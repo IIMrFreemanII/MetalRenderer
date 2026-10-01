@@ -1,0 +1,2142 @@
+// MetalGI shaders: ray traced direct light + path traced global illumination + SVGF-style denoiser.
+// Compiled at runtime by Renderer.swift — press R in the app to hot-reload after editing.
+
+#include <metal_stdlib>
+#include <metal_raytracing>
+using namespace metal;
+using namespace metal::raytracing;
+
+// ---------------------------------------------------------------------------------------------
+// Shared types — layouts must match GPUTypes.swift exactly.
+// ---------------------------------------------------------------------------------------------
+
+struct Uniforms {
+    float4 camPos;          // xyz
+    float4 camRight;        // xyz, w = tan(fovX/2)
+    float4 camUp;           // xyz, w = tan(fovY/2)
+    float4 camForward;      // xyz
+    float4 prevCamPos;
+    float4 prevCamRight;
+    float4 prevCamUp;
+    float4 prevCamForward;
+    float4 skyColor;
+    uint width;
+    uint height;
+    uint frameIndex;
+    uint lightCount;
+    uint bounces;
+    uint flags;
+    uint viewMode;
+    uint instanceCount;
+    float4 jitter;          // xy = this frame's sub-pixel jitter, zw = previous frame's (pixels)
+    float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off)
+    uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
+};
+
+struct MeshData {
+    uint firstIndex;
+    uint indexCount;
+    uint pad0;
+    uint pad1;
+};
+
+struct InstanceData {
+    float4x4 transform;
+    float4x4 prevTransform;
+    float4x4 normalMatrix;
+    uint meshIndex;
+    uint materialIndex;
+    uint pad0;
+    uint pad1;
+};
+
+struct Material {
+    float4 albedo;
+    float4 emission;
+};
+
+struct Light {
+    float4 positionRadius;
+    float4 color;
+};
+
+constant uint FLAG_HISTORY_VALID = 1;
+constant uint FLAG_DENOISE       = 2;
+constant uint FLAG_UPSCALE       = 4;   // MetalFX on: write depth + motion for it, composite outputs linear color
+constant uint FLAG_BLUE_NOISE    = 8;   // sample with the blue-noise texture instead of the hash RNG
+constant uint FLAG_SEPARATE      = 16;  // direct and indirect light were denoised separately
+constant uint FLAG_NO_CLAMP      = 32;  // no firefly clamp (reference images)
+constant uint FLAG_LIGHT_MAPS    = 64;  // path tracer: bounce lighting from light-visibility maps
+constant uint FLAG_SHADOW_DENOISER = 128;  // direct light = exact unshadowed light x denoised per-group visibility
+constant uint FLAG_ALL_LIGHTS    = 256; // one shadow ray per light even with more than SHADOW_GROUPS lights (references)
+constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
+                                        // up to 4 lights, each light is its own group (Light.color.w = group)
+constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
+
+constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
+constant uint MASK_ALL      = 0xFF;
+
+constant float RAY_EPSILON  = 1e-3f;
+constant float FIREFLY_CLAMP = 10.0f;
+constant float NEAR_PLANE   = 0.05f; // only used to encode the reversed-Z depth MetalFX reads
+
+// ---------------------------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------------------------
+
+inline float luminance(float3 c) { return dot(c, float3(0.2126f, 0.7152f, 0.0722f)); }
+
+// Round to the nearest half before writing a half-float texture. The texture write itself may round
+// toward zero, and the denoiser's history feedback amplifies that bias into visible darkening.
+inline float4 roundToHalf(float4 v) { return float4(half4(v)); }
+
+inline uint pcgHash(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// Simple per-pixel random stream (white noise).
+struct Rng {
+    uint state;
+    float next() {
+        state = pcgHash(state);
+        return float(state) * (1.0f / 4294967296.0f);
+    }
+    float2 next2() { return float2(next(), next()); }
+};
+
+constant uint BLUE_NOISE_SIZE = 128;   // must match BlueNoise.size
+
+// Per-pixel sample stream. With blue noise, every random dimension reads the tiled blue-noise texture at
+// its own offset, so neighboring pixels get well-spread values and the error is high-frequency (which the
+// a-trous filter removes far better than white noise). Each frame shifts the values by the golden ratio
+// (1D) or the R2 sequence (2D), so each pixel's samples over time are also evenly spread.
+struct Sampler {
+    texture2d<float, access::read> blueNoise;
+    uint2 pixel;
+    uint frame;
+    uint dimension;
+    bool useBlueNoise;
+    Rng rng;
+
+    float blueValue() {
+        // R2-sequence offsets give every dimension a different, far-apart window into the tile.
+        float2 r2 = fract(float(dimension + 1) * float2(0.7548776662f, 0.5698402910f));
+        dimension++;
+        uint2 q = (pixel + uint2(r2 * float(BLUE_NOISE_SIZE))) % BLUE_NOISE_SIZE;
+        return blueNoise.read(q).r;
+    }
+    // Adds frame * step (step = fraction * 2^32) in 32-bit fixed point, so there is no drift over time.
+    float shift(float v, uint step) {
+        uint x = (uint(v * 16777216.0f) << 8) + frame * step;
+        return float(x >> 8) * (1.0f / 16777216.0f);
+    }
+    float next() {
+        if (!useBlueNoise) return rng.next();
+        return shift(blueValue(), 2654435769u);                       // golden ratio
+    }
+    float2 next2() {
+        if (!useBlueNoise) return rng.next2();
+        float a = blueValue(), b = blueValue();
+        return float2(shift(a, 3242174889u), shift(b, 2447445414u));  // R2 sequence
+    }
+};
+
+
+// Cosine-weighted hemisphere sample around n (pdf = cos / pi).
+inline float3 cosineSampleHemisphere(float3 n, float2 u) {
+    float r = sqrt(u.x);
+    float phi = 2.0f * M_PI_F * u.y;
+    float3 local = float3(r * cos(phi), r * sin(phi), sqrt(max(0.0f, 1.0f - u.x)));
+    // Orthonormal basis (Duff et al. 2017)
+    float s = n.z >= 0.0f ? 1.0f : -1.0f;
+    float a = -1.0f / (s + n.z);
+    float b = n.x * n.y * a;
+    float3 t  = float3(1.0f + s * n.x * n.x * a, s * b, -s * n.x);
+    float3 bt = float3(b, s + n.y * n.y * a, -n.y);
+    return normalize(t * local.x + bt * local.y + n * local.z);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scene access + ray queries
+// ---------------------------------------------------------------------------------------------
+
+struct SceneData {
+    device const float3*       positions;
+    device const float3*       normals;
+    device const uint*         indices;
+    device const MeshData*     meshes;
+    device const InstanceData* instances;
+    device const Material*     materials;
+    device const Light*        lights;
+    uint                       lightCount;
+};
+
+struct Surface {
+    bool   hit;
+    float3 position;      // world space, this frame
+    float3 prevPosition;  // same surface point, previous frame (for motion vectors)
+    float3 normal;        // smooth shading normal (interpolated vertex normals), world space, not face-forwarded
+    float3 geomNormal;    // the triangle's true normal, world space, not face-forwarded
+    float3 albedo;
+    float3 emission;
+    uint   instanceId;
+};
+
+// Orients a hit's normals toward the side the ray came from. The geometric normal decides the side; the smooth
+// shading normal is flipped onto that side. Face-forwarding the smooth normal alone flips it inward at
+// silhouettes, where it can face away from the ray even though the triangle faces it, which put ray origins
+// inside the sphere and caused black dots along its edges.
+inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3& ng, thread float3& ns) {
+    ng = dot(sf.geomNormal, rayDir) > 0.0f ? -sf.geomNormal : sf.geomNormal;
+    ns = dot(sf.normal, ng) < 0.0f ? -sf.normal : sf.normal;
+}
+
+Surface traceSurface(ray r, uint mask, instance_acceleration_structure accel, thread const SceneData& s) {
+    intersector<triangle_data, instancing> isect;
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    auto res = isect.intersect(r, accel, mask);
+
+    Surface sf;
+    sf.hit = false;
+    sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
+    sf.instanceId = 0;
+    if (res.type != intersection_type::triangle) return sf;
+
+    InstanceData inst = s.instances[res.instance_id];
+    MeshData mesh = s.meshes[inst.meshIndex];
+    uint base = mesh.firstIndex + res.primitive_id * 3;
+    uint i0 = s.indices[base], i1 = s.indices[base + 1], i2 = s.indices[base + 2];
+
+    float2 bc = res.triangle_barycentric_coord;
+    float w0 = 1.0f - bc.x - bc.y;
+    float3 p0 = s.positions[i0], p1 = s.positions[i1], p2 = s.positions[i2];
+    float3 objPos = p0 * w0 + p1 * bc.x + p2 * bc.y;
+    float3 objN   = s.normals[i0] * w0 + s.normals[i1] * bc.x + s.normals[i2] * bc.y;
+    float3 objNg  = cross(p1 - p0, p2 - p0);
+
+    Material mat = s.materials[inst.materialIndex];
+    sf.hit = true;
+    sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
+    sf.prevPosition = (inst.prevTransform * float4(objPos, 1.0f)).xyz;
+    sf.normal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
+    sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
+    sf.albedo = mat.albedo.rgb;
+    sf.emission = mat.emission.rgb;
+    sf.instanceId = res.instance_id;
+    return sf;
+}
+
+bool isVisible(float3 from, float3 to, instance_acceleration_structure accel) {
+    float3 d = to - from;
+    float dist = length(d);
+    ray r(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f));
+    intersector<instancing> isect;   // no triangle_data: shadow rays never need barycentrics
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    isect.accept_any_intersection(true);   // shadow rays only need "is anything in the way?"
+    auto res = isect.intersect(r, accel, MASK_GEOMETRY);
+    return res.type == intersection_type::none;
+}
+
+// Diffuse lighting from one sphere light if nothing is in the way, with albedo divided out:
+//   outgoing radiance = albedo * returned value * visibility.
+// n = shading normal, ng = geometric normal (both oriented); a light behind the surface contributes nothing.
+inline float3 lightUnshadowed(Light light, float3 p, float3 n, float3 ng) {
+    float3 toLight = light.positionRadius.xyz - p;
+    float radius = light.positionRadius.w;
+    float dist2 = max(dot(toLight, toLight), radius * radius);
+    float cosTheta = dot(n, normalize(toLight));
+    if (cosTheta <= 0.0f || dot(toLight, ng) <= 0.0f) return float3(0.0f);
+    return light.color.rgb * cosTheta / (M_PI_F * dist2);
+}
+
+// A random point on the light's sphere, for a soft-shadow ray.
+inline float3 lightSamplePoint(Light light, float2 u) {
+    float z = 1.0f - 2.0f * u.x;
+    float rr = sqrt(max(0.0f, 1.0f - z * z));
+    float phi = 2.0f * M_PI_F * u.y;
+    return light.positionRadius.xyz + light.positionRadius.w * float3(rr * cos(phi), rr * sin(phi), z);
+}
+
+// Like isVisible, but also returns the distance from `from` to an occluder (0 if visible): the shadow
+// denoiser estimates penumbra widths from it.
+bool isVisibleBlocker(float3 from, float3 to, instance_acceleration_structure accel, thread float& blocker) {
+    float3 d = to - from;
+    float dist = length(d);
+    ray r(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f));
+    intersector<instancing> isect;
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    isect.accept_any_intersection(true);
+    auto res = isect.intersect(r, accel, MASK_GEOMETRY);
+    blocker = res.type == intersection_type::none ? 0.0f : max(res.distance, 1e-3f);
+    return res.type == intersection_type::none;
+}
+
+// One-sample estimate of a sphere light's diffuse lighting (lightUnshadowed x visibility of a random point
+// on the light, which gives soft shadows).
+float3 sampleLight(Light light, float3 p, float3 n, float3 ng, float2 u, instance_acceleration_structure accel) {
+    float3 unshadowed = lightUnshadowed(light, p, n, ng);
+    if (all(unshadowed == 0.0f)) return float3(0.0f);
+    if (!isVisible(p, lightSamplePoint(light, u), accel)) return float3(0.0f);
+    return unshadowed;
+}
+
+inline uint lightGroup(Light light) { return uint(light.color.w); }
+
+// The per-light weight loops (light picking, cached light at secondary hits) look at no more than
+// LIGHT_CANDIDATES lights: with more, a stratified random subset, one light per stride of N / M from a random
+// offset. Each light is then in the subset with probability M / N, so sums over it are scaled by N / M (`scale`),
+// which keeps every estimate unbiased; the cost stops growing with the light count, the noise grows a little.
+constant uint LIGHT_CANDIDATES = 32;
+
+struct LightSubset {
+    uint  count;    // lights to visit
+    float stride;
+    float offset;
+    float scale;    // N / M (1 when every light is visited)
+};
+
+inline LightSubset lightSubset(uint lightCount, float u, uint maxCount = LIGHT_CANDIDATES) {
+    LightSubset ls;
+    if (lightCount <= maxCount) {
+        ls.count = lightCount; ls.stride = 1.0f; ls.offset = 0.0f; ls.scale = 1.0f;
+    } else {
+        ls.count = maxCount;
+        ls.stride = float(lightCount) / float(maxCount);
+        ls.offset = min(u, 0.99999f) * ls.stride;
+        ls.scale = ls.stride;
+    }
+    return ls;
+}
+
+inline uint lightSubsetIndex(LightSubset ls, uint j, uint lightCount) {
+    return min(uint(ls.offset + float(j) * ls.stride), lightCount - 1);
+}
+
+// Picks one light with probability proportional to its unshadowed luminance at p (streaming weighted reservoir
+// sampling: one pass, one random number, rescaled after each decision), among a subset of the lights if there
+// are many (uSubset picks it). Returns lightCount if no light reaches p. pdf = the effective probability of the
+// pick (including the subset's), so sample / pdf is unbiased.
+uint pickLight(device const Light* lights, uint lightCount, float3 p, float3 n, float3 ng, float u, float uSubset,
+               thread float& pdf) {
+    float total = 0.0f, pickedWeight = 0.0f;
+    uint picked = lightCount;
+    u = min(u, 0.99999f);
+    LightSubset ls = lightSubset(lightCount, uSubset);
+    for (uint j = 0; j < ls.count; ++j) {
+        uint i = lightSubsetIndex(ls, j, lightCount);
+        float w = luminance(lightUnshadowed(lights[i], p, n, ng));
+        if (w <= 0.0f) continue;
+        total += w;
+        float q = w / total;
+        if (u < q) { picked = i; pickedWeight = w; u /= q; }
+        else u = (u - q) / (1.0f - q);
+    }
+    pdf = total > 0.0f ? pickedWeight / (total * ls.scale) : 0.0f;
+    return picked;
+}
+
+// Half width of a sphere light's penumbra in world units, for an occluder at distance d from the receiver:
+// w = r d / (D - d) for a light of radius r at distance D (as in PCSS). 0 = the sample was visible.
+inline float penumbraWidth(Light light, float3 p, float d) {
+    if (d <= 0.0f) return 0.0f;
+    float D = length(light.positionRadius.xyz - p);
+    return max(light.positionRadius.w * d / max(D - d, 1e-3f), 1e-4f);
+}
+
+// Continuous pixel coordinate (no jitter, y down) of camera-relative vector v, for a camera given as
+// right/up/forward with tan(fov/2) in .w. Returns the view depth along forward in `depth`.
+inline float2 projectToPixel(float3 v, float4 right, float4 up, float4 forward, float2 size, thread float& depth) {
+    depth = dot(v, forward.xyz);
+    float2 ndc = float2(dot(v, right.xyz) / (depth * right.w), dot(v, up.xyz) / (depth * up.w));
+    return float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f) * size;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Equal-area octahedral mapping (Clarberg 2008): unit vector <-> [-1, 1]^2, every texel covers the same solid
+// angle. Used for the light-visibility maps and the radiance-cascade direction bins.
+// ---------------------------------------------------------------------------------------------
+
+inline float3 equalAreaOctDecode(float2 f) {
+    float2 a = abs(f);
+    float d = 1.0f - (a.x + a.y);                     // > 0 inside the diamond = upper hemisphere
+    float r = 1.0f - abs(d);
+    float phi = r > 0.0f ? (M_PI_F / 4.0f) * ((a.y - a.x) / r + 1.0f) : 0.0f;
+    float z = copysign(1.0f - r * r, d);
+    float sinTheta = r * sqrt(max(2.0f - r * r, 0.0f));
+    return float3(copysign(cos(phi) * sinTheta, f.x), copysign(sin(phi) * sinTheta, f.y), z);
+}
+
+inline float2 equalAreaOctEncode(float3 v) {
+    float3 a = abs(v);
+    float r = sqrt(max(1.0f - a.z, 0.0f));
+    float phi = (a.x > 0.0f || a.y > 0.0f) ? atan2(a.y, a.x) : 0.0f;
+    float y = phi * (2.0f / M_PI_F) * r;
+    float x = r - y;
+    if (v.z < 0.0f) { float t = x; x = 1.0f - y; y = 1.0f - t; }   // fold the lower hemisphere into the corners
+    return float2(copysign(x, v.x), copysign(y, v.y));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Light-visibility maps: for each light, the distance to the nearest geometry in every direction, traced from
+// the light's centre once per frame. Secondary hits (path-tracer bounces with FLAG_LIGHT_MAPS, surfels,
+// radiance-cascade intervals) look up shadowing here instead of tracing a shadow ray. Shadows are hard (from
+// the light's centre), which is invisible once indirect light has been integrated over a hemisphere.
+// Maps are 128^2 for up to 16 lights and smaller beyond (Renderer.lightMapSize), so tracing them costs the same.
+// ---------------------------------------------------------------------------------------------
+
+kernel void lightMapKernel(constant Uniforms&                     u         [[buffer(0)]],
+                           instance_acceleration_structure        accel     [[buffer(1)]],
+                           device const Light*                    lights    [[buffer(8)]],
+                           texture2d_array<float, access::write>  lightMap  [[texture(0)]],
+                           uint3 tid [[thread_position_in_grid]])
+{
+    uint size = lightMap.get_width();
+    if (tid.x >= size || tid.y >= size || tid.z >= u.lightCount) return;
+    Light light = lights[tid.z];
+    float3 dir = equalAreaOctDecode((float2(tid.xy) + 0.5f) / float(size) * 2.0f - 1.0f);
+    float start = light.positionRadius.w * 1.01f;   // just outside the light's own sphere
+    ray r(light.positionRadius.xyz + dir * start, dir, 0.0f, INFINITY);
+    intersector<instancing> isect;
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    auto res = isect.intersect(r, accel, MASK_GEOMETRY);
+    lightMap.write(float4(res.type == intersection_type::none ? 1e30f : start + res.distance), tid.xy, tid.z);
+}
+
+// Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), albedo divided out.
+float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng) {
+    float3 center = light.positionRadius.xyz;
+    float radius = light.positionRadius.w;
+    float3 toLight = center - p;
+    float dist2 = dot(toLight, toLight);
+    float3 L = toLight * rsqrt(dist2);
+    float cosTheta = dot(n, L);
+    if (cosTheta <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
+
+    // Normal offset of ~1.5 map texels at this distance (a 128^2 equal-area texel spans ~0.028 rad) avoids acne.
+    uint size = lightMap.get_width();
+    float texelScale = 128.0f / float(size);
+    float3 q = p + ng * (sqrt(dist2) * 0.04f * texelScale);
+    float3 v = q - center;
+    float dq = length(v);
+    float2 tc = (equalAreaOctEncode(v / dq) * 0.5f + 0.5f) * float(size) - 0.5f;
+    int2 base = int2(floor(tc));
+    float2 f = tc - float2(base);
+    float bias = 0.02f + 0.01f * dq * texelScale;
+    float vis = 0.0f;
+    for (int k = 0; k < 4; ++k) {
+        int2 o = int2(k & 1, k >> 1);
+        uint2 texel = uint2(clamp(base + o, int2(0), int2(size - 1)));
+        float w = (o.x ? f.x : 1.0f - f.x) * (o.y ? f.y : 1.0f - f.y);
+        vis += w * (lightMap.read(texel, l).r >= dq - bias ? 1.0f : 0.0f);
+    }
+    return light.color.rgb * (cosTheta * vis / (M_PI_F * max(dist2, radius * radius)));
+}
+
+// Direct light at a secondary hit from all lights, shadowed by the light maps, albedo divided out.
+// n = shading normal, ng = geometric normal, both oriented toward the side being lit. Up to 8 lights are summed
+// exactly; with more, CACHED_LIGHT_SAMPLES lights are picked by unshadowed luminance (one weighted reservoir each,
+// seeded by `seed`) and only their maps are read, so the cost no longer grows with the light count's map reads.
+float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_array<float, access::read> lightMap,
+                        float3 p, float3 n, float3 ng, uint seed, uint flags) {
+    float3 sum = float3(0.0f);
+    if (lightCount <= 8 || (flags & FLAG_ALL_LIGHTS) != 0) {
+        for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng);
+        return sum;
+    }
+    float4 u;
+    for (uint k = 0; k < 4; ++k) { seed = pcgHash(seed + k); u[k] = min(float(seed >> 8) * (1.0f / 16777216.0f), 0.99999f); }
+    LightSubset ls = lightSubset(lightCount, float(pcgHash(seed + 7u) >> 8) * (1.0f / 16777216.0f));
+    float total = 0.0f;
+    uint picked[CACHED_LIGHT_SAMPLES] = { 0, 0, 0, 0 };
+    float4 pickedWeight = float4(0.0f);
+    for (uint j = 0; j < ls.count; ++j) {
+        uint i = lightSubsetIndex(ls, j, lightCount);
+        float w = luminance(lightUnshadowed(lights[i], p, n, ng));
+        if (w <= 0.0f) continue;
+        total += w;
+        float q = w / total;
+        for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k) {
+            if (u[k] < q) { picked[k] = i; pickedWeight[k] = w; u[k] /= q; }
+            else u[k] = (u[k] - q) / (1.0f - q);
+        }
+    }
+    if (total <= 0.0f) return sum;
+    for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k)
+        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng) * (total / pickedWeight[k]);
+    return sum * (ls.scale / float(CACHED_LIGHT_SAMPLES));
+}
+
+// ---------------------------------------------------------------------------------------------
+// 1. Trace kernel: G-buffer + direct light + path traced indirect light (1 sample per pixel)
+// ---------------------------------------------------------------------------------------------
+
+kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]],
+                        instance_acceleration_structure  accel      [[buffer(1)]],
+                        device const float3*             positions  [[buffer(2)]],
+                        device const float3*             normals    [[buffer(3)]],
+                        device const uint*               indices    [[buffer(4)]],
+                        device const MeshData*           meshes     [[buffer(5)]],
+                        device const InstanceData*       instances  [[buffer(6)]],
+                        device const Material*           materials  [[buffer(7)]],
+                        device const Light*              lights     [[buffer(8)]],
+                        texture2d<float, access::write>  outNormalDepth [[texture(0)]],
+                        texture2d<float, access::write>  outAlbedo      [[texture(1)]],
+                        texture2d<float, access::write>  outEmission    [[texture(2)]],
+                        texture2d<float, access::write>  outMotion      [[texture(3)]],
+                        texture2d<float, access::write>  outDirect      [[texture(4)]],
+                        texture2d<float, access::write>  outIndirect    [[texture(5)]],
+                        texture2d<float, access::write>  outDeviceDepth [[texture(6)]],  // MetalFX: reversed-Z depth
+                        texture2d<float, access::write>  outPixelMotion [[texture(7)]],  // MetalFX: prev pixel - this pixel
+                        texture2d<float, access::read>   blueNoise      [[texture(8)]],
+                        texture2d<float, access::write>  outSurfacePos  [[texture(9)]],   // xyz world, w = instance + 1 (0 = no GI)
+                        texture2d<float, access::write>  outGeoNormal   [[texture(10)]],  // oriented geometric normal
+                        texture2d_array<float, access::read> lightMap   [[texture(11)]],  // with FLAG_LIGHT_MAPS
+                        texture2d<float, access::write>  outVisibility  [[texture(12)]],  // per light group: visibility
+                        texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
+                        uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+
+    SceneData s;
+    s.positions = positions;
+    s.normals = normals;
+    s.indices = indices;
+    s.meshes = meshes;
+    s.instances = instances;
+    s.materials = materials;
+    s.lights = lights;
+    s.lightCount = u.lightCount;
+
+    Sampler rng;
+    rng.blueNoise = blueNoise;
+    rng.pixel = tid;
+    rng.frame = u.frameIndex;
+    rng.dimension = 0;
+    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex)));
+
+    // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
+    float2 size = float2(u.width, u.height);
+    float2 uv = (float2(tid) + 0.5f + u.jitter.xy) / size;   // jitter is zero unless MetalFX upscaling is on
+    float3 dir = normalize(u.camForward.xyz
+                           + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
+                           + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
+    ray primary(u.camPos.xyz, dir, 0.0f, INFINITY);
+    Surface sf = traceSurface(primary, MASK_ALL, accel, s);
+
+    bool upscale = (u.flags & FLAG_UPSCALE) != 0;
+    if (!sf.hit) {
+        if (upscale) {
+            // Sky: a point at infinity only moves with camera rotation.
+            float dCur, dPrev;
+            float2 cur  = projectToPixel(dir, u.camRight, u.camUp, u.camForward, size, dCur);
+            float2 prev = projectToPixel(dir, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, dPrev);
+            outDeviceDepth.write(float4(0.0f), tid);
+            outPixelMotion.write(float4(dPrev > 0.0f ? prev - cur : float2(0.0f), 0.0f, 0.0f), tid);
+        }
+        outNormalDepth.write(float4(0.0f, 0.0f, 0.0f, -1.0f), tid);
+        outAlbedo.write(float4(0.0f), tid);
+        outEmission.write(float4(u.skyColor.rgb, 1.0f), tid);
+        outMotion.write(float4(0.0f), tid);
+        outDirect.write(float4(0.0f), tid);
+        outIndirect.write(float4(0.0f), tid);
+        outSurfacePos.write(float4(0.0f), tid);
+        outGeoNormal.write(float4(0.0f), tid);
+        outVisibility.write(float4(0.0f), tid);
+        outBlocker.write(float4(0.0f), tid);
+        return;
+    }
+
+    float3 ng, n;
+    orientNormals(sf, dir, ng, n);
+    float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
+    outNormalDepth.write(float4(n, viewDepth), tid);
+    outGeoNormal.write(float4(ng, 0.0f), tid);
+    outAlbedo.write(float4(sf.albedo, 1.0f), tid);
+    outEmission.write(float4(sf.emission, 1.0f), tid);
+
+    // Motion vector: project where this surface point was last frame into last frame's camera.
+    // The denoiser wants the index of the previous frame's pixel, whose sample was taken at its center + that frame's jitter.
+    float prevDepth;
+    float2 prevPixel = projectToPixel(sf.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, prevDepth);
+    outMotion.write(float4(prevPixel - 0.5f - u.jitter.zw, prevDepth, prevDepth > 0.0f ? 1.0f : 0.0f), tid);
+    if (upscale) {
+        // MetalFX wants unjittered motion in pixels, from this pixel to where it was last frame.
+        float curDepth;
+        float2 curPixel = projectToPixel(sf.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
+        outDeviceDepth.write(float4(NEAR_PLANE / max(viewDepth, NEAR_PLANE)), tid);
+        outPixelMotion.write(float4(prevDepth > 0.0f ? prevPixel - curPixel : float2(0.0f), 0.0f, 0.0f), tid);
+    }
+
+    // Emissive surfaces (the light spheres) are not lit.
+    if (any(sf.emission > 0.0f)) {
+        outDirect.write(float4(0.0f), tid);
+        outIndirect.write(float4(0.0f), tid);
+        outSurfacePos.write(float4(sf.position, 0.0f), tid);
+        outVisibility.write(float4(0.0f), tid);
+        outBlocker.write(float4(0.0f), tid);
+        return;
+    }
+    outSurfacePos.write(float4(sf.position, float(sf.instanceId + 1)), tid);
+
+    float3 p = sf.position + ng * RAY_EPSILON;   // offset along the true normal so the origin is never below the triangle
+
+    // Direct light. The shadow denoiser filters visibility per light group (one rgba channel each; up to 4 lights,
+    // each light is its own group) and multiplies it back onto the group's exact unshadowed light in the composite
+    // pass. Each channel also gets the penumbra half width of its occluded samples, which sizes the filter.
+    float3 direct = float3(0.0f);
+    float4 visibility = float4(0.0f), blocker = float4(0.0f);
+    bool manyLights = u.lightCount > SHADOW_GROUPS && (u.flags & FLAG_ALL_LIGHTS) == 0;
+    if (!manyLights) {
+        // One shadow ray per light. A channel shared by several lights gets their luminance-weighted visibility.
+        float4 unshadowedSum = float4(0.0f), blockerWeight = float4(0.0f);
+        for (uint i = 0; i < u.lightCount; ++i) {
+            float2 r = rng.next2();
+            float3 unshadowed = lightUnshadowed(lights[i], p, n, ng);
+            if (all(unshadowed <= 0.0f)) continue;   // light behind the surface: it shadows itself
+            float b;
+            float v = isVisibleBlocker(p, lightSamplePoint(lights[i], r), accel, b) ? 1.0f : 0.0f;
+            direct += unshadowed * v;
+            uint g = lightGroup(lights[i]);
+            float w = luminance(unshadowed);
+            unshadowedSum[g] += w;
+            visibility[g] += w * v;
+            if (b > 0.0f) { blocker[g] += w * penumbraWidth(lights[i], p, b); blockerWeight[g] += w; }
+        }
+        visibility = select(float4(0.0f), visibility / unshadowedSum, unshadowedSum > 0.0f);
+        blocker = select(float4(0.0f), blocker / blockerWeight, blockerWeight > 0.0f);
+    }
+    // With more lights, manyLightsKernel computes direct light, visibility and penumbrae after this kernel.
+    if (!manyLights) {
+        outVisibility.write(visibility, tid);
+        outBlocker.write(roundToHalf(blocker), tid);
+    }
+
+    // Indirect light: a short diffuse path with next-event estimation at every bounce.
+    float3 indirect = float3(0.0f);
+    if (u.bounces > 0) {
+        float3 throughput = float3(1.0f);
+        float3 origin = p;
+        float3 normal = n, geomNormal = ng;
+        for (uint b = 0; b < u.bounces; ++b) {
+            float3 d = cosineSampleHemisphere(normal, rng.next2());
+            if (dot(d, geomNormal) <= 0.0f) d -= 2.0f * dot(d, geomNormal) * geomNormal;   // keep it above the triangle
+            ray r(origin, d, 0.0f, INFINITY);
+            Surface h = traceSurface(r, MASK_GEOMETRY, accel, s);
+            if (!h.hit) {
+                indirect += throughput * u.skyColor.rgb;
+                break;
+            }
+            float3 hng, hn;
+            orientNormals(h, d, hng, hn);
+            indirect += throughput * h.emission;
+            throughput *= h.albedo;   // Lambert BRDF * cos / cosine pdf = albedo
+            float3 hp = h.position + hng * RAY_EPSILON;
+            if ((u.flags & FLAG_LIGHT_MAPS) != 0) {
+                uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b)));
+                indirect += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags);   // no rays
+            } else if (u.lightCount > 0) {
+                // Next-event estimation: one light, picked by its unshadowed luminance here.
+                float pdf;
+                float uPick = rng.next();
+                float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;   // keeps few-light sequences unchanged
+                uint li = pickLight(lights, u.lightCount, hp, hn, hng, uPick, uSubset, pdf);
+                float2 r = rng.next2();
+                if (li < u.lightCount) indirect += throughput * sampleLight(lights[li], hp, hn, hng, r, accel) / pdf;
+            }
+            if (all(throughput < 0.01f)) break;
+            origin = hp;
+            normal = hn;
+            geomNormal = hng;
+        }
+        float l = luminance(indirect);
+        if (l > FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) indirect *= FIREFLY_CLAMP / l;
+    }
+
+    outDirect.write(float4(direct, 1.0f), tid);
+    outIndirect.write(float4(indirect, 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 1c. Direct light with many lights (more than SHADOW_GROUPS, unless FLAG_ALL_LIGHTS), after traceKernel, from
+//     its G-buffer. Per light group (one shadow-denoiser channel each): one light picked by unshadowed luminance
+//     over all the group's lights (weighted reservoir, no rays), and one shadow ray to it, so the cost is 4 rays
+//     per pixel whatever the light count. The 0/1 visibility is an unbiased estimate of the group's luminance-
+//     weighted visibility, which is what the denoiser filters (the composite multiplies it onto the group's exact
+//     unshadowed light); the raw direct light is the one-sample estimate unshadowed * visibility / pdf.
+//     raysPerGroup = 2 picks two lights per group (8 rays): half the variance, half the flicker, ~4 ms more here.
+//     Every light is weighed (a subset of candidates under-represents each pixel's dominant light, which biased
+//     the filtered visibility by 7 dB at 128 lights). Its own kernel because inside traceKernel, whose register
+//     use limits occupancy, the same loop cost 4x as much.
+// ---------------------------------------------------------------------------------------------
+
+constant uint MAX_RAYS_PER_GROUP = 2;
+
+kernel void manyLightsKernel(constant Uniforms&               u          [[buffer(0)]],
+                             instance_acceleration_structure  accel      [[buffer(1)]],
+                             device const Light*              lights     [[buffer(8)]],
+                             texture2d<float, access::read>   surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
+                             texture2d<float, access::read>   normalDepth [[texture(1)]],
+                             texture2d<float, access::read>   geoNormal  [[texture(2)]],
+                             texture2d<float, access::read>   blueNoise  [[texture(3)]],
+                             texture2d<float, access::write>  outDirect  [[texture(4)]],
+                             texture2d<float, access::write>  outVisibility [[texture(5)]],
+                             texture2d<float, access::write>  outBlocker [[texture(6)]],
+                             constant uint&                   raysPerGroup [[buffer(9)]],   // 1 or 2
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 sp = surfacePos.read(tid);
+    if (sp.w <= 0.0f) return;   // sky and emitters: traceKernel wrote zeros
+    float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+    float3 p = sp.xyz + ng * RAY_EPSILON;
+
+    Sampler rng;
+    rng.blueNoise = blueNoise;
+    rng.pixel = tid;
+    rng.frame = u.frameIndex;
+    rng.dimension = 64;   // other blue-noise windows than traceKernel's
+    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x9E3779B9u)));
+
+    uint rays = clamp(raysPerGroup, 1u, MAX_RAYS_PER_GROUP);
+    float4 sel[MAX_RAYS_PER_GROUP];
+    for (uint k = 0; k < rays; ++k) sel[k] = float4(rng.next2(), rng.next2());
+    float3 direct = float3(0.0f);
+    float4 visibility = float4(0.0f), blocker = float4(0.0f), blockerCount = float4(0.0f);
+    uint start = 0;
+    for (uint g = 0; g < SHADOW_GROUPS; ++g) {
+        uint end = u.lightGroupEnd[g];
+        float total = 0.0f;
+        float s[MAX_RAYS_PER_GROUP], pickedWeight[MAX_RAYS_PER_GROUP];
+        uint picked[MAX_RAYS_PER_GROUP];
+        for (uint k = 0; k < rays; ++k) { s[k] = min(sel[k][g], 0.99999f); picked[k] = end; pickedWeight[k] = 0.0f; }
+        for (uint i = start; i < end; ++i) {
+            float w = luminance(lightUnshadowed(lights[i], p, n, ng));
+            if (w <= 0.0f) continue;
+            total += w;
+            float q = w / total;
+            for (uint k = 0; k < rays; ++k) {
+                if (s[k] < q) { picked[k] = i; pickedWeight[k] = w; s[k] /= q; }
+                else s[k] = (s[k] - q) / (1.0f - q);
+            }
+        }
+        for (uint k = 0; k < rays; ++k) {
+            float2 r = rng.next2();   // drawn even for empty groups, so the sample dimensions stay fixed
+            if (picked[k] >= end) continue;
+            Light light = lights[picked[k]];
+            float b;
+            bool visible = isVisibleBlocker(p, lightSamplePoint(light, r), accel, b);
+            visibility[g] += visible ? 1.0f / float(rays) : 0.0f;
+            if (b > 0.0f) { blocker[g] += penumbraWidth(light, p, b); blockerCount[g] += 1.0f; }
+            if (visible) direct += lightUnshadowed(light, p, n, ng) * (total / (pickedWeight[k] * float(rays)));
+        }
+        start = end;
+    }
+    blocker = select(float4(0.0f), blocker / blockerCount, blockerCount > 0.0f);
+    outDirect.write(float4(direct, 1.0f), tid);
+    outVisibility.write(visibility, tid);
+    outBlocker.write(roundToHalf(blocker), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 2. Temporal accumulation: reproject last frame's denoised result, reject disocclusions,
+//    blend with the new noisy sample and track luminance moments for variance estimation.
+// ---------------------------------------------------------------------------------------------
+
+inline float3 readNoisy(texture2d<float, access::read> a, texture2d<float, access::read> b, uint count, uint2 p) {
+    return a.read(p).rgb + (count > 1 ? b.read(p).rgb : float3(0.0f));
+}
+
+// Denoises one signal: inputA alone (inputCount = 1) or inputA + inputB (inputCount = 2).
+kernel void temporalKernel(constant Uniforms&              u           [[buffer(0)]],
+                           constant uint&                  inputCount  [[buffer(1)]],
+                           texture2d<float, access::read>  inputA      [[texture(0)]],
+                           texture2d<float, access::read>  inputB      [[texture(1)]],
+                           texture2d<float, access::read>  motion      [[texture(2)]],
+                           texture2d<float, access::read>  curND       [[texture(3)]],
+                           texture2d<float, access::read>  prevND      [[texture(4)]],
+                           texture2d<float, access::read>  history     [[texture(5)]],
+                           texture2d<float, access::read>  prevMoments [[texture(6)]],
+                           texture2d<float, access::write> outIllum    [[texture(7)]],
+                           texture2d<float, access::write> outMoments  [[texture(8)]],
+                           uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+
+    float4 nd = curND.read(tid);
+    float3 current = readNoisy(inputA, inputB, inputCount, tid);
+    if (nd.w <= 0.0f) {
+        outIllum.write(float4(current, 0.0f), tid);
+        outMoments.write(float4(0.0f), tid);
+        return;
+    }
+    float lum = luminance(current);
+
+    // Bilinear reprojection where each of the 4 taps is validated by depth and normal.
+    float3 histColor = float3(0.0f);
+    float2 histMoments = float2(0.0f);
+    float histSlowLum = 0.0f;
+    float histLen = 0.0f;
+    float weightSum = 0.0f;
+    float4 mv = motion.read(tid);
+    if ((u.flags & FLAG_HISTORY_VALID) != 0 && mv.w > 0.0f) {
+        float2 pp = mv.xy;
+        int2 base = int2(floor(pp));
+        float2 f = pp - float2(base);
+        float bilinear[4] = { (1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y };
+        int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
+        for (int i = 0; i < 4; ++i) {
+            int2 q = base + offsets[i];
+            if (q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+            float4 pnd = prevND.read(uint2(q));
+            if (pnd.w <= 0.0f) continue;
+            if (abs(pnd.w - mv.z) > 0.1f * mv.z) continue;        // depth mismatch -> disoccluded
+            if (dot(pnd.xyz, nd.xyz) < 0.9f) continue;             // normal mismatch
+            float w = bilinear[i];
+            float4 m = prevMoments.read(uint2(q));
+            histColor += history.read(uint2(q)).rgb * w;
+            histMoments += m.xy * w;
+            histSlowLum += m.w * w;
+            histLen += m.z * w;
+            weightSum += w;
+        }
+    }
+
+    float len;
+    float3 color;
+    float2 moments;
+    float slowLum;
+    if (weightSum > 1e-3f) {
+        histColor /= weightSum;
+        histMoments /= weightSum;
+        histSlowLum /= weightSum;
+        histLen /= weightSum;
+
+        // Anti-lag: moments.x is a fast (~5 frame) running mean of the raw luminance, moments.w a slow one that
+        // follows the color history's blend rate. Where they differ by more than 2 standard errors, the lighting
+        // has changed (a moving light or shadow), so shorten the history and let new samples take over sooner.
+        if (u.denoise.z > 0.0f) {
+            float sigma = sqrt(max(histMoments.y - histMoments.x * histMoments.x, 0.0f));
+            float stdError = 0.36f * sigma + 1e-3f * histMoments.x + 1e-5f;   // of (fast - slow), alpha 0.2 vs ~1/32
+            float excess = max(abs(histSlowLum - histMoments.x) / stdError - 2.0f, 0.0f);
+            histLen /= 1.0f + u.denoise.z * excess;
+        }
+        len = min(histLen + 1.0f, u.denoise.y);
+        float alpha = 1.0f / len;
+        float alphaMoments = max(alpha, 0.2f);
+        color = mix(histColor, current, alpha);
+        moments = mix(histMoments, float2(lum, lum * lum), alphaMoments);
+        slowLum = mix(histSlowLum, lum, alpha);
+    } else {
+        len = 1.0f;
+        color = current;
+        moments = float2(lum, lum * lum);
+        slowLum = lum;
+    }
+
+    float variance;
+    if (len < 4.0f) {
+        // Too little history: estimate variance spatially from a 5x5 neighborhood on the same surface.
+        float2 m = float2(0.0f);
+        float ws = 0.0f;
+        for (int dy = -2; dy <= 2; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                int2 q = int2(tid) + int2(dx, dy);
+                if (q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+                float4 qnd = curND.read(uint2(q));
+                if (qnd.w <= 0.0f || dot(qnd.xyz, nd.xyz) < 0.8f) continue;
+                float ql = luminance(readNoisy(inputA, inputB, inputCount, uint2(q)));
+                m += float2(ql, ql * ql);
+                ws += 1.0f;
+            }
+        }
+        m /= max(ws, 1.0f);
+        variance = max(0.0f, m.y - m.x * m.x) * (4.0f / len);
+    } else {
+        variance = max(0.0f, moments.y - moments.x * moments.x);
+    }
+
+    // Alpha holds the standard deviation: the variance overflows the half-float texture near the lights.
+    outIllum.write(roundToHalf(float4(color, sqrt(variance))), tid);
+    outMoments.write(float4(moments, len, slowLum), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3. A-trous wavelet filter: 5x5 B-spline kernel with growing step size,
+//    weighted by depth, normal and luminance (scaled by the estimated variance).
+//    Illumination alpha is the standard deviation; variance math is done in 32-bit registers.
+// ---------------------------------------------------------------------------------------------
+
+constant float kernelWeights[3] = { 3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f };
+
+kernel void atrousKernel(constant Uniforms&              u        [[buffer(0)]],
+                         constant int&                   stepSize [[buffer(1)]],
+                         texture2d<float, access::read>  inIllum  [[texture(0)]],
+                         texture2d<float, access::read>  nd       [[texture(1)]],
+                         texture2d<float, access::write> outIllum [[texture(2)]],
+                         uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    int2 p = int2(tid);
+    int2 maxP = int2(u.width - 1, u.height - 1);
+
+    float4 center = inIllum.read(tid);
+    float4 cnd = nd.read(tid);
+    if (cnd.w <= 0.0f) {
+        outIllum.write(center, tid);
+        return;
+    }
+
+    // Blur the variance a little (3x3 Gaussian) so the luminance edge-stopping is stable.
+    float variance = 0.0f;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            float k = (dx == 0 ? 2.0f : 1.0f) * (dy == 0 ? 2.0f : 1.0f) / 16.0f;
+            float sd = inIllum.read(uint2(clamp(p + int2(dx, dy), int2(0), maxP))).a;
+            variance += k * sd * sd;
+        }
+    }
+
+    // Screen-space depth gradient, used to make the depth test tolerant on slanted surfaces.
+    float zr = nd.read(uint2(clamp(p + int2(1, 0), int2(0), maxP))).w;
+    float zd = nd.read(uint2(clamp(p + int2(0, 1), int2(0), maxP))).w;
+    float2 depthGrad = float2(zr > 0.0f ? zr - cnd.w : 0.0f, zd > 0.0f ? zd - cnd.w : 0.0f);
+
+    float centerLum = luminance(center.rgb);
+    float phiL = u.denoise.x * sqrt(max(variance, 0.0f)) + 1e-4f;
+
+    float3 sumColor = float3(0.0f);
+    float sumWeight = 0.0f;
+    float sumVariance = 0.0f;
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            int2 q = p + int2(dx, dy) * stepSize;
+            if (q.x < 0 || q.y < 0 || q.x > maxP.x || q.y > maxP.y) continue;
+            float4 qc = inIllum.read(uint2(q));
+            float4 qnd = nd.read(uint2(q));
+            if (qnd.w <= 0.0f) continue;
+
+            float2 offset = float2(dx, dy) * float(stepSize);
+            float wDepth = exp(-abs(cnd.w - qnd.w) / (abs(dot(depthGrad, offset)) + 0.01f * cnd.w + 1e-4f));
+            float wNormal = pow(max(0.0f, dot(cnd.xyz, qnd.xyz)), 128.0f);
+            float wLum = exp(-abs(centerLum - luminance(qc.rgb)) / phiL);
+            float w = kernelWeights[abs(dx)] * kernelWeights[abs(dy)] * wDepth * wNormal * wLum;
+
+            sumColor += qc.rgb * w;
+            sumVariance += w * w * qc.a * qc.a;
+            sumWeight += w;
+        }
+    }
+    sumWeight = max(sumWeight, 1e-6f);
+    outIllum.write(roundToHalf(float4(sumColor / sumWeight, sqrt(sumVariance) / sumWeight)), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3b. Shadow denoiser (direct light). traceKernel's direct light is, per light, an exact unshadowed term times
+//     the visibility of one random point on the light (0 or 1). Only that visibility is noisy, so only it is
+//     filtered, one light per rgba channel, and compositeKernel multiplies it back onto the exact term: shading
+//     falloff and normal detail are never blurred. Visibility is in [0, 1], so its variance is p(1 - p).
+//     Lights and objects move every frame and motion vectors don't move shadows, so the temporal pass clamps the
+//     reprojected history to what this frame's neighbourhood allows (as in TAA). The spatial passes blur no wider
+//     than each light's penumbra, estimated from occluder distances (as in PCSS), and skip 8x8 tiles that are
+//     fully lit or fully shadowed for every light. (After AMD FidelityFX's shadow denoiser and NVIDIA's SIGMA.)
+// ---------------------------------------------------------------------------------------------
+
+// params: x = max history frames, y = clamp width (standard deviations), z = edge-stopping width, w = step size
+kernel void shadowTemporalKernel(constant Uniforms&              u          [[buffer(0)]],
+                                 constant float4&                params     [[buffer(1)]],
+                                 texture2d<float, access::read>  visibility [[texture(0)]],
+                                 texture2d<float, access::read>  blocker    [[texture(1)]],
+                                 texture2d<float, access::read>  motion     [[texture(2)]],
+                                 texture2d<float, access::read>  curND      [[texture(3)]],
+                                 texture2d<float, access::read>  prevND     [[texture(4)]],
+                                 texture2d<float, access::read>  history    [[texture(5)]],   // last frame's filtered visibility
+                                 texture2d<float, access::read>  prevMeta   [[texture(6)]],   // z = history length
+                                 texture2d<float, access::write> outVis     [[texture(7)]],
+                                 texture2d<float, access::write> outMeta    [[texture(8)]],
+                                 texture2d<float, access::write> outPenumbra [[texture(9)]],  // per light group: radius in pixels
+                                 texture2d<uint, access::write>  outTiles   [[texture(10)]],  // per 8x8 tile: 1 = nothing to filter
+                                 uint2 tid   [[thread_position_in_grid]],
+                                 uint2 group [[threadgroup_position_in_grid]],
+                                 uint  lane  [[thread_index_in_threadgroup]],
+                                 uint  simdGroup [[simdgroup_index_in_threadgroup]],
+                                 uint  simdGroups [[simdgroups_per_threadgroup]])
+{
+    // The 8x8 tile plus a 2-pixel apron, loaded once: each pixel's 5x5 neighbourhood statistics read it 25 times.
+    threadgroup half4 tileVis[144], tileBlocker[144], tileND[144];
+    threadgroup bool groupSettled[32];
+    int2 maxP = int2(u.width - 1, u.height - 1);
+    int2 origin = int2(group * 8) - 2;
+    for (uint i = lane; i < 144; i += 64) {
+        uint2 q = uint2(clamp(origin + int2(i % 12, i / 12), int2(0), maxP));
+        tileVis[i] = half4(visibility.read(q));
+        tileBlocker[i] = half4(blocker.read(q));
+        tileND[i] = half4(curND.read(q));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    bool settled = true;   // fully lit or fully shadowed here and in the 5x5 neighbourhood, for every light
+    if (tid.x < u.width && tid.y < u.height) {
+        int2 local = int2(tid) - origin;
+        float4 nd = float4(tileND[local.y * 12 + local.x]);
+        if (nd.w <= 0.0f) {
+            outVis.write(float4(0.0f), tid);
+            outMeta.write(float4(0.0f), tid);
+            outPenumbra.write(float4(0.0f), tid);
+        } else {
+            float4 v = float4(tileVis[local.y * 12 + local.x]);
+            // 5x5 neighbourhood on the same surface: mean visibility and mean penumbra width, per light group.
+            float4 sum = float4(0.0f), blockerSum = float4(0.0f), blockerCount = float4(0.0f);
+            float count = 0.0f;
+            for (int dy = -2; dy <= 2; ++dy) {
+                for (int dx = -2; dx <= 2; ++dx) {
+                    uint i = uint((local.y + dy) * 12 + local.x + dx);
+                    float4 qnd = float4(tileND[i]);
+                    if (qnd.w <= 0.0f || dot(qnd.xyz, nd.xyz) < 0.8f || abs(qnd.w - nd.w) > 0.05f * nd.w) continue;
+                    sum += float4(tileVis[i]);
+                    float4 b = float4(tileBlocker[i]);
+                    blockerSum += b;
+                    blockerCount += select(float4(0.0f), float4(1.0f), b > 0.0f);
+                    count += 1.0f;
+                }
+            }
+            float4 mean = sum / max(count, 1.0f);
+            float4 sigma = sqrt(max(mean * (1.0f - mean), 0.0f));
+
+            // Validated bilinear reprojection, as in temporalKernel.
+            float4 hist = float4(0.0f);
+            float histLen = 0.0f, weightSum = 0.0f;
+            float4 mv = motion.read(tid);
+            if ((u.flags & FLAG_HISTORY_VALID) != 0 && mv.w > 0.0f) {
+                int2 base = int2(floor(mv.xy));
+                float2 f = mv.xy - float2(base);
+                float bilinear[4] = { (1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y };
+                int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
+                for (int i = 0; i < 4; ++i) {
+                    int2 q = base + offsets[i];
+                    if (q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+                    float4 pnd = prevND.read(uint2(q));
+                    if (pnd.w <= 0.0f || abs(pnd.w - mv.z) > 0.1f * mv.z || dot(pnd.xyz, nd.xyz) < 0.9f) continue;
+                    hist += history.read(uint2(q)) * bilinear[i];
+                    histLen += prevMeta.read(uint2(q)).z * bilinear[i];
+                    weightSum += bilinear[i];
+                }
+            }
+            float4 result;
+            float len;
+            if (weightSum > 1e-3f) {
+                hist /= weightSum;
+                histLen /= weightSum;
+                // Clamp the history to this frame's neighbourhood: a shadow that moved away (or arrived) can't
+                // linger. Where the clamp had to move it a lot, the history is stale: restart the average.
+                float4 clamped = clamp(hist, mean - params.y * sigma, mean + params.y * sigma);
+                float moved = max(max(abs(clamped.x - hist.x), abs(clamped.y - hist.y)), max(abs(clamped.z - hist.z), abs(clamped.w - hist.w)));
+                if (moved > 0.25f) histLen = min(histLen, 2.0f);
+                len = min(histLen + 1.0f, params.x);
+                result = mix(clamped, v, 1.0f / len);
+            } else {
+                len = 1.0f;
+                result = mean;   // no history: the spatial mean beats one binary sample
+            }
+
+            // Mean penumbra half width of the occluded samples (traceKernel: penumbraWidth), in pixels: divided by
+            // the pixel footprint at this depth.
+            float pixel = 2.0f * nd.w * u.camUp.w / float(u.height);
+            float4 radius = select(float4(0.0f), blockerSum / max(blockerCount, 1.0f) / pixel, blockerCount > 0.0f);
+            settled = all(sigma == 0.0f) && all(abs(result - v) < 0.004f);
+            outVis.write(roundToHalf(result), tid);
+            outMeta.write(float4(0.0f, 0.0f, len, 0.0f), tid);
+            outPenumbra.write(roundToHalf(min(radius, float4(64.0f))), tid);
+        }
+    }
+    // Tile classification: the spatial passes skip tiles where every pixel is settled.
+    bool simdSettled = simd_all(settled);
+    if (simd_is_first()) groupSettled[simdGroup] = simdSettled;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (lane == 0) {
+        bool tile = true;
+        for (uint i = 0; i < simdGroups; ++i) tile = tile && groupSettled[i];
+        outTiles.write(uint4(tile ? 1u : 0u), group);
+    }
+}
+
+// One edge-aware 3x3 a-trous pass over the denoised visibility (all lights at once).
+kernel void shadowFilterKernel(constant Uniforms&              u        [[buffer(0)]],
+                               constant float4&                params   [[buffer(1)]],
+                               texture2d<float, access::read>  inVis    [[texture(0)]],
+                               texture2d<float, access::read>  nd       [[texture(1)]],
+                               texture2d<float, access::read>  penumbra [[texture(2)]],
+                               texture2d<float, access::read>  meta     [[texture(3)]],
+                               texture2d<uint, access::read>   tiles    [[texture(4)]],
+                               texture2d<float, access::write> outVis   [[texture(5)]],
+                               uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 center = inVis.read(tid);
+    float4 cnd = nd.read(tid);
+    if (cnd.w <= 0.0f || tiles.read(tid / 8).x != 0) {
+        outVis.write(center, tid);
+        return;
+    }
+    int step = int(params.w);
+    int2 p = int2(tid);
+    int2 maxP = int2(u.width - 1, u.height - 1);
+    float zr = nd.read(uint2(clamp(p + int2(1, 0), int2(0), maxP))).w;
+    float zd = nd.read(uint2(clamp(p + int2(0, 1), int2(0), maxP))).w;
+    float2 depthGrad = float2(zr > 0.0f ? zr - cnd.w : 0.0f, zd > 0.0f ? zd - cnd.w : 0.0f);
+
+    // Visibility edge-stopping, scaled by the standard error of the temporal average, and a per-light reach
+    // factor: taps beyond the light's penumbra (step > radius) don't contribute.
+    float len = max(meta.read(tid).z, 1.0f);
+    float4 phi = params.z * sqrt(max(center * (1.0f - center), 0.0f) / len) + 0.02f;
+    float4 reach = saturate(penumbra.read(tid) / float(step));
+    float4 sum = float4(0.0f), weightSum = float4(0.0f);
+    const float k[2] = { 0.5f, 0.25f };
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            int2 q = p + int2(dx, dy) * step;
+            if (q.x < 0 || q.y < 0 || q.x > maxP.x || q.y > maxP.y) continue;
+            float4 qnd = nd.read(uint2(q));
+            if (qnd.w <= 0.0f) continue;
+            float4 qv = inVis.read(uint2(q));
+            float2 offset = float2(dx, dy) * float(step);
+            float wDepth = exp(-abs(cnd.w - qnd.w) / (abs(dot(depthGrad, offset)) + 0.01f * cnd.w + 1e-4f));
+            float wNormal = pow(max(0.0f, dot(cnd.xyz, qnd.xyz)), 64.0f);
+            float4 w = k[abs(dx)] * k[abs(dy)] * wDepth * wNormal * exp(-abs(qv - center) / phi);
+            if (dx != 0 || dy != 0) w *= reach;
+            sum += qv * w;
+            weightSum += w;
+        }
+    }
+    outVis.write(roundToHalf(sum / max(weightSum, 1e-6f)), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4. Composite: re-apply albedo, add emission, tonemap and write to the drawable.
+// ---------------------------------------------------------------------------------------------
+
+inline float3 acesFilm(float3 x) {
+    // Narkowicz 2015 ACES approximation
+    return saturate((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f));
+}
+
+kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
+                            texture2d<float, access::read>  denoised   [[texture(0)]],
+                            texture2d<float, access::read>  direct     [[texture(1)]],
+                            texture2d<float, access::read>  indirect   [[texture(2)]],
+                            texture2d<float, access::read>  albedoTex  [[texture(3)]],
+                            texture2d<float, access::read>  emissionTex [[texture(4)]],
+                            texture2d<float, access::read>  nd         [[texture(5)]],
+                            texture2d<float, access::read>  moments    [[texture(6)]],
+                            texture2d<float, access::write> output     [[texture(7)]],
+                            texture2d<float, access::read>  denoisedIndirect [[texture(8)]],  // with FLAG_SEPARATE
+                            texture2d<float, access::read>  giDebug    [[texture(9)]],   // written by surfel / cascade GI
+                            texture2d<float, access::read>  surfacePos [[texture(10)]],  // with FLAG_SHADOW_DENOISER
+                            texture2d<float, access::read>  geoNormal  [[texture(11)]],  // with FLAG_SHADOW_DENOISER
+                            device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
+                            uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    if (tid.x >= u.width || tid.y >= u.height) {
+        output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid);
+        return;
+    }
+
+    float3 albedo = albedoTex.read(tid).rgb;
+    float3 emission = emissionTex.read(tid).rgb;
+    float3 d = direct.read(tid).rgb;
+    float3 i = indirect.read(tid).rgb;
+    float3 illumination = d + i;
+    float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
+    if ((u.flags & FLAG_SHADOW_DENOISER) != 0) {
+        // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
+        float4 vis = denoised.read(tid);
+        float4 sp = surfacePos.read(tid);
+        float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+        float3 p = sp.xyz + ng * RAY_EPSILON;
+        illumination = float3(0.0f);
+        for (uint l = 0; l < u.lightCount; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * vis[lightGroup(lights[l])];
+        if ((u.flags & FLAG_SEPARATE) != 0) {
+            finalIndirect = denoisedIndirect.read(tid).rgb;
+            illumination += finalIndirect;
+        }
+    } else if ((u.flags & FLAG_DENOISE) != 0) {
+        illumination = denoised.read(tid).rgb;
+        if ((u.flags & FLAG_SEPARATE) != 0) {
+            finalIndirect = denoisedIndirect.read(tid).rgb;
+            illumination += finalIndirect;
+        }
+    }
+
+    float3 c;
+    bool hdr = true;
+    switch (u.viewMode) {
+        case 1: c = albedo * d + emission; break;                 // raw direct
+        case 2: c = albedo * i; break;                            // raw indirect
+        case 3: { float4 n = nd.read(tid); c = n.w > 0.0f ? n.xyz * 0.5f + 0.5f : float3(0.0f); hdr = false; break; }
+        case 4: c = albedo; hdr = false; break;
+        case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); hdr = false; break; }
+        case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
+        case 7: c = giDebug.read(tid).rgb; hdr = false; break;    // GI technique's debug view
+        default: c = albedo * illumination + emission; break;
+    }
+    if (hdr) c = acesFilm(c);
+    // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
+    output.write(float4(saturate(c), 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 5. Accumulate (benchmark reference only): running mean of the raw illumination over many frames
+//    of a paused scene, used in place of the denoiser to make a converged ground-truth image.
+// ---------------------------------------------------------------------------------------------
+
+kernel void accumulateKernel(constant Uniforms&                   u              [[buffer(0)]],
+                             constant uint&                       sampleCount    [[buffer(1)]],
+                             texture2d<float, access::read>       direct         [[texture(0)]],
+                             texture2d<float, access::read>       indirect       [[texture(1)]],
+                             texture2d<float, access::read_write> accumDirect    [[texture(2)]],
+                             texture2d<float, access::read_write> accumIndirect  [[texture(3)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    // Running means, kept apart so the "Indirect only" view has a converged reference too.
+    float w = 1.0f / float(sampleCount + 1);
+    float3 d = direct.read(tid).rgb, i = indirect.read(tid).rgb;
+    float3 meanD = sampleCount > 0 ? accumDirect.read(tid).rgb : float3(0.0f);
+    float3 meanI = sampleCount > 0 ? accumIndirect.read(tid).rgb : float3(0.0f);
+    accumDirect.write(float4(meanD + (d - meanD) * w, 1.0f), tid);
+    accumIndirect.write(float4(meanI + (i - meanI) * w, 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 6. Custom temporal upscaler (TAAU, the alternative to MetalFX): one pass per output pixel.
+//    Each frame's input samples sit at jittered positions (pixel centre + jitter). An output pixel takes the
+//    samples within about one *output* pixel of its centre (Gaussian weights; most frames that's none or one),
+//    so over the jitter cycle it collects its own sharp samples, and blends them into its history weighted by how
+//    close they landed. The history is reprojected with the closest-depth motion vector of the 3x3 input
+//    neighbourhood (sharp moving edges), sampled with Catmull-Rom (little blur when it moves) and clipped to
+//    the neighbourhood's YCoCg colour box (no ghosting). With no usable history it starts from a smooth
+//    spatial upsample. Input and history are tonemapped, linear; output goes straight to the sRGB drawable.
+// ---------------------------------------------------------------------------------------------
+
+inline float3 rgbToYCoCg(float3 c) {
+    return float3(dot(c, float3(0.25f, 0.5f, 0.25f)), dot(c, float3(0.5f, 0.0f, -0.5f)), dot(c, float3(-0.25f, 0.5f, -0.25f)));
+}
+inline float3 yCoCgToRgb(float3 c) { return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+
+// Moves h toward the box centre until it's inside the box (rather than clamping each axis). `outside` returns
+// how far out it was: 1 = on the box's surface.
+inline float3 clipToBox(float3 h, float3 boxMin, float3 boxMax, thread float& outside) {
+    float3 center = 0.5f * (boxMax + boxMin), extent = 0.5f * (boxMax - boxMin) + 1e-4f;
+    float3 v = h - center;
+    float3 a = abs(v / extent);
+    outside = max(a.x, max(a.y, a.z));
+    return outside > 1.0f ? center + v / outside : h;
+}
+
+// Lanczos-2 without trigonometry (the polynomial approximation FSR 2 uses), for x^2 < 4.
+inline float lanczos2(float x) {
+    float x2 = min(x * x, 4.0f);
+    float a = 0.4f * x2 - 1.0f, b = 0.25f * x2 - 1.0f;
+    return (1.5625f * a * a - 0.5625f) * b * b;
+}
+
+inline float lanczos3(float x) {
+    x = abs(x);
+    if (x < 1e-4f) return 1.0f;
+    if (x >= 3.0f) return 0.0f;
+    return 3.0f * sinpi(x) * sinpi(x / 3.0f) / (M_PI_F * M_PI_F * x * x);
+}
+
+// Lanczos-3 filtered sample (6x6 texels). Resampling a moving history every frame blurs it a little each time;
+// Lanczos-3's flatter passband blurs it far less than Catmull-Rom (a 1D simulation of this upscaler: under half
+// the edge error at 1-4 pixels of motion per frame).
+inline float4 sampleLanczos3(texture2d<float, access::sample> tex, float2 uv, float2 size) {
+    float2 pos = uv * size - 0.5f;
+    int2 base = int2(floor(pos));
+    float2 f = pos - float2(base);
+    float wx[6], wy[6], sx = 0.0f, sy = 0.0f;
+    for (int i = 0; i < 6; ++i) {
+        wx[i] = lanczos3(f.x - float(i - 2)); sx += wx[i];
+        wy[i] = lanczos3(f.y - float(i - 2)); sy += wy[i];
+    }
+    int2 maxP = int2(size) - 1;
+    float4 sum = float4(0.0f);
+    for (int j = 0; j < 6; ++j) {
+        float4 row = float4(0.0f);
+        for (int i = 0; i < 6; ++i) row += tex.read(uint2(clamp(base + int2(i - 2, j - 2), int2(0), maxP))) * wx[i];
+        sum += row * wy[j];
+    }
+    return sum / (sx * sy);
+}
+
+// Catmull-Rom filtered sample from 5 bilinear taps (the 4 corner taps carry almost no weight).
+inline float4 sampleCatmullRom(texture2d<float, access::sample> tex, float2 uv, float2 size) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 pos = uv * size;
+    float2 p1 = floor(pos - 0.5f) + 0.5f;
+    float2 f = pos - p1;
+    float2 w0 = f * (-0.5f + f * (1.0f - 0.5f * f));
+    float2 w1 = 1.0f + f * f * (-2.5f + 1.5f * f);
+    float2 w2 = f * (0.5f + f * (2.0f - 1.5f * f));
+    float2 w3 = f * f * (-0.5f + 0.5f * f);
+    float2 w12 = w1 + w2;
+    float2 t0 = (p1 - 1.0f) / size, t3 = (p1 + 2.0f) / size, t12 = (p1 + w2 / w12) / size;
+    float4 r = tex.sample(s, float2(t12.x, t0.y)) * (w12.x * w0.y) + tex.sample(s, float2(t0.x, t12.y)) * (w0.x * w12.y)
+             + tex.sample(s, t12) * (w12.x * w12.y)
+             + tex.sample(s, float2(t3.x, t12.y)) * (w3.x * w12.y) + tex.sample(s, float2(t12.x, t3.y)) * (w12.x * w3.y);
+    return r / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+}
+
+// params[0].xy = this frame's jitter (input pixels), z = history cut per output pixel of motion,
+//   w = history cut where the clip moved it; [1] = input size xy, output size zw;
+// [2] = max history weight, clip box width (standard deviations), 1 = reset, Lanczos-3 detail threshold (0 = off);
+// [3] = sample kernel sharpness with a full history (Gaussian exp(-x d^2), d in output pixels), the same with none,
+//   history cut per output pixel of motion at depth edges, dilation radius (input pixels, 0 = the whole 3x3)
+kernel void taauKernel(constant float4*                   params     [[buffer(0)]],
+                       texture2d<float, access::read>     color      [[texture(0)]],   // tonemapped, linear
+                       texture2d<float, access::read>     depth      [[texture(1)]],   // reversed-Z: larger = closer
+                       texture2d<float, access::read>     motion     [[texture(2)]],   // previous - current, input pixels
+                       texture2d<float, access::sample>   history    [[texture(3)]],   // rgb, a = accumulated weight
+                       texture2d<float, access::write>    outHistory [[texture(4)]],
+                       texture2d<float, access::write>    output     [[texture(5)]],   // the drawable
+                       uint2 tid [[thread_position_in_grid]])
+{
+    float2 jitter = params[0].xy, inSize = params[1].xy, outSize = params[1].zw;
+    if (tid.x >= uint(outSize.x) || tid.y >= uint(outSize.y)) return;
+    float2 toOut = outSize / inSize;
+    float2 inPos = (float2(tid) + 0.5f) / toOut;   // this output pixel's centre, in input pixels
+    int2 nearest = int2(floor(inPos - jitter));    // input sample q sits at q + 0.5 + jitter
+    int2 maxQ = int2(inSize) - 1;
+
+    // The 3x3 input samples around the pixel: colour, offset from the pixel centre, depth.
+    float3 colors[9];
+    float2 offsets[9];   // input pixels
+    float depths[9];
+    float zLo = 1e9f, zHi = -1.0f;
+    for (int k = 0; k < 9; ++k) {
+        int2 q = clamp(nearest + int2(k % 3 - 1, k / 3 - 1), int2(0), maxQ);
+        colors[k] = color.read(uint2(q)).rgb;
+        offsets[k] = float2(q) + 0.5f + jitter - inPos;
+        depths[k] = depth.read(uint2(q)).x;
+        zLo = min(zLo, depths[k]); zHi = max(zHi, depths[k]);
+    }
+    bool depthEdge = zHi - zLo > 0.05f * zHi;
+
+    // Motion at this pixel: bilinear from the 4 surrounding samples (camera motion varies across the screen).
+    float2 g = inPos - 0.5f - jitter;
+    int2 b = int2(floor(g));   // nearest - 1 or nearest per axis: the 2x2 lies inside the 3x3 above
+    float2 f = g - float2(b);
+    float2 mv = float2(0.0f);
+    for (int k = 0; k < 4; ++k) {
+        uint2 q = uint2(clamp(b + int2(k & 1, k >> 1), int2(0), maxQ));
+        mv += motion.read(q).xy * ((k & 1 ? f.x : 1.0f - f.x) * (k >> 1 ? f.y : 1.0f - f.y));
+    }
+    // Across a depth edge, the closest surface's motion instead (dilation, so moving edges stay sharp), among the
+    // samples within params[3].w input pixels. Dilating further drags the foreground's motion into the background,
+    // which then fetches stale history from where the edge used to be: a trail behind edges in camera pans.
+    if (depthEdge) {
+        float radius2 = params[3].w > 0.0f ? params[3].w * params[3].w : 1e9f;
+        float best = -1.0f, nearestD2 = 1e9f;
+        uint2 q = uint2(nearest), nearestQ = q;
+        for (int k = 0; k < 9; ++k) {
+            float d2 = dot(offsets[k], offsets[k]);
+            uint2 qk = uint2(clamp(nearest + int2(k % 3 - 1, k / 3 - 1), int2(0), maxQ));
+            if (d2 < nearestD2) { nearestD2 = d2; nearestQ = qk; }
+            if (d2 <= radius2 && depths[k] > best) { best = depths[k]; q = qk; }
+        }
+        mv = motion.read(best < 0.0f ? nearestQ : q).xy;
+    }
+    float speed = length(mv * toOut);   // output pixels per frame
+
+    // Spatial estimate (Lanczos-2, de-ringed to the neighbourhood's range) where there's no usable history, and
+    // the YCoCg colour box the history is clipped to, weighted toward the nearest samples.
+    float3 sumSharp = float3(0.0f), sumWide = float3(0.0f), m1 = float3(0.0f), m2 = float3(0.0f);
+    float3 lo = float3(1e9f), hi = float3(-1e9f);
+    float weightSharp = 0.0f, weightWide = 0.0f;
+    for (int k = 0; k < 9; ++k) {
+        float2 d = offsets[k];
+        float3 c = colors[k];
+        float wWide = exp(-2.0f * dot(d, d));
+        float wSharp = lanczos2(d.x) * lanczos2(d.y);
+        sumSharp += c * wSharp; weightSharp += wSharp;
+        sumWide += c * wWide; weightWide += wWide;
+        lo = min(lo, c); hi = max(hi, c);
+        float3 y = rgbToYCoCg(c);
+        m1 += y * wWide; m2 += y * y * wWide;
+    }
+    float3 spatial = weightSharp > 1e-3f ? clamp(sumSharp / weightSharp, lo, hi) : sumWide / max(weightWide, 1e-6f);
+    float3 mean = m1 / max(weightWide, 1e-6f), sigma = sqrt(max(m2 / max(weightWide, 1e-6f) - mean * mean, 0.0f));
+
+    float2 prevUV = (inPos + mv) / inSize;
+    float maxWeight = params[2].x;
+    float4 result;
+    if (params[2].z > 0.0f || any(prevUV < 0.0f) || any(prevUV > 1.0f)) {
+        result = float4(spatial, 1.0f);
+    } else {
+        // History: a pixel that didn't move reads its own texel. A moving one is resampled, which blurs it a little
+        // every frame: Lanczos-3 (36 taps) blurs far less than Catmull-Rom (5 taps), so it's used wherever there's
+        // detail to lose (the input neighbourhood varies more than params[2].w); flat areas lose nothing.
+        bool detail = params[2].w > 0.0f && max(sigma.x, max(abs(sigma.y), abs(sigma.z))) > params[2].w;
+        float4 hist = all(abs(mv) < 1e-4f) ? history.read(tid)
+                    : detail ? sampleLanczos3(history, prevUV, outSize) : sampleCatmullRom(history, prevUV, outSize);
+        float outside;
+        float3 h = yCoCgToRgb(clipToBox(rgbToYCoCg(max(hist.rgb, 0.0f)), mean - params[2].y * sigma, mean + params[2].y * sigma, outside));
+        // Trust the history less where it moves and where the clip had to move it. Near a depth edge, camera
+        // translation uncovers and covers background (parallax) that the colour box can't tell from history: cut
+        // the history much harder there (params[3].z) than on open surfaces (params[0].z).
+        float cap = maxWeight / (1.0f + (depthEdge ? max(params[3].z, params[0].z) : params[0].z) * speed);
+        float histWeight = clamp(hist.a, 0.0f, cap) / (1.0f + params[0].w * max(outside - 1.0f, 0.0f));
+
+        // This frame's samples within about an output pixel. The kernel is sharpest where the history is long
+        // (static: many frames to collect sharp samples from) and widest where it was cut (fewer, wider samples).
+        float sharpness = mix(params[3].y, params[3].x, saturate(histWeight / maxWeight));
+        float3 sum = float3(0.0f);
+        float weight = 0.0f;
+        for (int k = 0; k < 9; ++k) {
+            float2 dOut = offsets[k] * toOut;
+            float w = exp(-sharpness * dot(dOut, dOut));
+            sum += colors[k] * w;
+            weight += w;
+        }
+        float3 current = weight > 1e-4f ? sum / weight : spatial;
+        result = histWeight + weight > 1e-3f
+            ? float4((h * histWeight + current * weight) / (histWeight + weight), min(histWeight + weight, maxWeight))
+            : float4(spatial, 1.0f);
+    }
+    outHistory.write(result, tid);
+    output.write(float4(saturate(result.rgb), 1.0f), tid);
+}
+
+// Benchmark references only: running mean of the composited (tonemapped) colour over jittered frames, i.e. a
+// supersampled, anti-aliased image. params.x = frames averaged so far, y = 0 while not averaging yet.
+kernel void accumulateColorKernel(constant uint2&                      params [[buffer(0)]],
+                                  texture2d<float, access::read>       color  [[texture(0)]],
+                                  texture2d<float, access::read_write> accum  [[texture(1)]],
+                                  texture2d<float, access::write>      output [[texture(2)]],
+                                  uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    float3 c = color.read(tid).rgb;
+    if (params.y != 0) {
+        float3 m = params.x > 0 ? accum.read(tid).rgb : float3(0.0f);
+        c = m + (c - m) / float(params.x + 1);
+        accum.write(float4(c, 1.0f), tid);
+    }
+    output.write(float4(c, 1.0f), tid);
+}
+
+// =============================================================================================
+// Radiance cascades (GI mode "Radiance cascades")
+//
+// Probes sit on visible surfaces on a screen grid. Cascade c has probes every spacing * 2^c pixels and
+// (4 * 2^c)^2 equal-area octahedral direction bins per probe; it traces rays over the distance interval
+// [b_c, b_c+1) with b_0 = 0, b_1 = firstInterval and each later boundary 4x further (the last interval is
+// open, so it picks up the sky). Cascades are traced from the top down: each ray's radiance is
+// L + visibility * (the cascade above, interpolated from its 4 nearest probes and averaged over the 4 child
+// bins that subdivide this bin). Cascade 0 then holds each probe's full incoming radiance, and the resolve
+// pass integrates it against each pixel's normal. No temporal accumulation is needed: rays and bins are fixed,
+// so the result is noise-free and doesn't lag behind moving lights.
+//
+// Ray hits are lit by the light-visibility maps (no shadow rays) plus, where the hit point was visible last
+// frame, last frame's indirect light (multi-bounce, one bounce per frame).
+// =============================================================================================
+
+struct RCParams {
+    uint4  grids;      // xy = this cascade's probe grid, zw = the next cascade's probe grid
+    uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = 1 if last cascade
+    float4 interval;   // x = start, y = end (meters), z = 1 to use last frame's indirect light at hits, w unused
+};
+
+constant uint RC_MAX_CASCADES = 5;
+
+// Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
+struct RCProbeBatch {
+    uint4 cascades[RC_MAX_CASCADES];
+};
+
+// One probe per cell of each cascade's grid, on the surface seen through the cell centre. Traced with its own
+// unjittered ray so probes don't move with MetalFX's sub-pixel jitter. All cascades run in one flat dispatch
+// (cascade 0's probes first): the coarse cascades have only a few hundred probes each, too few to fill the GPU.
+kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0)]],
+                          instance_acceleration_structure  accel      [[buffer(1)]],
+                          device const float3*             positions  [[buffer(2)]],
+                          device const float3*             normals    [[buffer(3)]],
+                          device const uint*               indices    [[buffer(4)]],
+                          device const MeshData*           meshes     [[buffer(5)]],
+                          device const InstanceData*       instances  [[buffer(6)]],
+                          device const Material*           materials  [[buffer(7)]],
+                          device const Light*              lights     [[buffer(8)]],
+                          constant RCProbeBatch&           batch      [[buffer(9)]],
+                          constant uint&                   cascadeCount [[buffer(10)]],
+                          array<texture2d<float, access::write>, RC_MAX_CASCADES> probePos [[texture(0)]],   // xyz, w = view depth (-1 = none)
+                          array<texture2d<float, access::write>, RC_MAX_CASCADES> probeNs  [[texture(5)]],   // shading normal
+                          array<texture2d<float, access::write>, RC_MAX_CASCADES> probeNg  [[texture(10)]],  // geometric normal
+                          uint gid [[thread_position_in_grid]])
+{
+    uint c = 0;
+    while (c + 1 < cascadeCount && gid >= batch.cascades[c + 1].w) ++c;
+    uint4 k = batch.cascades[c];
+    uint local = gid - k.w;
+    if (local >= k.x * k.y) return;
+    uint2 tid = uint2(local % k.x, local / k.x);
+    SceneData s;
+    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
+    s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
+
+    float2 pixel = min((float2(tid) + 0.5f) * float(k.z), float2(u.width, u.height) - 0.5f);
+    float2 uv = pixel / float2(u.width, u.height);
+    float3 dir = normalize(u.camForward.xyz + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
+                                            + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
+    Surface sf = traceSurface(ray(u.camPos.xyz, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
+    if (!sf.hit) {
+        probePos[c].write(float4(0.0f, 0.0f, 0.0f, -1.0f), tid);
+        return;
+    }
+    float3 ng, ns;
+    orientNormals(sf, dir, ng, ns);
+    probePos[c].write(float4(sf.position, dot(sf.position - u.camPos.xyz, u.camForward.xyz)), tid);
+    probeNs[c].write(float4(ns, 0.0f), tid);
+    probeNg[c].write(float4(ng, 0.0f), tid);
+}
+
+// Weight of a neighbouring probe q when interpolating at a point x with normal n: probes on a different surface
+// (off x's tangent plane, or facing elsewhere) get little weight, which keeps light from leaking across edges.
+inline float rcProbeWeight(float4 q, float3 qn, float3 x, float3 n, float depth) {
+    if (q.w <= 0.0f) return 0.0f;
+    float planeDist = abs(dot(q.xyz - x, n));
+    return exp(-planeDist / (0.02f * depth + 0.01f)) * pow(saturate(dot(n, qn)), 4.0f);
+}
+
+// Traces one (probe, direction) interval of cascade c and merges cascade c+1 into it. Threads are ordered
+// direction-major (neighbouring threads = neighbouring probes, same direction) so rays stay coherent.
+kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buffer(0)]],
+                               instance_acceleration_structure  accel      [[buffer(1)]],
+                               device const float3*             positions  [[buffer(2)]],
+                               device const float3*             normals    [[buffer(3)]],
+                               device const uint*               indices    [[buffer(4)]],
+                               device const MeshData*           meshes     [[buffer(5)]],
+                               device const InstanceData*       instances  [[buffer(6)]],
+                               device const Material*           materials  [[buffer(7)]],
+                               device const Light*              lights     [[buffer(8)]],
+                               constant RCParams&               p          [[buffer(9)]],
+                               texture2d<float, access::read>   probePos   [[texture(0)]],
+                               texture2d<float, access::read>   probeNs    [[texture(1)]],
+                               texture2d<float, access::read>   probeNg    [[texture(2)]],
+                               texture2d<float, access::read>   nextPos    [[texture(3)]],   // cascade c+1 probes
+                               texture2d<float, access::read>   nextNs     [[texture(4)]],
+                               texture2d<float, access::read>   nextMerged [[texture(5)]],   // cascade c+1 result
+                               texture2d<float, access::write>  merged     [[texture(6)]],   // this cascade's result
+                               texture2d_array<float, access::read> lightMap [[texture(7)]],
+                               texture2d<float, access::read>   prevND     [[texture(8)]],   // last frame's normal + depth
+                               texture2d<float, access::read>   prevIndirect [[texture(9)]], // last frame's indirect light
+                               device const uint*               prevAmbient [[buffer(10)]],  // rgb sums (x1024) + count
+                               uint gid [[thread_position_in_grid]])
+{
+    uint probeCount = p.grids.x * p.grids.y;
+    uint dirSide = p.layout.y;
+    if (gid >= probeCount * dirSide * dirSide) return;
+    uint probe = gid % probeCount, bin = gid / probeCount;
+    uint2 pc = uint2(probe % p.grids.x, probe / p.grids.x);
+    uint2 bc = uint2(bin % dirSide, bin / dirSide);
+    uint2 texel = pc * dirSide + bc;
+
+    float4 pos = probePos.read(pc);
+    if (pos.w <= 0.0f) { merged.write(float4(0.0f), texel); return; }
+    float3 ng = probeNg.read(pc).xyz;
+    float3 dir = equalAreaOctDecode((float2(bc) + 0.5f) / float(dirSide) * 2.0f - 1.0f);
+    if (dot(dir, ng) < -0.05f) { merged.write(float4(0.0f), texel); return; }   // below the surface: never used
+
+    SceneData s;
+    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
+    s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
+    bool last = p.layout.w != 0;
+    ray r(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
+    Surface h = traceSurface(r, MASK_GEOMETRY, accel, s);
+
+    float3 radiance = float3(0.0f);
+    if (h.hit) {
+        float3 hng, hns;
+        orientNormals(h, dir, hng, hns);
+        float3 hp = h.position + hng * RAY_EPSILON;
+        float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng,
+                                        pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), u.flags);
+        if (p.interval.z > 0.0f) {
+            // Multi-bounce: where this hit point was on screen last frame, add last frame's indirect light there;
+            // elsewhere (off screen, occluded) fall back to last frame's average indirect light over all probes.
+            float prevDepth;
+            float2 pp = projectToPixel(h.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward,
+                                       float2(u.width, u.height), prevDepth);
+            bool found = false;
+            if (prevDepth > 0.0f && all(pp >= 0.0f) && pp.x < float(u.width) && pp.y < float(u.height)) {
+                uint2 q = uint2(pp);
+                float4 nd = prevND.read(q);
+                if (nd.w > 0.0f && abs(nd.w - prevDepth) < 0.05f * prevDepth && dot(nd.xyz, hns) > 0.8f) {
+                    light += prevIndirect.read(q).rgb;
+                    found = true;
+                }
+            }
+            if (!found && prevAmbient[3] > 0)
+                light += float3(prevAmbient[0], prevAmbient[1], prevAmbient[2]) / (1024.0f * float(prevAmbient[3]));
+        }
+        radiance = h.albedo * light;
+    } else if (last) {
+        radiance = u.skyColor.rgb;
+    } else {
+        // Nothing hit in this interval: continue with the next cascade's radiance in this direction.
+        float2 g = (float2(pc) + 0.5f) * 0.5f - 0.5f;   // this probe in the next cascade's (half-res) grid
+        int2 base = int2(floor(g));
+        float2 f = g - float2(base);
+        float3 n = probeNs.read(pc).xyz;
+        uint nextSide = dirSide * 2;
+        float3 sum = float3(0.0f), sumPlain = float3(0.0f);
+        float wsum = 0.0f, wPlain = 0.0f;
+        for (int k = 0; k < 4; ++k) {
+            int2 o = int2(k & 1, k >> 1);
+            uint2 q = uint2(clamp(base + o, int2(0), int2(p.grids.zw) - 1));
+            float4 qp = nextPos.read(q);
+            if (qp.w <= 0.0f) continue;
+            float bil = (o.x ? f.x : 1.0f - f.x) * (o.y ? f.y : 1.0f - f.y);
+            uint2 child = q * nextSide + bc * 2;
+            float3 avg = 0.25f * (nextMerged.read(child).rgb + nextMerged.read(child + uint2(1, 0)).rgb
+                                + nextMerged.read(child + uint2(0, 1)).rgb + nextMerged.read(child + uint2(1, 1)).rgb);
+            float w = bil * rcProbeWeight(qp, nextNs.read(q).xyz, pos.xyz, n, pos.w);
+            sum += avg * w; wsum += w;
+            sumPlain += avg * bil; wPlain += bil;
+        }
+        radiance = wsum > 1e-4f ? sum / wsum : (wPlain > 0.0f ? sumPlain / wPlain : float3(0.0f));
+    }
+    merged.write(float4(radiance, 0.0f), texel);
+}
+
+// Projects each cascade-0 probe's merged radiance onto L1 spherical harmonics (per colour channel: L00, L1-1,
+// L10, L11), so the per-pixel resolve evaluates irradiance for any normal with a few reads instead of re-reading
+// every direction bin. Also sums each probe's mean irradiance into `ambient` (fixed point), which next frame
+// uses as the indirect light at ray hits that weren't on screen.
+kernel void rcSHKernel(constant RCParams&               p        [[buffer(9)]],   // cascade 0
+                       device atomic_uint*              ambient  [[buffer(10)]],  // rgb sums (x1024) + count
+                       texture2d<float, access::read>   probePos [[texture(0)]],
+                       texture2d<float, access::read>   merged   [[texture(1)]],
+                       texture2d<float, access::write>  shR      [[texture(2)]],
+                       texture2d<float, access::write>  shG      [[texture(3)]],
+                       texture2d<float, access::write>  shB      [[texture(4)]],
+                       uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= p.grids.x || tid.y >= p.grids.y) return;
+    if (probePos.read(tid).w <= 0.0f) return;
+    uint dirSide = p.layout.y;
+    float dOmega = 4.0f * M_PI_F / float(dirSide * dirSide);
+    float4 r = float4(0.0f), g = float4(0.0f), b = float4(0.0f);
+    for (uint k = 0; k < dirSide * dirSide; ++k) {
+        uint2 bc = uint2(k % dirSide, k / dirSide);
+        float3 dir = equalAreaOctDecode((float2(bc) + 0.5f) / float(dirSide) * 2.0f - 1.0f);
+        float4 basis = float4(0.282095f, 0.488603f * dir.y, 0.488603f * dir.z, 0.488603f * dir.x) * dOmega;
+        float3 L = merged.read(tid * dirSide + bc).rgb;
+        r += L.r * basis; g += L.g * basis; b += L.b * basis;
+    }
+    shR.write(r, tid); shG.write(g, tid); shB.write(b, tid);
+    // Mean irradiance over the probe's hemisphere ~ L00 term (illumination units: E / pi = 0.282095 * L00).
+    float3 mean = 0.282095f * float3(r.x, g.x, b.x) * 2.0f;   // x2: only the upper hemisphere carries light
+    atomic_fetch_add_explicit(&ambient[0], uint(clamp(mean.r, 0.0f, 1e5f) * 1024.0f), memory_order_relaxed);
+    atomic_fetch_add_explicit(&ambient[1], uint(clamp(mean.g, 0.0f, 1e5f) * 1024.0f), memory_order_relaxed);
+    atomic_fetch_add_explicit(&ambient[2], uint(clamp(mean.b, 0.0f, 1e5f) * 1024.0f), memory_order_relaxed);
+    atomic_fetch_add_explicit(&ambient[3], 1, memory_order_relaxed);
+}
+
+kernel void rcClearAmbientKernel(device uint* ambient [[buffer(10)]]) {
+    ambient[0] = ambient[1] = ambient[2] = ambient[3] = 0;
+}
+
+// Irradiance / pi from L1 SH for normal n (cosine-lobe convolution: A0 = pi, A1 = 2pi/3).
+inline float rcEvalSH(float4 sh, float3 n) {
+    return max(0.282095f * sh.x + (2.0f / 3.0f) * 0.488603f * (sh.y * n.y + sh.z * n.z + sh.w * n.x), 0.0f);
+}
+
+// Per pixel: weighted average over the 4x4 nearest cascade-0 probes (smooth distance falloff x plane/normal
+// similarity), each evaluated for the pixel's normal from its SH. Output is "illumination" (mean incoming
+// radiance under cosine weighting), the same units as the path tracer's indirect light.
+kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(0)]],
+                            constant RCParams&              p          [[buffer(9)]],   // cascade 0
+                            texture2d<float, access::read>  probePos   [[texture(0)]],
+                            texture2d<float, access::read>  probeNs    [[texture(1)]],
+                            texture2d<float, access::read>  shR        [[texture(2)]],
+                            texture2d<float, access::read>  shG        [[texture(3)]],
+                            texture2d<float, access::read>  shB        [[texture(4)]],
+                            texture2d<float, access::read>  normalDepth [[texture(5)]],
+                            texture2d<float, access::read>  surfacePos [[texture(6)]],
+                            texture2d<float, access::write> outIndirect [[texture(7)]],
+                            texture2d<float, access::write> outHistory [[texture(8)]],  // kept for next frame's multi-bounce
+                            texture2d<float, access::write> giDebug    [[texture(9)]],
+                            uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 sp = surfacePos.read(tid);
+    if (sp.w <= 0.0f) {
+        outIndirect.write(float4(0.0f), tid);
+        outHistory.write(float4(0.0f), tid);
+        giDebug.write(float4(0.0f), tid);
+        return;
+    }
+    float4 nd = normalDepth.read(tid);
+    float3 n = nd.xyz;
+    float2 g = (float2(tid) + 0.5f + u.jitter.xy) / float(p.layout.x) - 0.5f;
+    int2 base = int2(floor(g)) - 1;
+    float3 sum = float3(0.0f);
+    float wsum = 0.0f;
+    for (int k = 0; k < 16; ++k) {
+        int2 qi = base + int2(k & 3, k >> 2);
+        if (any(qi < 0) || qi.x >= int(p.grids.x) || qi.y >= int(p.grids.y)) continue;
+        uint2 q = uint2(qi);
+        float4 qp = probePos.read(q);
+        if (qp.w <= 0.0f) continue;
+        float2 d = float2(qi) - g;
+        float falloff = exp(-dot(d, d) * 0.8f);   // ~bilinear-width Gaussian over the 4x4 neighbourhood
+        float w = falloff * rcProbeWeight(qp, probeNs.read(q).xyz, sp.xyz, n, nd.w) + 1e-6f * falloff;
+        float3 e = float3(rcEvalSH(shR.read(q), n), rcEvalSH(shG.read(q), n), rcEvalSH(shB.read(q), n));
+        sum += e * w;
+        wsum += w;
+    }
+    float3 indirect = wsum > 0.0f ? sum / wsum : float3(0.0f);
+    outIndirect.write(float4(indirect, 1.0f), tid);
+    outHistory.write(float4(indirect, 1.0f), tid);
+    // Debug: probe grid lines over the strongest weight's confidence (dark = no good probe nearby).
+    bool grid = any(fmod(float2(tid), float(p.layout.x)) < 1.0f);
+    giDebug.write(float4(grid ? float3(0.25f) : float3(saturate(wsum)), 1.0f), tid);
+}
+
+// =============================================================================================
+// Surfel GI (GI mode "Surfels", after EA SEED's GIBS)
+//
+// Small disks ("surfels") are spawned on visible surfaces where coverage is low and stored in their instance's
+// object space, so they ride along with moving objects. Each frame:
+//   begin -> transform (world positions, alive list, grid cell counts) -> scan (cell offsets, indirect dispatch
+//   args) -> scatter (grid lists) -> trace (R rays per surfel; hits are lit by the light maps plus last frame's
+//   surfel irradiance there = multi-bounce; temporal blend) -> gather + spawn (per pixel: weighted average of
+//   nearby surfels; one spawn per 16x16 tile at its least-covered pixel) -> lifecycle (free flagged / stale).
+// Spawning pops the free stack and the lifecycle pass pushes it; they're separate dispatches, so they never race.
+// =============================================================================================
+
+constant uint SURFEL_DEAD = 0xFFFFFFFFu;
+
+struct Surfel {
+    float4 objPosRadius;   // xyz = position in the instance's object space, w = world radius
+    float4 objNormal;      // shading normal, object space
+    float4 objGeomNormal;  // geometric normal, object space
+    uint   instance;       // SURFEL_DEAD = free slot
+    uint   spawnFrame;
+    uint   pad0;
+    uint   pad1;
+};
+
+struct SurfelIrradiance {
+    float4 longMean;       // rgb = irradiance estimate (what pixels read), w = frames accumulated
+    float4 shortMean;      // rgb = fast-moving mean, w = luminance variance (anti-lag)
+};
+
+struct SurfelHeader {
+    atomic_uint aliveCount;
+    atomic_uint freeTop;          // free stack size
+    atomic_uint spawnCount;       // this frame (stats)
+    atomic_uint killCount;        // this frame (stats)
+    uint        aliveDispatch[3]; // threadgroups of 64 over the alive list (indirect dispatch)
+    uint        traceDispatch[3]; // threadgroups of 32 over alive x rays
+    uint        pad[2];
+};
+
+struct SurfelParams {
+    float4 gridMin;   // xyz = grid origin, w = cell size
+    uint4  gridDims;  // xyz = cells, w = cell count
+    uint4  config;    // x = max surfels, y = rays per surfel (power of two <= 32), z = frame, w unused
+    float4 tuning;    // x = target radius in pixels, y = max history, z = pixel angle (2 tan(fovY/2) / height), w unused
+};
+
+inline int3 surfelCell(float3 p, constant SurfelParams& sp) {
+    return clamp(int3(floor((p - sp.gridMin.xyz) / sp.gridMin.w)), int3(0), int3(sp.gridDims.xyz) - 1);
+}
+inline uint surfelCellIndex(int3 c, constant SurfelParams& sp) {
+    return (uint(c.z) * sp.gridDims.y + uint(c.y)) * sp.gridDims.x + uint(c.x);
+}
+
+// Weighted average of the surfels covering point x (shading normal n). Returns rgb + total weight (coverage).
+inline float4 surfelLookup(float3 x, float3 n, constant SurfelParams& sp,
+                           device const uint* cellStart, device const uint* cellSurfels,
+                           device const float4* worldPos, device const float4* worldNormal,
+                           device const SurfelIrradiance* irr) {
+    uint c = surfelCellIndex(surfelCell(x, sp), sp);
+    float3 sum = float3(0.0f);
+    float wsum = 0.0f;
+    for (uint k = cellStart[c]; k < cellStart[c + 1]; ++k) {
+        uint id = cellSurfels[k];
+        float4 pr = worldPos[id];
+        float3 d = x - pr.xyz;
+        float dist = length(d);
+        if (dist >= pr.w) continue;
+        float3 sn = worldNormal[id].xyz;
+        if (abs(dot(d, sn)) > 0.5f * pr.w) continue;   // on a different surface
+        float w = (1.0f - dist / pr.w);
+        w *= w * pow(saturate(dot(n, sn)), 8.0f);
+        sum += w * irr[id].longMean.rgb;
+        wsum += w;
+    }
+    return float4(sum, wsum);
+}
+
+// Buffer indices are shared by all surfel kernels: 0 = SurfelParams (or Uniforms for trace / gather, which then
+// take SurfelParams at 9), 6 = instances, 10 = header, 11 = alive list, 12 = cell counts, 13-15 = world-space
+// position/normal/geometric normal, 16 = cell starts, 17 = scatter cursors, 18 = cell lists, 19 / 20 = previous /
+// current irradiance, 21 = last-used frame, 22 = surfels, 23 = free stack, 24 = kill flags, 25 / 26 = this /
+// last frame's mean surfel irradiance (rgb sums x1024 + count), used where no surfel covers a point.
+kernel void surfelClearKernel(constant SurfelParams& sp [[buffer(0)]], device Surfel* surfels [[buffer(22)]],
+                              device SurfelIrradiance* irrA [[buffer(19)]], device SurfelIrradiance* irrB [[buffer(20)]],
+                              device uint* freeStack [[buffer(23)]], device uint* lastUsed [[buffer(21)]],
+                              device SurfelHeader& header [[buffer(10)]], device atomic_uint* cellCount [[buffer(12)]],
+                              device uint* killFlag [[buffer(24)]],
+                              uint gid [[thread_position_in_grid]])
+{
+    uint maxSurfels = sp.config.x;
+    if (gid < maxSurfels) {
+        surfels[gid].instance = SURFEL_DEAD;
+        irrA[gid].longMean = irrA[gid].shortMean = float4(0.0f);
+        irrB[gid].longMean = irrB[gid].shortMean = float4(0.0f);
+        freeStack[gid] = maxSurfels - 1 - gid;   // pops hand out 0, 1, 2, ...
+        lastUsed[gid] = 0;
+        killFlag[gid] = 0;
+    }
+    if (gid < sp.gridDims.w) atomic_store_explicit(&cellCount[gid], 0, memory_order_relaxed);
+    if (gid == 0) {
+        atomic_store_explicit(&header.aliveCount, 0, memory_order_relaxed);
+        atomic_store_explicit(&header.freeTop, maxSurfels, memory_order_relaxed);
+        atomic_store_explicit(&header.spawnCount, 0, memory_order_relaxed);
+        atomic_store_explicit(&header.killCount, 0, memory_order_relaxed);
+    }
+}
+
+inline float3 surfelAmbient(device const uint* a) {
+    return a[3] > 0 ? float3(a[0], a[1], a[2]) / (1024.0f * float(a[3])) : float3(0.0f);
+}
+
+kernel void surfelBeginKernel(device SurfelHeader& header [[buffer(10)]], device uint* ambientCur [[buffer(25)]]) {
+    ambientCur[0] = ambientCur[1] = ambientCur[2] = ambientCur[3] = 0;
+    atomic_store_explicit(&header.aliveCount, 0, memory_order_relaxed);
+    atomic_store_explicit(&header.spawnCount, 0, memory_order_relaxed);
+    atomic_store_explicit(&header.killCount, 0, memory_order_relaxed);
+}
+
+kernel void surfelTransformKernel(constant SurfelParams& sp [[buffer(0)]], device const Surfel* surfels [[buffer(22)]],
+                                  device const InstanceData* instances [[buffer(6)]],
+                                  device SurfelHeader& header [[buffer(10)]], device uint* aliveList [[buffer(11)]],
+                                  device atomic_uint* cellCount [[buffer(12)]],
+                                  device float4* worldPos [[buffer(13)]], device float4* worldNormal [[buffer(14)]],
+                                  device float4* worldGeomNormal [[buffer(15)]],
+                                  uint gid [[thread_position_in_grid]])
+{
+    if (gid >= sp.config.x) return;
+    Surfel s = surfels[gid];
+    if (s.instance == SURFEL_DEAD) return;
+    InstanceData inst = instances[s.instance];
+    float3 p = (inst.transform * float4(s.objPosRadius.xyz, 1.0f)).xyz;
+    float r = s.objPosRadius.w;
+    worldPos[gid] = float4(p, r);
+    worldNormal[gid] = float4(normalize((inst.normalMatrix * float4(s.objNormal.xyz, 0.0f)).xyz), 0.0f);
+    worldGeomNormal[gid] = float4(normalize((inst.normalMatrix * float4(s.objGeomNormal.xyz, 0.0f)).xyz), 0.0f);
+    aliveList[atomic_fetch_add_explicit(&header.aliveCount, 1, memory_order_relaxed)] = gid;
+    int3 lo = surfelCell(p - r, sp), hi = surfelCell(p + r, sp);
+    for (int z = lo.z; z <= hi.z; ++z)
+        for (int y = lo.y; y <= hi.y; ++y)
+            for (int x = lo.x; x <= hi.x; ++x)
+                atomic_fetch_add_explicit(&cellCount[surfelCellIndex(int3(x, y, z), sp)], 1, memory_order_relaxed);
+}
+
+// One threadgroup of 1024: exclusive prefix sum over the cell counts -> cellStart (and the scatter cursors),
+// counts reset for next frame, indirect dispatch sizes from the alive count.
+kernel void surfelScanKernel(constant SurfelParams& sp [[buffer(0)]], device SurfelHeader& header [[buffer(10)]],
+                             device atomic_uint* cellCount [[buffer(12)]], device uint* cellStart [[buffer(16)]],
+                             device atomic_uint* cellCursor [[buffer(17)]],
+                             uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]],
+                             uint simd [[simdgroup_index_in_threadgroup]])
+{
+    threadgroup uint simdTotals[32];
+    uint cells = sp.gridDims.w, perThread = (cells + 1023) / 1024, first = tid * perThread;
+    uint local = 0;
+    for (uint k = 0; k < perThread; ++k)
+        if (first + k < cells) local += atomic_load_explicit(&cellCount[first + k], memory_order_relaxed);
+    uint prefix = simd_prefix_exclusive_sum(local);
+    if (lane == 31) simdTotals[simd] = prefix + local;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simd == 0) {
+        uint t = simdTotals[lane];
+        simdTotals[lane] = simd_prefix_exclusive_sum(t);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint offset = simdTotals[simd] + prefix;
+    for (uint k = 0; k < perThread; ++k) {
+        uint c = first + k;
+        if (c >= cells) break;
+        uint n = atomic_load_explicit(&cellCount[c], memory_order_relaxed);
+        cellStart[c] = offset;
+        atomic_store_explicit(&cellCursor[c], offset, memory_order_relaxed);
+        atomic_store_explicit(&cellCount[c], 0, memory_order_relaxed);
+        offset += n;
+    }
+    if (first < cells && first + perThread >= cells) cellStart[cells] = offset;   // thread holding the last cell
+    if (tid == 0) {
+        uint alive = atomic_load_explicit(&header.aliveCount, memory_order_relaxed);
+        header.aliveDispatch[0] = (alive + 63) / 64; header.aliveDispatch[1] = 1; header.aliveDispatch[2] = 1;
+        header.traceDispatch[0] = (alive * sp.config.y + 31) / 32; header.traceDispatch[1] = 1; header.traceDispatch[2] = 1;
+    }
+}
+
+kernel void surfelScatterKernel(constant SurfelParams& sp [[buffer(0)]], device SurfelHeader& header [[buffer(10)]],
+                                device const uint* aliveList [[buffer(11)]], device const float4* worldPos [[buffer(13)]],
+                                device atomic_uint* cellCursor [[buffer(17)]], device uint* cellSurfels [[buffer(18)]],
+                                uint gid [[thread_position_in_grid]])
+{
+    if (gid >= atomic_load_explicit(&header.aliveCount, memory_order_relaxed)) return;
+    uint id = aliveList[gid];
+    float4 pr = worldPos[id];
+    int3 lo = surfelCell(pr.xyz - pr.w, sp), hi = surfelCell(pr.xyz + pr.w, sp);
+    for (int z = lo.z; z <= hi.z; ++z)
+        for (int y = lo.y; y <= hi.y; ++y)
+            for (int x = lo.x; x <= hi.x; ++x) {
+                uint c = surfelCellIndex(int3(x, y, z), sp);
+                cellSurfels[atomic_fetch_add_explicit(&cellCursor[c], 1, memory_order_relaxed)] = id;
+            }
+}
+
+// One thread per (surfel, ray); the rays of a surfel are adjacent lanes of one SIMD group and get summed with
+// shuffles, then lane 0 blends the result into the surfel's irradiance (short + long running means, with the
+// long one's history cut when the two disagree beyond noise, i.e. when the lighting changes).
+kernel void surfelTraceKernel(constant Uniforms&               u          [[buffer(0)]],
+                              instance_acceleration_structure  accel      [[buffer(1)]],
+                              device const float3*             positions  [[buffer(2)]],
+                              device const float3*             normals    [[buffer(3)]],
+                              device const uint*               indices    [[buffer(4)]],
+                              device const MeshData*           meshes     [[buffer(5)]],
+                              device const InstanceData*       instances  [[buffer(6)]],
+                              device const Material*           materials  [[buffer(7)]],
+                              device const Light*              lights     [[buffer(8)]],
+                              constant SurfelParams&           sp         [[buffer(9)]],
+                              device SurfelHeader&             header     [[buffer(10)]],
+                              device const uint*               aliveList  [[buffer(11)]],
+                              device const float4*             worldPos   [[buffer(13)]],
+                              device const float4*             worldNormal [[buffer(14)]],
+                              device const float4*             worldGeomNormal [[buffer(15)]],
+                              device const uint*               cellStart  [[buffer(16)]],
+                              device const uint*               cellSurfels [[buffer(18)]],
+                              device const SurfelIrradiance*   irrPrev    [[buffer(19)]],
+                              device SurfelIrradiance*         irrCur     [[buffer(20)]],
+                              device const uint*               lastUsed   [[buffer(21)]],
+                              device atomic_uint*              ambientCur [[buffer(25)]],
+                              device const uint*               ambientPrev [[buffer(26)]],
+                              texture2d_array<float, access::read> lightMap [[texture(0)]],
+                              uint gid [[thread_position_in_grid]])
+{
+    uint rays = sp.config.y, frame = sp.config.z;
+    uint alive = atomic_load_explicit(&header.aliveCount, memory_order_relaxed);
+    uint slot = gid / rays, rayIndex = gid % rays;
+    bool valid = slot < alive;
+    uint id = valid ? aliveList[slot] : 0;
+    // Surfels not seen for a couple of frames (off screen) only trace every 4th frame.
+    bool visible = valid && frame - lastUsed[id] <= 2u;
+    bool traceNow = valid && (visible || ((id + frame) & 3u) == 0u);
+
+    float3 radiance = float3(0.0f);
+    if (traceNow) {
+        SceneData s;
+        s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
+        s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
+        float3 p = worldPos[id].xyz, n = worldNormal[id].xyz, ng = worldGeomNormal[id].xyz;
+        // Stratified over the surfel's rays, randomly rotated per surfel and frame.
+        uint h = pcgHash(id * 9781u + pcgHash(frame));
+        float2 jitter = float2(h & 0xFFFFu, h >> 16) * (1.0f / 65536.0f);
+        float2 uv = fract(float2((float(rayIndex) + 0.5f) / float(rays), float(rayIndex) * 0.618034f) + jitter);
+        float3 d = cosineSampleHemisphere(n, uv);
+        if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
+        Surface hit = traceSurface(ray(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
+        if (!hit.hit) {
+            radiance = u.skyColor.rgb;
+        } else {
+            float3 hng, hns;
+            orientNormals(hit, d, hng, hns);
+            float3 hp = hit.position + hng * RAY_EPSILON;
+            float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng, pcgHash(h + rayIndex), u.flags);
+            float4 bounce = surfelLookup(hit.position, hns, sp, cellStart, cellSurfels, worldPos, worldNormal, irrPrev);
+            // Multi-bounce from last frame's surfels there; where none exist yet (e.g. never seen), their average.
+            light += bounce.w > 0.0f ? bounce.rgb / bounce.w : surfelAmbient(ambientPrev);
+            radiance = hit.albedo * light;
+        }
+    }
+    // Sum the rays of this surfel (adjacent lanes; rays is a power of two <= 32).
+    for (uint offset = 1; offset < rays; offset <<= 1)
+        radiance += simd_shuffle_xor(radiance, ushort(offset));
+    if (!valid || rayIndex != 0) return;
+
+    SurfelIrradiance prev = irrPrev[id];
+    if (!traceNow) { irrCur[id] = prev; return; }
+    float3 mean = radiance / float(rays);
+    SurfelIrradiance next;
+    float count = prev.longMean.w;
+    if (count < 0.5f) {
+        next.longMean = float4(mean, 1.0f);
+        next.shortMean = float4(mean, 0.0f);
+    } else {
+        float3 shortMean = mix(prev.shortMean.rgb, mean, 0.25f);
+        float lumDiff = luminance(mean) - luminance(shortMean);
+        float variance = mix(prev.shortMean.w, lumDiff * lumDiff, 0.25f);
+        // Anti-lag: when the fast and slow means disagree by more than ~3 standard errors, the light changed.
+        float stdError = sqrt(variance) * 0.4f + 1e-3f * luminance(shortMean) + 1e-5f;
+        float excess = max(abs(luminance(shortMean) - luminance(prev.longMean.rgb)) / stdError - 3.0f, 0.0f);
+        count = min(count / (1.0f + excess) + 1.0f, sp.tuning.y);
+        next.longMean = float4(mix(prev.longMean.rgb, mean, 1.0f / count), count);
+        next.shortMean = float4(shortMean, variance);
+    }
+    irrCur[id] = next;
+    float3 e = clamp(next.longMean.rgb, 0.0f, 100.0f) * 1024.0f;
+    atomic_fetch_add_explicit(&ambientCur[0], uint(e.r), memory_order_relaxed);
+    atomic_fetch_add_explicit(&ambientCur[1], uint(e.g), memory_order_relaxed);
+    atomic_fetch_add_explicit(&ambientCur[2], uint(e.b), memory_order_relaxed);
+    atomic_fetch_add_explicit(&ambientCur[3], 1, memory_order_relaxed);
+}
+
+// Per pixel (16x16 threadgroups): weighted average of the surfels around the pixel -> indirect light, coverage
+// bookkeeping, then the tile's least-covered pixel may spawn one surfel.
+kernel void surfelGatherSpawnKernel(constant Uniforms&               u          [[buffer(0)]],
+                                    device const InstanceData*       instances  [[buffer(6)]],
+                                    constant SurfelParams&           sp         [[buffer(9)]],
+                                    device SurfelHeader&             header     [[buffer(10)]],
+                                    device const float4*             worldPos   [[buffer(13)]],
+                                    device const float4*             worldNormal [[buffer(14)]],
+                                    device const uint*               cellStart  [[buffer(16)]],
+                                    device const uint*               cellSurfels [[buffer(18)]],
+                                    device SurfelIrradiance*         irrCur     [[buffer(20)]],
+                                    device uint*                     lastUsed   [[buffer(21)]],
+                                    device Surfel*                   surfels    [[buffer(22)]],
+                                    device const uint*               freeStack  [[buffer(23)]],
+                                    device uint*                     killFlag   [[buffer(24)]],
+                                    device const uint*               ambientPrev [[buffer(26)]],
+                                    texture2d<float, access::read>   surfacePos [[texture(0)]],
+                                    texture2d<float, access::read>   normalDepth [[texture(1)]],
+                                    texture2d<float, access::read>   geoNormal  [[texture(2)]],
+                                    texture2d<float, access::write>  outIndirect [[texture(3)]],
+                                    texture2d<float, access::write>  giDebug    [[texture(4)]],
+                                    uint2 tid [[thread_position_in_grid]], uint lid [[thread_index_in_threadgroup]],
+                                    uint simd [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]])
+{
+    threadgroup uint simdMin[8];
+    uint frame = sp.config.z;
+    bool inside = tid.x < u.width && tid.y < u.height;
+    float4 spos = inside ? surfacePos.read(tid) : float4(0.0f);
+    bool needsGI = spos.w > 0.0f;
+    float coverage = 1e9f;
+    float3 x = spos.xyz, n = float3(0.0f, 1.0f, 0.0f);
+    float3 gathered = float3(0.0f);
+    float depth = 1.0f;
+    if (needsGI) {
+        float4 nd = normalDepth.read(tid);
+        n = nd.xyz;
+        depth = nd.w;
+        float rTarget = sp.tuning.x * sp.tuning.z * depth;
+        uint c = surfelCellIndex(surfelCell(x, sp), sp);
+        float3 sum = float3(0.0f);
+        float wsum = 0.0f, best = 0.0f;
+        uint bestId = 0, topHash = 0, topId = SURFEL_DEAD;
+        for (uint k = cellStart[c]; k < cellStart[c + 1]; ++k) {
+            uint id = cellSurfels[k];
+            float4 pr = worldPos[id];
+            if (pr.w > 2.0f * rTarget) killFlag[id] = 1;        // much bigger than wanted here (camera got closer)
+            float r = min(pr.w, 1.5f * rTarget);
+            float3 d = x - pr.xyz;
+            float dist = length(d);
+            if (dist >= r) continue;
+            float3 sn = worldNormal[id].xyz;
+            if (abs(dot(d, sn)) > 0.5f * r) continue;
+            float w = 1.0f - dist / r;
+            w *= w * pow(saturate(dot(n, sn)), 8.0f);
+            if (w <= 0.0f) continue;
+            sum += w * irrCur[id].longMean.rgb;
+            wsum += w;
+            lastUsed[id] = frame;
+            if (w > best) { best = w; bestId = id; }
+            uint hsh = pcgHash(id);
+            if (hsh >= topHash) { topHash = hsh; topId = id; }
+        }
+        coverage = wsum;
+        if (wsum > 2.0f && topId != SURFEL_DEAD) killFlag[topId] = 1;   // over-covered: all pixels pick the same one
+        // Normalized average; thin coverage blends toward the scene-wide mean so holes don't show as dark spots.
+        float3 ambient = surfelAmbient(ambientPrev);
+        gathered = wsum > 0.0f ? mix(ambient, sum / wsum, saturate(wsum * 4.0f)) : ambient;
+        float3 dbg = wsum > 0.0f ? float3((uint3(pcgHash(bestId)) >> uint3(0, 8, 16)) & 0xFFu) / 255.0f * saturate(wsum)
+                                 : float3(1.0f, 0.0f, 0.0f);   // holes in red
+        if (inside) giDebug.write(float4(dbg, 1.0f), tid);
+    } else if (inside) {
+        giDebug.write(float4(0.0f), tid);
+    }
+    if (inside) outIndirect.write(float4(gathered, 1.0f), tid);
+
+    // Tile-wide minimum coverage (key = quantized coverage << 8 | pixel index in the tile).
+    uint key = needsGI ? (uint(min(coverage, 15.99f) * 4096.0f) << 8) | lid : 0xFFFFFFFFu;
+    key = simd_min(key);
+    if (lane == 0) simdMin[simd] = key;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (lid != 0) return;
+    for (uint k = 1; k < 8; ++k) key = min(key, simdMin[k]);
+    if (key == 0xFFFFFFFFu) return;
+    float minCoverage = float(key >> 8) / 4096.0f;
+    const float targetCoverage = 0.3f;   // ~2 overlapping surfels (a surfel's mean weight over its disk is 1/6)
+    if (minCoverage >= targetCoverage) return;
+    uint h = pcgHash((tid.x / 16u) * 73856093u ^ (tid.y / 16u) * 19349663u ^ pcgHash(frame));
+    if (float(h) * (1.0f / 4294967296.0f) > 1.0f - minCoverage / targetCoverage) return;
+
+    // Spawn at that pixel: pop a free slot.
+    uint2 p = (tid / 16u) * 16u + uint2((key & 0xFFu) % 16u, (key & 0xFFu) / 16u);
+    uint top = atomic_fetch_sub_explicit(&header.freeTop, 1, memory_order_relaxed);
+    if (top == 0 || top > sp.config.x) { atomic_fetch_add_explicit(&header.freeTop, 1, memory_order_relaxed); return; }
+    uint id = freeStack[top - 1];
+    float4 ps = surfacePos.read(p);
+    float4 pnd = normalDepth.read(p);
+    float3 png = geoNormal.read(p).xyz;
+    uint instance = uint(ps.w) - 1u;
+    InstanceData inst = instances[instance];
+    float4x4 toObject = transpose(inst.normalMatrix);                 // = inverse(transform)
+    float3x3 linear = float3x3(inst.transform[0].xyz, inst.transform[1].xyz, inst.transform[2].xyz);
+    Surfel s;
+    s.objPosRadius = float4((toObject * float4(ps.xyz, 1.0f)).xyz,
+                            clamp(sp.tuning.x * sp.tuning.z * pnd.w, 0.05f, 0.5f * sp.gridMin.w));
+    s.objNormal = float4(normalize(transpose(linear) * pnd.xyz), 0.0f);
+    s.objGeomNormal = float4(normalize(transpose(linear) * png), 0.0f);
+    s.instance = instance;
+    s.spawnFrame = frame;
+    s.pad0 = s.pad1 = 0;
+    surfels[id] = s;
+    irrCur[id].longMean = float4(0.0f);   // count 0: the first traced frame replaces it
+    irrCur[id].shortMean = float4(0.0f);
+    lastUsed[id] = frame;
+    killFlag[id] = 0;
+    atomic_fetch_add_explicit(&header.spawnCount, 1, memory_order_relaxed);
+}
+
+// Frees surfels flagged by the gather (oversized / over-covered), and stale ones when the pool runs low.
+kernel void surfelLifecycleKernel(constant SurfelParams& sp [[buffer(9)]], device SurfelHeader& header [[buffer(10)]],
+                                  device const uint* aliveList [[buffer(11)]], device const uint* lastUsed [[buffer(21)]],
+                                  device Surfel* surfels [[buffer(22)]], device uint* freeStack [[buffer(23)]],
+                                  device uint* killFlag [[buffer(24)]],
+                                  uint gid [[thread_position_in_grid]])
+{
+    if (gid >= atomic_load_explicit(&header.aliveCount, memory_order_relaxed)) return;
+    uint id = aliveList[gid];
+    uint freeTop = atomic_load_explicit(&header.freeTop, memory_order_relaxed);
+    bool lowOnSpace = freeTop < sp.config.x / 4;
+    bool stale = sp.config.z - lastUsed[id] > 120u;
+    if (killFlag[id] == 0 && !(lowOnSpace && stale)) return;
+    killFlag[id] = 0;
+    surfels[id].instance = SURFEL_DEAD;
+    freeStack[atomic_fetch_add_explicit(&header.freeTop, 1, memory_order_relaxed)] = id;
+    atomic_fetch_add_explicit(&header.killCount, 1, memory_order_relaxed);
+}
