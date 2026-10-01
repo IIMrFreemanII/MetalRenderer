@@ -254,22 +254,29 @@ final class Benchmark {
                 Config(name: name, renderScale: 0.5, upscale: 3, giMode: giMode,
                        scene: SceneSettings(kind: .stress, objects: objects, lights: lights))
             }
+            // The stress scene's own GI defaults (RenderSettings.applySceneDefaults): surfels, 8 rays, 64k pool.
+            var stressDefault = stress("stress defaults (surfels), 32 lights", giMode: .surfels)
+            stressDefault.surfels.raysPerSurfel = 8
+            stressDefault.surfels.maxSurfels = 65536
             let lightSweep = [1, 4, 8, 16, 32, 64, 128, 256].map { stress("\($0) lights, 400 objects", lights: $0) }
             let objectSweep = [0, 100, 1000, 2000].map { stress("32 lights, \($0) objects", objects: $0) }
             return [Config(name: "cornell default", renderScale: 0.5, upscale: 3, giMode: .radianceCascades)] + lightSweep + objectSweep + [
                 stress("path traced, 32 lights", giMode: .pathTraced),
                 stress("surfels, 32 lights", giMode: .surfels),
+                stressDefault,
                 { var c = stress("camera move, 32 lights"); c.cameraPath = true; return c }(),
             ]
         case "stressq":
-            // Stress-scene quality (640x400, no upscaling): direct light only at 32 and 128 lights against converged
-            // references (every light traced each frame; skip them with METALGI_GI_REFS=0 once they exist), and the
-            // final image with GI against an 8-bounce path-traced reference. All end at t = 5 s.
+            // Stress-scene quality, all at t = 5 s against converged references (every light traced each frame; skip
+            // them with METALGI_GI_REFS=0 once they exist, see Tools/eval/stress.py):
+            // * direct light only (640x400) at 32 and 128 lights;
+            // * the GI methods (640x400, no upscaling) against an 8-bounce path-traced reference;
+            // * the upscalers (3x from 640x400) on albedo and direct light against supersampled 1920x1200 references.
             // Run again with METALGI_LIGHTS=all for the brute-force baseline, METALGI_DENOISE=shadows=0 for SVGF.
             let refs = ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0"
+            func stress(_ lights: Int = 32) -> SceneSettings { SceneSettings(kind: .stress, objects: 400, lights: lights) }
             let direct = [32, 128].flatMap { lights -> [Config] in
-                let scene = SceneSettings(kind: .stress, objects: 400, lights: lights)
-                let base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: scene)
+                let base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: stress(lights))
                 var ref = base; ref.name = "ref direct \(lights)"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
                 ref.frames = 1024
                 var st = base; st.name = "direct static \(lights)"; st.paused = true; st.startTime = 5; st.capturePrevious = true
@@ -277,14 +284,36 @@ final class Benchmark {
                 var cam = base; cam.name = "direct camera \(lights)"; cam.cameraPath = true
                 return (refs ? [ref] : []) + [st, mv, cam]
             }
-            let scene = SceneSettings(kind: .stress, objects: 400, lights: 32)
-            var final = [Config(name: "ref8 final 32", renderScale: 0.5, bounces: 8, paused: true, startTime: 5, accumulate: true,
-                                frames: 1024, scene: scene)]
-            if !refs { final = [] }
-            final += [Config(name: "cascades static 32", renderScale: 0.5, paused: true, startTime: 5, giMode: .radianceCascades, scene: scene),
-                      Config(name: "pt static 32", renderScale: 0.5, paused: true, startTime: 5, scene: scene),
-                      Config(name: "surfels static 32", renderScale: 0.5, paused: true, startTime: 5, giMode: .surfels, scene: scene)]
-            return direct + final
+            var gi: [Config] = refs ? [Config(name: "ref8 final 32", renderScale: 0.5, bounces: 8, paused: true, startTime: 5,
+                                              accumulate: true, frames: 1024, scene: stress())] : []
+            var cascadesHQ = CascadeSettings(); cascadesHQ.probeSpacing = 4; cascadesHQ.firstInterval = 0.25
+            let methods: [(String, GIMode, CascadeSettings)] = [("cascades", .radianceCascades, CascadeSettings()),
+                                                                 ("cascades-hq", .radianceCascades, cascadesHQ),
+                                                                 ("surfels", .surfels, CascadeSettings()),
+                                                                 ("pt", .pathTraced, CascadeSettings())]
+            for (tag, mode, cascades) in methods {
+                let base = Config(name: "", renderScale: 0.5, giMode: mode, cascades: cascades, scene: stress())
+                var st = base; st.name = "\(tag) static 32"; st.paused = true; st.startTime = 5; st.capturePrevious = true
+                var mv = base; mv.name = "\(tag) moving 32"
+                var cam = base; cam.name = "\(tag) camera 32"; cam.cameraPath = true
+                gi += [st, mv, cam]
+            }
+            var up: [Config] = refs ? [
+                Config(name: "ref albedo 1.5x", renderScale: 1.5, viewMode: 4, paused: true, startTime: 5, accumulate: true,
+                       frames: 512, supersample: true, scene: stress()),
+                Config(name: "ref direct 1.5x", renderScale: 1.5, giEnabled: false, paused: true, startTime: 5, accumulate: true,
+                       frames: 512, supersample: true, scene: stress()),
+            ] : []
+            for (tag, kind) in [("custom", UpscalerKind.custom), ("metalfx", .metalFX)] {
+                let base = Config(name: "", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4, scene: stress())
+                var st = base; st.name = "albedo static \(tag)"; st.paused = true; st.startTime = 5; st.capturePrevious = true
+                var mv = base; mv.name = "albedo moving \(tag)"
+                var cam = base; cam.name = "albedo camera \(tag)"; cam.cameraPath = true
+                var ds = base; ds.name = "direct static \(tag)"; ds.viewMode = 0; ds.giEnabled = false; ds.paused = true; ds.startTime = 5
+                var dm = base; dm.name = "direct moving \(tag)"; dm.viewMode = 0; dm.giEnabled = false
+                up += [st, mv, cam, ds, dm]
+            }
+            return direct + gi + up
         case "quick": return [
             Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
             Config(name: "default, MetalFX temporal", renderScale: 0.5, upscale: 3, upscaler: .metalFX, giMode: .radianceCascades),

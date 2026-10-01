@@ -146,6 +146,23 @@ struct RenderSettings: Equatable {
     var cascades = CascadeSettings()
     var scene = SceneSettings()
 
+    /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
+    /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their
+    /// screen-space probes lose ~10 dB to surfels (Tools/eval/stress.py), so it uses surfels; 8 rays per surfel lose
+    /// 0.04 dB against 16 for 2 ms less, and a 64k pool keeps up with camera moves (+2.1 dB).
+    mutating func applySceneDefaults(from defaults: RenderSettings) {
+        switch scene.kind {
+        case .cornell:
+            giMode = defaults.giMode
+            surfels = defaults.surfels
+        case .stress:
+            giMode = .surfels
+            surfels = defaults.surfels
+            surfels.raysPerSurfel = 8
+            surfels.maxSurfels = 65536
+        }
+    }
+
     static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
     static let renderScaleStep: CGFloat = 0.125
     static let bounceRange = 1...8

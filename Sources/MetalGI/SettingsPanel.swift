@@ -338,9 +338,16 @@ final class SettingsPanel: NSObject {
     @objc private func resetToDefaults() {
         var s = renderer.defaultSettings
         s.scene = renderer.settings.scene   // render settings only; the loaded scene stays
+        s.applySceneDefaults(from: renderer.defaultSettings)
         renderer.settings = s
     }
-    @objc private func sceneKindChanged() { renderer.settings.scene.kind = SceneKind(rawValue: sceneKind.indexOfSelectedItem) ?? .cornell }
+    @objc private func sceneKindChanged() {
+        var s = renderer.settings
+        s.scene.kind = SceneKind(rawValue: sceneKind.indexOfSelectedItem) ?? .cornell
+        guard s.scene.kind != renderer.settings.scene.kind else { return }
+        s.applySceneDefaults(from: renderer.defaultSettings)   // e.g. surfels for the stress hall
+        renderer.settings = s
+    }
     @objc private func objectsChanged() { renderer.settings.scene.objects = Int((objects.doubleValue / 50).rounded()) * 50 }
     @objc private func lightRaysChanged() { renderer.settings.manyLightRays = lightRays.indexOfSelectedItem + 1 }
     @objc private func lightsChanged() { renderer.settings.scene.lights = 1 << Int(lights.doubleValue.rounded()) }
