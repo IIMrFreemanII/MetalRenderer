@@ -14,11 +14,22 @@ struct RTInstance {
     var pad1: UInt32 = 0
 }
 
+/// Kernels that build the dynamic TLAS (Shaders.metal, "per-frame build of the dynamic top-level tree").
+struct RTPipelines {
+    let prep, keys, sortLocal, sortGlobal, hierarchy, fit: MTLComputePipelineState
+}
+
 /// The custom ray tracer's scene: per-mesh BLASes and the static TLAS (built once on the CPU), and per frame slot the
 /// dynamic TLAS over moving instances plus the `RTScene` argument buffer every ray-tracing kernel gets at buffer 1.
 /// See BVH.swift for the node format.
+///
+/// The dynamic TLAS is rebuilt from scratch every frame on the GPU as an LBVH (Karras 2012): moving instances are
+/// sorted along a Morton curve and the tree follows from the sorted keys, all in parallel. `METALGI_RT_BUILD=cpu`
+/// builds it on the CPU with binned SAH instead (a better tree, for comparing trace speed).
 final class CustomRayTracer {
     private let device: MTLDevice
+    var pipelines: RTPipelines
+    static let cpuBuild = ProcessInfo.processInfo.environment["METALGI_RT_BUILD"] == "cpu"
     let blasNodes: MTLBuffer
     let triangles: MTLBuffer
     private var tlasNodes: [MTLBuffer] = []       // per slot: static TLAS nodes, then the dynamic TLAS
@@ -30,6 +41,14 @@ final class CustomRayTracer {
     private let blasRoots: [UInt32]
     private let meshBounds: [AABB]
     private let cpu: (blas: BVHBuilder.BLASResult, tris: [SIMD4<Float>])   // kept for the self-test
+    // GPU build inputs and scratch (shared by the frame slots: Metal orders the passes that use them).
+    private let meshInfo: MTLBuffer               // per mesh: (box min, BLAS root bits), (box max, 0)
+    private let dynSlot: MTLBuffer                // per instance: index among the moving ones, or ~0
+    private let leafBoxes: MTLBuffer              // per moving instance: (min, instance id bits), (max, mask bits)
+    private let keys: MTLBuffer, values: MTLBuffer
+    private let nodeParent: MTLBuffer, leafParent: MTLBuffer, counters: MTLBuffer
+    private let instanceCount: Int
+    private let paddedCount: Int                  // moving instances rounded up to a power of two (sort size)
 
     /// Root ref of the dynamic TLAS: its first node when it has 2+ instances, the instance itself when it has one.
     private var dynamicRoot: UInt32 {
@@ -38,8 +57,9 @@ final class CustomRayTracer {
 
     static func isStatic(_ inst: Scene.Instance) -> Bool { inst.animation == nil && inst.mask == Scene.maskGeometry }
 
-    init(device: MTLDevice, scene: Scene, slots: Int) throws {
+    init(device: MTLDevice, scene: Scene, slots: Int, pipelines: RTPipelines) throws {
         self.device = device
+        self.pipelines = pipelines
         let start = CACurrentMediaTime()
         let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes)
         blasRoots = blas.roots
@@ -81,6 +101,23 @@ final class CustomRayTracer {
             instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(scene.instances.count, 1)), "rtInstances\(slot)"))
             sceneArgs.append(try buffer([UInt8](repeating: 0, count: 48), "rtScene\(slot)"))
         }
+
+        instanceCount = scene.instances.count
+        paddedCount = max(2, 1 << Int(ceil(log2(Double(max(dyn.count, 2))))))
+        var info: [SIMD4<Float>] = []
+        for (m, b) in blas.bounds.enumerated() {
+            info += [SIMD4(b.lo, Float(bitPattern: blas.roots[m])), SIMD4(b.hi, 0)]
+        }
+        var slotOf = [UInt32](repeating: BVHNode.none, count: max(scene.instances.count, 1))
+        for (k, i) in dyn.enumerated() { slotOf[i] = UInt32(k) }
+        meshInfo = try buffer(info, "rtMeshInfo")
+        dynSlot = try buffer(slotOf, "rtDynSlot")
+        leafBoxes = try buffer([SIMD4<Float>](repeating: .zero, count: 2 * max(dyn.count, 1)), "rtLeafBoxes")
+        keys = try buffer([UInt32](repeating: 0, count: paddedCount), "rtKeys")
+        values = try buffer([UInt32](repeating: 0, count: paddedCount), "rtValues")
+        nodeParent = try buffer([UInt32](repeating: 0, count: max(dyn.count, 1)), "rtNodeParent")
+        leafParent = try buffer([UInt32](repeating: 0, count: max(dyn.count, 1)), "rtLeafParent")
+        counters = try buffer([UInt32](repeating: 0, count: max(dyn.count, 1)), "rtCounters")
         for slot in 0..<slots { writeArgs(slot: slot) }
         print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms",
                      blas.nodes.count, blas.triangles.count / 3, staticIds.count, staticNodes.count, staticDepth, dynamicIds.count,
@@ -107,8 +144,9 @@ final class CustomRayTracer {
                           blasRoot: blasRoot, mask: inst.mask)
     }
 
-    /// This frame's instance data and dynamic TLAS, built on the CPU.
+    /// CPU build (`METALGI_RT_BUILD=cpu` only): this frame's instance data and dynamic TLAS.
     func update(slot: Int, scene: Scene) {
+        guard CustomRayTracer.cpuBuild else { return }
         let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
         for (i, s) in scene.instances.enumerated() { inst[i] = CustomRayTracer.rtInstance(s, blasRoot: blasRoots[s.mesh]) }
         guard dynamicIds.count >= 2 else { return }
@@ -120,6 +158,70 @@ final class CustomRayTracer {
             tlasNodes[slot].contents().advanced(by: staticNodes.count * MemoryLayout<BVHNode>.stride)
                 .copyMemory(from: $0.baseAddress!, byteCount: $0.count)
         }
+    }
+
+    /// GPU build: every instance's RTInstance and the dynamic TLAS from this frame's instance data.
+    func encodeBuild(_ enc: MTLComputeCommandEncoder, slot: Int, instanceData: MTLBuffer) {
+        guard !CustomRayTracer.cpuBuild, instanceCount > 0 else { return }
+        func dispatch(_ pso: MTLComputePipelineState, _ threads: Int, group: Int = 64) {
+            enc.setComputePipelineState(pso)
+            enc.dispatchThreads(MTLSize(width: threads, height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: min(group, pso.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+        }
+        var count = UInt32(instanceCount)
+        enc.setBytes(&count, length: 4, index: 0)
+        enc.setBuffer(instanceData, offset: 0, index: 1)
+        enc.setBuffer(meshInfo, offset: 0, index: 2)
+        enc.setBuffer(dynSlot, offset: 0, index: 3)
+        enc.setBuffer(instances[slot], offset: 0, index: 4)
+        enc.setBuffer(leafBoxes, offset: 0, index: 5)
+        dispatch(pipelines.prep, instanceCount)
+        let n = dynamicIds.count
+        guard n >= 2 else { return }
+
+        var counts = SIMD2<UInt32>(UInt32(n), UInt32(paddedCount))
+        enc.setBytes(&counts, length: 8, index: 0)
+        enc.setBuffer(leafBoxes, offset: 0, index: 1)
+        enc.setBuffer(keys, offset: 0, index: 2)
+        enc.setBuffer(values, offset: 0, index: 3)
+        dispatch(pipelines.keys, 1024, group: 1024)
+
+        // Bitonic sort: whole 2048-key blocks in threadgroup memory, then the cross-block stages.
+        enc.setBuffer(keys, offset: 0, index: 1)
+        enc.setBuffer(values, offset: 0, index: 2)
+        let block = 2048, blocks = max(paddedCount / block, 1)
+        func local(_ k: Int) {
+            var p = SIMD2<UInt32>(UInt32(paddedCount), UInt32(k))
+            enc.setBytes(&p, length: 8, index: 0)
+            enc.setComputePipelineState(pipelines.sortLocal)
+            enc.dispatchThreadgroups(MTLSize(width: blocks, height: 1, depth: 1),
+                                     threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
+        }
+        local(0)
+        var k = 2 * block
+        while k <= paddedCount {
+            var j = k / 2
+            while j >= block {
+                var p = SIMD2<UInt32>(UInt32(k), UInt32(j))
+                enc.setBytes(&p, length: 8, index: 0)
+                dispatch(pipelines.sortGlobal, paddedCount / 2)
+                j /= 2
+            }
+            local(k)
+            k *= 2
+        }
+
+        var params = SIMD2<UInt32>(UInt32(n), UInt32(staticNodes.count))
+        enc.setBytes(&params, length: 8, index: 0)
+        enc.setBuffer(keys, offset: 0, index: 1)
+        enc.setBuffer(values, offset: 0, index: 2)
+        enc.setBuffer(leafBoxes, offset: 0, index: 3)
+        enc.setBuffer(tlasNodes[slot], offset: staticNodes.count * MemoryLayout<BVHNode>.stride, index: 4)
+        enc.setBuffer(nodeParent, offset: 0, index: 5)
+        enc.setBuffer(leafParent, offset: 0, index: 6)
+        enc.setBuffer(counters, offset: 0, index: 7)
+        dispatch(pipelines.hierarchy, n - 1)
+        dispatch(pipelines.fit, n)
     }
 
     func bind(_ enc: MTLComputeCommandEncoder, slot: Int) {

@@ -97,7 +97,8 @@ final class Scene {
                             prevTransform: $0.prevTransform,
                             normalMatrix: $0.transform.inverse.transpose,
                             meshIndex: UInt32($0.mesh),
-                            materialIndex: UInt32($0.material))
+                            materialIndex: UInt32($0.material),
+                            pad0: $0.mask)
         }
     }
 

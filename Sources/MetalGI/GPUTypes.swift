@@ -52,7 +52,7 @@ struct GPUInstanceData {
     var normalMatrix: simd_float4x4    // inverse-transpose of transform
     var meshIndex: UInt32
     var materialIndex: UInt32
-    var pad0: UInt32 = 0
+    var pad0: UInt32 = 0               // instance mask (Scene.maskGeometry / maskLights), read by the custom ray tracer
     var pad1: UInt32 = 0
 }
 

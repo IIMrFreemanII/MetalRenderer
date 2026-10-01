@@ -163,6 +163,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var primitiveAS: [MTLAccelerationStructure] = []           // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
     private var customRT: CustomRayTracer?                             // custom ray tracer only
+    private var rtPipelines: RTPipelines?
     /// The tracer the shaders were compiled for and the scene's structures were built for.
     private var builtRayTracer = RayTracerKind.initial
     private var blueNoiseTexture: MTLTexture!   // filled the first time blue noise is turned on
@@ -277,7 +278,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func loadShaders() throws {
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
         let options = MTLCompileOptions()
-        options.languageVersion = .version3_0
+        // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
+        // 3.0 and then need METALGI_RT=metal.
+        if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
         options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: settings.rayTracer == .custom ? 1 : 0)]
         let library = try device.makeLibrary(source: source, options: options)
 
@@ -298,6 +301,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let lightMap = try pipeline("lightMapKernel")
         let manyLights = try pipeline("manyLightsKernel")
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
+        let rt = settings.rayTracer != .custom ? nil :
+            RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
+                        sortLocal: try pipeline("rtSortLocalKernel"), sortGlobal: try pipeline("rtSortGlobalKernel"),
+                        hierarchy: try pipeline("rtHierarchyKernel"), fit: try pipeline("rtFitKernel"))
         let rc = RCPipelines(probe: try pipeline("rcProbeKernel"), traceMerge: try pipeline("rcTraceMergeKernel"),
                              sh: try pipeline("rcSHKernel"), clearAmbient: try pipeline("rcClearAmbientKernel"),
                              resolve: try pipeline("rcResolveKernel"))
@@ -319,6 +326,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         manyLightsPSO = manyLights
         manyLightsReusePSO = manyLightsReuse
         rcPipelines = rc
+        rtPipelines = rt
+        if let rt { customRT?.pipelines = rt }
         surfelPipelines = surfel
     }
 
@@ -351,7 +360,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if builtRayTracer == .metal { try buildPrimitiveAccelerationStructures() }
         try createPerFrameResources()
         if builtRayTracer == .custom {
-            customRT = try CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight)
+            customRT = try CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight, pipelines: rtPipelines!)
         }
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
@@ -718,7 +727,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
 
-        // 1. Update the top-level acceleration structure with this frame's instance transforms. A refit (new bounds,
+        // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
@@ -736,6 +745,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 instanceASBuilt.insert(slot)
             }
             asEncoder.endEncoding()
+        }
+        // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
+        if let customRT, let enc = passBuffer("tlas").makeComputeCommandEncoder() {
+            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot])
+            enc.endEncoding()
         }
 
         var uniforms = makeUniforms(width: width, height: height)
