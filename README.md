@@ -186,59 +186,62 @@ M1 and M2 run Metal ray tracing without dedicated ray tracing hardware, so the r
   * **Surfels** are the most accurate on static scenes and in contact areas.
   * **Radiance cascades** have no temporal accumulation, so they follow moving lights best and barely flicker. Their probes are interpolated across edges, though, which can show as thin light or dark streaks along object edges.
   * All quality columns are measured on 640×400 frames without MetalFX.
-* **Stress test** (M1 Max, default settings: radiance cascades, custom upscaler 3× from 640×400; whole-frame GPU ms, `METALGI_BENCH=stress` with `METALGI_BENCH_SPLIT=0`). "Before" is one shadow ray per light with the TLAS rebuilt every 256 frames; the TLAS column adds the 16-frame rebuild; "now" adds the many-light sampling:
+* **Stress test** (M1 Max, radiance cascades and the custom upscaler 3× from 640×400 unless noted; whole-frame GPU ms, best of two `METALGI_BENCH=stress` runs with `METALGI_BENCH_SPLIT=0`). "Before" is one shadow ray per light with the TLAS rebuilt every 256 frames; the next row adds the 16-frame rebuild; "now" adds light sampling with reuse and the lighter spheres:
 
   | 400 objects | 1 light | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
   |---|---|---|---|---|---|---|---|---|
   | Before | 5.3 | 7.6 | 10.1 | 17.3 | 33.3 | 49.0 | 90.4 | 190.1 |
   | + TLAS rebuild every 16 frames | 3.6 | 5.8 | 8.0 | 12.7 | 21.9 | 42.3 | 83.5 | 167.7 |
-  | **Now** | **3.6** | **5.8** | **6.1** | **7.1** | **7.9** | **8.6** | **9.7** | **11.5** |
+  | **Now** | **3.5** | **5.5** | **6.3** | **7.3** | **8.1** | **8.9** | **9.9** | **11.7** |
 
-  | 32 lights | 0 objects | 100 | 400 | 1000 | 2000 | Path traced (400) | Surfels (400) |
-  |---|---|---|---|---|---|---|---|
-  | Before | 6.6 | 19.4 | 33.3 | 29.3 | 30.9 | 50.3 | 30.2 |
-  | **Now** | **3.3** | **5.0** | **7.9** | **10.8** | **12.2** | **16.5** | **12.0** |
+  | 32 lights | 0 objects | 100 | 400 | 1000 | 2000 | Path traced (400) | Surfels (400) | Scene default: surfels, 8 rays (400) |
+  |---|---|---|---|---|---|---|---|---|
+  | Before | 6.6 | 19.4 | 33.3 | 29.3 | 30.9 | 50.3 | 30.2 | — |
+  | **Now** | **3.3** | **5.2** | **8.1** | **11.1** | **12.6** | **16.3** | **12.2** | **10.1** |
 
   * **The TLAS was degrading.** A refit keeps the tree built for where the objects were, and with 400 objects moving freely, rays got 35% slower over 256 frames of refits. Rebuilding every 16 frames traces as fast as rebuilding every frame, for the refit's median cost.
   * **Shadow rays no longer grow with the light count.** Choosing each pixel's lights still weighs every light, but that's arithmetic, not rays. It runs in its own kernel (`manyLightsKernel`): inside `traceKernel`, whose register use limits occupancy, the same loop cost 4× as much. The remaining growth from 8 to 256 lights is that loop (about 2 ms), the composite's loop over all lights (0.8 ms at 256) and the light maps.
-  * **Quality** (direct light only, 640×400, PSNR against references that trace every light for 1024 frames, `METALGI_BENCH=stressq`):
+  * **Merging static objects into one acceleration structure didn't help.** Baking every unmoving object into one mesh (one instance instead of one each) made rays about 25% slower: walls and pillars lose their tight, flat instance boxes, which the top-level tree culls cheaply, and their big triangles split badly inside one tree. Merging only the small static clutter was within noise (−0.5 to +0.2 ms over 400–2000 objects), so it isn't used. What did help: the stress scene's small spheres use 320 triangles instead of 1280, which traces 5–6% faster and looks the same at their size.
+  * **Quality** (direct light only, 640×400, PSNR against references that trace every light for 1024 frames, `METALGI_BENCH=stressq`, scored by `Tools/eval/stress.py`):
 
     | | 32 lights static | moving | flicker | 128 lights static | moving | flicker |
     |---|---|---|---|---|---|---|
-    | One ray per light + shadow denoiser | 37.5 dB | 34.8 dB | 0.15 | 39.9 dB | 36.8 dB | 0.11 |
-    | 1 ray per group + shadow denoiser | 37.5 dB | **35.6 dB** | 1.08 | 38.1 dB | 37.2 dB | 1.45 |
-    | 1 ray per group + reuse (default) | 36.7 dB | 35.3 dB | 0.73 | 37.5 dB | 37.2 dB | 0.91 |
-    | 2 rays per group + shadow denoiser | **37.9 dB** | 35.5 dB | 0.53 | **39.9 dB** | **37.8 dB** | 0.62 |
-    | 1 ray per group + SVGF | 35.3 dB | 29.1 dB | 0.37 | 36.9 dB | 30.6 dB | 0.39 |
+    | One ray per light + shadow denoiser | 37.5 dB | 34.8 dB | 0.15 | 39.9 dB | 36.8 dB | 0.10 |
+    | 1 ray per group + shadow denoiser | 37.5 dB | **35.6 dB** | 1.05 | 38.1 dB | 37.2 dB | 1.45 |
+    | **1 ray per group + reuse (default)** | 36.7 dB | 35.3 dB | 0.72 | 37.4 dB | 37.2 dB | 0.94 |
+    | 2 rays per group + shadow denoiser | **37.9 dB** | 35.5 dB | 0.52 | **39.9 dB** | **37.8 dB** | 0.66 |
+    | 1 ray per group + SVGF | 35.4 dB | 29.2 dB | 0.36 | 37.0 dB | 30.6 dB | 0.37 |
 
-  * **GI methods in the stress scene** (32 lights, 640×400, against an 8-bounce path-traced reference; whole-frame ms at the default 3× upscaling):
+    Sampled lights match tracing every light in motion and come close on still frames, but each group's visibility is now a fraction estimated from one 0/1 sample, so still frames flicker more. Two rays per group halve that, for about 4 ms. Reusing light picks (ReSTIR-style temporal resampling, `manyLightsReuseKernel`) cuts it by a third without more rays, for about 0.7 dB on still frames and 0.7 ms: each pick already follows the unshadowed light exactly, so reuse can't improve the distribution, but a pixel's pick no longer changes every frame. These lost:
+    * ReSTIR's "visibility reuse" (dropping occluded picks, so reservoirs drift toward visible lights) cut flicker as much but darkened penumbrae and lagged: −3 dB still, −5 dB moving.
+    * Weighing a random subset of 32 lights instead of all of them under-represents each pixel's brightest light: −7 dB at 128 lights.
+    * Widening the shadow denoiser's history clamp lowers flicker but costs 2 dB everywhere.
+  * **GI methods in the stress scene** (32 lights, 640×400, against an 8-bounce path-traced reference; GPU ms are whole frames at the default 3× upscaling):
 
     | | GPU ms | Static | Contact crop | Flicker | Moving | Camera move |
     |---|---|---|---|---|---|---|
-    | Radiance cascades | **7.9** | 25.5 dB | 28.1 dB | 0.88 | 25.5 dB | 25.5 dB |
-    | Radiance cascades, 4 px probes | — | 27.4 dB | 30.1 dB | 0.86 | 27.4 dB | 27.3 dB |
-    | Surfels, 16 rays, 32k pool | 12.0 | **35.8 dB** | **39.6 dB** | **0.60** | **36.2 dB** | 34.7 dB |
-    | **Surfels, 8 rays, 64k pool (scene default)** | 9.9 | **35.8 dB** | 39.5 dB | 0.62 | 36.0 dB | **36.8 dB** |
-    | Path traced, 2 bounces | 16.5 | 32.5 dB | 34.9 dB | 0.78 | 31.7 dB | 31.8 dB |
+    | Radiance cascades | **8.1** | 25.5 dB | 28.0 dB | 0.79 | 25.3 dB | 25.3 dB |
+    | Radiance cascades, 4 px probes | — | 27.4 dB | 29.9 dB | 0.69 | 27.1 dB | 27.1 dB |
+    | Surfels, 16 rays, 32k pool | 12.2 | **35.6 dB** | **39.3 dB** | **0.46** | **36.0 dB** | 34.3 dB |
+    | **Surfels, 8 rays, 64k pool (scene default)** | 10.1 | **35.6 dB** | 39.2 dB | **0.46** | 35.7 dB | **36.4 dB** |
+    | Path traced, 2 bounces | 16.3 | 32.5 dB | 35.0 dB | 0.65 | 31.2 dB | 31.2 dB |
 
-    Radiance cascades, the best choice in the Cornell room, lose 10 dB here: their probes sit on a screen grid and are interpolated across the edges of hundreds of small objects. Surfels live on the surfaces themselves. So the stress scene defaults to surfels, with 8 rays (0.04 dB below 16 rays, 2 ms faster) and a 64k pool (a 32k pool runs short during camera moves: +2.1 dB). Sampled lights cost the GI nothing: every method scores within 0.15 dB of its score with every light traced, and the path tracer gains 0.9 dB.
+    Radiance cascades, the best choice in the Cornell room, lose 10 dB here: their probes sit on a screen grid and are interpolated across the edges of hundreds of small objects. Surfels live on the surfaces themselves. So the stress scene defaults to surfels, with 8 rays (no loss against 16 on still frames, 2 ms faster) and a 64k pool (a 32k pool runs short during camera moves: +2 dB). Sampled lights cost the GI nothing: every method scores within 0.15 dB of its score with every light traced, and the path tracer gains 0.9 dB.
   * **Upscalers in the stress scene** (3× from 640×400, against supersampled 1920×1200 frames):
 
     | | Albedo static | Flicker | Albedo moving | Camera move | Direct static | Direct moving |
     |---|---|---|---|---|---|---|
-    | Custom (TAAU) | **43.2 dB** | 1.07 | **35.7 dB** | **35.2 dB** | 35.4 dB | 31.5 dB |
-    | MetalFX temporal | 41.9 dB | **0.31** | 34.9 dB | 34.7 dB | **35.7 dB** | **31.8 dB** |
+    | Custom (TAAU) | **43.2 dB** | 0.96 | **35.7 dB** | **35.3 dB** | 35.1 dB | 31.4 dB |
+    | MetalFX temporal | 41.8 dB | **0.33** | 34.9 dB | 34.7 dB | **35.6 dB** | **31.8 dB** |
 
     The custom upscaler stays sharper and better in motion, but on a still frame full of small objects it flickers three times as much as MetalFX (on the Cornell room it was 0.05). Objects narrower than an input pixel show up only in some jitter phases, so the colour clip, which trusts the current frame, removes them and they pop back later. Turning off the clip's history cut removes the flicker (0.21) but costs 1.2 dB static and 0.9 dB moving; dead zones and a min/max hull test traded the two without winning. MetalFX and FSR 2 protect such pixels with thin-feature "locks", which this upscaler doesn't have yet.
-
-    Sampled lights match tracing every light in motion and come close on still frames, but the per-group visibility is now a fraction estimated from one 0/1 sample, so still frames flicker more. Two rays per group halve that. Reusing light picks (ReSTIR-style temporal resampling, `manyLightsReuseKernel`) cuts it by a third without more rays: each pick already follows the unshadowed light exactly, so reuse can't improve the distribution, but a pixel's pick no longer changes every frame. It costs about 0.7 dB on still frames and 0.7 ms. ReSTIR's "visibility reuse" (dropping occluded picks so reservoirs drift toward visible lights) cut flicker as much but darkened penumbrae and lagged: −3 dB still, −5 dB moving. Two approaches lost: weighing a random subset of 32 lights instead of all of them under-represents each pixel's brightest light (−7 dB at 128 lights), and widening the history clamp lowers flicker but costs 2 dB everywhere.
 * MetalFX's built-in denoiser (`MTLFXTemporalDenoisedScaler`) also runs on an M1 Max under macOS 27, but it costs 4.2 ms at 640×400 → 1920×1200. That's more than this project's SVGF denoiser plus the temporal scaler it would replace (about 1.5 ms together). On M3 and later, with ray tracing hardware, it may be worth swapping passes 3, 4 and 6 for it.
 
 ## Where to go next
 
 1. **Thin-feature locks for the custom upscaler:** in busy scenes it flickers 3× as much as MetalFX on still frames (see the stress test). Marking pixels where a thin, high-contrast feature keeps appearing and protecting their history from the clip, as FSR 2 does, would fix that.
 2. **Many lights, steadier:** with more than 4 lights, still frames still flicker more than with one ray per light, even with temporal reuse (see the stress test). Spatial reuse would pool neighbours' shadow rays, which the shadow denoiser partly does already; a denoiser that tracks the variance of fractional visibility over time (instead of assuming 0/1 samples) is the likelier fix. Per-tile light lists would stop the light-picking loop from growing with the light count.
-3. **Many objects:** in the stress test, frame time still rises from 7.9 to 12.2 ms between 400 and 2000 objects, because every ray gets slower. Merging static objects into one BLAS and sorting rays by direction would both help.
+3. **Many objects:** in the stress test, frame time rises by 4.5 ms between 400 and 2000 objects (8.1 to 12.6 ms), because every ray crosses more overlapping instance boxes, mostly of moving objects. Merging static geometry didn't help (see the stress test). Grouping nearby moving objects into shared bottom-level trees that are refit each frame, or sorting secondary rays by direction for coherence, are the next things to try.
 4. **Better GI caching:** surfels and radiance cascades fall back to the scene's average indirect light at points no surfel or screen pixel covers. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
 5. **Deforming meshes:** update vertices in a compute pass, then call `refit` on that mesh's BLAS each frame.
 6. **Glossy materials:** add a GGX specular lobe, kept as a separate signal for the denoiser.

@@ -162,8 +162,10 @@ final class Scene {
         var rng = SplitMix64(seed: 0x5EED_1234)
         let quad = addMesh(Scene.quadMesh())
         let cube = addMesh(Scene.cubeMesh())
-        let sphere = addMesh(Scene.icosphere(subdivisions: 3))
-        let lightSphere = addMesh(Scene.icosphere(subdivisions: 2))
+        // 320 triangles: the spheres are 10-30 cm, about a pixel off round even up close, and 5-6% faster to
+        // trace than the Cornell room's 1280-triangle sphere (merging static objects into one tree didn't help).
+        let sphere = addMesh(Scene.icosphere(subdivisions: 2))
+        let lightSphere = sphere
 
         let white = addMaterial(albedo: [0.6, 0.6, 0.6])
         let warm = addMaterial(albedo: [0.5, 0.45, 0.4])
