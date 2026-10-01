@@ -33,6 +33,7 @@ final class Benchmark {
         var cameraPath = false        // fly the camera along cameraPose(progress:), ending at the default pose
         var supersample = false       // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
         var scene = SceneSettings()
+        var rayTracer: RayTracerKind? = nil   // nil = METALGI_RT / the default
     }
 
     /// Scripted camera move for the "camera" settings: a yaw sweep plus dolly that ends at the default camera,
@@ -316,9 +317,9 @@ final class Benchmark {
             }
             return direct + gi + up
         case "rt":
-            // Ray tracer comparison (run once per tracer: METALGI_RT=custom|metal). Paused frames at t = 5 s in every GI
-            // mode for image diffs between the tracers, then moving frames for timing, on both scenes and at several
-            // stress-scene sizes.
+            // Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALGI_RT tracer (run once per
+            // tracer and compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run),
+            // then moving frames for timing on both scenes at several stress-scene sizes, alternating the two tracers.
             func scene(_ kind: SceneKind, objects: Int = 400) -> SceneSettings { SceneSettings(kind: kind, objects: objects, lights: 32) }
             var out: [Config] = []
             for (tag, sc) in [("cornell", scene(.cornell)), ("stress", scene(.stress))] {
@@ -329,13 +330,18 @@ final class Benchmark {
                                       giMode: mode, scene: sc))
                 }
             }
-            for objects in [0, 400, 1000, 2000] {
-                for (gtag, mode) in [("pt", GIMode.pathTraced), ("surfels", .surfels), ("cascades", .radianceCascades)] {
-                    out.append(Config(name: "stress \(objects) \(gtag) moving", renderScale: 0.5, upscale: 3, giMode: mode,
-                                      scene: scene(.stress, objects: objects)))
+            func moving(_ name: String, _ mode: GIMode, _ sc: SceneSettings) -> [Config] {
+                RayTracerKind.allCases.map { rt in
+                    Config(name: "\(name) moving, \(rt == .custom ? "custom" : "metal")", renderScale: 0.5, upscale: 3, giMode: mode,
+                           scene: sc, rayTracer: rt)
                 }
             }
-            out.append(Config(name: "cornell cascades moving", renderScale: 0.5, upscale: 3, giMode: .radianceCascades))
+            for objects in [0, 400, 1000, 2000] {
+                for (gtag, mode) in [("pt", GIMode.pathTraced), ("surfels", .surfels), ("cascades", .radianceCascades)] {
+                    out += moving("stress \(objects) \(gtag)", mode, scene(.stress, objects: objects))
+                }
+            }
+            out += moving("cornell cascades", .radianceCascades, scene(.cornell))
             return out
         case "quick": return [
             Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),

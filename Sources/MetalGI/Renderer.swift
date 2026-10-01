@@ -1128,6 +1128,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                denoiser: c.denoiser, giMode: c.giMode, lightMaps: c.lightMaps,
                                surfels: c.surfels, cascades: c.cascades, scene: c.scene)
         Benchmark.applySceneOverride(to: &s.scene)
+        if let rt = c.rayTracer { s.rayTracer = rt }
         s.denoiser.enabled = c.denoiseEnabled
         Benchmark.applyDenoiserOverride(to: &s.denoiser)
         if !c.accumulate { Benchmark.applyGIOverride(to: &s) }

@@ -3,7 +3,14 @@
 A minimal real-time ray tracer for macOS and Metal, with dynamic lights and global illumination.
 It's built for Apple Silicon and tuned for an M1 Max.
 
-* **Dynamic scenes:** objects and sphere lights move every frame. Two scenes ship (pick one in the settings panel): a small Cornell-style room, and a **stress test** hall with up to 2000 moving objects and 256 moving lights (see below). The top-level acceleration structure is refit every frame and fully rebuilt every 16 frames, and each mesh's bottom-level acceleration structure is built once.
+* **Dynamic scenes:** objects and sphere lights move every frame. Two scenes ship (pick one in the settings panel): a small Cornell-style room, and a **stress test** hall with up to 2000 moving objects and 256 moving lights (see below).
+* **Custom ray tracing (default):** the shaders traverse this project's own two-level BVH instead of Metal's acceleration structures.
+  * Each mesh gets a bottom-level tree (binned SAH, built once on the CPU).
+  * Objects that never move get a top-level tree of their own, also built once.
+  * Moving objects and light spheres get a top-level tree rebuilt from scratch on the GPU every frame as an LBVH: Morton codes, a bitonic sort, the Karras hierarchy and a bottom-up box pass. This takes 0.08–0.12 ms for 400–2000 objects.
+  * Rays walk both levels in a single loop.
+  * On an M1 Max, which has no ray-tracing hardware, this is 19–24% faster per frame than Metal's intersector in the stress test, and on par in the Cornell room (see below).
+  * Metal's acceleration structures stay one click away in the settings panel ("Ray tracing"), and so does `METALGI_RT=metal`.
 * **Direct light:** ray-traced soft shadows. With up to 4 lights, each light gets one shadow ray per pixel. With more, lights are split into 4 colour groups, and each pixel picks one light per group, weighted by how much light it would get from it unshadowed, then traces one shadow ray to it. The cost is then 4 rays per pixel whatever the light count.
 * **Global illumination, three methods** (switch with **M** or in the settings panel):
   * **Radiance cascades (default):** probes on a screen grid trace world-space rays over distance intervals that grow 4× per cascade. The cascades are merged top-down, giving each probe its incoming light without noise.
@@ -46,7 +53,13 @@ Each pass runs in its own command buffer so it can be timed, which serializes th
 
 Use `METALGI_BENCH=shadow` to score direct-light denoising (static, moving and camera-move frames against a converged reference). Use `METALGI_BENCH=upscale` to score the upscalers against supersampled native 1920×1200 references, on the albedo view and on direct light. `METALGI_UPSCALERS=metalfx,custom,spatial` picks the upscalers, and `METALGI_GI=upscaler=metalfx` switches every setting to one (`scale=0.75,factor=2` tests another upscale factor against the same references). Its "pan" frames fly the camera over the frozen scene; `METALGI_PAN=rotate` makes that a pure rotation. `METALGI_DENOISE` also takes `shadows=0` (SVGF for direct light), `spasses`, `shistory`, `sclamp` and `ssigma`. `METALGI_GI` takes `blue` and the custom upscaler's `taau…` keys (see `Benchmark.swift`).
 
-Use `METALGI_BENCH=stress` to time the stress scene against light count (1 to 256), object count (0 to 2000) and GI method, and `METALGI_BENCH=stressq` to score its direct light at 32 and 128 lights, and its final image, against converged references. `METALGI_SCENE=stress,objects=400,lights=32` loads the stress scene in every setting of any mode. `METALGI_LIGHTS=all` traces one shadow ray per light again (the brute-force baseline), `METALGI_GI=lightrays=2` sets the shadow rays per light group, and `METALGI_TLAS=<frames>` sets the TLAS rebuild interval (1 = every frame). `METALGI_BENCH_ONLY="32 lights|camera"` runs only the settings whose names contain one of these strings.
+Use `METALGI_BENCH=stress` to time the stress scene against light count (1 to 256), object count (0 to 2000) and GI method, and `METALGI_BENCH=stressq` to score its direct light at 32 and 128 lights, and its final image, against converged references. `METALGI_SCENE=stress,objects=400,lights=32` loads the stress scene in every setting of any mode. `METALGI_LIGHTS=all` traces one shadow ray per light again (the brute-force baseline), `METALGI_GI=lightrays=2` sets the shadow rays per light group, and `METALGI_TLAS=<frames>` sets the rebuild interval of Metal's TLAS (1 = every frame; the custom tracer rebuilds its own every frame). `METALGI_BENCH_ONLY="32 lights|camera"` runs only the settings whose names contain one of these strings.
+
+`METALGI_RT=metal|custom` picks the ray tracer for every setting. Use `METALGI_BENCH=rt` to compare the two:
+* It first renders paused frames in every GI mode on both scenes with the `METALGI_RT` tracer. Run it once per tracer and diff the PNGs with `Tools/eval/pngdiff.py`.
+* Then it times moving frames at 0–2000 objects, alternating the two tracers.
+
+`METALGI_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALGI_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup.
 
 Use `METALGI_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALGI_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALGI_GI_MODES` picks the methods, for example `pt,pt-lightmaps,surfels,cascades,cascades-hq`. `METALGI_GI` overrides GI settings everywhere, for example `mode=surfels,rays=8` or `mode=cascades,spacing=4,b1=0.25`. `METALGI_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
 
@@ -81,6 +94,7 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 | Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights) or the stress test. Switching rebuilds the geometry and acceleration structures, which takes a few milliseconds, and picks that scene's GI defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the stress test. Reset to Defaults also uses the current scene's. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 256. Their total power stays the same, so the brightness barely changes. |
+| Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
 | Shadow rays | 1 per group + reuse | With more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
 
 ### Denoiser settings
@@ -99,7 +113,8 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 
 ```
 CPU    animate objects + lights  ->  write instance transforms (triple-buffered)
-GPU 1  refit the instance acceleration structure (TLAS) over the per-mesh BLASes (rebuild every 16 frames)
+GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton keys -> sort -> hierarchy -> boxes)
+       (Metal RT instead: refit the instance acceleration structure, rebuild it every 16 frames)
     1b lightMapKernel  per-light distance maps (surfels, radiance cascades, path tracer with light maps)
     2  traceKernel     primary ray -> G-buffer (normal, depth, albedo, emission, motion, world position)
                        direct (up to 4 lights): 1 shadow ray per light (+ per-light visibility and penumbra width)
@@ -124,7 +139,9 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 
 | File | What it holds |
 |---|---|
-| `Renderer.swift` | Metal setup, acceleration structures, per-frame encoding, input |
+| `Renderer.swift` | Metal setup, per-frame encoding, input; Metal's acceleration structures when that tracer is selected |
+| `BVH.swift` | The custom ray tracer's node format and CPU builder (binned SAH) for bottom-level and static top-level trees |
+| `CustomRayTracer.swift` | The custom ray tracer's buffers, the per-frame GPU build of the moving objects' tree, its argument buffer |
 | `Settings.swift` | Every user-adjustable setting, with defaults and ranges |
 | `SettingsPanel.swift` | The Render Settings panel |
 | `Upscaler.swift` | MetalFX temporal (or spatial) scaler and the sub-pixel jitter sequence |
@@ -139,7 +156,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 
 ## Notes for M1 / M2 Macs
 
-M1 and M2 run Metal ray tracing without dedicated ray tracing hardware, so the ray budget is the main cost here:
+M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, and the ray budget is the main cost here. That is also why this project's own BVH traversal can beat it (see the stress test); on M3 and later, compare the two again with `METALGI_BENCH=rt`:
 
 * By default the frame is traced at 0.5× the window size in points and upscaled 3× (1280×800 points → 640×400 traced → 1920×1200). Press `-` or `=` to change the traced resolution, and **U** to change the upscale factor.
 * MetalFX temporal upscaling works on M1. With path-traced GI, the default resolution setting costs about 6.0 ms of GPU time on an M1 Max (custom upscaler), against 43 ms for a native 1920×1200 frame and 11.5 ms for a 960×600 frame stretched to the window. The stretched frame matches or loses to the upscaled one on image quality. If the GPU doesn't support MetalFX, the app renders at 0.75× without upscaling.
@@ -186,7 +203,7 @@ M1 and M2 run Metal ray tracing without dedicated ray tracing hardware, so the r
   * **Surfels** are the most accurate on static scenes and in contact areas.
   * **Radiance cascades** have no temporal accumulation, so they follow moving lights best and barely flicker. Their probes are interpolated across edges, though, which can show as thin light or dark streaks along object edges.
   * All quality columns are measured on 640×400 frames without MetalFX.
-* **Stress test** (M1 Max, radiance cascades and the custom upscaler 3× from 640×400 unless noted; whole-frame GPU ms, best of two `METALGI_BENCH=stress` runs with `METALGI_BENCH_SPLIT=0`). "Before" is one shadow ray per light with the TLAS rebuilt every 256 frames; the next row adds the 16-frame rebuild; "now" adds light sampling with reuse and the lighter spheres:
+* **Stress test** (M1 Max, radiance cascades and the custom upscaler 3× from 640×400 unless noted; whole-frame GPU ms, best of two `METALGI_BENCH=stress` runs with `METALGI_BENCH_SPLIT=0`). "Before" is one shadow ray per light with the TLAS rebuilt every 256 frames; the next row adds the 16-frame rebuild; "now" adds light sampling with reuse and the lighter spheres. All of these were measured with Metal's acceleration structures, before the custom ray tracer, which takes 1.9–3 ms off the busier rows (see "Custom ray tracing vs Metal's" below):
 
   | 400 objects | 1 light | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
   |---|---|---|---|---|---|---|---|---|
@@ -235,15 +252,49 @@ M1 and M2 run Metal ray tracing without dedicated ray tracing hardware, so the r
     | MetalFX temporal | 41.8 dB | **0.33** | 34.9 dB | 34.7 dB | **35.6 dB** | **31.8 dB** |
 
     The custom upscaler stays sharper and better in motion, but on a still frame full of small objects it flickers three times as much as MetalFX (on the Cornell room it was 0.05). Objects narrower than an input pixel show up only in some jitter phases, so the colour clip, which trusts the current frame, removes them and they pop back later. Turning off the clip's history cut removes the flicker (0.21) but costs 1.2 dB static and 0.9 dB moving; dead zones and a min/max hull test traded the two without winning. MetalFX and FSR 2 protect such pixels with thin-feature "locks", which this upscaler doesn't have yet.
+* **Custom ray tracing vs Metal's** (M1 Max, stress scene, 32 lights, moving, custom upscaler 3× from 640×400).
+  * Whole frames (`METALGI_BENCH_SPLIT=0`, two alternating runs each):
+
+    | | Metal | Custom |
+    |---|---|---|
+    | Cornell room, default | 2.40–2.45 ms | 2.34–2.52 ms |
+    | Stress, 400 objects, scene default (surfels) | 10.09 ms | **8.21 ms** |
+    | Stress, 2000 objects, radiance cascades | 12.59 ms | **9.60 ms** |
+
+  * Per pass (`METALGI_BENCH=rt`), Metal → custom:
+
+    | Pass | 400 objects | 2000 objects |
+    |---|---|---|
+    | Path-traced trace (primary ray + 2 bounces + NEE) | 9.40 → **6.72 ms** | 16.41 → **10.65 ms** |
+    | Many-light shadow rays | 4.55 → **3.38 ms** | 7.76 → **4.98 ms** |
+    | Surfel trace | 4.60 → **3.52 ms** | 7.54 → **4.85 ms** |
+    | Radiance-cascade trace | 1.37 → **1.21 ms** | 2.41 → **1.80 ms** |
+    | Light maps | 0.56 → 0.54 ms | 1.05 → 0.99 ms |
+    | Top-level tree | 0.07 → 0.08 ms | 0.08 → 0.12 ms |
+
+  * Quality (`METALGI_BENCH=stressq`): every direct-light, GI and upscaler score is within ±0.2 dB of Metal's.
+  * Paused frames differ from Metal's by RMS 0.02–0.3 of an 8-bit level. The few larger differences are soft-shadow pixels where an any-hit shadow ray reports a different occluder, which shifts the penumbra estimate.
+  * What mattered, in order:
+    * **One loop for both levels.** Nesting the per-instance bottom-level loop inside the top-level loop let SIMD lanes in different levels wait on each other. Merging them (entering an instance pushes a marker and switches the ray to object space; popping the marker switches back) almost halved closest-hit cost: path-traced trace 12.97 → 6.73 ms at 400 objects. Before that, the custom tracer was 35% *slower* than Metal on closest hits.
+    * **Static objects stay instances** in their own tree, built once, as with Metal (merging them into one mesh loses the walls' tight boxes).
+  * What didn't help:
+    * Skipping postponed subtrees that start beyond the closest hit (a second stack of entry distances) cost 15%: the extra stack traffic outweighs the boxes it skips.
+    * A smaller stack (32 entries) changed nothing.
+    * Bigger leaves (a higher SAH traversal cost) were 2–4% slower.
+    * A watertight triangle test (Woop et al.) was 30% slower and changed no image. The upscaled moving frames that differ from Metal's along silhouettes come from depth and motion differing in the last float bits, which the upscaler's depth-edge and clip decisions amplify; native frames match bit for bit.
+    * An SAH-built moving-object tree (`METALGI_RT_BUILD=cpu`) traces only 4–7% faster than the GPU LBVH.
 * MetalFX's built-in denoiser (`MTLFXTemporalDenoisedScaler`) also runs on an M1 Max under macOS 27, but it costs 4.2 ms at 640×400 → 1920×1200. That's more than this project's SVGF denoiser plus the temporal scaler it would replace (about 1.5 ms together). On M3 and later, with ray tracing hardware, it may be worth swapping passes 3, 4 and 6 for it.
 
 ## Where to go next
 
 1. **Thin-feature locks for the custom upscaler:** in busy scenes it flickers 3× as much as MetalFX on still frames (see the stress test). Marking pixels where a thin, high-contrast feature keeps appearing and protecting their history from the clip, as FSR 2 does, would fix that.
 2. **Many lights, steadier:** with more than 4 lights, still frames still flicker more than with one ray per light, even with temporal reuse (see the stress test). Spatial reuse would pool neighbours' shadow rays, which the shadow denoiser partly does already; a denoiser that tracks the variance of fractional visibility over time (instead of assuming 0/1 samples) is the likelier fix. Per-tile light lists would stop the light-picking loop from growing with the light count.
-3. **Many objects:** in the stress test, frame time rises by 4.5 ms between 400 and 2000 objects (8.1 to 12.6 ms), because every ray crosses more overlapping instance boxes, mostly of moving objects. Merging static geometry didn't help (see the stress test). Grouping nearby moving objects into shared bottom-level trees that are refit each frame, or sorting secondary rays by direction for coherence, are the next things to try.
+3. **Faster custom traversal:**
+   * Collapse the binary trees into 4-wide nodes, so a ray tests four boxes per fetch and pushes less. The GPU LBVH would need a collapse pass too, or the single loop would diverge again.
+   * Give the LBVH SAH-quality top levels, for example with treelet restructuring or PLOC: a CPU SAH tree traces 4–7% faster.
+   * With 2000 objects the frame still costs 1.4 ms more than with 400; sorting secondary rays by direction for coherence is the other thing to try.
 4. **Better GI caching:** surfels and radiance cascades fall back to the scene's average indirect light at points no surfel or screen pixel covers. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
-5. **Deforming meshes:** update vertices in a compute pass, then call `refit` on that mesh's BLAS each frame.
+5. **Deforming meshes:** update vertices in a compute pass, then refit that mesh's bottom-level tree with a bottom-up box pass like `rtFitKernel` (or call `refit` on its BLAS with the Metal tracer).
 6. **Glossy materials:** add a GGX specular lobe, kept as a separate signal for the denoiser.
 7. **Rasterized G-buffer:** generate primary visibility with a raster pass to save one ray per pixel.
 8. **Custom upscaler at 2× and 1.5×:** it matches MetalFX in motion at 3× but trails by up to 0.7 dB in camera moves at lower factors. Tuning per factor (its motion cuts are scaled by the factor today), or a per-pixel disocclusion test that doesn't misfire on jittered edges, would be the next step.
