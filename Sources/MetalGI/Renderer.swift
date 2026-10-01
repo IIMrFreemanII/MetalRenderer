@@ -28,6 +28,7 @@ final class RenderTargets {
     let surfacePos: MTLTexture      // xyz = world position, w = instance id + 1 (0 = sky or emitter: no GI)
     let geoNormal: MTLTexture       // geometric normal, oriented toward the camera
     let giDebug: MTLTexture         // debug visualisation written by surfel / cascade GI (view mode "GI debug")
+    let geometryDebug: MTLTexture   // geometry debug views (view modes 8-13), written by geometryDebugKernel
     let visibility: MTLTexture      // per light group (rgba = groups 0...3): visibility of this frame's shadow ray(s)
     let blocker: MTLTexture         // per light group: penumbra half width of the occluded samples, 0 = visible
     let material: MTLTexture        // specular materials: rgb = F0, a = roughness
@@ -64,6 +65,7 @@ final class RenderTargets {
         surfacePos = try make(.rgba32Float, "surfacePos")
         geoNormal = try make(.rgba16Float, "geoNormal")
         giDebug = try make(.rgba16Float, "giDebug")
+        geometryDebug = try make(.rgba8Unorm, "geometryDebug")
         visibility = try make(.rgba8Unorm, "visibility")
         blocker = try make(.rgba16Float, "blocker")
         material = try make(.rgba16Float, "material")
@@ -145,6 +147,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     // Pipelines
     private var tracePSO: MTLComputePipelineState!
+    private var geometryDebugPSO: MTLComputePipelineState!
+    private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
     private var temporalPSO: MTLComputePipelineState!
     private var atrousPSO: MTLComputePipelineState!
     private var shadowTemporalPSO: MTLComputePipelineState!
@@ -326,6 +330,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let manyLights = try pipeline("manyLightsKernel")
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
         let reflection = try pipeline("reflectionKernel")
+        let geometryDebug = try pipeline("geometryDebugKernel")
         let rt = kind != .custom ? nil :
             RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
                         sortLocal: try pipeline("rtSortLocalKernel"), sortGlobal: try pipeline("rtSortGlobalKernel"),
@@ -354,6 +359,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         manyLightsPSO = manyLights
         manyLightsReusePSO = manyLightsReuse
         reflectionPSO = reflection
+        geometryDebugPSO = geometryDebug
         rcPipelines = rc
         rtPipelines = rt
         if let rt { customRT?.pipelines = rt }
@@ -816,9 +822,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         scene.update(time: animTime)
 
         let slot = Int(frameIndex) % Renderer.maxFramesInFlight
+        // Viewpoint virtual geometry picks its detail for: the camera, or where it was when "Freeze LOD" was turned on.
+        let liveLOD = (camera.position, Float(height) / (2 * tan(camera.fovY / 2)))
+        if !settings.virtualGeometry.freeze { frozenLOD = nil } else if frozenLOD == nil { frozenLOD = liveLOD }
+        let lod = frozenLOD ?? liveLOD
         customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
         customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
-                                      camPos: camera.position, pixelScale: Float(height) / (2 * tan(camera.fovY / 2)),
+                                      camPos: lod.0, pixelScale: lod.1,
                                       tau: settings.virtualGeometry.pixelError, transforms: scene.instances.map(\.transform))
         writeFrameData(slot: slot)
 
@@ -884,8 +894,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
         // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
         if let customRT, let enc = passBuffer("tlas").makeComputeCommandEncoder() {
-            let view = VGView(camPos: camera.position, pixelScale: Float(height) / (2 * tan(camera.fovY / 2)),
-                              tau: settings.virtualGeometry.pixelError, frame: frameIndex)
+            let view = VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
             customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: view)
             enc.endEncoding()
         }
@@ -1119,6 +1128,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             runSerial(denoiseStages)
             runSerial(specularDenoise)
         }
+        // 3c. Geometry debug views: their own pass, only while one is shown.
+        if RenderSettings.geometryViews.contains(settings.viewMode), let enc = beginComputePass("geometry debug") {
+            enc.setComputePipelineState(geometryDebugPSO)
+            enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+            bindScene(enc, slot: slot)
+            enc.setTexture(t.geometryDebug, index: 0)
+            dispatch(enc, "geometry debug", width: width, height: height)
+            if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
+        }
+
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
         let compositeIndirect = accumulating || (settings.denoiser.enabled && separate && denoiseIndirect)
             ? finalIllumination.last! : t.indirect
@@ -1135,7 +1154,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             setTextures(enc, [finalIllumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
-                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular])
+                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular, t.geometryDebug])
             enc.setBuffer(lightBuffers[slot], offset: 0, index: 1)
             dispatch(enc, "composite", width: output.width, height: output.height)
         }
@@ -1448,6 +1467,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             sceneName += String(format: " — VG %.1fM triangles, %.0f MB", Double(vg.stats.triangles) / 1e6, vg.stats.megabytes)
         }
         if let ts = textureStreamer { sceneName += String(format: " — textures %.0f MB", ts.stats.residentMB) }
+        if frozenLOD != nil && scene.usesVirtualGeometry { sceneName += " — LOD frozen" }
         view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
                                      sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
@@ -1491,6 +1511,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         case "-": settings.renderScale = max(RenderSettings.renderScaleRange.lowerBound, settings.renderScale - RenderSettings.renderScaleStep)
         case "=", "+": settings.renderScale = min(RenderSettings.renderScaleRange.upperBound, settings.renderScale + RenderSettings.renderScaleStep)
         case "1", "2", "3", "4", "5", "6", "7", "8": settings.viewMode = Int(key)! - 1
+        case "9":   // cycle the geometry debug views
+            let views = RenderSettings.geometryViews
+            settings.viewMode = views.contains(settings.viewMode) && settings.viewMode < views.upperBound
+                ? settings.viewMode + 1 : views.lowerBound
+        case "0": settings.viewMode = 0
+        case "l": settings.virtualGeometry.freeze.toggle()
         case "u":
             guard upscaleSupported else { print("MetalFX temporal upscaling is not supported on this GPU"); break }
             let steps = upscaleSteps

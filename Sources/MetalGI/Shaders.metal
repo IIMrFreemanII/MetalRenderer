@@ -299,10 +299,13 @@ struct RTScene {
 #define RT_STATS 0
 #endif
 #if RT_STATS
-#define RT_COUNT(i, n) atomic_fetch_add_explicit(&sc.stats[i], (n), memory_order_relaxed)
+#define RT_STAT(i, n) atomic_fetch_add_explicit(&sc.stats[i], (n), memory_order_relaxed)
 #else
-#define RT_COUNT(i, n)
+#define RT_STAT(i, n)
 #endif
+// Counters (RT_STATS: global; COST traversals: per ray, for the "Traversal cost" view): 0 rays, 1 top nodes,
+// 2 bottom nodes, 3 instance entries, 4 cluster entries, 5 triangle tests, 6 nodes inside virtual instances.
+#define RT_COUNT(i, n) { if (COST) cost[i] += (n); RT_STAT(i, n); }
 
 // A virtual instance's BLAS over its current cut (VirtualBLAS.swift): nodes, triangles (v0 e1 e2, w = index), and per
 // triangle 3 octahedral normals + 3 half2 UVs.
@@ -391,8 +394,8 @@ constant uint RT_OBJECT_EXIT = 0xFFFFFFFDu;     // stack marker: back from a clu
 // tree splits by instance first: a ref flagged RT_ENTER is one instance's subtree, in its object space, whose leaves
 // are clusters with their own small BVHs in the streaming pool. Levels: 0 = world, 1 = inside a virtual instance's
 // subtree, 2 = inside a BLAS or a cluster's BVH. Returns true on a hit when ANY.
-template <bool ANY>
-inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h) {
+template <bool ANY, bool COST = false>
+inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, thread uint* cost = nullptr) {
     uint stack[RT_STACK];
     uint sp = 0;
     uint ref = RT_NONE;
@@ -550,6 +553,19 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     h.primitive = 0;
     h.cluster = HIT_NO_CLUSTER;
     rtTraverse<false>(sc, r, mask, h);
+    return h;
+}
+
+// Closest hit, counting the traversal's work into cost[0..6] (see RT_COUNT): the "Traversal cost" view only.
+Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint* cost) {
+    Hit h;
+    h.hit = false;
+    h.distance = r.tmax;
+    h.barycentrics = float2(0.0f);
+    h.instance = 0;
+    h.primitive = 0;
+    h.cluster = HIT_NO_CLUSTER;
+    rtTraverse<false, true>(sc, r, mask, h, cost);
     return h;
 }
 
@@ -711,6 +727,53 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
 // Primary rays pass their pixel's angle; GI rays a coarse fixed spread, since their hits get integrated anyway.
 constant float GI_RAY_SPREAD = 0.05f;
 
+// The hit triangle's vertices (object space): from a cluster in the streaming pool, a virtual instance's BLAS over
+// its cut, or the indexed mesh buffers.
+struct HitVertices {
+    float3 p[3];
+    float3 n[3];
+    float2 t[3];
+};
+inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
+    HitVertices v;
+#if CUSTOM_RT
+    if (res.cluster != HIT_NO_CLUSTER) {
+        // Virtual geometry: the hit cluster's vertices, in the streaming pool.
+        VGClusterView view = vgClusterView(accel.pool + accel.clusters[res.cluster].y);
+        uint packed = view.tris[res.primitive];
+        uint3 i = uint3(packed & 0xFFu, (packed >> 8) & 0xFFu, (packed >> 16) & 0xFFu);
+        for (uint k = 0; k < 3; ++k) {
+            float4 q = view.positions[i[k]];
+            v.p[k] = q.xyz;
+            v.n[k] = octDecode(as_type<uint>(q.w));
+            v.t[k] = float2(as_type<half2>(view.uvs[i[k]]));
+        }
+        return v;
+    }
+    if (inst.pad1 != 0) {
+        // Virtual geometry, per-instance BLAS over the cut: positions from its triangles, attributes alongside.
+        VGBlas e = accel.vgBlas[inst.pad1 - 1];
+        float4 v0 = e.tris[3 * res.primitive], e1 = e.tris[3 * res.primitive + 1], e2 = e.tris[3 * res.primitive + 2];
+        v.p[0] = v0.xyz; v.p[1] = v0.xyz + e1.xyz; v.p[2] = v0.xyz + e2.xyz;
+        device const uint* a = e.attrs + 6 * res.primitive;
+        for (uint k = 0; k < 3; ++k) {
+            v.n[k] = octDecode(a[k]);
+            v.t[k] = float2(as_type<half2>(a[3 + k]));
+        }
+        return v;
+    }
+#endif
+    MeshData mesh = s.meshes[inst.meshIndex];
+    uint base = mesh.firstIndex + res.primitive * 3;
+    for (uint k = 0; k < 3; ++k) {
+        uint i = s.indices[base + k];
+        v.p[k] = s.positions[i];
+        v.n[k] = s.normals[i];
+        v.t[k] = s.uvs[i];
+    }
+    return v;
+}
+
 Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
     Hit res = intersectClosest(r, mask, accel);
 
@@ -726,36 +789,9 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     InstanceData inst = s.instances[res.instance];
     float2 bc = res.barycentrics;
     float w0 = 1.0f - bc.x - bc.y;
-    float3 p0, p1, p2, n0, n1, n2;
-    float2 t0, t1, t2;
-#if CUSTOM_RT
-    if (res.cluster != HIT_NO_CLUSTER) {
-        // Virtual geometry: the hit cluster's vertices, in the streaming pool.
-        VGClusterView view = vgClusterView(accel.pool + accel.clusters[res.cluster].y);
-        uint packed = view.tris[res.primitive];
-        uint3 i = uint3(packed & 0xFFu, (packed >> 8) & 0xFFu, (packed >> 16) & 0xFFu);
-        float4 v0 = view.positions[i.x], v1 = view.positions[i.y], v2 = view.positions[i.z];
-        p0 = v0.xyz; p1 = v1.xyz; p2 = v2.xyz;
-        n0 = octDecode(as_type<uint>(v0.w)); n1 = octDecode(as_type<uint>(v1.w)); n2 = octDecode(as_type<uint>(v2.w));
-        t0 = float2(as_type<half2>(view.uvs[i.x])); t1 = float2(as_type<half2>(view.uvs[i.y])); t2 = float2(as_type<half2>(view.uvs[i.z]));
-    } else if (inst.pad1 != 0) {
-        // Virtual geometry, per-instance BLAS over the cut: positions from its triangles, attributes alongside.
-        VGBlas e = accel.vgBlas[inst.pad1 - 1];
-        float4 v0 = e.tris[3 * res.primitive], e1 = e.tris[3 * res.primitive + 1], e2 = e.tris[3 * res.primitive + 2];
-        p0 = v0.xyz; p1 = v0.xyz + e1.xyz; p2 = v0.xyz + e2.xyz;
-        device const uint* a = e.attrs + 6 * res.primitive;
-        n0 = octDecode(a[0]); n1 = octDecode(a[1]); n2 = octDecode(a[2]);
-        t0 = float2(as_type<half2>(a[3])); t1 = float2(as_type<half2>(a[4])); t2 = float2(as_type<half2>(a[5]));
-    } else
-#endif
-    {
-        MeshData mesh = s.meshes[inst.meshIndex];
-        uint base = mesh.firstIndex + res.primitive * 3;
-        uint i0 = s.indices[base], i1 = s.indices[base + 1], i2 = s.indices[base + 2];
-        p0 = s.positions[i0]; p1 = s.positions[i1]; p2 = s.positions[i2];
-        n0 = s.normals[i0]; n1 = s.normals[i1]; n2 = s.normals[i2];
-        t0 = s.uvs[i0]; t1 = s.uvs[i1]; t2 = s.uvs[i2];
-    }
+    HitVertices hv = fetchHitVertices(res, inst, accel, s);
+    float3 p0 = hv.p[0], p1 = hv.p[1], p2 = hv.p[2], n0 = hv.n[0], n1 = hv.n[1], n2 = hv.n[2];
+    float2 t0 = hv.t[0], t1 = hv.t[1], t2 = hv.t[2];
     float3 objPos = p0 * w0 + p1 * bc.x + p2 * bc.y;
     float3 objN   = n0 * w0 + n1 * bc.x + n2 * bc.y;
     float3 objNg  = cross(p1 - p0, p2 - p0);
@@ -1052,6 +1088,14 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
 // 1. Trace kernel: G-buffer + direct light + path traced indirect light (1 sample per pixel)
 // ---------------------------------------------------------------------------------------------
 
+// The primary ray's direction through pixel `tid` (jitter is zero unless upscaling is on).
+inline float3 primaryDirection(constant Uniforms& u, uint2 tid) {
+    float2 uv = (float2(tid) + 0.5f + u.jitter.xy) / float2(u.width, u.height);
+    return normalize(u.camForward.xyz
+                     + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
+                     + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
+}
+
 kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]],
                         SCENE_ACCEL                      accel      [[buffer(1)]],
                         device const float3*             positions  [[buffer(2)]],
@@ -1101,10 +1145,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 
     // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
     float2 size = float2(u.width, u.height);
-    float2 uv = (float2(tid) + 0.5f + u.jitter.xy) / size;   // jitter is zero unless MetalFX upscaling is on
-    float3 dir = normalize(u.camForward.xyz
-                           + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
-                           + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
+    float3 dir = primaryDirection(u, tid);
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
@@ -1972,6 +2013,118 @@ kernel void shadowFilterKernel(constant Uniforms&              u        [[buffer
 }
 
 // ---------------------------------------------------------------------------------------------
+// 3c. Geometry debug views (view modes 8-13), a pass of their own that runs only while one is shown: re-traces the
+//     primary rays and colours each pixel by what it hit. Virtual triangles carry their cluster, group, DAG level and
+//     index within the cluster (VirtualBLAS packs them into the free w components of e1 / e2; in cluster mode the
+//     cluster's pool header holds group and level, VirtualGeometry.upload).
+// ---------------------------------------------------------------------------------------------
+
+constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;
+
+inline float3 debugHashColor(uint h) {
+    h = pcgHash(h);
+    return 0.15f + 0.85f * float3(h & 0xFFu, (h >> 8) & 0xFFu, (h >> 16) & 0xFFu) / 255.0f;
+}
+
+// Turbo colour map (polynomial fit, Mikhailov 2019): 0 = dark blue, 0.5 = green, 1 = dark red.
+inline float3 debugHeat(float x) {
+    x = saturate(x);
+    const float4 r4 = float4(0.13572138f, 4.61539260f, -42.66032258f, 132.13108234f);
+    const float4 g4 = float4(0.09140261f, 2.19418839f, 4.84296658f, -14.18503333f);
+    const float4 b4 = float4(0.10667330f, 12.64194608f, -60.58204836f, 110.36276771f);
+    const float2 r2 = float2(-152.94239396f, 59.28637943f);
+    const float2 g2 = float2(4.27729857f, 2.82956604f);
+    const float2 b2 = float2(-89.90310912f, 27.34824973f);
+    float4 v4 = float4(1.0f, x, x * x, x * x * x);
+    float2 v2 = v4.zw * v4.z;
+    return saturate(float3(dot(v4, r4) + dot(v2, r2), dot(v4, g4) + dot(v2, g2), dot(v4, b4) + dot(v2, b2)));
+}
+
+kernel void geometryDebugKernel(constant Uniforms&               u          [[buffer(0)]],
+                                SCENE_ACCEL                      accel      [[buffer(1)]],
+                                device const float3*             positions  [[buffer(2)]],
+                                device const float3*             normals    [[buffer(3)]],
+                                device const uint*               indices    [[buffer(4)]],
+                                device const MeshData*           meshes     [[buffer(5)]],
+                                device const InstanceData*       instances  [[buffer(6)]],
+                                constant SceneShading&           shading    [[buffer(7)]],
+                                texture2d<float, access::write>  output     [[texture(0)]],
+                                uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    SceneData s;
+    s.positions = positions;
+    s.normals = normals;
+    s.indices = indices;
+    s.meshes = meshes;
+    s.instances = instances;
+    bindShading(s, shading);
+
+    float3 dir = primaryDirection(u, tid);
+    Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
+#if CUSTOM_RT
+    uint cost[7] = {0, 0, 0, 0, 0, 0, 0};
+    Hit res = intersectClosestCost(r, MASK_ALL, accel, cost);
+    // Work of the ray: node visits (both levels) plus triangle tests at half weight, log scale up to ~500.
+    float work = float(cost[1] + cost[2]) + 0.5f * float(cost[5]);
+    float3 costColor = debugHeat(log2(1.0f + work) / 9.0f);
+#else
+    Hit res = intersectClosest(r, MASK_ALL, accel);
+    float3 costColor = float3(1.0f, 0.0f, 1.0f);   // Metal's traversal can't be counted
+#endif
+    if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
+    if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
+
+    InstanceData inst = s.instances[res.instance];
+    HitVertices hv = fetchHitVertices(res, inst, accel, s);
+    float3 e1 = (inst.transform * float4(hv.p[1] - hv.p[0], 0.0f)).xyz, e2 = (inst.transform * float4(hv.p[2] - hv.p[0], 0.0f)).xyz;
+    float3 ng = cross(e1, e2);
+    float doubleArea = length(ng);
+    float shade = doubleArea > 0.0f ? 0.35f + 0.65f * abs(dot(ng / doubleArea, dir)) : 0.35f;
+
+    bool isVirtual = false;
+    uint cluster = 0, local = 0, group = 0, level = 0;
+#if CUSTOM_RT
+    if (res.cluster != HIT_NO_CLUSTER) {
+        uint2 rc = accel.clusters[res.cluster];
+        uint packed = ((device const uint*)(accel.pool + rc.y))[3];   // group | level << 24
+        isVirtual = true;
+        cluster = rc.y;                 // its place in the pool: stable while it stays resident
+        local = res.primitive;
+        group = packed & 0xFFFFFFu;
+        level = packed >> 24;
+    } else if (inst.pad1 != 0) {
+        VGBlas e = accel.vgBlas[inst.pad1 - 1];
+        uint a = as_type<uint>(e.tris[3 * res.primitive + 1].w), b = as_type<uint>(e.tris[3 * res.primitive + 2].w);
+        isVirtual = true;
+        cluster = a & 0xFFFFFFu;        // cluster | triangle within it << 24
+        local = a >> 24;
+        group = b & 0xFFFFFFu;          // group | level << 24
+        level = b >> 24;
+    }
+#endif
+    uint instanceSeed = pcgHash(res.instance + 0x51ED27u);
+    float3 c = float3(0.45f);           // geometry that isn't virtual, in the views that are about virtual geometry
+    switch (u.viewMode) {
+        case VIEW_TRIANGLES:
+            c = debugHashColor(isVirtual ? local + pcgHash(cluster + instanceSeed) : res.primitive + instanceSeed);
+            break;
+        case VIEW_CLUSTERS: if (isVirtual) c = debugHashColor(cluster + instanceSeed); break;
+        case VIEW_GROUPS:   if (isVirtual) c = debugHashColor(group * 0x9E3779B9u + instanceSeed); break;
+        case VIEW_LOD:      if (isVirtual) c = debugHeat(0.05f + float(level) / 10.0f); break;   // 0 = finest
+        case VIEW_TRIANGLE_SIZE: {
+            // Edge length (of a right triangle with the same area) in traced pixels: 1/8 px blue, 1 px green, 8 px red.
+            float footprint = res.distance * 2.0f * u.camUp.w / float(u.height);
+            float px = sqrt(doubleArea) / max(footprint, 1e-8f);
+            c = debugHeat((log2(max(px, 1e-4f)) + 3.0f) / 6.0f);
+            break;
+        }
+        default: break;
+    }
+    output.write(float4(c * shade, 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
 // 4. Composite: re-apply albedo, add emission, tonemap and write to the drawable.
 // ---------------------------------------------------------------------------------------------
 
@@ -1995,6 +2148,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  geoNormal  [[texture(11)]],  // with FLAG_SHADOW_DENOISER
                             texture2d<float, access::read>  material   [[texture(12)]],  // with FLAG_SPECULAR: F0, roughness
                             texture2d<float, access::read>  specularTex [[texture(13)]], // with FLAG_SPECULAR: specular light / specular albedo
+                            texture2d<float, access::read>  geometryDebug [[texture(14)]], // view modes 8-13 (geometryDebugKernel)
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             uint2 tid [[thread_position_in_grid]])
 {
@@ -2064,6 +2218,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); hdr = false; break; }
         case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
         case 7: c = giDebug.read(tid).rgb; hdr = false; break;    // GI technique's debug view
+        case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; hdr = false; break;
         default: c = albedo * illumination + specular + emission; break;
     }
     if (hdr) c = acesFilm(c);

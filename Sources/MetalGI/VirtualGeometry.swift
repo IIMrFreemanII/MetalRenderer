@@ -220,6 +220,12 @@ final class VirtualGeometry {
             pool.contents().advanced(by: grp.poolOffset).copyMemory(from: raw.baseAddress!.advanced(by: grp.pageOffset),
                                                                     byteCount: grp.pageSize)
         }
+        // Each cluster's header word 3 (unused in the cache) gets group | level << 24, for the geometry debug views.
+        let rec = meshes[grp.mesh].groups[grp.local]
+        let groupLevel = UInt32(grp.local) & 0xFFFFFF | min(rec.level, 255) << 24
+        for c in meshes[grp.mesh].clusters[Int(rec.clusterStart)..<Int(rec.clusterStart + rec.clusterCount)] {
+            pool.contents().storeBytes(of: groupLevel, toByteOffset: grp.poolOffset + Int(c.pageOffset) + 12, as: UInt32.self)
+        }
     }
 
     // MARK: Per frame

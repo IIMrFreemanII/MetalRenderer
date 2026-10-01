@@ -12,6 +12,7 @@ final class SettingsPanel: NSObject {
     private let sceneKind = NSPopUpButton()
     private let rayTracer = NSPopUpButton()
     private let virtualGeometry = NSButton(checkboxWithTitle: "Virtual geometry (LOD)", target: nil, action: nil)
+    private let freezeLOD = NSButton(checkboxWithTitle: "Freeze LOD (L)", target: nil, action: nil)
     private let specular = NSButton(checkboxWithTitle: "Specular (glTF PBR)", target: nil, action: nil)
     private let vgError = NSSlider()               // log2 of the allowed error in traced pixels
     private let vgErrorValue = NSTextField(labelWithString: "")
@@ -129,6 +130,7 @@ final class SettingsPanel: NSObject {
                               (surfelDenoise, #selector(surfelDenoiseChanged)), (cascadeBounce, #selector(cascadeBounceChanged)),
                               (cascadeDenoise, #selector(cascadeDenoiseChanged)),
                               (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged)),
+                              (freezeLOD, #selector(freezeLODChanged)),
                               (specular, #selector(specularChanged))] {
             box.target = self
             box.action = action
@@ -151,6 +153,7 @@ final class SettingsPanel: NSObject {
             [label("Ray tracing"), rayTracer],
             [NSGridCell.emptyContentView, virtualGeometry],
             [label("Geometry error"), vgError, vgErrorValue],
+            [NSGridCell.emptyContentView, freezeLOD],
             [NSGridCell.emptyContentView, specular],
             [header("Rendering")],
             [label("Render scale"), renderScale, renderScaleValue],
@@ -268,6 +271,8 @@ final class SettingsPanel: NSObject {
         vgError.doubleValue = Double(log2(s.virtualGeometry.pixelError))
         vgErrorValue.stringValue = String(format: "%.2g px", s.virtualGeometry.pixelError)
         vgError.isEnabled = s.rayTracer == .custom && s.virtualGeometry.enabled
+        freezeLOD.state = s.virtualGeometry.freeze ? .on : .off
+        freezeLOD.isEnabled = vgError.isEnabled
         objects.integerValue = s.scene.objects
         objectsValue.stringValue = "\(s.scene.objects)"
         lights.doubleValue = log2(Double(max(s.scene.lights, 1)))
@@ -363,6 +368,7 @@ final class SettingsPanel: NSObject {
         renderer.settings = s
     }
     @objc private func specularChanged() { renderer.settings.specular = specular.state == .on }
+    @objc private func freezeLODChanged() { renderer.settings.virtualGeometry.freeze = freezeLOD.state == .on }
     @objc private func virtualGeometryChanged() { renderer.settings.virtualGeometry.enabled = virtualGeometry.state == .on }
     @objc private func vgErrorChanged() {
         renderer.settings.virtualGeometry.pixelError = Float((pow(2, vgError.doubleValue) * 4).rounded() / 4)

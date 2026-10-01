@@ -10,8 +10,9 @@ import simd
 ///
 /// GPU memory holds only the current cuts: about one triangle per traced pixel at the default error of 1 px.
 final class VirtualBLAS {
-    /// Per VG instance on the GPU (MSL `VGBlas`): its current BLAS (nodes, then triangles as v0 e1 e2, then per
-    /// triangle 6 words of attributes: 3 octahedral normals, 3 half2 UVs, all in BLAS leaf order).
+    /// Per VG instance on the GPU (MSL `VGBlas`): its current BLAS (nodes, then triangles as v0 e1 e2 with the debug
+    /// views' IDs in e1.w / e2.w, then per triangle 6 words of attributes: 3 octahedral normals, 3 half2 UVs, all in BLAS
+    /// leaf order).
     struct Entry {
         var nodes: UInt64 = 0
         var tris: UInt64 = 0
@@ -144,12 +145,14 @@ final class VirtualBLAS {
         var positions: [SIMD3<Float>] = []
         var attrs: [SIMD3<UInt32>] = []      // per corner: (octahedral normal, half2 UV, 0)
         var boxes: [AABB] = []
+        var ids: [SIMD2<UInt32>] = []        // per triangle, for the debug views: cluster | triangle << 24, group | level << 24
         mesh.pageData.withUnsafeBytes { raw in
             for ci in selection {
                 let c = mesh.clusters[Int(ci)]
                 let base = Int(mesh.groups[Int(c.group)].pageOffset) + Int(c.pageOffset)
                 func u32(_ o: Int) -> UInt32 { raw.loadUnaligned(fromByteOffset: base + o, as: UInt32.self) }
                 let triCount = Int(u32(8)), posOffset = Int(u32(20)), uvOffset = Int(u32(24)), triOffset = Int(u32(28))
+                let groupLevel = c.group & 0xFFFFFF | min(mesh.groups[Int(c.group)].level, 255) << 24
                 for t in 0..<triCount {
                     let packed = u32(triOffset + 4 * t)
                     var box = AABB()
@@ -162,6 +165,7 @@ final class VirtualBLAS {
                         box.grow(p3)
                     }
                     boxes.append(box)
+                    ids.append(SIMD2(ci & 0xFFFFFF | UInt32(t) << 24, groupLevel))
                 }
             }
         }
@@ -179,8 +183,8 @@ final class VirtualBLAS {
         for (i, t) in order.enumerated() {
             let p0 = positions[3 * t], p1 = positions[3 * t + 1], p2 = positions[3 * t + 2]
             tris[3 * i] = SIMD4(p0, Float(bitPattern: UInt32(i)))
-            tris[3 * i + 1] = SIMD4(p1 - p0, 0)
-            tris[3 * i + 2] = SIMD4(p2 - p0, 0)
+            tris[3 * i + 1] = SIMD4(p1 - p0, Float(bitPattern: ids[t].x))   // the w components are free: debug IDs
+            tris[3 * i + 2] = SIMD4(p2 - p0, Float(bitPattern: ids[t].y))
             for k in 0..<3 {
                 at[6 * i + k] = attrs[3 * t + k].x          // normals
                 at[6 * i + 3 + k] = attrs[3 * t + k].y      // UVs

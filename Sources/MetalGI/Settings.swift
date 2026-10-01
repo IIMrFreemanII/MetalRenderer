@@ -159,6 +159,9 @@ struct VirtualGeometrySettings: Equatable {
     var enabled = ProcessInfo.processInfo.environment["METALGI_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALGI_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALGI_VG_POOL"] ?? "") ?? 768
+    /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
+    /// to see the cut it got from far away).
+    var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
     static let poolOptions = [256, 512, 768, 1024, 2048]
@@ -210,5 +213,9 @@ struct RenderSettings: Equatable {
     static let renderScaleStep: CGFloat = 0.125
     static let bounceRange = 1...8
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
-                            "Indirect only", "GI debug"]
+                            "Indirect only", "GI debug",
+                            "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost"]
+    /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
+    /// projected triangle size, and the primary rays' traversal cost.
+    static let geometryViews = 8...13
 }

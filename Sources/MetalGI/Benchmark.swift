@@ -408,6 +408,21 @@ final class Benchmark {
                 out.append(shown)
             }
             return out
+        case "vgdebug":
+            // The geometry debug views at the gallery overview and close-up, native resolution (crisp PNGs), with
+            // virtual geometry, plus full-detail meshes for the views that show all geometry.
+            var out: [Config] = []
+            for (cam, camera) in [("overview", Scene.galleryCamera), ("closeup", Benchmark.galleryCloseup)] {
+                for (tag, on) in [("vg", true), ("full", false)] {
+                    var v = VirtualGeometrySettings(); v.enabled = on
+                    for mode in RenderSettings.geometryViews where on || [8, 12, 13].contains(mode) {
+                        let name = RenderSettings.viewModes[mode].lowercased()
+                        out.append(Config(name: "\(tag) \(name) \(cam)", renderScale: 1, giEnabled: false, viewMode: mode, paused: true,
+                                          startTime: 5, frames: 8, scene: SceneSettings(kind: .gallery), virtualGeometry: v, camera: camera))
+                    }
+                }
+            }
+            return out
         case "quick": return [
             Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
             Config(name: "default, MetalFX temporal", renderScale: 0.5, upscale: 3, upscaler: .metalFX, giMode: .radianceCascades),

@@ -23,6 +23,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * Each instance whose cut changed gets a fresh SAH BLAS over exactly those triangles, read from the memory-mapped cache, so the OS streams pages from disk.
   * Rays see one tight tree per model.
   * The gallery's 17.9M triangles trace as a 0.4M-triangle cut in 40 MB, instead of ~1.5 GB, at about the same speed (see below).
+  * Debug views (key 9) show triangles, clusters, groups, DAG levels, projected triangle size and traversal cost. Freeze LOD (L) keeps the cut chosen for where the camera was, so you can fly up and inspect it.
 * **Physically based materials:** GGX specular with Smith visibility and Schlick Fresnel for glTF materials; the generated scenes stay diffuse and unchanged.
   * Direct specular is exact per light (representative-point sphere lights), multiplied by the shadow denoiser's visibility in the composite.
   * Indirect specular comes from a reflection pass: one GGX visible-normal ray per pixel, divided by an analytic specular albedo and denoised.
@@ -91,6 +92,7 @@ These variables apply to the gallery and to models in general:
   * `METALGI_VG_MODE=clusters` uses the GPU-driven cluster variant (see below), with `METALGI_VG_POOL=<MB>` for its page pool.
   * `METALGI_VG_SYNC=0|1` forces background or synchronous cut updates; benchmarks run them synchronously.
   * `METALGI_VG_TEST=<model.glb>` builds a model's DAG, checks its invariants, round-trips the cache file and exits.
+  * `METALGI_BENCH=vgdebug` renders every geometry debug view at the gallery overview and close-up, with virtual geometry and (for triangles, triangle size and cost) full-detail meshes; set `METALGI_BENCH_DIR` for the PNGs.
 * Textures:
   * `METALGI_TEXTURE_STREAMING=0` loads every texture whole, capped at `METALGI_TEXTURE_SIZE` (default 2048).
   * `METALGI_TEXTURE_BUDGET=<MB>` sets the streaming heap.
@@ -120,6 +122,8 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | U | MetalFX upscaling: off, 1.5×, 2×, 3× (output is capped at the window's pixel size) |
 | B | Toggle blue-noise sampling (on by default; the tile is generated at startup, which takes about 0.5 s) |
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (surfels: one color per surfel, holes in red; cascades: probe grid over interpolation confidence) |
+| 9, 0 | Cycle the geometry debug views (see below); back to the final image |
+| L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
 | R | Hot-reload `Shaders.metal` |
 | ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera |
 | Tab, ⌘, | Show or hide the Render Settings panel |
@@ -136,8 +140,24 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
 | Virtual geometry | On | Custom ray tracer only: big glTF meshes as streamed level-of-detail cuts. Off: full-detail meshes. |
 | Geometry error | 1 px | The cut's allowed geometric error in traced pixels. 0.5 px: about 2× the triangles, closer to full detail; 2 px: half. Changes apply within a few frames. |
+| Freeze LOD | Off | Keeps the cut chosen for the camera position at the moment it was turned on (title: "LOD frozen"). Fly up to a model to see the coarse geometry it gets from far away; turn it off and it refines within a few frames. |
 | Specular | On | GGX specular for glTF materials (direct and reflections). Off: diffuse only, and no reflection pass. |
 | Shadow rays | 1 per group + reuse | With more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
+
+### Geometry debug views
+
+The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
+
+| View | Shows |
+|---|---|
+| Triangles | A random colour per triangle, for all geometry. Virtual triangles keep their colour when the cut's BLAS is rebuilt. |
+| Clusters | A random colour per virtual-geometry cluster (up to 128 triangles); other geometry is grey. |
+| Groups | A random colour per cluster group, the unit the DAG simplifies and streams. |
+| LOD level | The cluster's DAG level on a blue (finest) to red (coarse) scale: finer near the camera, coarser far away. |
+| Triangle size | Projected edge length in traced pixels: blue ⅛ px, green 1 px, red 8 px and more. Virtual geometry at the default error is mostly green-yellow; full-detail meshes are blue (sub-pixel triangles). |
+| Traversal cost | Node visits plus half the triangle tests of each primary ray, log scale: blue few, red ~500. Custom tracer only; Metal's intersector can't be counted, so the view is magenta. |
+
+With the Metal tracer, the clusters, groups and LOD views are grey, because Metal traces full-detail meshes. The views work in both virtual-geometry runtimes. In `METALGI_VG_MODE=clusters`, cluster colours follow a cluster's place in the page pool, so they change when it is streamed again.
 
 ### Denoiser settings
 
