@@ -17,6 +17,21 @@ struct RTInstance {
 /// Kernels that build the dynamic TLAS (Shaders.metal, "per-frame build of the dynamic top-level tree").
 struct RTPipelines {
     let prep, keys, sortLocal, sortGlobal, hierarchy, fit: MTLComputePipelineState
+    let vg: VGPipelines
+}
+
+/// Where the LBVH kernels read their leaf count and sort size: set by the CPU, or written by an earlier kernel.
+enum LBVHCounts {
+    case bytes(SIMD2<UInt32>)
+    case buffer(MTLBuffer)
+}
+
+/// What the virtual-geometry cut needs to know about the view each frame.
+struct VGView {
+    var camPos: SIMD3<Float>
+    var pixelScale: Float       // traced height / (2 tan(fovY / 2))
+    var tau: Float              // allowed error in traced pixels
+    var frame: UInt32
 }
 
 /// The custom ray tracer's scene: per-mesh BLASes and the static TLAS (built once on the CPU), and per frame slot the
@@ -49,6 +64,17 @@ final class CustomRayTracer {
     private let nodeParent: MTLBuffer, leafParent: MTLBuffer, counters: MTLBuffer
     private let instanceCount: Int
     private let paddedCount: Int                  // moving instances rounded up to a power of two (sort size)
+    /// Virtual meshes, if the scene has any. Default: each virtual instance traced through an SAH BLAS over its
+    /// current cut (VirtualBLAS). METALGI_VG_MODE=clusters: a third top-level tree over this frame's cut of clusters,
+    /// selected and streamed on the GPU (VirtualGeometry).
+    let virtualGeometry: VirtualGeometry?
+    let virtualBLAS: VirtualBLAS?
+    static let clusterMode = ProcessInfo.processInfo.environment["METALGI_VG_MODE"] == "clusters"
+    private let dummy: MTLBuffer                  // stands in for the virtual-geometry buffers without any
+    /// Traversal counters (METALGI_RT_STATS=1 compiles them in): rays, top-level nodes, bottom-level nodes,
+    /// instance entries, cluster entries, triangle tests.
+    let stats: MTLBuffer
+    static let statsEnabled = ProcessInfo.processInfo.environment["METALGI_RT_STATS"] == "1"
 
     /// Root ref of the dynamic TLAS: its first node when it has 2+ instances, the instance itself when it has one.
     private var dynamicRoot: UInt32 {
@@ -57,7 +83,10 @@ final class CustomRayTracer {
 
     static func isStatic(_ inst: Scene.Instance) -> Bool { inst.animation == nil && inst.mask == Scene.maskGeometry }
 
-    init(device: MTLDevice, scene: Scene, slots: Int) throws {
+    /// The first node of this frame's cluster tree (after the static and dynamic trees).
+    private var virtualNodeBase: Int { staticNodes.count + max(dynamicIds.count - 1, 1) }
+
+    init(device: MTLDevice, scene: Scene, slots: Int, poolMB: Int = 768) throws {
         self.device = device
         let start = CACurrentMediaTime()
         let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes)
@@ -66,9 +95,14 @@ final class CustomRayTracer {
         cpu = (blas, blas.triangles)
 
         var staticBoxes: [AABB] = [], staticIds: [Int] = [], staticMasks: [UInt32] = [], dyn: [Int] = []
+        var virtualInstances: [(instance: Int, mesh: Int)] = []
+        func bounds(_ inst: Scene.Instance) -> AABB { inst.mesh >= 0 ? blas.bounds[inst.mesh] : scene.virtualMeshes[inst.virtualMesh].bounds }
         for (i, inst) in scene.instances.enumerated() {
-            if CustomRayTracer.isStatic(inst) {
-                staticBoxes.append(blas.bounds[inst.mesh].transformed(inst.transform))
+            if inst.virtualMesh >= 0 { virtualInstances.append((i, inst.virtualMesh)) }
+            if inst.virtualMesh >= 0 && CustomRayTracer.clusterMode {
+                continue   // in the cluster tree, not the instance trees
+            } else if CustomRayTracer.isStatic(inst) {
+                staticBoxes.append(bounds(inst).transformed(inst.transform))
                 staticIds.append(i)
                 staticMasks.append(inst.mask)
             } else {
@@ -92,13 +126,19 @@ final class CustomRayTracer {
         }
         blasNodes = try buffer(blas.nodes, "blasNodes")
         triangles = try buffer(blas.triangles, "bvhTriangles")
-        let tlasCapacity = staticNodes.count + max(dynamicIds.count - 1, 1)
+        virtualGeometry = virtualInstances.isEmpty || !CustomRayTracer.clusterMode ? nil
+            : try VirtualGeometry(device: device, meshes: scene.virtualMeshes, instances: virtualInstances, poolMB: poolMB, slots: slots)
+        virtualBLAS = virtualInstances.isEmpty || CustomRayTracer.clusterMode ? nil
+            : try VirtualBLAS(device: device, meshes: scene.virtualMeshes, instances: virtualInstances, slots: slots)
+        dummy = try buffer([UInt32](repeating: BVHNode.none, count: 4), "rtDummy")
+        stats = try buffer([UInt32](repeating: 0, count: 8), "rtStats")
+        let tlasCapacity = staticNodes.count + max(dynamicIds.count - 1, 1) + (virtualGeometry == nil ? 0 : VirtualGeometry.capacity)
         for slot in 0..<slots {
             let t = try buffer([BVHNode](repeating: BVHNode(), count: tlasCapacity), "tlasNodes\(slot)")
             staticNodes.withUnsafeBytes { if $0.count > 0 { t.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
             tlasNodes.append(t)
             instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(scene.instances.count, 1)), "rtInstances\(slot)"))
-            sceneArgs.append(try buffer([UInt8](repeating: 0, count: 48), "rtScene\(slot)"))
+            sceneArgs.append(try buffer([UInt8](repeating: 0, count: 112), "rtScene\(slot)"))
         }
 
         instanceCount = scene.instances.count
@@ -106,6 +146,9 @@ final class CustomRayTracer {
         var info: [SIMD4<Float>] = []
         for (m, b) in blas.bounds.enumerated() {
             info += [SIMD4(b.lo, Float(bitPattern: blas.roots[m])), SIMD4(b.hi, 0)]
+        }
+        for vm in scene.virtualMeshes {   // after the ordinary meshes (GPUInstanceData.meshIndex of virtual instances)
+            info += [SIMD4(vm.bounds.lo, 0), SIMD4(vm.bounds.hi, 0)]
         }
         var slotOf = [UInt32](repeating: BVHNode.none, count: max(scene.instances.count, 1))
         for (k, i) in dyn.enumerated() { slotOf[i] = UInt32(k) }
@@ -124,15 +167,23 @@ final class CustomRayTracer {
         if ProcessInfo.processInfo.environment["METALGI_RT_CHECK"] == "1" { selfTest(scene: scene) }
     }
 
-    /// RTScene: 4 GPU addresses, then the two root refs (MSL layout: 4 x 8 bytes + 4 x 4 bytes).
+    /// RTScene: 8 GPU addresses, then the static and dynamic root refs and the cluster tree's first node.
     private func writeArgs(slot: Int) {
         let p = sceneArgs[slot].contents()
+        let vg = virtualGeometry
         p.storeBytes(of: tlasNodes[slot].gpuAddress, toByteOffset: 0, as: UInt64.self)
         p.storeBytes(of: blasNodes.gpuAddress, toByteOffset: 8, as: UInt64.self)
         p.storeBytes(of: triangles.gpuAddress, toByteOffset: 16, as: UInt64.self)
         p.storeBytes(of: instances[slot].gpuAddress, toByteOffset: 24, as: UInt64.self)
-        p.storeBytes(of: staticRoot, toByteOffset: 32, as: UInt32.self)
-        p.storeBytes(of: dynamicRoot, toByteOffset: 36, as: UInt32.self)
+        p.storeBytes(of: (vg?.selectedBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
+        p.storeBytes(of: (vg?.pool ?? dummy).gpuAddress, toByteOffset: 40, as: UInt64.self)
+        p.storeBytes(of: (vg?.rootsBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 48, as: UInt64.self)
+        p.storeBytes(of: (vg?.nodeInstanceBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 56, as: UInt64.self)
+        p.storeBytes(of: stats.gpuAddress, toByteOffset: 64, as: UInt64.self)
+        p.storeBytes(of: (virtualBLAS?.table(slot: slot) ?? dummy).gpuAddress, toByteOffset: 72, as: UInt64.self)
+        p.storeBytes(of: staticRoot, toByteOffset: 80, as: UInt32.self)
+        p.storeBytes(of: dynamicRoot, toByteOffset: 84, as: UInt32.self)
+        p.storeBytes(of: UInt32(virtualNodeBase), toByteOffset: 88, as: UInt32.self)
     }
 
     static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32) -> RTInstance {
@@ -147,9 +198,12 @@ final class CustomRayTracer {
     func update(slot: Int, scene: Scene) {
         guard CustomRayTracer.cpuBuild else { return }
         let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
-        for (i, s) in scene.instances.enumerated() { inst[i] = CustomRayTracer.rtInstance(s, blasRoot: blasRoots[s.mesh]) }
+        for (i, s) in scene.instances.enumerated() { inst[i] = CustomRayTracer.rtInstance(s, blasRoot: s.mesh >= 0 ? blasRoots[s.mesh] : 0) }
         guard dynamicIds.count >= 2 else { return }
-        let boxes = dynamicIds.map { meshBounds[scene.instances[$0].mesh].transformed(scene.instances[$0].transform) }
+        let boxes = dynamicIds.map { i -> AABB in
+            let inst = scene.instances[i]
+            return (inst.mesh >= 0 ? meshBounds[inst.mesh] : scene.virtualMeshes[inst.virtualMesh].bounds).transformed(inst.transform)
+        }
         var nodes: [BVHNode] = []
         _ = BVHBuilder.buildTLAS(boxes: boxes, ids: dynamicIds, masks: dynamicIds.map { scene.instances[$0].mask },
                                  nodeBase: staticNodes.count, into: &nodes)
@@ -159,73 +213,125 @@ final class CustomRayTracer {
         }
     }
 
-    /// GPU build: every instance's RTInstance and the dynamic TLAS from this frame's instance data.
-    func encodeBuild(_ enc: MTLComputeCommandEncoder, slot: Int, instanceData: MTLBuffer) {
-        guard !CustomRayTracer.cpuBuild, instanceCount > 0, let pipelines else { return }
+    /// GPU build: every instance's RTInstance, the dynamic TLAS from this frame's instance data, and the
+    /// virtual-geometry cut and its cluster tree.
+    func encodeBuild(_ enc: MTLComputeCommandEncoder, slot: Int, instanceData: MTLBuffer, view: VGView) {
+        guard instanceCount > 0, let pipelines else { return }
+        if !CustomRayTracer.cpuBuild {
+            var count = UInt32(instanceCount)
+            enc.setBytes(&count, length: 4, index: 0)
+            enc.setBuffer(instanceData, offset: 0, index: 1)
+            enc.setBuffer(meshInfo, offset: 0, index: 2)
+            enc.setBuffer(dynSlot, offset: 0, index: 3)
+            enc.setBuffer(instances[slot], offset: 0, index: 4)
+            enc.setBuffer(leafBoxes, offset: 0, index: 5)
+            enc.setComputePipelineState(pipelines.prep)
+            enc.dispatchThreads(MTLSize(width: instanceCount, height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+            let n = dynamicIds.count
+            if n >= 2 {
+                CustomRayTracer.encodeLBVH(enc, rt: pipelines, counts: .bytes(SIMD2(UInt32(n), UInt32(paddedCount))), capacity: n,
+                                           leafBoxes: leafBoxes, keys: keys, values: values, nodes: tlasNodes[slot],
+                                           nodeBase: staticNodes.count, nodeParent: nodeParent, leafParent: leafParent, counters: counters)
+            }
+        }
+        virtualGeometry?.encode(enc, slot: slot, rt: pipelines, vg: pipelines.vg, instanceData: instanceData, tlasNodes: tlasNodes[slot],
+                                nodeBase: virtualNodeBase, camPos: view.camPos, pixelScale: view.pixelScale, tau: view.tau, frame: view.frame)
+    }
+
+    /// An LBVH over `leafBoxes` (Morton keys, bitonic sort, Karras hierarchy, bottom-up boxes) into `nodes` from
+    /// `nodeBase` on. Dispatches cover `capacity` leaves; the kernels skip what lies beyond the actual count.
+    static func encodeLBVH(_ enc: MTLComputeCommandEncoder, rt: RTPipelines, counts: LBVHCounts, capacity: Int,
+                           leafBoxes: MTLBuffer, keys: MTLBuffer, values: MTLBuffer, nodes: MTLBuffer, nodeBase: Int,
+                           nodeParent: MTLBuffer, leafParent: MTLBuffer, counters: MTLBuffer) {
         func dispatch(_ pso: MTLComputePipelineState, _ threads: Int, group: Int = 64) {
             enc.setComputePipelineState(pso)
-            enc.dispatchThreads(MTLSize(width: threads, height: 1, depth: 1),
+            enc.dispatchThreads(MTLSize(width: max(threads, 1), height: 1, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: min(group, pso.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
         }
-        var count = UInt32(instanceCount)
-        enc.setBytes(&count, length: 4, index: 0)
-        enc.setBuffer(instanceData, offset: 0, index: 1)
-        enc.setBuffer(meshInfo, offset: 0, index: 2)
-        enc.setBuffer(dynSlot, offset: 0, index: 3)
-        enc.setBuffer(instances[slot], offset: 0, index: 4)
-        enc.setBuffer(leafBoxes, offset: 0, index: 5)
-        dispatch(pipelines.prep, instanceCount)
-        let n = dynamicIds.count
-        guard n >= 2 else { return }
+        func bindCounts(_ index: Int) {
+            switch counts {
+            case .bytes(var c): enc.setBytes(&c, length: 8, index: index)
+            case .buffer(let b): enc.setBuffer(b, offset: 0, index: index)
+            }
+        }
+        let padded = max(2, 1 << Int(ceil(log2(Double(max(capacity, 2))))))   // sort size the dispatches cover
 
-        var counts = SIMD2<UInt32>(UInt32(n), UInt32(paddedCount))
-        enc.setBytes(&counts, length: 8, index: 0)
+        bindCounts(0)
         enc.setBuffer(leafBoxes, offset: 0, index: 1)
         enc.setBuffer(keys, offset: 0, index: 2)
         enc.setBuffer(values, offset: 0, index: 3)
-        dispatch(pipelines.keys, 1024, group: 1024)
+        dispatch(rt.keys, 1024, group: 1024)
+        encodeSort(enc, rt: rt, counts: counts, capacity: capacity, keys: keys, values: values)
 
-        // Bitonic sort: whole 2048-key blocks in threadgroup memory, then the cross-block stages.
+        var params = SIMD2<UInt32>(0, UInt32(nodeBase))
+        enc.setBytes(&params, length: 8, index: 0)
         enc.setBuffer(keys, offset: 0, index: 1)
         enc.setBuffer(values, offset: 0, index: 2)
-        let block = 2048, blocks = max(paddedCount / block, 1)
+        enc.setBuffer(leafBoxes, offset: 0, index: 3)
+        enc.setBuffer(nodes, offset: nodeBase * MemoryLayout<BVHNode>.stride, index: 4)
+        enc.setBuffer(nodeParent, offset: 0, index: 5)
+        enc.setBuffer(leafParent, offset: 0, index: 6)
+        enc.setBuffer(counters, offset: 0, index: 7)
+        bindCounts(8)
+        dispatch(rt.hierarchy, capacity - 1)
+        dispatch(rt.fit, capacity)
+    }
+
+    /// Bitonic sort of (key, value) pairs: whole 2048-key blocks in threadgroup memory, then the cross-block stages.
+    /// Dispatches cover `capacity`; the kernels skip what lies beyond the padded count in `counts`.
+    static func encodeSort(_ enc: MTLComputeCommandEncoder, rt: RTPipelines, counts: LBVHCounts, capacity: Int,
+                           keys: MTLBuffer, values: MTLBuffer) {
+        func dispatch(_ pso: MTLComputePipelineState, _ threads: Int) {
+            enc.setComputePipelineState(pso)
+            enc.dispatchThreads(MTLSize(width: max(threads, 1), height: 1, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: min(64, pso.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+        }
+        let padded = max(2, 1 << Int(ceil(log2(Double(max(capacity, 2))))))
+        enc.setBuffer(keys, offset: 0, index: 1)
+        enc.setBuffer(values, offset: 0, index: 2)
+        switch counts {
+        case .bytes(var c): enc.setBytes(&c, length: 8, index: 3)
+        case .buffer(let b): enc.setBuffer(b, offset: 0, index: 3)
+        }
+        let block = 2048, blocks = max(padded / block, 1)
         func local(_ k: Int) {
-            var p = SIMD2<UInt32>(UInt32(paddedCount), UInt32(k))
+            var p = SIMD2<UInt32>(0, UInt32(k))
             enc.setBytes(&p, length: 8, index: 0)
-            enc.setComputePipelineState(pipelines.sortLocal)
+            enc.setComputePipelineState(rt.sortLocal)
             enc.dispatchThreadgroups(MTLSize(width: blocks, height: 1, depth: 1),
                                      threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
         }
         local(0)
         var k = 2 * block
-        while k <= paddedCount {
+        while k <= padded {
             var j = k / 2
             while j >= block {
                 var p = SIMD2<UInt32>(UInt32(k), UInt32(j))
                 enc.setBytes(&p, length: 8, index: 0)
-                dispatch(pipelines.sortGlobal, paddedCount / 2)
+                dispatch(rt.sortGlobal, padded / 2)
                 j /= 2
             }
             local(k)
             k *= 2
         }
+    }
 
-        var params = SIMD2<UInt32>(UInt32(n), UInt32(staticNodes.count))
-        enc.setBytes(&params, length: 8, index: 0)
-        enc.setBuffer(keys, offset: 0, index: 1)
-        enc.setBuffer(values, offset: 0, index: 2)
-        enc.setBuffer(leafBoxes, offset: 0, index: 3)
-        enc.setBuffer(tlasNodes[slot], offset: staticNodes.count * MemoryLayout<BVHNode>.stride, index: 4)
-        enc.setBuffer(nodeParent, offset: 0, index: 5)
-        enc.setBuffer(leafParent, offset: 0, index: 6)
-        enc.setBuffer(counters, offset: 0, index: 7)
-        dispatch(pipelines.hierarchy, n - 1)
-        dispatch(pipelines.fit, n)
+    /// Per-ray averages of the traversal counters since the last call (then resets them).
+    func takeStats() -> String {
+        let c = stats.contents().bindMemory(to: UInt32.self, capacity: 8)
+        let rays = max(Double(c[0]), 1)
+        let out = String(format: "rays %.0fk: per ray %.1f top nodes (%.1f inside virtual instances), %.1f bottom nodes, %.2f instance entries, %.2f cluster entries, %.1f triangle tests",
+                         rays / 1000, Double(c[1]) / rays, Double(c[6]) / rays, Double(c[2]) / rays, Double(c[3]) / rays, Double(c[4]) / rays, Double(c[5]) / rays)
+        memset(stats.contents(), 0, 32)
+        return out
     }
 
     func bind(_ enc: MTLComputeCommandEncoder, slot: Int) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
-        enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot]], usage: .read)
+        enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot]] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
+                         + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
+        enc.useResource(stats, usage: [.read, .write])
     }
 
     // MARK: - Self-test (METALGI_RT_CHECK=1)

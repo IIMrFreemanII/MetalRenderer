@@ -253,6 +253,15 @@ enum BVHBuilder {
         return (root, depth(tree))
     }
 
+    /// A small BVH over one virtual-geometry cluster's triangles (≤ 128): node indices and leaf refs are local
+    /// (BLAS leaf refs with the first triangle in `order`'s numbering). The root is always an internal node.
+    static func buildCluster(boxes: [AABB]) -> (nodes: [BVHNode], order: [Int]) {
+        let (tree, order) = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+        var nodes: [BVHNode] = []
+        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in BVHNode.blasLeaf(first: n.start, count: n.count) }
+        return (nodes, order)
+    }
+
     private static func depth(_ tree: [Node]) -> Int {
         guard !tree.isEmpty else { return 0 }
         var best = 0

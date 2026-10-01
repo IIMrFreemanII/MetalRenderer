@@ -99,6 +99,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// `METALGI_VG_TEST=<model.glb>`: builds the model's virtual geometry, checks the DAG, round-trips the cache file
+/// and exits (no window).
+if let path = ProcessInfo.processInfo.environment["METALGI_VG_TEST"] {
+    let url = URL(fileURLWithPath: path)
+    do {
+        let model = try GLTFLoader.load(url)
+        var built: [(index: Int, mesh: VirtualMesh)] = []
+        for (i, m) in model.meshes.enumerated() where m.indices.count / 3 >= (Int(ProcessInfo.processInfo.environment["METALGI_VG_MIN"] ?? "") ?? VirtualGeometryBuilder.minTriangles) {
+            let mesh = VirtualGeometryBuilder.build(positions: m.positions, normals: m.normals, uvs: m.uvs, indices: m.indices,
+                                                    name: "\(model.name)#\(i)")
+            let problems = VirtualGeometryBuilder.check(mesh)
+            print(problems.isEmpty ? "  DAG check: ok" : "  DAG check: \(problems.count) problems\n    " + problems.joined(separator: "\n    "))
+            let levels = Dictionary(grouping: mesh.clusters, by: { mesh.groups[Int($0.group)].level })
+            for l in levels.keys.sorted() {
+                let cs = levels[l]!
+                print(String(format: "    level %2d: %6d clusters, %8d triangles, error %.5f", l, cs.count,
+                             cs.reduce(0) { $0 + Int($1.triangles) }, cs.map(\.lo.w).max() ?? 0))
+            }
+            built.append((i, mesh))
+        }
+        let cache = VirtualGeometryBuilder.cacheURL(for: url)
+        try VirtualGeometryBuilder.write(built, to: cache)
+        let back = try VirtualGeometryBuilder.read(cache)
+        for (i, m) in built {
+            let r = back[i]!
+            let same = r.clusters.count == m.clusters.count && r.groups.count == m.groups.count && r.pageData == m.pageData
+            print("  cache round trip mesh \(i): \(same ? "ok" : "MISMATCH") (\(cache.lastPathComponent))")
+        }
+    } catch {
+        print("VG test failed: \(error)")
+    }
+    exit(0)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

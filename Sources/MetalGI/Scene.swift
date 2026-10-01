@@ -15,6 +15,7 @@ final class Scene {
         var transform: float4x4
         var prevTransform: float4x4
         var animation: ((Float) -> float4x4)?
+        var virtualMesh = -1                  // >= 0: index into `virtualMeshes` (then `mesh` is -1)
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -42,6 +43,10 @@ final class Scene {
     private(set) var normals: [SIMD3<Float>] = []
     private(set) var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
     private(set) var textures: [TextureSource] = []
+    /// Large glTF meshes as streamed, level-of-detail cluster DAGs (custom ray tracer only; see VirtualGeometry).
+    private(set) var virtualMeshes: [VirtualMesh] = []
+    private(set) var virtualMeshNames: [String] = []
+    let usesVirtualGeometry: Bool
     private(set) var indices: [UInt32] = []
     private(set) var meshes: [GPUMesh] = []
     private(set) var materials: [GPUMaterial] = []
@@ -53,8 +58,11 @@ final class Scene {
 
     let skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
 
-    init(_ settings: SceneSettings = SceneSettings()) {
+    /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
+    /// of ordinary full-detail meshes.
+    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false) {
         self.settings = settings
+        self.usesVirtualGeometry = virtualGeometry
         switch settings.kind {
         case .cornell: buildCornell()
         case .stress: buildStress(objects: settings.objects, lights: settings.lights)
@@ -89,7 +97,8 @@ final class Scene {
     func bounds() -> (SIMD3<Float>, SIMD3<Float>) {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.mask == Scene.maskGeometry {
-            let (a, b) = meshBounds[inst.mesh]
+            let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
+                                               : meshBounds[inst.mesh]
             for corner in 0..<8 {
                 let c = SIMD3<Float>(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z)
                 let p = inst.transform * SIMD4<Float>(c, 1)
@@ -102,14 +111,20 @@ final class Scene {
 
     // MARK: - GPU data
 
+    /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
+    /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
     func gpuInstanceData() -> [GPUInstanceData] {
-        instances.map {
-            GPUInstanceData(transform: $0.transform,
-                            prevTransform: $0.prevTransform,
-                            normalMatrix: $0.transform.inverse.transpose,
-                            meshIndex: UInt32($0.mesh),
-                            materialIndex: UInt32($0.material),
-                            pad0: $0.mask)
+        var virtualRank: UInt32 = 0
+        return instances.map {
+            var vg: UInt32 = 0
+            if $0.virtualMesh >= 0 { virtualRank += 1; vg = virtualRank }
+            return GPUInstanceData(transform: $0.transform,
+                                   prevTransform: $0.prevTransform,
+                                   normalMatrix: $0.transform.inverse.transpose,
+                                   meshIndex: $0.mesh >= 0 ? UInt32($0.mesh) : UInt32(meshes.count + $0.virtualMesh),
+                                   materialIndex: UInt32($0.material),
+                                   pad0: $0.mask,
+                                   pad1: vg)
         }
     }
 
@@ -372,7 +387,7 @@ final class Scene {
 
     /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
     /// materials and textures. `animation`, if given, replaces `transform` over time.
-    private func addModel(_ model: GLTFModel, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+    private func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
         var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
         func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
             guard let ref else { return .max }
@@ -393,17 +408,32 @@ final class Scene {
                                 texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
         }
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
-        let meshBase = meshes.count
-        for mesh in model.meshes {
-            _ = addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs)
+        // Big meshes become virtual (cached cluster DAGs); the rest are ordinary meshes.
+        let virtualIndices = usesVirtualGeometry
+            ? model.meshes.indices.filter { model.meshes[$0].indices.count / 3 >= VirtualGeometryBuilder.minTriangles } : []
+        var meshOf: [Int: (mesh: Int, virtual: Int)] = [:]
+        if !virtualIndices.isEmpty {
+            let built = VirtualGeometryBuilder.meshes(for: url, model: model, indices: virtualIndices)
+            for i in virtualIndices {
+                guard let vm = built[i] else { continue }
+                virtualMeshes.append(vm)
+                virtualMeshNames.append("\(model.name)#\(i)")
+                meshOf[i] = (-1, virtualMeshes.count - 1)
+            }
+        }
+        for (i, mesh) in model.meshes.enumerated() where meshOf[i] == nil {
+            meshOf[i] = (addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs), -1)
         }
         for part in model.parts {
             let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
+            let (mesh, virtual) = meshOf[part.mesh]!
+            let index: Int
             if let animation {
-                addInstance(meshBase + part.mesh, material, transform * part.transform) { t in animation(t) * part.transform }
+                index = addInstance(mesh, material, transform * part.transform) { t in animation(t) * part.transform }
             } else {
-                addInstance(meshBase + part.mesh, material, transform * part.transform)
+                index = addInstance(mesh, material, transform * part.transform)
             }
+            instances[index].virtualMesh = virtual
         }
     }
 
@@ -411,7 +441,8 @@ final class Scene {
     private func addExtraModel(_ extra: ExtraModel) {
         do {
             let model = try GLTFLoader.load(URL(fileURLWithPath: extra.path))
-            addModel(model, transform: translate(extra.position) * rotate(extra.yaw, [0, 1, 0]) * Scene.placement(model, size: 1.6))
+            addModel(model, url: URL(fileURLWithPath: extra.path),
+                     transform: translate(extra.position) * rotate(extra.yaw, [0, 1, 0]) * Scene.placement(model, size: 1.6))
         } catch {
             print("Could not load \(extra.path): \(error)")
         }
@@ -454,9 +485,9 @@ final class Scene {
             let place = Scene.placement(model, size: 1.6)
             if i % 5 == 1 {   // turntables
                 let speed: Float = i % 2 == 0 ? 0.25 : -0.2
-                addModel(model, transform: base * place) { t in base * rotate(speed * t, [0, 1, 0]) * place }
+                addModel(model, url: url, transform: base * place) { t in base * rotate(speed * t, [0, 1, 0]) * place }
             } else {
-                addModel(model, transform: base * place)
+                addModel(model, url: url, transform: base * place)
             }
             print(String(format: "Gallery: %@ (%d triangles, %d images)", model.name, model.triangleCount, model.images.count))
         }

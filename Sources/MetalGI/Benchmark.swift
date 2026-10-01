@@ -34,13 +34,20 @@ final class Benchmark {
         var supersample = false       // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
         var scene = SceneSettings()
         var rayTracer: RayTracerKind? = nil   // nil = METALGI_RT / the default
+        var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALGI_VG...)
     }
 
     /// Scripted camera move for the "camera" settings: a yaw sweep plus dolly that ends at the default camera,
     /// still moving, so the last frame can be scored against the same t = 5 s references as the static frames.
     static func cameraPose(progress p: Float, scene: SceneKind = .cornell) -> Camera {
         var c = Camera(), start = Camera()
-        if scene == .stress {
+        if scene == .gallery {
+            // From close to the left models, gliding back to the gallery overview.
+            c = Scene.galleryCamera
+            start.position = SIMD3<Float>(-3.2, 1.5, 0.2)
+            start.yaw = -0.7
+            start.pitch = -0.05
+        } else if scene == .stress {
             // Low over the floor on the right, sweeping up to the overview.
             c = Scene.stressCamera
             start.position = SIMD3<Float>(7.0, 2.2, 12.0)
@@ -347,6 +354,29 @@ final class Benchmark {
                 }
             }
             out += moving("cornell cascades", .radianceCascades, scene(.cornell))
+            return out
+        case "gallery":
+            // The glTF gallery: full-detail meshes against virtual geometry at several error thresholds, alternating
+            // so heat affects them alike. Paused frames at t = 5 s (PNGs for diffs), then the scripted camera move.
+            func vg(_ on: Bool, _ tau: Float = 1) -> VirtualGeometrySettings {
+                var v = VirtualGeometrySettings(); v.enabled = on; v.pixelError = tau; return v
+            }
+            let variants: [(String, VirtualGeometrySettings)] = [("full", vg(false)), ("vg1", vg(true, 1)), ("full", vg(false)),
+                                                                 ("vg0.5", vg(true, 0.5)), ("vg2", vg(true, 2))]
+            let gallery = SceneSettings(kind: .gallery)
+            var out: [Config] = []
+            for (tag, v) in variants {
+                out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
+                                  frames: 60, scene: gallery, virtualGeometry: v))
+                out.append(Config(name: "\(tag) surfels static", renderScale: 0.5, paused: true, startTime: 5, frames: 60,
+                                  giMode: .surfels, scene: gallery, virtualGeometry: v))
+                out.append(Config(name: "\(tag) albedo static", renderScale: 0.5, viewMode: 4, paused: true, startTime: 5, frames: 30,
+                                  scene: gallery, virtualGeometry: v))
+            }
+            for (tag, v) in [("full", vg(false)), ("vg1", vg(true, 1))] {
+                out.append(Config(name: "\(tag) camera", renderScale: 0.5, upscale: 3, giMode: .surfels, cameraPath: true,
+                                  scene: gallery, virtualGeometry: v))
+            }
             return out
         case "quick": return [
             Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),

@@ -154,6 +154,16 @@ struct SceneSettings: Equatable {
     static let lightRange = 1...256
 }
 
+/// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
+struct VirtualGeometrySettings: Equatable {
+    var enabled = ProcessInfo.processInfo.environment["METALGI_VG"] != "0"
+    var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALGI_VG_TAU"] ?? "") ?? 1   // traced pixels
+    var poolMB = Int(ProcessInfo.processInfo.environment["METALGI_VG_POOL"] ?? "") ?? 768
+
+    static let pixelErrorRange: ClosedRange<Float> = 0.25...8
+    static let poolOptions = [256, 512, 768, 1024, 2048]
+}
+
 /// Everything the settings panel and the keyboard shortcuts can change.
 struct RenderSettings: Equatable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
@@ -175,6 +185,7 @@ struct RenderSettings: Equatable {
     var cascades = CascadeSettings()
     var scene = SceneSettings()
     var rayTracer = RayTracerKind.initial
+    var virtualGeometry = VirtualGeometrySettings()
 
     /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their

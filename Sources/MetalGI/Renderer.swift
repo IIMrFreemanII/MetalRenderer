@@ -295,7 +295,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
         // 3.0 and then need METALGI_RT=metal.
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
-        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0)]
+        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
+                                      "RT_STATS": NSNumber(value: CustomRayTracer.statsEnabled ? 1 : 0)]
         let library = try device.makeLibrary(source: source, options: options)
 
         func pipeline(_ name: String) throws -> MTLComputePipelineState {
@@ -318,7 +319,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let rt = kind != .custom ? nil :
             RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
                         sortLocal: try pipeline("rtSortLocalKernel"), sortGlobal: try pipeline("rtSortGlobalKernel"),
-                        hierarchy: try pipeline("rtHierarchyKernel"), fit: try pipeline("rtFitKernel"))
+                        hierarchy: try pipeline("rtHierarchyKernel"), fit: try pipeline("rtFitKernel"),
+                        vg: VGPipelines(reset: try pipeline("vgResetKernel"), cut: try pipeline("vgCutKernel"),
+                                        finish: try pipeline("vgFinishKernel"), pad: try pipeline("vgPadKernel"),
+                                        hierarchy: try pipeline("vgHierarchyKernel"), fit: try pipeline("vgFitKernel")))
         let rc = RCPipelines(probe: try pipeline("rcProbeKernel"), traceMerge: try pipeline("rcTraceMergeKernel"),
                              sh: try pipeline("rcSHKernel"), clearAmbient: try pipeline("rcClearAmbientKernel"),
                              resolve: try pipeline("rcResolveKernel"))
@@ -368,10 +372,24 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
     private var loading: (scene: SceneSettings, rayTracer: RayTracerKind)?   // being prepared in the background
 
+    /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
+    private var virtualGeometryChanged: Bool {
+        let hasModels = scene.settings.kind == .gallery || !scene.settings.extraModels.isEmpty
+        let poolChanged = customRT?.virtualGeometry.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
+        return hasModels && (scene.usesVirtualGeometry != wantsVirtualGeometry(settings.rayTracer) || poolChanged)
+    }
+
+    /// Virtual geometry needs the custom tracer (Metal would need acceleration structures rebuilt for every cut).
+    private func wantsVirtualGeometry(_ rayTracer: RayTracerKind) -> Bool {
+        rayTracer == .custom && settings.virtualGeometry.enabled
+    }
+
     private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?) throws -> PreparedScene {
-        let newScene = current ?? Scene(sceneSettings)
+        let virtual = wantsVirtualGeometry(rayTracer)
+        let newScene = current.flatMap { $0.usesVirtualGeometry == virtual ? $0 : nil } ?? Scene(sceneSettings, virtualGeometry: virtual)
         let textures = try MaterialTextures.load(newScene.textures, device: device, queue: queue)
-        let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, slots: Renderer.maxFramesInFlight) : nil
+        let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, slots: Renderer.maxFramesInFlight,
+                                                            poolMB: settings.virtualGeometry.poolMB) : nil
         return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, customRT: rt)
     }
 
@@ -417,7 +435,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if builtRayTracer == .metal { try buildPrimitiveAccelerationStructures() }
         try createPerFrameResources()
         if builtRayTracer == .custom {
-            customRT = try prepared?.customRT ?? CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight)
+            customRT = try prepared?.customRT ?? CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight,
+                                                                 poolMB: settings.virtualGeometry.poolMB)
             customRT?.pipelines = rtPipelines
         }
         let lmd = MTLTextureDescriptor()
@@ -714,7 +733,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         guard let t = targets else { return }
 
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer {
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged {
             if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
@@ -770,6 +789,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         scene.update(time: animTime)
 
         let slot = Int(frameIndex) % Renderer.maxFramesInFlight
+        customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
+        customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
+                                      camPos: camera.position, pixelScale: Float(height) / (2 * tan(camera.fovY / 2)),
+                                      tau: settings.virtualGeometry.pixelError, transforms: scene.instances.map(\.transform))
         writeFrameData(slot: slot)
 
         guard let cmd = queue.makeCommandBuffer() else {
@@ -830,8 +853,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             asEncoder.endEncoding()
         }
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
+        // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
         if let customRT, let enc = passBuffer("tlas").makeComputeCommandEncoder() {
-            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot])
+            let view = VGView(camPos: camera.position, pixelScale: Float(height) / (2 * tan(camera.fovY / 2)),
+                              tau: settings.virtualGeometry.pixelError, frame: frameIndex)
+            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: view)
             enc.endEncoding()
         }
 
@@ -1072,6 +1098,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         openEncoder?.endEncoding()
 
         var writeCapture: (() -> Void)?
+        if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
+        if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
+        if let benchmark, benchmark.isMeasuring, CustomRayTracer.statsEnabled, let customRT {
+            // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
+            if benchmark.shouldCapture { print("  " + customRT.takeStats()) } else { _ = customRT.takeStats() }
+        }
         if let benchmark, let drawable, benchmark.shouldCapture {
             writeCapture = benchmark.encodeCapture(of: drawable.texture, into: cmd, device: device)
         }
@@ -1080,7 +1112,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
         let passes = passBuffers
+        let vg = customRT?.virtualGeometry, vgFrame = frameIndex
         cmd.addCompletedHandler { [weak self] cb in
+            if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame) }
             if let bench, recordFrame {
                 var passMs: [String: Double] = [:]
                 var start = Double.infinity, end = 0.0
@@ -1106,7 +1140,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         cmd.commit()
         // Benchmark: finish this frame before encoding the next, so passes from consecutive frames
         // never overlap on the GPU and inflate each other's timings.
-        if benchmark != nil { cmd.waitUntilCompleted() }
+        if benchmark != nil {
+            cmd.waitUntilCompleted()
+            vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
+        }
 
         prevCamera = camera
         prevJitter = jitter
@@ -1213,11 +1250,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                surfels: c.surfels, cascades: c.cascades, scene: c.scene)
         Benchmark.applySceneOverride(to: &s.scene)
         if let rt = c.rayTracer { s.rayTracer = rt }
+        if let v = c.virtualGeometry { s.virtualGeometry = v }
         s.denoiser.enabled = c.denoiseEnabled
         Benchmark.applyDenoiserOverride(to: &s.denoiser)
         if !c.accumulate { Benchmark.applyGIOverride(to: &s) }
         settings = s
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer { rebuildScene(resetCamera: false) }
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
@@ -1317,6 +1355,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
         var sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
         if let loading { sceneName += " — loading \(loading.scene.kind.title)…" }
+        if let vg = customRT?.virtualGeometry {
+            sceneName += String(format: " — %d clusters, %.0f MB", vg.stats.selected, vg.residentMB)
+        }
+        if let vg = customRT?.virtualBLAS {
+            sceneName += String(format: " — VG %.1fM triangles, %.0f MB", Double(vg.stats.triangles) / 1e6, vg.stats.megabytes)
+        }
         view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
                                      sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",

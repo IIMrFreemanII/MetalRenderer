@@ -201,12 +201,15 @@ inline Ray makeRay(float3 origin, float3 direction, float tmin, float tmax) {
     return r;
 }
 
+constant uint HIT_NO_CLUSTER = 0xFFFFFFFFu;
+
 struct Hit {
     bool   hit;
     float  distance;
     float2 barycentrics;   // weights of the triangle's 2nd and 3rd vertices
     uint   instance;
-    uint   primitive;      // triangle index within the instance's mesh
+    uint   primitive;      // triangle index within the instance's mesh (or within its virtual-geometry cluster)
+    uint   cluster;        // custom tracer: this frame's selected virtual-geometry cluster, or HIT_NO_CLUSTER
 };
 
 #if !CUSTOM_RT
@@ -224,6 +227,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
     h.barycentrics = res.triangle_barycentric_coord;
     h.instance = res.instance_id;
     h.primitive = res.primitive_id;
+    h.cluster = HIT_NO_CLUSTER;
     return h;
 }
 
@@ -270,15 +274,66 @@ struct RTInstance {
 };
 
 struct RTScene {
-    device const BVHNode*    tlas;        // static top-level nodes, then this frame's dynamic ones
+    device const BVHNode*    tlas;        // static top-level nodes, then this frame's dynamic and cluster trees
     device const BVHNode*    blas;
     device const float4*     tris;        // 3 per triangle: v0 (w = triangle index in its mesh), e1, e2
     device const RTInstance* instances;
+    device const uint2*      clusters;    // this frame's selected virtual-geometry clusters: (instance, pool offset)
+    device const float4*     pool;        // streamed virtual-geometry pages (VirtualGeometry.swift)
+    device const uint*       roots;       // [0] = the cluster tree's root ref, written on the GPU every frame
+    device const uint*       nodeInstance; // per cluster-tree node: the scene instance it lies in (see RT_ENTER)
+    device atomic_uint*      stats;       // RT_STATS builds: rays, top nodes, bottom nodes, instance entries,
+                                          // cluster entries, triangle tests
+    device const struct VGBlas* vgBlas;   // per virtual instance: its current cut's BLAS (VirtualBLAS.swift)
     uint staticRoot;                      // root refs; RT_NONE = empty tree
     uint dynamicRoot;
-    uint pad0;
-    uint pad1;
+    uint virtualBase;                     // the cluster tree's first node
+    uint pad;
 };
+
+#ifndef RT_STATS
+#define RT_STATS 0
+#endif
+#if RT_STATS
+#define RT_COUNT(i, n) atomic_fetch_add_explicit(&sc.stats[i], (n), memory_order_relaxed)
+#else
+#define RT_COUNT(i, n)
+#endif
+
+// A virtual instance's BLAS over its current cut (VirtualBLAS.swift): nodes, triangles (v0 e1 e2, w = index), and per
+// triangle 3 octahedral normals + 3 half2 UVs.
+struct VGBlas {
+    device const BVHNode* nodes;
+    device const float4*  tris;
+    device const uint*    attrs;
+    uint                  triangles;   // 0 = no BLAS yet (the instance is skipped)
+    uint                  pad;
+};
+
+// A virtual-geometry cluster's data in the pool (VirtualGeometryBuilder.clusterBlob): header (2 x uint4), BVH
+// nodes, vertices (position + octahedral normal), UVs (half2), triangles (three 8-bit local indices).
+struct VGClusterView {
+    device const BVHNode* nodes;
+    device const float4*  positions;   // xyz, w = octahedral normal bits
+    device const uint*    uvs;
+    device const uint*    tris;
+};
+inline VGClusterView vgClusterView(device const float4* blob) {
+    uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
+    device const uchar* base = (device const uchar*)blob;
+    VGClusterView v;
+    v.nodes = (device const BVHNode*)(base + offsets.x);
+    v.positions = (device const float4*)(base + offsets.y);
+    v.uvs = (device const uint*)(base + offsets.z);
+    v.tris = (device const uint*)(base + offsets.w);
+    return v;
+}
+inline float3 octDecode(uint bits) {
+    float2 e = float2(as_type<short2>(bits)) / 32767.0f;
+    float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
+    if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * select(float2(-1.0f), float2(1.0f), n.xy >= 0.0f);
+    return normalize(n);
+}
 
 #define SCENE_ACCEL constant RTScene&
 
@@ -320,68 +375,164 @@ inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, floa
 }
 
 constant uint RT_INSTANCE_EXIT = 0xFFFFFFFEu;   // stack marker: back to the top level (world space) below here
+constant uint RT_CLUSTER = 0x40000000u;         // top-level leaf flag: a virtual-geometry cluster, not an instance
+constant uint RT_ENTER   = 0x40000000u;         // internal-node ref flag: the subtree holds one virtual instance's
+                                                // clusters, in its object space (enter the instance here)
+constant uint RT_OBJECT_EXIT = 0xFFFFFFFDu;     // stack marker: back from a cluster's BVH to its instance's subtree
 
-// Both levels in one loop: entering an instance switches the ray to object space and pushes a marker; popping the
+// All levels in one loop: entering an instance switches the ray to object space and pushes a marker; popping the
 // marker switches back. Every SIMD lane then runs the same node-fetch code whichever level it is in, instead of
-// lanes in a top-level loop waiting for lanes inside a nested bottom-level loop. Returns true on a hit when ANY.
+// lanes in a top-level loop waiting for lanes inside a nested bottom-level loop.
+// Three top-level trees: static instances, moving instances, and this frame's cut of the virtual meshes. The cut's
+// tree splits by instance first: a ref flagged RT_ENTER is one instance's subtree, in its object space, whose leaves
+// are clusters with their own small BVHs in the streaming pool. Levels: 0 = world, 1 = inside a virtual instance's
+// subtree, 2 = inside a BLAS or a cluster's BVH. Returns true on a hit when ANY.
 template <bool ANY>
 inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h) {
     uint stack[RT_STACK];
     uint sp = 0;
-    uint ref = sc.staticRoot;
-    if (sc.dynamicRoot != RT_NONE) {
-        if (ref == RT_NONE) ref = sc.dynamicRoot; else stack[sp++] = sc.dynamicRoot;
+    uint ref = RT_NONE;
+    uint roots[3] = {sc.roots[0], sc.dynamicRoot, sc.staticRoot};   // the last one found is traversed first
+    for (uint i = 0; i < 3; ++i) {
+        if (roots[i] == RT_NONE) continue;
+        if (ref != RT_NONE) stack[sp++] = ref;
+        ref = roots[i];
     }
     if (ref == RT_NONE) return false;
+    RT_COUNT(0, 1u);
 
     float3 worldInv = rtSafeInverse(r.direction), worldOi = -r.origin * worldInv;
     float3 o = r.origin, d = r.direction, inv = worldInv, oi = worldOi;
-    bool bottom = false;
+    uint level = 0;
     uint instance = 0;
+    device const BVHNode* bottomNodes = sc.blas;
+    device const float4* bottomTris = sc.tris;
+    uint cluster = HIT_NO_CLUSTER;
+    VGClusterView view;
     while (true) {
         if ((ref & RT_LEAF) == 0) {
-            BVHNode n = bottom ? sc.blas[ref] : sc.tlas[ref];
-            float t0, t1;
-            bool b0 = (bottom || (as_type<uint>(n.hi0.w) & mask) != 0) && rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
-            bool b1 = (bottom || (as_type<uint>(n.hi1.w) & mask) != 0) && rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
-            uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
-            if (b0 && b1) {
-                bool swap = t1 < t0;
-                if (sp < RT_STACK) stack[sp++] = swap ? c0 : c1;
-                ref = swap ? c1 : c0;
-                continue;
+            if ((ref & RT_ENTER) != 0) {   // a virtual instance's subtree: into its object space (from the world)
+                ref &= ~RT_ENTER;
+                uint id = sc.nodeInstance[ref - sc.virtualBase];
+                RTInstance inst = sc.instances[id];
+                if ((inst.mask & mask) != 0 && sp < RT_STACK) {
+                    float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
+                    o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
+                    d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));
+                    inv = rtSafeInverse(d);
+                    oi = -o * inv;
+                    level = 1;
+                    instance = id;
+                    stack[sp++] = RT_INSTANCE_EXIT;
+                    continue;
+                }
+            } else {
+                BVHNode n = level == 2 ? bottomNodes[ref] : sc.tlas[ref];
+                bool top = level < 2;
+                RT_COUNT(top ? 1 : 2, 1u);
+                RT_COUNT(6, level == 1 ? 1u : 0u);   // inside a virtual instance's subtree
+                float t0, t1;
+                bool b0 = (!top || (as_type<uint>(n.hi0.w) & mask) != 0) && rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
+                bool b1 = (!top || (as_type<uint>(n.hi1.w) & mask) != 0) && rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
+                uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
+                if (b0 && b1) {
+                    bool swap = t1 < t0;
+                    if (sp < RT_STACK) stack[sp++] = swap ? c0 : c1;
+                    ref = swap ? c1 : c0;
+                    continue;
+                }
+                if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
             }
-            if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
-        } else if (!bottom) {
+        } else if (level < 2) {
             uint id = ref & ~RT_LEAF;
-            RTInstance inst = sc.instances[id];
-            if ((inst.mask & mask) != 0 && sp < RT_STACK) {
-                float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
-                o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
-                d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared
-                inv = rtSafeInverse(d);
-                oi = -o * inv;
-                bottom = true;
-                instance = id;
-                stack[sp++] = RT_INSTANCE_EXIT;
-                ref = inst.blasRoot;
-                continue;
+            if ((id & RT_CLUSTER) != 0) {   // a cluster: into its BVH (already in object space inside a subtree)
+                cluster = id & ~RT_CLUSTER;
+                uint2 rc = sc.clusters[cluster];
+                bool enter = level == 0;    // a lone cluster in the world-space part of the tree
+                RTInstance inst;
+                if (enter) inst = sc.instances[rc.x];
+                if ((!enter || (inst.mask & mask) != 0) && sp < RT_STACK) {
+                    if (enter) {
+                        float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
+                        o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
+                        d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));
+                        inv = rtSafeInverse(d);
+                        oi = -o * inv;
+                        instance = rc.x;
+                    }
+                    view = vgClusterView(sc.pool + rc.y);
+                    bottomNodes = view.nodes;
+                    RT_COUNT(4, 1u);
+                    stack[sp++] = enter ? RT_INSTANCE_EXIT : RT_OBJECT_EXIT;
+                    level = 2;
+                    ref = 0;
+                    continue;
+                }
+            } else {                         // an ordinary instance (or a virtual mesh's cut): into its BLAS
+                RTInstance inst = sc.instances[id];
+                device const BVHNode* nodes = sc.blas;
+                device const float4* tris = sc.tris;
+                uint root = inst.blasRoot;
+                bool present = true;
+                if (inst.pad0 != 0) {
+                    VGBlas e = sc.vgBlas[inst.pad0 - 1];
+                    nodes = e.nodes; tris = e.tris; root = 0;
+                    present = e.triangles != 0;
+                }
+                if (present && (inst.mask & mask) != 0 && sp < RT_STACK) {
+                    float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
+                    o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
+                    d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared
+                    inv = rtSafeInverse(d);
+                    oi = -o * inv;
+                    level = 2;
+                    instance = id;
+                    cluster = HIT_NO_CLUSTER;
+                    bottomNodes = nodes;
+                    bottomTris = tris;
+                    RT_COUNT(3, 1u);
+                    stack[sp++] = RT_INSTANCE_EXIT;
+                    ref = root;
+                    continue;
+                }
             }
         } else if (ref != RT_NONE) {   // RT_NONE: the empty child of a single-leaf mesh
             uint first = ref & 0x0FFFFFFFu, end = first + ((ref >> 28) & 7u) + 1u;
-            for (uint t = first; t < end; ++t) {
-                if (rtTriangle(o, d, sc.tris[3 * t], sc.tris[3 * t + 1], sc.tris[3 * t + 2], r.tmin, h)) {
-                    h.instance = instance;
-                    if (ANY) return true;
+            RT_COUNT(5, end - first);
+            if (cluster != HIT_NO_CLUSTER) {
+                for (uint t = first; t < end; ++t) {
+                    uint packed = view.tris[t];
+                    float3 p0 = view.positions[packed & 0xFFu].xyz, p1 = view.positions[(packed >> 8) & 0xFFu].xyz;
+                    float3 p2 = view.positions[(packed >> 16) & 0xFFu].xyz;
+                    if (rtTriangle(o, d, float4(p0, as_type<float>(t)), float4(p1 - p0, 0.0f), float4(p2 - p0, 0.0f), r.tmin, h)) {
+                        h.instance = instance;
+                        h.cluster = cluster;
+                        if (ANY) return true;
+                    }
+                }
+            } else {
+                for (uint t = first; t < end; ++t) {
+                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h)) {
+                        h.instance = instance;
+                        h.cluster = HIT_NO_CLUSTER;
+                        if (ANY) return true;
+                    }
                 }
             }
         }
         while (true) {
             if (sp == 0) return false;
             ref = stack[--sp];
-            if (ref != RT_INSTANCE_EXIT) break;
-            bottom = false;
-            o = r.origin; d = r.direction; inv = worldInv; oi = worldOi;
+            if (ref == RT_INSTANCE_EXIT) {
+                level = 0;
+                o = r.origin; d = r.direction; inv = worldInv; oi = worldOi;
+                continue;
+            }
+            if (ref == RT_OBJECT_EXIT) {
+                level = 1;
+                continue;
+            }
+            break;
         }
     }
 }
@@ -393,6 +544,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     h.barycentrics = float2(0.0f);
     h.instance = 0;
     h.primitive = 0;
+    h.cluster = HIT_NO_CLUSTER;
     rtTraverse<false>(sc, r, mask, h);
     return h;
 }
@@ -406,6 +558,7 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     Hit h;
     h.hit = false;
     h.distance = r.tmax;
+    h.cluster = HIT_NO_CLUSTER;
     bool hit = rtTraverse<true>(sc, r, mask, h);
     t = h.distance;
     return hit;
@@ -481,15 +634,40 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     if (!res.hit) return sf;
 
     InstanceData inst = s.instances[res.instance];
-    MeshData mesh = s.meshes[inst.meshIndex];
-    uint base = mesh.firstIndex + res.primitive * 3;
-    uint i0 = s.indices[base], i1 = s.indices[base + 1], i2 = s.indices[base + 2];
-
     float2 bc = res.barycentrics;
     float w0 = 1.0f - bc.x - bc.y;
-    float3 p0 = s.positions[i0], p1 = s.positions[i1], p2 = s.positions[i2];
+    float3 p0, p1, p2, n0, n1, n2;
+    float2 t0, t1, t2;
+#if CUSTOM_RT
+    if (res.cluster != HIT_NO_CLUSTER) {
+        // Virtual geometry: the hit cluster's vertices, in the streaming pool.
+        VGClusterView view = vgClusterView(accel.pool + accel.clusters[res.cluster].y);
+        uint packed = view.tris[res.primitive];
+        uint3 i = uint3(packed & 0xFFu, (packed >> 8) & 0xFFu, (packed >> 16) & 0xFFu);
+        float4 v0 = view.positions[i.x], v1 = view.positions[i.y], v2 = view.positions[i.z];
+        p0 = v0.xyz; p1 = v1.xyz; p2 = v2.xyz;
+        n0 = octDecode(as_type<uint>(v0.w)); n1 = octDecode(as_type<uint>(v1.w)); n2 = octDecode(as_type<uint>(v2.w));
+        t0 = float2(as_type<half2>(view.uvs[i.x])); t1 = float2(as_type<half2>(view.uvs[i.y])); t2 = float2(as_type<half2>(view.uvs[i.z]));
+    } else if (inst.pad1 != 0) {
+        // Virtual geometry, per-instance BLAS over the cut: positions from its triangles, attributes alongside.
+        VGBlas e = accel.vgBlas[inst.pad1 - 1];
+        float4 v0 = e.tris[3 * res.primitive], e1 = e.tris[3 * res.primitive + 1], e2 = e.tris[3 * res.primitive + 2];
+        p0 = v0.xyz; p1 = v0.xyz + e1.xyz; p2 = v0.xyz + e2.xyz;
+        device const uint* a = e.attrs + 6 * res.primitive;
+        n0 = octDecode(a[0]); n1 = octDecode(a[1]); n2 = octDecode(a[2]);
+        t0 = float2(as_type<half2>(a[3])); t1 = float2(as_type<half2>(a[4])); t2 = float2(as_type<half2>(a[5]));
+    } else
+#endif
+    {
+        MeshData mesh = s.meshes[inst.meshIndex];
+        uint base = mesh.firstIndex + res.primitive * 3;
+        uint i0 = s.indices[base], i1 = s.indices[base + 1], i2 = s.indices[base + 2];
+        p0 = s.positions[i0]; p1 = s.positions[i1]; p2 = s.positions[i2];
+        n0 = s.normals[i0]; n1 = s.normals[i1]; n2 = s.normals[i2];
+        t0 = s.uvs[i0]; t1 = s.uvs[i1]; t2 = s.uvs[i2];
+    }
     float3 objPos = p0 * w0 + p1 * bc.x + p2 * bc.y;
-    float3 objN   = s.normals[i0] * w0 + s.normals[i1] * bc.x + s.normals[i2] * bc.y;
+    float3 objN   = n0 * w0 + n1 * bc.x + n2 * bc.y;
     float3 objNg  = cross(p1 - p0, p2 - p0);
 
     Material mat = s.materials[inst.materialIndex];
@@ -506,7 +684,6 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.instanceId = res.instance;
 
     if (any(mat.textures != uint4(NO_TEXTURE))) {
-        float2 t0 = s.uvs[i0], t1 = s.uvs[i1], t2 = s.uvs[i2];
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;
         // Texture level from the ray's footprint: width = distance x spread, stretched by the incidence angle,
         // converted to UV units by the triangle's UV-to-world area ratio.
@@ -2583,14 +2760,15 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
 {
     if (i >= instanceCount) return;
     InstanceData inst = instances[i];
-    float4 lo = meshInfo[2 * inst.meshIndex], hi = meshInfo[2 * inst.meshIndex + 1];
+    float4 lo = meshInfo[2 * inst.meshIndex], hi = meshInfo[2 * inst.meshIndex + 1];   // virtual meshes too (bounds)
     RTInstance r;
     r.row0 = inst.normalMatrix[0];
     r.row1 = inst.normalMatrix[1];
     r.row2 = inst.normalMatrix[2];
     r.blasRoot = as_type<uint>(lo.w);
     r.mask = inst.pad0;
-    r.pad0 = r.pad1 = 0;
+    r.pad0 = inst.pad1;   // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
+    r.pad1 = 0;
     out[i] = r;
     uint k = dynSlot[i];
     if (k == RT_NONE) return;
@@ -2660,16 +2838,20 @@ inline void rtSortStep(threadgroup uint* sk, threadgroup uint* sv, uint n, uint 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 }
 
-// Bitonic sort of (key, value) pairs, ascending. params: x = padded count; y = 0: sort each 2048-key block
-// (alternating directions, as bitonic merging needs), y = k > 2048: finish stage k inside each block (j < 2048).
+// Bitonic sort of (key, value) pairs, ascending. params.y = 0: sort each 2048-key block (alternating directions,
+// as bitonic merging needs); params.y = k > 2048: finish stage k inside each block (j < 2048). The padded count
+// comes from `counts` (y), possibly written on the GPU: dispatches cover a capacity and skip what's beyond it.
 kernel void rtSortLocalKernel(constant uint2&  params [[buffer(0)]],
                               device uint*     keys   [[buffer(1)]],
                               device uint*     values [[buffer(2)]],
+                              constant uint2&  counts [[buffer(3)]],   // x = leaves, y = padded count
                               uint lid [[thread_position_in_threadgroup]],
                               uint group [[threadgroup_position_in_grid]])
 {
     threadgroup uint sk[RT_SORT_BLOCK], sv[RT_SORT_BLOCK];
-    uint n = min(RT_SORT_BLOCK, params.x), base = group * RT_SORT_BLOCK;
+    uint padded = counts.y;
+    uint n = min(RT_SORT_BLOCK, padded), base = group * RT_SORT_BLOCK;
+    if (base >= padded || params.y > padded) return;
     for (uint e = lid; e < n; e += 1024) { sk[e] = keys[base + e]; sv[e] = values[base + e]; }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (params.y == 0) {
@@ -2685,9 +2867,11 @@ kernel void rtSortLocalKernel(constant uint2&  params [[buffer(0)]],
 kernel void rtSortGlobalKernel(constant uint2&  params [[buffer(0)]],   // x = k, y = j
                                device uint*     keys   [[buffer(1)]],
                                device uint*     values [[buffer(2)]],
+                               constant uint2&  counts [[buffer(3)]],
                                uint t [[thread_position_in_grid]])
 {
     uint j = params.y, i = 2 * j * (t / j) + (t % j), l = i + j;
+    if (params.x > counts.y || l >= counts.y) return;
     bool ascending = (i & params.x) == 0;
     uint a = keys[i], b = keys[l];
     if (a != b && (a > b) == ascending) {
@@ -2704,7 +2888,7 @@ inline int rtDelta(device const uint* keys, int n, int i, int j) {
 
 // Karras 2012: internal node i of n - 1 (n = moving instances, >= 2), from the sorted keys. Writes both child refs
 // and the parent links the bottom-up pass follows (bit 31 = right child), and clears the arrival counters.
-kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   // x = n, y = index of node 0 in the buffer
+kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   // y = index of node 0 in the buffer
                               device const uint*    keys       [[buffer(1)]],
                               device const uint*    values     [[buffer(2)]],
                               device const float4*  leafBoxes  [[buffer(3)]],
@@ -2712,9 +2896,10 @@ kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   
                               device uint*          nodeParent [[buffer(5)]],
                               device uint*          leafParent [[buffer(6)]],
                               device atomic_uint*   counters   [[buffer(7)]],
+                              constant uint2&       counts     [[buffer(8)]],   // x = n
                               uint gid [[thread_position_in_grid]])
 {
-    int n = int(params.x), i = int(gid);
+    int n = int(counts.x), i = int(gid);
     if (i >= n - 1) return;
     int d = rtDelta(keys, n, i, i + 1) - rtDelta(keys, n, i, i - 1) >= 0 ? 1 : -1;
     int deltaMin = rtDelta(keys, n, i, i - d);
@@ -2756,7 +2941,7 @@ kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   
 
 // Bottom-up boxes: each leaf writes its box into its parent's child slot and walks up; the second thread to reach
 // a node (counters) unions its two child slots into the grandparent, so every node is finished exactly once.
-kernel void rtFitKernel(constant uint2&                 params     [[buffer(0)]],   // x = n
+kernel void rtFitKernel(constant uint2&                 counts     [[buffer(8)]],   // x = n
                         device const uint*              values     [[buffer(2)]],
                         device const float4*            leafBoxes  [[buffer(3)]],
                         coherent(device) device BVHNode* nodes     [[buffer(4)]],
@@ -2765,7 +2950,7 @@ kernel void rtFitKernel(constant uint2&                 params     [[buffer(0)]]
                         device atomic_uint*             counters   [[buffer(7)]],
                         uint gid [[thread_position_in_grid]])
 {
-    if (gid >= params.x) return;
+    if (gid >= counts.x) return;
     uint leaf = values[gid];
     float3 lo = leafBoxes[2 * leaf].xyz;
     float4 hi = leafBoxes[2 * leaf + 1];   // w = mask bits
@@ -2785,4 +2970,252 @@ kernel void rtFitKernel(constant uint2&                 params     [[buffer(0)]]
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Virtual geometry: this frame's cut through every virtual mesh's cluster DAG (VirtualGeometry.swift).
+// ---------------------------------------------------------------------------------------------
+
+struct VGCluster {
+    float4 selfSphere;     // xyz = centre, w = radius (object space)
+    float4 parentSphere;
+    float4 lo;             // xyz = bounds min, w = selfError
+    float4 hi;             // xyz = bounds max, w = parentError (infinity for roots)
+    uint group;            // its page
+    uint childGroup;       // the finer group it was made from, ~0 at the finest level
+    uint pageOffset;       // bytes into the page
+    uint triangles;
+};
+
+struct VGInstance {
+    uint instance;         // scene instance
+    uint clusterBase;      // into the cluster records
+    uint clusterCount;
+    uint workBase;         // first work item (one per cluster of each virtual instance)
+    float4 lo;             // the mesh's bounds (object space), for Morton keys
+    float4 hi;
+};
+
+struct VGParams {
+    float4 camPos;         // xyz, w = pixels per unit of error at distance 1 (traced height / (2 tan(fovY / 2)))
+    float  tau;            // allowed projected error, in traced pixels
+    uint   workCount;
+    uint   instanceCount;
+    uint   capacity;       // most selected clusters
+    uint   frame;
+    uint   requestCapacity;
+    uint   nodeBase;       // the cluster tree's first node in the top-level node buffer
+    uint   pad;
+};
+
+kernel void vgResetKernel(device uint* counters [[buffer(0)]]) {   // selected, requests, overflow
+    counters[0] = 0; counters[1] = 0; counters[2] = 0;
+}
+
+// Projected error in traced pixels of `error` (object space) over `sphere` (object space) seen from the camera.
+inline float vgProjected(float4 sphere, float error, float4x4 m, float scale, float4 camPos) {
+    float3 c = (m * float4(sphere.xyz, 1.0f)).xyz;
+    float d = length(c - camPos.xyz) - sphere.w * scale;
+    return d <= 1e-4f ? INFINITY : error * scale * camPos.w / d;
+}
+
+// One thread per (virtual instance, cluster). Nanite's rule (see VGCluster in VirtualGeometryBuilder.swift): drawn
+// if resident, its group's coarser version is too coarse, and it is fine enough itself or its finer group isn't
+// resident (then that group is requested). Detail follows distance only: off-screen geometry still casts shadows
+// and shows in reflections, and every ray type sees the same cut.
+kernel void vgCutKernel(constant VGParams&           p           [[buffer(0)]],
+                        device const VGInstance*     vinstances  [[buffer(1)]],
+                        device const VGCluster*      clusters    [[buffer(2)]],
+                        device const uint*           groupPage   [[buffer(3)]],   // per group: pool offset (float4s) or ~0
+                        device const InstanceData*   instances   [[buffer(4)]],
+                        device atomic_uint*          counters    [[buffer(5)]],
+                        device uint2*                selected    [[buffer(6)]],   // (instance, pool offset of the cluster)
+                        device float4*               leafBoxes   [[buffer(7)]],
+                        device uint2*                requests    [[buffer(8)]],   // (group, priority bits)
+                        device atomic_uint*          requestStamp [[buffer(9)]],  // per group: last frame it was requested
+                        device uint*                 lastUsed    [[buffer(10)]],  // per group: last frame it was drawn
+                        device uint*                 keys        [[buffer(13)]],
+                        device uint*                 values      [[buffer(14)]],
+                        uint gid [[thread_position_in_grid]])
+{
+    if (gid >= p.workCount) return;
+    uint lo = 0, hi = p.instanceCount - 1;   // the instance whose work range holds gid
+    while (lo < hi) {
+        uint mid = (lo + hi + 1) / 2;
+        if (vinstances[mid].workBase <= gid) lo = mid; else hi = mid - 1;
+    }
+    VGInstance vi = vinstances[lo];
+    uint local = gid - vi.workBase;
+    if (local >= vi.clusterCount) return;
+    VGCluster c = clusters[vi.clusterBase + local];
+    uint page = groupPage[c.group];
+    if (page == 0xFFFFFFFFu) return;   // not resident
+
+    InstanceData inst = instances[vi.instance];
+    float4x4 m = inst.transform;
+    float scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
+    if (c.hi.w != INFINITY && vgProjected(c.parentSphere, c.hi.w, m, scale, p.camPos) <= p.tau) return;   // coarser is enough
+    if (c.childGroup != 0xFFFFFFFFu) {
+        float own = vgProjected(c.selfSphere, c.lo.w, m, scale, p.camPos);
+        if (own > p.tau) {
+            if (groupPage[c.childGroup] != 0xFFFFFFFFu) return;   // the finer clusters are drawn instead
+            if (atomic_exchange_explicit(&requestStamp[c.childGroup], p.frame, memory_order_relaxed) != p.frame) {
+                uint r = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
+                if (r < p.requestCapacity) requests[r] = uint2(c.childGroup, as_type<uint>(own));
+            }
+        }
+    }
+    lastUsed[c.group] = p.frame;
+    uint idx = atomic_fetch_add_explicit(&counters[0], 1u, memory_order_relaxed);
+    if (idx >= p.capacity) { atomic_store_explicit(&counters[2], 1u, memory_order_relaxed); return; }
+    selected[idx] = uint2(vi.instance, page + c.pageOffset / 16);
+    // Object-space box (vgFitKernel moves it to world space above the instance's subtree), and a key that sorts by
+    // virtual instance first (8 bits), then along a Morton curve inside the mesh's bounds (22 bits).
+    leafBoxes[2 * idx]     = float4(c.lo.xyz, as_type<float>(RT_CLUSTER | idx));
+    leafBoxes[2 * idx + 1] = float4(c.hi.xyz, as_type<float>(inst.pad0));
+    float3 q = clamp(((c.lo.xyz + c.hi.xyz) * 0.5f - vi.lo.xyz) / max(vi.hi.xyz - vi.lo.xyz, float3(1e-6f)), 0.0f, 1.0f) * 1023.0f;
+    uint3 qi = uint3(q);
+    uint morton = (rtExpandBits(qi.x) << 2) | (rtExpandBits(qi.y) << 1) | rtExpandBits(qi.z);
+    keys[idx] = (min(lo, 255u) << 22) | (morton >> 8);
+    values[idx] = idx;
+}
+
+// After the cut: the leaf count and sort size for the cluster tree's build, and its root ref.
+kernel void vgFinishKernel(constant VGParams&  p        [[buffer(0)]],
+                           device const uint*  counters [[buffer(5)]],
+                           device uint2*       counts   [[buffer(11)]],   // x = leaves, y = padded sort size
+                           device uint*        roots    [[buffer(12)]])
+{
+    uint n = min(counters[0], p.capacity);
+    uint padded = 2;
+    while (padded < n) padded <<= 1;
+    counts[0] = uint2(n, padded);
+    if (n < 2) roots[0] = n == 0 ? RT_NONE : (RT_LEAF | RT_CLUSTER);   // 2+: vgHierarchyKernel writes it
+}
+
+// Fills the sort input past the leaf count with keys that sort last.
+kernel void vgPadKernel(device const uint2* counts [[buffer(11)]],
+                        device uint*        keys   [[buffer(13)]],
+                        device uint*        values [[buffer(14)]],
+                        uint gid [[thread_position_in_grid]])
+{
+    uint2 c = counts[0];
+    if (gid < c.x || gid >= c.y) return;
+    keys[gid] = 0xFFFFFFFFu;
+    values[gid] = gid;
+}
+
+inline bool vgSameInstance(device const uint* keys, int a, int b) { return (keys[a] >> 22) == (keys[b] >> 22); }
+
+// The cluster tree's hierarchy (Karras, as rtHierarchyKernel). Keys start with the virtual instance, so the tree
+// splits by instance first; a node whose leaves all share one instance is that instance's (part of the) subtree:
+// nodeInstance records it, and the ref to it from a node spanning several instances carries RT_ENTER.
+kernel void vgHierarchyKernel(constant uint2&       params       [[buffer(0)]],   // y = index of node 0 in the buffer
+                              device const uint*    keys         [[buffer(1)]],
+                              device const uint*    values       [[buffer(2)]],
+                              device const float4*  leafBoxes    [[buffer(3)]],
+                              device BVHNode*       nodes        [[buffer(4)]],
+                              device uint*          nodeParent   [[buffer(5)]],
+                              device uint*          leafParent   [[buffer(6)]],
+                              device atomic_uint*   counters     [[buffer(7)]],
+                              constant uint2&       counts       [[buffer(8)]],
+                              device const uint2*   selected     [[buffer(9)]],
+                              device uint*          nodeInstance [[buffer(10)]],
+                              device uint*          roots        [[buffer(12)]],
+                              uint gid [[thread_position_in_grid]])
+{
+    int n = int(counts.x), i = int(gid);
+    if (i >= n - 1) return;
+    int d = rtDelta(keys, n, i, i + 1) - rtDelta(keys, n, i, i - 1) >= 0 ? 1 : -1;
+    int deltaMin = rtDelta(keys, n, i, i - d);
+    int lmax = 2;
+    while (rtDelta(keys, n, i, i + lmax * d) > deltaMin) lmax *= 2;
+    int l = 0;
+    for (int t = lmax / 2; t >= 1; t /= 2)
+        if (rtDelta(keys, n, i, i + (l + t) * d) > deltaMin) l += t;
+    int j = i + l * d;
+    int deltaNode = rtDelta(keys, n, i, j);
+    int s = 0;
+    for (int div = 2; ; div *= 2) {
+        int t = (l + div - 1) / div;
+        if (rtDelta(keys, n, i, i + (s + t) * d) > deltaNode) s += t;
+        if (t <= 1) break;
+    }
+    int split = i + s * d + min(d, 0);
+    int first = min(i, j), last = max(i, j);
+    bool mine = vgSameInstance(keys, first, last);
+    nodeInstance[i] = mine ? selected[values[first]].x : 0xFFFFFFFFu;
+    if (i == 0) roots[0] = params.y | (mine ? RT_ENTER : 0u);
+
+    uint left, right;
+    if (first == split) {
+        left = RT_LEAF | as_type<uint>(leafBoxes[2 * values[split]].w);
+        leafParent[split] = uint(i);
+    } else {
+        left = params.y + uint(split) | (!mine && vgSameInstance(keys, first, split) ? RT_ENTER : 0u);
+        nodeParent[split] = uint(i);
+    }
+    if (last == split + 1) {
+        right = RT_LEAF | as_type<uint>(leafBoxes[2 * values[split + 1]].w);
+        leafParent[split + 1] = uint(i) | 0x80000000u;
+    } else {
+        right = params.y + uint(split + 1) | (!mine && vgSameInstance(keys, split + 1, last) ? RT_ENTER : 0u);
+        nodeParent[split + 1] = uint(i) | 0x80000000u;
+    }
+    nodes[i].lo0.w = as_type<float>(left);
+    nodes[i].lo1.w = as_type<float>(right);
+    atomic_store_explicit(&counters[i], 0u, memory_order_relaxed);
+}
+
+inline void vgToWorld(thread float3& lo, thread float3& hi, float4x4 m) {
+    float3 c = (lo + hi) * 0.5f, e = (hi - lo) * 0.5f;
+    float3 wc = (m * float4(c, 1.0f)).xyz;
+    float3 we = abs(m[0].xyz) * e.x + abs(m[1].xyz) * e.y + abs(m[2].xyz) * e.z;
+    lo = wc - we;
+    hi = wc + we;
+}
+
+// Bottom-up boxes for the cluster tree (as rtFitKernel): boxes stay in their instance's object space up to the node
+// where the subtree meets other instances, and are moved to world space there.
+kernel void vgFitKernel(constant uint2&                  counts       [[buffer(8)]],
+                        device const uint*               values       [[buffer(2)]],
+                        device const float4*             leafBoxes    [[buffer(3)]],
+                        coherent(device) device BVHNode* nodes        [[buffer(4)]],
+                        device const uint*               nodeParent   [[buffer(5)]],
+                        device const uint*               leafParent   [[buffer(6)]],
+                        device atomic_uint*              counters     [[buffer(7)]],
+                        device const uint2*              selected     [[buffer(9)]],
+                        device const uint*               nodeInstance [[buffer(10)]],
+                        device const InstanceData*       instances    [[buffer(15)]],
+                        uint gid [[thread_position_in_grid]])
+{
+    uint n = counts.x;
+    if (gid >= n) return;
+    uint leaf = values[gid];
+    float3 lo = leafBoxes[2 * leaf].xyz;
+    float4 hi = leafBoxes[2 * leaf + 1];   // w = mask bits
+    uint inst = selected[leaf].x;          // the box is in this instance's object space (~0: world space)
+    if (n == 1) return;
+    uint link = leafParent[gid];
+    while (true) {
+        uint p = link & 0x7FFFFFFFu;
+        if (inst != 0xFFFFFFFFu && nodeInstance[p] == 0xFFFFFFFFu) {   // the parent spans several instances
+            float3 h3 = hi.xyz;
+            vgToWorld(lo, h3, instances[inst].transform);
+            hi.xyz = h3;
+        }
+        if ((link >> 31) != 0) { nodes[p].lo1.xyz = lo; nodes[p].hi1 = hi; }
+        else                   { nodes[p].lo0.xyz = lo; nodes[p].hi0 = hi; }
+        atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
+        if (atomic_fetch_add_explicit(&counters[p], 1u, memory_order_relaxed) == 0) return;
+        atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
+        BVHNode node = nodes[p];
+        lo = min(node.lo0.xyz, node.lo1.xyz);
+        hi = float4(max(node.hi0.xyz, node.hi1.xyz), as_type<float>(as_type<uint>(node.hi0.w) | as_type<uint>(node.hi1.w)));
+        inst = nodeInstance[p];
+        if (p == 0) return;
+        link = nodeParent[p];
+    }
+}
+
 #endif
+
+

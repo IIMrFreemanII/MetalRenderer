@@ -11,6 +11,9 @@ final class SettingsPanel: NSObject {
     private let stats = NSTextField(labelWithString: "")
     private let sceneKind = NSPopUpButton()
     private let rayTracer = NSPopUpButton()
+    private let virtualGeometry = NSButton(checkboxWithTitle: "Virtual geometry (LOD)", target: nil, action: nil)
+    private let vgError = NSSlider()               // log2 of the allowed error in traced pixels
+    private let vgErrorValue = NSTextField(labelWithString: "")
     private let objects = NSSlider()
     private let objectsValue = NSTextField(labelWithString: "")
     private let lights = NSSlider()            // log2 of the light count
@@ -95,6 +98,8 @@ final class SettingsPanel: NSObject {
                         ticks: Int(log2(Double(SceneSettings.lightRange.upperBound))) + 1, #selector(lightsChanged))
         objects.isContinuous = false
         lights.isContinuous = false
+        configureSlider(vgError, log2(CGFloat(VirtualGeometrySettings.pixelErrorRange.lowerBound))...log2(CGFloat(VirtualGeometrySettings.pixelErrorRange.upperBound)),
+                        ticks: 0, #selector(vgErrorChanged))
         for (popup, titles, action) in [
             (giMode, GIMode.allCases.map(\.title), #selector(giModeChanged)),
             (sceneKind, SceneKind.allCases.map(\.title), #selector(sceneKindChanged)),
@@ -122,13 +127,13 @@ final class SettingsPanel: NSObject {
                               (separate, #selector(separateChanged)), (lightMaps, #selector(lightMapsChanged)),
                               (surfelDenoise, #selector(surfelDenoiseChanged)), (cascadeBounce, #selector(cascadeBounceChanged)),
                               (cascadeDenoise, #selector(cascadeDenoiseChanged)),
-                              (shadowDenoiser, #selector(shadowDenoiserChanged))] {
+                              (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged))] {
             box.target = self
             box.action = action
         }
         stats.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stats.textColor = .secondaryLabelColor
-        for value in [objectsValue, lightsValue, renderScaleValue, bouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
+        for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
                       surfelSizeValue, surfelHistoryValue, cascadeCountValue, firstIntervalValue] {
             value.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
             value.alignment = .right
@@ -142,6 +147,8 @@ final class SettingsPanel: NSObject {
             [label("Lights"), lights, lightsValue],                          // stress
             [label("Shadow rays"), lightRays],                               // stress
             [label("Ray tracing"), rayTracer],
+            [NSGridCell.emptyContentView, virtualGeometry],
+            [label("Geometry error"), vgError, vgErrorValue],
             [header("Rendering")],
             [label("Render scale"), renderScale, renderScaleValue],
             [label("MetalFX upscaling"), upscale],
@@ -252,6 +259,11 @@ final class SettingsPanel: NSObject {
         if layoutChanged { resizeToFit() }
         sceneKind.selectItem(at: s.scene.kind.rawValue)
         rayTracer.selectItem(at: s.rayTracer.rawValue)
+        virtualGeometry.state = s.virtualGeometry.enabled ? .on : .off
+        virtualGeometry.isEnabled = s.rayTracer == .custom   // Metal would need its acceleration structures rebuilt per cut
+        vgError.doubleValue = Double(log2(s.virtualGeometry.pixelError))
+        vgErrorValue.stringValue = String(format: "%.2g px", s.virtualGeometry.pixelError)
+        vgError.isEnabled = s.rayTracer == .custom && s.virtualGeometry.enabled
         objects.integerValue = s.scene.objects
         objectsValue.stringValue = "\(s.scene.objects)"
         lights.doubleValue = log2(Double(max(s.scene.lights, 1)))
@@ -345,6 +357,10 @@ final class SettingsPanel: NSObject {
         s.rayTracer = renderer.settings.rayTracer
         s.applySceneDefaults(from: renderer.defaultSettings)
         renderer.settings = s
+    }
+    @objc private func virtualGeometryChanged() { renderer.settings.virtualGeometry.enabled = virtualGeometry.state == .on }
+    @objc private func vgErrorChanged() {
+        renderer.settings.virtualGeometry.pixelError = Float((pow(2, vgError.doubleValue) * 4).rounded() / 4)
     }
     @objc private func rayTracerChanged() {
         renderer.settings.rayTracer = RayTracerKind(rawValue: rayTracer.indexOfSelectedItem) ?? .custom
