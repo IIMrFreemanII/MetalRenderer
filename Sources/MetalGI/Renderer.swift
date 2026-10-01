@@ -169,8 +169,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var uvBuffer: MTLBuffer!
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
     private var textureTable: MTLBuffer!              // their MTLResourceIDs (MSL MaterialTexture array)
-    private var shadingArgs: MTLBuffer!               // MSL SceneShading: materials, UVs, texture table (buffer 7)
+    private var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
     private var shadingResources: [MTLResource] = []
+    private var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
+    private var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
+    private var feedbackDummy: MTLBuffer!
     private var primitiveAS: [MTLAccelerationStructure] = []           // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
     private var customRT: CustomRayTracer?                             // custom ray tracer only
@@ -376,6 +379,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let scene: Scene
         let rayTracer: RayTracerKind
         let textures: [MTLTexture]
+        let streamer: TextureStreamer?
         let customRT: CustomRayTracer?
     }
     private var loading: (scene: SceneSettings, rayTracer: RayTracerKind)?   // being prepared in the background
@@ -395,10 +399,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?) throws -> PreparedScene {
         let virtual = wantsVirtualGeometry(rayTracer)
         let newScene = current.flatMap { $0.usesVirtualGeometry == virtual ? $0 : nil } ?? Scene(sceneSettings, virtualGeometry: virtual)
-        let textures = try MaterialTextures.load(newScene.textures, device: device, queue: queue)
+        let streamer = newScene.textures.isEmpty || !TextureStreamer.isSupported(device) ? nil
+            : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: settings.textureBudgetMB,
+                                  slots: Renderer.maxFramesInFlight)
+        let textures = try streamer?.textures ?? MaterialTextures.load(newScene.textures, device: device, queue: queue)
         let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, slots: Renderer.maxFramesInFlight,
                                                             poolMB: settings.virtualGeometry.poolMB) : nil
-        return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, customRT: rt)
+        return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, streamer: streamer, customRT: rt)
     }
 
     /// Starts preparing `settings.scene` / `settings.rayTracer` in the background; `install` swaps it in when done.
@@ -439,6 +446,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         instanceAS = []
         instanceScratch = []
         instanceASBuilt = []
+        textureStreamer = prepared?.streamer
         try createGeometryBuffers(textures: prepared?.textures)
         if builtRayTracer == .metal { try buildPrimitiveAccelerationStructures() }
         try createPerFrameResources()
@@ -513,15 +521,25 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         uvBuffer = try makeBuffer(scene.uvs, "uvs")
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
         textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
-        guard let args = device.makeBuffer(length: 32, options: .storageModeShared) else {
-            throw RendererError.resourceCreation("buffer shadingArgs")
+        staticMinLod = try makeBuffer([Float](repeating: 0, count: max(materialTextures.count, 1)), "textureMinLod")
+        feedbackDummy = try makeBuffer([UInt32](repeating: 0, count: max(materialTextures.count, 1) * TextureStreamer.levelBins),
+                                       "textureFeedback")
+        shadingArgs = []
+        for slot in 0..<Renderer.maxFramesInFlight {
+            guard let args = device.makeBuffer(length: 48, options: .storageModeShared) else {
+                throw RendererError.resourceCreation("buffer shadingArgs")
+            }
+            args.label = "shadingArgs\(slot)"
+            let p = args.contents()
+            p.storeBytes(of: materialBuffer.gpuAddress, toByteOffset: 0, as: UInt64.self)
+            p.storeBytes(of: uvBuffer.gpuAddress, toByteOffset: 8, as: UInt64.self)
+            p.storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
+            p.storeBytes(of: (textureStreamer?.minLodBuffer(slot: slot) ?? staticMinLod).gpuAddress, toByteOffset: 24, as: UInt64.self)
+            p.storeBytes(of: (textureStreamer?.feedbackBuffer(slot: slot) ?? feedbackDummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
+            shadingArgs.append(args)
         }
-        args.label = "shadingArgs"
-        args.contents().storeBytes(of: materialBuffer.gpuAddress, toByteOffset: 0, as: UInt64.self)
-        args.contents().storeBytes(of: uvBuffer.gpuAddress, toByteOffset: 8, as: UInt64.self)
-        args.contents().storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
-        shadingArgs = args
-        shadingResources = [materialBuffer, uvBuffer, textureTable] + materialTextures
+        shadingResources = [materialBuffer, uvBuffer, textureTable, staticMinLod, feedbackDummy]
+            + (textureStreamer == nil ? materialTextures : [])
     }
 
     /// One bottom-level (primitive) acceleration structure per mesh, built once.
@@ -861,6 +879,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
             asEncoder.endEncoding()
         }
+        // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
+        textureStreamer?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, cmd: passBuffer("textures"))
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
         // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
         if let customRT, let enc = passBuffer("tlas").makeComputeCommandEncoder() {
@@ -1152,6 +1172,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
+        if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
+            print("  " + ts.summary)
+            if ProcessInfo.processInfo.environment["METALGI_TEXTURE_DEBUG"] != nil { print(ts.details) }
+        }
         if let benchmark, benchmark.isMeasuring, CustomRayTracer.statsEnabled, let customRT {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
             if benchmark.shouldCapture { print("  " + customRT.takeStats()) } else { _ = customRT.takeStats() }
@@ -1164,9 +1188,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
         let passes = passBuffers
-        let vg = customRT?.virtualGeometry, vgFrame = frameIndex
+        let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
         cmd.addCompletedHandler { [weak self] cb in
-            if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame) }
+            if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame); streamer?.collect(slot: slot) }
             if let bench, recordFrame {
                 var passMs: [String: Double] = [:]
                 var start = Double.infinity, end = 0.0
@@ -1195,6 +1219,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if benchmark != nil {
             cmd.waitUntilCompleted()
             vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
+            streamer?.collect(slot: slot)
         }
 
         prevCamera = camera
@@ -1220,8 +1245,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBuffer(indexBuffer, offset: 0, index: 4)
         enc.setBuffer(meshBuffer, offset: 0, index: 5)
         enc.setBuffer(instanceDataBuffers[slot], offset: 0, index: 6)
-        enc.setBuffer(shadingArgs, offset: 0, index: 7)
+        enc.setBuffer(shadingArgs[slot], offset: 0, index: 7)
         enc.useResources(shadingResources, usage: .read)
+        if let textureStreamer {
+            enc.useHeap(textureStreamer.heap)
+            enc.useResource(textureStreamer.minLodBuffer(slot: slot), usage: .read)
+            enc.useResource(textureStreamer.feedbackBuffer(slot: slot), usage: [.read, .write])
+        }
         enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
     }
 
@@ -1417,6 +1447,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if let vg = customRT?.virtualBLAS {
             sceneName += String(format: " — VG %.1fM triangles, %.0f MB", Double(vg.stats.triangles) / 1e6, vg.stats.megabytes)
         }
+        if let ts = textureStreamer { sceneName += String(format: " — textures %.0f MB", ts.stats.residentMB) }
         view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
                                      sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",

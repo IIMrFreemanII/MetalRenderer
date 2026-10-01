@@ -23,6 +23,8 @@ final class Scene {
         var data: Data
         var srgb: Bool                        // colour data (base colour, emissive) vs linear (normal, metallic-roughness)
         var name: String
+        var modelPath: String                 // the glTF file (texture streaming caches per file)
+        var cacheKey: String                  // unique within the file: image index + colour space
     }
 
     struct Light {
@@ -403,7 +405,8 @@ final class Scene {
             let key = ref.image * 2 + (srgb ? 1 : 0)
             if let i = textureIndex[key] { return i }
             textures.append(TextureSource(data: model.images[ref.image].data, srgb: srgb,
-                                          name: "\(model.name)/\(model.images[ref.image].name)"))
+                                          name: "\(model.name)/\(model.images[ref.image].name)",
+                                          modelPath: url.path, cacheKey: "\(ref.image)-\(srgb ? "srgb" : "linear")"))
             textureIndex[key] = UInt32(textures.count - 1)
             return UInt32(textures.count - 1)
         }

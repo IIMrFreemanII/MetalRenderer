@@ -75,6 +75,8 @@ struct SceneShading {
     device const Material*        materials;
     device const float2*          uvs;
     device const MaterialTexture* textures;
+    device const float*           minLod;      // per texture: finest resident mip level (texture streaming)
+    device atomic_uint*           feedback;    // per texture: 16 counters, samples wanting each mip level this frame
 };
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
@@ -577,6 +579,8 @@ struct SceneData {
     device const Material*     materials;
     device const float2*       uvs;
     device const MaterialTexture* textures;
+    device const float*        minLod;
+    device atomic_uint*        feedback;
     device const Light*        lights;
     uint                       lightCount;
 };
@@ -585,6 +589,8 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.materials = shading.materials;
     s.uvs = shading.uvs;
     s.textures = shading.textures;
+    s.minLod = shading.minLod;
+    s.feedback = shading.feedback;
 }
 
 struct Surface {
@@ -681,10 +687,15 @@ constexpr sampler materialSampler(filter::linear, mip_filter::linear, address::r
 
 // Samples a material texture at the level of a footprint: lodBase = log2 of the footprint in UV units (see
 // traceSurface); the texture's resolution is added here.
-inline float4 sampleMaterial(device const MaterialTexture* textures, uint index, float2 uv, float lodBase) {
-    texture2d<float> t = textures[index].t;
-    float lod = lodBase + 0.5f * log2(float(t.get_width()) * float(t.get_height()));
-    return t.sample(materialSampler, uv, level(max(lod, 0.0f)));
+// Streamed textures: sampled hits (`record`: a rotating eighth of the pixels' primary rays)
+// count the level they need in a per-texture histogram; the streamer serves the finest level a meaningful share of
+// samples needs (single bad estimates, from degenerate UVs, don't pull in 4K mips). Every sample is clamped to the
+// finest level that is resident.
+inline float4 sampleMaterial(thread const struct SceneData& s, uint index, float2 uv, float lodBase, bool record) {
+    texture2d<float> t = s.textures[index].t;
+    float lod = max(lodBase + 0.5f * log2(float(t.get_width()) * float(t.get_height())), 0.0f);
+    if (record) atomic_fetch_add_explicit(&s.feedback[16 * index + min(uint(lod), 15u)], 1u, memory_order_relaxed);
+    return t.sample(materialSampler, uv, level(max(lod, s.minLod[index])));
 }
 
 // Orients a hit's normals toward the side the ray came from. The geometric normal decides the side; the smooth
@@ -700,7 +711,7 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
 // Primary rays pass their pixel's angle; GI rays a coarse fixed spread, since their hits get integrated anyway.
 constant float GI_RAY_SPREAD = 0.05f;
 
-Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread) {
+Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
     Hit res = intersectClosest(r, mask, accel);
 
     Surface sf;
@@ -772,15 +783,21 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         float uvArea = abs(d1.x * d2.y - d1.y * d2.x);
         float cosTheta = max(abs(dot(normalize(r.direction), sf.geomNormal)), 0.2f);
         float footprint = res.distance * length(r.direction) * spread / cosTheta;
-        float lodBase = worldArea > 0.0f && uvArea > 0.0f ? log2(max(footprint, 1e-8f)) + 0.5f * log2(uvArea / worldArea) : 0.0f;
+        // UV units per world unit along the triangle's most stretched edge (like the hardware's larger derivative):
+        // the area ratio would call a sliver in UV space "magnified" and ask for the finest mip.
+        float3 e3 = e2 - e1;
+        float2 d3 = d2 - d1;
+        float stretch = max(length(d1) / max(length(e1), 1e-12f),
+                            max(length(d2) / max(length(e2), 1e-12f), length(d3) / max(length(e3), 1e-12f)));
+        float lodBase = worldArea > 0.0f && stretch > 0.0f ? log2(max(footprint, 1e-8f) * stretch) : 0.0f;
 
-        if (mat.textures.x != NO_TEXTURE) sf.albedo *= sampleMaterial(s.textures, mat.textures.x, uv, lodBase).rgb;
+        if (mat.textures.x != NO_TEXTURE) sf.albedo *= sampleMaterial(s, mat.textures.x, uv, lodBase, record).rgb;
         if (mat.textures.y != NO_TEXTURE) {
-            float4 mr = sampleMaterial(s.textures, mat.textures.y, uv, lodBase);
+            float4 mr = sampleMaterial(s, mat.textures.y, uv, lodBase, record);
             sf.roughness *= mr.g;
             sf.metallic *= mr.b;
         }
-        if (mat.textures.w != NO_TEXTURE) sf.emission *= sampleMaterial(s.textures, mat.textures.w, uv, lodBase).rgb;
+        if (mat.textures.w != NO_TEXTURE) sf.emission *= sampleMaterial(s, mat.textures.w, uv, lodBase, record).rgb;
         if (mat.textures.z != NO_TEXTURE && uvArea > 0.0f) {
             // Tangent frame from the triangle's UV derivatives (no stored tangents), Gram-Schmidt against the
             // shading normal; normal maps are tangent space, +Y = +V.
@@ -790,7 +807,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
             T = T - N * dot(N, T);
             B = B - N * dot(N, B) - T * (dot(T, B) / max(dot(T, T), 1e-12f));
             if (dot(T, T) > 1e-12f && dot(B, B) > 1e-12f) {
-                float3 m = sampleMaterial(s.textures, mat.textures.z, uv, lodBase).xyz * 2.0f - 1.0f;
+                float3 m = sampleMaterial(s, mat.textures.z, uv, lodBase, record).xyz * 2.0f - 1.0f;
                 m.xy *= mat.params.y;
                 sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
             }
@@ -1089,7 +1106,9 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                            + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
                            + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
-    Surface sf = traceSurface(primary, MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height));   // pixel angle
+    // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
+    bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
+    Surface sf = traceSurface(primary, MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height), recordTextures);   // pixel angle
 
     bool upscale = (u.flags & FLAG_UPSCALE) != 0;
     if (!sf.hit) {
@@ -1567,6 +1586,8 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             float g2 = smithVisibility(NoV, NoL, a) * 4.0f * NoL * NoV;
             float3 weight = schlick(f0, 1.0f, dot(v, h)) * (g2 / max(g1, 1e-6f));
             float spread = mix(2.0f * u.camUp.w / float(u.height), GI_RAY_SPREAD * 4.0f, roughness);
+            // No texture feedback from reflections: their footprint ignores curvature, so self-reflections at close
+            // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, spread);
             result += weight * reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect);
         }
