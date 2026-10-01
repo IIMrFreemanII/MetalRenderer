@@ -2,9 +2,17 @@
 // Compiled at runtime by Renderer.swift — press R in the app to hot-reload after editing.
 
 #include <metal_stdlib>
-#include <metal_raytracing>
 using namespace metal;
+
+// CUSTOM_RT (set by Renderer.loadShaders): 1 = this file's own BVH traversal (see "Ray queries" below),
+// 0 = Metal's acceleration structures and intersector.
+#ifndef CUSTOM_RT
+#define CUSTOM_RT 1
+#endif
+#if !CUSTOM_RT
+#include <metal_raytracing>
 using namespace metal::raytracing;
+#endif
 
 // ---------------------------------------------------------------------------------------------
 // Shared types — layouts must match GPUTypes.swift exactly.
@@ -162,6 +170,69 @@ inline float3 cosineSampleHemisphere(float3 n, float2 u) {
 // Scene access + ray queries
 // ---------------------------------------------------------------------------------------------
 
+// Ray queries. Every kernel reaches the scene through these three functions, implemented twice:
+//   CUSTOM_RT = 0: Metal's instance acceleration structure and intersector;
+//   CUSTOM_RT = 1: this file's two-level BVH (see "Custom BVH traversal").
+struct Ray {
+    float3 origin;
+    float3 direction;   // need not be normalized; distances are in units of its length
+    float  tmin;
+    float  tmax;
+};
+inline Ray makeRay(float3 origin, float3 direction, float tmin, float tmax) {
+    Ray r;
+    r.origin = origin; r.direction = direction; r.tmin = tmin; r.tmax = tmax;
+    return r;
+}
+
+struct Hit {
+    bool   hit;
+    float  distance;
+    float2 barycentrics;   // weights of the triangle's 2nd and 3rd vertices
+    uint   instance;
+    uint   primitive;      // triangle index within the instance's mesh
+};
+
+#if !CUSTOM_RT
+
+#define SCENE_ACCEL instance_acceleration_structure
+
+Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
+    intersector<triangle_data, instancing> isect;
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
+    Hit h;
+    h.hit = res.type == intersection_type::triangle;
+    h.distance = res.distance;
+    h.barycentrics = res.triangle_barycentric_coord;
+    h.instance = res.instance_id;
+    h.primitive = res.primitive_id;
+    return h;
+}
+
+// Closest hit distance only (INFINITY if none).
+float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
+    intersector<instancing> isect;   // no triangle_data: barycentrics aren't needed
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
+    return res.type == intersection_type::none ? INFINITY : res.distance;
+}
+
+// Any hit (shadow rays): true if something is in the way; `t` = its distance.
+bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
+    intersector<instancing> isect;
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    isect.accept_any_intersection(true);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
+    t = res.distance;
+    return res.type != intersection_type::none;
+}
+
+#endif
+
 struct SceneData {
     device const float3*       positions;
     device const float3*       normals;
@@ -193,24 +264,21 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
     ns = dot(sf.normal, ng) < 0.0f ? -sf.normal : sf.normal;
 }
 
-Surface traceSurface(ray r, uint mask, instance_acceleration_structure accel, thread const SceneData& s) {
-    intersector<triangle_data, instancing> isect;
-    isect.assume_geometry_type(geometry_type::triangle);
-    isect.force_opacity(forced_opacity::opaque);
-    auto res = isect.intersect(r, accel, mask);
+Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s) {
+    Hit res = intersectClosest(r, mask, accel);
 
     Surface sf;
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
     sf.instanceId = 0;
-    if (res.type != intersection_type::triangle) return sf;
+    if (!res.hit) return sf;
 
-    InstanceData inst = s.instances[res.instance_id];
+    InstanceData inst = s.instances[res.instance];
     MeshData mesh = s.meshes[inst.meshIndex];
-    uint base = mesh.firstIndex + res.primitive_id * 3;
+    uint base = mesh.firstIndex + res.primitive * 3;
     uint i0 = s.indices[base], i1 = s.indices[base + 1], i2 = s.indices[base + 2];
 
-    float2 bc = res.triangle_barycentric_coord;
+    float2 bc = res.barycentrics;
     float w0 = 1.0f - bc.x - bc.y;
     float3 p0 = s.positions[i0], p1 = s.positions[i1], p2 = s.positions[i2];
     float3 objPos = p0 * w0 + p1 * bc.x + p2 * bc.y;
@@ -225,20 +293,24 @@ Surface traceSurface(ray r, uint mask, instance_acceleration_structure accel, th
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
     sf.albedo = mat.albedo.rgb;
     sf.emission = mat.emission.rgb;
-    sf.instanceId = res.instance_id;
+    sf.instanceId = res.instance;
     return sf;
 }
 
-bool isVisible(float3 from, float3 to, instance_acceleration_structure accel) {
+// Shadow ray from `from` to `to`: true if nothing (but light spheres) is in the way. `blocker` = distance to an
+// occluder (any one, not necessarily the nearest), 0 if visible: the shadow denoiser estimates penumbrae from it.
+bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& blocker) {
     float3 d = to - from;
     float dist = length(d);
-    ray r(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f));
-    intersector<instancing> isect;   // no triangle_data: shadow rays never need barycentrics
-    isect.assume_geometry_type(geometry_type::triangle);
-    isect.force_opacity(forced_opacity::opaque);
-    isect.accept_any_intersection(true);   // shadow rays only need "is anything in the way?"
-    auto res = isect.intersect(r, accel, MASK_GEOMETRY);
-    return res.type == intersection_type::none;
+    float t;
+    bool hit = intersectAny(makeRay(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), MASK_GEOMETRY, accel, t);
+    blocker = hit ? max(t, 1e-3f) : 0.0f;
+    return !hit;
+}
+
+bool isVisible(float3 from, float3 to, SCENE_ACCEL accel) {
+    float b;
+    return isVisibleBlocker(from, to, accel, b);
 }
 
 // Diffuse lighting from one sphere light if nothing is in the way, with albedo divided out:
@@ -261,24 +333,9 @@ inline float3 lightSamplePoint(Light light, float2 u) {
     return light.positionRadius.xyz + light.positionRadius.w * float3(rr * cos(phi), rr * sin(phi), z);
 }
 
-// Like isVisible, but also returns the distance from `from` to an occluder (0 if visible): the shadow
-// denoiser estimates penumbra widths from it.
-bool isVisibleBlocker(float3 from, float3 to, instance_acceleration_structure accel, thread float& blocker) {
-    float3 d = to - from;
-    float dist = length(d);
-    ray r(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f));
-    intersector<instancing> isect;
-    isect.assume_geometry_type(geometry_type::triangle);
-    isect.force_opacity(forced_opacity::opaque);
-    isect.accept_any_intersection(true);
-    auto res = isect.intersect(r, accel, MASK_GEOMETRY);
-    blocker = res.type == intersection_type::none ? 0.0f : max(res.distance, 1e-3f);
-    return res.type == intersection_type::none;
-}
-
 // One-sample estimate of a sphere light's diffuse lighting (lightUnshadowed x visibility of a random point
 // on the light, which gives soft shadows).
-float3 sampleLight(Light light, float3 p, float3 n, float3 ng, float2 u, instance_acceleration_structure accel) {
+float3 sampleLight(Light light, float3 p, float3 n, float3 ng, float2 u, SCENE_ACCEL accel) {
     float3 unshadowed = lightUnshadowed(light, p, n, ng);
     if (all(unshadowed == 0.0f)) return float3(0.0f);
     if (!isVisible(p, lightSamplePoint(light, u), accel)) return float3(0.0f);
@@ -390,7 +447,7 @@ inline float2 equalAreaOctEncode(float3 v) {
 // ---------------------------------------------------------------------------------------------
 
 kernel void lightMapKernel(constant Uniforms&                     u         [[buffer(0)]],
-                           instance_acceleration_structure        accel     [[buffer(1)]],
+                           SCENE_ACCEL                            accel     [[buffer(1)]],
                            device const Light*                    lights    [[buffer(8)]],
                            texture2d_array<float, access::write>  lightMap  [[texture(0)]],
                            uint3 tid [[thread_position_in_grid]])
@@ -400,12 +457,8 @@ kernel void lightMapKernel(constant Uniforms&                     u         [[bu
     Light light = lights[tid.z];
     float3 dir = equalAreaOctDecode((float2(tid.xy) + 0.5f) / float(size) * 2.0f - 1.0f);
     float start = light.positionRadius.w * 1.01f;   // just outside the light's own sphere
-    ray r(light.positionRadius.xyz + dir * start, dir, 0.0f, INFINITY);
-    intersector<instancing> isect;
-    isect.assume_geometry_type(geometry_type::triangle);
-    isect.force_opacity(forced_opacity::opaque);
-    auto res = isect.intersect(r, accel, MASK_GEOMETRY);
-    lightMap.write(float4(res.type == intersection_type::none ? 1e30f : start + res.distance), tid.xy, tid.z);
+    float t = intersectDistance(makeRay(light.positionRadius.xyz + dir * start, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel);
+    lightMap.write(float4(isinf(t) ? 1e30f : start + t), tid.xy, tid.z);
 }
 
 // Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), albedo divided out.
@@ -477,7 +530,7 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
 // ---------------------------------------------------------------------------------------------
 
 kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]],
-                        instance_acceleration_structure  accel      [[buffer(1)]],
+                        SCENE_ACCEL                      accel      [[buffer(1)]],
                         device const float3*             positions  [[buffer(2)]],
                         device const float3*             normals    [[buffer(3)]],
                         device const uint*               indices    [[buffer(4)]],
@@ -527,7 +580,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     float3 dir = normalize(u.camForward.xyz
                            + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
                            + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
-    ray primary(u.camPos.xyz, dir, 0.0f, INFINITY);
+    Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     Surface sf = traceSurface(primary, MASK_ALL, accel, s);
 
     bool upscale = (u.flags & FLAG_UPSCALE) != 0;
@@ -627,7 +680,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         for (uint b = 0; b < u.bounces; ++b) {
             float3 d = cosineSampleHemisphere(normal, rng.next2());
             if (dot(d, geomNormal) <= 0.0f) d -= 2.0f * dot(d, geomNormal) * geomNormal;   // keep it above the triangle
-            ray r(origin, d, 0.0f, INFINITY);
+            Ray r = makeRay(origin, d, 0.0f, INFINITY);
             Surface h = traceSurface(r, MASK_GEOMETRY, accel, s);
             if (!h.hit) {
                 indirect += throughput * u.skyColor.rgb;
@@ -679,7 +732,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 constant uint MAX_RAYS_PER_GROUP = 2;
 
 kernel void manyLightsKernel(constant Uniforms&               u          [[buffer(0)]],
-                             instance_acceleration_structure  accel      [[buffer(1)]],
+                             SCENE_ACCEL                      accel      [[buffer(1)]],
                              device const Light*              lights     [[buffer(8)]],
                              texture2d<float, access::read>   surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
                              texture2d<float, access::read>   normalDepth [[texture(1)]],
@@ -757,7 +810,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
 // ---------------------------------------------------------------------------------------------
 
 kernel void manyLightsReuseKernel(constant Uniforms&               u          [[buffer(0)]],
-                             instance_acceleration_structure  accel      [[buffer(1)]],
+                             SCENE_ACCEL                      accel      [[buffer(1)]],
                              device const Light*              lights     [[buffer(8)]],
                              texture2d<float, access::read>   surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
                              texture2d<float, access::read>   normalDepth [[texture(1)]],
@@ -1590,7 +1643,7 @@ struct RCProbeBatch {
 // unjittered ray so probes don't move with MetalFX's sub-pixel jitter. All cascades run in one flat dispatch
 // (cascade 0's probes first): the coarse cascades have only a few hundred probes each, too few to fill the GPU.
 kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0)]],
-                          instance_acceleration_structure  accel      [[buffer(1)]],
+                          SCENE_ACCEL                      accel      [[buffer(1)]],
                           device const float3*             positions  [[buffer(2)]],
                           device const float3*             normals    [[buffer(3)]],
                           device const uint*               indices    [[buffer(4)]],
@@ -1619,7 +1672,7 @@ kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0
     float2 uv = pixel / float2(u.width, u.height);
     float3 dir = normalize(u.camForward.xyz + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
                                             + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
-    Surface sf = traceSurface(ray(u.camPos.xyz, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
+    Surface sf = traceSurface(makeRay(u.camPos.xyz, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
     if (!sf.hit) {
         probePos[c].write(float4(0.0f, 0.0f, 0.0f, -1.0f), tid);
         return;
@@ -1642,7 +1695,7 @@ inline float rcProbeWeight(float4 q, float3 qn, float3 x, float3 n, float depth)
 // Traces one (probe, direction) interval of cascade c and merges cascade c+1 into it. Threads are ordered
 // direction-major (neighbouring threads = neighbouring probes, same direction) so rays stay coherent.
 kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buffer(0)]],
-                               instance_acceleration_structure  accel      [[buffer(1)]],
+                               SCENE_ACCEL                      accel      [[buffer(1)]],
                                device const float3*             positions  [[buffer(2)]],
                                device const float3*             normals    [[buffer(3)]],
                                device const uint*               indices    [[buffer(4)]],
@@ -1682,7 +1735,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
     s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
     bool last = p.layout.w != 0;
-    ray r(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
+    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, MASK_GEOMETRY, accel, s);
 
     float3 radiance = float3(0.0f);
@@ -2038,7 +2091,7 @@ kernel void surfelScatterKernel(constant SurfelParams& sp [[buffer(0)]], device 
 // shuffles, then lane 0 blends the result into the surfel's irradiance (short + long running means, with the
 // long one's history cut when the two disagree beyond noise, i.e. when the lighting changes).
 kernel void surfelTraceKernel(constant Uniforms&               u          [[buffer(0)]],
-                              instance_acceleration_structure  accel      [[buffer(1)]],
+                              SCENE_ACCEL                      accel      [[buffer(1)]],
                               device const float3*             positions  [[buffer(2)]],
                               device const float3*             normals    [[buffer(3)]],
                               device const uint*               indices    [[buffer(4)]],
@@ -2083,7 +2136,7 @@ kernel void surfelTraceKernel(constant Uniforms&               u          [[buff
         float2 uv = fract(float2((float(rayIndex) + 0.5f) / float(rays), float(rayIndex) * 0.618034f) + jitter);
         float3 d = cosineSampleHemisphere(n, uv);
         if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
-        Surface hit = traceSurface(ray(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
+        Surface hit = traceSurface(makeRay(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
         if (!hit.hit) {
             radiance = u.skyColor.rgb;
         } else {

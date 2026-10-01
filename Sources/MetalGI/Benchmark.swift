@@ -315,6 +315,28 @@ final class Benchmark {
                 up += [st, mv, cam, ds, dm]
             }
             return direct + gi + up
+        case "rt":
+            // Ray tracer comparison (run once per tracer: METALGI_RT=custom|metal). Paused frames at t = 5 s in every GI
+            // mode for image diffs between the tracers, then moving frames for timing, on both scenes and at several
+            // stress-scene sizes.
+            func scene(_ kind: SceneKind, objects: Int = 400) -> SceneSettings { SceneSettings(kind: kind, objects: objects, lights: 32) }
+            var out: [Config] = []
+            for (tag, sc) in [("cornell", scene(.cornell)), ("stress", scene(.stress))] {
+                out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
+                                  frames: 30, scene: sc))
+                for (gtag, mode) in [("pt", GIMode.pathTraced), ("surfels", .surfels), ("cascades", .radianceCascades)] {
+                    out.append(Config(name: "\(tag) \(gtag) static", renderScale: 0.5, paused: true, startTime: 5, frames: 30,
+                                      giMode: mode, scene: sc))
+                }
+            }
+            for objects in [0, 400, 1000, 2000] {
+                for (gtag, mode) in [("pt", GIMode.pathTraced), ("surfels", .surfels), ("cascades", .radianceCascades)] {
+                    out.append(Config(name: "stress \(objects) \(gtag) moving", renderScale: 0.5, upscale: 3, giMode: mode,
+                                      scene: scene(.stress, objects: objects)))
+                }
+            }
+            out.append(Config(name: "cornell cascades moving", renderScale: 0.5, upscale: 3, giMode: .radianceCascades))
+            return out
         case "quick": return [
             Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
             Config(name: "default, MetalFX temporal", renderScale: 0.5, upscale: 3, upscaler: .metalFX, giMode: .radianceCascades),

@@ -275,6 +275,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
         let options = MTLCompileOptions()
         options.languageVersion = .version3_0
+        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: 0)]
         let library = try device.makeLibrary(source: source, options: options)
 
         func pipeline(_ name: String) throws -> MTLComputePipelineState {
