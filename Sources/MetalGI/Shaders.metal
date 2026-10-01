@@ -303,23 +303,31 @@ inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, floa
     return true;
 }
 
-// One instance's bottom-level tree, using the stack above `base`. Returns true on a hit when ANY (stop now).
+constant uint RT_INSTANCE_EXIT = 0xFFFFFFFEu;   // stack marker: back to the top level (world space) below here
+
+// Both levels in one loop: entering an instance switches the ray to object space and pushes a marker; popping the
+// marker switches back. Every SIMD lane then runs the same node-fetch code whichever level it is in, instead of
+// lanes in a top-level loop waiting for lanes inside a nested bottom-level loop. Returns true on a hit when ANY.
 template <bool ANY>
-inline bool rtInstance(uint id, constant RTScene& sc, Ray r, uint mask, thread Hit& h, thread uint* stack, uint base) {
-    RTInstance inst = sc.instances[id];
-    if ((inst.mask & mask) == 0) return false;
-    float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
-    float3 o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
-    float3 d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared
-    float3 inv = rtSafeInverse(d), oi = -o * inv;
-    uint sp = base;
-    uint ref = inst.blasRoot;
+inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h) {
+    uint stack[RT_STACK];
+    uint sp = 0;
+    uint ref = sc.staticRoot;
+    if (sc.dynamicRoot != RT_NONE) {
+        if (ref == RT_NONE) ref = sc.dynamicRoot; else stack[sp++] = sc.dynamicRoot;
+    }
+    if (ref == RT_NONE) return false;
+
+    float3 worldInv = rtSafeInverse(r.direction), worldOi = -r.origin * worldInv;
+    float3 o = r.origin, d = r.direction, inv = worldInv, oi = worldOi;
+    bool bottom = false;
+    uint instance = 0;
     while (true) {
         if ((ref & RT_LEAF) == 0) {
-            BVHNode n = sc.blas[ref];
+            BVHNode n = bottom ? sc.blas[ref] : sc.tlas[ref];
             float t0, t1;
-            bool b0 = rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
-            bool b1 = rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
+            bool b0 = (bottom || (as_type<uint>(n.hi0.w) & mask) != 0) && rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
+            bool b1 = (bottom || (as_type<uint>(n.hi1.w) & mask) != 0) && rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
             uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
             if (b0 && b1) {
                 bool swap = t1 < t0;
@@ -328,46 +336,37 @@ inline bool rtInstance(uint id, constant RTScene& sc, Ray r, uint mask, thread H
                 continue;
             }
             if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
-        } else {
+        } else if (!bottom) {
+            uint id = ref & ~RT_LEAF;
+            RTInstance inst = sc.instances[id];
+            if ((inst.mask & mask) != 0 && sp < RT_STACK) {
+                float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
+                o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
+                d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared
+                inv = rtSafeInverse(d);
+                oi = -o * inv;
+                bottom = true;
+                instance = id;
+                stack[sp++] = RT_INSTANCE_EXIT;
+                ref = inst.blasRoot;
+                continue;
+            }
+        } else if (ref != RT_NONE) {   // RT_NONE: the empty child of a single-leaf mesh
             uint first = ref & 0x0FFFFFFFu, end = first + ((ref >> 28) & 7u) + 1u;
-            if (ref == RT_NONE) end = first;   // the empty child of a single-leaf mesh
             for (uint t = first; t < end; ++t) {
                 if (rtTriangle(o, d, sc.tris[3 * t], sc.tris[3 * t + 1], sc.tris[3 * t + 2], r.tmin, h)) {
-                    h.instance = id;
+                    h.instance = instance;
                     if (ANY) return true;
                 }
             }
         }
-        if (sp == base) return false;
-        ref = stack[--sp];
-    }
-}
-
-template <bool ANY>
-inline bool rtTree(uint root, constant RTScene& sc, Ray r, uint mask, thread Hit& h, thread uint* stack) {
-    if (root == RT_NONE) return false;
-    float3 inv = rtSafeInverse(r.direction), oi = -r.origin * inv;
-    uint sp = 0;
-    uint ref = root;
-    while (true) {
-        if ((ref & RT_LEAF) == 0) {
-            BVHNode n = sc.tlas[ref];
-            float t0, t1;
-            bool b0 = (as_type<uint>(n.hi0.w) & mask) != 0 && rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
-            bool b1 = (as_type<uint>(n.hi1.w) & mask) != 0 && rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
-            uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
-            if (b0 && b1) {
-                bool swap = t1 < t0;
-                if (sp < RT_STACK) stack[sp++] = swap ? c0 : c1;
-                ref = swap ? c1 : c0;
-                continue;
-            }
-            if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
-        } else if (rtInstance<ANY>(ref & ~RT_LEAF, sc, r, mask, h, stack, sp)) {
-            return true;
+        while (true) {
+            if (sp == 0) return false;
+            ref = stack[--sp];
+            if (ref != RT_INSTANCE_EXIT) break;
+            bottom = false;
+            o = r.origin; d = r.direction; inv = worldInv; oi = worldOi;
         }
-        if (sp == 0) return false;
-        ref = stack[--sp];
     }
 }
 
@@ -378,9 +377,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     h.barycentrics = float2(0.0f);
     h.instance = 0;
     h.primitive = 0;
-    uint stack[RT_STACK];
-    rtTree<false>(sc.staticRoot, sc, r, mask, h, stack);
-    rtTree<false>(sc.dynamicRoot, sc, r, mask, h, stack);
+    rtTraverse<false>(sc, r, mask, h);
     return h;
 }
 
@@ -393,8 +390,7 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     Hit h;
     h.hit = false;
     h.distance = r.tmax;
-    uint stack[RT_STACK];
-    bool hit = rtTree<true>(sc.staticRoot, sc, r, mask, h, stack) || rtTree<true>(sc.dynamicRoot, sc, r, mask, h, stack);
+    bool hit = rtTraverse<true>(sc, r, mask, h);
     t = h.distance;
     return hit;
 }
