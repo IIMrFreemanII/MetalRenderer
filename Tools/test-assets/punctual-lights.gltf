@@ -1,0 +1,284 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "MetalGI test asset"
+ },
+ "extensionsUsed": [
+  "KHR_lights_punctual"
+ ],
+ "extensions": {
+  "KHR_lights_punctual": {
+   "lights": [
+    {
+     "type": "point",
+     "color": [
+      1.0,
+      0.7,
+      0.4
+     ],
+     "intensity": 60,
+     "name": "warm point"
+    },
+    {
+     "type": "spot",
+     "color": [
+      0.4,
+      0.6,
+      1.0
+     ],
+     "intensity": 120,
+     "spot": {
+      "innerConeAngle": 0.25,
+      "outerConeAngle": 0.45
+     },
+     "name": "blue spot"
+    },
+    {
+     "type": "directional",
+     "color": [
+      1.0,
+      0.95,
+      0.9
+     ],
+     "intensity": 40,
+     "name": "sun"
+    }
+   ]
+  }
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0,
+    1,
+    2,
+    3,
+    4
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0,
+   "name": "floor"
+  },
+  {
+   "mesh": 1,
+   "translation": [
+    0,
+    0.3,
+    0
+   ],
+   "rotation": [
+    0.0,
+    0.24740395925452294,
+    0.0,
+    0.9689124217106447
+   ],
+   "name": "box"
+  },
+  {
+   "translation": [
+    -1.2,
+    1.0,
+    0.8
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 0
+    }
+   },
+   "name": "point"
+  },
+  {
+   "translation": [
+    1.0,
+    2.2,
+    -0.5
+   ],
+   "rotation": [
+    -0.7071067811865475,
+    -0.0,
+    -0.0,
+    0.7071067811865476
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 1
+    }
+   },
+   "name": "spot (points down)"
+  },
+  {
+   "rotation": [
+    -0.3535534,
+    0.3535534,
+    0.1464466,
+    0.8535534
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 2
+    }
+   },
+   "name": "sun"
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1
+     },
+     "indices": 2,
+     "material": 0
+    }
+   ]
+  },
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 3,
+      "NORMAL": 4
+     },
+     "indices": 5,
+     "material": 1
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "floor",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.7,
+     0.7,
+     0.7,
+     1
+    ],
+    "metallicFactor": 0,
+    "roughnessFactor": 0.6
+   }
+  },
+  {
+   "name": "box",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.8,
+     0.3,
+     0.2,
+     1
+    ],
+    "metallicFactor": 0,
+    "roughnessFactor": 0.5
+   }
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3",
+   "min": [
+    -2.0,
+    0,
+    -2.0
+   ],
+   "max": [
+    2.0,
+    0,
+    2.0
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5125,
+   "count": 6,
+   "type": "SCALAR"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5126,
+   "count": 24,
+   "type": "VEC3",
+   "min": [
+    -0.3,
+    -0.3,
+    -0.3
+   ],
+   "max": [
+    0.3,
+    0.3,
+    0.3
+   ]
+  },
+  {
+   "bufferView": 4,
+   "componentType": 5126,
+   "count": 24,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 5,
+   "componentType": 5125,
+   "count": 36,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 48,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 48,
+   "byteLength": 48,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 96,
+   "byteLength": 24,
+   "target": 34963
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 120,
+   "byteLength": 288,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 408,
+   "byteLength": 288,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 696,
+   "byteLength": 144,
+   "target": 34963
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 840,
+   "uri": "data:application/octet-stream;base64,AAAAwAAAAAAAAADAAAAAQAAAAAAAAADAAAAAQAAAAAAAAABAAAAAwAAAAAAAAABAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAIAAAABAAAAAAAAAAMAAAACAAAAmpmZPpqZmb6amZm+mpmZPpqZmT6amZm+mpmZPpqZmT6amZk+mpmZPpqZmb6amZk+mpmZvpqZmb6amZm+mpmZvpqZmb6amZk+mpmZvpqZmT6amZk+mpmZvpqZmT6amZm+mpmZvpqZmT6amZm+mpmZvpqZmT6amZk+mpmZPpqZmT6amZk+mpmZPpqZmT6amZm+mpmZvpqZmb6amZm+mpmZPpqZmb6amZm+mpmZPpqZmb6amZk+mpmZvpqZmb6amZk+mpmZvpqZmb6amZk+mpmZPpqZmb6amZk+mpmZPpqZmT6amZk+mpmZvpqZmT6amZk+mpmZvpqZmb6amZm+mpmZvpqZmT6amZm+mpmZPpqZmT6amZm+mpmZPpqZmb6amZm+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAEAAAACAAAAAAAAAAIAAAADAAAABAAAAAUAAAAGAAAABAAAAAYAAAAHAAAACAAAAAkAAAAKAAAACAAAAAoAAAALAAAADAAAAA0AAAAOAAAADAAAAA4AAAAPAAAAEAAAABEAAAASAAAAEAAAABIAAAATAAAAFAAAABUAAAAWAAAAFAAAABYAAAAXAAAA"
+  }
+ ]
+}

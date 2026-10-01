@@ -3,7 +3,8 @@ import simd
 
 /// A model loaded from glTF 2.0 (`.glb`, or `.gltf` with external or embedded buffers and images): triangle meshes,
 /// metallic-roughness materials and their images, flattened into mesh parts with model-space transforms.
-/// Static geometry only: skins, morph targets, animations and cameras are ignored.
+/// Static geometry only: skins, morph targets, animations and cameras are ignored. Punctual lights
+/// (KHR_lights_punctual: point, spot, directional) come with their node transforms.
 struct GLTFModel {
     struct Mesh {
         var positions: [SIMD3<Float>]
@@ -31,12 +32,21 @@ struct GLTFModel {
         var data: Data                   // encoded (PNG, JPEG, ...), decoded later with ImageIO
         var name: String
     }
+    /// A KHR_lights_punctual light placed by a node: it sits at the transform's origin and points down its -Z.
+    struct Light {
+        enum Kind { case point, spot(inner: Float, outer: Float), directional }
+        var kind: Kind
+        var color: SIMD3<Float>          // linear
+        var intensity: Float             // candela (point, spot) or lux (directional)
+        var transform: float4x4          // model space
+    }
 
     var name: String
     var meshes: [Mesh] = []
     var parts: [(mesh: Int, transform: float4x4)] = []   // one per mesh use in the node hierarchy
     var materials: [Material] = []
     var images: [Image] = []
+    var lights: [Light] = []
 
     var triangleCount: Int { parts.reduce(0) { $0 + meshes[$1.mesh].indices.count / 3 } }
 
@@ -80,7 +90,19 @@ enum GLTFLoader {
         var textures: [Texture]?
         var images: [ImageDef]?
         var extensionsRequired: [String]?
+        var extensions: DocumentExtensions?
     }
+    private struct DocumentExtensions: Decodable { var KHR_lights_punctual: PunctualLights? }
+    private struct PunctualLights: Decodable { var lights: [PunctualLight] }
+    private struct PunctualLight: Decodable {
+        var type: String
+        var color: [Float]?
+        var intensity: Float?
+        var spot: Spot?
+        struct Spot: Decodable { var innerConeAngle: Float?; var outerConeAngle: Float? }
+    }
+    private struct NodeExtensions: Decodable { var KHR_lights_punctual: NodeLight? }
+    private struct NodeLight: Decodable { var light: Int }
     private struct Asset: Decodable { var version: String }
     private struct SceneDef: Decodable { var nodes: [Int]? }
     private struct Node: Decodable {
@@ -90,6 +112,7 @@ enum GLTFLoader {
         var translation: [Float]?
         var rotation: [Float]?
         var scale: [Float]?
+        var extensions: NodeExtensions?
     }
     private struct MeshDef: Decodable { var primitives: [Primitive] }
     private struct Primitive: Decodable {
@@ -140,7 +163,7 @@ enum GLTFLoader {
     private struct AnyDecodable: Decodable { init(from decoder: Decoder) throws {} }
 
     /// Extensions that change how data must be read; a file that requires anything else is rejected.
-    private static let supportedRequired: Set<String> = ["KHR_materials_emissive_strength"]
+    private static let supportedRequired: Set<String> = ["KHR_materials_emissive_strength", "KHR_lights_punctual"]
 
     // MARK: Loading
 
@@ -333,6 +356,22 @@ enum GLTFLoader {
             let world = parent * local(n)
             if let m = n.mesh, meshPrimitives.indices.contains(m) {
                 for mesh in meshPrimitives[m] { model.parts.append((mesh, world)) }
+            }
+            if let l = n.extensions?.KHR_lights_punctual?.light, let lights = doc.extensions?.KHR_lights_punctual?.lights,
+               lights.indices.contains(l) {
+                let def = lights[l]
+                let kind: GLTFModel.Light.Kind?
+                switch def.type {
+                case "point": kind = .point
+                case "directional": kind = .directional
+                case "spot": kind = .spot(inner: def.spot?.innerConeAngle ?? 0, outer: def.spot?.outerConeAngle ?? .pi / 4)
+                default: kind = nil
+                }
+                let c = def.color ?? [1, 1, 1]
+                if let kind, c.count == 3 {
+                    model.lights.append(GLTFModel.Light(kind: kind, color: SIMD3(c[0], c[1], c[2]),
+                                                        intensity: def.intensity ?? 1, transform: world))
+                }
             }
             for c in n.children ?? [] { visit(c, world, depth: depth + 1) }
         }

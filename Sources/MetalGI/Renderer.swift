@@ -33,9 +33,10 @@ final class RenderTargets {
     let blocker: MTLTexture         // per light group: penumbra half width of the occluded samples, 0 = visible
     let material: MTLTexture        // specular materials: rgb = F0, a = roughness
     let specular: MTLTexture        // raw 1-spp specular light (reflections), divided by the specular albedo
+    let meshDirect: MTLTexture      // raw 1-spp direct light from emissive-mesh lights (albedo removed)
     let shadow: ShadowTargets       // shadow denoiser state
-    /// Denoiser state for [0] direct + indirect light combined (or direct alone), [1] indirect light alone and
-    /// [2] specular light.
+    /// Denoiser state for [0] direct + indirect light combined (or direct alone), [1] indirect light alone,
+    /// [2] specular light and [3] mesh-light direct light (with the shadow denoiser).
     let denoise: [DenoiseTargets]
     // MetalFX inputs (written only while upscaling is on)
     static let upscaleColorFormat = MTLPixelFormat.rgba16Float
@@ -70,8 +71,10 @@ final class RenderTargets {
         blocker = try make(.rgba16Float, "blocker")
         material = try make(.rgba16Float, "material")
         specular = try make(.rgba16Float, "specular")
+        meshDirect = try make(.rgba16Float, "meshDirect")
         shadow = try ShadowTargets(device: device, width: width, height: height, make)
-        denoise = [try DenoiseTargets(make, "direct"), try DenoiseTargets(make, "indirect"), try DenoiseTargets(make, "specular")]
+        denoise = [try DenoiseTargets(make, "direct"), try DenoiseTargets(make, "indirect"), try DenoiseTargets(make, "specular"),
+                   try DenoiseTargets(make, "meshDirect")]
         upscaleColor = try make(RenderTargets.upscaleColorFormat, "upscaleColor")
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
@@ -158,6 +161,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var lightMapPSO: MTLComputePipelineState!
     private var manyLightsPSO: MTLComputePipelineState!
     private var manyLightsReusePSO: MTLComputePipelineState!
+    private var meshLightsPSO: MTLComputePipelineState!
     private var reflectionPSO: MTLComputePipelineState!
     private var rcPipelines: RCPipelines!
     private var surfelPipelines: SurfelPipelines!
@@ -171,6 +175,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var meshBuffer: MTLBuffer!
     private var materialBuffer: MTLBuffer!
     private var uvBuffer: MTLBuffer!
+    private var emissiveBuffer: MTLBuffer!            // emissive-mesh lights' triangles (MSL EmissiveTriangle)
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
     private var textureTable: MTLBuffer!              // their MTLResourceIDs (MSL MaterialTexture array)
     private var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
@@ -184,6 +189,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var rtPipelines: RTPipelines?
     /// The tracer the shaders were compiled for and the scene's structures were built for.
     private var builtRayTracer = RayTracerKind.initial
+    private var shaderLibrary: (kind: RayTracerKind, library: MTLLibrary)?
+    private var builtLightTypes: UInt32 = 0   // the light types the pipelines are specialised for
     private var blueNoiseTexture: MTLTexture!   // filled the first time blue noise is turned on
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
     static func lightMapSize(lightCount: Int) -> Int {
@@ -278,7 +285,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
 
-        try loadShaders(for: settings.rayTracer)
+        try loadShaders(for: settings.rayTracer, lightTypes: scene.lightTypeMask)
         try createSceneResources()
         try createBlueNoiseTexture()
         if !upscaleSupported {
@@ -302,18 +309,28 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     // MARK: - Setup
 
     /// Compiles Shaders.metal for `kind` (CUSTOM_RT macro). The custom tracer's build kernels exist only in its variant.
-    private func loadShaders(for kind: RayTracerKind) throws {
-        let source = try String(contentsOf: shaderURL, encoding: .utf8)
-        let options = MTLCompileOptions()
-        // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
-        // 3.0 and then need METALGI_RT=metal.
-        if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
-        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
-                                      "RT_STATS": NSNumber(value: CustomRayTracer.statsEnabled ? 1 : 0)]
-        let library = try device.makeLibrary(source: source, options: options)
+    /// Compiles Shaders.metal for `kind` (kept until the tracer changes or `recompile`, the hot reload) and makes
+    /// every pipeline, specialised for the scene's light types (function constant 0, see Scene.lightTypeMask).
+    private func loadShaders(for kind: RayTracerKind, lightTypes: UInt32, recompile: Bool = false) throws {
+        let library: MTLLibrary
+        if let cached = shaderLibrary, cached.kind == kind, !recompile {
+            library = cached.library
+        } else {
+            let source = try String(contentsOf: shaderURL, encoding: .utf8)
+            let options = MTLCompileOptions()
+            // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
+            // 3.0 and then need METALGI_RT=metal.
+            if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
+            options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
+                                          "RT_STATS": NSNumber(value: CustomRayTracer.statsEnabled ? 1 : 0)]
+            library = try device.makeLibrary(source: source, options: options)
+        }
+        let constants = MTLFunctionConstantValues()
+        var types = lightTypes
+        constants.setConstantValue(&types, type: .uint, index: 0)
 
         func pipeline(_ name: String) throws -> MTLComputePipelineState {
-            guard let function = library.makeFunction(name: name) else { throw RendererError.missingFunction(name) }
+            let function = try library.makeFunction(name: name, constantValues: constants)
             return try device.makeComputePipelineState(function: function)
         }
         // Build everything first so a failed hot-reload keeps the old pipelines.
@@ -329,6 +346,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let lightMap = try pipeline("lightMapKernel")
         let manyLights = try pipeline("manyLightsKernel")
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
+        let meshLights = try pipeline("meshLightsKernel")
         let reflection = try pipeline("reflectionKernel")
         let geometryDebug = try pipeline("geometryDebugKernel")
         let rt = kind != .custom ? nil :
@@ -358,12 +376,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         lightMapPSO = lightMap
         manyLightsPSO = manyLights
         manyLightsReusePSO = manyLightsReuse
+        meshLightsPSO = meshLights
         reflectionPSO = reflection
         geometryDebugPSO = geometryDebug
         rcPipelines = rc
         rtPipelines = rt
         if let rt { customRT?.pipelines = rt }
         surfelPipelines = surfel
+        shaderLibrary = (kind, library)
+        builtLightTypes = lightTypes
     }
 
     private func makeBuffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
@@ -495,14 +516,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let start = CACurrentMediaTime()
         scene = prepared.scene
         do {
-            if prepared.rayTracer != builtRayTracer { try loadShaders(for: prepared.rayTracer) }
+            if prepared.rayTracer != builtRayTracer || scene.lightTypeMask != builtLightTypes {
+                try loadShaders(for: prepared.rayTracer, lightTypes: scene.lightTypeMask)
+            }
             try createSceneResources(prepared)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old
             settings.scene = old.settings
             settings.rayTracer = oldRayTracer
-            try? loadShaders(for: oldRayTracer)
+            try? loadShaders(for: oldRayTracer, lightTypes: old.lightTypeMask)
             try? createSceneResources()
         }
         surfelGI = nil   // its grid covers the old scene's bounds
@@ -525,6 +548,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         meshBuffer = try makeBuffer(scene.meshes, "meshes")
         materialBuffer = try makeBuffer(scene.materials, "materials")
         uvBuffer = try makeBuffer(scene.uvs, "uvs")
+        emissiveBuffer = try makeBuffer(scene.emissiveTriangles, "emissiveTriangles")
+        scene.materialsChanged = false
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
         textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
         staticMinLod = try makeBuffer([Float](repeating: 0, count: max(materialTextures.count, 1)), "textureMinLod")
@@ -542,9 +567,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.minLodBuffer(slot: slot) ?? staticMinLod).gpuAddress, toByteOffset: 24, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.feedbackBuffer(slot: slot) ?? feedbackDummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
+            p.storeBytes(of: emissiveBuffer.gpuAddress, toByteOffset: 40, as: UInt64.self)
             shadingArgs.append(args)
         }
-        shadingResources = [materialBuffer, uvBuffer, textureTable, staticMinLod, feedbackDummy]
+        shadingResources = [materialBuffer, uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer]
             + (textureStreamer == nil ? materialTextures : [])
     }
 
@@ -651,6 +677,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let data = scene.gpuInstanceData()
         data.withUnsafeBytes { raw in
             instanceDataBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+        }
+        if scene.materialsChanged {
+            // Animated light proxies (flicker, the sun's colour): frames in flight may see the new values a frame early.
+            scene.materials.withUnsafeBytes { raw in
+                materialBuffer.contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+            }
+            scene.materialsChanged = false
         }
         let lights = scene.gpuLights()
         if !lights.isEmpty {
@@ -962,6 +995,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var signals: [(noisy: [MTLTexture], targets: DenoiseTargets, passes: Int)] =
             shadowDenoiser ? [] : separate ? [([t.direct], t.denoise[0], passCount)] : [([t.direct, t.indirect], t.denoise[0], passCount)]
         if separate && denoiseIndirect { signals.append(([t.indirect], t.denoise[1], techniqueGI ? 1 : passCount)) }
+        // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
+        // of its own (first, so finalIllumination keeps the indirect light last); otherwise it joins the direct light.
+        let meshLights = !scene.meshLights.isEmpty
+        let denoiseMeshLights = meshLights && shadowDenoiser
+        if denoiseMeshLights { signals.insert(([t.meshDirect], t.denoise[3], settings.denoiser.passes(for: .pathTraced)), at: 0) }
+        var finalMeshDirect = t.meshDirect
         var finalIllumination = [t.denoise[0].pingA]
         var denoiseStages: [ComputeStage] = []
         // 2d. Reflections (glTF specular materials): after the GI (they read its result), before the denoisers.
@@ -1002,7 +1041,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         // 2c. More than 4 lights: direct light from one sampled light per group (manyLightsKernel), after the trace
         //     and before anything that reads direct light or visibility.
-        let manyLights = scene.lights.count > 4 && frameUniforms.flags & UniformFlags.allLights == 0
+        let manyLights = scene.lightGroupEnd[3] > 4 && frameUniforms.flags & UniformFlags.allLights == 0
         let reuse = manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
         let reservoirsValid = reuse && reservoirsWritten && historyValid
         reservoirsWritten = reuse
@@ -1019,6 +1058,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                   t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
                                   t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
                 dispatch(enc, "many lights", width: width, height: height)
+            })
+        }
+        if meshLights {
+            denoiseStages.append(ComputeStage(pass: "mesh lights") { [self] enc in
+                var u = frameUniforms, addToDirect: UInt32 = shadowDenoiser ? 0 : 1
+                enc.setComputePipelineState(meshLightsPSO)
+                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                bindScene(enc, slot: slot)
+                enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
+                dispatch(enc, "mesh lights", width: width, height: height)
             })
         }
         if shadowDenoiser {
@@ -1100,6 +1150,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
             finalIllumination = (shadowDenoiser ? finalIllumination : [])
                 + signals.map { _, d, passes in atrousPasses(d)[passes - 1].dst }
+            if denoiseMeshLights {
+                finalMeshDirect = finalIllumination[1]
+                uniforms.flags |= UniformFlags.meshLights
+            }
             if separate { uniforms.flags |= UniformFlags.separateSignals }
         }
 
@@ -1154,7 +1208,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             setTextures(enc, [finalIllumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
-                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular, t.geometryDebug])
+                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular, t.geometryDebug, finalMeshDirect])
             enc.setBuffer(lightBuffers[slot], offset: 0, index: 1)
             dispatch(enc, "composite", width: output.width, height: output.height)
         }
@@ -1523,7 +1577,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r":
             do {
-                try loadShaders(for: builtRayTracer)
+                try loadShaders(for: builtRayTracer, lightTypes: builtLightTypes, recompile: true)
                 resetGIState()
                 upscalerReset = true
                 print("Shaders reloaded")

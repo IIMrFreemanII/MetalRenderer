@@ -61,7 +61,8 @@ struct InstanceData {
 struct Material {
     float4 albedo;      // rgb = base colour, a = metallic
     float4 emission;    // rgb = emitted radiance, a = roughness
-    float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale
+    float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
+                        // z = 1: its emission is sampled as an emissive-mesh light
     uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
 };
 
@@ -70,6 +71,8 @@ struct MaterialTexture {
     texture2d<float> t;
 };
 
+struct EmissiveTriangle;
+
 // Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table.
 struct SceneShading {
     device const Material*        materials;
@@ -77,13 +80,46 @@ struct SceneShading {
     device const MaterialTexture* textures;
     device const float*           minLod;      // per texture: finest resident mip level (texture streaming)
     device atomic_uint*           feedback;    // per texture: 16 counters, samples wanting each mip level this frame
+    device const EmissiveTriangle* emissive;   // emissive-mesh lights' triangles
 };
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
+// One light (GPUTypes.swift GPULight). Analytic lights come first, sorted by shadow-denoiser group
+// (u.lightGroupEnd.w of them); emissive-mesh lights follow, up to u.lightCount.
 struct Light {
-    float4 positionRadius;
-    float4 color;
+    float4 positionRadius;  // xyz = centre (unused by the sun), w = radius (sphere, spot, tube; mesh: bounding sphere),
+                            //   angular radius in radians (sun)
+    float4 color;           // rgb = intensity (sphere, spot, tube), irradiance (sun), radiance (rect),
+                            //   sum of radiance x area (mesh); w = shadow-denoiser group + 4 x type (LIGHT_*), so
+                            //   the per-light weight loops read only the first 32 bytes of a sphere light
+    float4 axis;            // xyz = spot axis, rect normal (it emits along it), direction toward the sun,
+                            //   tube half axis (centre +- axis), mesh mean normal
+    float4 params;          // spot: cos outer, cos inner | rect: half-width tangent xyz, half height
+                            // sun: light-map bounds centre xyz, radius | mesh: first triangle, triangle count,
+                            //   flatness, instance (uints bit cast, but flatness)
+};
+
+constant uint LIGHT_SPHERE = 0;
+constant uint LIGHT_SPOT   = 1;
+constant uint LIGHT_SUN    = 2;
+constant uint LIGHT_RECT   = 3;
+constant uint LIGHT_TUBE   = 4;
+constant uint LIGHT_MESH   = 5;
+
+// One bit per LIGHT_* type the scene has (function constant 0). The renderer specialises the pipelines per scene,
+// so the per-light loops of a scene with only sphere lights compile to exactly the sphere code; without the constant
+// (e.g. a pipeline made without it) every type is handled.
+constant uint lightTypesConstant [[function_constant(0)]];
+constant uint LIGHT_TYPES = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x3Fu;
+constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
+
+// One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
+struct EmissiveTriangle {
+    float4 v0;    // xyz = vertex 0, w = cumulative selection probability within its light (last = 1)
+    float4 e1;    // xyz = v1 - v0, w = uv0.x
+    float4 e2;    // xyz = v2 - v0, w = uv0.y
+    float4 uv12;  // uv1, uv2
 };
 
 constant uint FLAG_HISTORY_VALID = 1;
@@ -97,6 +133,7 @@ constant uint FLAG_SHADOW_DENOISER = 128;  // direct light = exact unshadowed li
 constant uint FLAG_ALL_LIGHTS    = 256; // one shadow ray per light even with more than SHADOW_GROUPS lights (references)
 constant uint FLAG_SPECULAR      = 512; // specular materials present: material G-buffer, reflection pass, specular composite
 constant uint FLAG_REFERENCE     = 1024; // accumulated reference: reflections follow full paths
+constant uint FLAG_MESH_LIGHTS   = 2048; // with the shadow denoiser: the composite adds the denoised mesh-light direct light
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
@@ -597,6 +634,7 @@ struct SceneData {
     device const MaterialTexture* textures;
     device const float*        minLod;
     device atomic_uint*        feedback;
+    device const EmissiveTriangle* emissive;
     device const Light*        lights;
     uint                       lightCount;
 };
@@ -607,6 +645,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.textures = shading.textures;
     s.minLod = shading.minLod;
     s.feedback = shading.feedback;
+    s.emissive = shading.emissive;
 }
 
 struct Surface {
@@ -622,7 +661,12 @@ struct Surface {
     float  specular;      // specular weight: 0 = diffuse-only material
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
+    bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
 };
+
+// Emission a GI or bounce ray picks up at a hit: none from emissive-mesh lights, whose light next-event estimation
+// and the light maps already deliver (as the light spheres, which GI rays don't even see).
+inline float3 giEmission(thread const Surface& h) { return h.lightEmitter ? float3(0.0f) : h.emission; }
 
 // ---------------------------------------------------------------------------------------------
 // Specular BRDF: GGX with height-correlated Smith visibility and Schlick Fresnel (F90 = specular weight).
@@ -658,25 +702,6 @@ inline float specularF90(float3 f0) { return any(f0 > 0.0f) ? 1.0f : 0.0f; }   /
 // approximation, the specular albedo at normal incidence, so metals don't turn black in indirect light.
 inline float3 hitAlbedo(thread const struct Surface& sf) {
     return sf.albedo + (sf.specular > 0.0f ? specularAlbedo(sf.f0, sf.specular, max(sf.roughness, MIN_ROUGHNESS), 1.0f) : float3(0.0f));
-}
-
-// Specular light from a sphere light, unshadowed: GGX with the representative point (Karis 2013, the point of the
-// sphere closest to the reflection ray) and its energy normalisation. Radiance, Fresnel included, albedo-free.
-inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v, float3 f0, float roughness) {
-    float3 L = light.positionRadius.xyz - p;
-    float radius = light.positionRadius.w;
-    float dist2 = max(dot(L, L), radius * radius), dist = sqrt(dist2);
-    if (dot(n, L) <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
-    float a = max(roughness, MIN_ROUGHNESS); a *= a;
-    float3 r = reflect(-v, n);
-    float3 toRay = dot(L, r) * r - L;
-    float3 l = normalize(L + toRay * saturate(radius / max(length(toRay), 1e-6f)));
-    float aPrime = saturate(a + radius / (2.0f * dist));
-    float normalisation = (a / aPrime) * (a / aPrime);
-    float3 h = normalize(l + v);
-    float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f), NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
-    float3 F = schlick(f0, specularF90(f0), VoH);
-    return light.color.rgb * (ggxD(NoH, a) * smithVisibility(NoV, NoL, a) * NoL * normalisation / dist2) * F;
 }
 
 // GGX visible-normal sampling (Heitz 2018), in the frame where the normal is +z.
@@ -784,6 +809,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.roughness = 1.0f;
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;
+    sf.lightEmitter = false;
     if (!res.hit) return sf;
 
     InstanceData inst = s.instances[res.instance];
@@ -808,6 +834,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.roughness = mat.emission.a;
     sf.specular = mat.params.x;
     sf.instanceId = res.instance;
+    sf.lightEmitter = mat.params.z > 0.0f;
 
     if (any(mat.textures != uint4(NO_TEXTURE))) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;
@@ -856,6 +883,22 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     return sf;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Lights. Every type answers the same questions, so the kernels never look at a light's shape:
+//   lightUnshadowed     diffuse light at p if nothing is in the way (albedo divided out); also every pick's weight
+//   lightShadowTarget   a random point of the light for a soft-shadow ray (the sun: a far point inside its disc)
+//   lightSpecular       GGX specular light, unshadowed (representative point, Karis 2013)
+//   penumbraWidth       half width of the penumbra an occluder at distance d casts (sizes the shadow filter)
+//   lightMapVisibility  visibility from the light's light map (secondary hits)
+// Emissive-mesh lights answer lightUnshadowed and the light map with a proxy (their bounding sphere and mean
+// normal), for picking and GI; their direct light is sampled per triangle (sampleMeshLight).
+// ---------------------------------------------------------------------------------------------
+
+inline uint lightType(Light light) {
+    return (LIGHT_TYPES & (LIGHT_TYPES - 1u)) == 0 ? ctz(LIGHT_TYPES) : uint(light.color.w) >> 2;   // one type: known
+}
+inline uint lightGroup(Light light) { return uint(light.color.w) & 3u; }
+
 // Shadow ray from `from` to `to`: true if nothing (but light spheres) is in the way. `blocker` = distance to an
 // occluder (any one, not necessarily the nearest), 0 if visible: the shadow denoiser estimates penumbrae from it.
 bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& blocker) {
@@ -872,36 +915,299 @@ bool isVisible(float3 from, float3 to, SCENE_ACCEL accel) {
     return isVisibleBlocker(from, to, accel, b);
 }
 
-// Diffuse lighting from one sphere light if nothing is in the way, with albedo divided out:
+// Spot lights: smooth falloff from the inner to the outer cone, for the unit direction from the light to a point.
+inline float spotFactor(Light light, float3 fromLight) {
+    return smoothstep(light.params.x, light.params.y, dot(fromLight, light.axis.xyz));
+}
+
+// Rect lights: corners, counter-clockwise seen from the emitting side.
+struct RectCorners { float3 c[4]; };
+inline RectCorners rectCorners(Light light) {
+    float3 U = light.params.xyz;
+    float3 V = normalize(cross(light.axis.xyz, U)) * light.params.w;
+    float3 o = light.positionRadius.xyz;
+    RectCorners r;
+    r.c[0] = o - U - V; r.c[1] = o + U - V; r.c[2] = o + U + V; r.c[3] = o - U + V;
+    return r;
+}
+
+// Irradiance at p (normal n) from a rect of unit radiance: Lambert's polygon formula, the sum over the edges of the
+// angle each subtends times the cosine between n and the normal of its plane through p. Exact while the whole
+// rect is above p's horizon; clamped at 0 (the usual approximation) when it crosses it.
+inline float rectIrradiance(thread const RectCorners& r, float3 p, float3 center, float3 n) {
+    float3 F = float3(0.0f);
+    for (uint k = 0; k < 4; ++k) {
+        float3 a = normalize(r.c[k] - p), b = normalize(r.c[(k + 1) & 3] - p);
+        float3 c = cross(a, b);
+        float s = length(c);
+        if (s > 1e-7f) F += c * (atan2(s, dot(a, b)) / s);
+    }
+    if (dot(F, center - p) < 0.0f) F = -F;   // F points toward the rect, whichever way its winding looks from p
+    return max(0.5f * dot(F, n), 0.0f);
+}
+
+// Tube lights: a thin cylinder of uniform radiance, so a length ds of it has intensity proportional to its
+// projected width, sin(angle to the axis) = D / |w| (D = the receiver's distance to the line, w = point - receiver).
+// Returns the integral of (n.w) D / |w|^4 along the segment a -> b, exact (Lambert's cylinder), with D clamped to the
+// tube radius; irradiance = that x the intensity per unit length at sin = 1.
+inline float tubeIrradiance(float3 a, float3 b, float3 n, float radius) {
+    float3 d = b - a;
+    float len = length(d);
+    if (len < 1e-6f) return 0.0f;
+    float3 t = d / len;
+    float c = dot(a, t);
+    float D2 = max(dot(a, a) - c * c, radius * radius), D = sqrt(D2);
+    // With x = s + c: n.w = alpha + beta x, |w|^2 = x^2 + D^2.
+    float alpha = dot(n, a) - c * dot(n, t), beta = dot(n, t);
+    float x0 = c, x1 = c + len;
+    float r0 = x0 * x0 + D2, r1 = x1 * x1 + D2;
+    float i0 = (x1 / r1 - x0 / r0) / (2.0f * D2) + (atan(x1 / D) - atan(x0 / D)) / (2.0f * D2 * D);   // int dx / (x^2+D^2)^2
+    float i1 = 0.5f * (1.0f / r0 - 1.0f / r1);                                                         // int x dx / (x^2+D^2)^2
+    return max(D * (alpha * i0 + beta * i1), 0.0f);
+}
+
+// Clips segment a -> b (relative to the receiver) to the half space in front of plane normal n.
+inline bool clipSegment(thread float3& a, thread float3& b, float3 n) {
+    float ha = dot(n, a), hb = dot(n, b);
+    if (ha <= 0.0f && hb <= 0.0f) return false;
+    if (ha < 0.0f) a = mix(a, b, ha / (ha - hb));
+    else if (hb < 0.0f) b = mix(b, a, hb / (hb - ha));
+    return true;
+}
+
+// Diffuse lighting from one light if nothing is in the way, with albedo divided out:
 //   outgoing radiance = albedo * returned value * visibility.
 // n = shading normal, ng = geometric normal (both oriented); a light behind the surface contributes nothing.
+// Emissive-mesh lights' proxy: intensity sum(L A) / 4 if round, sum(L A) |cos| along the mean normal if flat
+// (two-sided); the cosine at the receiver widened by the bounding sphere's angular size, so no part of the emitter
+// is given zero weight. For picking and for GI (light maps); direct light samples the triangles.
+inline float3 meshLightUnshadowed(Light light, float3 p, float3 n, float3 ng) {
+    float3 toLight = light.positionRadius.xyz - p;
+    float radius = light.positionRadius.w;
+    float dist2 = max(dot(toLight, toLight), radius * radius);
+    float d = sqrt(dot(toLight, toLight));
+    float3 l = toLight / max(d, 1e-6f);
+    float sinA = saturate(radius / max(d, 1e-6f));
+    float cosTheta = saturate((dot(n, l) + sinA) / (1.0f + sinA));
+    if (cosTheta <= 0.0f || dot(ng, l) + sinA <= 0.0f) return float3(0.0f);
+    float flat = light.params.z;
+    float intensity = (1.0f - flat) * 0.25f + flat * abs(dot(light.axis.xyz, l));
+    return light.color.rgb * (intensity * cosTheta / (M_PI_F * dist2));
+}
+
+float3 lightUnshadowedOther(Light light, float3 p, float3 n, float3 ng);
+
 inline float3 lightUnshadowed(Light light, float3 p, float3 n, float3 ng) {
+    uint type = lightType(light);
+    if (!POINT_LIGHTS_ONLY && type > LIGHT_SPOT) return lightUnshadowedOther(light, p, n, ng);
     float3 toLight = light.positionRadius.xyz - p;
     float radius = light.positionRadius.w;
     float dist2 = max(dot(toLight, toLight), radius * radius);
     float cosTheta = dot(n, normalize(toLight));
     if (cosTheta <= 0.0f || dot(toLight, ng) <= 0.0f) return float3(0.0f);
-    return light.color.rgb * cosTheta / (M_PI_F * dist2);
+    float3 e = light.color.rgb * cosTheta / (M_PI_F * dist2);
+    if (type == LIGHT_SPOT) e *= spotFactor(light, -normalize(toLight));
+    return e;
 }
 
-// A random point on the light's sphere, for a soft-shadow ray.
-inline float3 lightSamplePoint(Light light, float2 u) {
+// The other types: sun, rect, tube and the mesh lights' proxy.
+float3 lightUnshadowedOther(Light light, float3 p, float3 n, float3 ng) {
+    uint type = lightType(light);
+    if (type == LIGHT_SUN) {
+        float3 l = light.axis.xyz;
+        float cosTheta = dot(n, l);
+        if (cosTheta <= 0.0f || dot(ng, l) <= 0.0f) return float3(0.0f);
+        return light.color.rgb * (cosTheta / M_PI_F);
+    }
+    if (type == LIGHT_RECT) {
+        float3 center = light.positionRadius.xyz;
+        if (dot(p - center, light.axis.xyz) <= 0.0f) return float3(0.0f);   // behind the emitting side
+        RectCorners r = rectCorners(light);
+        float above = max(max(dot(ng, r.c[0] - p), dot(ng, r.c[1] - p)), max(dot(ng, r.c[2] - p), dot(ng, r.c[3] - p)));
+        if (above <= 0.0f) return float3(0.0f);
+        return light.color.rgb * (rectIrradiance(r, p, center, n) / M_PI_F);
+    }
+    if (type == LIGHT_TUBE) {
+        float3 a = light.positionRadius.xyz - light.axis.xyz - p, b = light.positionRadius.xyz + light.axis.xyz - p;
+        if (!clipSegment(a, b, ng) || !clipSegment(a, b, n)) return float3(0.0f);
+        // Intensity per unit length broadside: 4 I / (pi length), so the tube emits what a sphere light of
+        // intensity I does (power 4 pi I).
+        float len = 2.0f * length(light.axis.xyz);
+        float perLength = 4.0f / (M_PI_F * max(len, 1e-6f));
+        return light.color.rgb * (perLength * tubeIrradiance(a, b, n, light.positionRadius.w) / M_PI_F);
+    }
+    if (type == LIGHT_MESH) return meshLightUnshadowed(light, p, n, ng);
+    return float3(0.0f);
+}
+
+// A random point of the light, for a soft-shadow ray from p.
+inline float3 lightShadowTarget(Light light, float3 p, float2 u) {
+    uint type = lightType(light);
+    if (type == LIGHT_SUN) {
+        // Uniform in the sun's cone, far away.
+        float cosMax = cos(light.positionRadius.w);
+        float cosT = 1.0f - u.x * (1.0f - cosMax), sinT = sqrt(max(0.0f, 1.0f - cosT * cosT));
+        float phi = 2.0f * M_PI_F * u.y;
+        float3 t, b;
+        tangentFrame(light.axis.xyz, t, b);
+        return p + (light.axis.xyz * cosT + (t * cos(phi) + b * sin(phi)) * sinT) * 1e4f;
+    }
+    if (type == LIGHT_RECT) {
+        float3 U = light.params.xyz, V = normalize(cross(light.axis.xyz, U)) * light.params.w;
+        return light.positionRadius.xyz + U * (2.0f * u.x - 1.0f) + V * (2.0f * u.y - 1.0f);
+    }
+    if (type == LIGHT_TUBE) {
+        float3 t, b;
+        tangentFrame(normalize(light.axis.xyz), t, b);
+        float phi = 2.0f * M_PI_F * u.y;
+        return light.positionRadius.xyz + light.axis.xyz * (2.0f * u.x - 1.0f)
+             + (t * cos(phi) + b * sin(phi)) * light.positionRadius.w;
+    }
+    if (type == LIGHT_MESH) return light.positionRadius.xyz;   // not used: mesh lights sample triangles
+    // Sphere and spot: uniform on the sphere.
     float z = 1.0f - 2.0f * u.x;
     float rr = sqrt(max(0.0f, 1.0f - z * z));
     float phi = 2.0f * M_PI_F * u.y;
     return light.positionRadius.xyz + light.positionRadius.w * float3(rr * cos(phi), rr * sin(phi), z);
 }
 
-// One-sample estimate of a sphere light's diffuse lighting (lightUnshadowed x visibility of a random point
-// on the light, which gives soft shadows).
-float3 sampleLight(Light light, float3 p, float3 n, float3 ng, float2 u, SCENE_ACCEL accel) {
-    float3 unshadowed = lightUnshadowed(light, p, n, ng);
-    if (all(unshadowed == 0.0f)) return float3(0.0f);
-    if (!isVisible(p, lightSamplePoint(light, u), accel)) return float3(0.0f);
-    return unshadowed;
+// GGX light from one direction l carrying illuminance E, widened by Karis's energy normalisation.
+inline float3 ggxFromDirection(float3 E, float3 l, float normalisation, float3 n, float3 v, float3 f0, float a) {
+    float3 h = normalize(l + v);
+    float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f), NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
+    float3 F = schlick(f0, specularF90(f0), VoH);
+    return E * (ggxD(NoH, a) * smithVisibility(NoV, NoL, a) * NoL * normalisation) * F;
 }
 
-inline uint lightGroup(Light light) { return uint(light.color.w); }
+// Specular light from a light, unshadowed: GGX with the representative point (Karis 2013, the point of the light
+// closest to the reflection ray) and its energy normalisation. Radiance, Fresnel included, albedo-free.
+inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v, float3 f0, float roughness) {
+    uint type = lightType(light);
+    float a = max(roughness, MIN_ROUGHNESS); a *= a;
+    float3 r = reflect(-v, n);
+    if (type == LIGHT_SUN) {
+        float3 w = light.axis.xyz;
+        if (dot(n, w) <= 0.0f || dot(ng, w) <= 0.0f) return float3(0.0f);
+        float theta = light.positionRadius.w, cosR = dot(r, w);
+        float3 l = w;
+        if (cosR < cos(theta)) {   // the reflection ray misses the disc: its nearest point
+            float3 perp = r - w * cosR;
+            float len = length(perp);
+            if (len > 1e-6f) l = w * cos(theta) + perp * (sin(theta) / len);
+        }
+        float aPrime = saturate(a + 0.5f * theta);
+        return ggxFromDirection(light.color.rgb, l, (a / aPrime) * (a / aPrime), n, v, f0, a);
+    }
+    if (type == LIGHT_RECT) {
+        float3 c = light.positionRadius.xyz, N = light.axis.xyz;
+        if (dot(p - c, N) <= 0.0f) return float3(0.0f);
+        float3 U = light.params.xyz;
+        float hw = length(U), hh = light.params.w;
+        float3 Uh = U / hw, Vh = normalize(cross(N, U));
+        // Where the reflection ray meets the light's plane (or, going away from it, the point straight ahead of
+        // it), clamped into the rect.
+        float denom = dot(r, N);
+        float3 hitPlane = denom < -1e-4f ? p + r * (dot(c - p, N) / denom) : p + r * length(c - p);
+        float3 q = hitPlane - c;
+        q = c + Uh * clamp(dot(q, Uh), -hw, hw) + Vh * clamp(dot(q, Vh), -hh, hh);
+        float3 L = q - p;
+        float dist2 = dot(L, L), dist = sqrt(dist2);
+        float3 l = L / max(dist, 1e-6f);
+        if (dot(n, l) <= 0.0f || dot(ng, l) <= 0.0f) return float3(0.0f);
+        float area = 4.0f * hw * hh;
+        float solidAngle = min(area * max(-dot(N, l), 0.0f) / max(dist2, 1e-6f), 2.0f * M_PI_F);
+        float aPrime = saturate(a + sqrt(area / M_PI_F) / (2.0f * max(dist, 1e-3f)));
+        return ggxFromDirection(light.color.rgb * solidAngle, l, (a / aPrime) * (a / aPrime), n, v, f0, a);
+    }
+    if (type == LIGHT_TUBE) {
+        float radius = light.positionRadius.w;
+        float3 L0 = light.positionRadius.xyz - light.axis.xyz - p, L1 = light.positionRadius.xyz + light.axis.xyz - p;
+        float3 Ld = L1 - L0;
+        float len2 = dot(Ld, Ld), rLd = dot(r, Ld);
+        float t = saturate((dot(r, L0) * rLd - dot(L0, Ld)) / max(len2 - rLd * rLd, 1e-6f));
+        float3 L = L0 + Ld * t;                                   // the segment's point nearest the reflection ray
+        float3 toRay = dot(L, r) * r - L;
+        L += toRay * saturate(radius / max(length(toRay), 1e-6f));   // then the nearest point of its cross-section
+        float dist2 = max(dot(L, L), radius * radius), dist = sqrt(dist2);
+        float3 l = L / sqrt(max(dot(L, L), 1e-12f));
+        if (dot(n, l) <= 0.0f || dot(ng, l) <= 0.0f) return float3(0.0f);
+        float aSphere = saturate(a + radius / (2.0f * dist));
+        float aLine = saturate(a + sqrt(len2) / (4.0f * dist));
+        float normalisation = (a / aSphere) * (a / aSphere) * (a / aLine);
+        return ggxFromDirection(light.color.rgb / dist2, l, normalisation, n, v, f0, a);
+    }
+    if (type == LIGHT_MESH) return float3(0.0f);   // reflection rays see mesh lights themselves
+    // Sphere and spot.
+    float3 L = light.positionRadius.xyz - p;
+    float radius = light.positionRadius.w;
+    float dist2 = max(dot(L, L), radius * radius), dist = sqrt(dist2);
+    if (dot(n, L) <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
+    float3 toRay = dot(L, r) * r - L;
+    float3 l = normalize(L + toRay * saturate(radius / max(length(toRay), 1e-6f)));
+    float aPrime = saturate(a + radius / (2.0f * dist));
+    float normalisation = (a / aPrime) * (a / aPrime);
+    float3 h = normalize(l + v);
+    float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f), NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
+    float3 F = schlick(f0, specularF90(f0), VoH);
+    float3 s = light.color.rgb * (ggxD(NoH, a) * smithVisibility(NoV, NoL, a) * NoL * normalisation / dist2) * F;
+    if (type == LIGHT_SPOT) s *= spotFactor(light, -normalize(L));
+    return s;
+}
+
+// Emissive-mesh lights: one point on one triangle (picked by the triangles' emitted power), as a one-sample estimate
+// of the light's diffuse lighting at p, unshadowed, albedo divided out. `target` = the point, pulled 1% toward p,
+// for the shadow ray (so an emitter traced at a coarser level of detail doesn't shadow itself).
+float3 sampleMeshLight(Light light, float3 p, float3 n, float3 ng, float2 u, thread const SceneData& s, thread float3& target) {
+    uint first = as_type<uint>(light.params.x), count = as_type<uint>(light.params.y);
+    target = light.positionRadius.xyz;
+    if (count == 0) return float3(0.0f);
+    uint lo = 0, hi = count - 1;
+    while (lo < hi) {   // first triangle whose cumulative probability exceeds u.x
+        uint mid = (lo + hi) / 2;
+        if (s.emissive[first + mid].v0.w > u.x) hi = mid; else lo = mid + 1;
+    }
+    EmissiveTriangle tri = s.emissive[first + lo];
+    float prev = lo > 0 ? s.emissive[first + lo - 1].v0.w : 0.0f;
+    float prob = tri.v0.w - prev;
+    if (prob <= 0.0f) return float3(0.0f);
+    float su = sqrt(saturate((u.x - prev) / prob));   // u.x rescaled within the pick: uniform again
+    float b1 = su * (1.0f - u.y), b2 = su * u.y;
+    InstanceData inst = s.instances[as_type<uint>(light.params.w)];
+    float3 x = (inst.transform * float4(tri.v0.xyz + tri.e1.xyz * b1 + tri.e2.xyz * b2, 1.0f)).xyz;
+    float3 cr = cross((inst.transform * float4(tri.e1.xyz, 0.0f)).xyz, (inst.transform * float4(tri.e2.xyz, 0.0f)).xyz);
+    float area2 = length(cr);
+    float3 w = x - p;
+    float d2 = dot(w, w);
+    float3 l = w * rsqrt(max(d2, 1e-12f));
+    target = p + w * 0.99f;
+    float cosP = dot(n, l), cosL = abs(dot(cr, l)) / max(area2, 1e-12f);   // emission is two-sided
+    if (cosP <= 0.0f || dot(ng, l) <= 0.0f || area2 <= 0.0f) return float3(0.0f);
+    Material m = s.materials[inst.materialIndex];
+    float3 Le = m.emission.rgb;
+    if (m.textures.w != NO_TEXTURE) {
+        float2 uv0 = float2(tri.e1.w, tri.e2.w), d1 = tri.uv12.xy - uv0, d2uv = tri.uv12.zw - uv0;
+        float2 uv = uv0 + d1 * b1 + d2uv * b2;
+        float uvArea = abs(d1.x * d2uv.y - d1.y * d2uv.x);
+        Le *= sampleMaterial(s, m.textures.w, uv, 0.5f * log2(max(uvArea, 1e-12f)) - 2.0f, false).rgb;   // ~4 texels per triangle
+    }
+    // Point pdf (area) = prob / area; to solid angle: d^2 / cosL.
+    return Le * (cosP * cosL / max(d2, 1e-6f) * (0.5f * area2 / prob) / M_PI_F);
+}
+
+// One-sample estimate of a light's diffuse lighting at p, shadowed: lightUnshadowed x the visibility of a random
+// point of the light (soft shadows); for mesh lights, one sampled triangle point.
+float3 sampleLight(Light light, float3 p, float3 n, float3 ng, float2 u, SCENE_ACCEL accel, thread const SceneData& s) {
+    if (lightType(light) == LIGHT_MESH) {
+        float3 target;
+        float3 c = sampleMeshLight(light, p, n, ng, u, s, target);
+        if (all(c == 0.0f) || !isVisible(p, target, accel)) return float3(0.0f);
+        return c;
+    }
+    float3 unshadowed = lightUnshadowed(light, p, n, ng);
+    if (all(unshadowed == 0.0f)) return float3(0.0f);
+    if (!isVisible(p, lightShadowTarget(light, p, u), accel)) return float3(0.0f);
+    return unshadowed;
+}
 
 // The per-light weight loops (light picking, cached light at secondary hits) look at no more than
 // LIGHT_CANDIDATES lights: with more, a stratified random subset, one light per stride of N / M from a random
@@ -956,12 +1262,18 @@ uint pickLight(device const Light* lights, uint lightCount, float3 p, float3 n, 
     return picked;
 }
 
-// Half width of a sphere light's penumbra in world units, for an occluder at distance d from the receiver:
-// w = r d / (D - d) for a light of radius r at distance D (as in PCSS). 0 = the sample was visible.
+// Half width of a light's penumbra in world units, for an occluder at distance d from the receiver:
+// w = r d / (D - d) for a light of radius r at distance D (as in PCSS); the sun: d tan(angular radius).
+// 0 = the sample was visible.
 inline float penumbraWidth(Light light, float3 p, float d) {
     if (d <= 0.0f) return 0.0f;
+    uint type = lightType(light);
+    if (type == LIGHT_SUN) return max(d * tan(light.positionRadius.w), 1e-4f);
+    float size = light.positionRadius.w;
+    if (type == LIGHT_RECT) size = sqrt(length_squared(light.params.xyz) + light.params.w * light.params.w);
+    else if (type == LIGHT_TUBE) size += length(light.axis.xyz);
     float D = length(light.positionRadius.xyz - p);
-    return max(light.positionRadius.w * d / max(D - d, 1e-3f), 1e-4f);
+    return max(size * d / max(D - d, 1e-3f), 1e-4f);
 }
 
 // Continuous pixel coordinate (no jitter, y down) of camera-relative vector v, for a camera given as
@@ -1002,8 +1314,19 @@ inline float2 equalAreaOctEncode(float3 v) {
 // the light's centre once per frame. Secondary hits (path-tracer bounces with FLAG_LIGHT_MAPS, surfels,
 // radiance-cascade intervals) look up shadowing here instead of tracing a shadow ray. Shadows are hard (from
 // the light's centre), which is invisible once indirect light has been integrated over a hemisphere.
+// The sun's map is orthographic instead: the depth along its direction over a square covering the scene's
+// bounding sphere (Light.params). Emissive-mesh lights trace theirs from their bounding sphere's surface outward.
 // Maps are 128^2 for up to 16 lights and smaller beyond (Renderer.lightMapSize), so tracing them costs the same.
 // ---------------------------------------------------------------------------------------------
+
+// Where a light's octahedral map is traced from, and how far out its rays start.
+inline float3 lightMapCenter(Light light) {
+    if (lightType(light) == LIGHT_RECT) return light.positionRadius.xyz + light.axis.xyz * 0.02f;
+    return light.positionRadius.xyz;
+}
+inline float lightMapStart(Light light) {
+    return lightType(light) == LIGHT_RECT ? 0.0f : light.positionRadius.w * 1.01f;   // just outside the light's own sphere
+}
 
 kernel void lightMapKernel(constant Uniforms&                     u         [[buffer(0)]],
                            SCENE_ACCEL                            accel     [[buffer(1)]],
@@ -1014,40 +1337,74 @@ kernel void lightMapKernel(constant Uniforms&                     u         [[bu
     uint size = lightMap.get_width();
     if (tid.x >= size || tid.y >= size || tid.z >= u.lightCount) return;
     Light light = lights[tid.z];
-    float3 dir = equalAreaOctDecode((float2(tid.xy) + 0.5f) / float(size) * 2.0f - 1.0f);
-    float start = light.positionRadius.w * 1.01f;   // just outside the light's own sphere
-    float t = intersectDistance(makeRay(light.positionRadius.xyz + dir * start, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel);
+    float2 f = (float2(tid.xy) + 0.5f) / float(size) * 2.0f - 1.0f;
+    if (lightType(light) == LIGHT_SUN) {
+        float3 w = light.axis.xyz, t, b;
+        tangentFrame(w, t, b);
+        float R = light.params.w;
+        float3 origin = light.params.xyz + w * (R * 1.05f) + (t * f.x + b * f.y) * R;
+        float d = intersectDistance(makeRay(origin, -w, 0.0f, INFINITY), MASK_GEOMETRY, accel);
+        lightMap.write(float4(isinf(d) ? 1e30f : d), tid.xy, tid.z);
+        return;
+    }
+    float3 dir = equalAreaOctDecode(f);
+    float start = lightMapStart(light);
+    float t = intersectDistance(makeRay(lightMapCenter(light) + dir * start, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel);
     lightMap.write(float4(isinf(t) ? 1e30f : start + t), tid.xy, tid.z);
 }
 
-// Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), albedo divided out.
-float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng) {
-    float3 center = light.positionRadius.xyz;
-    float radius = light.positionRadius.w;
-    float3 toLight = center - p;
-    float dist2 = dot(toLight, toLight);
-    float3 L = toLight * rsqrt(dist2);
-    float cosTheta = dot(n, L);
-    if (cosTheta <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
-
-    // Normal offset of ~1.5 map texels at this distance (a 128^2 equal-area texel spans ~0.028 rad) avoids acne.
+// 2x2 PCF of "map depth >= depth - bias" around continuous texel coordinate tc.
+inline float lightMapPCF(texture2d_array<float, access::read> lightMap, uint l, float2 tc, float depth, float bias) {
     uint size = lightMap.get_width();
-    float texelScale = 128.0f / float(size);
-    float3 q = p + ng * (sqrt(dist2) * 0.04f * texelScale);
-    float3 v = q - center;
-    float dq = length(v);
-    float2 tc = (equalAreaOctEncode(v / dq) * 0.5f + 0.5f) * float(size) - 0.5f;
     int2 base = int2(floor(tc));
     float2 f = tc - float2(base);
-    float bias = 0.02f + 0.01f * dq * texelScale;
     float vis = 0.0f;
     for (int k = 0; k < 4; ++k) {
         int2 o = int2(k & 1, k >> 1);
         uint2 texel = uint2(clamp(base + o, int2(0), int2(size - 1)));
         float w = (o.x ? f.x : 1.0f - f.x) * (o.y ? f.y : 1.0f - f.y);
-        vis += w * (lightMap.read(texel, l).r >= dq - bias ? 1.0f : 0.0f);
+        vis += w * (lightMap.read(texel, l).r >= depth - bias ? 1.0f : 0.0f);
     }
-    return light.color.rgb * (cosTheta * vis / (M_PI_F * max(dist2, radius * radius)));
+    return vis;
+}
+
+// Visibility of light l (its map in slice l) from p, with a normal offset along ng against acne.
+float lightMapVisibility(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 ng) {
+    uint size = lightMap.get_width();
+    if (lightType(light) == LIGHT_SUN) {
+        float3 w = light.axis.xyz, t, b;
+        tangentFrame(w, t, b);
+        float R = light.params.w, texel = 2.0f * R / float(size);
+        float3 q = p + ng * (1.5f * texel) - light.params.xyz;
+        float2 tc = (float2(dot(q, t), dot(q, b)) / R * 0.5f + 0.5f) * float(size) - 0.5f;
+        float depth = R * 1.05f - dot(q, w);
+        return lightMapPCF(lightMap, l, tc, depth, 0.02f + texel);
+    }
+    // Normal offset of ~1.5 map texels at this distance (a 128^2 equal-area texel spans ~0.028 rad) avoids acne.
+    float3 center = lightMapCenter(light);
+    float texelScale = 128.0f / float(size);
+    float3 q = p + ng * (length(center - p) * 0.04f * texelScale);
+    float3 v = q - center;
+    float dq = length(v);
+    float2 tc = (equalAreaOctEncode(v / dq) * 0.5f + 0.5f) * float(size) - 0.5f;
+    return lightMapPCF(lightMap, l, tc, dq, 0.02f + 0.01f * dq * texelScale);
+}
+
+// Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), albedo divided out.
+float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng) {
+    if (lightType(light) == LIGHT_SPHERE) {
+        float3 center = light.positionRadius.xyz;
+        float radius = light.positionRadius.w;
+        float3 toLight = center - p;
+        float dist2 = dot(toLight, toLight);
+        float3 L = toLight * rsqrt(dist2);
+        float cosTheta = dot(n, L);
+        if (cosTheta <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
+        return light.color.rgb * (cosTheta * lightMapVisibility(light, l, lightMap, p, ng) / (M_PI_F * max(dist2, radius * radius)));
+    }
+    float3 unshadowed = lightUnshadowed(light, p, n, ng);
+    if (all(unshadowed <= 0.0f)) return float3(0.0f);
+    return unshadowed * lightMapVisibility(light, l, lightMap, p, ng);
 }
 
 // Direct light at a secondary hit from all lights, shadowed by the light maps, albedo divided out.
@@ -1163,7 +1520,15 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         }
         outNormalDepth.write(float4(0.0f, 0.0f, 0.0f, -1.0f), tid);
         outAlbedo.write(float4(0.0f), tid);
-        outEmission.write(float4(u.skyColor.rgb, 1.0f), tid);
+        // Sky, plus the discs of the suns (camera rays only: GI rays get the sun from next-event estimation).
+        float3 sky = u.skyColor.rgb;
+        for (uint i = 0; i < u.lightGroupEnd.w; ++i) {
+            Light light = lights[i];
+            float theta = light.positionRadius.w;
+            if (lightType(light) == LIGHT_SUN && dot(dir, light.axis.xyz) >= cos(theta))
+                sky += light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
+        }
+        outEmission.write(float4(sky, 1.0f), tid);
         outMotion.write(float4(0.0f), tid);
         outDirect.write(float4(0.0f), tid);
         outIndirect.write(float4(0.0f), tid);
@@ -1215,16 +1580,18 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     // pass. Each channel also gets the penumbra half width of its occluded samples, which sizes the filter.
     float3 direct = float3(0.0f);
     float4 visibility = float4(0.0f), blocker = float4(0.0f);
-    bool manyLights = u.lightCount > SHADOW_GROUPS && (u.flags & FLAG_ALL_LIGHTS) == 0;
+    // Analytic lights only (the first lightGroupEnd.w): meshLightsKernel samples the emissive-mesh lights.
+    uint analyticLights = u.lightGroupEnd.w;
+    bool manyLights = analyticLights > SHADOW_GROUPS && (u.flags & FLAG_ALL_LIGHTS) == 0;
     if (!manyLights) {
         // One shadow ray per light. A channel shared by several lights gets their luminance-weighted visibility.
         float4 unshadowedSum = float4(0.0f), blockerWeight = float4(0.0f);
-        for (uint i = 0; i < u.lightCount; ++i) {
+        for (uint i = 0; i < analyticLights; ++i) {
             float2 r = rng.next2();
             float3 unshadowed = lightUnshadowed(lights[i], p, n, ng);
             if (all(unshadowed <= 0.0f)) continue;   // light behind the surface: it shadows itself
             float b;
-            float v = isVisibleBlocker(p, lightSamplePoint(lights[i], r), accel, b) ? 1.0f : 0.0f;
+            float v = isVisibleBlocker(p, lightShadowTarget(lights[i], p, r), accel, b) ? 1.0f : 0.0f;
             direct += unshadowed * v;
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
@@ -1258,7 +1625,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             }
             float3 hng, hn;
             orientNormals(h, d, hng, hn);
-            indirect += throughput * h.emission;
+            indirect += throughput * giEmission(h);
             throughput *= hitAlbedo(h);   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
             float3 hp = h.position + hng * RAY_EPSILON;
             if ((u.flags & FLAG_LIGHT_MAPS) != 0) {
@@ -1271,7 +1638,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                 float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;   // keeps few-light sequences unchanged
                 uint li = pickLight(lights, u.lightCount, hp, hn, hng, uPick, uSubset, pdf);
                 float2 r = rng.next2();
-                if (li < u.lightCount) indirect += throughput * sampleLight(lights[li], hp, hn, hng, r, accel) / pdf;
+                if (li < u.lightCount) indirect += throughput * sampleLight(lights[li], hp, hn, hng, r, accel, s) / pdf;
             }
             if (all(throughput < 0.01f)) break;
             origin = hp;
@@ -1355,7 +1722,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
             if (picked[k] >= end) continue;
             Light light = lights[picked[k]];
             float b;
-            bool visible = isVisibleBlocker(p, lightSamplePoint(light, r), accel, b);
+            bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
             visibility[g] += visible ? 1.0f / float(rays) : 0.0f;
             if (b > 0.0f) { blocker[g] += penumbraWidth(light, p, b); blockerCount[g] += 1.0f; }
             if (visible) direct += lightUnshadowed(light, p, n, ng) * (total / (pickedWeight[k] * float(rays)));
@@ -1476,7 +1843,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         float W = weightSum / (M * targetY);
         Light light = lights[y];
         float b;
-        bool visible = isVisibleBlocker(p, lightSamplePoint(light, r), accel, b);
+        bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
         visibility[g] = visible && total > 0.0f ? saturate(targetY * W / total) : 0.0f;
         blocker[g] = penumbraWidth(light, p, b);
@@ -1490,6 +1857,69 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
     outDirect.write(float4(direct, 1.0f), tid);
     outVisibility.write(visibility, tid);
     outBlocker.write(roundToHalf(blocker), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 1e. Emissive-mesh lights (the lights after lightGroupEnd.w), after the analytic direct light: one light picked by
+//     its proxy's unshadowed luminance, one point on one of its triangles picked by emitted power, one shadow ray.
+//     The estimate is unbiased but noisy, so it doesn't go through the shadow denoiser (whose exact unshadowed
+//     light a mesh doesn't have): with it, SVGF denoises outMeshDirect on its own and the composite adds it; without
+//     it (addToDirect = 1), the estimate is added to the direct light, which SVGF or accumulation then handle.
+// ---------------------------------------------------------------------------------------------
+
+kernel void meshLightsKernel(constant Uniforms&                    u          [[buffer(0)]],
+                             SCENE_ACCEL                           accel      [[buffer(1)]],
+                             device const InstanceData*            instances  [[buffer(6)]],
+                             constant SceneShading&                shading    [[buffer(7)]],
+                             device const Light*                   lights     [[buffer(8)]],
+                             constant uint&                        addToDirect [[buffer(9)]],
+                             texture2d<float, access::read>        surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
+                             texture2d<float, access::read>        normalDepth [[texture(1)]],
+                             texture2d<float, access::read>        geoNormal  [[texture(2)]],
+                             texture2d<float, access::read>        blueNoise  [[texture(3)]],
+                             texture2d<float, access::read_write>  direct     [[texture(4)]],
+                             texture2d<float, access::write>       outMeshDirect [[texture(5)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 sp = surfacePos.read(tid);
+    uint first = u.lightGroupEnd.w, count = u.lightCount - first;
+    if (sp.w <= 0.0f || count == 0) { outMeshDirect.write(float4(0.0f), tid); return; }   // sky and emitters
+    float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+    float3 p = sp.xyz + ng * RAY_EPSILON;
+
+    SceneData s;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    Sampler rng;
+    rng.blueNoise = blueNoise;
+    rng.pixel = tid;
+    rng.frame = u.frameIndex;
+    rng.dimension = 96;   // other blue-noise windows than the trace and many-lights kernels'
+    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.rng.state = pcgHash(tid.x * 31u + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x5bd1e995u)));
+
+    // One light by its proxy's luminance (weighted reservoir over all of them: there are few).
+    float total = 0.0f, pickedWeight = 0.0f, uPick = min(rng.next(), 0.99999f);
+    uint picked = count;
+    for (uint i = 0; i < count; ++i) {
+        float w = luminance(meshLightUnshadowed(lights[first + i], p, n, ng));
+        if (w <= 0.0f) continue;
+        total += w;
+        float q = w / total;
+        if (uPick < q) { picked = i; pickedWeight = w; uPick /= q; }
+        else uPick = (uPick - q) / (1.0f - q);
+    }
+    float2 r = rng.next2();
+    float3 result = float3(0.0f);
+    if (picked < count) {
+        float3 target;
+        result = sampleMeshLight(lights[first + picked], p, n, ng, r, s, target) * (total / pickedWeight);
+        if (any(result > 0.0f) && !isVisible(p, target, accel)) result = float3(0.0f);
+    }
+    float l = luminance(result);
+    if (l > 4.0f * FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) result *= 4.0f * FIREFLY_CLAMP / l;
+    outMeshDirect.write(roundToHalf(float4(result, 1.0f)), tid);
+    if (addToDirect != 0) direct.write(direct.read(tid) + float4(result, 0.0f), tid);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1514,14 +1944,14 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         orientNormals(h, dir, hng, hn);
         float3 hp = h.position + hng * RAY_EPSILON;
         float3 albedo = hitAlbedo(h);
-        L += throughput * h.emission;
+        L += throughput * (b == 0 ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
         if (u.lightCount > 0) {
             float pdf;
             float uPick = rng.next();
             float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;
             uint li = pickLight(s.lights, u.lightCount, hp, hn, hng, uPick, uSubset, pdf);
             float2 r = rng.next2();
-            if (li < u.lightCount) L += throughput * albedo * sampleLight(s.lights[li], hp, hn, hng, r, accel) / pdf;
+            if (li < u.lightCount) L += throughput * albedo * sampleLight(s.lights[li], hp, hn, hng, r, accel, s) / pdf;
         }
         if (!reference) {
             // Diffuse GI at the hit: this frame's indirect light where the hit point is visible on screen.
@@ -1587,28 +2017,36 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float3 albedo = specularAlbedo(f0, 1.0f, roughness, NoV);
     float3 result = float3(0.0f);
 
-    if ((u.flags & FLAG_SHADOW_DENOISER) == 0 && u.lightCount > 0) {
-        // Direct specular from one light (picked by its diffuse light here), a uniform point on its sphere.
+    uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
+    if ((u.flags & FLAG_SHADOW_DENOISER) == 0 && analyticLights > 0) {
+        // Direct specular from one light (picked by its diffuse light here): spheres and spots exactly, a uniform
+        // point on the sphere; other lights their analytic specular x the visibility of a random point of them.
         float pdf;
         float uPick = rng.next();
-        float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;
-        uint li = pickLight(lights, u.lightCount, p, n, ng, uPick, uSubset, pdf);
+        float uSubset = analyticLights > LIGHT_CANDIDATES ? rng.next() : 0.0f;
+        uint li = pickLight(lights, analyticLights, p, n, ng, uPick, uSubset, pdf);
         float2 r = rng.next2();
-        if (li < u.lightCount) {
+        if (li < analyticLights) {
             Light light = lights[li];
-            float3 x = lightSamplePoint(light, r);
-            float3 toX = x - p;
-            float d2 = dot(toX, toX);
-            float3 l = toX * rsqrt(d2);
-            float cosX = dot(normalize(x - light.positionRadius.xyz), -l);
-            float NoL = dot(n, l);
-            if (cosX > 0.0f && NoL > 0.0f && dot(ng, l) > 0.0f && isVisible(p, x, accel)) {
-                float rad = light.positionRadius.w;
-                float3 Le = light.color.rgb / (M_PI_F * rad * rad);
-                float3 h = normalize(l + v);
-                float3 F = schlick(f0, 1.0f, dot(v, h));
-                float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
-                result += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
+            uint type = lightType(light);
+            float3 x = lightShadowTarget(light, p, r);
+            if (type == LIGHT_SPHERE || type == LIGHT_SPOT) {
+                float3 toX = x - p;
+                float d2 = dot(toX, toX);
+                float3 l = toX * rsqrt(d2);
+                float cosX = dot(normalize(x - light.positionRadius.xyz), -l);
+                float NoL = dot(n, l);
+                if (cosX > 0.0f && NoL > 0.0f && dot(ng, l) > 0.0f && isVisible(p, x, accel)) {
+                    float rad = light.positionRadius.w;
+                    float3 Le = light.color.rgb / (M_PI_F * rad * rad);
+                    if (type == LIGHT_SPOT) Le *= spotFactor(light, -l);
+                    float3 h = normalize(l + v);
+                    float3 F = schlick(f0, 1.0f, dot(v, h));
+                    float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
+                    result += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
+                }
+            } else if (isVisible(p, x, accel)) {
+                result += lightSpecular(light, p, n, ng, v, f0, roughness) / pdf;
             }
         }
     }
@@ -2149,6 +2587,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  material   [[texture(12)]],  // with FLAG_SPECULAR: F0, roughness
                             texture2d<float, access::read>  specularTex [[texture(13)]], // with FLAG_SPECULAR: specular light / specular albedo
                             texture2d<float, access::read>  geometryDebug [[texture(14)]], // view modes 8-13 (geometryDebugKernel)
+                            texture2d<float, access::read>  meshDirect [[texture(15)]],   // with FLAG_MESH_LIGHTS: denoised mesh-light direct light
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             uint2 tid [[thread_position_in_grid]])
 {
@@ -2172,13 +2611,14 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
         float3 p = sp.xyz + ng * RAY_EPSILON;
         illumination = float3(0.0f);
-        for (uint l = 0; l < u.lightCount; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * vis[lightGroup(lights[l])];
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * vis[lightGroup(lights[l])];
+        if ((u.flags & FLAG_MESH_LIGHTS) != 0) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         if ((u.flags & FLAG_SPECULAR) != 0) {
             // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
             float4 m = material.read(tid);
             if (any(m.rgb > 0.0f)) {
                 float3 v = normalize(u.camPos.xyz - sp.xyz);
-                for (uint l = 0; l < u.lightCount; ++l)
+                for (uint l = 0; l < u.lightGroupEnd.w; ++l)
                     directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * vis[lightGroup(lights[l])];
             }
         }

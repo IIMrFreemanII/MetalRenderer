@@ -110,12 +110,24 @@ enum SceneKind: Int, CaseIterable {
     case cornell            // small Cornell-style room: 5 objects (2 moving), 3 moving lights
     case stress             // stress test: a hall with `objects` (mostly moving) objects and `lights` moving lights
     case gallery            // the glTF models in Assets/ on plinths, 8 moving lights
+    case spots              // a stage under six sweeping spot lights
+    case sun                // a courtyard and a covered room under the sun, with a day cycle
+    case area               // a studio with softboxes and light panels (rect area lights) over glossy objects
+    case tubes              // a garage with fluorescent and neon tube lights
+    case emissive           // a dark room lit only by emissive meshes (neon shapes, a screen, a spinning ring)
+    case mixed              // a room at dusk with every light type
 
     var title: String {
         switch self {
         case .cornell: return "Cornell room"
         case .stress: return "Stress test"
         case .gallery: return "Gallery (Assets)"
+        case .spots: return "Spot lights"
+        case .sun: return "Sun and sky"
+        case .area: return "Area lights"
+        case .tubes: return "Tube lights"
+        case .emissive: return "Emissive meshes"
+        case .mixed: return "Mixed lights"
         }
     }
 }
@@ -149,6 +161,11 @@ struct SceneSettings: Equatable {
     var objects = 400
     var lights = 32
     var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
+    /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
+    /// Off: they only light what GI rays happen to hit, as before.
+    var emissiveLights = ProcessInfo.processInfo.environment["METALGI_EMISSIVE_LIGHTS"] != "0"
+    /// Benchmarks only (METALGI_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
+    var lightCheck: String? = nil
 
     static let objectRange = 0...2000
     static let lightRange = 1...256
@@ -201,7 +218,7 @@ struct RenderSettings: Equatable {
         case .cornell:
             giMode = defaults.giMode
             surfels = defaults.surfels
-        case .stress, .gallery:
+        case .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed:
             giMode = .surfels
             surfels = defaults.surfels
             surfels.raysPerSurfel = 8

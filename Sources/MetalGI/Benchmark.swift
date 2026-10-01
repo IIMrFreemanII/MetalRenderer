@@ -63,6 +63,12 @@ final class Benchmark {
             start.position = SIMD3<Float>(7.0, 2.2, 12.0)
             start.yaw = -0.6
             start.pitch = -0.1
+        } else if let demo = Scene.demoCamera(scene) {
+            // A step to the side and back, turning toward the default view.
+            c = demo
+            start.position = demo.position + SIMD3<Float>(1.5, 0.3, 1.5)
+            start.yaw = demo.yaw + 0.35
+            start.pitch = demo.pitch - 0.05
         } else {
             start.position = SIMD3<Float>(2.6, 1.7, 2.2)
             start.yaw = -0.9
@@ -128,8 +134,9 @@ final class Benchmark {
     }
 
     /// `METALGI_SCENE="stress,objects=400,lights=32"` loads the stress scene (with these sizes) in every setting
-    /// (and is the app's starting scene outside benchmarks). Kinds: cornell, stress, gallery; `model=<path>` adds a
-    /// glTF model as File > Open does.
+    /// (and is the app's starting scene outside benchmarks). Kinds: cornell, stress, gallery, and the light demos spots,
+    /// sun, area, tubes, emissive, mixed; `model=<path>` adds a glTF model as File > Open does; `emissivelights=0`
+    /// turns emissive-mesh lights off.
     static func applySceneOverride(to s: inout SceneSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALGI_SCENE"] else { return }
         for item in spec.split(separator: ",") {
@@ -138,6 +145,14 @@ final class Benchmark {
             case "stress": s.kind = .stress
             case "cornell": s.kind = .cornell
             case "gallery": s.kind = .gallery
+            case "spots": s.kind = .spots
+            case "sun": s.kind = .sun
+            case "area": s.kind = .area
+            case "tubes": s.kind = .tubes
+            case "emissive": s.kind = .emissive
+            case "mixed": s.kind = .mixed
+            case "emissivelights" where kv.count == 2: s.emissiveLights = kv[1] != "0"
+            case "check" where kv.count == 2: s.lightCheck = kv[1]   // Scene.buildLightCheck; "empty" = just the floor
             case "objects" where kv.count == 2: s.objects = Int(kv[1]) ?? s.objects
             case "lights" where kv.count == 2: s.lights = Int(kv[1]) ?? s.lights
             case "model" where kv.count == 2:   // as if opened: in front of the default camera
@@ -406,6 +421,39 @@ final class Benchmark {
                                    scene: gallery, virtualGeometry: v)
                 shown.camera = Benchmark.galleryCloseup
                 out.append(shown)
+            }
+            return out
+        case "lights":
+            // The light demo scenes, paused at t = 5: direct light only, each GI technique, then moving (timing).
+            // METALGI_LIGHTS_SCENES="sun|mixed" limits the scenes.
+            var out: [Config] = []
+            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            for kind in [SceneKind.spots, .sun, .area, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
+                let scene = SceneSettings(kind: kind)
+                let tag = "\(kind)"
+                out.append(Config(name: "\(tag) direct", giEnabled: false, paused: true, startTime: 5, frames: 30, scene: scene))
+                for (name, mode) in [("surfels", GIMode.surfels), ("cascades", .radianceCascades), ("path traced", .pathTraced)] {
+                    var c = Config(name: "\(tag) \(name)", paused: true, startTime: 5, frames: 30, giMode: mode, scene: scene)
+                    c.surfels.raysPerSurfel = 8
+                    c.surfels.maxSurfels = 65536
+                    out.append(c)
+                }
+                var moving = Config(name: "\(tag) moving", giMode: .surfels, scene: scene)
+                moving.surfels.raysPerSurfel = 8
+                moving.surfels.maxSurfels = 65536
+                out.append(moving)
+            }
+            return out
+        case "lightcheck":
+            // Each analytic area light against its emissive-mesh twin (Scene.buildLightCheck), converged direct light.
+            var out: [Config] = []
+            for shape in ["rect", "tube", "sphere"] {
+                for variant in [shape, shape + "-mesh"] {
+                    var scene = SceneSettings()
+                    scene.lightCheck = variant
+                    out.append(Config(name: "check \(variant)", giEnabled: false, paused: true, startTime: 5, accumulate: true,
+                                      frames: 1024, scene: scene))
+                }
             }
             return out
         case "vgdebug":

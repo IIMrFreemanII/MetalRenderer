@@ -14,6 +14,7 @@ final class SettingsPanel: NSObject {
     private let virtualGeometry = NSButton(checkboxWithTitle: "Virtual geometry (LOD)", target: nil, action: nil)
     private let freezeLOD = NSButton(checkboxWithTitle: "Freeze LOD (L)", target: nil, action: nil)
     private let specular = NSButton(checkboxWithTitle: "Specular (glTF PBR)", target: nil, action: nil)
+    private let emissiveLights = NSButton(checkboxWithTitle: "Emissive surfaces are lights", target: nil, action: nil)
     private let vgError = NSSlider()               // log2 of the allowed error in traced pixels
     private let vgErrorValue = NSTextField(labelWithString: "")
     private let objects = NSSlider()
@@ -131,7 +132,7 @@ final class SettingsPanel: NSObject {
                               (cascadeDenoise, #selector(cascadeDenoiseChanged)),
                               (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged)),
                               (freezeLOD, #selector(freezeLODChanged)),
-                              (specular, #selector(specularChanged))] {
+                              (specular, #selector(specularChanged)), (emissiveLights, #selector(emissiveLightsChanged))] {
             box.target = self
             box.action = action
         }
@@ -155,6 +156,7 @@ final class SettingsPanel: NSObject {
             [label("Geometry error"), vgError, vgErrorValue],
             [NSGridCell.emptyContentView, freezeLOD],
             [NSGridCell.emptyContentView, specular],
+            [NSGridCell.emptyContentView, emissiveLights],
             [header("Rendering")],
             [label("Render scale"), renderScale, renderScaleValue],
             [label("MetalFX upscaling"), upscale],
@@ -272,6 +274,7 @@ final class SettingsPanel: NSObject {
         vgErrorValue.stringValue = String(format: "%.2g px", s.virtualGeometry.pixelError)
         vgError.isEnabled = s.rayTracer == .custom && s.virtualGeometry.enabled
         freezeLOD.state = s.virtualGeometry.freeze ? .on : .off
+        emissiveLights.state = s.scene.emissiveLights ? .on : .off
         freezeLOD.isEnabled = vgError.isEnabled
         objects.integerValue = s.scene.objects
         objectsValue.stringValue = "\(s.scene.objects)"
@@ -368,6 +371,7 @@ final class SettingsPanel: NSObject {
         renderer.settings = s
     }
     @objc private func specularChanged() { renderer.settings.specular = specular.state == .on }
+    @objc private func emissiveLightsChanged() { renderer.settings.scene.emissiveLights = emissiveLights.state == .on }
     @objc private func freezeLODChanged() { renderer.settings.virtualGeometry.freeze = freezeLOD.state == .on }
     @objc private func virtualGeometryChanged() { renderer.settings.virtualGeometry.enabled = virtualGeometry.state == .on }
     @objc private func vgErrorChanged() {

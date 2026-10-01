@@ -3,7 +3,16 @@
 A minimal real-time ray tracer for macOS and Metal, with dynamic lights and global illumination.
 It's built for Apple Silicon and tuned for an M1 Max.
 
-* **Dynamic scenes:** objects and sphere lights move every frame. Two scenes ship (pick one in the settings panel): a small Cornell-style room, and a **stress test** hall with up to 2000 moving objects and 256 moving lights (see below).
+* **Dynamic scenes:** objects and lights move every frame. Pick a scene in the settings panel:
+  * a small Cornell-style room;
+  * a **stress test** hall with up to 2000 moving objects and 256 moving lights (see below);
+  * the glTF **Gallery**;
+  * six light demos (see "Light types" below).
+* **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
+  * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
+  * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
+* **Emissive meshes are lights:** any glowing surface (a neon sign, a screen, a glTF emissive texture) is sampled for direct light with shadow rays, one triangle at a time.
+* **glTF lights:** `KHR_lights_punctual` point, spot and directional lights load with their models.
 * **Custom ray tracing (default):** the shaders traverse this project's own two-level BVH instead of Metal's acceleration structures.
   * Each mesh gets a bottom-level tree (binned SAH, built once on the CPU).
   * Objects that never move get a top-level tree of their own, also built once.
@@ -38,7 +47,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * **Surfels:** a pool of small disks on visible surfaces, after EA SEED's GIBS. Each disk traces 16 rays per frame and accumulates irradiance over time. Pixels average the disks around them.
   * **Path traced:** a 1-sample-per-pixel diffuse path is traced for 1 to 8 bounces. Each bounce samples one light directly (next-event estimation), picked in proportion to its unshadowed light there, and picks up sky light. The result is denoised.
   * Surfels and radiance cascades get **multi-bounce** light, and light their ray hits from per-light **light-visibility maps**, so they need no shadow rays.
-* **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps").
+* **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). The sun's map is orthographic instead, over the scene's bounding sphere. Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps").
 * **Upscaling (optional):** the frame is traced at low resolution with sub-pixel jitter, and a temporal upscaler rebuilds a sharper, anti-aliased image at up to 3× the resolution. It's on by default at 3×. Press **U** to cycle through off, 1.5×, 2× and 3×. The settings panel picks the upscaler:
   * **Custom (TAAU)** (default): this project's own pass (`taauKernel`). It is about 0.5 ms cheaper per frame than MetalFX, much sharper and steadier on still images, and as good in motion at 3× (see below).
   * **MetalFX temporal**.
@@ -99,6 +108,16 @@ These variables apply to the gallery and to models in general:
   * `METALGI_TEXTURE_DEBUG=1` prints each texture's wanted and resident level.
 * `METALGI_SPECULAR=0` turns specular off.
 
+For the lights:
+* `METALGI_SCENE=spots|sun|area|tubes|emissive|mixed` starts in a light demo scene.
+* `emissivelights=0`, added to `METALGI_SCENE` or set as `METALGI_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
+* `METALGI_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
+* `METALGI_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALGI_LIGHTS_SCENES="sun|mixed"` picks scenes.
+* `METALGI_BENCH=lightcheck` cross-checks the closed-form area lights. A rect, a tube and a sphere light are each rendered over a floor next to an emissive-mesh twin of the same shape and radiance, converged over 1024 frames. The mesh estimator is unbiased, so the pairs should match:
+  * the sphere matches its twin within 0.1%;
+  * the rect within 1%;
+  * the tube within 7%, which is the extra light from the capsule twin's end caps.
+
 The models in `Assets/` aren't part of the repository (they're 596 MB); put any glTF files there. The caches in `Assets/.metalgi-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
 Use `METALGI_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALGI_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALGI_GI_MODES` picks the methods, for example `pt,pt-lightmaps,surfels,cascades,cascades-hq`. `METALGI_GI` overrides GI settings everywhere, for example `mode=surfels,rays=8` or `mode=cascades,spacing=4,b1=0.25`. `METALGI_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
@@ -134,7 +153,7 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 
 | Setting | Default | Effect |
 |---|---|---|
-| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, or the Gallery of glTF models in `Assets/`. Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
+| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 256. Their total power stays the same, so the brightness barely changes. |
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
@@ -142,7 +161,57 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 | Geometry error | 1 px | The cut's allowed geometric error in traced pixels. 0.5 px: about 2× the triangles, closer to full detail; 2 px: half. Changes apply within a few frames. |
 | Freeze LOD | Off | Keeps the cut chosen for the camera position at the moment it was turned on (title: "LOD frozen"). Fly up to a model to see the coarse geometry it gets from far away; turn it off and it refines within a few frames. |
 | Specular | On | GGX specular for glTF materials (direct and reflections). Off: diffuse only, and no reflection pass. |
+| Emissive surfaces are lights | On | Emissive geometry is sampled for direct light, with shadow rays, and lights GI through its light map. Off: it only lights what GI rays happen to hit, as before (surfels and radiance cascades ignore it entirely). Toggling it rebuilds the scene. |
 | Shadow rays | 1 per group + reuse | With more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
+
+### Light types
+
+Each light demo is procedural, so it loads at once. Each demo scene shows one light type, and every light in it moves, sweeps or flickers.
+
+| Type | Shape and units | Diffuse | Specular | Demo scene |
+|---|---|---|---|---|
+| Sphere | Sphere of radius r; intensity I (power 4πI) | Exact for a sphere above the horizon | Representative point (Karis 2013) | Cornell, stress, gallery |
+| Spot | A sphere light with a smooth falloff between an inner and an outer cone | As the sphere × cone | As the sphere × cone | **Spot lights**: a stage with six coloured spots sweeping their beams |
+| Sun | Direction and angular radius (0.27°); irradiance E | E cos / π | Reflection vector clamped into the sun's disc | **Sun and sky**: a courtyard and a room lit only through its windows, with a one-minute day cycle that also changes the sky colour |
+| Rect | One-sided panel; radiance L | Exact polygon form factor (Lambert), clamped at the horizon | Representative point on the rect | **Area lights**: softboxes, a ceiling strip and a window panel over a roughness ramp of glossy spheres |
+| Tube | Capsule of length ℓ and radius r: a cylinder of uniform radiance with the power of a sphere light of intensity I | Exact line integral for a Lambertian cylinder, clipped to the horizon | Nearest point of the segment to the reflection ray, then sphere | **Tube lights**: a garage with fluorescent tubes and neon (one flickering) |
+| Emissive mesh | Any geometry with an emissive material, textured or not | One triangle per pixel, picked by emitted power, one shadow ray, denoised by SVGF | Seen by the reflection rays | **Emissive meshes**: a dark room with neon letters, a glowing orb, a screen and a spinning ring of coloured cubes |
+
+**Mixed lights** has every type at once: a living room at dusk with:
+* a low sun through the window;
+* a ceiling panel;
+* a desk spot lamp;
+* a tube under a shelf;
+* a TV screen;
+* a floor lamp.
+
+How the types fit the existing pipeline:
+* **Shared helpers.** Every type answers the same five questions in `Shaders.metal`:
+  * `lightUnshadowed`: diffuse light, which is also each light's picking weight;
+  * `lightShadowTarget`: a random point of the light, for the shadow ray;
+  * `lightSpecular`;
+  * `penumbraWidth`, for the shadow denoiser;
+  * `lightMapVisibility`.
+  Every kernel goes through these, so the many-lights picking, reuse, the shadow denoiser and all three GI methods work with any mix of types.
+* **No cost for unused types.** A light's type is packed next to its shadow-denoiser group, and the pipelines are specialised (a Metal function constant) for the scene's set of types. A scene with only sphere lights compiles to the old code and runs at the old speed. Switching to a scene with a new set of types re-specialises the pipelines, which takes about 1.5 s the first time.
+* **Emissive meshes.** They take a separate path, because the shadow denoiser needs an exact unshadowed term that a mesh doesn't have:
+  * Each emissive instance becomes one light, with a bounding-sphere-and-normal proxy. The proxy is used for picking it and for its light map in GI.
+  * `meshLightsKernel` picks one triangle per pixel and casts one shadow ray to it. Its result is denoised by its own SVGF signal and added in the composite.
+  * GI rays ignore those surfaces' emission, as they ignore the light spheres, so their light isn't counted twice.
+
+Costs at 960×600 with surfel GI on an M1 Max:
+
+| Scene | GPU time |
+|---|---|
+| Spots | 5.0 ms |
+| Sun | 4.1 ms |
+| Area | 7.6 ms |
+| Tubes | 9.4 ms |
+| Emissive | 8.2 ms |
+| Mixed | 11.7 ms |
+
+* **Rect lights:** four of them cost 3 ms of trace time, for their form factors and shadow rays.
+* **Mesh lights:** the mesh-light pass costs 1.5–2.4 ms, mostly its shadow ray.
 
 ### Geometry debug views
 
@@ -187,6 +256,8 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
     2c manyLightsKernel more than 4 lights: per light group, pick 1 light by unshadowed light, 1 shadow ray
                        (+ per-group visibility and penumbra width); manyLightsReuseKernel also resamples
                        against last frame's picks (default)
+    2e meshLightsKernel emissive meshes: 1 light by its proxy, 1 triangle by emitted power, 1 shadow ray
+                       (denoised by SVGF on its own, or added to the direct light without the shadow denoiser)
     2b surfels         transform -> grid (count, scan, scatter) -> trace -> gather + spawn -> lifecycle
        or cascades     probes -> trace + merge per cascade (top down) -> SH projection -> resolve
     2d reflectionKernel glTF specular materials: 1 GGX ray per pixel, hit lit by 1 light sample + this frame's
@@ -217,8 +288,9 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator |
 | `Benchmark.swift` | Benchmark mode (`METALGI_BENCH`) |
-| `Scene.swift` | The three scenes: meshes, materials, instances, animation paths, lights and their shadow-denoiser groups; glTF models |
-| `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images |
+| `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups and emissive-mesh lights; glTF models and their lights |
+| `Scene+Lights.swift` | The six light demo scenes, and the light-check scene the `lightcheck` benchmark renders |
+| `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |
 | `MeshClusterizer.swift` | Clusters (≤128 triangles) by region growing, and cluster groups |

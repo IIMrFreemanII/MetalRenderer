@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import simd
 
 /// A small Cornell-style room with static objects, animated objects and moving sphere lights, or a stress-test
@@ -27,13 +28,47 @@ final class Scene {
         var cacheKey: String                  // unique within the file: image index + colour space
     }
 
+    /// A light's shape. Angles in radians.
+    enum LightKind {
+        case sphere(radius: Float)                              // color = radiant intensity
+        case spot(radius: Float, inner: Float, outer: Float)    // a sphere light inside a cone (half angles), same units
+        case sun(angularRadius: Float)                          // color = irradiance, from LightPose.direction
+        case rect(width: Float, height: Float)                  // one-sided panel, color = radiance
+        case tube(length: Float, radius: Float)                 // capsule, color = intensity (as a sphere of that power)
+        case mesh(Int)                                          // an emissive instance: index into `meshLights`
+    }
+
+    /// Where a light is and how bright, at one time.
+    struct LightPose {
+        var position: SIMD3<Float>
+        var direction = SIMD3<Float>(0, -1, 0)   // spot axis, rect normal, toward the sun, tube axis
+        var tangent: SIMD3<Float>? = nil         // rect: its width's direction (default: horizontal)
+        var scale = SIMD3<Float>(repeating: 1)   // multiplies the colour (flicker, the sun's colour over the day)
+    }
+
     struct Light {
-        var color: SIMD3<Float>               // radiant intensity (color * power)
-        var radius: Float
-        var path: (Float) -> SIMD3<Float>     // position over time
-        var position = SIMD3<Float>(repeating: 0)
-        var sphereInstance = -1               // visible emissive sphere that follows the light
+        var kind: LightKind
+        var color: SIMD3<Float>               // see LightKind for the units
+        var pose: (Float) -> LightPose
+        var current = LightPose(position: .zero)
+        var proxyInstance = -1                // visible emissive shape that follows the light (maskLights)
+        var proxyMaterial = -1
+        var proxyEmission = SIMD3<Float>(repeating: 0)   // its radiance at scale 1
         var group = 0                         // shadow-denoiser channel (see assignLightGroups)
+
+        var isMesh: Bool { if case .mesh = kind { return true }; return false }
+    }
+
+    /// An emissive instance sampled as a light: its triangles are `emissiveTriangles[first ..< first + count]`.
+    struct MeshLight {
+        var instance: Int
+        var firstTriangle: Int
+        var triangleCount: Int
+        var center: SIMD3<Float>              // object space bounding sphere of the triangles
+        var radius: Float
+        var normal: SIMD3<Float>              // object space, area-weighted mean normal (zero if closed)
+        var flatness: Float                   // |sum of area x normal| / area: 1 = flat, 0 = closed or round
+        var power: SIMD3<Float>               // sum of emitted radiance x area (object space)
     }
 
     /// Instance masks. Shadow and GI rays only test `geometry`, so the visible
@@ -56,24 +91,44 @@ final class Scene {
     private(set) var materials: [GPUMaterial] = []
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
+    private(set) var meshLights: [MeshLight] = []
+    private(set) var emissiveTriangles: [GPUEmissiveTriangle] = []
+    /// Materials changed since the renderer last uploaded them (light proxies whose brightness is animated).
+    var materialsChanged = false
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
-    private(set) var defaultCamera = Camera()
+    /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
+    private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
+    var defaultCamera = Camera()
     let settings: SceneSettings
 
-    let skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
+    var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
+    var skyAnimation: ((Float) -> SIMD3<Float>)?
+    /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
+    private var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
     init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
+        if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
         case .stress: buildStress(objects: settings.objects, lights: settings.lights)
         case .gallery: buildGallery()
+        case .spots: buildSpots()
+        case .sun: buildSun()
+        case .area: buildArea()
+        case .tubes: buildTubes()
+        case .emissive: buildEmissive()
+        case .mixed: buildMixed()
+        }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         assignLightGroups()
+        if settings.emissiveLights { buildMeshLights() }
+        let (lo, hi) = bounds()
+        if lo.x <= hi.x { sceneSphere = SIMD4((lo + hi) / 2, max(length(hi - lo) / 2, 1)) }
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
     }
@@ -87,12 +142,51 @@ final class Scene {
                 instances[i].transform = animation(t)
             }
         }
-        for l in lights.indices {
-            lights[l].position = lights[l].path(t)
-            let s = lights[l].sphereInstance
-            if s >= 0 {
-                instances[s].transform = translate(lights[l].position) * scale(lights[l].radius)
+        if let skyAnimation { skyColor = skyAnimation(t) }
+        for l in lights.indices where !lights[l].isMesh {
+            let old = lights[l].current.scale
+            let pose = lights[l].pose(t)
+            lights[l].current = pose
+            let s = lights[l].proxyInstance
+            if s >= 0 { instances[s].transform = proxyTransform(lights[l].kind, pose) }
+            if lights[l].proxyMaterial >= 0 && pose.scale != old {
+                materials[lights[l].proxyMaterial].emission = SIMD4(lights[l].proxyEmission * pose.scale, 1)
+                materialsChanged = true
             }
+        }
+    }
+
+    /// Unit direction perpendicular to `n`: horizontal if possible.
+    static func perpendicular(_ n: SIMD3<Float>) -> SIMD3<Float> {
+        let h = cross(SIMD3<Float>(0, 1, 0), n)
+        return length(h) > 1e-4 ? normalize(h) : normalize(cross(SIMD3<Float>(1, 0, 0), n))
+    }
+
+    /// Rotation taking +Y to `d` (unit).
+    static func alignY(_ d: SIMD3<Float>) -> float4x4 {
+        if dot(d, [0, 1, 0]) < -0.9999 { return rotate(.pi, [1, 0, 0]) }
+        return float4x4(simd_quatf(from: [0, 1, 0], to: d))
+    }
+
+    /// Rect lights: width axis (unit), normal, height axis.
+    private static func rectFrame(_ pose: LightPose) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+        let n = normalize(pose.direction)
+        var t = pose.tangent.map { normalize($0 - n * dot($0, n)) } ?? perpendicular(n)
+        if !t.x.isFinite { t = perpendicular(n) }
+        return (t, n, cross(t, n))
+    }
+
+    private func proxyTransform(_ kind: LightKind, _ pose: LightPose) -> float4x4 {
+        switch kind {
+        case .sphere(let r), .spot(let r, _, _):
+            return translate(pose.position) * scale(r)
+        case .rect(let w, let h):
+            let (t, n, b) = Scene.rectFrame(pose)   // the unit quad lies in XZ, facing +Y
+            return float4x4(SIMD4(t * w, 0), SIMD4(n, 0), SIMD4(b * h, 0), SIMD4(pose.position, 1))
+        case .tube:
+            return translate(pose.position) * Scene.alignY(normalize(pose.direction))
+        case .sun, .mesh:
+            return matrix_identity_float4x4
         }
     }
 
@@ -132,10 +226,60 @@ final class Scene {
         }
     }
 
+    /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it.
+    var lightTypeMask: UInt32 {
+        lights.reduce(UInt32(1)) { mask, l in   // spheres always: an empty scene needs some type
+            let type: Float
+            switch l.kind {
+            case .sphere: type = GPULight.sphere
+            case .spot: type = GPULight.spot
+            case .sun: type = GPULight.sun
+            case .rect: type = GPULight.rect
+            case .tube: type = GPULight.tube
+            case .mesh: type = GPULight.mesh
+            }
+            return mask | 1 << UInt32(type)
+        }
+    }
+
     func gpuLights() -> [GPULight] {
-        lights.map {
-            GPULight(positionRadius: SIMD4<Float>($0.position, $0.radius),
-                     color: SIMD4<Float>($0.color, Float($0.group)))
+        lights.map { l in
+            let p = l.current
+            func color(_ type: Float) -> SIMD4<Float> { SIMD4(l.color * p.scale, Float(l.group) + 4 * type) }
+            switch l.kind {
+            case .sphere(let r):
+                return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.sphere),
+                                axis: .zero, params: .zero)
+            case .spot(let r, let inner, let outer):
+                return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.spot),
+                                axis: SIMD4(normalize(p.direction), 0),
+                                params: SIMD4(cos(outer), cos(max(inner, 0)) + (inner >= outer ? 1e-4 : 0), 0, 0))
+            case .sun(let angle):
+                return GPULight(positionRadius: SIMD4(0, 0, 0, angle), color: color(GPULight.sun),
+                                axis: SIMD4(normalize(p.direction), 0), params: sceneSphere)
+            case .rect(let w, let h):
+                let (t, n, _) = Scene.rectFrame(p)
+                return GPULight(positionRadius: SIMD4(p.position, 0), color: color(GPULight.rect),
+                                axis: SIMD4(n, 0), params: SIMD4(t * (w / 2), h / 2))
+            case .tube(let length, let r):
+                return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.tube),
+                                axis: SIMD4(normalize(p.direction) * (length / 2), 0), params: .zero)
+            case .mesh(let i):
+                let m = meshLights[i]
+                let t = instances[m.instance].transform
+                let linear = float3x3(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z),
+                                      SIMD3(t.columns.1.x, t.columns.1.y, t.columns.1.z),
+                                      SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+                let maxScale = max(length(linear.columns.0), length(linear.columns.1), length(linear.columns.2))
+                let areaScale = pow(abs(linear.determinant), 2.0 / 3.0)
+                let c = t * SIMD4(m.center, 1)
+                let n = m.flatness > 0 ? normalize(linear.inverse.transpose * m.normal) : SIMD3<Float>(0, 1, 0)
+                return GPULight(positionRadius: SIMD4(c.x, c.y, c.z, m.radius * maxScale),
+                                color: SIMD4(m.power * areaScale, 4 * GPULight.mesh),
+                                axis: SIMD4(n, 0),
+                                params: SIMD4(Float(bitPattern: UInt32(m.firstTriangle)), Float(bitPattern: UInt32(m.triangleCount)),
+                                              m.flatness, Float(bitPattern: UInt32(m.instance))))
+            }
         }
     }
 
@@ -303,7 +447,7 @@ final class Scene {
             for i in lights.indices { lights[i].group = i }
             return
         }
-        let chroma = lights.map { $0.color / max($0.color.sum(), 1e-6) }
+        let chroma = lights.map { $0.color / max($0.color.sum(), 1e-6) }   // analytic lights (mesh lights come later)
         // Farthest-point initialisation, deterministic.
         var centers = [chroma[0]]
         while centers.count < 4 {
@@ -323,7 +467,7 @@ final class Scene {
         }
     }
 
-    private func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil) -> Int {
+    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil) -> Int {
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
         positions += mesh.positions
@@ -337,20 +481,20 @@ final class Scene {
     }
 
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
-    private func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
+    func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))
         return materials.count - 1
     }
 
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
-    private func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero) -> Int {
+    func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1)))
         return materials.count - 1
     }
 
     @discardableResult
-    private func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
+    func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
                              mask: UInt32 = Scene.maskGeometry,
                              animation: ((Float) -> float4x4)? = nil) -> Int {
         instances.append(Instance(mesh: mesh, material: material, mask: mask,
@@ -358,11 +502,145 @@ final class Scene {
         return instances.count - 1
     }
 
-    private func addLight(color: SIMD3<Float>, radius: Float, sphereMesh: Int, path: @escaping (Float) -> SIMD3<Float>) {
-        // Radiance of a sphere with radiant intensity I and radius r is I / (pi r^2).
-        let material = addMaterial(albedo: .zero, emission: color / (.pi * radius * radius))
-        let sphere = addInstance(sphereMesh, material, matrix_identity_float4x4, mask: Scene.maskLights)
-        lights.append(Light(color: color, radius: radius, path: path, sphereInstance: sphere))
+    /// A moving sphere light (the original scenes' lights), drawn with `sphereMesh`.
+    func addLight(color: SIMD3<Float>, radius: Float, sphereMesh: Int, path: @escaping (Float) -> SIMD3<Float>) {
+        addLight(.sphere(radius: radius), color: color, proxyMesh: sphereMesh) { LightPose(position: path($0)) }
+    }
+
+    private var lightSphereMesh = -1
+
+    /// Adds a light and, but for the sun, the emissive shape that shows it (maskLights: it never blocks light).
+    /// The shape's radiance makes it look as bright as the light is: I / (pi r^2) for a sphere of intensity I,
+    /// the radiance itself for a rect, 2 I / (pi r length) for a tube (a cylinder whose broadside intensity per unit
+    /// length, radiance x 2r, is the 4 I / (pi length) the shaders give it).
+    @discardableResult
+    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, pose: @escaping (Float) -> LightPose) -> Int {
+        var light = Light(kind: kind, color: color, pose: pose)
+        var mesh = -1, emission = SIMD3<Float>(repeating: 0)
+        switch kind {
+        case .sphere(let r), .spot(let r, _, _):
+            if proxyMesh == nil && lightSphereMesh < 0 { lightSphereMesh = addMesh(Scene.icosphere(subdivisions: 2)) }
+            mesh = proxyMesh ?? lightSphereMesh
+            emission = color / (.pi * r * r)
+        case .rect:
+            mesh = proxyMesh ?? addMesh(Scene.quadMesh())
+            emission = color
+        case .tube(let length, let r):
+            mesh = proxyMesh ?? addMesh(Scene.capsuleMesh(halfLength: length / 2, radius: r))
+            emission = 2 * color / (.pi * r * length)
+        case .sun, .mesh:
+            break
+        }
+        if mesh >= 0 {
+            light.proxyMaterial = addMaterial(albedo: .zero, emission: emission)
+            light.proxyEmission = emission
+            light.proxyInstance = addInstance(mesh, light.proxyMaterial, matrix_identity_float4x4, mask: Scene.maskLights)
+        }
+        lights.append(light)
+        return lights.count - 1
+    }
+
+    // MARK: - Emissive-mesh lights
+
+    /// Every geometry instance with an emissive material becomes a mesh light (after the analytic lights, which
+    /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
+    /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
+    private func buildMeshLights() {
+        var textureCache: [Int: ((SIMD2<Float>) -> SIMD3<Float>)?] = [:]
+        func emissiveTexture(_ index: UInt32) -> ((SIMD2<Float>) -> SIMD3<Float>)? {
+            guard index != .max else { return nil }
+            if let cached = textureCache[Int(index)] { return cached }
+            let sampler = Scene.thumbnailSampler(textures[Int(index)].data)
+            textureCache[Int(index)] = sampler
+            return sampler
+        }
+        let lumWeights = SIMD3<Float>(0.2126, 0.7152, 0.0722)
+        var flagged = Set<Int>()
+        for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry {
+            let material = materials[inst.material]
+            let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
+            guard factor.max() > 0 else { continue }
+            let positions: [SIMD3<Float>], uvsOf: [SIMD2<Float>], tris: ArraySlice<UInt32>
+            if let src = emitterSources[i] {
+                (positions, uvsOf, tris) = (src.positions, src.uvs, src.indices[...])
+            } else if inst.mesh >= 0 {
+                let m = meshes[inst.mesh]
+                (positions, uvsOf, tris) = (self.positions, uvs, indices[Int(m.firstIndex) ..< Int(m.firstIndex + m.indexCount)])
+            } else {
+                continue
+            }
+            let texture = emissiveTexture(material.textures.w)
+            var light = MeshLight(instance: i, firstTriangle: emissiveTriangles.count, triangleCount: 0,
+                                  center: .zero, radius: 0, normal: .zero, flatness: 0, power: .zero)
+            var weights: [Float] = []
+            var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
+            var areaNormal = SIMD3<Float>(repeating: 0), area: Float = 0
+            let t = Array(tris)
+            for f in stride(from: 0, to: t.count - 2, by: 3) {
+                let (a, b, c) = (Int(t[f]), Int(t[f + 1]), Int(t[f + 2]))
+                let p0 = positions[a], e1 = positions[b] - p0, e2 = positions[c] - p0
+                let cr = cross(e1, e2)
+                let triArea = length(cr) / 2
+                guard triArea > 0 else { continue }
+                let uv0 = a < uvsOf.count ? uvsOf[a] : .zero, uv1 = b < uvsOf.count ? uvsOf[b] : .zero
+                let uv2 = c < uvsOf.count ? uvsOf[c] : .zero
+                var le = factor
+                if let texture {
+                    le *= (texture((uv0 + uv1 + uv2) / 3) * 2 + texture(uv0) + texture(uv1) + texture(uv2)) / 5
+                }
+                let w = triArea * dot(le, lumWeights)
+                guard w > 0 else { continue }
+                weights.append(w)
+                emissiveTriangles.append(GPUEmissiveTriangle(v0: SIMD4(p0, 0), e1: SIMD4(e1, uv0.x), e2: SIMD4(e2, uv0.y),
+                                                             uv12: SIMD4(uv1.x, uv1.y, uv2.x, uv2.y)))
+                for p in [p0, positions[b], positions[c]] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
+                areaNormal += cr / 2
+                area += triArea
+                light.power += le * triArea
+            }
+            guard !weights.isEmpty else { continue }
+            let total = weights.reduce(0, +)
+            var running: Float = 0
+            for (k, w) in weights.enumerated() {
+                running += w
+                emissiveTriangles[light.firstTriangle + k].v0.w = k == weights.count - 1 ? 1 : running / total
+            }
+            light.triangleCount = weights.count
+            light.center = (lo + hi) / 2
+            light.radius = max(length(hi - lo) / 2, 1e-3)
+            light.flatness = min(length(areaNormal) / area, 1)
+            light.normal = length(areaNormal) > 0 ? normalize(areaNormal) : .zero
+            meshLights.append(light)
+            lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
+            flagged.insert(inst.material)
+        }
+        for m in flagged { materials[m].params.z = 1 }
+        if !meshLights.isEmpty {
+            print(String(format: "Emissive lights: %d meshes, %d triangles", meshLights.count, emissiveTriangles.count))
+        }
+    }
+
+    /// A 64-pixel copy of an encoded image, sampled (repeat, nearest) as linear RGB; nil if it doesn't decode.
+    private static func thumbnailSampler(_ data: Data) -> ((SIMD2<Float>) -> SIMD3<Float>)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                                          kCGImageSourceThumbnailMaxPixelSize: 64] as CFDictionary)
+        else { return nil }
+        let w = image.width, h = image.height
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        guard let context = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let linear = (0..<256).map { i -> Float in
+            let c = Float(i) / 255
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        let rgb = (0..<w * h).map { SIMD3(linear[Int(pixels[4 * $0])], linear[Int(pixels[4 * $0 + 1])], linear[Int(pixels[4 * $0 + 2])]) }
+        return { uv in
+            let x = Int((uv.x - uv.x.rounded(.down)) * Float(w)) % w, y = Int((uv.y - uv.y.rounded(.down)) * Float(h)) % h
+            return rgb[max(y, 0) * w + max(x, 0)]
+        }
     }
 
     // MARK: - glTF models
@@ -398,7 +676,7 @@ final class Scene {
 
     /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
     /// materials and textures. `animation`, if given, replaces `transform` over time.
-    private func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+    func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
         var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
         func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
             guard let ref else { return .max }
@@ -420,6 +698,7 @@ final class Scene {
                                 texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
         }
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
+        addModelLights(model, transform: transform, animation: animation)
         // Big meshes become virtual (cached cluster DAGs); the rest are ordinary meshes.
         let virtualIndices = usesVirtualGeometry
             ? model.meshes.indices.filter { model.meshes[$0].indices.count / 3 >= VirtualGeometryBuilder.minTriangles } : []
@@ -446,6 +725,44 @@ final class Scene {
                 index = addInstance(mesh, material, transform * part.transform)
             }
             instances[index].virtualMesh = virtual
+            if materials[material].emission.x + materials[material].emission.y + materials[material].emission.z > 0 {
+                let m = model.meshes[part.mesh]
+                emitterSources[index] = (m.positions, m.uvs, m.indices)
+            }
+        }
+    }
+
+    /// glTF punctual lights to this renderer's units: candela (point, spot) and lux (directional) are photometric,
+    /// so / 683 lm/W gives watts per steradian / square metre; this scale then puts them on the scale of the scenes'
+    /// lights (a 100 W bulb's 135 cd comes out a little dimmer than the gallery's lights).
+    static let gltfLightScale: Float = 20
+
+    /// Adds `model`'s punctual lights at `transform` (following `animation` if given): points as small sphere lights,
+    /// spots as spot lights, directional lights as suns.
+    private func addModelLights(_ model: GLTFModel, transform: float4x4, animation: ((Float) -> float4x4)?) {
+        for l in model.lights {
+            let color = l.color * l.intensity / 683 * Scene.gltfLightScale
+            let kind: LightKind
+            switch l.kind {
+            case .point: kind = .sphere(radius: 0.05)
+            case .spot(let inner, let outer): kind = .spot(radius: 0.05, inner: inner, outer: outer)
+            case .directional: kind = .sun(angularRadius: 0.27 * .pi / 180)
+            }
+            let local = l.transform
+            func pose(_ m: float4x4) -> LightPose {
+                let p = m * local, z = -SIMD3(p.columns.2.x, p.columns.2.y, p.columns.2.z)
+                let forward = length(z) > 0 ? normalize(z) : SIMD3<Float>(0, -1, 0)
+                if case .directional = l.kind {   // the sun's direction points toward it
+                    return LightPose(position: .zero, direction: -forward)
+                }
+                return LightPose(position: SIMD3(p.columns.3.x, p.columns.3.y, p.columns.3.z), direction: forward)
+            }
+            if let animation {
+                addLight(kind, color: color) { pose(animation($0)) }
+            } else {
+                let fixed = pose(transform)
+                addLight(kind, color: color) { _ in fixed }
+            }
         }
     }
 
@@ -553,6 +870,38 @@ final class Scene {
                   c + f.u * 0.5 + f.v * 0.5, c - f.u * 0.5 + f.v * 0.5]
             n += [SIMD3<Float>](repeating: f.n, count: 4)
             idx += [base, base + 1, base + 2, base, base + 2, base + 3]
+        }
+        return (p, n, idx)
+    }
+
+    /// Capsule along Y: a cylinder of `halfLength` either side of the origin with hemispherical caps, smooth normals.
+    static func capsuleMesh(halfLength: Float, radius: Float, segments: Int = 24, rings: Int = 6) -> MeshGeometry {
+        var p: [SIMD3<Float>] = [], n: [SIMD3<Float>] = [], idx: [UInt32] = []
+        // Rows from the bottom pole to the top pole; the two equator rows sit at -halfLength and +halfLength.
+        var rows: [(y: Float, r: Float, ny: Float)] = []
+        for i in 0...rings {   // bottom cap
+            let a = -Float.pi / 2 + Float.pi / 2 * Float(i) / Float(rings)
+            rows.append((-halfLength + radius * sin(a), radius * cos(a), sin(a)))
+        }
+        for i in 0...rings {   // top cap
+            let a = Float.pi / 2 * Float(i) / Float(rings)
+            rows.append((halfLength + radius * sin(a), radius * cos(a), sin(a)))
+        }
+        for row in rows {
+            for s in 0...segments {
+                let phi = 2 * Float.pi * Float(s) / Float(segments)
+                let dir = SIMD3<Float>(cos(phi), 0, sin(phi))
+                p.append(SIMD3(dir.x * row.r, row.y, dir.z * row.r))
+                let r = (1 - row.ny * row.ny).squareRoot()
+                n.append(normalize(SIMD3(dir.x * r, row.ny, dir.z * r) + [0, 1e-6, 0]))
+            }
+        }
+        let stride = UInt32(segments + 1)
+        for r in 0..<UInt32(rows.count - 1) {
+            for s in 0..<UInt32(segments) {
+                let a = r * stride + s, b = a + stride
+                idx += [a, b, a + 1, a + 1, b, b + 1]
+            }
         }
         return (p, n, idx)
     }

@@ -39,6 +39,7 @@ enum UniformFlags {
     static let allLights: UInt32 = 256       // one shadow ray per light even with more than 4 (references, baseline)
     static let specular: UInt32 = 512        // specular materials: material G-buffer, reflection pass, specular composite
     static let reference: UInt32 = 1024      // accumulated reference: reflections follow full paths
+    static let meshLights: UInt32 = 2048     // with the shadow denoiser: composite adds the denoised mesh-light direct light
 }
 
 struct GPUMesh {
@@ -66,9 +67,25 @@ struct GPUMaterial {
                                                     // index, or ~0 = none
 }
 
+/// One light; see the MSL struct for what each field holds per type (Scene.LightKind).
 struct GPULight {
-    var positionRadius: SIMD4<Float>  // xyz = center, w = sphere radius
-    var color: SIMD4<Float>           // rgb = radiant intensity (color * power), w = shadow-denoiser group (0...3)
+    var positionRadius: SIMD4<Float>  // xyz = centre, w = radius (sphere, spot, tube, mesh bounds), angular radius (sun)
+    var color: SIMD4<Float>           // rgb = intensity / irradiance (sun) / radiance (rect) / sum of L x area (mesh),
+                                      // w = shadow-denoiser group (0...3) + 4 x type (GPULight.sphere...)
+    var axis: SIMD4<Float>            // xyz = spot axis, rect normal, toward the sun, tube half axis, mesh mean normal
+    var params: SIMD4<Float>          // spot: cos outer, cos inner | rect: half-width tangent, half height
+                                      // sun: light-map bounds centre, radius | mesh: first triangle, count, flatness,
+                                      // instance (bit cast)
+
+    static let sphere: Float = 0, spot: Float = 1, sun: Float = 2, rect: Float = 3, tube: Float = 4, mesh: Float = 5
+}
+
+/// One triangle of an emissive-mesh light, object space (MSL EmissiveTriangle).
+struct GPUEmissiveTriangle {
+    var v0: SIMD4<Float>     // w = cumulative selection probability within its light
+    var e1: SIMD4<Float>     // w = uv0.x
+    var e2: SIMD4<Float>     // w = uv0.y
+    var uv12: SIMD4<Float>   // uv1, uv2
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
@@ -77,7 +94,8 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUMesh>.stride == 16, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
-    precondition(MemoryLayout<GPULight>.stride == 32, "GPULight layout mismatch")
+    precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
+    precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")
