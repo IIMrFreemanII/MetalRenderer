@@ -10,6 +10,7 @@ final class SettingsPanel: NSObject {
 
     private let stats = NSTextField(labelWithString: "")
     private let sceneKind = NSPopUpButton()
+    private let rayTracer = NSPopUpButton()
     private let objects = NSSlider()
     private let objectsValue = NSTextField(labelWithString: "")
     private let lights = NSSlider()            // log2 of the light count
@@ -97,6 +98,7 @@ final class SettingsPanel: NSObject {
         for (popup, titles, action) in [
             (giMode, GIMode.allCases.map(\.title), #selector(giModeChanged)),
             (sceneKind, SceneKind.allCases.map(\.title), #selector(sceneKindChanged)),
+            (rayTracer, RayTracerKind.allCases.map(\.title), #selector(rayTracerChanged)),
             (lightRays, ["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"], #selector(lightRaysChanged)),
             (upscalerKind, UpscalerKind.allCases.map(\.title), #selector(upscalerKindChanged)),
             (surfelRays, SettingsPanel.surfelRayOptions.map { "\($0) rays" }, #selector(surfelRaysChanged)),
@@ -139,6 +141,7 @@ final class SettingsPanel: NSObject {
             [label("Objects"), objects, objectsValue],                       // stress
             [label("Lights"), lights, lightsValue],                          // stress
             [label("Shadow rays"), lightRays],                               // stress
+            [label("Ray tracing"), rayTracer],
             [header("Rendering")],
             [label("Render scale"), renderScale, renderScaleValue],
             [label("MetalFX upscaling"), upscale],
@@ -248,6 +251,7 @@ final class SettingsPanel: NSObject {
         }
         if layoutChanged { resizeToFit() }
         sceneKind.selectItem(at: s.scene.kind.rawValue)
+        rayTracer.selectItem(at: s.rayTracer.rawValue)
         objects.integerValue = s.scene.objects
         objectsValue.stringValue = "\(s.scene.objects)"
         lights.doubleValue = log2(Double(max(s.scene.lights, 1)))
@@ -337,9 +341,13 @@ final class SettingsPanel: NSObject {
     @objc private func antiLagChanged() { renderer.settings.denoiser.antiLag = Float((antiLag.doubleValue * 10).rounded() / 10) }
     @objc private func resetToDefaults() {
         var s = renderer.defaultSettings
-        s.scene = renderer.settings.scene   // render settings only; the loaded scene stays
+        s.scene = renderer.settings.scene   // render settings only; the loaded scene and tracer stay
+        s.rayTracer = renderer.settings.rayTracer
         s.applySceneDefaults(from: renderer.defaultSettings)
         renderer.settings = s
+    }
+    @objc private func rayTracerChanged() {
+        renderer.settings.rayTracer = RayTracerKind(rawValue: rayTracer.indexOfSelectedItem) ?? .custom
     }
     @objc private func sceneKindChanged() {
         var s = renderer.settings

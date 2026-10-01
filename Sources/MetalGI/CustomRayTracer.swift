@@ -1,0 +1,202 @@
+import Foundation
+import Metal
+import QuartzCore
+import simd
+
+/// Per-instance data the custom traversal reads (MSL `RTInstance`): world -> object rows and the mesh's BLAS root.
+struct RTInstance {
+    var row0 = SIMD4<Float>()     // rows of inverse(transform): object point = (dot(row0, p1), dot(row1, p1), dot(row2, p1))
+    var row1 = SIMD4<Float>()
+    var row2 = SIMD4<Float>()
+    var blasRoot: UInt32 = 0
+    var mask: UInt32 = 0
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// The custom ray tracer's scene: per-mesh BLASes and the static TLAS (built once on the CPU), and per frame slot the
+/// dynamic TLAS over moving instances plus the `RTScene` argument buffer every ray-tracing kernel gets at buffer 1.
+/// See BVH.swift for the node format.
+final class CustomRayTracer {
+    private let device: MTLDevice
+    let blasNodes: MTLBuffer
+    let triangles: MTLBuffer
+    private var tlasNodes: [MTLBuffer] = []       // per slot: static TLAS nodes, then the dynamic TLAS
+    private var instances: [MTLBuffer] = []       // per slot: RTInstance per scene instance
+    private var sceneArgs: [MTLBuffer] = []       // per slot: RTScene
+    private let staticNodes: [BVHNode]
+    private let staticRoot: UInt32
+    private let dynamicIds: [Int]                 // scene instances that can move (animated objects, light spheres)
+    private let blasRoots: [UInt32]
+    private let meshBounds: [AABB]
+    private let cpu: (blas: BVHBuilder.BLASResult, tris: [SIMD4<Float>])   // kept for the self-test
+
+    /// Root ref of the dynamic TLAS: its first node when it has 2+ instances, the instance itself when it has one.
+    private var dynamicRoot: UInt32 {
+        dynamicIds.isEmpty ? BVHNode.none : dynamicIds.count == 1 ? BVHNode.leafBit | UInt32(dynamicIds[0]) : UInt32(staticNodes.count)
+    }
+
+    static func isStatic(_ inst: Scene.Instance) -> Bool { inst.animation == nil && inst.mask == Scene.maskGeometry }
+
+    init(device: MTLDevice, scene: Scene, slots: Int) throws {
+        self.device = device
+        let start = CACurrentMediaTime()
+        let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes)
+        blasRoots = blas.roots
+        meshBounds = blas.bounds
+        cpu = (blas, blas.triangles)
+
+        var staticBoxes: [AABB] = [], staticIds: [Int] = [], staticMasks: [UInt32] = [], dyn: [Int] = []
+        for (i, inst) in scene.instances.enumerated() {
+            if CustomRayTracer.isStatic(inst) {
+                staticBoxes.append(blas.bounds[inst.mesh].transformed(inst.transform))
+                staticIds.append(i)
+                staticMasks.append(inst.mask)
+            } else {
+                dyn.append(i)
+            }
+        }
+        var nodes: [BVHNode] = []
+        let (root, staticDepth) = BVHBuilder.buildTLAS(boxes: staticBoxes, ids: staticIds, masks: staticMasks,
+                                                       nodeBase: 0, into: &nodes)
+        staticNodes = nodes
+        staticRoot = root
+        dynamicIds = dyn
+
+        func buffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
+            let length = max(MemoryLayout<T>.stride * array.count, 16)
+            let b = array.isEmpty ? device.makeBuffer(length: length, options: .storageModeShared)
+                                  : array.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }
+            guard let b else { throw RendererError.resourceCreation("buffer \(label)") }
+            b.label = label
+            return b
+        }
+        blasNodes = try buffer(blas.nodes, "blasNodes")
+        triangles = try buffer(blas.triangles, "bvhTriangles")
+        let tlasCapacity = staticNodes.count + max(dynamicIds.count - 1, 1)
+        for slot in 0..<slots {
+            let t = try buffer([BVHNode](repeating: BVHNode(), count: tlasCapacity), "tlasNodes\(slot)")
+            staticNodes.withUnsafeBytes { if $0.count > 0 { t.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
+            tlasNodes.append(t)
+            instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(scene.instances.count, 1)), "rtInstances\(slot)"))
+            sceneArgs.append(try buffer([UInt8](repeating: 0, count: 48), "rtScene\(slot)"))
+        }
+        for slot in 0..<slots { writeArgs(slot: slot) }
+        print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms",
+                     blas.nodes.count, blas.triangles.count / 3, staticIds.count, staticNodes.count, staticDepth, dynamicIds.count,
+                     (CACurrentMediaTime() - start) * 1000))
+        if ProcessInfo.processInfo.environment["METALGI_RT_CHECK"] == "1" { selfTest(scene: scene) }
+    }
+
+    /// RTScene: 4 GPU addresses, then the two root refs (MSL layout: 4 x 8 bytes + 4 x 4 bytes).
+    private func writeArgs(slot: Int) {
+        let p = sceneArgs[slot].contents()
+        p.storeBytes(of: tlasNodes[slot].gpuAddress, toByteOffset: 0, as: UInt64.self)
+        p.storeBytes(of: blasNodes.gpuAddress, toByteOffset: 8, as: UInt64.self)
+        p.storeBytes(of: triangles.gpuAddress, toByteOffset: 16, as: UInt64.self)
+        p.storeBytes(of: instances[slot].gpuAddress, toByteOffset: 24, as: UInt64.self)
+        p.storeBytes(of: staticRoot, toByteOffset: 32, as: UInt32.self)
+        p.storeBytes(of: dynamicRoot, toByteOffset: 36, as: UInt32.self)
+    }
+
+    static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32) -> RTInstance {
+        let inv = inst.transform.inverse
+        return RTInstance(row0: SIMD4(inv[0][0], inv[1][0], inv[2][0], inv[3][0]),
+                          row1: SIMD4(inv[0][1], inv[1][1], inv[2][1], inv[3][1]),
+                          row2: SIMD4(inv[0][2], inv[1][2], inv[2][2], inv[3][2]),
+                          blasRoot: blasRoot, mask: inst.mask)
+    }
+
+    /// This frame's instance data and dynamic TLAS, built on the CPU.
+    func update(slot: Int, scene: Scene) {
+        let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
+        for (i, s) in scene.instances.enumerated() { inst[i] = CustomRayTracer.rtInstance(s, blasRoot: blasRoots[s.mesh]) }
+        guard dynamicIds.count >= 2 else { return }
+        let boxes = dynamicIds.map { meshBounds[scene.instances[$0].mesh].transformed(scene.instances[$0].transform) }
+        var nodes: [BVHNode] = []
+        _ = BVHBuilder.buildTLAS(boxes: boxes, ids: dynamicIds, masks: dynamicIds.map { scene.instances[$0].mask },
+                                 nodeBase: staticNodes.count, into: &nodes)
+        nodes.withUnsafeBytes {
+            tlasNodes[slot].contents().advanced(by: staticNodes.count * MemoryLayout<BVHNode>.stride)
+                .copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+        }
+    }
+
+    func bind(_ enc: MTLComputeCommandEncoder, slot: Int) {
+        enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
+        enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot]], usage: .read)
+    }
+
+    // MARK: - Self-test (METALGI_RT_CHECK=1)
+
+    /// CPU traversal of one BLAS (the same algorithm as the shader): closest hit t along an object-space ray.
+    private func intersectBLAS(root: UInt32, o: SIMD3<Float>, d: SIMD3<Float>, tmax: Float) -> Float {
+        var best = tmax
+        var stack = [root]
+        var dd = d
+        dd.replace(with: SIMD3(repeating: 1e-12), where: abs(d) .< 1e-12)
+        let inv = SIMD3<Float>(1, 1, 1) / dd
+        func slab(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>) -> Bool {
+            let t0 = (lo - o) * inv, t1 = (hi - o) * inv
+            let tn = simd_min(t0, t1).max(), tf = simd_max(t0, t1).min()
+            return max(tn, 0) <= min(tf, best)
+        }
+        while let ref = stack.popLast() {
+            if ref == BVHNode.none { continue }
+            if ref & BVHNode.leafBit != 0 {
+                let first = Int(ref & 0x0FFF_FFFF), count = Int((ref >> 28) & 7) + 1
+                for t in first..<(first + count) {
+                    let v0 = cpu.tris[3 * t], e1 = cpu.tris[3 * t + 1], e2 = cpu.tris[3 * t + 2]
+                    if let h = CustomRayTracer.triangle(o, d, SIMD3(v0.x, v0.y, v0.z), SIMD3(e1.x, e1.y, e1.z), SIMD3(e2.x, e2.y, e2.z)),
+                       h < best { best = h }
+                }
+                continue
+            }
+            let n = cpu.blas.nodes[Int(ref)]
+            for k in 0..<2 where slab(n.lo(k), n.hi(k)) { stack.append(n.ref(k)) }
+        }
+        return best
+    }
+
+    static func triangle(_ o: SIMD3<Float>, _ d: SIMD3<Float>, _ v0: SIMD3<Float>, _ e1: SIMD3<Float>, _ e2: SIMD3<Float>) -> Float? {
+        let pv = cross(d, e2), det = dot(e1, pv)
+        if det == 0 { return nil }
+        let inv = 1 / det, tv = o - v0
+        let u = dot(tv, pv) * inv
+        if u < 0 || u > 1 { return nil }
+        let qv = cross(tv, e1), v = dot(d, qv) * inv
+        if v < 0 || u + v > 1 { return nil }
+        let t = dot(e2, qv) * inv
+        return t > 0 ? t : nil
+    }
+
+    /// Random rays against every mesh's BLAS, compared with testing every triangle. Prints the result.
+    private func selfTest(scene: Scene) {
+        var rng = SystemRandomNumberGenerator()
+        var mismatches = 0, rays = 0, hits = 0
+        for (m, mesh) in scene.meshes.enumerated() {
+            let b = meshBounds[m]
+            let size = simd_max(b.hi - b.lo, SIMD3(repeating: 1e-3))
+            let triCount = Int(mesh.indexCount) / 3
+            for _ in 0..<2000 {
+                let o = b.lo - size + SIMD3(Float.random(in: 0...1, using: &rng), Float.random(in: 0...1, using: &rng),
+                                            Float.random(in: 0...1, using: &rng)) * size * 3
+                let target = b.lo + SIMD3(Float.random(in: 0...1, using: &rng), Float.random(in: 0...1, using: &rng),
+                                          Float.random(in: 0...1, using: &rng)) * size
+                let d = target - o
+                var brute = Float.infinity
+                for t in 0..<triCount {
+                    let base = Int(mesh.firstIndex) + 3 * t
+                    let p0 = scene.positions[Int(scene.indices[base])], p1 = scene.positions[Int(scene.indices[base + 1])],
+                        p2 = scene.positions[Int(scene.indices[base + 2])]
+                    if let h = CustomRayTracer.triangle(o, d, p0, p1 - p0, p2 - p0), h < brute { brute = h }
+                }
+                let bvh = intersectBLAS(root: blasRoots[m], o: o, d: d, tmax: .infinity)
+                rays += 1
+                if brute.isFinite { hits += 1 }
+                if !(brute == bvh || abs(brute - bvh) <= 1e-5 * max(1, brute)) { mismatches += 1 }
+            }
+        }
+        print("Custom BVH self-test: \(rays) rays over \(scene.meshes.count) meshes, \(hits) hits, \(mismatches) mismatches")
+    }
+}

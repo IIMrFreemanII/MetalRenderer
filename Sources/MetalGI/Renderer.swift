@@ -160,8 +160,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var indexBuffer: MTLBuffer!
     private var meshBuffer: MTLBuffer!
     private var materialBuffer: MTLBuffer!
-    private var primitiveAS: [MTLAccelerationStructure] = []
+    private var primitiveAS: [MTLAccelerationStructure] = []           // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
+    private var customRT: CustomRayTracer?                             // custom ray tracer only
+    /// The tracer the shaders were compiled for and the scene's structures were built for.
+    private var builtRayTracer = RayTracerKind.initial
     private var blueNoiseTexture: MTLTexture!   // filled the first time blue noise is turned on
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
     static func lightMapSize(lightCount: Int) -> Int {
@@ -275,7 +278,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
         let options = MTLCompileOptions()
         options.languageVersion = .version3_0
-        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: 0)]
+        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: settings.rayTracer == .custom ? 1 : 0)]
         let library = try device.makeLibrary(source: source, options: options)
 
         func pipeline(_ name: String) throws -> MTLComputePipelineState {
@@ -334,7 +337,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Everything sized by the scene: geometry, acceleration structures, per-frame instance / light buffers, light maps.
     private func createSceneResources() throws {
+        builtRayTracer = settings.rayTracer
+        customRT = nil
         primitiveAS = []
+        primitiveASResources = []
         instanceDescBuffers = []
         instanceDataBuffers = []
         lightBuffers = []
@@ -342,8 +348,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         instanceScratch = []
         instanceASBuilt = []
         try createGeometryBuffers()
-        try buildPrimitiveAccelerationStructures()
+        if builtRayTracer == .metal { try buildPrimitiveAccelerationStructures() }
         try createPerFrameResources()
+        if builtRayTracer == .custom {
+            customRT = try CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight)
+        }
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
         lmd.pixelFormat = .r32Float
@@ -363,13 +372,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let old = scene
         let start = CACurrentMediaTime()
-        scene = Scene(settings.scene)
+        if settings.scene != scene.settings { scene = Scene(settings.scene) }
         do {
+            if settings.rayTracer != builtRayTracer { try loadShaders() }
             try createSceneResources()
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old
             settings.scene = old.settings
+            settings.rayTracer = builtRayTracer
+            try? loadShaders()
             try? createSceneResources()
         }
         surfelGI = nil   // its grid covers the old scene's bounds
@@ -381,8 +393,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             camera = scene.defaultCamera
             prevCamera = camera
         }
-        print(String(format: "Scene: %@, %d instances, %d lights (built in %.0f ms)", settings.scene.kind.title,
-                     scene.instances.count, scene.lights.count, (CACurrentMediaTime() - start) * 1000))
+        print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing (built in %.0f ms)", settings.scene.kind.title,
+                     scene.instances.count, scene.lights.count, settings.rayTracer.title, (CACurrentMediaTime() - start) * 1000))
     }
 
     private func createGeometryBuffers() throws {
@@ -478,6 +490,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             instanceDataBuffers.append(data)
             lightBuffers.append(lights)
 
+            guard builtRayTracer == .metal else { continue }
             let sizes = device.accelerationStructureSizes(descriptor: instanceASDescriptor(slot: slot))
             guard let accel = device.makeAccelerationStructure(size: sizes.accelerationStructureSize),
                   let scratch = device.makeBuffer(length: max(sizes.buildScratchBufferSize, sizes.refitScratchBufferSize, 16), options: .storageModePrivate) else {
@@ -491,7 +504,21 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     // MARK: - Per-frame CPU work
 
     private func writeFrameData(slot: Int) {
-        // Instance descriptors for the top-level acceleration structure.
+        if let customRT { customRT.update(slot: slot, scene: scene) } else { writeInstanceDescriptors(slot: slot) }
+        let data = scene.gpuInstanceData()
+        data.withUnsafeBytes { raw in
+            instanceDataBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+        }
+        let lights = scene.gpuLights()
+        if !lights.isEmpty {
+            lights.withUnsafeBytes { raw in
+                lightBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+            }
+        }
+    }
+
+    /// Instance descriptors for Metal's top-level acceleration structure.
+    private func writeInstanceDescriptors(slot: Int) {
         let descBase = instanceDescBuffers[slot].contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
         for (i, instance) in scene.instances.enumerated() {
@@ -508,17 +535,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.storeBytes(of: instance.mask, toByteOffset: 52, as: UInt32.self)
             p.storeBytes(of: UInt32(0), toByteOffset: 56, as: UInt32.self)              // intersection function table offset
             p.storeBytes(of: UInt32(instance.mesh), toByteOffset: 60, as: UInt32.self)  // index into primitiveAS
-        }
-
-        let data = scene.gpuInstanceData()
-        data.withUnsafeBytes { raw in
-            instanceDataBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
-        }
-        let lights = scene.gpuLights()
-        if !lights.isEmpty {
-            lights.withUnsafeBytes { raw in
-                lightBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
-            }
         }
     }
 
@@ -606,7 +622,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         guard let t = targets else { return }
 
-        if settings.scene != scene.settings { rebuildScene(resetCamera: benchmark == nil && settings.scene.kind != scene.settings.kind) }
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer {
+            rebuildScene(resetCamera: benchmark == nil && settings.scene.kind != scene.settings.kind)
+        }
         frameSemaphore.wait()
 
         let custom = upscaling && settings.upscaler == .custom
@@ -704,7 +722,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
-        if let asEncoder = passBuffer("tlas").makeAccelerationStructureCommandEncoder() {
+        if builtRayTracer == .metal, let asEncoder = passBuffer("tlas").makeAccelerationStructureCommandEncoder() {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
             if instanceASBuilt.contains(slot) {
                 asEncoder.refit(sourceAccelerationStructure: instanceAS[slot], descriptor: instanceASDescriptor(slot: slot),
@@ -1005,7 +1023,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Scene buffers at the indices every ray-tracing kernel uses (1 = TLAS, 2...8 = geometry, instances, lights).
     private func bindScene(_ enc: MTLComputeCommandEncoder, slot: Int) {
-        enc.setAccelerationStructure(instanceAS[slot], bufferIndex: 1)
+        if let customRT {
+            customRT.bind(enc, slot: slot)
+        } else {
+            enc.setAccelerationStructure(instanceAS[slot], bufferIndex: 1)
+            enc.useResources(primitiveASResources, usage: .read)   // BLASes referenced indirectly by the TLAS
+        }
         enc.setBuffer(positionBuffer, offset: 0, index: 2)
         enc.setBuffer(normalBuffer, offset: 0, index: 3)
         enc.setBuffer(indexBuffer, offset: 0, index: 4)
@@ -1013,7 +1036,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBuffer(instanceDataBuffers[slot], offset: 0, index: 6)
         enc.setBuffer(materialBuffer, offset: 0, index: 7)
         enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
-        enc.useResources(primitiveASResources, usage: .read)   // BLASes referenced indirectly by the TLAS
     }
 
     private var usesLightMaps: Bool {
@@ -1096,7 +1118,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         Benchmark.applyDenoiserOverride(to: &s.denoiser)
         if !c.accumulate { Benchmark.applyGIOverride(to: &s) }
         settings = s
-        if settings.scene != scene.settings { rebuildScene(resetCamera: false) }
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer { rebuildScene(resetCamera: false) }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
@@ -1195,8 +1217,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                    : String(format: "%ld×%ld", width, height)
         let stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
         let sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
-        view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ noise — denoiser %@ — %@%@",
-                                     sceneName, stats, gi, s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
+        view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
+                                     sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
+                                     s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
                                      RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         onStats?(stats)
     }

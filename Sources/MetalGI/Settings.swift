@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 extension ClosedRange {
     func clamp(_ value: Bound) -> Bound { Swift.min(Swift.max(value, lowerBound), upperBound) }
@@ -117,6 +118,22 @@ enum SceneKind: Int, CaseIterable {
     }
 }
 
+/// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
+enum RayTracerKind: Int, CaseIterable {
+    case custom             // this project's BVHs: per-mesh BLAS + static TLAS (CPU, once) + dynamic TLAS (every frame)
+    case metal              // Metal's acceleration structures and intersector
+
+    var title: String {
+        switch self {
+        case .custom: return "Custom BVH"
+        case .metal: return "Metal"
+        }
+    }
+
+    /// `METALGI_RT=metal|custom` picks the starting tracer (benchmarks: for every setting).
+    static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALGI_RT"] == "metal" ? .metal : .custom
+}
+
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
 struct SceneSettings: Equatable {
     var kind = SceneKind.cornell
@@ -147,6 +164,7 @@ struct RenderSettings: Equatable {
     var surfels = SurfelSettings()
     var cascades = CascadeSettings()
     var scene = SceneSettings()
+    var rayTracer = RayTracerKind.initial
 
     /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their

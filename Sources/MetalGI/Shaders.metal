@@ -231,6 +231,174 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
     return res.type != intersection_type::none;
 }
 
+#else
+
+// Custom BVH traversal (layouts: BVH.swift / CustomRayTracer.swift). Two top-level trees (static instances, built
+// once; moving instances, rebuilt every frame) over per-mesh bottom-level trees. Nodes hold both children's boxes;
+// a child ref with bit 31 set is a leaf: an instance (top level) or (count - 1) << 28 | first triangle (bottom).
+struct BVHNode {
+    float4 lo0;   // xyz = child 0 box min, w = child 0 ref (bits)
+    float4 hi0;   // xyz = child 0 box max, w = instance masks under child 0 (bits, top level only)
+    float4 lo1;
+    float4 hi1;
+};
+
+struct RTInstance {
+    float4 row0;  // world -> object rows
+    float4 row1;
+    float4 row2;
+    uint blasRoot;
+    uint mask;
+    uint pad0;
+    uint pad1;
+};
+
+struct RTScene {
+    device const BVHNode*    tlas;        // static top-level nodes, then this frame's dynamic ones
+    device const BVHNode*    blas;
+    device const float4*     tris;        // 3 per triangle: v0 (w = triangle index in its mesh), e1, e2
+    device const RTInstance* instances;
+    uint staticRoot;                      // root refs; RT_NONE = empty tree
+    uint dynamicRoot;
+    uint pad0;
+    uint pad1;
+};
+
+#define SCENE_ACCEL constant RTScene&
+
+constant uint RT_LEAF  = 0x80000000u;
+constant uint RT_NONE  = 0xFFFFFFFFu;
+constant uint RT_STACK = 64;   // top-level depth + bottom-level depth must fit
+
+// Slab test of a box against [tmin, tmax]; tnear = entry distance.
+inline bool rtSlab(float3 lo, float3 hi, float3 inv, float3 oi, float tmin, float tmax, thread float& tnear) {
+    float3 t0 = fma(lo, inv, oi), t1 = fma(hi, inv, oi);
+    float3 tn = min(t0, t1), tf = max(t0, t1);
+    tnear = max(max(tn.x, tn.y), max(tn.z, tmin));
+    return tnear <= min(min(tf.x, tf.y), min(tf.z, tmax));
+}
+
+inline float3 rtSafeInverse(float3 d) {
+    return 1.0f / select(d, copysign(float3(1e-12f), d), abs(d) < 1e-12f);
+}
+
+// Möller-Trumbore, both faces. Updates h (closest so far) and returns true on a nearer hit.
+inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, float tmin, thread Hit& h) {
+    float3 pv = cross(d, e2.xyz);
+    float det = dot(e1.xyz, pv);
+    if (det == 0.0f) return false;
+    float inv = 1.0f / det;
+    float3 tv = o - v0.xyz;
+    float u = dot(tv, pv) * inv;
+    if (u < 0.0f || u > 1.0f) return false;
+    float3 qv = cross(tv, e1.xyz);
+    float v = dot(d, qv) * inv;
+    if (v < 0.0f || u + v > 1.0f) return false;
+    float t = dot(e2.xyz, qv) * inv;
+    if (t < tmin || t > h.distance) return false;
+    h.hit = true;
+    h.distance = t;
+    h.barycentrics = float2(u, v);
+    h.primitive = as_type<uint>(v0.w);
+    return true;
+}
+
+// One instance's bottom-level tree, using the stack above `base`. Returns true on a hit when ANY (stop now).
+template <bool ANY>
+inline bool rtInstance(uint id, constant RTScene& sc, Ray r, uint mask, thread Hit& h, thread uint* stack, uint base) {
+    RTInstance inst = sc.instances[id];
+    if ((inst.mask & mask) == 0) return false;
+    float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
+    float3 o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
+    float3 d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared
+    float3 inv = rtSafeInverse(d), oi = -o * inv;
+    uint sp = base;
+    uint ref = inst.blasRoot;
+    while (true) {
+        if ((ref & RT_LEAF) == 0) {
+            BVHNode n = sc.blas[ref];
+            float t0, t1;
+            bool b0 = rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
+            bool b1 = rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
+            uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
+            if (b0 && b1) {
+                bool swap = t1 < t0;
+                if (sp < RT_STACK) stack[sp++] = swap ? c0 : c1;
+                ref = swap ? c1 : c0;
+                continue;
+            }
+            if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
+        } else {
+            uint first = ref & 0x0FFFFFFFu, end = first + ((ref >> 28) & 7u) + 1u;
+            if (ref == RT_NONE) end = first;   // the empty child of a single-leaf mesh
+            for (uint t = first; t < end; ++t) {
+                if (rtTriangle(o, d, sc.tris[3 * t], sc.tris[3 * t + 1], sc.tris[3 * t + 2], r.tmin, h)) {
+                    h.instance = id;
+                    if (ANY) return true;
+                }
+            }
+        }
+        if (sp == base) return false;
+        ref = stack[--sp];
+    }
+}
+
+template <bool ANY>
+inline bool rtTree(uint root, constant RTScene& sc, Ray r, uint mask, thread Hit& h, thread uint* stack) {
+    if (root == RT_NONE) return false;
+    float3 inv = rtSafeInverse(r.direction), oi = -r.origin * inv;
+    uint sp = 0;
+    uint ref = root;
+    while (true) {
+        if ((ref & RT_LEAF) == 0) {
+            BVHNode n = sc.tlas[ref];
+            float t0, t1;
+            bool b0 = (as_type<uint>(n.hi0.w) & mask) != 0 && rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, r.tmin, h.distance, t0);
+            bool b1 = (as_type<uint>(n.hi1.w) & mask) != 0 && rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, r.tmin, h.distance, t1);
+            uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
+            if (b0 && b1) {
+                bool swap = t1 < t0;
+                if (sp < RT_STACK) stack[sp++] = swap ? c0 : c1;
+                ref = swap ? c1 : c0;
+                continue;
+            }
+            if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
+        } else if (rtInstance<ANY>(ref & ~RT_LEAF, sc, r, mask, h, stack, sp)) {
+            return true;
+        }
+        if (sp == 0) return false;
+        ref = stack[--sp];
+    }
+}
+
+Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
+    Hit h;
+    h.hit = false;
+    h.distance = r.tmax;
+    h.barycentrics = float2(0.0f);
+    h.instance = 0;
+    h.primitive = 0;
+    uint stack[RT_STACK];
+    rtTree<false>(sc.staticRoot, sc, r, mask, h, stack);
+    rtTree<false>(sc.dynamicRoot, sc, r, mask, h, stack);
+    return h;
+}
+
+float intersectDistance(Ray r, uint mask, SCENE_ACCEL sc) {
+    Hit h = intersectClosest(r, mask, sc);
+    return h.hit ? h.distance : INFINITY;
+}
+
+bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
+    Hit h;
+    h.hit = false;
+    h.distance = r.tmax;
+    uint stack[RT_STACK];
+    bool hit = rtTree<true>(sc.staticRoot, sc, r, mask, h, stack) || rtTree<true>(sc.dynamicRoot, sc, r, mask, h, stack);
+    t = h.distance;
+    return hit;
+}
+
 #endif
 
 struct SceneData {

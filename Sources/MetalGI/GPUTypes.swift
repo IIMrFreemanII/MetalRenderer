@@ -73,6 +73,8 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 32, "GPUMaterial layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 32, "GPULight layout mismatch")
+    precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
+    precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }
