@@ -12,6 +12,7 @@ final class SettingsPanel: NSObject {
     private let sceneKind = NSPopUpButton()
     private let rayTracer = NSPopUpButton()
     private let virtualGeometry = NSButton(checkboxWithTitle: "Virtual geometry (LOD)", target: nil, action: nil)
+    private let specular = NSButton(checkboxWithTitle: "Specular (glTF PBR)", target: nil, action: nil)
     private let vgError = NSSlider()               // log2 of the allowed error in traced pixels
     private let vgErrorValue = NSTextField(labelWithString: "")
     private let objects = NSSlider()
@@ -127,7 +128,8 @@ final class SettingsPanel: NSObject {
                               (separate, #selector(separateChanged)), (lightMaps, #selector(lightMapsChanged)),
                               (surfelDenoise, #selector(surfelDenoiseChanged)), (cascadeBounce, #selector(cascadeBounceChanged)),
                               (cascadeDenoise, #selector(cascadeDenoiseChanged)),
-                              (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged))] {
+                              (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged)),
+                              (specular, #selector(specularChanged))] {
             box.target = self
             box.action = action
         }
@@ -149,6 +151,7 @@ final class SettingsPanel: NSObject {
             [label("Ray tracing"), rayTracer],
             [NSGridCell.emptyContentView, virtualGeometry],
             [label("Geometry error"), vgError, vgErrorValue],
+            [NSGridCell.emptyContentView, specular],
             [header("Rendering")],
             [label("Render scale"), renderScale, renderScaleValue],
             [label("MetalFX upscaling"), upscale],
@@ -260,6 +263,7 @@ final class SettingsPanel: NSObject {
         sceneKind.selectItem(at: s.scene.kind.rawValue)
         rayTracer.selectItem(at: s.rayTracer.rawValue)
         virtualGeometry.state = s.virtualGeometry.enabled ? .on : .off
+        specular.state = s.specular ? .on : .off
         virtualGeometry.isEnabled = s.rayTracer == .custom   // Metal would need its acceleration structures rebuilt per cut
         vgError.doubleValue = Double(log2(s.virtualGeometry.pixelError))
         vgErrorValue.stringValue = String(format: "%.2g px", s.virtualGeometry.pixelError)
@@ -358,6 +362,7 @@ final class SettingsPanel: NSObject {
         s.applySceneDefaults(from: renderer.defaultSettings)
         renderer.settings = s
     }
+    @objc private func specularChanged() { renderer.settings.specular = specular.state == .on }
     @objc private func virtualGeometryChanged() { renderer.settings.virtualGeometry.enabled = virtualGeometry.state == .on }
     @objc private func vgErrorChanged() {
         renderer.settings.virtualGeometry.pixelError = Float((pow(2, vgError.doubleValue) * 4).rounded() / 4)

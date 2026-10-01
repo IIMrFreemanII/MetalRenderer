@@ -186,6 +186,7 @@ struct RenderSettings: Equatable {
     var scene = SceneSettings()
     var rayTracer = RayTracerKind.initial
     var virtualGeometry = VirtualGeometrySettings()
+    var specular = ProcessInfo.processInfo.environment["METALGI_SPECULAR"] != "0"   // GGX specular for glTF materials
 
     /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their

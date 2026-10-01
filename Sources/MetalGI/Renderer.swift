@@ -30,8 +30,11 @@ final class RenderTargets {
     let giDebug: MTLTexture         // debug visualisation written by surfel / cascade GI (view mode "GI debug")
     let visibility: MTLTexture      // per light group (rgba = groups 0...3): visibility of this frame's shadow ray(s)
     let blocker: MTLTexture         // per light group: penumbra half width of the occluded samples, 0 = visible
+    let material: MTLTexture        // specular materials: rgb = F0, a = roughness
+    let specular: MTLTexture        // raw 1-spp specular light (reflections), divided by the specular albedo
     let shadow: ShadowTargets       // shadow denoiser state
-    /// Denoiser state for [0] direct + indirect light combined (or direct alone) and [1] indirect light alone.
+    /// Denoiser state for [0] direct + indirect light combined (or direct alone), [1] indirect light alone and
+    /// [2] specular light.
     let denoise: [DenoiseTargets]
     // MetalFX inputs (written only while upscaling is on)
     static let upscaleColorFormat = MTLPixelFormat.rgba16Float
@@ -63,8 +66,10 @@ final class RenderTargets {
         giDebug = try make(.rgba16Float, "giDebug")
         visibility = try make(.rgba8Unorm, "visibility")
         blocker = try make(.rgba16Float, "blocker")
+        material = try make(.rgba16Float, "material")
+        specular = try make(.rgba16Float, "specular")
         shadow = try ShadowTargets(device: device, width: width, height: height, make)
-        denoise = [try DenoiseTargets(make, "direct"), try DenoiseTargets(make, "indirect")]
+        denoise = [try DenoiseTargets(make, "direct"), try DenoiseTargets(make, "indirect"), try DenoiseTargets(make, "specular")]
         upscaleColor = try make(RenderTargets.upscaleColorFormat, "upscaleColor")
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
@@ -149,6 +154,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var lightMapPSO: MTLComputePipelineState!
     private var manyLightsPSO: MTLComputePipelineState!
     private var manyLightsReusePSO: MTLComputePipelineState!
+    private var reflectionPSO: MTLComputePipelineState!
     private var rcPipelines: RCPipelines!
     private var surfelPipelines: SurfelPipelines!
     private var surfelGI: SurfelGI?                    // created on first use of the surfel GI mode
@@ -223,7 +229,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     // Benchmark reference: average raw frames of a paused scene instead of denoising.
     private var accumulating = false
     private var accumCount: UInt32 = 0
-    private var accumTextures: (direct: MTLTexture, indirect: MTLTexture)?
+    private var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
     private(set) lazy var upscaleSupported = Upscaler.isSupported(on: device)
     private lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
     /// MetalFX factors this GPU supports, with 0 meaning off.
@@ -316,6 +322,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let lightMap = try pipeline("lightMapKernel")
         let manyLights = try pipeline("manyLightsKernel")
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
+        let reflection = try pipeline("reflectionKernel")
         let rt = kind != .custom ? nil :
             RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
                         sortLocal: try pipeline("rtSortLocalKernel"), sortGlobal: try pipeline("rtSortGlobalKernel"),
@@ -343,6 +350,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         lightMapPSO = lightMap
         manyLightsPSO = manyLights
         manyLightsReusePSO = manyLightsReuse
+        reflectionPSO = reflection
         rcPipelines = rc
         rtPipelines = rt
         if let rt { customRT?.pipelines = rt }
@@ -683,7 +691,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         u.lightCount = UInt32(scene.lights.count)
         u.bounces = settings.giEnabled && activeGIMode == .pathTraced ? UInt32(settings.bounces) : 0
         u.flags = (historyValid ? UniformFlags.historyValid : 0) | (settings.denoiser.enabled ? UniformFlags.denoise : 0)
-        if accumulating { u.flags |= UniformFlags.noClamp }
+        if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
+        if usesSpecular { u.flags |= UniformFlags.specular }
         // References trace every light (lower variance per frame); METALGI_LIGHTS=all does it everywhere (baseline).
         if accumulating || Renderer.allLights { u.flags |= UniformFlags.allLights }
         if settings.lightMaps && activeGIMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
@@ -897,7 +906,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             bindScene(enc, slot: slot)
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
                               t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
-                              t.visibility, t.blocker])
+                              t.visibility, t.blocker, t.material])
             dispatch(enc, "trace", width: width, height: height)
         })
 
@@ -926,6 +935,42 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if separate && denoiseIndirect { signals.append(([t.indirect], t.denoise[1], techniqueGI ? 1 : passCount)) }
         var finalIllumination = [t.denoise[0].pingA]
         var denoiseStages: [ComputeStage] = []
+        // 2d. Reflections (glTF specular materials): after the GI (they read its result), before the denoisers.
+        var finalSpecular = t.specular
+        var specularStages: [ComputeStage] = [], specularDenoise: [ComputeStage] = []
+        if usesSpecular {
+            specularStages.append(ComputeStage(pass: "reflections") { [self] enc in
+                var u = frameUniforms
+                enc.setComputePipelineState(reflectionPSO)
+                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                bindScene(enc, slot: slot)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular])
+                dispatch(enc, "reflections", width: width, height: height)
+            })
+            if settings.denoiser.enabled && !accumulating {
+                let d = t.denoise[2]
+                specularDenoise.append(ComputeStage(pass: "reflections") { [self] enc in
+                    var u = frameUniforms, inputCount: UInt32 = 1
+                    enc.setComputePipelineState(temporalPSO)
+                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                    enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
+                    setTextures(enc, [t.specular, t.specular, t.motion, t.normalDepth[cur], t.normalDepth[prev],
+                                      d.history, d.moments[prev], d.pingA, d.moments[cur]])
+                    dispatch(enc, "temporal", width: width, height: height)
+                })
+                for (i, pass) in [(d.pingA, d.history), (d.history, d.pingB)].enumerated() {
+                    specularDenoise.append(ComputeStage(pass: "reflections") { [self] enc in
+                        var u = frameUniforms, step = Int32(1 << i)
+                        enc.setComputePipelineState(atrousPSO)
+                        enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                        enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
+                        setTextures(enc, [pass.0, t.normalDepth[cur], pass.1])
+                        dispatch(enc, "atrous", width: width, height: height)
+                    })
+                }
+                finalSpecular = d.pingB
+            }
+        }
         // 2c. More than 4 lights: direct light from one sampled light per group (manyLightsKernel), after the trace
         //     and before anything that reads direct light or visibility.
         let manyLights = scene.lights.count > 4 && frameUniforms.flags & UniformFlags.allLights == 0
@@ -985,11 +1030,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 enc.setComputePipelineState(accumulatePSO)
                 enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
                 enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 1)
-                setTextures(enc, [t.direct, t.indirect, accum.direct, accum.indirect])
+                setTextures(enc, [t.direct, t.indirect, accum.direct, accum.indirect, t.specular, accum.specular])
                 dispatch(enc, "accumulate", width: width, height: height)
             })
             accumCount += 1
             finalIllumination = [accum.direct, accum.indirect]
+            finalSpecular = accum.specular
             // Tells the composite pass to read finalIllumination as separate direct + indirect light.
             uniforms.flags |= UniformFlags.denoise | UniformFlags.separateSignals
         }
@@ -1030,7 +1076,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
         if overlap, let enc = beginComputePass("trace") {
             // Light map, trace and cascade probes need only the TLAS; then the cascade chain and the denoiser chain
-            // advance in lock-step, one barrier per step.
+            // advance in lock-step, one barrier per step. Reflections read the cascades' result: after both.
             for stage in headStages + giStages.prefix(1) { stage.encode(enc) }
             enc.memoryBarrier(scope: [.buffers, .textures])
             let gi = Array(giStages.dropFirst())
@@ -1039,13 +1085,19 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 if i < gi.count { gi[i].encode(enc) }
                 enc.memoryBarrier(scope: [.buffers, .textures])
             }
+            for stage in specularStages + specularDenoise {
+                stage.encode(enc)
+                enc.memoryBarrier(scope: [.buffers, .textures])
+            }
         } else {
             runSerial(headStages)
             if settings.giEnabled && giMode == .surfels {
                 encodeSurfels(beginComputePass: beginComputePass, uniforms: &uniforms, targets: t, slot: slot)
             }
             runSerial(giStages)
+            runSerial(specularStages)
             runSerial(denoiseStages)
+            runSerial(specularDenoise)
         }
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
         let compositeIndirect = accumulating || (settings.denoiser.enabled && separate && denoiseIndirect)
@@ -1063,7 +1115,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             setTextures(enc, [finalIllumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
-                              t.giDebug, t.surfacePos, t.geoNormal])
+                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular])
             enc.setBuffer(lightBuffers[slot], offset: 0, index: 1)
             dispatch(enc, "composite", width: output.width, height: output.height)
         }
@@ -1173,6 +1225,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
     }
 
+    /// Specular shading is on and the scene has materials with a specular lobe (glTF ones).
+    private var usesSpecular: Bool { settings.specular && scene.hasSpecular }
+
     private var usesLightMaps: Bool {
         settings.giEnabled && !accumulating && (activeGIMode != .pathTraced || settings.lightMaps)
     }
@@ -1256,7 +1311,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if !c.accumulate { Benchmark.applyGIOverride(to: &s) }
         settings = s
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
-        camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : scene.defaultCamera
+        camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
         accumCount = 0
@@ -1299,13 +1354,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return colorAccum
     }
 
-    private func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture)? {
+    private func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)? {
         if let t = accumTextures, t.direct.width == width, t.direct.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
         d.storageMode = .private
-        guard let direct = device.makeTexture(descriptor: d), let indirect = device.makeTexture(descriptor: d) else { return nil }
-        accumTextures = (direct, indirect)
+        guard let direct = device.makeTexture(descriptor: d), let indirect = device.makeTexture(descriptor: d),
+              let specular = device.makeTexture(descriptor: d) else { return nil }
+        accumTextures = (direct, indirect, specular)
         accumCount = 0
         return accumTextures
     }

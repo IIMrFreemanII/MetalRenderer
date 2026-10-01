@@ -93,6 +93,8 @@ constant uint FLAG_NO_CLAMP      = 32;  // no firefly clamp (reference images)
 constant uint FLAG_LIGHT_MAPS    = 64;  // path tracer: bounce lighting from light-visibility maps
 constant uint FLAG_SHADOW_DENOISER = 128;  // direct light = exact unshadowed light x denoised per-group visibility
 constant uint FLAG_ALL_LIGHTS    = 256; // one shadow ray per light even with more than SHADOW_GROUPS lights (references)
+constant uint FLAG_SPECULAR      = 512; // specular materials present: material G-buffer, reflection pass, specular composite
+constant uint FLAG_REFERENCE     = 1024; // accumulated reference: reflections follow full paths
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
@@ -596,8 +598,84 @@ struct Surface {
     float  metallic;
     float  roughness;
     float  specular;      // specular weight: 0 = diffuse-only material
+    float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
 };
+
+// ---------------------------------------------------------------------------------------------
+// Specular BRDF: GGX with height-correlated Smith visibility and Schlick Fresnel (F90 = specular weight).
+// ---------------------------------------------------------------------------------------------
+
+constant float MIN_ROUGHNESS = 0.03f;     // perceptual; keeps highlights of small lights finite
+constant float REFLECTION_MAX_ROUGHNESS = 0.75f;   // rougher: indirect specular from the diffuse GI (no ray)
+
+inline float ggxD(float NoH, float a) {
+    float a2 = a * a, d = NoH * NoH * (a2 - 1.0f) + 1.0f;
+    return a2 / (M_PI_F * d * d);
+}
+inline float smithVisibility(float NoV, float NoL, float a) {   // G2 / (4 NoL NoV), height-correlated
+    float a2 = a * a;
+    float gv = NoL * sqrt(NoV * NoV * (1.0f - a2) + a2), gl = NoV * sqrt(NoL * NoL * (1.0f - a2) + a2);
+    return 0.5f / max(gv + gl, 1e-7f);
+}
+inline float3 schlick(float3 f0, float f90, float VoH) {
+    float f = pow(1.0f - saturate(VoH), 5.0f);
+    return f0 + (f90 - f0) * f;
+}
+// Hemispherical-directional specular albedo, analytic fit (Karis, "Physically Based Shading on Mobile").
+inline float3 specularAlbedo(float3 f0, float f90, float roughness, float NoV) {
+    const float4 c0 = float4(-1.0f, -0.0275f, -0.572f, 0.022f), c1 = float4(1.0f, 0.0425f, 1.04f, -0.04f);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28f * NoV)) * r.x + r.y;
+    float2 ab = float2(-1.04f, 1.04f) * a004 + r.zw;
+    return f0 * ab.x + f90 * ab.y;
+}
+inline float specularF90(float3 f0) { return any(f0 > 0.0f) ? 1.0f : 0.0f; }   // glTF materials 1, generated ones 0
+
+// Albedo a secondary hit (GI rays, path bounces, reflection hits) reflects with: diffuse plus, as a diffuse
+// approximation, the specular albedo at normal incidence, so metals don't turn black in indirect light.
+inline float3 hitAlbedo(thread const struct Surface& sf) {
+    return sf.albedo + (sf.specular > 0.0f ? specularAlbedo(sf.f0, sf.specular, max(sf.roughness, MIN_ROUGHNESS), 1.0f) : float3(0.0f));
+}
+
+// Specular light from a sphere light, unshadowed: GGX with the representative point (Karis 2013, the point of the
+// sphere closest to the reflection ray) and its energy normalisation. Radiance, Fresnel included, albedo-free.
+inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v, float3 f0, float roughness) {
+    float3 L = light.positionRadius.xyz - p;
+    float radius = light.positionRadius.w;
+    float dist2 = max(dot(L, L), radius * radius), dist = sqrt(dist2);
+    if (dot(n, L) <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
+    float a = max(roughness, MIN_ROUGHNESS); a *= a;
+    float3 r = reflect(-v, n);
+    float3 toRay = dot(L, r) * r - L;
+    float3 l = normalize(L + toRay * saturate(radius / max(length(toRay), 1e-6f)));
+    float aPrime = saturate(a + radius / (2.0f * dist));
+    float normalisation = (a / aPrime) * (a / aPrime);
+    float3 h = normalize(l + v);
+    float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f), NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
+    float3 F = schlick(f0, specularF90(f0), VoH);
+    return light.color.rgb * (ggxD(NoH, a) * smithVisibility(NoV, NoL, a) * NoL * normalisation / dist2) * F;
+}
+
+// GGX visible-normal sampling (Heitz 2018), in the frame where the normal is +z.
+inline float3 sampleGGXVNDF(float3 ve, float a, float2 u) {
+    float3 vh = normalize(float3(a * ve.x, a * ve.y, ve.z));
+    float lensq = vh.x * vh.x + vh.y * vh.y;
+    float3 t1 = lensq > 0.0f ? float3(-vh.y, vh.x, 0.0f) * rsqrt(lensq) : float3(1.0f, 0.0f, 0.0f);
+    float3 t2 = cross(vh, t1);
+    float r = sqrt(u.x), phi = 2.0f * M_PI_F * u.y;
+    float p1 = r * cos(phi), p2 = r * sin(phi);
+    float sv = 0.5f * (1.0f + vh.z);
+    p2 = (1.0f - sv) * sqrt(max(0.0f, 1.0f - p1 * p1)) + sv * p2;
+    float3 nh = p1 * t1 + p2 * t2 + sqrt(max(0.0f, 1.0f - p1 * p1 - p2 * p2)) * vh;
+    return normalize(float3(a * nh.x, a * nh.y, max(0.0f, nh.z)));
+}
+inline void tangentFrame(float3 n, thread float3& t, thread float3& b) {   // Duff et al. 2017
+    float s = n.z >= 0.0f ? 1.0f : -1.0f;
+    float a = -1.0f / (s + n.z), c = n.x * n.y * a;
+    t = float3(1.0f + s * n.x * n.x * a, s * c, -s * n.x);
+    b = float3(c, s + n.y * n.y * a, -n.y);
+}
 
 constexpr sampler materialSampler(filter::linear, mip_filter::linear, address::repeat);
 
@@ -630,6 +708,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
     sf.metallic = sf.specular = 0.0f;
     sf.roughness = 1.0f;
+    sf.f0 = float3(0.0f);
     sf.instanceId = 0;
     if (!res.hit) return sf;
 
@@ -716,6 +795,10 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
                 sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
             }
         }
+    }
+    if (sf.specular > 0.0f) {   // metallic-roughness: metals reflect their base colour, dielectrics 4% (x weight)
+        sf.f0 = mix(float3(0.04f * sf.specular), sf.albedo, sf.metallic);
+        sf.albedo *= 1.0f - sf.metallic;
     }
     return sf;
 }
@@ -975,6 +1058,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d_array<float, access::read> lightMap   [[texture(11)]],  // with FLAG_LIGHT_MAPS
                         texture2d<float, access::write>  outVisibility  [[texture(12)]],  // per light group: visibility
                         texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
+                        texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -988,6 +1072,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     bindShading(s, shading);
     s.lights = lights;
     s.lightCount = u.lightCount;
+    bool specular = (u.flags & FLAG_SPECULAR) != 0;
 
     Sampler rng;
     rng.blueNoise = blueNoise;
@@ -1026,11 +1111,13 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         outGeoNormal.write(float4(0.0f), tid);
         outVisibility.write(float4(0.0f), tid);
         outBlocker.write(float4(0.0f), tid);
+        if (specular) outMaterial.write(float4(0.0f), tid);
         return;
     }
 
     float3 ng, n;
     orientNormals(sf, dir, ng, n);
+    if (specular) outMaterial.write(float4(sf.f0, max(sf.roughness, MIN_ROUGHNESS)), tid);
     float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
     outNormalDepth.write(float4(n, viewDepth), tid);
     outGeoNormal.write(float4(ng, 0.0f), tid);
@@ -1112,7 +1199,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 hng, hn;
             orientNormals(h, d, hng, hn);
             indirect += throughput * h.emission;
-            throughput *= h.albedo;   // Lambert BRDF * cos / cosine pdf = albedo
+            throughput *= hitAlbedo(h);   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
             float3 hp = h.position + hng * RAY_EPSILON;
             if ((u.flags & FLAG_LIGHT_MAPS) != 0) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b)));
@@ -1343,6 +1430,151 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
     outDirect.write(float4(direct, 1.0f), tid);
     outVisibility.write(visibility, tid);
     outBlocker.write(roundToHalf(blocker), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 2d. Reflections (specular materials only): one GGX visible-normal ray per pixel for the indirect specular light,
+//     divided by the specular albedo so the denoiser filters a smooth signal (the composite multiplies it back).
+//     Hits are lit by one light sample (one shadow ray) plus this frame's diffuse GI where the hit is on screen
+//     (a dim sky ambient elsewhere); references (FLAG_REFERENCE) follow full paths instead. Without the shadow
+//     denoiser, which otherwise adds direct specular analytically, one sampled light's direct specular is added.
+//     Rougher than REFLECTION_MAX_ROUGHNESS: no ray, the composite uses the diffuse GI.
+// ---------------------------------------------------------------------------------------------
+
+// Light arriving along a reflection ray that hit `h`: emission, one light sample and the diffuse GI (see above).
+float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, Surface h, float3 dir,
+                             thread Sampler& rng, texture2d<float, access::read> normalDepth,
+                             texture2d<float, access::read> indirect) {
+    if (!h.hit) return u.skyColor.rgb;
+    float3 L = float3(0.0f), throughput = float3(1.0f);
+    bool reference = (u.flags & FLAG_REFERENCE) != 0;
+    uint bounces = reference ? u.bounces : 0;
+    for (uint b = 0; ; ++b) {
+        float3 hng, hn;
+        orientNormals(h, dir, hng, hn);
+        float3 hp = h.position + hng * RAY_EPSILON;
+        float3 albedo = hitAlbedo(h);
+        L += throughput * h.emission;
+        if (u.lightCount > 0) {
+            float pdf;
+            float uPick = rng.next();
+            float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;
+            uint li = pickLight(s.lights, u.lightCount, hp, hn, hng, uPick, uSubset, pdf);
+            float2 r = rng.next2();
+            if (li < u.lightCount) L += throughput * albedo * sampleLight(s.lights[li], hp, hn, hng, r, accel) / pdf;
+        }
+        if (!reference) {
+            // Diffuse GI at the hit: this frame's indirect light where the hit point is visible on screen.
+            float depth;
+            float2 px = projectToPixel(h.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, float2(u.width, u.height), depth);
+            float3 gi = u.skyColor.rgb * 0.3f;
+            if (depth > 0.0f && all(px >= 0.0f) && px.x < float(u.width) && px.y < float(u.height)) {
+                uint2 q = uint2(px);
+                float4 nd = normalDepth.read(q);
+                if (nd.w > 0.0f && abs(nd.w - depth) < 0.03f * depth && dot(nd.xyz, hn) > 0.7f) gi = indirect.read(q).rgb;
+            }
+            return L + throughput * albedo * gi;
+        }
+        if (b >= bounces) return L;
+        float3 d = cosineSampleHemisphere(hn, rng.next2());
+        if (dot(d, hng) <= 0.0f) d -= 2.0f * dot(d, hng) * hng;
+        throughput *= albedo;
+        h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+        dir = d;
+        if (!h.hit) return L + throughput * u.skyColor.rgb;
+    }
+}
+
+kernel void reflectionKernel(constant Uniforms&               u          [[buffer(0)]],
+                             SCENE_ACCEL                      accel      [[buffer(1)]],
+                             device const float3*             positions  [[buffer(2)]],
+                             device const float3*             normals    [[buffer(3)]],
+                             device const uint*               indices    [[buffer(4)]],
+                             device const MeshData*           meshes     [[buffer(5)]],
+                             device const InstanceData*       instances  [[buffer(6)]],
+                             constant SceneShading&           shading    [[buffer(7)]],
+                             device const Light*              lights     [[buffer(8)]],
+                             texture2d<float, access::read>   surfacePos [[texture(0)]],
+                             texture2d<float, access::read>   normalDepth [[texture(1)]],
+                             texture2d<float, access::read>   geoNormal  [[texture(2)]],
+                             texture2d<float, access::read>   material   [[texture(3)]],
+                             texture2d<float, access::read>   blueNoise  [[texture(4)]],
+                             texture2d<float, access::read>   indirect   [[texture(5)]],   // this frame's diffuse GI
+                             texture2d<float, access::write>  outSpecular [[texture(6)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 sp = surfacePos.read(tid), m = material.read(tid);
+    if (sp.w <= 0.0f || all(m.rgb <= 0.0f)) { outSpecular.write(float4(0.0f), tid); return; }
+
+    SceneData s;
+    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    Sampler rng;
+    rng.blueNoise = blueNoise;
+    rng.pixel = tid;
+    rng.frame = u.frameIndex;
+    rng.dimension = 40;   // past the trace kernel's dimensions
+    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.rng.state = pcgHash(tid.x * 7919u + pcgHash(tid.y + pcgHash(u.frameIndex * 31u + 17u)));
+
+    float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+    float3 p = sp.xyz + ng * RAY_EPSILON;
+    float3 v = normalize(u.camPos.xyz - sp.xyz);
+    float3 f0 = m.rgb;
+    float roughness = m.a, a = roughness * roughness;
+    float NoV = max(dot(n, v), 1e-4f);
+    float3 albedo = specularAlbedo(f0, 1.0f, roughness, NoV);
+    float3 result = float3(0.0f);
+
+    if ((u.flags & FLAG_SHADOW_DENOISER) == 0 && u.lightCount > 0) {
+        // Direct specular from one light (picked by its diffuse light here), a uniform point on its sphere.
+        float pdf;
+        float uPick = rng.next();
+        float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;
+        uint li = pickLight(lights, u.lightCount, p, n, ng, uPick, uSubset, pdf);
+        float2 r = rng.next2();
+        if (li < u.lightCount) {
+            Light light = lights[li];
+            float3 x = lightSamplePoint(light, r);
+            float3 toX = x - p;
+            float d2 = dot(toX, toX);
+            float3 l = toX * rsqrt(d2);
+            float cosX = dot(normalize(x - light.positionRadius.xyz), -l);
+            float NoL = dot(n, l);
+            if (cosX > 0.0f && NoL > 0.0f && dot(ng, l) > 0.0f && isVisible(p, x, accel)) {
+                float rad = light.positionRadius.w;
+                float3 Le = light.color.rgb / (M_PI_F * rad * rad);
+                float3 h = normalize(l + v);
+                float3 F = schlick(f0, 1.0f, dot(v, h));
+                float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
+                result += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
+            }
+        }
+    }
+
+    if (roughness < REFLECTION_MAX_ROUGHNESS || (u.flags & FLAG_REFERENCE) != 0) {
+        float3 t, b;
+        tangentFrame(n, t, b);
+        float3 hl = sampleGGXVNDF(float3(dot(v, t), dot(v, b), NoV), a, rng.next2());
+        float3 h = t * hl.x + b * hl.y + n * hl.z;
+        float3 l = reflect(-v, h);
+        float NoL = dot(n, l);
+        if (NoL > 0.0f && dot(l, ng) > 0.0f) {
+            // VNDF sampling: f cos / pdf = F G2 / G1(v).
+            float a2 = a * a;
+            float g1 = 2.0f * NoV / (NoV + sqrt(a2 + (1.0f - a2) * NoV * NoV));
+            float g2 = smithVisibility(NoV, NoL, a) * 4.0f * NoL * NoV;
+            float3 weight = schlick(f0, 1.0f, dot(v, h)) * (g2 / max(g1, 1e-6f));
+            float spread = mix(2.0f * u.camUp.w / float(u.height), GI_RAY_SPREAD * 4.0f, roughness);
+            Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, spread);
+            result += weight * reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect);
+        }
+    }
+    result /= max(albedo, float3(1e-3f));
+    float lum = luminance(result);
+    if (lum > FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) result *= FIREFLY_CLAMP / lum;
+    outSpecular.write(roundToHalf(float4(result, 1.0f)), tid);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1740,6 +1972,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  giDebug    [[texture(9)]],   // written by surfel / cascade GI
                             texture2d<float, access::read>  surfacePos [[texture(10)]],  // with FLAG_SHADOW_DENOISER
                             texture2d<float, access::read>  geoNormal  [[texture(11)]],  // with FLAG_SHADOW_DENOISER
+                            texture2d<float, access::read>  material   [[texture(12)]],  // with FLAG_SPECULAR: F0, roughness
+                            texture2d<float, access::read>  specularTex [[texture(13)]], // with FLAG_SPECULAR: specular light / specular albedo
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             uint2 tid [[thread_position_in_grid]])
 {
@@ -1755,6 +1989,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
     float3 i = indirect.read(tid).rgb;
     float3 illumination = d + i;
     float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
+    float3 directSpecular = float3(0.0f);
     if ((u.flags & FLAG_SHADOW_DENOISER) != 0) {
         // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
         float4 vis = denoised.read(tid);
@@ -1763,6 +1998,15 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         float3 p = sp.xyz + ng * RAY_EPSILON;
         illumination = float3(0.0f);
         for (uint l = 0; l < u.lightCount; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * vis[lightGroup(lights[l])];
+        if ((u.flags & FLAG_SPECULAR) != 0) {
+            // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
+            float4 m = material.read(tid);
+            if (any(m.rgb > 0.0f)) {
+                float3 v = normalize(u.camPos.xyz - sp.xyz);
+                for (uint l = 0; l < u.lightCount; ++l)
+                    directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * vis[lightGroup(lights[l])];
+            }
+        }
         if ((u.flags & FLAG_SEPARATE) != 0) {
             finalIndirect = denoisedIndirect.read(tid).rgb;
             illumination += finalIndirect;
@@ -1772,6 +2016,20 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         if ((u.flags & FLAG_SEPARATE) != 0) {
             finalIndirect = denoisedIndirect.read(tid).rgb;
             illumination += finalIndirect;
+        }
+    }
+
+    // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.
+    float3 specular = directSpecular;
+    if ((u.flags & FLAG_SPECULAR) != 0) {
+        float4 m = material.read(tid);
+        float4 ndc = nd.read(tid);
+        if (any(m.rgb > 0.0f) && ndc.w > 0.0f) {
+            float3 v = normalize(u.camPos.xyz - surfacePos.read(tid).xyz);
+            float3 sa = specularAlbedo(m.rgb, 1.0f, m.a, max(dot(ndc.xyz, v), 1e-4f));
+            float3 traced = specularTex.read(tid).rgb;
+            bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || (u.flags & FLAG_REFERENCE) != 0;
+            specular += sa * (tracedAll ? traced : traced + finalIndirect);
         }
     }
 
@@ -1785,7 +2043,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); hdr = false; break; }
         case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
         case 7: c = giDebug.read(tid).rgb; hdr = false; break;    // GI technique's debug view
-        default: c = albedo * illumination + emission; break;
+        default: c = albedo * illumination + specular + emission; break;
     }
     if (hdr) c = acesFilm(c);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
@@ -1803,6 +2061,8 @@ kernel void accumulateKernel(constant Uniforms&                   u             
                              texture2d<float, access::read>       indirect       [[texture(1)]],
                              texture2d<float, access::read_write> accumDirect    [[texture(2)]],
                              texture2d<float, access::read_write> accumIndirect  [[texture(3)]],
+                             texture2d<float, access::read>       spec           [[texture(4)]],   // with FLAG_SPECULAR
+                             texture2d<float, access::read_write> accumSpec      [[texture(5)]],
                              uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -1813,6 +2073,10 @@ kernel void accumulateKernel(constant Uniforms&                   u             
     float3 meanI = sampleCount > 0 ? accumIndirect.read(tid).rgb : float3(0.0f);
     accumDirect.write(float4(meanD + (d - meanD) * w, 1.0f), tid);
     accumIndirect.write(float4(meanI + (i - meanI) * w, 1.0f), tid);
+    if ((u.flags & FLAG_SPECULAR) != 0) {
+        float3 sp = spec.read(tid).rgb, meanS = sampleCount > 0 ? accumSpec.read(tid).rgb : float3(0.0f);
+        accumSpec.write(float4(meanS + (sp - meanS) * w, 1.0f), tid);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2187,7 +2451,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
             if (!found && prevAmbient[3] > 0)
                 light += float3(prevAmbient[0], prevAmbient[1], prevAmbient[2]) / (1024.0f * float(prevAmbient[3]));
         }
-        radiance = h.albedo * light;
+        radiance = hitAlbedo(h) * light;
     } else if (last) {
         radiance = u.skyColor.rgb;
     } else {
@@ -2571,7 +2835,7 @@ kernel void surfelTraceKernel(constant Uniforms&               u          [[buff
             float4 bounce = surfelLookup(hit.position, hns, sp, cellStart, cellSurfels, worldPos, worldNormal, irrPrev);
             // Multi-bounce from last frame's surfels there; where none exist yet (e.g. never seen), their average.
             light += bounce.w > 0.0f ? bounce.rgb / bounce.w : surfelAmbient(ambientPrev);
-            radiance = hit.albedo * light;
+            radiance = hitAlbedo(hit) * light;
         }
     }
     // Sum the rays of this surfel (adjacent lanes; rays is a power of two <= 32).

@@ -35,7 +35,17 @@ final class Benchmark {
         var scene = SceneSettings()
         var rayTracer: RayTracerKind? = nil   // nil = METALGI_RT / the default
         var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALGI_VG...)
+        var camera: Camera? = nil                             // fixed camera instead of the scene's default
     }
+
+    /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
+    static let galleryCloseup: Camera = {
+        var c = Camera()
+        c.position = [1.6, 1.35, -1.6]
+        c.yaw = 0.62
+        c.pitch = -0.22
+        return c
+    }()
 
     /// Scripted camera move for the "camera" settings: a yaw sweep plus dolly that ends at the default camera,
     /// still moving, so the last frame can be scored against the same t = 5 s references as the static frames.
@@ -365,6 +375,16 @@ final class Benchmark {
                                                                  ("vg0.5", vg(true, 0.5)), ("vg2", vg(true, 2))]
             let gallery = SceneSettings(kind: .gallery)
             var out: [Config] = []
+            // Path-traced references (full BRDF, full-detail meshes, 4 bounces) for Tools/eval/gallery.py; skip them
+            // with METALGI_GI_REFS=0 once they exist.
+            if ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0" {
+                out.append(Config(name: "ref overview", renderScale: 0.5, bounces: 4, paused: true, startTime: 5, accumulate: true,
+                                  frames: 1024, scene: gallery, virtualGeometry: vg(false)))
+                var refClose = Config(name: "ref closeup", renderScale: 0.5, bounces: 4, paused: true, startTime: 5, accumulate: true,
+                                      frames: 1024, scene: gallery, virtualGeometry: vg(false))
+                refClose.camera = Benchmark.galleryCloseup
+                out.append(refClose)
+            }
             for (tag, v) in variants {
                 out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
                                   frames: 60, scene: gallery, virtualGeometry: v))
@@ -376,6 +396,16 @@ final class Benchmark {
             for (tag, v) in [("full", vg(false)), ("vg1", vg(true, 1))] {
                 out.append(Config(name: "\(tag) camera", renderScale: 0.5, upscale: 3, giMode: .surfels, cameraPath: true,
                                   scene: gallery, virtualGeometry: v))
+                for (gtag, mode) in [("surfels", GIMode.surfels), ("cascades", .radianceCascades), ("pt", .pathTraced)] {
+                    var close = Config(name: "\(tag) \(gtag) closeup", renderScale: 0.5, paused: true, startTime: 5, capturePrevious: true,
+                                       giMode: mode, scene: gallery, virtualGeometry: v)
+                    close.camera = Benchmark.galleryCloseup
+                    out.append(close)
+                }
+                var shown = Config(name: "\(tag) closeup 3x", renderScale: 0.5, upscale: 3, paused: true, startTime: 5, giMode: .surfels,
+                                   scene: gallery, virtualGeometry: v)
+                shown.camera = Benchmark.galleryCloseup
+                out.append(shown)
             }
             return out
         case "quick": return [

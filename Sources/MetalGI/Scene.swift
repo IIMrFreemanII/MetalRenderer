@@ -47,6 +47,8 @@ final class Scene {
     private(set) var virtualMeshes: [VirtualMesh] = []
     private(set) var virtualMeshNames: [String] = []
     let usesVirtualGeometry: Bool
+    /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only).
+    var hasSpecular: Bool { materials.contains { $0.params.x > 0 } }
     private(set) var indices: [UInt32] = []
     private(set) var meshes: [GPUMesh] = []
     private(set) var materials: [GPUMaterial] = []
@@ -332,6 +334,13 @@ final class Scene {
         return meshes.count - 1
     }
 
+    /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
+    private func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
+        materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
+                                     params: SIMD4(1, 1, 0, 0)))
+        return materials.count - 1
+    }
+
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
     private func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1)))
@@ -454,9 +463,9 @@ final class Scene {
         let quad = addMesh(Scene.quadMesh())
         let cube = addMesh(Scene.cubeMesh())
         let sphere = addMesh(Scene.icosphere(subdivisions: 2))
-        let floor = addMaterial(albedo: [0.45, 0.43, 0.40])
+        let floor = addPBRMaterial(baseColor: [0.32, 0.31, 0.30], metallic: 0, roughness: 0.25)   // polished stone
         let wall = addMaterial(albedo: [0.70, 0.70, 0.68])
-        let plinth = addMaterial(albedo: [0.30, 0.30, 0.32])
+        let plinth = addPBRMaterial(baseColor: [0.62, 0.62, 0.64], metallic: 1, roughness: 0.35)   // brushed steel
 
         let w: Float = 26, h: Float = 7, d: Float = 18
         addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d]))

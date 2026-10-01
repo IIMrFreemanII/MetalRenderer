@@ -37,6 +37,8 @@ enum UniformFlags {
     static let lightMaps: UInt32 = 64        // path tracer: bounce lighting from light-visibility maps
     static let shadowDenoiser: UInt32 = 128  // direct light = exact unshadowed light x denoised per-group visibility
     static let allLights: UInt32 = 256       // one shadow ray per light even with more than 4 (references, baseline)
+    static let specular: UInt32 = 512        // specular materials: material G-buffer, reflection pass, specular composite
+    static let reference: UInt32 = 1024      // accumulated reference: reflections follow full paths
 }
 
 struct GPUMesh {
