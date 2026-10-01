@@ -11,6 +11,26 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * Rays walk both levels in a single loop.
   * On an M1 Max, which has no ray-tracing hardware, this is 19–24% faster per frame than Metal's intersector in the stress test, and on par in the Cornell room (see below).
   * Metal's acceleration structures stay one click away in the settings panel ("Ray tracing"), and so does `METALGI_RT=metal`.
+* **glTF models:** `.glb` and `.gltf` files load with their node hierarchy and metallic-roughness materials.
+  * The **Gallery** scene shows every model in `Assets/` on plinths, two of them on turntables, under 8 moving lights.
+  * File > Open… (⌘O) or dropping files on the window adds models to any scene.
+  * Textures supported: base colour, metallic-roughness, normal and emissive (normal maps use tangents derived per triangle from the UVs).
+  * Scenes load in the background while the old one keeps rendering.
+* **Virtual geometry (Nanite-style, default with the custom tracer):** meshes of 65k+ triangles become level-of-detail DAGs of 128-triangle clusters.
+  * Everything is this project's own code: clustering, quadric simplification with locked group borders, seam- and border-aware collapses, and the DAG.
+  * Each model is built once (about 7 s per 2M triangles) and cached in `Assets/.metalgi-cache/`.
+  * Every few frames a background thread picks Nanite's cut for each instance: every cluster whose simplification error projects to under 1 traced pixel and whose parent's doesn't.
+  * Each instance whose cut changed gets a fresh SAH BLAS over exactly those triangles, read from the memory-mapped cache, so the OS streams pages from disk.
+  * Rays see one tight tree per model.
+  * The gallery's 17.9M triangles trace as a 0.4M-triangle cut in 40 MB, instead of ~1.5 GB, at about the same speed (see below).
+* **Physically based materials:** GGX specular with Smith visibility and Schlick Fresnel for glTF materials; the generated scenes stay diffuse and unchanged.
+  * Direct specular is exact per light (representative-point sphere lights), multiplied by the shadow denoiser's visibility in the composite.
+  * Indirect specular comes from a reflection pass: one GGX visible-normal ray per pixel, divided by an analytic specular albedo and denoised.
+  * References follow full paths.
+* **Texture streaming:** textures are cached at full resolution with full mip chains and live in a sparse heap (budget 1 GB).
+  * Primary hits count, per texture, the mip levels they need.
+  * The streamer maps and uploads the finest level 1.5% of the samples need and unmaps levels nobody needed lately.
+  * The gallery's 2.6 GB of 4K textures need 14 MB from the overview and 46–65 MB close up.
 * **Direct light:** ray-traced soft shadows. With up to 4 lights, each light gets one shadow ray per pixel. With more, lights are split into 4 colour groups, and each pixel picks one light per group, weighted by how much light it would get from it unshadowed, then traces one shadow ray to it. The cost is then 4 rays per pixel whatever the light count.
 * **Global illumination, three methods** (switch with **M** or in the settings panel):
   * **Radiance cascades (default):** probes on a screen grid trace world-space rays over distance intervals that grow 4× per cascade. The cascades are merged top-down, giving each probe its incoming light without noise.
@@ -59,7 +79,25 @@ Use `METALGI_BENCH=stress` to time the stress scene against light count (1 to 25
 * It first renders paused frames in every GI mode on both scenes with the `METALGI_RT` tracer. Run it once per tracer and diff the PNGs with `Tools/eval/pngdiff.py`.
 * Then it times moving frames at 0–2000 objects, alternating the two tracers.
 
-`METALGI_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALGI_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup.
+`METALGI_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALGI_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup. `METALGI_RT_STATS=1` compiles traversal counters in, and benchmarks print them per setting: nodes, instance and cluster entries, and triangle tests per ray.
+
+Use `METALGI_BENCH=gallery` for the glTF gallery. It renders path-traced references (full BRDF, full-detail meshes, 4 bounces; skip them with `METALGI_GI_REFS=0`), then the overview and a close-up with full-detail meshes and with virtual geometry at 0.5, 1 and 2 px, alternating so heat affects them alike, and the camera fly-through. Score it with `Tools/eval/gallery.py`.
+
+These variables apply to the gallery and to models in general:
+* `METALGI_SCENE=gallery` starts the app in the gallery; `model=<path>` adds a model, as File > Open does.
+* `METALGI_GALLERY="owl|demon"` loads only the matching files; `METALGI_ASSETS=<folder>` uses another folder.
+* Virtual geometry:
+  * `METALGI_VG=0` turns it off; `METALGI_VG_TAU=<px>` sets the allowed error.
+  * `METALGI_VG_MODE=clusters` uses the GPU-driven cluster variant (see below), with `METALGI_VG_POOL=<MB>` for its page pool.
+  * `METALGI_VG_SYNC=0|1` forces background or synchronous cut updates; benchmarks run them synchronously.
+  * `METALGI_VG_TEST=<model.glb>` builds a model's DAG, checks its invariants, round-trips the cache file and exits.
+* Textures:
+  * `METALGI_TEXTURE_STREAMING=0` loads every texture whole, capped at `METALGI_TEXTURE_SIZE` (default 2048).
+  * `METALGI_TEXTURE_BUDGET=<MB>` sets the streaming heap.
+  * `METALGI_TEXTURE_DEBUG=1` prints each texture's wanted and resident level.
+* `METALGI_SPECULAR=0` turns specular off.
+
+The models in `Assets/` aren't part of the repository (they're 596 MB); put any glTF files there. The caches in `Assets/.metalgi-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
 Use `METALGI_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALGI_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALGI_GI_MODES` picks the methods, for example `pt,pt-lightmaps,surfels,cascades,cascades-hq`. `METALGI_GI` overrides GI settings everywhere, for example `mode=surfels,rays=8` or `mode=cascades,spacing=4,b1=0.25`. `METALGI_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
 
@@ -83,6 +121,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | B | Toggle blue-noise sampling (on by default; the tile is generated at startup, which takes about 0.5 s) |
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (surfels: one color per surfel, holes in red; cascades: probe grid over interpolation confidence) |
 | R | Hot-reload `Shaders.metal` |
+| ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera |
 | Tab, ⌘, | Show or hide the Render Settings panel |
 
 The window title and the settings panel show the resolution, frame rate and GPU time. The panel never takes keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
@@ -91,10 +130,13 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 
 | Setting | Default | Effect |
 |---|---|---|
-| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights) or the stress test. Switching rebuilds the geometry and acceleration structures, which takes a few milliseconds, and picks that scene's GI defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the stress test. Reset to Defaults also uses the current scene's. |
+| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, or the Gallery of glTF models in `Assets/`. Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 256. Their total power stays the same, so the brightness barely changes. |
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
+| Virtual geometry | On | Custom ray tracer only: big glTF meshes as streamed level-of-detail cuts. Off: full-detail meshes. |
+| Geometry error | 1 px | The cut's allowed geometric error in traced pixels. 0.5 px: about 2× the triangles, closer to full detail; 2 px: half. Changes apply within a few frames. |
+| Specular | On | GGX specular for glTF materials (direct and reflections). Off: diffuse only, and no reflection pass. |
 | Shadow rays | 1 per group + reuse | With more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
 
 ### Denoiser settings
@@ -113,6 +155,8 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 
 ```
 CPU    animate objects + lights  ->  write instance transforms (triple-buffered)
+       virtual geometry (background thread): Nanite cut per instance -> SAH BLAS over the cut where it changed
+GPU 0  textures: map + upload the mip levels last frame's hits asked for (sparse textures), unmap unused ones
 GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton keys -> sort -> hierarchy -> boxes)
        (Metal RT instead: refit the instance acceleration structure, rebuild it every 16 frames)
     1b lightMapKernel  per-light distance maps (surfels, radiance cascades, path tracer with light maps)
@@ -125,12 +169,15 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
                        against last frame's picks (default)
     2b surfels         transform -> grid (count, scan, scatter) -> trace -> gather + spawn -> lifecycle
        or cascades     probes -> trace + merge per cascade (top down) -> SH projection -> resolve
+    2d reflectionKernel glTF specular materials: 1 GGX ray per pixel, hit lit by 1 light sample + this frame's
+                       diffuse GI on screen; / specular albedo; temporal + 2 a-trous passes
     3  shadowTemporalKernel  direct light: reproject + clamp per-light visibility, penumbra widths, tile classes
        shadowFilterKernel x3 edge-aware, penumbra-limited 3x3 passes (skips fully lit / shadowed tiles)
     3b temporalKernel  SVGF for indirect light: reproject last frame, reject disocclusions, blend, track variance
                        (surfel / cascade indirect light skips the denoiser unless you enable it)
     4  atrousKernel x4 edge-aware wavelet filter (step 1, 2, 4, 8)
-    5  compositeKernel exact unshadowed light x visibility + indirect, x albedo + emission -> ACES tonemap
+    5  compositeKernel exact unshadowed light (diffuse + GGX) x visibility + indirect, x albedo, + reflections x
+                       specular albedo + emission -> ACES tonemap
                        -> drawable (sRGB format: the GPU encodes), or with upscaling linear colour at render resolution
     6  upscale         taauKernel straight into the drawable, or MetalFX into a private texture + a copy
 ```
@@ -150,7 +197,15 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator |
 | `Benchmark.swift` | Benchmark mode (`METALGI_BENCH`) |
-| `Scene.swift` | The two scenes: meshes, materials, instances, animation paths, lights and their shadow-denoiser groups |
+| `Scene.swift` | The three scenes: meshes, materials, instances, animation paths, lights and their shadow-denoiser groups; glTF models |
+| `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images |
+| `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
+| `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |
+| `MeshClusterizer.swift` | Clusters (≤128 triangles) by region growing, and cluster groups |
+| `MeshSimplifier.swift` | Quadric half-edge-collapse simplifier with locked borders and seam-aware attribute handling |
+| `VirtualGeometryBuilder.swift` | The cluster LOD DAG, cluster pages and the cache file format |
+| `VirtualBLAS.swift` | Virtual geometry at run time (default): the cut per instance and a background SAH BLAS over it |
+| `VirtualGeometry.swift` | The GPU-driven variant (`METALGI_VG_MODE=clusters`): GPU cut, page pool and streaming, cluster tree |
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders.metal` |
 | `Shaders.metal` | All GPU code |
 
@@ -285,6 +340,28 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     * An SAH-built moving-object tree (`METALGI_RT_BUILD=cpu`) traces only 4–7% faster than the GPU LBVH.
 * MetalFX's built-in denoiser (`MTLFXTemporalDenoisedScaler`) also runs on an M1 Max under macOS 27, but it costs 4.2 ms at 640×400 → 1920×1200. That's more than this project's SVGF denoiser plus the temporal scaler it would replace (about 1.5 ms together). On M3 and later, with ray tracing hardware, it may be worth swapping passes 3, 4 and 6 for it.
 
+* **glTF gallery** (11 Tripo models, 17.9M triangles, 67 textures of up to 4096², M1 Max, 640×400; `METALGI_BENCH=gallery`, `Tools/eval/gallery.py`).
+  * Virtual geometry against full-detail meshes, same scene and custom tracer (GPU ms per frame):
+
+    | | Full detail | VG 1 px | VG 2 px |
+    |---|---|---|---|
+    | Triangles traced | 17.9M | 0.4M (overview), 1.1M (close-up) | 0.18M |
+    | Geometry memory | ~1.5 GB (BLAS + vertex buffers) | 40 MB (overview), 108 MB (close-up) | 18 MB |
+    | Overview, direct light | 4.33 | 4.09 | 3.81 |
+    | Overview, surfel GI | 8.42 | 8.46 | 7.92 |
+    | Close-up, surfel GI | 12.72 | 13.73 | — |
+    | Camera fly-through (3× upscaled) | 16.63 | 17.54 | — |
+
+    About the same speed, at 3–4% of the memory. The cut updates in the background in 30–150 ms when it changes (the fly-through rebuilt 900 instance BLASes). Quality: the cut is crack-free and looks the same. Against path-traced references it scores 29.7 dB at 1 px, 31.5 dB at 0.5 px and 35.0 dB at full detail on the overview; the single sample per pixel makes texture detail alias, so sub-pixel geometry changes cost dB there (blurred 4×4, VG 1 px and full detail agree to 41 dB).
+  * PBR against the path-traced references (close-up, full detail): 32.4 dB with surfel GI, 30.7 dB with cascades, 31.1 dB path traced. Average colour per region matches within 0.5% on the glossy floor, 1–3% on the steel plinths, about 5% on the bronze owl. The reflection pass costs 0.4 ms on a still frame and 0.6–1.0 ms in motion.
+  * Texture streaming: 14 MB resident from the overview and 46–65 MB close up, against 2.6 GB for all levels (or 711 MB capped at 2048). Images match fully resident 4K textures at 56–77 dB. Uploads are capped at 48 MB per frame.
+  * What mattered:
+    * **One SAH tree per model over the cut, not a tree of clusters.** The first runtime selected the cut on the GPU, streamed cluster groups into a 768 MB pool (buddy allocator, LRU, Nanite's residency rules) and built a per-frame LBVH over the selected clusters, each with its own little BVH. It works (`METALGI_VG_MODE=clusters`) but traces 2× slower than full detail. Rays visit 8.6 nodes per ray inside models instead of 3.8, because cluster boxes overlap. Splitting the tree per instance to drop the per-cluster transform changed nothing, and an offline SAH over the same clusters would only save 15%.
+    * **Simplification that keeps going:** locking only group borders (not the mesh's own open edges), letting seam and border vertices slide along their seams, a relaxed pass across UV seams for fragmented Tripo atlases when the strict one gets stuck, passing stuck groups up a level, and filling clusters spatially. That took the DAG from 883 root groups per model (full-detail fragments, always drawn) to one 366-triangle root, and the cut from 62k clusters to 3.9k.
+    * **Texture levels from the largest UV stretch** (as GPUs do) and a histogram instead of a minimum: UV slivers and close self-reflections had asked for 4K mips of models 100 px tall (600 MB resident instead of 14).
+  * In close-ups, Metal's intersector on the full-detail meshes is about 12% faster than this tracer with virtual geometry (11.1 vs 13.7 ms); from the overview, and in the stress scene, the custom tracer is faster.
+  * Known issue: surfel GI shows a jagged bright patch on the gallery floor while the camera moves (with or without virtual geometry).
+
 ## Where to go next
 
 1. **Thin-feature locks for the custom upscaler:** in busy scenes it flickers 3× as much as MetalFX on still frames (see the stress test). Marking pixels where a thin, high-contrast feature keeps appearing and protecting their history from the clip, as FSR 2 does, would fix that.
@@ -295,6 +372,8 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
    * With 2000 objects the frame still costs 1.4 ms more than with 400; sorting secondary rays by direction for coherence is the other thing to try.
 4. **Better GI caching:** surfels and radiance cascades fall back to the scene's average indirect light at points no surfel or screen pixel covers. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
 5. **Deforming meshes:** update vertices in a compute pass, then refit that mesh's bottom-level tree with a bottom-up box pass like `rtFitKernel` (or call `refit` on its BLAS with the Metal tracer).
-6. **Glossy materials:** add a GGX specular lobe, kept as a separate signal for the denoiser.
+6. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
+9. **Virtual geometry:** a GPU-built (or treelet-optimized) BLAS over the cut would let the cut update every frame; LOD cross-fades would hide the rare pop; the Metal tracer could build BLASes over the cut too.
+10. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.
 7. **Rasterized G-buffer:** generate primary visibility with a raster pass to save one ray per pixel.
 8. **Custom upscaler at 2× and 1.5×:** it matches MetalFX in motion at 3× but trails by up to 0.7 dB in camera moves at lower factors. Tuning per factor (its motion cuts are scaled by the factor today), or a per-pixel disocclusion test that doesn't misfire on jittered edges, would be the next step.
