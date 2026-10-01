@@ -353,6 +353,7 @@ final class SettingsPanel: NSObject {
         var s = renderer.settings
         s.scene.kind = SceneKind(rawValue: sceneKind.indexOfSelectedItem) ?? .cornell
         guard s.scene.kind != renderer.settings.scene.kind else { return }
+        s.scene.extraModels = []   // opened / dropped models belong to the scene they were added to
         s.applySceneDefaults(from: renderer.defaultSettings)   // e.g. surfels for the stress hall
         renderer.settings = s
     }

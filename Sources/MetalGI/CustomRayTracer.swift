@@ -28,7 +28,7 @@ struct RTPipelines {
 /// builds it on the CPU with binned SAH instead (a better tree, for comparing trace speed).
 final class CustomRayTracer {
     private let device: MTLDevice
-    var pipelines: RTPipelines
+    var pipelines: RTPipelines!   // set by the renderer once the custom-RT shaders are compiled
     static let cpuBuild = ProcessInfo.processInfo.environment["METALGI_RT_BUILD"] == "cpu"
     let blasNodes: MTLBuffer
     let triangles: MTLBuffer
@@ -57,9 +57,8 @@ final class CustomRayTracer {
 
     static func isStatic(_ inst: Scene.Instance) -> Bool { inst.animation == nil && inst.mask == Scene.maskGeometry }
 
-    init(device: MTLDevice, scene: Scene, slots: Int, pipelines: RTPipelines) throws {
+    init(device: MTLDevice, scene: Scene, slots: Int) throws {
         self.device = device
-        self.pipelines = pipelines
         let start = CACurrentMediaTime()
         let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes)
         blasRoots = blas.roots
@@ -162,7 +161,7 @@ final class CustomRayTracer {
 
     /// GPU build: every instance's RTInstance and the dynamic TLAS from this frame's instance data.
     func encodeBuild(_ enc: MTLComputeCommandEncoder, slot: Int, instanceData: MTLBuffer) {
-        guard !CustomRayTracer.cpuBuild, instanceCount > 0 else { return }
+        guard !CustomRayTracer.cpuBuild, instanceCount > 0, let pipelines else { return }
         func dispatch(_ pso: MTLComputePipelineState, _ threads: Int, group: Int = 64) {
             enc.setComputePipelineState(pso)
             enc.dispatchThreads(MTLSize(width: threads, height: 1, depth: 1),

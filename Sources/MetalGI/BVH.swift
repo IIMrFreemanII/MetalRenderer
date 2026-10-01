@@ -1,3 +1,4 @@
+import Foundation
 import simd
 
 /// Bounding volume hierarchies for the custom ray tracer (Shaders.metal, "Custom BVH traversal").
@@ -74,77 +75,91 @@ enum BVHBuilder {
     private static let traversalCost: Float = 1   // relative to one primitive test
 
     /// Binned-SAH build over `boxes`. `maxLeaf` = most primitives per leaf (1 for instances).
+    /// Raw pointers and scratch bins allocated once per build: this runs over ~18M triangles for the gallery.
     private static func build(boxes: [AABB], masks: [UInt32]?, maxLeaf: Int) -> (nodes: [Node], order: [Int]) {
-        var order = Array(boxes.indices)
-        let centroids = boxes.map(\.centroid)
+        let n = boxes.count
+        var order = Array(0..<n)
         var nodes: [Node] = []
-        nodes.reserveCapacity(max(2 * boxes.count, 1))
+        guard n > 0 else { return (nodes, order) }
+        nodes.reserveCapacity(2 * n)
+        let centroids = UnsafeMutablePointer<SIMD3<Float>>.allocate(capacity: n)
+        defer { centroids.deallocate() }
+        for i in 0..<n { centroids[i] = boxes[i].centroid }
+        let binBoxes = UnsafeMutablePointer<AABB>.allocate(capacity: bins)
+        let binCounts = UnsafeMutablePointer<Int>.allocate(capacity: bins)
+        let rightArea = UnsafeMutablePointer<Float>.allocate(capacity: bins)
+        let rightCount = UnsafeMutablePointer<Int>.allocate(capacity: bins)
+        defer { binBoxes.deallocate(); binCounts.deallocate(); rightArea.deallocate(); rightCount.deallocate() }
 
-        func makeNode(_ start: Int, _ end: Int) -> Int {
-            var box = AABB(), cbox = AABB()
-            var mask: UInt32 = 0
-            for i in start..<end {
-                box.grow(boxes[order[i]])
-                cbox.grow(centroids[order[i]])
-                mask |= masks?[order[i]] ?? 0
-            }
-            let index = nodes.count
-            nodes.append(Node(box: box, start: start, count: end - start, mask: mask))
-            let count = end - start
-            if count == 1 { return index }
+        boxes.withUnsafeBufferPointer { bx in
+            order.withUnsafeMutableBufferPointer { ord in
+                func makeNode(_ start: Int, _ end: Int) -> Int {
+                    var box = AABB(), cbox = AABB()
+                    var mask: UInt32 = 0
+                    for i in start..<end {
+                        let k = ord[i]
+                        box.grow(bx[k])
+                        cbox.grow(centroids[k])
+                        if let masks { mask |= masks[k] }
+                    }
+                    let index = nodes.count
+                    nodes.append(Node(box: box, start: start, count: end - start, mask: mask))
+                    let count = end - start
+                    if count == 1 { return index }
 
-            // Best split over all three axes.
-            var bestCost = Float.infinity, bestAxis = -1, bestBin = 0
-            let extent = cbox.hi - cbox.lo
-            for axis in 0..<3 where extent[axis] > 0 {
-                var binBoxes = [AABB](repeating: AABB(), count: bins)
-                var binCounts = [Int](repeating: 0, count: bins)
-                let scale = Float(bins) / extent[axis]
-                for i in start..<end {
-                    let b = min(bins - 1, Int((centroids[order[i]][axis] - cbox.lo[axis]) * scale))
-                    binBoxes[b].grow(boxes[order[i]])
-                    binCounts[b] += 1
-                }
-                // Sweep: right-side areas and counts first, then left to right.
-                var rightArea = [Float](repeating: 0, count: bins), rightCount = [Int](repeating: 0, count: bins)
-                var acc = AABB(), n = 0
-                for b in stride(from: bins - 1, to: 0, by: -1) {
-                    acc.grow(binBoxes[b]); n += binCounts[b]
-                    rightArea[b] = acc.area; rightCount[b] = n
-                }
-                acc = AABB(); n = 0
-                for b in 0..<(bins - 1) {
-                    acc.grow(binBoxes[b]); n += binCounts[b]
-                    guard n > 0, rightCount[b + 1] > 0 else { continue }
-                    let cost = acc.area * Float(n) + rightArea[b + 1] * Float(rightCount[b + 1])
-                    if cost < bestCost { bestCost = cost; bestAxis = axis; bestBin = b }
-                }
-            }
-            let parentArea = max(box.area, 1e-20)
-            let splitCost = traversalCost + bestCost / parentArea
-            if count <= maxLeaf && Float(count) <= splitCost { return index }
+                    // Best split over all three axes.
+                    var bestCost = Float.infinity, bestAxis = -1, bestBin = 0
+                    let extent = cbox.hi - cbox.lo
+                    for axis in 0..<3 where extent[axis] > 0 {
+                        for b in 0..<bins { binBoxes[b] = AABB(); binCounts[b] = 0 }
+                        let scale = Float(bins) / extent[axis], lo = cbox.lo[axis]
+                        for i in start..<end {
+                            let k = ord[i]
+                            let b = min(bins - 1, Int((centroids[k][axis] - lo) * scale))
+                            binBoxes[b].grow(bx[k])
+                            binCounts[b] += 1
+                        }
+                        // Sweep: right-side areas and counts first, then left to right.
+                        var acc = AABB(), c = 0
+                        for b in stride(from: bins - 1, to: 0, by: -1) {
+                            acc.grow(binBoxes[b]); c += binCounts[b]
+                            rightArea[b] = acc.area; rightCount[b] = c
+                        }
+                        acc = AABB(); c = 0
+                        for b in 0..<(bins - 1) {
+                            acc.grow(binBoxes[b]); c += binCounts[b]
+                            guard c > 0, rightCount[b + 1] > 0 else { continue }
+                            let cost = acc.area * Float(c) + rightArea[b + 1] * Float(rightCount[b + 1])
+                            if cost < bestCost { bestCost = cost; bestAxis = axis; bestBin = b }
+                        }
+                    }
+                    let parentArea = max(box.area, 1e-20)
+                    let splitCost = traversalCost + bestCost / parentArea
+                    if count <= maxLeaf && Float(count) <= splitCost { return index }
 
-            var mid: Int
-            if bestAxis >= 0 {
-                let scale = Float(bins) / extent[bestAxis]
-                let lo = cbox.lo[bestAxis]
-                var i = start, j = end - 1
-                while i <= j {
-                    if min(bins - 1, Int((centroids[order[i]][bestAxis] - lo) * scale)) <= bestBin { i += 1 }
-                    else { order.swapAt(i, j); j -= 1 }
+                    var mid: Int
+                    if bestAxis >= 0 {
+                        let scale = Float(bins) / extent[bestAxis]
+                        let lo = cbox.lo[bestAxis]
+                        var i = start, j = end - 1
+                        while i <= j {
+                            if min(bins - 1, Int((centroids[ord[i]][bestAxis] - lo) * scale)) <= bestBin { i += 1 }
+                            else { ord.swapAt(i, j); j -= 1 }
+                        }
+                        mid = i
+                    } else {
+                        mid = (start + end) / 2   // all centroids coincide: split the list in half
+                    }
+                    if mid == start || mid == end { mid = (start + end) / 2 }
+                    let l = makeNode(start, mid)
+                    let r = makeNode(mid, end)
+                    nodes[index].left = l
+                    nodes[index].right = r
+                    return index
                 }
-                mid = i
-            } else {
-                mid = (start + end) / 2   // all centroids coincide: split the list in half
+                _ = makeNode(0, n)
             }
-            if mid == start || mid == end { mid = (start + end) / 2 }
-            let l = makeNode(start, mid)
-            let r = makeNode(mid, end)
-            nodes[index].left = l
-            nodes[index].right = r
-            return index
         }
-        if !boxes.isEmpty { _ = makeNode(0, boxes.count) }
         return (nodes, order)
     }
 
@@ -183,24 +198,39 @@ enum BVHBuilder {
         var maxDepth = 0
     }
 
-    /// One BLAS per mesh, all in one node buffer and one triangle buffer.
+    /// One BLAS per mesh, all in one node buffer and one triangle buffer. Meshes are built in parallel.
     static func buildBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh]) -> BLASResult {
-        var result = BLASResult()
-        for mesh in meshes {
-            let triCount = Int(mesh.indexCount) / 3
-            var boxes: [AABB] = []
-            boxes.reserveCapacity(triCount)
-            for t in 0..<triCount {
-                var b = AABB()
-                for k in 0..<3 { b.grow(positions[Int(indices[Int(mesh.firstIndex) + 3 * t + k])]) }
-                boxes.append(b)
+        var trees = [(nodes: [Node], order: [Int])](repeating: ([], []), count: meshes.count)
+        let lock = NSLock()
+        positions.withUnsafeBufferPointer { pos in
+            indices.withUnsafeBufferPointer { idx in
+                DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
+                    let mesh = meshes[m]
+                    let triCount = Int(mesh.indexCount) / 3
+                    var boxes: [AABB] = []
+                    boxes.reserveCapacity(triCount)
+                    for t in 0..<triCount {
+                        var b = AABB()
+                        for k in 0..<3 { b.grow(pos[Int(idx[Int(mesh.firstIndex) + 3 * t + k])]) }
+                        boxes.append(b)
+                    }
+                    let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+                    lock.lock(); trees[m] = tree; lock.unlock()
+                }
             }
-            let (tree, order) = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+        }
+        var result = BLASResult()
+        result.nodes.reserveCapacity(trees.reduce(0) { $0 + $1.nodes.count / 2 + 1 })
+        result.triangles.reserveCapacity(3 * indices.count / 3)
+        for (m, mesh) in meshes.enumerated() {
+            let (tree, order) = trees[m]
             let triBase = result.triangles.count / 3
             for t in order {
                 let base = Int(mesh.firstIndex) + 3 * t
                 let p0 = positions[Int(indices[base])], p1 = positions[Int(indices[base + 1])], p2 = positions[Int(indices[base + 2])]
-                result.triangles += [SIMD4(p0, Float(bitPattern: UInt32(t))), SIMD4(p1 - p0, 0), SIMD4(p2 - p0, 0)]
+                result.triangles.append(SIMD4(p0, Float(bitPattern: UInt32(t))))
+                result.triangles.append(SIMD4(p1 - p0, 0))
+                result.triangles.append(SIMD4(p2 - p0, 0))
             }
             let root = emit(tree, nodeBase: 0, into: &result.nodes, forceInternalRoot: true) { n in
                 BVHNode.blasLeaf(first: triBase + n.start, count: n.count)

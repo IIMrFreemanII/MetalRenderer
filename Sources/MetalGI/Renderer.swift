@@ -160,6 +160,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var indexBuffer: MTLBuffer!
     private var meshBuffer: MTLBuffer!
     private var materialBuffer: MTLBuffer!
+    private var uvBuffer: MTLBuffer!
+    private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
+    private var textureTable: MTLBuffer!              // their MTLResourceIDs (MSL MaterialTexture array)
+    private var shadingArgs: MTLBuffer!               // MSL SceneShading: materials, UVs, texture table (buffer 7)
+    private var shadingResources: [MTLResource] = []
     private var primitiveAS: [MTLAccelerationStructure] = []           // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
     private var customRT: CustomRayTracer?                             // custom ray tracer only
@@ -260,7 +265,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
 
-        try loadShaders()
+        try loadShaders(for: settings.rayTracer)
         try createSceneResources()
         try createBlueNoiseTexture()
         if !upscaleSupported {
@@ -270,18 +275,27 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             defaultSettings.upscaleFactor = 0
             settings = defaultSettings
         }
-        if let benchmark { applyBenchmarkConfig(benchmark.current) }
+        if let benchmark {
+            applyBenchmarkConfig(benchmark.current)
+        } else if ProcessInfo.processInfo.environment["METALGI_SCENE"] != nil {
+            // Starting scene: loads in the background like a switch in the panel.
+            var s = settings
+            Benchmark.applySceneOverride(to: &s.scene)
+            s.applySceneDefaults(from: defaultSettings)
+            settings = s
+        }
     }
 
     // MARK: - Setup
 
-    private func loadShaders() throws {
+    /// Compiles Shaders.metal for `kind` (CUSTOM_RT macro). The custom tracer's build kernels exist only in its variant.
+    private func loadShaders(for kind: RayTracerKind) throws {
         let source = try String(contentsOf: shaderURL, encoding: .utf8)
         let options = MTLCompileOptions()
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
         // 3.0 and then need METALGI_RT=metal.
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
-        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: settings.rayTracer == .custom ? 1 : 0)]
+        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0)]
         let library = try device.makeLibrary(source: source, options: options)
 
         func pipeline(_ name: String) throws -> MTLComputePipelineState {
@@ -301,7 +315,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let lightMap = try pipeline("lightMapKernel")
         let manyLights = try pipeline("manyLightsKernel")
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
-        let rt = settings.rayTracer != .custom ? nil :
+        let rt = kind != .custom ? nil :
             RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
                         sortLocal: try pipeline("rtSortLocalKernel"), sortGlobal: try pipeline("rtSortGlobalKernel"),
                         hierarchy: try pipeline("rtHierarchyKernel"), fit: try pipeline("rtFitKernel"))
@@ -344,9 +358,52 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return buffer
     }
 
+    /// The slow, CPU-heavy part of a scene switch (loading models, building BVHs, decoding textures). Thread-safe, so
+    /// interactive switches run it in the background while the old scene keeps rendering.
+    private struct PreparedScene {
+        let scene: Scene
+        let rayTracer: RayTracerKind
+        let textures: [MTLTexture]
+        let customRT: CustomRayTracer?
+    }
+    private var loading: (scene: SceneSettings, rayTracer: RayTracerKind)?   // being prepared in the background
+
+    private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?) throws -> PreparedScene {
+        let newScene = current ?? Scene(sceneSettings)
+        let textures = try MaterialTextures.load(newScene.textures, device: device, queue: queue)
+        let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, slots: Renderer.maxFramesInFlight) : nil
+        return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, customRT: rt)
+    }
+
+    /// Starts preparing `settings.scene` / `settings.rayTracer` in the background; `install` swaps it in when done.
+    private func startLoadingScene() {
+        let wanted = (scene: settings.scene, rayTracer: settings.rayTracer)
+        if let loading, loading.scene == wanted.scene, loading.rayTracer == wanted.rayTracer { return }
+        loading = wanted
+        let reuse = wanted.scene == scene.settings ? scene : nil   // only the tracer changes
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = Result { try self.prepareScene(wanted.scene, rayTracer: wanted.rayTracer, reuse: reuse) }
+            DispatchQueue.main.async {
+                guard let loading = self.loading, loading.scene == wanted.scene, loading.rayTracer == wanted.rayTracer else {
+                    return   // superseded by a newer request
+                }
+                self.loading = nil
+                switch result {
+                case .success(let prepared):
+                    self.install(prepared, resetCamera: prepared.scene.settings.kind != self.scene.settings.kind)
+                case .failure(let error):
+                    print("Scene load failed, keeping the previous scene: \(error)")
+                    self.settings.scene = self.scene.settings
+                    self.settings.rayTracer = self.builtRayTracer
+                }
+            }
+        }
+    }
+
     /// Everything sized by the scene: geometry, acceleration structures, per-frame instance / light buffers, light maps.
-    private func createSceneResources() throws {
-        builtRayTracer = settings.rayTracer
+    private func createSceneResources(_ prepared: PreparedScene? = nil) throws {
+        builtRayTracer = prepared?.rayTracer ?? settings.rayTracer
         customRT = nil
         primitiveAS = []
         primitiveASResources = []
@@ -356,11 +413,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         instanceAS = []
         instanceScratch = []
         instanceASBuilt = []
-        try createGeometryBuffers()
+        try createGeometryBuffers(textures: prepared?.textures)
         if builtRayTracer == .metal { try buildPrimitiveAccelerationStructures() }
         try createPerFrameResources()
         if builtRayTracer == .custom {
-            customRT = try CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight, pipelines: rtPipelines!)
+            customRT = try prepared?.customRT ?? CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight)
+            customRT?.pipelines = rtPipelines
         }
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
@@ -375,22 +433,35 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         lightMap = lm
     }
 
-    /// Replaces the scene with `settings.scene`. Waits for in-flight frames, since they still read the old buffers.
+    /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
     private func rebuildScene(resetCamera: Bool) {
+        do {
+            let reuse = settings.scene == scene.settings ? scene : nil
+            install(try prepareScene(settings.scene, rayTracer: settings.rayTracer, reuse: reuse), resetCamera: resetCamera)
+        } catch {
+            print("Scene rebuild failed, keeping the previous scene: \(error)")
+            settings.scene = scene.settings
+            settings.rayTracer = builtRayTracer
+        }
+    }
+
+    /// Swaps in a prepared scene. Waits for in-flight frames, since they still read the old buffers.
+    private func install(_ prepared: PreparedScene, resetCamera: Bool) {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let old = scene
+        let oldRayTracer = builtRayTracer
         let start = CACurrentMediaTime()
-        if settings.scene != scene.settings { scene = Scene(settings.scene) }
+        scene = prepared.scene
         do {
-            if settings.rayTracer != builtRayTracer { try loadShaders() }
-            try createSceneResources()
+            if prepared.rayTracer != builtRayTracer { try loadShaders(for: prepared.rayTracer) }
+            try createSceneResources(prepared)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old
             settings.scene = old.settings
-            settings.rayTracer = builtRayTracer
-            try? loadShaders()
+            settings.rayTracer = oldRayTracer
+            try? loadShaders(for: oldRayTracer)
             try? createSceneResources()
         }
         surfelGI = nil   // its grid covers the old scene's bounds
@@ -402,16 +473,28 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             camera = scene.defaultCamera
             prevCamera = camera
         }
-        print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing (built in %.0f ms)", settings.scene.kind.title,
-                     scene.instances.count, scene.lights.count, settings.rayTracer.title, (CACurrentMediaTime() - start) * 1000))
+        print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing (installed in %.0f ms)", scene.settings.kind.title,
+                     scene.instances.count, scene.lights.count, builtRayTracer.title, (CACurrentMediaTime() - start) * 1000))
     }
 
-    private func createGeometryBuffers() throws {
+    private func createGeometryBuffers(textures: [MTLTexture]?) throws {
         positionBuffer = try makeBuffer(scene.positions, "positions")
         normalBuffer = try makeBuffer(scene.normals, "normals")
         indexBuffer = try makeBuffer(scene.indices, "indices")
         meshBuffer = try makeBuffer(scene.meshes, "meshes")
         materialBuffer = try makeBuffer(scene.materials, "materials")
+        uvBuffer = try makeBuffer(scene.uvs, "uvs")
+        materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
+        textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
+        guard let args = device.makeBuffer(length: 32, options: .storageModeShared) else {
+            throw RendererError.resourceCreation("buffer shadingArgs")
+        }
+        args.label = "shadingArgs"
+        args.contents().storeBytes(of: materialBuffer.gpuAddress, toByteOffset: 0, as: UInt64.self)
+        args.contents().storeBytes(of: uvBuffer.gpuAddress, toByteOffset: 8, as: UInt64.self)
+        args.contents().storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
+        shadingArgs = args
+        shadingResources = [materialBuffer, uvBuffer, textureTable] + materialTextures
     }
 
     /// One bottom-level (primitive) acceleration structure per mesh, built once.
@@ -632,7 +715,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         guard let t = targets else { return }
 
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer {
-            rebuildScene(resetCamera: benchmark == nil && settings.scene.kind != scene.settings.kind)
+            if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
 
@@ -1048,7 +1131,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBuffer(indexBuffer, offset: 0, index: 4)
         enc.setBuffer(meshBuffer, offset: 0, index: 5)
         enc.setBuffer(instanceDataBuffers[slot], offset: 0, index: 6)
-        enc.setBuffer(materialBuffer, offset: 0, index: 7)
+        enc.setBuffer(shadingArgs, offset: 0, index: 7)
+        enc.useResources(shadingResources, usage: .read)
         enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
     }
 
@@ -1231,12 +1315,28 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let res = outWidth > width ? String(format: "%ld×%ld → %@ %ld×%ld", width, height, upscalerName, outWidth, outHeight)
                                    : String(format: "%ld×%ld", width, height)
         let stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
-        let sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
+        var sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
+        if let loading { sceneName += " — loading \(loading.scene.kind.title)…" }
         view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
                                      sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
                                      RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         onStats?(stats)
+    }
+
+    /// Adds glTF models to the scene, side by side 2.5 m in front of the camera on the floor, facing it
+    /// (glTF models face +Z). The scene reloads in the background.
+    func addModels(_ urls: [URL]) {
+        var forward = camera.forward
+        forward.y = 0
+        forward = length(forward) > 1e-4 ? normalize(forward) : SIMD3(0, 0, -1)
+        let right = SIMD3<Float>(-forward.z, 0, forward.x)
+        var center = camera.position + forward * 2.5
+        center.y = 0
+        for (i, url) in urls.enumerated() {
+            let offset = (Float(i) - Float(urls.count - 1) / 2) * 1.8
+            settings.scene.extraModels.append(ExtraModel(path: url.path, position: center + right * offset, yaw: -camera.yaw))
+        }
     }
 
     // MARK: - InputHandler
@@ -1266,7 +1366,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r":
             do {
-                try loadShaders()
+                try loadShaders(for: builtRayTracer)
                 resetGIState()
                 upscalerReset = true
                 print("Shaders reloaded")

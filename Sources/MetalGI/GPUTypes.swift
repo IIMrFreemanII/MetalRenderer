@@ -57,8 +57,11 @@ struct GPUInstanceData {
 }
 
 struct GPUMaterial {
-    var albedo: SIMD4<Float>     // rgb = diffuse reflectance
-    var emission: SIMD4<Float>   // rgb = emitted radiance
+    var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
+    var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
+    var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale
+    var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
+                                                    // index, or ~0 = none
 }
 
 struct GPULight {
@@ -71,7 +74,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 224, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 16, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
-    precondition(MemoryLayout<GPUMaterial>.stride == 32, "GPUMaterial layout mismatch")
+    precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 32, "GPULight layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")

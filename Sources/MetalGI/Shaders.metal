@@ -59,9 +59,25 @@ struct InstanceData {
 };
 
 struct Material {
-    float4 albedo;
-    float4 emission;
+    float4 albedo;      // rgb = base colour, a = metallic
+    float4 emission;    // rgb = emitted radiance, a = roughness
+    float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale
+    uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
 };
+
+// Bindless material textures (Renderer: an array of MTLResourceIDs).
+struct MaterialTexture {
+    texture2d<float> t;
+};
+
+// Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table.
+struct SceneShading {
+    device const Material*        materials;
+    device const float2*          uvs;
+    device const MaterialTexture* textures;
+};
+
+constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
 struct Light {
     float4 positionRadius;
@@ -404,9 +420,17 @@ struct SceneData {
     device const MeshData*     meshes;
     device const InstanceData* instances;
     device const Material*     materials;
+    device const float2*       uvs;
+    device const MaterialTexture* textures;
     device const Light*        lights;
     uint                       lightCount;
 };
+
+inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
+    s.materials = shading.materials;
+    s.uvs = shading.uvs;
+    s.textures = shading.textures;
+}
 
 struct Surface {
     bool   hit;
@@ -414,10 +438,23 @@ struct Surface {
     float3 prevPosition;  // same surface point, previous frame (for motion vectors)
     float3 normal;        // smooth shading normal (interpolated vertex normals), world space, not face-forwarded
     float3 geomNormal;    // the triangle's true normal, world space, not face-forwarded
-    float3 albedo;
+    float3 albedo;        // base colour (diffuse reflectance; metals get their colour from specular in a later step)
     float3 emission;
+    float  metallic;
+    float  roughness;
+    float  specular;      // specular weight: 0 = diffuse-only material
     uint   instanceId;
 };
+
+constexpr sampler materialSampler(filter::linear, mip_filter::linear, address::repeat);
+
+// Samples a material texture at the level of a footprint: lodBase = log2 of the footprint in UV units (see
+// traceSurface); the texture's resolution is added here.
+inline float4 sampleMaterial(device const MaterialTexture* textures, uint index, float2 uv, float lodBase) {
+    texture2d<float> t = textures[index].t;
+    float lod = lodBase + 0.5f * log2(float(t.get_width()) * float(t.get_height()));
+    return t.sample(materialSampler, uv, level(max(lod, 0.0f)));
+}
 
 // Orients a hit's normals toward the side the ray came from. The geometric normal decides the side; the smooth
 // shading normal is flipped onto that side. Face-forwarding the smooth normal alone flips it inward at
@@ -428,12 +465,18 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
     ns = dot(sf.normal, ng) < 0.0f ? -sf.normal : sf.normal;
 }
 
-Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s) {
+// Pixel-footprint spreads for texture filtering (ray cones without curvature): radians of spread per unit distance.
+// Primary rays pass their pixel's angle; GI rays a coarse fixed spread, since their hits get integrated anyway.
+constant float GI_RAY_SPREAD = 0.05f;
+
+Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread) {
     Hit res = intersectClosest(r, mask, accel);
 
     Surface sf;
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
+    sf.metallic = sf.specular = 0.0f;
+    sf.roughness = 1.0f;
     sf.instanceId = 0;
     if (!res.hit) return sf;
 
@@ -457,7 +500,46 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
     sf.albedo = mat.albedo.rgb;
     sf.emission = mat.emission.rgb;
+    sf.metallic = mat.albedo.a;
+    sf.roughness = mat.emission.a;
+    sf.specular = mat.params.x;
     sf.instanceId = res.instance;
+
+    if (any(mat.textures != uint4(NO_TEXTURE))) {
+        float2 t0 = s.uvs[i0], t1 = s.uvs[i1], t2 = s.uvs[i2];
+        float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;
+        // Texture level from the ray's footprint: width = distance x spread, stretched by the incidence angle,
+        // converted to UV units by the triangle's UV-to-world area ratio.
+        float3 e1 = (inst.transform * float4(p1 - p0, 0.0f)).xyz, e2 = (inst.transform * float4(p2 - p0, 0.0f)).xyz;
+        float2 d1 = t1 - t0, d2 = t2 - t0;
+        float worldArea = length(cross(e1, e2));
+        float uvArea = abs(d1.x * d2.y - d1.y * d2.x);
+        float cosTheta = max(abs(dot(normalize(r.direction), sf.geomNormal)), 0.2f);
+        float footprint = res.distance * length(r.direction) * spread / cosTheta;
+        float lodBase = worldArea > 0.0f && uvArea > 0.0f ? log2(max(footprint, 1e-8f)) + 0.5f * log2(uvArea / worldArea) : 0.0f;
+
+        if (mat.textures.x != NO_TEXTURE) sf.albedo *= sampleMaterial(s.textures, mat.textures.x, uv, lodBase).rgb;
+        if (mat.textures.y != NO_TEXTURE) {
+            float4 mr = sampleMaterial(s.textures, mat.textures.y, uv, lodBase);
+            sf.roughness *= mr.g;
+            sf.metallic *= mr.b;
+        }
+        if (mat.textures.w != NO_TEXTURE) sf.emission *= sampleMaterial(s.textures, mat.textures.w, uv, lodBase).rgb;
+        if (mat.textures.z != NO_TEXTURE && uvArea > 0.0f) {
+            // Tangent frame from the triangle's UV derivatives (no stored tangents), Gram-Schmidt against the
+            // shading normal; normal maps are tangent space, +Y = +V.
+            float invDet = 1.0f / (d1.x * d2.y - d1.y * d2.x);
+            float3 T = (e1 * d2.y - e2 * d1.y) * invDet, B = (e2 * d1.x - e1 * d2.x) * invDet;
+            float3 N = sf.normal;
+            T = T - N * dot(N, T);
+            B = B - N * dot(N, B) - T * (dot(T, B) / max(dot(T, T), 1e-12f));
+            if (dot(T, T) > 1e-12f && dot(B, B) > 1e-12f) {
+                float3 m = sampleMaterial(s.textures, mat.textures.z, uv, lodBase).xyz * 2.0f - 1.0f;
+                m.xy *= mat.params.y;
+                sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
+            }
+        }
+    }
     return sf;
 }
 
@@ -700,7 +782,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         device const uint*               indices    [[buffer(4)]],
                         device const MeshData*           meshes     [[buffer(5)]],
                         device const InstanceData*       instances  [[buffer(6)]],
-                        device const Material*           materials  [[buffer(7)]],
+                        constant SceneShading&           shading    [[buffer(7)]],
                         device const Light*              lights     [[buffer(8)]],
                         texture2d<float, access::write>  outNormalDepth [[texture(0)]],
                         texture2d<float, access::write>  outAlbedo      [[texture(1)]],
@@ -726,7 +808,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     s.indices = indices;
     s.meshes = meshes;
     s.instances = instances;
-    s.materials = materials;
+    bindShading(s, shading);
     s.lights = lights;
     s.lightCount = u.lightCount;
 
@@ -745,7 +827,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                            + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
                            + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
-    Surface sf = traceSurface(primary, MASK_ALL, accel, s);
+    Surface sf = traceSurface(primary, MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height));   // pixel angle
 
     bool upscale = (u.flags & FLAG_UPSCALE) != 0;
     if (!sf.hit) {
@@ -845,7 +927,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 d = cosineSampleHemisphere(normal, rng.next2());
             if (dot(d, geomNormal) <= 0.0f) d -= 2.0f * dot(d, geomNormal) * geomNormal;   // keep it above the triangle
             Ray r = makeRay(origin, d, 0.0f, INFINITY);
-            Surface h = traceSurface(r, MASK_GEOMETRY, accel, s);
+            Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
                 indirect += throughput * u.skyColor.rgb;
                 break;
@@ -1813,7 +1895,7 @@ kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0
                           device const uint*               indices    [[buffer(4)]],
                           device const MeshData*           meshes     [[buffer(5)]],
                           device const InstanceData*       instances  [[buffer(6)]],
-                          device const Material*           materials  [[buffer(7)]],
+                          constant SceneShading&           shading    [[buffer(7)]],
                           device const Light*              lights     [[buffer(8)]],
                           constant RCProbeBatch&           batch      [[buffer(9)]],
                           constant uint&                   cascadeCount [[buffer(10)]],
@@ -1830,13 +1912,14 @@ kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0
     uint2 tid = uint2(local % k.x, local / k.x);
     SceneData s;
     s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-    s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
 
     float2 pixel = min((float2(tid) + 0.5f) * float(k.z), float2(u.width, u.height) - 0.5f);
     float2 uv = pixel / float2(u.width, u.height);
     float3 dir = normalize(u.camForward.xyz + (2.0f * uv.x - 1.0f) * u.camRight.w * u.camRight.xyz
                                             + (1.0f - 2.0f * uv.y) * u.camUp.w * u.camUp.xyz);
-    Surface sf = traceSurface(makeRay(u.camPos.xyz, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
+    Surface sf = traceSurface(makeRay(u.camPos.xyz, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel, s,
+                              2.0f * u.camUp.w / float(u.height) * float(k.z));   // the probe cell's angle
     if (!sf.hit) {
         probePos[c].write(float4(0.0f, 0.0f, 0.0f, -1.0f), tid);
         return;
@@ -1865,7 +1948,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
                                device const uint*               indices    [[buffer(4)]],
                                device const MeshData*           meshes     [[buffer(5)]],
                                device const InstanceData*       instances  [[buffer(6)]],
-                               device const Material*           materials  [[buffer(7)]],
+                               constant SceneShading&           shading    [[buffer(7)]],
                                device const Light*              lights     [[buffer(8)]],
                                constant RCParams&               p          [[buffer(9)]],
                                texture2d<float, access::read>   probePos   [[texture(0)]],
@@ -1897,10 +1980,10 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
 
     SceneData s;
     s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-    s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
     bool last = p.layout.w != 0;
     Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
-    Surface h = traceSurface(r, MASK_GEOMETRY, accel, s);
+    Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
 
     float3 radiance = float3(0.0f);
     if (h.hit) {
@@ -2261,7 +2344,7 @@ kernel void surfelTraceKernel(constant Uniforms&               u          [[buff
                               device const uint*               indices    [[buffer(4)]],
                               device const MeshData*           meshes     [[buffer(5)]],
                               device const InstanceData*       instances  [[buffer(6)]],
-                              device const Material*           materials  [[buffer(7)]],
+                              constant SceneShading&           shading    [[buffer(7)]],
                               device const Light*              lights     [[buffer(8)]],
                               constant SurfelParams&           sp         [[buffer(9)]],
                               device SurfelHeader&             header     [[buffer(10)]],
@@ -2292,7 +2375,7 @@ kernel void surfelTraceKernel(constant Uniforms&               u          [[buff
     if (traceNow) {
         SceneData s;
         s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-        s.instances = instances; s.materials = materials; s.lights = lights; s.lightCount = u.lightCount;
+        s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
         float3 p = worldPos[id].xyz, n = worldNormal[id].xyz, ng = worldGeomNormal[id].xyz;
         // Stratified over the surfel's rays, randomly rotated per surfel and frame.
         uint h = pcgHash(id * 9781u + pcgHash(frame));
@@ -2300,7 +2383,7 @@ kernel void surfelTraceKernel(constant Uniforms&               u          [[buff
         float2 uv = fract(float2((float(rayIndex) + 0.5f) / float(rays), float(rayIndex) * 0.618034f) + jitter);
         float3 d = cosineSampleHemisphere(n, uv);
         if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
-        Surface hit = traceSurface(makeRay(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s);
+        Surface hit = traceSurface(makeRay(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
         if (!hit.hit) {
             radiance = u.skyColor.rgb;
         } else {

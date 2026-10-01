@@ -110,7 +110,9 @@ final class Benchmark {
         }
     }
 
-    /// `METALGI_SCENE="stress,objects=400,lights=32"` loads the stress scene (with these sizes) in every setting.
+    /// `METALGI_SCENE="stress,objects=400,lights=32"` loads the stress scene (with these sizes) in every setting
+    /// (and is the app's starting scene outside benchmarks). Kinds: cornell, stress, gallery; `model=<path>` adds a
+    /// glTF model as File > Open does.
     static func applySceneOverride(to s: inout SceneSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALGI_SCENE"] else { return }
         for item in spec.split(separator: ",") {
@@ -118,8 +120,11 @@ final class Benchmark {
             switch kv[0] {
             case "stress": s.kind = .stress
             case "cornell": s.kind = .cornell
+            case "gallery": s.kind = .gallery
             case "objects" where kv.count == 2: s.objects = Int(kv[1]) ?? s.objects
             case "lights" where kv.count == 2: s.lights = Int(kv[1]) ?? s.lights
+            case "model" where kv.count == 2:   // as if opened: in front of the default camera
+                s.extraModels.append(ExtraModel(path: kv[1], position: [Float(s.extraModels.count) * 1.8 - 0.9, 0, 2], yaw: 0))
             default: print("METALGI_SCENE: unknown key \(kv[0])")
             }
         }

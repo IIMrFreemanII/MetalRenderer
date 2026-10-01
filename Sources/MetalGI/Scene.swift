@@ -1,4 +1,4 @@
-import Darwin
+import Foundation
 import simd
 
 /// A small Cornell-style room with static objects, animated objects and moving sphere lights, or a stress-test
@@ -17,6 +17,13 @@ final class Scene {
         var animation: ((Float) -> float4x4)?
     }
 
+    /// An encoded image a material samples (decoded and uploaded by the renderer).
+    struct TextureSource {
+        var data: Data
+        var srgb: Bool                        // colour data (base colour, emissive) vs linear (normal, metallic-roughness)
+        var name: String
+    }
+
     struct Light {
         var color: SIMD3<Float>               // radiant intensity (color * power)
         var radius: Float
@@ -33,6 +40,8 @@ final class Scene {
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
+    private(set) var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
+    private(set) var textures: [TextureSource] = []
     private(set) var indices: [UInt32] = []
     private(set) var meshes: [GPUMesh] = []
     private(set) var materials: [GPUMaterial] = []
@@ -49,7 +58,9 @@ final class Scene {
         switch settings.kind {
         case .cornell: buildCornell()
         case .stress: buildStress(objects: settings.objects, lights: settings.lights)
+        case .gallery: buildGallery()
         }
+        for extra in settings.extraModels { addExtraModel(extra) }
         assignLightGroups()
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
@@ -293,11 +304,12 @@ final class Scene {
         }
     }
 
-    private func addMesh(_ mesh: MeshGeometry) -> Int {
+    private func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil) -> Int {
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
         positions += mesh.positions
         normals += mesh.normals
+        uvs += meshUVs ?? [SIMD2<Float>](repeating: .zero, count: mesh.positions.count)
         indices += mesh.indices.map { $0 + baseVertex }   // indices are absolute into the shared vertex buffer
         meshes.append(GPUMesh(firstIndex: firstIndex, indexCount: UInt32(mesh.indices.count)))
         meshBounds.append((mesh.positions.reduce(SIMD3(repeating: .infinity), simd_min),
@@ -305,8 +317,9 @@ final class Scene {
         return meshes.count - 1
     }
 
+    /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
     private func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero) -> Int {
-        materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 0)))
+        materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1)))
         return materials.count - 1
     }
 
@@ -325,6 +338,153 @@ final class Scene {
         let sphere = addInstance(sphereMesh, material, matrix_identity_float4x4, mask: Scene.maskLights)
         lights.append(Light(color: color, radius: radius, path: path, sphereInstance: sphere))
     }
+
+    // MARK: - glTF models
+
+    /// Where the Gallery scene finds its models: `METALGI_ASSETS`, or `Assets/` next to `Package.swift`.
+    static let assetsDirectory: URL = {
+        if let dir = ProcessInfo.processInfo.environment["METALGI_ASSETS"] { return URL(fileURLWithPath: dir) }
+        return URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Assets")
+    }()
+
+    /// The glTF files in `assetsDirectory`, sorted by name. `METALGI_GALLERY="owl|demon"` keeps the files whose names
+    /// contain one of these strings (quicker test runs).
+    static func galleryFiles() -> [URL] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: assetsDirectory, includingPropertiesForKeys: nil)) ?? []
+        var models = files.filter { ["glb", "gltf"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        if let only = ProcessInfo.processInfo.environment["METALGI_GALLERY"] {
+            let keys = only.split(separator: "|").map { $0.lowercased() }
+            models = models.filter { url in keys.contains { url.lastPathComponent.lowercased().contains($0) } }
+        }
+        return models
+    }
+
+    /// Model-space bounds of the loaded models' parts, scaled so the largest side is `size`, standing on y = 0 and
+    /// centred on x = z = 0.
+    private static func placement(_ model: GLTFModel, size: Float) -> float4x4 {
+        let b = model.bounds
+        guard !b.isEmpty else { return matrix_identity_float4x4 }
+        let s = size / max((b.hi - b.lo).max(), 1e-6)
+        return scale(s) * translate([-(b.lo.x + b.hi.x) / 2, -b.lo.y, -(b.lo.z + b.hi.z) / 2])
+    }
+
+    /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
+    /// materials and textures. `animation`, if given, replaces `transform` over time.
+    private func addModel(_ model: GLTFModel, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+        var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
+        func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
+            guard let ref else { return .max }
+            let key = ref.image * 2 + (srgb ? 1 : 0)
+            if let i = textureIndex[key] { return i }
+            textures.append(TextureSource(data: model.images[ref.image].data, srgb: srgb,
+                                          name: "\(model.name)/\(model.images[ref.image].name)"))
+            textureIndex[key] = UInt32(textures.count - 1)
+            return UInt32(textures.count - 1)
+        }
+        let firstMaterial = materials.count
+        for m in model.materials {
+            materials.append(GPUMaterial(
+                albedo: SIMD4(SIMD3(m.baseColor.x, m.baseColor.y, m.baseColor.z), m.metallic),
+                emission: SIMD4(m.emissive, m.roughness),
+                params: SIMD4(1, m.normalScale, 0, 0),
+                textures: SIMD4(texture(m.baseColorTexture, srgb: true), texture(m.metallicRoughnessTexture, srgb: false),
+                                texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
+        }
+        let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
+        let meshBase = meshes.count
+        for mesh in model.meshes {
+            _ = addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs)
+        }
+        for part in model.parts {
+            let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
+            if let animation {
+                addInstance(meshBase + part.mesh, material, transform * part.transform) { t in animation(t) * part.transform }
+            } else {
+                addInstance(meshBase + part.mesh, material, transform * part.transform)
+            }
+        }
+    }
+
+    /// A model the user opened or dropped (`SceneSettings.extraModels`), 1.6 m tall at its position.
+    private func addExtraModel(_ extra: ExtraModel) {
+        do {
+            let model = try GLTFLoader.load(URL(fileURLWithPath: extra.path))
+            addModel(model, transform: translate(extra.position) * rotate(extra.yaw, [0, 1, 0]) * Scene.placement(model, size: 1.6))
+        } catch {
+            print("Could not load \(extra.path): \(error)")
+        }
+    }
+
+    /// Gallery: the models in `Assets/` on plinths in an arc, 1.6 m at their largest side, under 8 moving lights.
+    /// Two of them turn slowly (dynamic instances); the rest are static.
+    private func buildGallery() {
+        let quad = addMesh(Scene.quadMesh())
+        let cube = addMesh(Scene.cubeMesh())
+        let sphere = addMesh(Scene.icosphere(subdivisions: 2))
+        let floor = addMaterial(albedo: [0.45, 0.43, 0.40])
+        let wall = addMaterial(albedo: [0.70, 0.70, 0.68])
+        let plinth = addMaterial(albedo: [0.30, 0.30, 0.32])
+
+        let w: Float = 26, h: Float = 7, d: Float = 18
+        addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d]))
+        addInstance(quad, wall, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))
+        addInstance(quad, wall, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
+        addInstance(quad, wall, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
+
+        let files = Scene.galleryFiles()
+        let plinthHeight: Float = 0.3
+        let start = CFAbsoluteTimeGetCurrent()
+        var triangles = 0
+        for (i, url) in files.enumerated() {
+            let model: GLTFModel
+            do {
+                model = try GLTFLoader.load(url)
+            } catch {
+                print("Gallery: skipping \(url.lastPathComponent): \(error)")
+                continue
+            }
+            triangles += model.triangleCount
+            // Arc of radius 6 around (0, 0, 1), from -60 to +60 degrees, each model facing the arc's centre.
+            let a = files.count > 1 ? (-60 + 120 * Float(i) / Float(files.count - 1)) * .pi / 180 : 0
+            let p = SIMD3<Float>(6 * sin(a), 0, 1 - 6 * cos(a))
+            addInstance(cube, plinth, translate(p + [0, plinthHeight / 2, 0]) * scale([1.3, plinthHeight, 1.3]))
+            let base = translate(p + [0, plinthHeight, 0]) * rotate(-a, [0, 1, 0])
+            let place = Scene.placement(model, size: 1.6)
+            if i % 5 == 1 {   // turntables
+                let speed: Float = i % 2 == 0 ? 0.25 : -0.2
+                addModel(model, transform: base * place) { t in base * rotate(speed * t, [0, 1, 0]) * place }
+            } else {
+                addModel(model, transform: base * place)
+            }
+            print(String(format: "Gallery: %@ (%d triangles, %d images)", model.name, model.triangleCount, model.images.count))
+        }
+        print(String(format: "Gallery: %d models, %d triangles, loaded in %.1f s", files.count, triangles,
+                     CFAbsoluteTimeGetCurrent() - start))
+
+        // 8 lights drifting above the arc, warm and cool.
+        var rng = SplitMix64(seed: 0x6A11_E7)
+        let colors: [SIMD3<Float>] = [[1.0, 0.85, 0.65], [1.0, 0.55, 0.25], [0.45, 0.65, 1.0], [0.85, 0.75, 1.0]]
+        for j in 0..<8 {
+            let color = colors[j % colors.count] / dot(colors[j % colors.count], [0.2126, 0.7152, 0.0722])
+            let c = SIMD3<Float>(rng.range(-6, 6), rng.range(2.2, 3.6), rng.range(-4, 3))
+            let amp = SIMD3<Float>(rng.range(1, 3), rng.range(0.2, 0.6), rng.range(0.5, 2))
+            let f = SIMD3<Float>(rng.range(0.1, 0.3), rng.range(0.2, 0.5), rng.range(0.1, 0.3))
+            let phase = rng.range(0, 2 * .pi)
+            addLight(color: color * 5, radius: 0.08, sphereMesh: sphere) { t in
+                c + amp * SIMD3(sin(f.x * t + phase), sin(f.y * t + 2 * phase), cos(f.z * t + phase))
+            }
+        }
+        defaultCamera = Scene.galleryCamera
+    }
+
+    static let galleryCamera: Camera = {
+        var c = Camera()
+        c.position = [0, 1.8, 4.5]
+        c.pitch = -0.1
+        return c
+    }()
 
     // MARK: - Mesh generators
 

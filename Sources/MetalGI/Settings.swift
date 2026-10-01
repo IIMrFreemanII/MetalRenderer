@@ -109,11 +109,13 @@ struct CascadeSettings: Equatable {
 enum SceneKind: Int, CaseIterable {
     case cornell            // small Cornell-style room: 5 objects (2 moving), 3 moving lights
     case stress             // stress test: a hall with `objects` (mostly moving) objects and `lights` moving lights
+    case gallery            // the glTF models in Assets/ on plinths, 8 moving lights
 
     var title: String {
         switch self {
         case .cornell: return "Cornell room"
         case .stress: return "Stress test"
+        case .gallery: return "Gallery (Assets)"
         }
     }
 }
@@ -134,11 +136,19 @@ enum RayTracerKind: Int, CaseIterable {
     static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALGI_RT"] == "metal" ? .metal : .custom
 }
 
+/// A glTF model the user opened or dropped into the scene.
+struct ExtraModel: Equatable {
+    var path: String
+    var position: SIMD3<Float>
+    var yaw: Float
+}
+
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
 struct SceneSettings: Equatable {
     var kind = SceneKind.cornell
     var objects = 400
     var lights = 32
+    var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
 
     static let objectRange = 0...2000
     static let lightRange = 1...256
@@ -175,7 +185,7 @@ struct RenderSettings: Equatable {
         case .cornell:
             giMode = defaults.giMode
             surfels = defaults.surfels
-        case .stress:
+        case .stress, .gallery:
             giMode = .surfels
             surfels = defaults.surfels
             surfels.raysPerSurfel = 8

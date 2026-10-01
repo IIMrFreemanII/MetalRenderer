@@ -1,5 +1,6 @@
 import AppKit
 import MetalKit
+import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
@@ -33,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         view.delegate = renderer
         view.inputHandler = renderer
+        view.onDropModels = { [weak self] urls in self?.renderer.addModels(urls) }
 
         window.contentView = view
         window.makeKeyAndOrderFront(nil)
@@ -56,10 +58,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
           R            hot-reload Shaders.metal (edit it while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
+          Cmd-O        add glTF models (.glb / .gltf) in front of the camera; or drop them on the window
         """)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// File > Open…: glTF models, placed in front of the camera.
+    @objc private func openModels(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = RenderView.modelTypes
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = Scene.assetsDirectory
+        panel.message = "Choose glTF models (.glb or .gltf) to add to the scene"
+        guard panel.runModal() == .OK else { return }
+        renderer.addModels(panel.urls)
+    }
 
     @objc private func toggleSettings(_ sender: Any?) {
         settingsPanel?.toggle(nextTo: window)
@@ -76,6 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
         appItem.submenu = appMenu
+        let fileItem = NSMenuItem()
+        mainMenu.addItem(fileItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Open…", action: #selector(openModels(_:)), keyEquivalent: "o").target = self
+        fileItem.submenu = fileMenu
         NSApp.mainMenu = mainMenu
     }
 }

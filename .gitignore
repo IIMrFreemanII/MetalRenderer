@@ -8,3 +8,5 @@ DerivedData/
 __pycache__/
 # benchmark captures (METALGI_BENCH_DIR): keep them outside the repo, or here
 /bench-out/
+# virtual-geometry / texture caches built from Assets/ on first load
+/Assets/.metalgi-cache/
