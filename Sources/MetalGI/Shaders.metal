@@ -745,6 +745,130 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
     outBlocker.write(roundToHalf(blocker), tid);
 }
 
+// 1d. The same with light reuse (RenderSettings.manyLightReuse, ReSTIR-style temporal resampling): each group keeps
+//     last frame's pick in a reservoir (light, confidence M, contribution weight W), reprojected with the motion
+//     vectors. This frame's exact pick and the reservoir's light (re-weighed here, where the lights are now) are
+//     resampled in proportion to their weights, and the winner gets the shadow ray. Every pick already follows the
+//     unshadowed light exactly, so reuse can't sharpen the distribution; what it does is keep a pixel's pick from
+//     changing every frame, so a still image flickers less: a third less at 4 frames, for about 0.7 dB of accuracy on
+//     still frames (stress scene). Its own kernel because merged into manyLightsKernel the extra state cost 0.75 ms
+//     with reuse off. Visibility reuse (storing occluded picks with W = 0, so reservoirs drift toward visible lights)
+//     cut flicker as much but darkened penumbrae and lagged: -3 dB still, -5 dB moving.
+// ---------------------------------------------------------------------------------------------
+
+kernel void manyLightsReuseKernel(constant Uniforms&               u          [[buffer(0)]],
+                             instance_acceleration_structure  accel      [[buffer(1)]],
+                             device const Light*              lights     [[buffer(8)]],
+                             texture2d<float, access::read>   surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
+                             texture2d<float, access::read>   normalDepth [[texture(1)]],
+                             texture2d<float, access::read>   geoNormal  [[texture(2)]],
+                             texture2d<float, access::read>   blueNoise  [[texture(3)]],
+                             texture2d<float, access::write>  outDirect  [[texture(4)]],
+                             texture2d<float, access::write>  outVisibility [[texture(5)]],
+                             texture2d<float, access::write>  outBlocker [[texture(6)]],
+                             texture2d<float, access::read>   motion     [[texture(7)]],
+                             texture2d<float, access::read>   prevND     [[texture(8)]],
+                             texture2d<uint, access::read>    prevReservoir [[texture(9)]],
+                             texture2d<float, access::read>   prevReservoirW [[texture(10)]],
+                             texture2d<uint, access::write>   outReservoir [[texture(11)]],
+                             texture2d<float, access::write>  outReservoirW [[texture(12)]],
+                             constant uint4&                  config     [[buffer(9)]],   // y = reuse frames, z = 1 if last frame stored picks
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 sp = surfacePos.read(tid);
+    uint maxM = max(config.y, 1u);
+    if (sp.w <= 0.0f) {   // sky and emitters: traceKernel wrote zeros
+        outReservoir.write(uint4(0xFFFFu), tid);
+        return;
+    }
+    float4 nd = normalDepth.read(tid);
+    float3 n = nd.xyz, ng = geoNormal.read(tid).xyz;
+    float3 p = sp.xyz + ng * RAY_EPSILON;
+
+    Sampler rng;
+    rng.blueNoise = blueNoise;
+    rng.pixel = tid;
+    rng.frame = u.frameIndex;
+    rng.dimension = 64;   // other blue-noise windows than traceKernel's
+    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x9E3779B9u)));
+
+    float3 direct = float3(0.0f);
+    float4 visibility = float4(0.0f), blocker = float4(0.0f);
+
+    uint4 prevPick = uint4(0xFFFFu);
+    float4 prevW = float4(0.0f);
+    float4 mv = motion.read(tid);
+    if (config.z != 0 && mv.w > 0.0f) {
+        int2 q = int2(floor(mv.xy + 0.5f));
+        if (q.x >= 0 && q.y >= 0 && q.x < int(u.width) && q.y < int(u.height)) {
+            float4 pnd = prevND.read(uint2(q));
+            if (pnd.w > 0.0f && abs(pnd.w - mv.z) < 0.1f * mv.z && dot(pnd.xyz, n) > 0.9f) {
+                prevPick = prevReservoir.read(uint2(q));
+                prevW = prevReservoirW.read(uint2(q));
+            }
+        }
+    }
+    float4 sel = float4(rng.next2(), rng.next2());
+    float4 reuseSel = float4(rng.next2(), rng.next2());
+    uint4 outPick = uint4(0xFFFFu);
+    float4 outW = float4(0.0f);
+    uint start = 0;
+    for (uint g = 0; g < SHADOW_GROUPS; ++g) {
+        uint end = u.lightGroupEnd[g];
+        float2 r = rng.next2();
+        // This frame's candidate: exact pick over the group's lights (pdf = weight / total, so W = total / weight).
+        float total = 0.0f, pickedWeight = 0.0f, s = min(sel[g], 0.99999f);
+        uint picked = end;
+        for (uint i = start; i < end; ++i) {
+            float w = luminance(lightUnshadowed(lights[i], p, n, ng));
+            if (w <= 0.0f) continue;
+            total += w;
+            float q = w / total;
+            if (s < q) { picked = i; pickedWeight = w; s /= q; }
+            else s = (s - q) / (1.0f - q);
+        }
+        float weightSum = picked < end ? total : 0.0f;   // M = 1 * target(pick) * W
+        float M = 1.0f;
+        uint y = picked;
+        float targetY = pickedWeight;
+        // Last frame's pick, re-weighed at this pixel with the lights where they are now.
+        uint prevLight = prevPick[g] & 0xFFFFu;
+        if (prevLight >= start && prevLight < end) {
+            float Mp = min(float(prevPick[g] >> 16), float(maxM));
+            float targetP = luminance(lightUnshadowed(lights[prevLight], p, n, ng));
+            float wp = Mp * targetP * prevW[g];
+            M += Mp;
+            if (wp > 0.0f) {
+                weightSum += wp;
+                if (reuseSel[g] * weightSum < wp) { y = prevLight; targetY = targetP; }
+            }
+        }
+        start = end;
+        if (y >= end || targetY <= 0.0f || weightSum <= 0.0f) {
+            outPick[g] = y < end ? (y | (uint(min(M, 65535.0f)) << 16)) : 0xFFFFu;
+            continue;
+        }
+        float W = weightSum / (M * targetY);
+        Light light = lights[y];
+        float b;
+        bool visible = isVisibleBlocker(p, lightSamplePoint(light, r), accel, b);
+        // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
+        visibility[g] = visible && total > 0.0f ? saturate(targetY * W / total) : 0.0f;
+        blocker[g] = penumbraWidth(light, p, b);
+        if (visible) direct += lightUnshadowed(light, p, n, ng) * W;
+        outPick[g] = y | (uint(min(M, float(maxM))) << 16);
+        outW[g] = W;
+    }
+    outReservoir.write(outPick, tid);
+    outReservoirW.write(outW, tid);
+
+    outDirect.write(float4(direct, 1.0f), tid);
+    outVisibility.write(visibility, tid);
+    outBlocker.write(roundToHalf(blocker), tid);
+}
+
 // ---------------------------------------------------------------------------------------------
 // 2. Temporal accumulation: reproject last frame's denoised result, reject disocclusions,
 //    blend with the new noisy sample and track luminance moments for variance estimation.

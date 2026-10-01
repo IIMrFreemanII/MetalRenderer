@@ -97,7 +97,7 @@ final class SettingsPanel: NSObject {
         for (popup, titles, action) in [
             (giMode, GIMode.allCases.map(\.title), #selector(giModeChanged)),
             (sceneKind, SceneKind.allCases.map(\.title), #selector(sceneKindChanged)),
-            (lightRays, ["1 per group (fast)", "2 per group (less flicker)"], #selector(lightRaysChanged)),
+            (lightRays, ["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"], #selector(lightRaysChanged)),
             (upscalerKind, UpscalerKind.allCases.map(\.title), #selector(upscalerKindChanged)),
             (surfelRays, SettingsPanel.surfelRayOptions.map { "\($0) rays" }, #selector(surfelRaysChanged)),
             (maxSurfels, SurfelSettings.maxSurfelsOptions.map { "\($0 / 1024)k" }, #selector(maxSurfelsChanged)),
@@ -252,7 +252,7 @@ final class SettingsPanel: NSObject {
         objectsValue.stringValue = "\(s.scene.objects)"
         lights.doubleValue = log2(Double(max(s.scene.lights, 1)))
         lightsValue.stringValue = "\(s.scene.lights)"
-        lightRays.selectItem(at: s.manyLightRays == 2 ? 1 : 0)
+        lightRays.selectItem(at: s.manyLightRays >= 2 ? 2 : s.manyLightReuse > 0 ? 1 : 0)
         lightRays.isEnabled = s.scene.lights > 4
         giMode.selectItem(at: s.giMode.rawValue)
         lightMaps.state = s.lightMaps ? .on : .off
@@ -349,7 +349,11 @@ final class SettingsPanel: NSObject {
         renderer.settings = s
     }
     @objc private func objectsChanged() { renderer.settings.scene.objects = Int((objects.doubleValue / 50).rounded()) * 50 }
-    @objc private func lightRaysChanged() { renderer.settings.manyLightRays = lightRays.indexOfSelectedItem + 1 }
+    @objc private func lightRaysChanged() {
+        let choice = lightRays.indexOfSelectedItem   // 0: 1 ray, 1: 1 ray + reuse, 2: 2 rays
+        renderer.settings.manyLightRays = choice == 2 ? 2 : 1
+        renderer.settings.manyLightReuse = choice == 1 ? renderer.defaultSettings.manyLightReuse : 0
+    }
     @objc private func lightsChanged() { renderer.settings.scene.lights = 1 << Int(lights.doubleValue.rounded()) }
     @objc private func giModeChanged() { renderer.settings.giMode = GIMode(rawValue: giMode.indexOfSelectedItem) ?? .pathTraced }
     @objc private func lightMapsChanged() { renderer.settings.lightMaps = lightMaps.state == .on }

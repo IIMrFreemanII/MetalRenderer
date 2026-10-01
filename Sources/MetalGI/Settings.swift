@@ -142,6 +142,8 @@ struct RenderSettings: Equatable {
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
+    var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
+                                       // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
     var surfels = SurfelSettings()
     var cascades = CascadeSettings()
     var scene = SceneSettings()

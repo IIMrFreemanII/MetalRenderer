@@ -78,6 +78,7 @@ final class Benchmark {
             case "mode": s.giMode = ["pt": .pathTraced, "surfels": .surfels, "cascades": .radianceCascades][kv[1]] ?? s.giMode
             case "lightmaps": s.lightMaps = v != 0
             case "lightrays": s.manyLightRays = Int(v)
+            case "lightreuse": s.manyLightReuse = Int(v)
             case "bounces": s.bounces = Int(v)
             case "rays": s.surfels.raysPerSurfel = Int(v)
             case "maxsurfels": s.surfels.maxSurfels = Int(v)

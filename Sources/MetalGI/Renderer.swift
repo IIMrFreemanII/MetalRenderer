@@ -28,8 +28,8 @@ final class RenderTargets {
     let surfacePos: MTLTexture      // xyz = world position, w = instance id + 1 (0 = sky or emitter: no GI)
     let geoNormal: MTLTexture       // geometric normal, oriented toward the camera
     let giDebug: MTLTexture         // debug visualisation written by surfel / cascade GI (view mode "GI debug")
-    let visibility: MTLTexture      // per light (rgba = lights 0...3): 1 if this frame's shadow ray reached the light
-    let blocker: MTLTexture         // per light: distance to the occluder that blocked it, 0 = visible
+    let visibility: MTLTexture      // per light group (rgba = groups 0...3): visibility of this frame's shadow ray(s)
+    let blocker: MTLTexture         // per light group: penumbra half width of the occluded samples, 0 = visible
     let shadow: ShadowTargets       // shadow denoiser state
     /// Denoiser state for [0] direct + indirect light combined (or direct alone) and [1] indirect light alone.
     let denoise: [DenoiseTargets]
@@ -97,6 +97,9 @@ final class ShadowTargets {
     let meta: [MTLTexture]      // [2], ping-ponged. z = history length
     let penumbra: MTLTexture    // per light: penumbra half-width in pixels
     let tiles: MTLTexture       // per 8x8 tile: 1 = fully lit / shadowed everywhere, nothing to filter
+    // More than 4 lights with light reuse: per group, last frame's light pick (manyLightsKernel), ping-ponged.
+    let reservoir: [MTLTexture]         // [2] rgba32Uint: light index | confidence M << 16
+    let reservoirWeight: [MTLTexture]   // [2] rgba32Float: the pick's contribution weight W
 
     init(device: MTLDevice, width: Int, height: Int, _ make: (MTLPixelFormat, String) throws -> MTLTexture) throws {
         history = try make(.rgba16Float, "shadow history")
@@ -104,6 +107,8 @@ final class ShadowTargets {
         pingB = try make(.rgba16Float, "shadow pingB")
         meta = [try make(.rgba16Float, "shadow meta0"), try make(.rgba16Float, "shadow meta1")]
         penumbra = try make(.rgba16Float, "shadow penumbra")
+        reservoir = [try make(.rgba32Uint, "light reservoir0"), try make(.rgba32Uint, "light reservoir1")]
+        reservoirWeight = [try make(.rgba32Float, "light reservoir weight0"), try make(.rgba32Float, "light reservoir weight1")]
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Uint, width: (width + 7) / 8,
                                                          height: (height + 7) / 8, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
@@ -143,6 +148,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var accumulatePSO: MTLComputePipelineState!
     private var lightMapPSO: MTLComputePipelineState!
     private var manyLightsPSO: MTLComputePipelineState!
+    private var manyLightsReusePSO: MTLComputePipelineState!
     private var rcPipelines: RCPipelines!
     private var surfelPipelines: SurfelPipelines!
     private var surfelGI: SurfelGI?                    // created on first use of the surfel GI mode
@@ -214,6 +220,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// MetalFX factors this GPU supports, with 0 meaning off.
     var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
     private var historyValid = false
+    private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
@@ -286,6 +293,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let accumulate = try pipeline("accumulateKernel")
         let lightMap = try pipeline("lightMapKernel")
         let manyLights = try pipeline("manyLightsKernel")
+        let manyLightsReuse = try pipeline("manyLightsReuseKernel")
         let rc = RCPipelines(probe: try pipeline("rcProbeKernel"), traceMerge: try pipeline("rcTraceMergeKernel"),
                              sh: try pipeline("rcSHKernel"), clearAmbient: try pipeline("rcClearAmbientKernel"),
                              resolve: try pipeline("rcResolveKernel"))
@@ -305,6 +313,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         accumulatePSO = accumulate
         lightMapPSO = lightMap
         manyLightsPSO = manyLights
+        manyLightsReusePSO = manyLightsReuse
         rcPipelines = rc
         surfelPipelines = surfel
     }
@@ -777,15 +786,22 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var denoiseStages: [ComputeStage] = []
         // 2c. More than 4 lights: direct light from one sampled light per group (manyLightsKernel), after the trace
         //     and before anything that reads direct light or visibility.
-        if scene.lights.count > 4 && frameUniforms.flags & UniformFlags.allLights == 0 {
+        let manyLights = scene.lights.count > 4 && frameUniforms.flags & UniformFlags.allLights == 0
+        let reuse = manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
+        let reservoirsValid = reuse && reservoirsWritten && historyValid
+        reservoirsWritten = reuse
+        if manyLights {
             denoiseStages.append(ComputeStage(pass: "many lights") { [self] enc in
                 var u = frameUniforms
-                enc.setComputePipelineState(manyLightsPSO)
+                enc.setComputePipelineState(reuse ? manyLightsReusePSO : manyLightsPSO)
                 enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
                 bindScene(enc, slot: slot)
-                var rays = UInt32(settings.manyLightRays)
-                enc.setBytes(&rays, length: MemoryLayout<UInt32>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker])
+                var config = SIMD4<UInt32>(UInt32(settings.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
+                                           reservoirsValid ? 1 : 0, 0)
+                enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
+                                  t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
+                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
                 dispatch(enc, "many lights", width: width, height: height)
             })
         }
