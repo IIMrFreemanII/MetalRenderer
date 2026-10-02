@@ -117,6 +117,7 @@ enum SceneKind: Int, CaseIterable {
     case emissive           // a dark room lit only by emissive meshes (neon shapes, a screen, a spinning ring)
     case mixed              // a room at dusk with every light type
     case fog                // a misty hall: sun shafts through tall windows, a searchlight, ground mist
+    case valley             // an open valley under the sky: a day cycle, drifting clouds and their shadows
 
     var title: String {
         switch self {
@@ -130,6 +131,7 @@ enum SceneKind: Int, CaseIterable {
         case .emissive: return "Emissive meshes"
         case .mixed: return "Mixed lights"
         case .fog: return "Misty hall"
+        case .valley: return "Open valley"
         }
     }
 }
@@ -219,10 +221,13 @@ struct FogSettings: Equatable {
         switch kind {
         case .cornell, .stress, .gallery, .area:
             break
+        case .valley:
+            f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
+            f.maxDistance = 150
         case .spots:
             f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
         case .sun:
-            f.enabled = true; f.density = 0.025; f.heightFalloff = 0.1; f.anisotropy = 0.3; f.noise = 0.3
+            f.enabled = true; f.density = 0.012; f.heightFalloff = 0.1; f.anisotropy = 0.3; f.noise = 0.3
             f.maxDistance = 100
         case .tubes:
             f.enabled = true; f.density = 0.05; f.heightFalloff = 0; f.anisotropy = 0.3; f.maxDistance = 30
@@ -236,6 +241,74 @@ struct FogSettings: Equatable {
         }
         if let override { f.enabled = override }
         return f
+    }
+}
+
+/// Where the sky comes from (Shaders.metal "Sky and clouds").
+enum SkyMode: Int, CaseIterable {
+    case constant           // one colour (the scene's), as indoor scenes use
+    case atmosphere         // physically based atmosphere; the sun light's colour follows it
+    case image              // an HDR environment image (.hdr, .exr); its sun drives the sun light
+
+    var title: String {
+        switch self {
+        case .constant: return "Constant colour"
+        case .atmosphere: return "Atmosphere"
+        case .image: return "HDR image"
+        }
+    }
+}
+
+/// The sky and its clouds. Each scene kind has a preset (`preset(for:)`).
+struct SkySettings: Equatable {
+    var mode = SkyMode.constant
+    var imagePath: String? = nil        // .image: the environment file
+    var imageExposure: Float = 0        // .image: stops on top of the automatic scale
+    var clouds = true
+    var cloudsOverImage = false         // .image: the volumetric clouds in front of the image too
+    var coverage: Float = 0.35          // 0 = clear, ~0.3 scattered cumulus, 1 = overcast
+    var density: Float = 0.03           // extinction inside a cloud (1/m)
+    var cloudBase: Float = 1500         // altitude of the layer's bottom (m)
+    var cloudThickness: Float = 1500
+    var cloudScale: Float = 4000        // shape noise tile (m): smaller = smaller clouds
+    var erosion: Float = 0.35           // detail noise eating the edges
+    var windSpeed: Float = 12           // m/s, blowing toward windDirection (degrees from +x toward +z)
+    var windDirection: Float = 30
+    var shadows = true                  // the clouds shadow the scene
+    var shadowStrength: Float = 1
+
+    static let coverageRange: ClosedRange<Float> = 0...1
+    static let densityRange: ClosedRange<Float> = 0.005...0.1
+    static let cloudBaseRange: ClosedRange<Float> = 300...4000
+    static let windRange: ClosedRange<Float> = 0...40
+    static let mapSize = 1024           // sky texture side, per hemisphere
+    static let shadowMapSize = 256
+    /// `METALGI_SKY=constant|atmosphere|<image path>` overrides every preset's mode.
+    static let override: String? = ProcessInfo.processInfo.environment["METALGI_SKY"]
+
+    /// The sky that suits scene `kind`: the atmosphere for the outdoor and window-lit scenes, a constant colour inside.
+    static func preset(for kind: SceneKind) -> SkySettings {
+        var s = SkySettings()
+        switch kind {
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog:
+            break
+        case .sun:
+            s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
+        case .mixed:
+            s.mode = .atmosphere; s.coverage = 0.25; s.shadows = false   // the sun is low: clouds near the horizon
+        case .valley:
+            // Small, low clouds (a stylised scale), so their shadows visibly cross the 400 m valley.
+            s.mode = .atmosphere; s.coverage = 0.4; s.cloudBase = 700; s.cloudThickness = 800; s.cloudScale = 800
+            s.density = 0.04; s.windSpeed = 14; s.shadowStrength = 0.7
+        }
+        if let o = override {
+            switch o {
+            case "constant": s.mode = .constant
+            case "atmosphere": s.mode = .atmosphere
+            default: s.mode = .image; s.imagePath = o
+            }
+        }
+        return s
     }
 }
 
@@ -264,6 +337,7 @@ struct RenderSettings: Equatable {
     var specular = ProcessInfo.processInfo.environment["METALGI_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALGI_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
     var fog = FogSettings.preset(for: .cornell)
+    var sky = SkySettings.preset(for: .cornell)
 
     /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their
@@ -279,8 +353,14 @@ struct RenderSettings: Equatable {
             surfels = defaults.surfels
             surfels.raysPerSurfel = 8
             surfels.maxSurfels = 65536
+        case .valley:   // 400 m across: screen-space cascades don't care, a surfel grid over it would be coarse
+            giMode = .radianceCascades
+            surfels = defaults.surfels
         }
         fog = FogSettings.preset(for: scene.kind)
+        let image = sky.mode == .image ? sky : nil   // an image the user opened stays
+        sky = SkySettings.preset(for: scene.kind)
+        if let image { sky.mode = .image; sky.imagePath = image.imagePath; sky.imageExposure = image.imageExposure }
     }
 
     static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0

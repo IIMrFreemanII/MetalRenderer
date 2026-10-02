@@ -26,12 +26,16 @@ struct SurfelPipelines {
 /// per-frame lists for one pool size.
 final class SurfelGI {
     static let cellSize: Float = 0.5        // surfel radius is clamped to half a cell, so a surfel touches <= 8 cells
+    /// The grid is dense and one threadgroup prefix-sums it every frame: larger scenes get larger cells (and so
+    /// larger surfels) to stay within this many cells (the 400 m valley: ~1.3 m cells instead of ~40M 0.5 m ones).
+    static let maxCells = 2_000_000
     static let headerAliveOffset = 0, headerFreeOffset = 4
     static let headerAliveDispatchOffset = 16, headerTraceDispatchOffset = 28
 
     let maxSurfels: Int
     private let gridMin: SIMD3<Float>
     private let gridDims: SIMD3<Int>
+    private let cellSize: Float
     private var cellCount: Int { gridDims.x * gridDims.y * gridDims.z }
 
     private let surfels, irradiance0, irradiance1, freeStack, lastUsed, killFlag, aliveList: MTLBuffer
@@ -47,8 +51,16 @@ final class SurfelGI {
         self.maxSurfels = maxSurfels
         gridMin = sceneBounds.0 - 1
         let extent = sceneBounds.1 + 1 - gridMin
-        gridDims = SIMD3(Int((extent.x / SurfelGI.cellSize).rounded(.up)), Int((extent.y / SurfelGI.cellSize).rounded(.up)),
-                         Int((extent.z / SurfelGI.cellSize).rounded(.up)))
+        var cell = SurfelGI.cellSize
+        func dims(_ c: Float) -> SIMD3<Int> {
+            SIMD3(Int((extent.x / c).rounded(.up)), Int((extent.y / c).rounded(.up)), Int((extent.z / c).rounded(.up)))
+        }
+        while case let d = dims(cell), d.x * d.y * d.z > SurfelGI.maxCells { cell *= 1.1 }
+        cellSize = cell
+        gridDims = dims(cell)
+        if cell > SurfelGI.cellSize {
+            print("Surfel grid: \(gridDims.x)x\(gridDims.y)x\(gridDims.z) cells of \(String(format: "%.2f", cell)) m (large scene)")
+        }
         let cells = gridDims.x * gridDims.y * gridDims.z
         func buffer(_ length: Int, _ label: String, shared: Bool = false) throws -> MTLBuffer {
             guard let b = device.makeBuffer(length: max(length, 16), options: shared ? .storageModeShared : .storageModePrivate) else {
@@ -91,7 +103,7 @@ final class SurfelGI {
                 normalDepth: MTLTexture, targets t: RenderTargets) {
         let rays = 1 << Int(log2(Double(SurfelSettings.raysRange.clamp(settings.raysPerSurfel))).rounded())
         var params = SurfelParams(
-            gridMin: SIMD4(gridMin, SurfelGI.cellSize),
+            gridMin: SIMD4(gridMin, cellSize),
             gridDims: SIMD4(UInt32(gridDims.x), UInt32(gridDims.y), UInt32(gridDims.z), UInt32(cellCount)),
             config: SIMD4(UInt32(maxSurfels), UInt32(rays), uniforms.frameIndex, 0),
             tuning: SIMD4(settings.radiusPixels, max(settings.maxHistory, 1), 2 * uniforms.camUp.w / Float(uniforms.height), 0))

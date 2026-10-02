@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Floating panel with a control for every `RenderSettings` field, plus live resolution / fps / GPU time.
 /// It never becomes the key window, so WASD and the keyboard shortcuts keep working while it's open.
@@ -78,11 +79,26 @@ final class SettingsPanel: NSObject {
     private let fogDistanceValue = NSTextField(labelWithString: "")
     private let fogVolumes = NSButton(checkboxWithTitle: "Local fog volumes", target: nil, action: nil)
     private let fogReflections = NSButton(checkboxWithTitle: "Fog in reflections", target: nil, action: nil)
+    // Sky
+    private let skyMode = NSPopUpButton()
+    private let clouds = NSButton(checkboxWithTitle: "Clouds", target: nil, action: nil)
+    private let coverage = NSSlider()
+    private let coverageValue = NSTextField(labelWithString: "")
+    private let cloudDensity = NSSlider()
+    private let cloudDensityValue = NSTextField(labelWithString: "")
+    private let cloudHeight = NSSlider()
+    private let cloudHeightValue = NSTextField(labelWithString: "")
+    private let wind = NSSlider()
+    private let windValue = NSTextField(labelWithString: "")
+    private let cloudShadows = NSButton(checkboxWithTitle: "Cloud shadows", target: nil, action: nil)
+    private let skyImageButton = NSButton(title: "Choose Image…", target: nil, action: nil)
     private static let surfelRayOptions = [4, 8, 16, 32]
     private var grid: NSGridView!
     private var modeRows: [GIMode: [Int]] = [:]   // grid rows shown only in that GI mode
     private var stressRows: [Int] = []             // grid rows shown only for the stress scene
     private var fogRows: [Int] = []                // grid rows shown only while fog is on
+    private var cloudRows: [Int] = []              // grid rows shown only with an atmosphere or image sky
+    private var imageRows: [Int] = []              // grid rows shown only with an image sky
 
     init(renderer: Renderer) {
         self.renderer = renderer
@@ -118,6 +134,10 @@ final class SettingsPanel: NSObject {
         configureSlider(fogAmbient, cg(FogSettings.ambientRange), ticks: 0, #selector(fogAmbientChanged))
         configureSlider(fogNoise, cg(FogSettings.noiseRange), ticks: 0, #selector(fogNoiseChanged))
         configureSlider(fogDistance, cg(FogSettings.distanceRange), ticks: 0, #selector(fogDistanceChanged))
+        configureSlider(coverage, cg(SkySettings.coverageRange), ticks: 0, #selector(coverageChanged))
+        configureSlider(cloudDensity, cg(SkySettings.densityRange), ticks: 0, #selector(cloudDensityChanged))
+        configureSlider(cloudHeight, cg(SkySettings.cloudBaseRange), ticks: 0, #selector(cloudHeightChanged))
+        configureSlider(wind, cg(SkySettings.windRange), ticks: 0, #selector(windChanged))
         // Scene sizes rebuild the scene, so they apply when the slider is released.
         configureSlider(objects, CGFloat(SceneSettings.objectRange.lowerBound)...CGFloat(SceneSettings.objectRange.upperBound),
                         ticks: 0, #selector(objectsChanged))
@@ -136,6 +156,7 @@ final class SettingsPanel: NSObject {
             (surfelRays, SettingsPanel.surfelRayOptions.map { "\($0) rays" }, #selector(surfelRaysChanged)),
             (maxSurfels, SurfelSettings.maxSurfelsOptions.map { "\($0 / 1024)k" }, #selector(maxSurfelsChanged)),
             (probeSpacing, CascadeSettings.spacingOptions.map { "\($0) px" }, #selector(probeSpacingChanged)),
+            (skyMode, SkyMode.allCases.map(\.title), #selector(skyModeChanged)),
         ] as [(NSPopUpButton, [String], Selector)] {
             popup.addItems(withTitles: titles)
             popup.target = self
@@ -158,7 +179,8 @@ final class SettingsPanel: NSObject {
                               (freezeLOD, #selector(freezeLODChanged)),
                               (specular, #selector(specularChanged)), (emissiveLights, #selector(emissiveLightsChanged)),
                               (fog, #selector(fogChanged)), (fogVolumes, #selector(fogVolumesChanged)),
-                              (fogReflections, #selector(fogReflectionsChanged))] {
+                              (fogReflections, #selector(fogReflectionsChanged)), (clouds, #selector(cloudsChanged)),
+                              (cloudShadows, #selector(cloudShadowsChanged)), (skyImageButton, #selector(chooseSkyImage))] {
             box.target = self
             box.action = action
         }
@@ -166,7 +188,8 @@ final class SettingsPanel: NSObject {
         stats.textColor = .secondaryLabelColor
         for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
                       surfelSizeValue, surfelHistoryValue, cascadeCountValue, firstIntervalValue, fogDensityValue, fogFalloffValue,
-                      fogAnisotropyValue, fogAmbientValue, fogNoiseValue, fogDistanceValue] {
+                      fogAnisotropyValue, fogAmbientValue, fogNoiseValue, fogDistanceValue, coverageValue, cloudDensityValue,
+                      cloudHeightValue, windValue] {
             value.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
             value.alignment = .right
         }
@@ -216,6 +239,15 @@ final class SettingsPanel: NSObject {
             [label("Distance"), fogDistance, fogDistanceValue],
             [NSGridCell.emptyContentView, fogVolumes],
             [NSGridCell.emptyContentView, fogReflections],
+            [header("Sky")],
+            [label("Sky"), skyMode],
+            [NSGridCell.emptyContentView, skyImageButton],
+            [NSGridCell.emptyContentView, clouds],
+            [label("Coverage"), coverage, coverageValue],
+            [label("Cloud density"), cloudDensity, cloudDensityValue],
+            [label("Cloud height"), cloudHeight, cloudHeightValue],
+            [label("Wind"), wind, windValue],
+            [NSGridCell.emptyContentView, cloudShadows],
             [header("Denoiser")],
             [NSGridCell.emptyContentView, denoise],
             [NSGridCell.emptyContentView, shadowDenoiser],
@@ -231,6 +263,8 @@ final class SettingsPanel: NSObject {
         func rowsOf(_ views: [NSView]) -> [Int] { views.compactMap { v in rows.firstIndex { $0.contains(v) } } }
         stressRows = rowsOf([objects, lights, lightRays])
         fogRows = rowsOf([fogDensity, fogFalloff, fogAnisotropy, fogAmbient, fogNoise, fogDistance, fogVolumes, fogReflections])
+        cloudRows = rowsOf([clouds, coverage, cloudDensity, cloudHeight, wind, cloudShadows])
+        imageRows = rowsOf([skyImageButton])
         modeRows = [.pathTraced: rowsOf([bounces, lightMaps]),
                     .surfels: rowsOf([surfelRays, maxSurfels, surfelSize, surfelHistory, surfelDenoise]),
                     .radianceCascades: rowsOf([probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise])]
@@ -306,6 +340,12 @@ final class SettingsPanel: NSObject {
             grid.row(at: r).isHidden = !s.fog.enabled
             layoutChanged = true
         }
+        for (rows, shown) in [(cloudRows, s.sky.mode != .constant), (imageRows, s.sky.mode == .image)] {
+            for r in rows where grid.row(at: r).isHidden != !shown {
+                grid.row(at: r).isHidden = !shown
+                layoutChanged = true
+            }
+        }
         if layoutChanged { resizeToFit() }
         sceneKind.selectItem(at: s.scene.kind.rawValue)
         rayTracer.selectItem(at: s.rayTracer.rawValue)
@@ -363,6 +403,22 @@ final class SettingsPanel: NSObject {
         fogDistanceValue.stringValue = String(format: "%.0f m", f.maxDistance)
         fogVolumes.state = f.volumes ? .on : .off
         fogReflections.state = f.reflections ? .on : .off
+        let sky = s.sky
+        skyMode.selectItem(at: sky.mode.rawValue)
+        clouds.state = (sky.mode == .image ? sky.cloudsOverImage : sky.clouds) ? .on : .off   // over an image: in front of it
+        coverage.doubleValue = Double(sky.coverage)
+        coverageValue.stringValue = String(format: "%.2f", sky.coverage)
+        cloudDensity.doubleValue = Double(sky.density)
+        cloudDensityValue.stringValue = String(format: "%.3f /m", sky.density)
+        cloudHeight.doubleValue = Double(sky.cloudBase)
+        cloudHeightValue.stringValue = String(format: "%.0f m", sky.cloudBase)
+        wind.doubleValue = Double(sky.windSpeed)
+        windValue.stringValue = String(format: "%.0f m/s", sky.windSpeed)
+        cloudShadows.state = sky.shadows ? .on : .off
+        skyImageButton.title = sky.imagePath.map { "Image: " + ($0 as NSString).lastPathComponent } ?? "Choose Image…"
+        for control in [coverage, cloudDensity, cloudHeight, wind, cloudShadows] as [NSControl] {
+            control.isEnabled = sky.mode == .image ? sky.cloudsOverImage : sky.clouds
+        }
 
         renderScale.doubleValue = Double(s.renderScale)
         renderScaleValue.stringValue = String(format: "%.3g×", s.renderScale)
@@ -479,6 +535,26 @@ final class SettingsPanel: NSObject {
     @objc private func fogDistanceChanged() { renderer.settings.fog.maxDistance = Float((fogDistance.doubleValue / 5).rounded() * 5) }
     @objc private func fogVolumesChanged() { renderer.settings.fog.volumes = fogVolumes.state == .on }
     @objc private func fogReflectionsChanged() { renderer.settings.fog.reflections = fogReflections.state == .on }
+    @objc private func skyModeChanged() {
+        let mode = SkyMode(rawValue: skyMode.indexOfSelectedItem) ?? .constant
+        if mode == .image && renderer.settings.sky.imagePath == nil { chooseSkyImage(); return }
+        renderer.settings.sky.mode = mode
+    }
+    @objc private func chooseSkyImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = SkyImage.fileExtensions.compactMap { UTType(filenameExtension: $0) }
+        panel.message = "Choose an equirectangular HDR image (.hdr or .exr) for the sky"
+        if panel.runModal() == .OK, let url = panel.url { renderer.addModels([url]) } else { update(from: renderer.settings) }
+    }
+    @objc private func cloudsChanged() {
+        if renderer.settings.sky.mode == .image { renderer.settings.sky.cloudsOverImage = clouds.state == .on }
+        else { renderer.settings.sky.clouds = clouds.state == .on }
+    }
+    @objc private func coverageChanged() { renderer.settings.sky.coverage = Float((coverage.doubleValue * 100).rounded() / 100) }
+    @objc private func cloudDensityChanged() { renderer.settings.sky.density = Float((cloudDensity.doubleValue * 1000).rounded() / 1000) }
+    @objc private func cloudHeightChanged() { renderer.settings.sky.cloudBase = Float((cloudHeight.doubleValue / 50).rounded() * 50) }
+    @objc private func windChanged() { renderer.settings.sky.windSpeed = Float(wind.doubleValue.rounded()) }
+    @objc private func cloudShadowsChanged() { renderer.settings.sky.shadows = cloudShadows.state == .on }
 
     // MARK: - Helpers
 

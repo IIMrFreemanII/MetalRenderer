@@ -42,6 +42,24 @@ enum UniformFlags {
     static let meshLights: UInt32 = 2048     // with the shadow denoiser: composite adds the denoised mesh-light direct light
     static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
     static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
+    static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
+}
+
+/// The sky (MSL SkyParams): the per-slot copy lives in the shading arguments (SceneShading), the sky kernels get it directly.
+struct GPUSkyParams {
+    var sun = SIMD4<Float>()          // xyz = toward the sun (unit), w = its angular radius
+    var sunTop = SIMD4<Float>()       // rgb = sun irradiance above the atmosphere (atmosphere mode)
+    var sunGround = SIMD4<Float>()    // rgb = sun irradiance at the ground (the sun light's colour)
+    var cloudLayer = SIMD4<Float>()   // x = cloud base altitude (m), y = top (m), z = coverage (0...1), w = extinction (1/m)
+    var cloudShape = SIMD4<Float>()   // x = shape noise tile (m), y = detail erosion, z = time (s), w = shadow strength
+    var wind = SIMD4<Float>()         // xyz = wind (m/s), w = weight of a new cloud sample in a texel (1 = replace)
+    var shadowMap = SIMD4<Float>()    // xy = centre (x, z) of the cloud-shadow square, z = its half size (m), w = ground height
+    var ground = SIMD4<Float>()       // rgb = ground albedo below the horizon, w = the sky's observer altitude (m)
+    var flags = SIMD4<UInt32>()       // x = mode (GPUSkyParams.atmosphere / .image), y = feature bits, z = update phase 0...15,
+                                      // w = frame (jitters the cloud march)
+
+    static let atmosphere: UInt32 = 1, image: UInt32 = 2
+    static let clouds: UInt32 = 1, shadows: UInt32 = 2, updateAll: UInt32 = 4, cloudsOverImage: UInt32 = 8
 }
 
 struct GPUMesh {
@@ -132,6 +150,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
+    precondition(MemoryLayout<GPUSkyParams>.stride == 144, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")

@@ -14,7 +14,9 @@ final class RenderView: MTKView {
 
     var onDropModels: (([URL]) -> Void)?
 
-    static let modelTypes: [UTType] = ["glb", "gltf"].compactMap { UTType(filenameExtension: $0) }
+    /// What File > Open and drag and drop accept: glTF models, and HDR images (.hdr, .exr) for the sky.
+    static let openableExtensions = ["glb", "gltf", "hdr", "exr"]
+    static let modelTypes: [UTType] = openableExtensions.compactMap { UTType(filenameExtension: $0) }
 
     override init(frame: CGRect, device: MTLDevice?) {
         super.init(frame: frame, device: device)
@@ -24,7 +26,7 @@ final class RenderView: MTKView {
 
     private func modelURLs(_ info: NSDraggingInfo) -> [URL] {
         let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return urls.filter { ["glb", "gltf"].contains($0.pathExtension.lowercased()) }
+        return urls.filter { RenderView.openableExtensions.contains($0.pathExtension.lowercased()) }
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { modelURLs(sender).isEmpty ? [] : .copy }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

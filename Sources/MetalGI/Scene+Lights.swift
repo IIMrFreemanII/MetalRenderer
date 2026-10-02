@@ -1,8 +1,8 @@
 import Foundation
 import simd
 
-/// Demo scenes for the light types: one per type (spot, sun, rect, tube, emissive mesh), one with all of them, and a
-/// misty hall for the volumetric fog. Procedural geometry only, so they load at once; every light moves, sweeps or
+/// Demo scenes for the light types: one per type (spot, sun, rect, tube, emissive mesh), one with all of them, a
+/// misty hall for the volumetric fog, and an open valley for the sky and clouds. Procedural geometry only, so they load at once; every light moves, sweeps or
 /// flickers. Their fog settings are presets (FogSettings.preset); the local fog volumes are set up here.
 extension Scene {
     /// Shared meshes and a box helper for the builders below.
@@ -62,6 +62,7 @@ extension Scene {
         case .emissive: return camera([0, 2.2, 6.5], pitch: -0.14)
         case .mixed: return camera([-3.4, 1.7, 3.7], yaw: 0.42, pitch: -0.14)
         case .fog: return camera([1.2, 1.7, 2.6], yaw: -0.04, pitch: 0.1)
+        case .valley: return camera([4, 2.2, 38], yaw: -0.15, pitch: 0.12)
         case .cornell, .stress, .gallery: return nil
         }
     }
@@ -464,6 +465,84 @@ extension Scene {
         fogVolumes.append(FogVolume(shape: .sphere(radius: 2), center: [3.4, 1.7, -20.5], density: 0.12,
                                     albedo: [1.0, 0.9, 0.8], edge: 1.2, noise: 0.8))
         defaultCamera = Scene.demoCamera(.fog)!
+    }
+
+    // MARK: - Open valley
+
+    /// An open valley under the sky (the atmosphere and clouds preset): fields, a road and a small village with a
+    /// church tower, trees and fences, hills around, and a day cycle from morning to evening and back (90 s each
+    /// way; the sun stays 10 degrees or more above the horizon, as the exposure is fixed). Low, small clouds drift
+    /// over it, so their shadows cross the fields.
+    func buildValley() {
+        let kit = Kit(self)
+        let grass = addMaterial(albedo: [0.22, 0.36, 0.13])
+        let wheat = addMaterial(albedo: [0.62, 0.52, 0.24])
+        let meadow = addMaterial(albedo: [0.3, 0.42, 0.16])
+        let road = addMaterial(albedo: [0.32, 0.3, 0.28])
+        let wall = addMaterial(albedo: [0.78, 0.74, 0.66])
+        let roof = addMaterial(albedo: [0.55, 0.2, 0.12])
+        let slate = addMaterial(albedo: [0.25, 0.26, 0.3])
+        let trunk = addMaterial(albedo: [0.3, 0.2, 0.12])
+        let leaves = addMaterial(albedo: [0.13, 0.28, 0.09])
+        let hill = addMaterial(albedo: [0.24, 0.34, 0.15])
+        let wood = addMaterial(albedo: [0.45, 0.33, 0.2])
+        let pond = addPBRMaterial(baseColor: [0.03, 0.05, 0.06], metallic: 0, roughness: 0.04)
+
+        addInstance(kit.quad, grass, scale([400, 1, 400]))
+        // Fields and the road.
+        for (lo, hi, m) in [(SIMD3<Float>(-90, 0, -60), SIMD3<Float>(-20, 0.02, 10), wheat),
+                            (SIMD3<Float>(25, 0, -80), SIMD3<Float>(110, 0.02, -15), wheat),
+                            (SIMD3<Float>(25, 0, 5), SIMD3<Float>(90, 0.02, 60), meadow)] as [(SIMD3<Float>, SIMD3<Float>, Int)] {
+            kit.slab(lo, hi, m)
+        }
+        kit.slab([-200, 0, -3], [200, 0.04, 3], road)
+        kit.slab([-3, 0, -200], [3, 0.04, -3], road)
+        kit.slab([-40, 0, 18], [-22, 0.05, 30], pond)
+        // Hills on three sides (flattened spheres sunk into the ground).
+        for (c, sz) in [(SIMD3<Float>(-150, -20, -170), SIMD3<Float>(140, 70, 70)), (SIMD3<Float>(60, -25, -190), SIMD3<Float>(170, 80, 60)),
+                        (SIMD3<Float>(190, -15, -40), SIMD3<Float>(60, 55, 140)), (SIMD3<Float>(-190, -18, 20), SIMD3<Float>(50, 50, 120))] {
+            addInstance(kit.sphere, hill, translate(c) * scale(sz))
+        }
+        // The village around the crossroads: houses with pitched roofs, and a church with a tower.
+        func house(_ x: Float, _ z: Float, _ yaw: Float, _ w: Float = 6, _ d: Float = 8, _ h: Float = 4) {
+            let t = translate([x, 0, z]) * rotate(yaw, [0, 1, 0])
+            addInstance(kit.cube, wall, t * translate([0, h / 2, 0]) * scale([w, h, d]))
+            for side: Float in [-1, 1] {   // two roof planes meeting at the ridge
+                addInstance(kit.cube, roof, t * translate([side * w / 4, h + w / 4 * 0.75, 0]) * rotate(side * -0.64, [0, 0, 1])
+                            * scale([w * 0.62, 0.25, d + 0.6]))
+            }
+        }
+        for (x, z, yaw) in [(Float(-12), Float(-12), Float(0)), (-24, -14, 0.1), (-13, 12, 0), (12, -13, 0.05), (24, -12, -0.1),
+                            (13, 13, 0), (-36, -11, 0.2), (36, 12, -0.15)] {
+            house(x, z, yaw)
+        }
+        addInstance(kit.cube, wall, translate([-8, 4, -36]) * scale([10, 8, 18]))                    // church
+        addInstance(kit.cube, slate, translate([-8, 9.2, -36]) * rotate(.pi / 4, [0, 0, 1]) * scale([7.4, 7.4, 18.4]))
+        addInstance(kit.cube, wall, translate([-8, 10, -24]) * scale([5, 20, 5]))                    // tower
+        addInstance(kit.cube, slate, translate([-8, 22, -24]) * rotate(.pi / 4, [0, 1, 0]) * scale([3.2, 4, 3.2]))
+        // Trees: along the road, in a copse, and alone in the fields.
+        func tree(_ x: Float, _ z: Float, _ size: Float = 1) {
+            kit.box([x, 1.5 * size, z], [0.4 * size, 3 * size, 0.4 * size], trunk)
+            kit.ball([x, 4.2 * size, z], 2.2 * size, leaves)
+        }
+        for i in 0..<8 { tree(-60 + Float(i) * 14, 6, 0.9 + 0.15 * Float(i % 3)) }
+        for (x, z) in [(Float(55), Float(-30)), (60, -24), (66, -32), (58, -38), (70, -26), (-60, 40), (80, 30), (-110, -20)] {
+            tree(x, z, 1.2)
+        }
+        // A fence along the meadow, close to the camera.
+        for i in 0..<16 { kit.box([10 + Float(i) * 2.5, 0.6, 22], [0.12, 1.2, 0.12], wood) }
+        kit.box([28.75, 0.9, 22], [37.5, 0.08, 0.08], wood)
+        kit.box([28.75, 0.5, 22], [37.5, 0.08, 0.08], wood)
+
+        // The sun: morning in the east (+x) to evening in the west (-x), passing ahead of the camera (-z), and back,
+        // 90 s each way; t = 0 is mid-morning. Its colour comes from the atmosphere.
+        let half: Float = 90
+        addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { t in
+            let phase = 0.5 - 0.5 * cos(.pi * (t / half + 0.35))   // 0 = morning, 1 = evening
+            let e = Scene.degrees(10 + 50 * sin(.pi * phase)), a = Scene.degrees(20 + 140 * phase)
+            return LightPose(position: .zero, direction: [cos(e) * cos(a), sin(e), -cos(e) * sin(a)])
+        }
+        defaultCamera = Scene.demoCamera(.valley)!
     }
 
     // MARK: - Mixed

@@ -196,6 +196,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var fogInjectPSO: MTLComputePipelineState!
     private var fogIntegratePSO: MTLComputePipelineState!
     private var fogReferencePSO: MTLComputePipelineState!
+    private var skyPSO: MTLComputePipelineState!
+    private var cloudShadowPSO: MTLComputePipelineState!
+    private var cloudNoisePSO: MTLComputePipelineState!
+    private var skyMeanPSO: MTLComputePipelineState!
+    private var transmittanceLUTPSO: MTLComputePipelineState!
+    private var multiScatterLUTPSO: MTLComputePipelineState!
     private var rcPipelines: RCPipelines!
     private var surfelPipelines: SurfelPipelines!
     private var surfelGI: SurfelGI?                    // created on first use of the surfel GI mode
@@ -239,6 +245,25 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
     private var dummy2D: MTLTexture!
+    private var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
+    // Sky and clouds (Shaders.metal "Sky and clouds"), allocated when first used.
+    private var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
+    private var cloudShadowMap: MTLTexture?     // clouds' transmittance toward the sun over the ground around the scene
+    private var cloudShape: MTLTexture?         // 128^3 Perlin-Worley + Worley octaves (cloudNoiseKernel)
+    private var cloudDetail: MTLTexture?        // 32^3 Worley octaves
+    private var cloudNoiseReady = false         // the noise and the atmosphere's tables have been drawn
+    private var transmittanceLUT: MTLTexture?   // atmosphere transmittance to its top, by height and angle
+    private var multiScatterLUT: MTLTexture?    // atmosphere multiple scattering, by height and sun angle
+    private var skyMean: MTLBuffer?             // the sky's mean radiance per hemisphere (skyMeanKernel), for the next frame
+    private var skyImage: (path: String, exposure: Float, image: SkyImage, texture: MTLTexture)?
+    private var skyImageFailed: String?         // a path that didn't load (not retried every frame)
+    private var skyParams = GPUSkyParams()      // this frame's (also written into the shading arguments)
+    private var skyActive = false               // this frame uses the sky texture
+    private var skyRefreshed: (sky: SkySettings, scene: ObjectIdentifier)?   // what the sky texture was fully drawn for
+    private var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
+    /// Shading-argument layout (MSL SceneShading): six buffer addresses, the sky and cloud-shadow textures, SkyParams.
+    private static let shadingSkyOffset = 48, shadingParamsOffset = 64
+    private static let shadingArgsLength = 64 + MemoryLayout<GPUSkyParams>.stride
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] = []
@@ -327,9 +352,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
 
         try loadShaders(for: settings.rayTracer, lightTypes: scene.lightTypeMask)
+        try createDummyTextures()
         try createSceneResources()
         try createBlueNoiseTexture()
-        try createDummyTextures()
         if !upscaleSupported {
             // Without MetalFX, a 0.5x render would just be stretched, so render at 0.75x instead.
             print("MetalFX temporal upscaling is not supported on this GPU; rendering at 0.75x without it")
@@ -393,6 +418,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let fogInject = try pipeline("fogInjectKernel")
         let fogIntegrate = try pipeline("fogIntegrateKernel")
         let fogReference = try pipeline("fogReferenceKernel")
+        let sky = try pipeline("skyKernel")
+        let cloudShadow = try pipeline("cloudShadowKernel")
+        let cloudNoise = try pipeline("cloudNoiseKernel")
+        let skyMeanP = try pipeline("skyMeanKernel")
+        let transmittanceLUTP = try pipeline("transmittanceLUTKernel")
+        let multiScatterLUTP = try pipeline("multiScatterLUTKernel")
         let geometryDebug = try pipeline("geometryDebugKernel")
         let rt = kind != .custom ? nil :
             RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
@@ -426,6 +457,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         fogInjectPSO = fogInject
         fogIntegratePSO = fogIntegrate
         fogReferencePSO = fogReference
+        skyPSO = sky
+        cloudShadowPSO = cloudShadow
+        cloudNoisePSO = cloudNoise
+        skyMeanPSO = skyMeanP
+        transmittanceLUTPSO = transmittanceLUTP
+        multiScatterLUTPSO = multiScatterLUTP
         geometryDebugPSO = geometryDebug
         rcPipelines = rc
         rtPipelines = rt
@@ -605,7 +642,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                        "textureFeedback")
         shadingArgs = []
         for slot in 0..<Renderer.maxFramesInFlight {
-            guard let args = device.makeBuffer(length: 48, options: .storageModeShared) else {
+            guard let args = device.makeBuffer(length: Renderer.shadingArgsLength, options: .storageModeShared) else {
                 throw RendererError.resourceCreation("buffer shadingArgs")
             }
             args.label = "shadingArgs\(slot)"
@@ -617,6 +654,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.storeBytes(of: (textureStreamer?.feedbackBuffer(slot: slot) ?? feedbackDummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
             p.storeBytes(of: emissiveBuffer.gpuAddress, toByteOffset: 40, as: UInt64.self)
             shadingArgs.append(args)
+            writeSkyArguments(slot: slot)
         }
         shadingResources = [materialBuffer, uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer]
             + (textureStreamer == nil ? materialTextures : [])
@@ -693,11 +731,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let d2 = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
         d2.usage = .shaderRead
         d2.storageMode = .private
-        guard let t3 = device.makeTexture(descriptor: d3), let t2 = device.makeTexture(descriptor: d2) else {
+        let da = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
+        da.textureType = .type2DArray
+        da.arrayLength = 2
+        da.usage = .shaderRead
+        da.storageMode = .private
+        guard let t3 = device.makeTexture(descriptor: d3), let t2 = device.makeTexture(descriptor: d2),
+              let ta = device.makeTexture(descriptor: da) else {
             throw RendererError.resourceCreation("dummy textures")
         }
         dummy3D = t3
         dummy2D = t2
+        dummyArray = ta
     }
 
     /// The fog's 3D noise, generated the first time fog is on (~50 ms).
@@ -757,6 +802,210 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return p
     }
 
+    // MARK: - Sky
+
+    /// The sky texture, the cloud noise and the cloud-shadow map, allocated the first time the sky is used.
+    private func ensureSkyTextures() -> Bool {
+        if skyMap != nil { return true }
+        let n = SkySettings.mapSize
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: n, height: n, mipmapped: true)
+        d.textureType = .type2DArray
+        d.arrayLength = 2
+        d.usage = [.shaderRead, .shaderWrite, .renderTarget]
+        d.storageMode = .private
+        let m = SkySettings.shadowMapSize
+        let ds = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r16Float, width: m, height: m, mipmapped: false)
+        ds.usage = [.shaderRead, .shaderWrite]
+        ds.storageMode = .private
+        func volume(_ side: Int) -> MTLTextureDescriptor {
+            let v = MTLTextureDescriptor()
+            v.textureType = .type3D
+            v.pixelFormat = .rgba8Unorm
+            v.width = side; v.height = side; v.depth = side
+            v.mipmapLevelCount = Int(log2(Double(side))) + 1   // the clouds read coarser levels for longer steps
+            v.usage = [.shaderRead, .shaderWrite, .renderTarget]
+            v.storageMode = .private
+            return v
+        }
+        func lut(_ w: Int, _ h: Int) -> MTLTextureDescriptor {
+            let l = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false)
+            l.usage = [.shaderRead, .shaderWrite]
+            l.storageMode = .private
+            return l
+        }
+        guard let sky = device.makeTexture(descriptor: d), let shadow = device.makeTexture(descriptor: ds),
+              let shape = device.makeTexture(descriptor: volume(128)), let detail = device.makeTexture(descriptor: volume(32)),
+              let tLUT = device.makeTexture(descriptor: lut(256, 64)), let msLUT = device.makeTexture(descriptor: lut(32, 32)),
+              let mean = device.makeBuffer(length: 32, options: .storageModeShared) else {
+            return false
+        }
+        memset(mean.contents(), 0, 32)
+        transmittanceLUT = tLUT
+        multiScatterLUT = msLUT
+        skyMean = mean
+        sky.label = "sky"; shadow.label = "cloud shadow"; shape.label = "cloud shape noise"; detail.label = "cloud detail noise"
+        skyMap = sky
+        cloudShadowMap = shadow
+        cloudShape = shape
+        cloudDetail = detail
+        cloudNoiseReady = false
+        return true
+    }
+
+    /// The environment image for `path` (loaded once, its sun cut out), as an equirectangular texture.
+    private func skyImageFor(_ path: String, exposure: Float) -> (image: SkyImage, texture: MTLTexture)? {
+        if let s = skyImage, s.path == path, s.exposure == exposure { return (s.image, s.texture) }
+        if skyImageFailed == path { return nil }
+        do {
+            let image = try SkyImage.load(path: path, exposure: exposure)
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: image.width, height: image.height,
+                                                             mipmapped: false)
+            d.usage = .shaderRead
+            d.storageMode = .shared
+            guard let texture = device.makeTexture(descriptor: d) else { return nil }
+            texture.label = "sky image"
+            image.pixels.withUnsafeBytes { raw in
+                texture.replace(region: MTLRegionMake2D(0, 0, image.width, image.height), mipmapLevel: 0,
+                                withBytes: raw.baseAddress!, bytesPerRow: image.width * 16)
+            }
+            skyImage = (path, exposure, image, texture)
+            let sun = image.sunDirection.map { String(format: "sun toward (%.3f, %.3f, %.3f), %.2f° across, irradiance %.2f", $0.x, $0.y, $0.z, 2 * image.sunAngularRadius * 180 / .pi, 0.2126 * image.sunIrradiance.x + 0.7152 * image.sunIrradiance.y + 0.0722 * image.sunIrradiance.z) } ?? "no sun"
+            print("Sky image: \((path as NSString).lastPathComponent), \(image.width)×\(image.height), \(sun)")
+            return (image, texture)
+        } catch {
+            print("Sky image failed to load (\(path)): \(error)")
+            skyImageFailed = path
+            return nil
+        }
+    }
+
+    /// This frame's sky: the sun (from the atmosphere, or the image's), which also sets the scene's sun light (its
+    /// colour, and with an image its direction), and the clouds. False for a constant sky (or an image that failed).
+    private func updateSky(lights: inout [GPULight]) -> Bool {
+        let sky = settings.sky
+        guard sky.mode != .constant, ensureSkyTextures() else { return false }
+        var image: SkyImage?
+        if sky.mode == .image {
+            guard let path = sky.imagePath, let loaded = skyImageFor(path, exposure: sky.imageExposure) else { return false }
+            image = loaded.image
+        }
+        let sunIndex = lights.firstIndex { Int($0.color.w) >> 2 == Int(GPULight.sun) }
+        var sunDir = normalize(SIMD3<Float>(0.4, 0.5, -0.6)), sunRadius: Float = 0.27 * .pi / 180
+        if let d = image?.sunDirection {
+            sunDir = d
+            sunRadius = image!.sunAngularRadius
+        } else if let i = sunIndex {
+            sunDir = normalize(SIMD3(lights[i].axis.x, lights[i].axis.y, lights[i].axis.z))
+            sunRadius = lights[i].positionRadius.w
+        }
+        let sunGround: SIMD3<Float>
+        if let image {
+            sunGround = image.sunDirection == nil ? .zero : image.sunIrradiance
+        } else {
+            if atmosphereCache == nil || length(atmosphereCache!.sun - sunDir) > 1e-4 {
+                atmosphereCache = (sunDir, Atmosphere.sunIrradiance(toward: sunDir))
+            }
+            sunGround = atmosphereCache!.ground
+        }
+        if let i = sunIndex {
+            lights[i].color = SIMD4(sunGround, lights[i].color.w)
+            lights[i].axis = SIMD4(sunDir, 0)
+            lights[i].positionRadius.w = sunRadius
+        }
+        let full = skyRefreshed == nil || skyRefreshed!.sky != sky || skyRefreshed!.scene != ObjectIdentifier(scene)
+        skyRefreshed = (sky, ObjectIdentifier(scene))
+        let windAngle = sky.windDirection * .pi / 180
+        let sphere = scene.sceneSphere
+        var p = GPUSkyParams()
+        p.sun = SIMD4(sunDir, sunRadius)
+        p.sunTop = SIMD4(Atmosphere.solarIrradiance, 0)
+        p.sunGround = SIMD4(sunGround, 0)
+        p.cloudLayer = SIMD4(sky.cloudBase, sky.cloudBase + max(sky.cloudThickness, 100),
+                             SkySettings.coverageRange.clamp(sky.coverage), SkySettings.densityRange.clamp(sky.density))
+        p.cloudShape = SIMD4(max(sky.cloudScale, 100), sky.erosion, animTime, sky.shadowStrength)
+        p.wind = SIMD4(SIMD3(cos(windAngle), 0, sin(windAngle)) * sky.windSpeed, full ? 1 : 0.5)
+        p.shadowMap = SIMD4(sphere.x, sphere.z, max(1.2 * sphere.w, 150), 0)
+        p.ground = SIMD4(SIMD3(repeating: 0.25), Atmosphere.observerAltitude)
+        let clouds = sky.clouds && (image == nil || sky.cloudsOverImage)
+        p.flags = SIMD4(image == nil ? GPUSkyParams.atmosphere : GPUSkyParams.image,
+                        (sky.clouds ? GPUSkyParams.clouds : 0) | (clouds && sky.shadows ? GPUSkyParams.shadows : 0)
+                            | (full ? GPUSkyParams.updateAll : 0) | (sky.cloudsOverImage ? GPUSkyParams.cloudsOverImage : 0),
+                        frameIndex % 16, frameIndex)
+        skyParams = p
+        return true
+    }
+
+    /// The sky's part of the shading arguments (MSL SceneShading): its textures (stand-ins without a sky) and SkyParams.
+    private func writeSkyArguments(slot: Int) {
+        guard slot < shadingArgs.count else { return }
+        let p = shadingArgs[slot].contents()
+        let sky = skyActive ? skyMap ?? dummyArray! : dummyArray!, shadow = skyActive ? cloudShadowMap ?? dummy2D! : dummy2D!
+        p.storeBytes(of: sky.gpuResourceID, toByteOffset: Renderer.shadingSkyOffset, as: MTLResourceID.self)
+        p.storeBytes(of: shadow.gpuResourceID, toByteOffset: Renderer.shadingSkyOffset + 8, as: MTLResourceID.self)
+        p.storeBytes(of: skyActive ? skyParams : GPUSkyParams(), toByteOffset: Renderer.shadingParamsOffset, as: GPUSkyParams.self)
+    }
+
+    /// The sky's passes, ahead of the frame's main encoder: the cloud noise and the atmosphere's tables (once), then
+    /// this frame's sky texels, the cloud-shadow map and the sky texture's mips (encodeSkyTexels).
+    private func encodeSky(_ cb: MTLCommandBuffer) {
+        guard let sky = skyMap, let shape = cloudShape, let detail = cloudDetail, let shadow = cloudShadowMap,
+              let tLUT = transmittanceLUT, let msLUT = multiScatterLUT, let mean = skyMean,
+              let enc = cb.makeComputeCommandEncoder() else { return }
+        if !cloudNoiseReady {   // once: the cloud noise and the atmosphere's tables (the second reads the first)
+            enc.setComputePipelineState(cloudNoisePSO)
+            enc.setTexture(shape, index: 0)
+            enc.setTexture(detail, index: 1)
+            enc.dispatchThreads(MTLSize(width: shape.width, height: shape.height, depth: shape.depth),
+                                threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 4))
+            enc.setComputePipelineState(transmittanceLUTPSO)
+            enc.setTexture(tLUT, index: 0)
+            dispatch(enc, "transmittance", width: tLUT.width, height: tLUT.height)
+            enc.setComputePipelineState(multiScatterLUTPSO)
+            setTextures(enc, [tLUT, msLUT])
+            dispatch(enc, "multiple scattering", width: msLUT.width, height: msLUT.height)
+            enc.endEncoding()
+            if let blit = cb.makeBlitCommandEncoder() {
+                blit.generateMipmaps(for: shape)
+                blit.generateMipmaps(for: detail)
+                blit.endEncoding()
+            }
+            cloudNoiseReady = true
+            guard let next = cb.makeComputeCommandEncoder() else { return }
+            encodeSkyTexels(next, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb)
+            return
+        }
+        encodeSkyTexels(enc, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb)
+    }
+
+    private func encodeSkyTexels(_ enc: MTLComputeCommandEncoder, sky: MTLTexture, shape: MTLTexture, detail: MTLTexture,
+                                 shadow: MTLTexture, tLUT: MTLTexture, msLUT: MTLTexture, mean: MTLBuffer, cb: MTLCommandBuffer) {
+        var p = skyParams
+        // The clear sky's mean radiance (lights the clouds and the ground), then this frame's sky texels.
+        enc.setComputePipelineState(skyMeanPSO)
+        enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
+        enc.setBuffer(mean, offset: 0, index: 1)
+        setTextures(enc, [skyImage?.texture ?? dummy2D, tLUT, msLUT])
+        enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+        enc.setComputePipelineState(skyPSO)
+        enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
+        enc.setBuffer(mean, offset: 0, index: 1)
+        setTextures(enc, [shape, detail, blueNoiseTexture, skyImage?.texture ?? dummy2D, sky, tLUT, msLUT])
+        let part = p.flags.y & GPUSkyParams.updateAll != 0 ? 1 : 4   // this frame's texels: every one, or 1 in 4x4
+        enc.dispatchThreads(MTLSize(width: sky.width / part, height: sky.height / part, depth: 2),
+                            threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+        if p.flags.y & GPUSkyParams.shadows != 0 {
+            enc.setComputePipelineState(cloudShadowPSO)
+            enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
+            setTextures(enc, [shape, detail, shadow])
+            dispatch(enc, "cloud shadow", width: shadow.width, height: shadow.height)
+        }
+        enc.endEncoding()
+        if let blit = cb.makeBlitCommandEncoder() {
+            blit.generateMipmaps(for: sky)
+            blit.endEncoding()
+        }
+    }
+
     private func instanceASDescriptor(slot: Int) -> MTLInstanceAccelerationStructureDescriptor {
         let d = MTLInstanceAccelerationStructureDescriptor()
         d.instancedAccelerationStructures = primitiveAS
@@ -808,7 +1057,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
             scene.materialsChanged = false
         }
-        let lights = scene.gpuLights()
+        var lights = scene.gpuLights()
+        skyActive = updateSky(lights: &lights)
+        writeSkyArguments(slot: slot)
         if !lights.isEmpty {
             lights.withUnsafeBytes { raw in
                 lightBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
@@ -883,6 +1134,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                  DenoiserSettings.antiLagRange.clamp(d.antiLag), 0)
         u.instanceCount = UInt32(scene.instances.count)
         u.lightGroupEnd = scene.lightGroupEnd
+        if skyActive { u.flags |= UniformFlags.skyMap }
         return u
     }
 
@@ -1067,6 +1319,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             uniforms.flags |= UniformFlags.blueNoise
         }
         let cur = Int(frameIndex & 1), prev = cur ^ 1
+        if skyActive { encodeSky(passBuffer("sky")) }
 
         // 1b. Light-visibility maps, for GI techniques and the path tracer's light-map variant.
         let frameUniforms = uniforms
@@ -1501,6 +1754,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBuffer(instanceDataBuffers[slot], offset: 0, index: 6)
         enc.setBuffer(shadingArgs[slot], offset: 0, index: 7)
         enc.useResources(shadingResources, usage: .read)
+        enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
         if let textureStreamer {
             enc.useHeap(textureStreamer.heap)
             enc.useResource(textureStreamer.minLodBuffer(slot: slot), usage: .read)
@@ -1566,6 +1820,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Drops all temporal GI state (surfel pool, cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
+        skyRefreshed = nil
         fogLastFrame = nil
         radianceCascades?.reset()
         surfelGI?.reset()
@@ -1591,6 +1846,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         Benchmark.applySceneOverride(to: &s.scene)
         s.fog = c.fog ?? FogSettings.preset(for: s.scene.kind)
         Benchmark.applyFogOverride(to: &s.fog)
+        s.sky = c.sky ?? SkySettings.preset(for: s.scene.kind)
+        Benchmark.applySkyOverride(to: &s.sky)
         if let rt = c.rayTracer { s.rayTracer = rt }
         if let v = c.virtualGeometry { s.virtualGeometry = v }
         s.denoiser.enabled = c.denoiseEnabled
@@ -1714,8 +1971,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
 
     /// Adds glTF models to the scene, side by side 2.5 m in front of the camera on the floor, facing it
-    /// (glTF models face +Z). The scene reloads in the background.
+    /// (glTF models face +Z); the scene reloads in the background. An HDR image (.hdr, .exr) becomes the sky.
     func addModels(_ urls: [URL]) {
+        if let image = urls.last(where: { SkyImage.fileExtensions.contains($0.pathExtension.lowercased()) }) {
+            settings.sky.mode = .image
+            settings.sky.imagePath = image.path
+            skyImageFailed = nil
+        }
+        let urls = urls.filter { !SkyImage.fileExtensions.contains($0.pathExtension.lowercased()) }
+        guard !urls.isEmpty else { return }
         var forward = camera.forward
         forward.y = 0
         forward = length(forward) > 1e-4 ? normalize(forward) : SIMD3(0, 0, -1)

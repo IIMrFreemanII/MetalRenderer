@@ -58,19 +58,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
           R            hot-reload Shaders.metal (edit it while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
-          Cmd-O        add glTF models (.glb / .gltf) in front of the camera; or drop them on the window
+          Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// File > Open…: glTF models, placed in front of the camera.
+    /// File > Open…: glTF models, placed in front of the camera, or an HDR environment image for the sky.
     @objc private func openModels(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = RenderView.modelTypes
         panel.allowsMultipleSelection = true
         panel.directoryURL = Scene.assetsDirectory
-        panel.message = "Choose glTF models (.glb or .gltf) to add to the scene"
+        panel.message = "Choose glTF models (.glb or .gltf) to add to the scene, or an HDR image (.hdr or .exr) for the sky"
         guard panel.runModal() == .OK else { return }
         renderer.addModels(panel.urls)
     }

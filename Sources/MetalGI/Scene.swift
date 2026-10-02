@@ -132,7 +132,7 @@ final class Scene {
     /// Local fog volumes (used while the fog and its volumes are on), at most GPUFogParams.maxVolumes.
     var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
-    private var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
+    private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
@@ -151,6 +151,7 @@ final class Scene {
         case .emissive: buildEmissive()
         case .mixed: buildMixed()
         case .fog: buildFogHall()
+        case .valley: buildValley()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }

@@ -37,6 +37,7 @@ final class Benchmark {
         var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALGI_VG...)
         var camera: Camera? = nil                             // fixed camera instead of the scene's default
         var fog: FogSettings? = nil                           // nil = the scene's preset (FogSettings.preset)
+        var sky: SkySettings? = nil                           // nil = the scene's preset (SkySettings.preset)
     }
 
     /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
@@ -162,6 +163,32 @@ final class Benchmark {
         }
     }
 
+    /// `METALGI_SKY_SET="coverage=0.6,clouds=0,..."` overrides sky settings in every setting (after `METALGI_SKY`).
+    /// Keys: clouds, coverage, density, base, thickness, scale, erosion, wind, winddir, shadows, strength, exposure, over.
+    static func applySkyOverride(to s: inout SkySettings) {
+        guard let spec = ProcessInfo.processInfo.environment["METALGI_SKY_SET"] else { return }
+        for item in spec.split(separator: ",") {
+            let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2, let v = Float(kv[1]) else { continue }
+            switch kv[0] {
+            case "clouds": s.clouds = v != 0
+            case "coverage": s.coverage = v
+            case "density": s.density = v
+            case "base": s.cloudBase = v
+            case "thickness": s.cloudThickness = v
+            case "scale": s.cloudScale = v
+            case "erosion": s.erosion = v
+            case "wind": s.windSpeed = v
+            case "winddir": s.windDirection = v
+            case "shadows": s.shadows = v != 0
+            case "strength": s.shadowStrength = v
+            case "exposure": s.imageExposure = v
+            case "over": s.cloudsOverImage = v != 0
+            default: break
+            }
+        }
+    }
+
     static func applySceneOverride(to s: inout SceneSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALGI_SCENE"] else { return }
         for item in spec.split(separator: ",") {
@@ -177,6 +204,7 @@ final class Benchmark {
             case "emissive": s.kind = .emissive
             case "mixed": s.kind = .mixed
             case "fog": s.kind = .fog
+            case "valley": s.kind = .valley
             case "emissivelights" where kv.count == 2: s.emissiveLights = kv[1] != "0"
             case "check" where kv.count == 2: s.lightCheck = kv[1]   // Scene.buildLightCheck; "empty" = just the floor
             case "objects" where kv.count == 2: s.objects = Int(kv[1]) ?? s.objects
@@ -509,6 +537,69 @@ final class Benchmark {
                                       accumulate: true, frames: 512, scene: scene))
                     out.append(Config(name: "\(tag) grid \(name)", giEnabled: false, viewMode: view, paused: true, startTime: 5,
                                       frames: 120, scene: scene))
+                }
+            }
+            return out
+        case "sky":
+            // The sky scenes paused at sunrise, mid-morning, noon and evening (the valley's day; the sun scene's and
+            // the mixed room's own times), with clouds on and off, cloud shadows off, then moving (timing).
+            // METALGI_LIGHTS_SCENES="valley|sun" limits the scenes; METALGI_SKY=<image> tests an image sky.
+            var out: [Config] = []
+            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            for kind in [SceneKind.valley, .sun, .mixed] where only?.contains("\(kind)") ?? true {
+                let tag = "\(kind)", preset = SkySettings.preset(for: kind)
+                var base = Config(name: "", paused: true, startTime: 5, frames: 60, scene: SceneSettings(kind: kind))
+                base.giMode = kind == .valley ? .radianceCascades : .surfels
+                base.surfels.raysPerSurfel = 8
+                base.surfels.maxSurfels = 65536
+                let times: [(String, Float)] = kind == .valley ? [("morning", -31.5), ("forenoon", 5), ("noon", 13.5), ("afternoon", 40), ("evening", 58.5)]
+                                                             : [("t5", 5), ("t20", 20)]
+                for (name, t) in times {
+                    var c = base; c.name = "\(tag) \(name)"; c.startTime = t
+                    out.append(c)
+                }
+                var clear = preset; clear.clouds = false
+                var noShadows = preset; noShadows.shadows = false
+                var constant = preset; constant.mode = .constant
+                for (name, sky) in [("clear", clear), ("no cloud shadows", noShadows), ("constant sky", constant)] {
+                    var c = base; c.name = "\(tag) \(name)"; c.sky = sky
+                    out.append(c)
+                }
+                if kind == .valley {   // from above, to see the clouds' shadows on the fields
+                    var aerial = base; aerial.name = "\(tag) aerial"
+                    var cam = Camera(); cam.position = [0, 70, 110]; cam.pitch = -0.45
+                    aerial.camera = cam
+                    out.append(aerial)
+                }
+                var moving = base; moving.name = "\(tag) moving"; moving.paused = false; moving.frames = nil
+                var shown = moving; shown.name = "\(tag) moving 3x"; shown.renderScale = 0.5; shown.upscale = 3
+                out += [moving, shown]
+            }
+            return out
+        case "skycheck":
+            // Cloud shadows through every sun-visibility path (shadow rays, the shadow denoiser, light maps): the valley
+            // in the afternoon, a cloud shadow's edge in view, each GI method against a 4-bounce path-traced reference
+            // (512 frames), final image and indirect light, with cloud shadows on and off. Each method's error should
+            // not depend on the shadows.
+            var out: [Config] = []
+            let scene = SceneSettings(kind: .valley)
+            for shadows in [true, false] {
+                var sky = SkySettings.preset(for: .valley); sky.shadows = shadows
+                let tag = shadows ? "shadows" : "no shadows"
+                for (name, view) in [("final", 0), ("indirect", 6)] {
+                    var ref = Config(name: "\(tag) ref \(name)", bounces: 4, viewMode: view, paused: true, startTime: 40,
+                                     accumulate: true, frames: 512, scene: scene)
+                    ref.sky = sky
+                    out.append(ref)
+                    for (mode, giMode, lightMaps) in [("pt", GIMode.pathTraced, false), ("pt-lightmaps", .pathTraced, true),
+                                                       ("surfels", .surfels, false), ("cascades", .radianceCascades, false)] {
+                        var c = Config(name: "\(tag) \(mode) \(name)", viewMode: view, paused: true, startTime: 40, frames: 90,
+                                       giMode: giMode, lightMaps: lightMaps, scene: scene)
+                        c.surfels.raysPerSurfel = 8
+                        c.surfels.maxSurfels = 65536
+                        c.sky = sky
+                        out.append(c)
+                    }
                 }
             }
             return out

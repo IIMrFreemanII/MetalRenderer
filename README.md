@@ -8,12 +8,19 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * a **stress test** hall with up to 2000 moving objects and 256 moving lights (see below);
   * the glTF **Gallery**;
   * six light demos (see "Light types" below);
-  * a **Misty hall** for the volumetric fog (see "Volumetric fog" below).
+  * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
+  * an **Open valley** for the sky and clouds (see "Sky and clouds" below).
 * **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
   * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
 * **Emissive meshes are lights:** any glowing surface (a neon sign, a screen, a glTF emissive texture) is sampled for direct light with shadow rays, one triangle at a time.
 * **glTF lights:** `KHR_lights_punctual` point, spot and directional lights load with their models.
+* **Sky and clouds:** a physically based atmosphere, or an HDR environment image, with the sun.
+  * The atmosphere has Rayleigh, Mie and ozone, with multiple scattering. It gives blue skies, bright horizons and red sunsets, and the sun light's colour follows it.
+  * An image's sun is found and cut out, and the sun light takes its place.
+  * In front of either sky there are volumetric clouds, and their shadows drift over the scene.
+  * The sky lights everything: camera view, GI, reflections, fog.
+  * Cost: 0.2–1 ms per frame, whatever the resolution.
 * **Volumetric fog and light:** height fog with drifting noise, plus soft-edged local fog volumes (ground mist, a stage haze, a glow around a lamp).
   * Every light type scatters in it, with ray-traced shadows, so sunlight falls in shafts through windows and spot beams are visible.
   * It is computed in a camera-aligned voxel grid ("froxels"), 8×8 traced pixels by 64 depth slices.
@@ -132,6 +139,14 @@ For the fog:
 * `METALGI_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
 * Both fog modes take `METALGI_LIGHTS_SCENES`.
 
+For the sky:
+* `METALGI_SCENE=valley` starts in the Open valley.
+* `METALGI_SKY=constant`, `atmosphere` or an image path overrides every scene's sky.
+* `METALGI_SKY_SET="coverage=0.5,wind=20"` overrides the clouds. The keys are `clouds`, `coverage`, `density`, `base`, `thickness`, `scale`, `erosion`, `wind`, `winddir`, `shadows`, `strength`, `exposure` and `over` (clouds over an image).
+* `Tools/test-assets/make-test-sky.py out.hdr [elevation] [azimuth]` writes a synthetic equirectangular test sky with a sun.
+* `METALGI_BENCH=sky` renders the valley at morning, forenoon, noon, afternoon and evening, from the ground and from the air, plus the sun and mixed scenes. It adds clear-sky, no-cloud-shadow and constant-sky variants, then moving frames. It takes `METALGI_LIGHTS_SCENES`.
+* `METALGI_BENCH=skycheck` renders the valley in the afternoon, with a cloud shadow's edge in view. Each GI method runs against a 4-bounce path-traced reference, for the final image and indirect light, with cloud shadows on and off.
+
 The models in `Assets/` aren't part of the repository (they're 596 MB); put any glTF files there. The caches in `Assets/.metalgi-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
 Use `METALGI_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALGI_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALGI_GI_MODES` picks the methods, for example `pt,pt-lightmaps,surfels,cascades,cascades-hq`. `METALGI_GI` overrides GI settings everywhere, for example `mode=surfels,rays=8` or `mode=cascades,spacing=4,b1=0.25`. `METALGI_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
@@ -158,7 +173,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | 9, 0 | Cycle the geometry debug views (see below); back to the final image |
 | L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
 | R | Hot-reload `Shaders.metal` |
-| ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera |
+| ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera, or an HDR sky (`.hdr` / `.exr`) |
 | Tab, ⌘, | Show or hide the Render Settings panel |
 
 The window title and the settings panel show the resolution, frame rate and GPU time. The panel never takes keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
@@ -167,7 +182,7 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 
 | Setting | Default | Effect |
 |---|---|---|
-| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI and fog defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
+| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI, fog and sky defaults: radiance cascades for the Cornell room and the Open valley, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 256. Their total power stays the same, so the brightness barely changes. |
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
@@ -294,6 +309,72 @@ The cost follows the froxels in front of the surfaces and the lights' sample pat
 * Shafts and beams narrower than a froxel (8 traced pixels) are blurred.
 * A froxel that contains a point light averages its very bright core, so the source looks like a small square glow.
 
+### Sky and clouds
+
+The sky is one texture, read wherever the sky is seen: camera rays, GI rays (all three methods), reflection rays and the fog's ambient light.
+* **Layout:** each hemisphere is an equal-area square, 1024² with mips: Shirley–Chiu's concentric map, then Lambert's. A texel is about 0.14°, roughly a traced pixel at 640×400.
+* **Updates:** `skyKernel` redraws a sixteenth of the texels each frame. It dispatches only those, so no SIMD lanes idle. A scene switch or settings change redraws them all.
+* **Sun disc:** drawn per camera pixel, darkening toward its limb and dimmed by the clouds in front of it. GI rays never see it; next-event estimation delivers the sun.
+* **Constant sky:** scenes with a constant sky skip all of this and render exactly as before.
+
+**Atmosphere** (Hillaire 2020):
+* **Model:** single scattering in an Earth-sized atmosphere (Rayleigh, Mie, ozone), marched in 20 steps per texel. It is lit through a transmittance table and has a multiple-scattering table; both are computed once.
+* **Sun light:** `Atmosphere.swift` computes the transmittance toward the sun on the CPU, and the sun light's colour follows it. In Sun and sky, the day cycle now colours itself, as do the valley's mornings and evenings.
+* **Exposure:** it is fixed, so the valley's sun stays at least 10° up; below that the sky is 20–50× darker than at noon.
+
+**Clouds** are a spherical shell, by default 1.5–3 km up (the valley's are lower and smaller). Their shape:
+* coverage from a slow 2D field;
+* a height profile: rounded bases, thinning tops;
+* Perlin–Worley base noise, eroded by Worley detail (Schneider 2015).
+
+The noise is tiling 3D textures, generated once on the GPU with mips. Each sample reads the level that matches the march's step length. Long steps toward the horizon would otherwise alias the tiled noise into streaks, so the fine erosion fades out where it can't be resolved.
+
+Clouds are lit by:
+* the sun, through a 5-step march toward it, with three scattering orders (Wrenninge) and a two-lobe phase function (silver linings);
+* the clear sky around them (`skyMeanKernel` averages 64 directions). Using the clouded sky instead would make clouds dark under their own darkness.
+
+They are marched in 40 jittered steps per texel and blended into the texel's last value. They sit kilometres away, so a direction-only texture is right for a camera that moves metres.
+
+**Cloud shadows:**
+* `cloudShadowKernel` traces the clouds' transmittance toward the sun every frame, 256² over the ground around the scene.
+* Every sun visibility test multiplies by it (`sunVisibilityScale`), so all paths see the same clouds: shadow rays, the shadow denoiser's visibility, next-event estimation, the light maps used by surfels, cascades and path-tracer bounces, and the fog.
+* Real cumulus are larger than these scenes. The valley's clouds are small and low (800 m features, 700 m up) so that their shadows visibly cross it.
+
+**HDR images** (`.hdr`, `.exr`, equirectangular):
+* Open one with File > Open or drag and drop, or pick "HDR image" in the Sky popup.
+* The brightest compact spot, if it outshines the sky 50 times, becomes the sun. Its direction and irradiance drive the scene's sun light, and its texels are replaced by the ring around it, so it isn't counted twice.
+* The image is scaled so that sun plus sky light a level floor with about 4 units.
+* The volumetric clouds can be drawn in front of it ("Clouds" with an image sky).
+* With the test image the sun is found exactly where it was drawn.
+
+| Setting | Default | Effect |
+|---|---|---|
+| Sky | per scene | Constant colour (indoor scenes), Atmosphere (Sun and sky, Mixed lights, Open valley) or HDR image. |
+| Clouds | On | With an image sky: clouds in front of it. |
+| Coverage | per scene | 0 = clear, ~0.3 scattered cumulus, 1 = overcast. |
+| Cloud density | 0.03 /m | Extinction inside a cloud. |
+| Cloud height | per scene | The layer's base altitude (its thickness and noise scale come with the scene). |
+| Wind | per scene | The clouds and their shadows drift with it. |
+| Cloud shadows | On (off in Mixed lights) | The clouds shadow the scene. |
+
+Sky pass cost on an M1 Max (every sky texel is updated each 16 frames, so it doesn't depend on the resolution):
+
+| Sky | Cost |
+|---|---|
+| Atmosphere with clouds and cloud shadows (valley) | 0.8–1.0 ms |
+| Atmosphere with clouds (Sun and sky, Mixed lights) | 0.5 ms |
+| Clear atmosphere | 0.23 ms |
+| HDR image | 0.17 ms |
+
+The first frame of a sky also draws the noise and the atmosphere's tables, and redraws every texel (about 10 ms, once).
+
+**Limitations:**
+* The exposure is fixed: low suns are dark.
+* The camera can't fly into the clouds (the sky is direction-only).
+* Cloud shadows cover a square around the scene's bounding sphere.
+* An image's sun needs a sun light in the scene to land on; without one, the image still lights GI.
+* Surfels' spatial grid is dense and capped at 2M cells, so in the 400 m valley its cells are about 2.8 m (0.5 m in the other scenes) and surfels are larger. The valley defaults to radiance cascades.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -344,6 +425,8 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
     2d reflectionKernel glTF specular materials: 1 GGX ray per pixel, hit lit by 1 light sample + this frame's
                        diffuse GI on screen; / specular albedo; temporal + 2 a-trous passes
                        (fog: dimmed along the ray, + in-scatter from 1 point with 1 light sample)
+    0b sky             atmosphere / image sky: skyMeanKernel (clear-sky mean) -> skyKernel (1/16 of the texels:
+                       atmosphere + clouds) -> cloudShadowKernel (256^2 over the ground) -> sky mips
     2f fogInjectKernel fog on: per froxel (8x8 px x 64 slices) 1 point in front of the surfaces, 1 light, 1 shadow
                        ray, blended into last frame's grid; fogIntegrateKernel: in-scatter + transmittance front to back
     3  shadowTemporalKernel  direct light: reproject + clamp per-light visibility, penumbra widths, tile classes
@@ -373,8 +456,9 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator |
 | `Benchmark.swift` | Benchmark mode (`METALGI_BENCH`) |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups and emissive-mesh lights; glTF models and their lights |
-| `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, and the light-check scene the `lightcheck` benchmark renders |
+| `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, and the light-check scene the `lightcheck` benchmark renders |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
+| `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
 | `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |

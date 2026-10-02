@@ -73,7 +73,24 @@ struct MaterialTexture {
 
 struct EmissiveTriangle;
 
-// Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table.
+// The sky (GPUTypes.swift GPUSkyParams); see "Sky and clouds" below.
+struct SkyParams {
+    float4 sun;          // xyz = toward the sun (unit), w = its angular radius
+    float4 sunTop;       // rgb = sun irradiance above the atmosphere (atmosphere mode)
+    float4 sunGround;    // rgb = sun irradiance at the ground (the sun light's colour)
+    float4 cloudLayer;   // x = cloud base altitude (m), y = top (m), z = coverage (0...1), w = extinction (1/m)
+    float4 cloudShape;   // x = shape noise tile (m), y = detail erosion, z = time (s), w = shadow strength
+    float4 wind;         // xyz = wind (m/s), w = weight of a new cloud sample in a texel (1 = replace)
+    float4 shadowMap;    // xy = centre (x, z) of the cloud-shadow square, z = its half size (m), w = ground height
+    float4 ground;       // rgb = ground albedo below the horizon, w = the sky's observer altitude (m)
+    uint4  flags;        // x = SKY_ATMOSPHERE / SKY_IMAGE, y = SKY_CLOUDS | SKY_SHADOWS | ..., z = update phase 0...15,
+                         //   w = frame (jitters the cloud march)
+};
+
+constant uint SKY_ATMOSPHERE = 1, SKY_IMAGE = 2;
+constant uint SKY_CLOUDS = 1, SKY_SHADOWS = 2, SKY_UPDATE_ALL = 4, SKY_CLOUDS_OVER_IMAGE = 8;
+
+// Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table; the sky.
 struct SceneShading {
     device const Material*        materials;
     device const float2*          uvs;
@@ -81,6 +98,9 @@ struct SceneShading {
     device const float*           minLod;      // per texture: finest resident mip level (texture streaming)
     device atomic_uint*           feedback;    // per texture: 16 counters, samples wanting each mip level this frame
     device const EmissiveTriangle* emissive;   // emissive-mesh lights' triangles
+    texture2d_array<float>        sky;         // with FLAG_SKY_MAP: [0] upper, [1] lower hemisphere (skyKernel)
+    texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
+    SkyParams                     skyParams;
 };
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
@@ -162,6 +182,7 @@ constant uint FLAG_REFERENCE     = 1024; // accumulated reference: reflections f
 constant uint FLAG_MESH_LIGHTS   = 2048; // with the shadow denoiser: the composite adds the denoised mesh-light direct light
 constant uint FLAG_FOG           = 4096; // the composite applies the volumetric fog
 constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference march instead of the froxel grid
+constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
@@ -665,6 +686,9 @@ struct SceneData {
     device const EmissiveTriangle* emissive;
     device const Light*        lights;
     uint                       lightCount;
+    texture2d_array<float>     sky;
+    texture2d<float>           cloudShadow;
+    constant SkyParams*        skyParams;
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -674,7 +698,72 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.minLod = shading.minLod;
     s.feedback = shading.feedback;
     s.emissive = shading.emissive;
+    s.sky = shading.sky;
+    s.cloudShadow = shading.cloudShadow;
+    s.skyParams = &shading.skyParams;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Sky lookups. The sky texture holds each hemisphere in an equal-area square (Shirley-Chiu's concentric map from
+// the square to the disk, then Lambert's from the disk to the hemisphere), so every texel covers the same solid
+// angle and the horizon is the square's border. rgb = radiance (with clouds), a = cloud transmittance.
+// ---------------------------------------------------------------------------------------------
+
+constexpr sampler skySampler(filter::linear, mip_filter::linear, address::clamp_to_edge);
+
+// Square [0, 1]^2 -> unit direction in the upper hemisphere (y up).
+inline float3 hemiDecode(float2 uv) {
+    float2 a = uv * 2.0f - 1.0f;
+    float r, phi;
+    if (a.x * a.x > a.y * a.y) { r = a.x; phi = (M_PI_F / 4.0f) * (a.y / a.x); }
+    else if (a.y != 0.0f) { r = a.y; phi = M_PI_F / 2.0f - (M_PI_F / 4.0f) * (a.x / a.y); }
+    else { r = 0.0f; phi = 0.0f; }
+    float rho = abs(r), s = r < 0.0f ? -1.0f : 1.0f;   // r < 0: the opposite half (phi + pi)
+    float h = rho * sqrt(max(2.0f - rho * rho, 0.0f));
+    return float3(s * h * cos(phi), 1.0f - rho * rho, s * h * sin(phi));
+}
+
+// Unit direction (y >= 0) -> square [0, 1]^2.
+inline float2 hemiEncode(float3 d) {
+    float rho = sqrt(saturate(1.0f - d.y));
+    float hl = length(d.xz);
+    float2 disk = hl > 1e-7f ? d.xz / hl * rho : float2(0.0f);
+    float r = length(disk), phi = atan2(disk.y, disk.x);
+    if (phi < -M_PI_F / 4.0f) phi += 2.0f * M_PI_F;
+    float2 a;
+    if (phi < M_PI_F / 4.0f)             { a.x = r;  a.y = phi * r / (M_PI_F / 4.0f); }
+    else if (phi < 3.0f * M_PI_F / 4.0f) { a.y = r;  a.x = -(phi - M_PI_F / 2.0f) * r / (M_PI_F / 4.0f); }
+    else if (phi < 5.0f * M_PI_F / 4.0f) { a.x = -r; a.y = -(phi - M_PI_F) * r / (M_PI_F / 4.0f); }
+    else                                 { a.y = -r; a.x = (phi - 3.0f * M_PI_F / 2.0f) * r / (M_PI_F / 4.0f); }
+    return a * 0.5f + 0.5f;
+}
+
+// Sky radiance (and cloud transmittance in .a) toward unit dir: the sky texture with FLAG_SKY_MAP, otherwise the
+// constant sky colour (exactly the old value). lod 0 for camera and mirror rays, higher for diffuse rays.
+inline float4 skySample(uint flags, float3 skyColor, thread const SceneData& s, float3 dir, float lod) {
+    if ((flags & FLAG_SKY_MAP) == 0) return float4(skyColor, 1.0f);
+    uint slice = dir.y >= 0.0f ? 0u : 1u;
+    return s.sky.sample(skySampler, hemiEncode(float3(dir.x, abs(dir.y), dir.z)), slice, level(lod));
+}
+#define skyRadiance(u, s, dir, lod) (skySample((u).flags, (u).skyColor.rgb, (s), (dir), (lod)).rgb)
+
+// The sky's mean radiance over the whole sphere (the fog's ambient light): the textures' smallest mips.
+inline float3 skyAmbient(constant Uniforms& u, thread const SceneData& s) {
+    if ((u.flags & FLAG_SKY_MAP) == 0) return u.skyColor.rgb;
+    float top = float(s.sky.get_num_mip_levels() - 1);
+    return 0.5f * (s.sky.sample(skySampler, float2(0.5f), 0, level(top)).rgb + s.sky.sample(skySampler, float2(0.5f), 1, level(top)).rgb);
+}
+
+// Cloud shadow at p: transmittance toward the sun through the clouds, from the cloud-shadow map (a square of the
+// ground around the scene; p is projected onto it along the sun's direction). 1 without cloud shadows.
+inline float cloudShadowAt(texture2d<float> map, constant SkyParams& sp, float3 p) {
+    float3 l = sp.sun.xyz;
+    if ((sp.flags.y & SKY_SHADOWS) == 0 || l.y <= 0.01f) return 1.0f;
+    float2 g = p.xz - l.xz * ((p.y - sp.shadowMap.w) / l.y);
+    float2 uv = (g - sp.shadowMap.xy) / (2.0f * sp.shadowMap.z) + 0.5f;
+    return map.sample(skySampler, uv, level(0)).r;
+}
+inline float cloudShadow(thread const SceneData& s, float3 p) { return cloudShadowAt(s.cloudShadow, *s.skyParams, p); }
 
 struct Surface {
     bool   hit;
@@ -926,6 +1015,15 @@ inline uint lightType(Light light) {
     return (LIGHT_TYPES & (LIGHT_TYPES - 1u)) == 0 ? ctz(LIGHT_TYPES) : uint(light.color.w) >> 2;   // one type: known
 }
 inline uint lightGroup(Light light) { return uint(light.color.w) & 3u; }
+
+// What multiplies a light's ray-traced visibility at p: the clouds' shadow for the sun, 1 for every other light.
+// Every sun visibility test goes through this (shadow rays, light maps, the fog), so all paths see the same clouds.
+inline float sunVisibilityScale(Light light, float3 p, thread const SceneData& s) {
+    return lightType(light) == LIGHT_SUN ? cloudShadow(s, p) : 1.0f;
+}
+inline float sunVisibilityScale(Light light, float3 p, constant SceneShading& shading) {
+    return lightType(light) == LIGHT_SUN ? cloudShadowAt(shading.cloudShadow, shading.skyParams, p) : 1.0f;
+}
 
 // Shadow ray from `from` to `to`: true if nothing (but light spheres) is in the way. `blocker` = distance to an
 // occluder (any one, not necessarily the nearest), 0 if visible: the shadow denoiser estimates penumbrae from it.
@@ -1263,7 +1361,7 @@ float3 sampleLight(Light light, float3 p, float3 n, float3 ng, float2 u, SCENE_A
     float3 unshadowed = lightUnshadowed(light, p, n, ng);
     if (all(unshadowed == 0.0f)) return float3(0.0f);
     if (!isVisible(p, lightShadowTarget(light, p, u), accel)) return float3(0.0f);
-    return unshadowed;
+    return unshadowed * sunVisibilityScale(light, p, s);
 }
 
 // The per-light weight loops (light picking, cached light at secondary hits) look at no more than
@@ -1448,7 +1546,8 @@ float lightMapVisibility(Light light, uint l, texture2d_array<float, access::rea
 }
 
 // Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), albedo divided out.
-float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng) {
+float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng,
+                           thread const SceneData& s) {
     if (lightType(light) == LIGHT_SPHERE) {
         float3 center = light.positionRadius.xyz;
         float radius = light.positionRadius.w;
@@ -1461,7 +1560,7 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
     }
     float3 unshadowed = lightUnshadowed(light, p, n, ng);
     if (all(unshadowed <= 0.0f)) return float3(0.0f);
-    return unshadowed * lightMapVisibility(light, l, lightMap, p, ng);
+    return unshadowed * (lightMapVisibility(light, l, lightMap, p, ng) * sunVisibilityScale(light, p, s));
 }
 
 // Direct light at a secondary hit from all lights, shadowed by the light maps, albedo divided out.
@@ -1469,10 +1568,10 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
 // exactly; with more, CACHED_LIGHT_SAMPLES lights are picked by unshadowed luminance (one weighted reservoir each,
 // seeded by `seed`) and only their maps are read, so the cost no longer grows with the light count's map reads.
 float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_array<float, access::read> lightMap,
-                        float3 p, float3 n, float3 ng, uint seed, uint flags) {
+                        float3 p, float3 n, float3 ng, uint seed, uint flags, thread const SceneData& s) {
     float3 sum = float3(0.0f);
     if (lightCount <= 8 || (flags & FLAG_ALL_LIGHTS) != 0) {
-        for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng);
+        for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng, s);
         return sum;
     }
     float4 u;
@@ -1494,7 +1593,7 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
     }
     if (total <= 0.0f) return sum;
     for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k)
-        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng) * (total / pickedWeight[k]);
+        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng, s) * (total / pickedWeight[k]);
     return sum * (ls.scale / float(CACHED_LIGHT_SAMPLES));
 }
 
@@ -1741,7 +1840,8 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
     float3 target, l;
     float3 E = lightVolumeSample(light, p, u.zw, s, target, l);
     if (all(E <= 0.0f)) return ambient;
-    float T = exp(-fogOpticalDepth(p, l, lightType(light) == LIGHT_SUN ? sunFogDistance(light, p) : length(target - p), f));
+    float T = exp(-fogOpticalDepth(p, l, lightType(light) == LIGHT_SUN ? sunFogDistance(light, p) : length(target - p), f))
+            * sunVisibilityScale(light, p, s);
     if (T < 1e-4f || !isVisible(p, target, accel)) return ambient;
     return ambient + E * (T * phaseHG(-dot(l, v), g) / pdf);
 }
@@ -1831,7 +1931,7 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     float4 sample = float4(0.0f, 0.0f, 0.0f, m.w);
     if (m.w > 0.0f) {
         float4 r = float4(rng.next2(), rng.next2());
-        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, u.skyColor.rgb * f.albedo.w);
+        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, skyAmbient(u, s) * f.albedo.w);
     }
     // Blend into last frame's grid, sampled where this froxel's centre was.
     if (historyValid) sample = mix(fogHistory(u, f, history, tid, dims, sample), sample, f.noise.w);
@@ -1908,7 +2008,7 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
     float t = depth / dot(dir, u.camForward.xyz);
     constexpr uint steps = 32;
     float dt = t / float(steps), jitter = rng.next();
-    float3 S = float3(0.0f), ambient = u.skyColor.rgb * f.albedo.w;
+    float3 S = float3(0.0f), ambient = skyAmbient(u, s) * f.albedo.w;
     float T = 1.0f;
     for (uint i = 0; i < steps; ++i) {
         float3 p = u.camPos.xyz + dir * ((float(i) + jitter) * dt);
@@ -1921,6 +2021,405 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
     }
     float4 mean = sampleCount == 0 ? float4(S, T) : mix(accumFog.read(tid), float4(S, T), 1.0f / float(sampleCount + 1));
     accumFog.write(mean, tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sky and clouds. With FLAG_SKY_MAP every sky lookup (camera, GI and reflection misses, the fog's ambient light)
+// reads the sky texture (see "Sky lookups"), which skyKernel keeps up to date, a sixteenth of its texels a frame:
+//   * the atmosphere: single scattering of the sun's light (Rayleigh, Mie, ozone; Hillaire 2020's constants), or
+//   * an HDR image (equirectangular), its sun cut out on the CPU (the sun light carries it);
+//   * in front of either, a volumetric cloud layer: a spherical shell of Perlin-Worley noise shaped by a coverage
+//     field and a height profile, eroded by Worley detail (Schneider 2015), lit by the sun through a short march
+//     toward it with a multiple-scattering approximation (Wrenninge's octaves) and by the sky around.
+// cloudShadowKernel traces the clouds' transmittance toward the sun over a square of ground around the scene; every
+// sun visibility test multiplies by it (sunVisibilityScale), so the clouds' shadows drift over the scene.
+// Atmosphere.swift computes the same atmosphere on the CPU for the sun light's colour and the sky's mean radiance.
+// ---------------------------------------------------------------------------------------------
+
+constant float ATMO_GROUND = 6360e3f;   // planet radius (m)
+constant float ATMO_TOP    = 6460e3f;   // top of the atmosphere
+constant float3 RAYLEIGH_SCATTER = float3(5.802e-6f, 13.558e-6f, 33.1e-6f);
+constant float  RAYLEIGH_HEIGHT  = 8000.0f;
+constant float  MIE_SCATTER = 3.996e-6f, MIE_EXTINCTION = 4.440e-6f, MIE_HEIGHT = 1200.0f, MIE_G = 0.8f;
+constant float3 OZONE_ABSORPTION = float3(0.650e-6f, 1.881e-6f, 0.085e-6f);   // tent around 25 km, 30 km wide
+
+constexpr sampler cloudSampler(filter::linear, address::repeat);
+
+// Extinction at altitude h, with Rayleigh and Mie scattering.
+inline float3 atmosphereExtinction(float h, thread float3& rayleigh, thread float& mie) {
+    float dR = exp(-h / RAYLEIGH_HEIGHT), dM = exp(-h / MIE_HEIGHT), dO = max(0.0f, 1.0f - abs(h - 25000.0f) / 15000.0f);
+    rayleigh = RAYLEIGH_SCATTER * dR;
+    mie = MIE_SCATTER * dM;
+    return RAYLEIGH_SCATTER * dR + MIE_EXTINCTION * dM + OZONE_ABSORPTION * dO;
+}
+
+// Distances along unit d from o (both relative to the planet's centre) to a sphere of radius R: x = near, y = far
+// (x < 0 from inside); y < x when it misses.
+inline float2 raySphere(float3 o, float3 d, float R) {
+    float b = dot(o, d), c = dot(o, o) - R * R, disc = b * b - c;
+    if (disc < 0.0f) return float2(1.0f, -1.0f);
+    float q = sqrt(disc);
+    return float2(-b - q, -b + q);
+}
+
+// Transmittance along unit d from p (relative to the planet's centre) to the top of the atmosphere, integrated in
+// `steps` steps (the ground ignored). For the lookup table and the CPU check; shading reads the table.
+float3 atmosphereTransmittanceMarch(float3 p, float3 d, uint steps) {
+    float t = raySphere(p, d, ATMO_TOP).y;
+    if (t <= 0.0f) return float3(1.0f);
+    float dt = t / float(steps);
+    float3 tau = float3(0.0f);
+    for (uint i = 0; i < steps; ++i) {
+        float3 r; float m;
+        tau += atmosphereExtinction(length(p + d * ((float(i) + 0.5f) * dt)) - ATMO_GROUND, r, m) * dt;
+    }
+    return exp(-tau);
+}
+
+// The transmittance table's coordinates for a point at radius r looking at cos zenith mu (Bruneton 2017: the
+// distance to the top between its extremes, and the height as the distance to the horizon, so the horizon gets
+// the resolution).
+constant float ATMO_HORIZON = 1132255.0f;   // sqrt(ATMO_TOP^2 - ATMO_GROUND^2)
+inline float2 transmittanceUV(float r, float mu) {
+    float rho = sqrt(max(r * r - ATMO_GROUND * ATMO_GROUND, 0.0f));
+    float d = max(-r * mu + sqrt(max(r * r * (mu * mu - 1.0f) + ATMO_TOP * ATMO_TOP, 0.0f)), 0.0f);
+    float dMin = ATMO_TOP - r, dMax = rho + ATMO_HORIZON;
+    return float2((d - dMin) / max(dMax - dMin, 1.0f), rho / ATMO_HORIZON);
+}
+
+constexpr sampler lutSampler(filter::linear, address::clamp_to_edge);
+
+// Transmittance from p toward unit d to the top of the atmosphere, from the table; 0 if the planet is in the way.
+inline float3 atmosphereTransmittance(texture2d<float> lut, float3 p, float3 d) {
+    float r = length(p), mu = dot(p, d) / r;
+    if (mu < -sqrt(max(1.0f - (ATMO_GROUND / r) * (ATMO_GROUND / r), 0.0f))) return float3(0.0f);
+    return lut.sample(lutSampler, transmittanceUV(r, mu), level(0)).rgb;
+}
+
+kernel void transmittanceLUTKernel(texture2d<float, access::write> outLUT [[texture(0)]],
+                                   uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= outLUT.get_width() || tid.y >= outLUT.get_height()) return;
+    float2 x = (float2(tid) + 0.5f) / float2(outLUT.get_width(), outLUT.get_height());
+    float rho = ATMO_HORIZON * x.y, r = sqrt(rho * rho + ATMO_GROUND * ATMO_GROUND);
+    float dMin = ATMO_TOP - r, dMax = rho + ATMO_HORIZON, d = dMin + x.x * (dMax - dMin);
+    float mu = d <= 0.0f ? 1.0f : clamp((ATMO_HORIZON * ATMO_HORIZON - rho * rho - d * d) / (2.0f * r * d), -1.0f, 1.0f);
+    outLUT.write(float4(atmosphereTransmittanceMarch(float3(0.0f, r, 0.0f), float3(sqrt(1.0f - mu * mu), mu, 0.0f), 40), 1.0f), tid);
+}
+
+// Multiple scattering (Hillaire 2020): for altitude and the sun's cos zenith, the isotropic light of all higher
+// scattering orders per unit of sun irradiance, from the second order over 64 directions and the fraction f the
+// medium passes on (a geometric series: L2 / (1 - f)). x = sun cos zenith (-1 ... 1), y = altitude.
+kernel void multiScatterLUTKernel(texture2d<float>                transmittance [[texture(0)]],
+                                  texture2d<float, access::write> outLUT        [[texture(1)]],
+                                  uint2 tid [[thread_position_in_grid]])
+{
+    uint2 size = uint2(outLUT.get_width(), outLUT.get_height());
+    if (any(tid >= size)) return;
+    float2 x = (float2(tid) + 0.5f) / float2(size);
+    float muS = x.x * 2.0f - 1.0f;
+    float3 p = float3(0.0f, ATMO_GROUND + 50.0f + x.y * (ATMO_TOP - ATMO_GROUND - 100.0f), 0.0f);
+    float3 sun = float3(sqrt(max(1.0f - muS * muS, 0.0f)), muS, 0.0f);
+    constexpr uint dirs = 64, steps = 20;
+    constexpr float albedo = 0.3f;
+    float3 L2 = float3(0.0f), f = float3(0.0f);
+    for (uint k = 0; k < dirs; ++k) {   // Fibonacci sphere
+        float z = 1.0f - 2.0f * (float(k) + 0.5f) / float(dirs), phi = float(k) * 2.39996323f, rr = sqrt(max(1.0f - z * z, 0.0f));
+        float3 w = float3(rr * cos(phi), z, rr * sin(phi));
+        float2 g = raySphere(p, w, ATMO_GROUND);
+        bool ground = g.x > 0.0f && g.y > g.x;
+        float tMax = ground ? g.x : raySphere(p, w, ATMO_TOP).y, dt = tMax / float(steps);
+        float3 L = float3(0.0f), fl = float3(0.0f), T = float3(1.0f);
+        for (uint i = 0; i < steps; ++i) {
+            float3 q = p + w * ((float(i) + 0.5f) * dt);
+            float3 sR; float sM;
+            float3 ext = atmosphereExtinction(length(q) - ATMO_GROUND, sR, sM);
+            float3 scatter = sR + sM, tr = exp(-ext * dt), integral = (1.0f - tr) / max(ext, float3(1e-12f));
+            L += T * scatter * atmosphereTransmittance(transmittance, q, sun) * (integral / (4.0f * M_PI_F));
+            fl += T * scatter * integral;
+            T *= tr;
+        }
+        if (ground) {
+            float3 q = p + w * tMax, n = normalize(q);
+            L += T * atmosphereTransmittance(transmittance, q + n, sun) * (albedo / M_PI_F * max(dot(n, sun), 0.0f));
+        }
+        L2 += L / float(dirs);
+        f += fl / float(dirs);
+    }
+    outLUT.write(float4(L2 / max(1.0f - f, float3(1e-3f)), 1.0f), tid);
+}
+
+inline float3 multipleScattering(texture2d<float> lut, float h, float muS) {
+    return lut.sample(lutSampler, float2(muS * 0.5f + 0.5f, saturate((h - 50.0f) / (ATMO_TOP - ATMO_GROUND - 100.0f))), level(0)).rgb;
+}
+
+inline float rayleighPhase(float c) { return 3.0f / (16.0f * M_PI_F) * (1.0f + c * c); }
+inline float miePhase(float c, float g) {   // Cornette-Shanks
+    float g2 = g * g;
+    return 3.0f / (8.0f * M_PI_F) * (1.0f - g2) * (1.0f + c * c) / ((2.0f + g2) * pow(max(1.0f + g2 - 2.0f * g * c, 1e-4f), 1.5f));
+}
+
+// Sky radiance toward unit v for an observer near the ground: single scattering marched in 20 steps (denser near
+// the observer), lit through the transmittance table, plus the multiple-scattering table; below the horizon, the
+// lit ground at the end. `skyMean` = the sky's mean radiance (lights the ground from around).
+float3 atmosphereRadiance(float3 v, constant SkyParams& sp, texture2d<float> transmittance, texture2d<float> multiScatter,
+                          float3 skyMean) {
+    float3 o = float3(0.0f, ATMO_GROUND + sp.ground.w, 0.0f), l = sp.sun.xyz;
+    float2 g = raySphere(o, v, ATMO_GROUND);
+    bool ground = g.x > 0.0f && g.y > g.x;
+    float tMax = ground ? g.x : raySphere(o, v, ATMO_TOP).y;
+    float c = dot(v, l), pR = rayleighPhase(c), pM = miePhase(c, MIE_G);
+    float3 L = float3(0.0f), T = float3(1.0f), E = sp.sunTop.rgb;
+    constexpr uint steps = 20;
+    float t0 = 0.0f;
+    for (uint i = 0; i < steps; ++i) {
+        float x = float(i + 1) / float(steps), t1 = tMax * x * x;
+        float dt = t1 - t0;
+        float3 p = o + v * (0.5f * (t0 + t1));
+        float r = length(p);
+        float3 sR; float sM;
+        float3 ext = atmosphereExtinction(r - ATMO_GROUND, sR, sM);
+        float3 S = ((sR * pR + sM * pM) * atmosphereTransmittance(transmittance, p, l)
+                    + (sR + sM) * multipleScattering(multiScatter, r - ATMO_GROUND, dot(p, l) / r)) * E;
+        float3 tr = exp(-ext * dt);
+        L += T * S * (1.0f - tr) / max(ext, float3(1e-12f));
+        T *= tr;
+        t0 = t1;
+    }
+    if (ground) {
+        float3 pg = o + v * tMax, n = normalize(pg);
+        float3 sunAtGround = atmosphereTransmittance(transmittance, pg + n, l) * E * max(dot(n, l), 0.0f);
+        L += T * sp.ground.rgb / M_PI_F * (sunAtGround + M_PI_F * skyMean);
+    }
+    return L;
+}
+
+inline float remap(float x, float a, float b, float c, float d) { return c + (x - a) * (d - c) / (b - a); }
+
+// Cloud density (extinction, 1/m) at world point p (metres, y up), h01 = height within the layer. fine = false
+// skips the erosion (light and shadow marches). step = the march's step length: the noise is read at the mip level
+// whose texels match it, so long steps (toward the horizon) don't alias into streaks.
+float cloudDensity(float3 p, float h01, constant SkyParams& sp, texture3d<float> shape, texture3d<float> detail, bool fine,
+                   float step) {
+    if (h01 <= 0.0f || h01 >= 1.0f) return 0.0f;
+    // Rounded bases, tops thinning toward an anvil.
+    float profile = saturate(remap(h01, 0.0f, 0.1f, 0.0f, 1.0f)) * saturate(remap(h01, 0.3f, 1.0f, 1.0f, 0.0f));
+    float3 q = (p + sp.wind.xyz * sp.cloudShape.z) / sp.cloudShape.x;
+    // Coverage: the global amount (scaled so 1 is overcast, ~0.3 scattered cumulus), varied by a slow field (the
+    // noise's lowest octave over 6 tiles).
+    float field = shape.sample(cloudSampler, float3(q.x / 6.0f, 0.37f, q.z / 6.0f), level(0)).g;
+    float coverage = saturate(0.55f * sp.cloudLayer.z + (field - 0.5f) * 0.3f);
+    if (profile <= 1.0f - coverage) return 0.0f;   // base x profile can't reach the coverage threshold
+    float lod = max(log2(step * 128.0f / sp.cloudShape.x), 0.0f);   // shape texel = tile / 128
+    float4 n = shape.sample(cloudSampler, q, level(lod));
+    float fbm = n.g * 0.625f + n.b * 0.25f + n.a * 0.125f;
+    float base = saturate(remap(n.r, fbm - 1.0f, 1.0f, 0.0f, 1.0f)) * profile;
+    float cloud = saturate(remap(base, 1.0f - coverage, 1.0f, 0.0f, 1.0f)) * coverage;
+    // Erosion by the detail noise (its tile = half the shape's, texel = tile / 64), faded out where the steps are too
+    // long to resolve it: a coarse tiled texture read far apart turns into a lattice of streaks.
+    float detailLod = max(log2(step * 64.0f / sp.cloudShape.x), 0.0f), resolve = saturate(2.5f - detailLod);
+    if (fine && cloud > 0.0f && resolve > 0.0f) {
+        float3 dn = detail.sample(cloudSampler, q * 2.0f, level(detailLod)).rgb;
+        float hf = dn.r * 0.625f + dn.g * 0.25f + dn.b * 0.125f;
+        float erode = mix(hf, 1.0f - hf, saturate(h01 * 5.0f)) * sp.cloudShape.y * resolve;
+        cloud = saturate(remap(cloud, erode, 1.0f, 0.0f, 1.0f));
+    }
+    return cloud * sp.cloudLayer.w;
+}
+
+// Height within the cloud layer of a point given relative to the planet's centre.
+inline float cloudHeight(float3 pc, constant SkyParams& sp) {
+    return (length(pc) - ATMO_GROUND - sp.cloudLayer.x) / (sp.cloudLayer.y - sp.cloudLayer.x);
+}
+
+// Cloud phase: a forward lobe (silver linings) and a back lobe; g scaled down for the higher scattering orders.
+inline float cloudPhase(float c, float k) { return mix(phaseHG(c, 0.8f * k), phaseHG(c, -0.3f * k), 0.3f); }
+
+// The clouds along unit v from the sky's observer: rgb = in-scattered light, a = transmittance. 40 jittered steps
+// through the layer (up to 30 km of it), each lit by the sun through a 5-step march toward it (three scattering
+// orders) and by the sky around; far clouds fade into the sky.
+float4 cloudMarch(float3 v, float jitter, constant SkyParams& sp, texture3d<float> shape, texture3d<float> detail,
+                  float3 skyMean) {
+    float3 o = float3(0.0f, ATMO_GROUND + sp.ground.w, 0.0f);
+    float2 ground = raySphere(o, v, ATMO_GROUND);
+    if (ground.x > 0.0f && ground.y > ground.x) return float4(0.0f, 0.0f, 0.0f, 1.0f);
+    float t0 = raySphere(o, v, ATMO_GROUND + sp.cloudLayer.x).y, t1 = raySphere(o, v, ATMO_GROUND + sp.cloudLayer.y).y;
+    t1 = min(t1, t0 + 30000.0f);
+    if (!(t1 > t0)) return float4(0.0f, 0.0f, 0.0f, 1.0f);
+    float3 l = sp.sun.xyz, sun = sp.sunGround.rgb;
+    float c = dot(v, l);
+    constexpr uint steps = 40;
+    float dt = (t1 - t0) / float(steps);
+    float3 L = float3(0.0f);
+    float T = 1.0f;
+    for (uint i = 0; i < steps && T > 0.01f; ++i) {
+        float t = t0 + (float(i) + jitter) * dt;
+        float3 pc = o + v * t;
+        float h01 = cloudHeight(pc, sp);
+        float3 pw = float3(pc.x, pc.y - ATMO_GROUND, pc.z);
+        float sigma = cloudDensity(pw, h01, sp, shape, detail, true, dt);
+        if (sigma <= 0.0f) continue;
+        // Optical depth toward the sun: 5 steps, each twice as long (40 m ... 1.2 km).
+        float tauSun = 0.0f, step = 40.0f, along = 0.0f;
+        for (uint k = 0; k < 5; ++k) {
+            float3 q = pc + l * (along + 0.5f * step);
+            tauSun += cloudDensity(float3(q.x, q.y - ATMO_GROUND, q.z), cloudHeight(q, sp), sp, shape, detail, false, step) * step;
+            along += step;
+            step *= 2.0f;
+        }
+        float3 S = float3(0.0f);
+        float a = 1.0f, b = 1.0f, k = 1.0f;
+        for (uint order = 0; order < 3; ++order) {
+            S += a * sun * cloudPhase(c, k) * exp(-b * tauSun);
+            a *= 0.5f; b *= 0.5f; k *= 0.5f;
+        }
+        float powder = 1.0f - exp(-2.0f * sigma * 60.0f);
+        S = S * mix(1.0f, powder, 0.5f) + skyMean * mix(0.5f, 1.0f, h01);   // + the sky around, brighter on top
+        float tr = exp(-sigma * dt);
+        L += T * S * (1.0f - tr);   // scattering albedo 1: in-scatter per unit extinction
+        T *= tr;
+    }
+    float fade = exp(-max(t0 - 4000.0f, 0.0f) / 25000.0f);   // far clouds sink into the haze
+    return float4(L * fade, mix(1.0f, T, fade));
+}
+
+// Equirectangular image lookup: u = 0.5 faces -z, v = 0 is straight up.
+inline float3 equirectSample(texture2d<float> image, float3 d) {
+    float2 uv = float2(0.5f + atan2(d.x, -d.z) / (2.0f * M_PI_F), acos(clamp(d.y, -1.0f, 1.0f)) / M_PI_F);
+    return image.sample(cloudSampler, uv, level(0)).rgb;
+}
+
+// Updates the sky texture, slice z (0 = upper, 1 = lower hemisphere): the texels with (x & 3) + 4 (y & 3) = this
+// frame's phase, one per thread (a sixteenth of the grid is dispatched, so no SIMD lanes idle), or every texel with
+// SKY_UPDATE_ALL. Clouds blend into the texel's last value (wind.w) to smooth their march's noise; a full update
+// replaces it.
+kernel void skyKernel(constant SkyParams&                       sp        [[buffer(0)]],
+                      device const float4*                      skyMean   [[buffer(1)]],   // skyMeanKernel, last frame
+                      texture3d<float>                          shape     [[texture(0)]],
+                      texture3d<float>                          detail    [[texture(1)]],
+                      texture2d<float, access::read>            blueNoise [[texture(2)]],
+                      texture2d<float>                          image     [[texture(3)]],   // SKY_IMAGE: equirectangular
+                      texture2d_array<float, access::read_write> sky      [[texture(4)]],
+                      texture2d<float>                          transmittance [[texture(5)]],
+                      texture2d<float>                          multiScatter  [[texture(6)]],
+                      uint3 tid [[thread_position_in_grid]])
+{
+    uint size = sky.get_width();
+    bool full = (sp.flags.y & SKY_UPDATE_ALL) != 0;
+    uint2 texel = full ? tid.xy : tid.xy * 4u + uint2(sp.flags.z & 3u, sp.flags.z >> 2);
+    if (texel.x >= size || texel.y >= size || tid.z > 1) return;
+    float3 dir = hemiDecode((float2(texel) + 0.5f) / float(size));
+    if (tid.z == 1) dir.y = -dir.y;
+    float3 mean = skyMean[0].rgb;
+    float3 background = sp.flags.x == SKY_IMAGE ? equirectSample(image, dir)
+                                                : atmosphereRadiance(dir, sp, transmittance, multiScatter, mean);
+    float4 result = float4(background, 1.0f);
+    bool clouds = (sp.flags.y & SKY_CLOUDS) != 0 && (sp.flags.x == SKY_ATMOSPHERE || (sp.flags.y & SKY_CLOUDS_OVER_IMAGE) != 0);
+    if (tid.z == 0 && clouds) {
+        float jitter = blueNoise.read(texel % BLUE_NOISE_SIZE).r;
+        jitter = fract(jitter + float(sp.flags.w) * 0.618034f);
+        float4 c = cloudMarch(dir, jitter, sp, shape, detail, mean);
+        result = float4(background * c.a + c.rgb, c.a);
+        if (!full) result = mix(sky.read(texel, 0), result, sp.wind.w);
+    }
+    sky.write(result, texel, tid.z);
+}
+
+// The clear sky's cosine-weighted mean radiance over the upper hemisphere (the atmosphere, or the image), from 64
+// directions: lights the clouds and the ground from around, before this frame's skyKernel. (Not the clouded sky:
+// clouds lit by their own darkness would darken each other frame after frame.)
+kernel void skyMeanKernel(constant SkyParams&    sp            [[buffer(0)]],
+                          device float4*         skyMean       [[buffer(1)]],
+                          texture2d<float>       image         [[texture(0)]],
+                          texture2d<float>       transmittance [[texture(1)]],
+                          texture2d<float>       multiScatter  [[texture(2)]],
+                          uint k [[thread_position_in_threadgroup]])
+{
+    threadgroup float3 sums[64];
+    float r = sqrt((float(k) + 0.5f) / 64.0f), phi = float(k) * 2.39996323f;   // cosine-weighted (Malley)
+    float3 dir = float3(r * cos(phi), sqrt(max(1.0f - r * r, 0.0f)), r * sin(phi));
+    sums[k] = sp.flags.x == SKY_IMAGE ? equirectSample(image, dir)
+                                      : atmosphereRadiance(dir, sp, transmittance, multiScatter, skyMean[0].rgb);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (k != 0) return;
+    float3 sum = float3(0.0f);
+    for (uint i = 0; i < 64; ++i) sum += sums[i];
+    skyMean[0] = float4(sum / 64.0f, 1.0f);
+}
+
+// The clouds' transmittance toward the sun from each point of a square of ground around the scene (24 steps
+// through the layer, no erosion detail).
+kernel void cloudShadowKernel(constant SkyParams&             sp      [[buffer(0)]],
+                              texture3d<float>                shape   [[texture(0)]],
+                              texture3d<float>                detail  [[texture(1)]],
+                              texture2d<float, access::write> outShadow [[texture(2)]],
+                              uint2 tid [[thread_position_in_grid]])
+{
+    uint size = outShadow.get_width();
+    if (tid.x >= size || tid.y >= size) return;
+    float3 l = sp.sun.xyz;
+    if (l.y <= 0.01f) { outShadow.write(float4(1.0f), tid); return; }
+    float2 xz = sp.shadowMap.xy + ((float2(tid) + 0.5f) / float(size) * 2.0f - 1.0f) * sp.shadowMap.z;
+    float3 o = float3(xz.x, ATMO_GROUND + sp.shadowMap.w, xz.y);
+    float t0 = raySphere(o, l, ATMO_GROUND + sp.cloudLayer.x).y, t1 = raySphere(o, l, ATMO_GROUND + sp.cloudLayer.y).y;
+    constexpr uint steps = 24;
+    float dt = (t1 - t0) / float(steps), tau = 0.0f;
+    for (uint i = 0; i < steps; ++i) {
+        float3 pc = o + l * (t0 + (float(i) + 0.5f) * dt);
+        tau += cloudDensity(float3(pc.x, pc.y - ATMO_GROUND, pc.z), cloudHeight(pc, sp), sp, shape, detail, false, dt) * dt;
+    }
+    outShadow.write(float4(exp(-tau * sp.cloudShape.w)), tid);
+}
+
+// Tiling noise for the clouds, generated once. Worley: 1 at the cell's feature point, falling to 0 a cell away.
+inline float3 hash3(uint3 c) {
+    uint h = pcgHash(c.x + pcgHash(c.y + pcgHash(c.z)));
+    uint h2 = pcgHash(h), h3 = pcgHash(h2);
+    return float3(h, h2, h3) * (1.0f / 4294967296.0f);
+}
+inline float worleyTile(float3 p, float period) {
+    float3 c = floor(p), f = p - c;
+    float d2 = 1e9f;
+    for (int z = -1; z <= 1; ++z)
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x) {
+                float3 o = float3(x, y, z), cell = fmod(c + o + period, period);
+                float3 r = o + hash3(uint3(cell)) - f;
+                d2 = min(d2, dot(r, r));
+            }
+    return 1.0f - saturate(sqrt(d2));
+}
+inline float perlinTile(float3 p, float period) {   // about -1 ... 1
+    float3 c = floor(p), f = p - c, u = f * f * f * (f * (f * 6.0f - 15.0f) + 10.0f);
+    float v[8];
+    for (uint k = 0; k < 8; ++k) {
+        float3 o = float3(k & 1, (k >> 1) & 1, k >> 2);
+        float3 g = hash3(uint3(fmod(c + o, period)) + 977u) * 2.0f - 1.0f;
+        v[k] = dot(normalize(g + 1e-6f), f - o);
+    }
+    float x00 = mix(v[0], v[1], u.x), x10 = mix(v[2], v[3], u.x), x01 = mix(v[4], v[5], u.x), x11 = mix(v[6], v[7], u.x);
+    return mix(mix(x00, x10, u.y), mix(x01, x11, u.y), u.z) * 1.6f;
+}
+
+kernel void cloudNoiseKernel(texture3d<float, access::write> outShape  [[texture(0)]],   // 128^3
+                             texture3d<float, access::write> outDetail [[texture(1)]],   // 32^3
+                             uint3 tid [[thread_position_in_grid]])
+{
+    uint n = outShape.get_width();
+    if (any(tid >= n)) return;
+    float3 q = (float3(tid) + 0.5f) / float(n);
+    float perlin = saturate(0.5f + 0.5f * (perlinTile(q * 4.0f, 4.0f) * 0.5f + perlinTile(q * 8.0f, 8.0f) * 0.3f
+                                         + perlinTile(q * 16.0f, 16.0f) * 0.2f));
+    float w4 = worleyTile(q * 4.0f, 4.0f), w8 = worleyTile(q * 8.0f, 8.0f), w16 = worleyTile(q * 16.0f, 16.0f);
+    float w32 = worleyTile(q * 32.0f, 32.0f);
+    float worley = w4 * 0.625f + w8 * 0.25f + w16 * 0.125f;
+    float perlinWorley = remap(perlin, 0.0f, 1.0f, worley, 1.0f);
+    outShape.write(float4(perlinWorley, worley, w8 * 0.625f + w16 * 0.25f + w32 * 0.125f, w16 * 0.75f + w32 * 0.25f), tid);
+    uint m = outDetail.get_width();
+    if (all(tid < m)) {
+        float3 d = (float3(tid) + 0.5f) / float(m);
+        outDetail.write(float4(worleyTile(d * 2.0f, 2.0f), worleyTile(d * 4.0f, 4.0f), worleyTile(d * 8.0f, 8.0f), 1.0f), tid);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1994,13 +2493,21 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         }
         outNormalDepth.write(float4(0.0f, 0.0f, 0.0f, -1.0f), tid);
         outAlbedo.write(float4(0.0f), tid);
-        // Sky, plus the discs of the suns (camera rays only: GI rays get the sun from next-event estimation).
-        float3 sky = u.skyColor.rgb;
+        // Sky, plus the discs of the suns (camera rays only: GI rays get the sun from next-event estimation). With the
+        // sky texture the disc darkens toward its limb and clouds in front of it dim it (the texture's alpha).
+        float4 skyHere = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
+        float3 sky = skyHere.rgb;
         for (uint i = 0; i < u.lightGroupEnd.w; ++i) {
             Light light = lights[i];
             float theta = light.positionRadius.w;
-            if (lightType(light) == LIGHT_SUN && dot(dir, light.axis.xyz) >= cos(theta))
-                sky += light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
+            float c = dot(dir, light.axis.xyz);
+            if (lightType(light) != LIGHT_SUN || c < cos(theta)) continue;
+            float3 disc = light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
+            if ((u.flags & FLAG_SKY_MAP) != 0) {
+                float x = sqrt(max(1.0f - c * c, 0.0f)) / sin(theta), mu = sqrt(max(1.0f - x * x, 0.0f));
+                disc *= skyHere.a * (1.0f - 0.6f * (1.0f - mu)) / 0.8f;   // limb darkening (u = 0.6), mean 1
+            }
+            sky += disc;
         }
         outEmission.write(float4(sky, 1.0f), tid);
         outMotion.write(float4(0.0f), tid);
@@ -2065,7 +2572,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 unshadowed = lightUnshadowed(lights[i], p, n, ng);
             if (all(unshadowed <= 0.0f)) continue;   // light behind the surface: it shadows itself
             float b;
-            float v = isVisibleBlocker(p, lightShadowTarget(lights[i], p, r), accel, b) ? 1.0f : 0.0f;
+            float v = isVisibleBlocker(p, lightShadowTarget(lights[i], p, r), accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
             direct += unshadowed * v;
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
@@ -2094,7 +2601,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             Ray r = makeRay(origin, d, 0.0f, INFINITY);
             Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
-                indirect += throughput * u.skyColor.rgb;
+                indirect += throughput * skyRadiance(u, s, d, 2.0f);
                 break;
             }
             float3 hng, hn;
@@ -2104,7 +2611,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 hp = h.position + hng * RAY_EPSILON;
             if ((u.flags & FLAG_LIGHT_MAPS) != 0) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b)));
-                indirect += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags);   // no rays
+                indirect += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags, s);   // no rays
             } else if (u.lightCount > 0) {
                 // Next-event estimation: one light, picked by its unshadowed luminance here.
                 float pdf;
@@ -2144,6 +2651,7 @@ constant uint MAX_RAYS_PER_GROUP = 2;
 
 kernel void manyLightsKernel(constant Uniforms&               u          [[buffer(0)]],
                              SCENE_ACCEL                      accel      [[buffer(1)]],
+                             constant SceneShading&           shading    [[buffer(7)]],   // the sky: cloud shadows
                              device const Light*              lights     [[buffer(8)]],
                              texture2d<float, access::read>   surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
                              texture2d<float, access::read>   normalDepth [[texture(1)]],
@@ -2197,9 +2705,10 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
             Light light = lights[picked[k]];
             float b;
             bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
-            visibility[g] += visible ? 1.0f / float(rays) : 0.0f;
+            float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
+            visibility[g] += cloud / float(rays);
             if (b > 0.0f) { blocker[g] += penumbraWidth(light, p, b); blockerCount[g] += 1.0f; }
-            if (visible) direct += lightUnshadowed(light, p, n, ng) * (total / (pickedWeight[k] * float(rays)));
+            if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * total / (pickedWeight[k] * float(rays)));
         }
         start = end;
     }
@@ -2222,6 +2731,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
 
 kernel void manyLightsReuseKernel(constant Uniforms&               u          [[buffer(0)]],
                              SCENE_ACCEL                      accel      [[buffer(1)]],
+                             constant SceneShading&           shading    [[buffer(7)]],   // the sky: cloud shadows
                              device const Light*              lights     [[buffer(8)]],
                              texture2d<float, access::read>   surfacePos [[texture(0)]],   // w = instance + 1, 0 = unlit
                              texture2d<float, access::read>   normalDepth [[texture(1)]],
@@ -2318,10 +2828,11 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         Light light = lights[y];
         float b;
         bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
+        float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
-        visibility[g] = visible && total > 0.0f ? saturate(targetY * W / total) : 0.0f;
+        visibility[g] = visible && total > 0.0f ? saturate(cloud * targetY * W / total) : 0.0f;
         blocker[g] = penumbraWidth(light, p, b);
-        if (visible) direct += lightUnshadowed(light, p, n, ng) * W;
+        if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * W);
         outPick[g] = y | (uint(min(M, float(maxM))) << 16);
         outW[g] = W;
     }
@@ -2409,7 +2920,7 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
 float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, Surface h, float3 dir,
                              thread Sampler& rng, texture2d<float, access::read> normalDepth,
                              texture2d<float, access::read> indirect) {
-    if (!h.hit) return u.skyColor.rgb;
+    if (!h.hit) return skyRadiance(u, s, dir, 0.0f);
     float3 L = float3(0.0f), throughput = float3(1.0f);
     bool reference = (u.flags & FLAG_REFERENCE) != 0;
     uint bounces = reference ? u.bounces : 0;
@@ -2431,7 +2942,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
             // Diffuse GI at the hit: this frame's indirect light where the hit point is visible on screen.
             float depth;
             float2 px = projectToPixel(h.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, float2(u.width, u.height), depth);
-            float3 gi = u.skyColor.rgb * 0.3f;
+            float3 gi = skyAmbient(u, s) * 0.3f;
             if (depth > 0.0f && all(px >= 0.0f) && px.x < float(u.width) && px.y < float(u.height)) {
                 uint2 q = uint2(px);
                 float4 nd = normalDepth.read(q);
@@ -2445,7 +2956,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         throughput *= albedo;
         h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
         dir = d;
-        if (!h.hit) return L + throughput * u.skyColor.rgb;
+        if (!h.hit) return L + throughput * skyRadiance(u, s, dir, 2.0f);
     }
 }
 
@@ -2522,7 +3033,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                     result += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
                 }
             } else if (isVisible(p, x, accel)) {
-                result += lightSpecular(light, p, n, ng, v, f0, roughness) / pdf;
+                result += lightSpecular(light, p, n, ng, v, f0, roughness) * (sunVisibilityScale(light, p, s) / pdf);
             }
         }
     }
@@ -2549,7 +3060,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                 float2 uDistMix = rng.next2();
                 float4 r = float4(rng.next2(), rng.next2());
                 radiance = fogAlongRay(p, l, hit.hit ? length(hit.position - p) : INFINITY, radiance, uDistMix, r, accel, s, fog,
-                                       u.skyColor.rgb * fog.albedo.w, fogNoiseTex);
+                                       skyAmbient(u, s) * fog.albedo.w, fogNoiseTex);
             }
             result += weight * radiance;
         }
@@ -3548,7 +4059,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         orientNormals(h, dir, hng, hns);
         float3 hp = h.position + hng * RAY_EPSILON;
         float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng,
-                                        pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), u.flags);
+                                        pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), u.flags, s);
         if (p.interval.z > 0.0f) {
             // Multi-bounce: where this hit point was on screen last frame, add last frame's indirect light there;
             // elsewhere (off screen, occluded) fall back to last frame's average indirect light over all probes.
@@ -3569,7 +4080,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         }
         radiance = hitAlbedo(h) * light;
     } else if (last) {
-        radiance = u.skyColor.rgb;
+        radiance = skyRadiance(u, s, dir, 2.0f);
     } else {
         // Nothing hit in this interval: continue with the next cascade's radiance in this direction.
         float2 g = (float2(pc) + 0.5f) * 0.5f - 0.5f;   // this probe in the next cascade's (half-res) grid
@@ -3836,7 +4347,8 @@ kernel void surfelTransformKernel(constant SurfelParams& sp [[buffer(0)]], devic
 }
 
 // One threadgroup of 1024: exclusive prefix sum over the cell counts -> cellStart (and the scatter cursors),
-// counts reset for next frame, indirect dispatch sizes from the alive count.
+// counts reset for next frame, indirect dispatch sizes from the alive count. The grid is swept in blocks of 1024
+// consecutive cells (one per thread, so the reads coalesce), carrying the running total between blocks.
 kernel void surfelScanKernel(constant SurfelParams& sp [[buffer(0)]], device SurfelHeader& header [[buffer(10)]],
                              device atomic_uint* cellCount [[buffer(12)]], device uint* cellStart [[buffer(16)]],
                              device atomic_uint* cellCursor [[buffer(17)]],
@@ -3844,30 +4356,32 @@ kernel void surfelScanKernel(constant SurfelParams& sp [[buffer(0)]], device Sur
                              uint simd [[simdgroup_index_in_threadgroup]])
 {
     threadgroup uint simdTotals[32];
-    uint cells = sp.gridDims.w, perThread = (cells + 1023) / 1024, first = tid * perThread;
-    uint local = 0;
-    for (uint k = 0; k < perThread; ++k)
-        if (first + k < cells) local += atomic_load_explicit(&cellCount[first + k], memory_order_relaxed);
-    uint prefix = simd_prefix_exclusive_sum(local);
-    if (lane == 31) simdTotals[simd] = prefix + local;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (simd == 0) {
-        uint t = simdTotals[lane];
-        simdTotals[lane] = simd_prefix_exclusive_sum(t);
+    threadgroup uint blockTotal;
+    uint cells = sp.gridDims.w, running = 0;
+    for (uint base = 0; base < cells; base += 1024) {
+        uint c = base + tid;
+        uint n = c < cells ? atomic_load_explicit(&cellCount[c], memory_order_relaxed) : 0;
+        uint prefix = simd_prefix_exclusive_sum(n);
+        if (lane == 31) simdTotals[simd] = prefix + n;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (simd == 0) {
+            uint t = simdTotals[lane];
+            uint e = simd_prefix_exclusive_sum(t);
+            simdTotals[lane] = e;
+            if (lane == 31) blockTotal = e + t;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (c < cells) {
+            uint offset = running + simdTotals[simd] + prefix;
+            cellStart[c] = offset;
+            atomic_store_explicit(&cellCursor[c], offset, memory_order_relaxed);
+            atomic_store_explicit(&cellCount[c], 0, memory_order_relaxed);
+        }
+        running += blockTotal;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint offset = simdTotals[simd] + prefix;
-    for (uint k = 0; k < perThread; ++k) {
-        uint c = first + k;
-        if (c >= cells) break;
-        uint n = atomic_load_explicit(&cellCount[c], memory_order_relaxed);
-        cellStart[c] = offset;
-        atomic_store_explicit(&cellCursor[c], offset, memory_order_relaxed);
-        atomic_store_explicit(&cellCount[c], 0, memory_order_relaxed);
-        offset += n;
-    }
-    if (first < cells && first + perThread >= cells) cellStart[cells] = offset;   // thread holding the last cell
     if (tid == 0) {
+        cellStart[cells] = running;
         uint alive = atomic_load_explicit(&header.aliveCount, memory_order_relaxed);
         header.aliveDispatch[0] = (alive + 63) / 64; header.aliveDispatch[1] = 1; header.aliveDispatch[2] = 1;
         header.traceDispatch[0] = (alive * sp.config.y + 31) / 32; header.traceDispatch[1] = 1; header.traceDispatch[2] = 1;
@@ -3942,12 +4456,12 @@ kernel void surfelTraceKernel(constant Uniforms&               u          [[buff
         if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
         Surface hit = traceSurface(makeRay(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
         if (!hit.hit) {
-            radiance = u.skyColor.rgb;
+            radiance = skyRadiance(u, s, d, 2.0f);
         } else {
             float3 hng, hns;
             orientNormals(hit, d, hng, hns);
             float3 hp = hit.position + hng * RAY_EPSILON;
-            float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng, pcgHash(h + rayIndex), u.flags);
+            float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng, pcgHash(h + rayIndex), u.flags, s);
             float4 bounce = surfelLookup(hit.position, hns, sp, cellStart, cellSurfels, worldPos, worldNormal, irrPrev);
             // Multi-bounce from last frame's surfels there; where none exist yet (e.g. never seen), their average.
             light += bounce.w > 0.0f ? bounce.rgb / bounce.w : surfelAmbient(ambientPrev);
