@@ -37,8 +37,9 @@ struct Uniforms {
     uint viewMode;
     uint instanceCount;
     float4 jitter;          // xy = this frame's sub-pixel jitter, zw = previous frame's (pixels)
-    float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off)
+    float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off), w = variance scale
     uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
+    uint4 lightTable;       // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
 };
 
 struct MeshData {
@@ -129,9 +130,13 @@ constant uint LIGHT_MESH   = 5;
 
 // One bit per LIGHT_* type the scene has (function constant 0). The renderer specialises the pipelines per scene,
 // so the per-light loops of a scene with only sphere lights compile to exactly the sphere code; without the constant
-// (e.g. a pipeline made without it) every type is handled.
+// (e.g. a pipeline made without it) every type is handled. Bit 31 = LIGHT_TABLE: a scene with many lights (more than
+// Scene.lightTableThreshold), where nothing may loop over the lights or keep something per light: GI and the path
+// tracer sample the light table instead of per-light light maps, and the sky draws only the suns' discs.
 constant uint lightTypesConstant [[function_constant(0)]];
-constant uint LIGHT_TYPES = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x3Fu;
+constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x3Fu;
+constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
+constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
@@ -183,6 +188,7 @@ constant uint FLAG_MESH_LIGHTS   = 2048; // with the shadow denoiser: the compos
 constant uint FLAG_FOG           = 4096; // the composite applies the volumetric fog
 constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference march instead of the froxel grid
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
+constant uint FLAG_RESTIR        = 32768; // direct light from ReSTIR DI (restirTemporalKernel, restirSpatialKernel)
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
@@ -218,6 +224,7 @@ struct Rng {
         return float(state) * (1.0f / 4294967296.0f);
     }
     float2 next2() { return float2(next(), next()); }
+    uint nextUint() { state = pcgHash(state); return state; }
 };
 
 constant uint BLUE_NOISE_SIZE = 128;   // must match BlueNoise.size
@@ -1431,6 +1438,129 @@ inline float penumbraWidth(Light light, float3 p, float d) {
     return max(size * d / max(D - d, 1e-3f), 1e-4f);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Light table (LightTable.swift): every light but the suns, and every emissive-mesh triangle, as one alias table after
+// the lights in their buffer, drawn from in O(1) in proportion to nominal power. A light sample is (element, uv):
+// uv picks the point (lightShadowTarget for analytic lights and suns, sqrt-warped barycentrics for triangles) relative
+// to the light's current pose, so a sample moves with its light and reusing it across frames and pixels needs no
+// Jacobian. What it estimates is what the exact path computes: a light's analytic unshadowed light x the visibility of
+// the sample's point (triangles: their emission x the geometry term, per point).
+// ---------------------------------------------------------------------------------------------
+
+struct LightTableEntry { float threshold; uint alias; float pdf; uint element; };
+struct TriangleInfo { uint light; float radianceLum; };
+
+constant uint ELEMENT_TRIANGLE = 1u << 30, ELEMENT_SUN = 2u << 30;   // else analytic (0)
+constant uint ELEMENT_TYPE = 3u << 30, ELEMENT_INDEX = (1u << 30) - 1u, ELEMENT_NONE = 0xFFFFFFFFu;
+
+inline device const LightTableEntry* lightTableEntries(device const Light* lights, uint lightCount) {
+    return (device const LightTableEntry*)(lights + lightCount);
+}
+inline device const TriangleInfo* lightTableTriangles(device const Light* lights, uint lightCount, uint entries) {
+    return (device const TriangleInfo*)(lightTableEntries(lights, lightCount) + entries);
+}
+
+// One element in proportion to the table's probabilities, from two random uints.
+inline uint sampleLightTable(device const LightTableEntry* table, uint count, uint h0, uint h1, thread float& pdf) {
+    LightTableEntry e = table[mulhi(h0, count)];
+    if (float(h1 >> 8) * (1.0f / 16777216.0f) >= e.threshold) e = table[e.alias];
+    pdf = e.pdf;
+    return e.element;
+}
+
+// The surface a light sample lights.
+struct ShadingPoint {
+    float3 p, n, ng, v;   // p already offset along ng
+    float3 albedo;        // weighs diffuse against specular in the target function (floored, so black surfaces still pick)
+    float3 f0;
+    float  roughness;
+    bool   specular;      // F0 > 0 (with FLAG_SPECULAR)
+};
+
+// A light sample at a surface, unshadowed: diffuse light (albedo divided out, like lightUnshadowed), specular light,
+// and the shadow ray's end point. The clouds' shadow is in for the sun.
+struct LightSampleEval {
+    float3 diffuse;
+    float3 specular;
+    float3 target;
+};
+
+// `lights` = this frame's or (prev) last frame's: a triangle then uses its instance's last transform.
+// `exact` = textured emission (shading); otherwise the triangle's mean luminance (the target function: no textures).
+LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoint& sp, thread const SceneData& s,
+                                device const Light* lights, device const TriangleInfo* tris, bool prev, bool exact) {
+    LightSampleEval e;
+    e.diffuse = e.specular = float3(0.0f);
+    uint index = element & ELEMENT_INDEX;
+    if ((element & ELEMENT_TYPE) == ELEMENT_TRIANGLE) {
+        MeshLightPoint mp;
+        mp.tri = s.emissive[index];
+        InstanceData inst = s.instances[as_type<uint>(lights[tris[index].light].params.w)];
+        float4x4 m = prev ? inst.prevTransform : inst.transform;
+        float su = sqrt(uv.x);
+        mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
+        float3 x = (m * float4(mp.tri.v0.xyz + mp.tri.e1.xyz * mp.b1 + mp.tri.e2.xyz * mp.b2, 1.0f)).xyz;
+        float3 cr = cross((m * float4(mp.tri.e1.xyz, 0.0f)).xyz, (m * float4(mp.tri.e2.xyz, 0.0f)).xyz);
+        float3 w = x - sp.p;
+        float d2 = dot(w, w);
+        float3 l = w * rsqrt(max(d2, 1e-12f));
+        e.target = sp.p + w * 0.99f;   // pulled toward p: an emitter traced at a coarser level of detail doesn't shadow itself
+        float area2 = length(cr);
+        float cosP = dot(sp.n, l), cosL = abs(dot(cr, l)) / max(area2, 1e-12f);   // emission is two-sided
+        if (cosP <= 0.0f || dot(sp.ng, l) <= 0.0f || area2 <= 0.0f) return e;
+        float g = cosP * cosL / max(d2, 1e-6f) * (0.5f * area2) / M_PI_F;      // uniform point: pdf = 1 / area
+        if (exact) {
+            mp.material = inst.materialIndex;
+            e.diffuse = meshLightPointEmission(mp, s) * g;
+        } else {
+            e.diffuse = float3(tris[index].radianceLum * g);
+        }
+        return e;
+    }
+    Light light = lights[index];
+    e.target = lightShadowTarget(light, sp.p, uv);
+    float cloud = sunVisibilityScale(light, sp.p, s);
+    e.diffuse = lightUnshadowed(light, sp.p, sp.n, sp.ng) * cloud;
+    if (sp.specular) e.specular = lightSpecular(light, sp.p, sp.n, sp.ng, sp.v, sp.f0, sp.roughness) * cloud;
+    return e;
+}
+
+// ReSTIR's target function: the sample's unshadowed luminance as the pixel would show it.
+inline float lightSampleTarget(thread const LightSampleEval& e, thread const ShadingPoint& sp) {
+    return luminance(sp.albedo * e.diffuse + e.specular);
+}
+
+// Direct light at a point from one light sample picked by RIS among `candidates` table draws and the suns (one each),
+// by unshadowed luminance, with one shadow ray: an unbiased estimate of the light from every light. For GI's hits and
+// the path tracer's next-event estimation in scenes with many lights (LIGHT_TABLE), in place of per-light loops.
+float3 sampleLightsRIS(device const Light* lights, uint lightCount, uint4 table, float3 p, float3 n, float3 ng,
+                       uint candidates, thread Rng& rng, SCENE_ACCEL accel, thread const SceneData& s) {
+    ShadingPoint sp;
+    sp.p = p; sp.n = n; sp.ng = ng; sp.v = n; sp.albedo = float3(1.0f); sp.f0 = float3(0.0f); sp.roughness = 1.0f;
+    sp.specular = false;
+    device const LightTableEntry* entries = lightTableEntries(lights, lightCount);
+    device const TriangleInfo* tris = lightTableTriangles(lights, lightCount, table.x);
+    uint M = table.x > 0 ? candidates : 0u;
+    uint picked = ELEMENT_NONE;
+    float2 pickedUV = float2(0.0f);
+    float wSum = 0.0f, pickedTarget = 0.0f;
+    for (uint k = 0; k < M + table.y; ++k) {
+        float pdf = 1.0f;
+        uint h0 = rng.nextUint(), h1 = rng.nextUint();
+        uint element = k < M ? sampleLightTable(entries, table.x, h0, h1, pdf) : ELEMENT_SUN | (k == M ? table.z : table.w);
+        float2 uv = rng.next2();
+        float t = lightSampleTarget(evalLightSample(element, uv, sp, s, lights, tris, false, false), sp);
+        float w = k < M ? t / (float(M) * pdf) : t;   // the suns: one candidate each, from their own strategy
+        if (w <= 0.0f) continue;
+        wSum += w;
+        if (rng.next() * wSum < w) { picked = element; pickedUV = uv; pickedTarget = t; }
+    }
+    if (picked == ELEMENT_NONE || pickedTarget <= 0.0f) return float3(0.0f);
+    LightSampleEval e = evalLightSample(picked, pickedUV, sp, s, lights, tris, false, true);
+    if (!isVisible(p, e.target, accel)) return float3(0.0f);
+    return e.diffuse * (wSum / pickedTarget);
+}
+
 // Continuous pixel coordinate (no jitter, y down) of camera-relative vector v, for a camera given as
 // right/up/forward with tan(fov/2) in .w. Returns the view depth along forward in `depth`.
 inline float2 projectToPixel(float3 v, float4 right, float4 up, float4 forward, float2 size, thread float& depth) {
@@ -1466,7 +1596,7 @@ inline float2 equalAreaOctEncode(float3 v) {
 
 // ---------------------------------------------------------------------------------------------
 // Light-visibility maps: for each light, the distance to the nearest geometry in every direction, traced from
-// the light's centre once per frame. Secondary hits (path-tracer bounces with FLAG_LIGHT_MAPS, surfels,
+// the light's centre once per frame. Secondary hits (path-tracer bounces with FLAG_LIGHT_MAPS and
 // radiance-cascade intervals) look up shadowing here instead of tracing a shadow ray. Shadows are hard (from
 // the light's centre), which is invisible once indirect light has been integrated over a hemisphere.
 // The sun's map is orthographic instead: the depth along its direction over a square covering the scene's
@@ -1595,6 +1725,22 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
     for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k)
         sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng, s) * (total / pickedWeight[k]);
     return sum * (ls.scale / float(CACHED_LIGHT_SAMPLES));
+}
+
+// GI's direct light at a secondary hit: the light maps' cached visibility (no rays), or in scenes with many lights
+// (LIGHT_TABLE, no light maps) one light sample picked by RIS from the light table, with one shadow ray.
+inline float3 giLightIllum(device const Light* lights, constant Uniforms& u, texture2d_array<float, access::read> lightMap,
+                           float3 p, float3 n, float3 ng, uint seed, SCENE_ACCEL accel, thread const SceneData& s) {
+    if (LIGHT_TABLE) {
+        // Clamped: cascades average few rays per frame, and their anti-lag takes a rare bright sample (a
+        // surface right beside a bulb) for a change in the lighting, so it would stay as a coloured blotch.
+        Rng r;
+        r.state = seed;
+        float3 e = sampleLightsRIS(lights, u.lightCount, u.lightTable, p, n, ng, 8, r, accel, s);
+        float l = luminance(e);
+        return l > 2.0f ? e * (2.0f / l) : e;
+    }
+    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, s);
 }
 
 // View direction through screen position uv (0...1, y down), scaled so that its view depth is 1.
@@ -2497,8 +2643,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         // sky texture the disc darkens toward its limb and clouds in front of it dim it (the texture's alpha).
         float4 skyHere = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
         float3 sky = skyHere.rgb;
-        for (uint i = 0; i < u.lightGroupEnd.w; ++i) {
-            Light light = lights[i];
+        for (uint k = 0; k < (LIGHT_TABLE ? u.lightTable.y : u.lightGroupEnd.w); ++k) {
+            Light light = lights[LIGHT_TABLE ? (k == 0 ? u.lightTable.z : u.lightTable.w) : k];
             float theta = light.positionRadius.w;
             float c = dot(dir, light.axis.xyz);
             if (lightType(light) != LIGHT_SUN || c < cos(theta)) continue;
@@ -2563,7 +2709,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     float4 visibility = float4(0.0f), blocker = float4(0.0f);
     // Analytic lights only (the first lightGroupEnd.w): meshLightsKernel samples the emissive-mesh lights.
     uint analyticLights = u.lightGroupEnd.w;
-    bool manyLights = analyticLights > SHADOW_GROUPS && (u.flags & FLAG_ALL_LIGHTS) == 0;
+    bool manyLights = (analyticLights > SHADOW_GROUPS || (u.flags & FLAG_RESTIR) != 0) && (u.flags & FLAG_ALL_LIGHTS) == 0;
     if (!manyLights) {
         // One shadow ray per light. A channel shared by several lights gets their luminance-weighted visibility.
         float4 unshadowedSum = float4(0.0f), blockerWeight = float4(0.0f);
@@ -2583,7 +2729,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         visibility = select(float4(0.0f), visibility / unshadowedSum, unshadowedSum > 0.0f);
         blocker = select(float4(0.0f), blocker / blockerWeight, blockerWeight > 0.0f);
     }
-    // With more lights, manyLightsKernel computes direct light, visibility and penumbrae after this kernel.
+    // With more lights, manyLightsKernel computes direct light, visibility and penumbrae after this kernel (ReSTIR:
+    // restirSpatialKernel the direct light).
     if (!manyLights) {
         outVisibility.write(visibility, tid);
         outBlocker.write(roundToHalf(blocker), tid);
@@ -2611,7 +2758,12 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 hp = h.position + hng * RAY_EPSILON;
             if ((u.flags & FLAG_LIGHT_MAPS) != 0) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b)));
-                indirect += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags, s);   // no rays
+                indirect += throughput * giLightIllum(lights, u, lightMap, hp, hn, hng, seed, accel, s);   // no rays (but LIGHT_TABLE)
+            } else if (LIGHT_TABLE) {
+                // Next-event estimation with many lights: RIS over light-table draws.
+                Rng r;
+                r.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b + 0x51ED27u)));
+                indirect += throughput * sampleLightsRIS(lights, u.lightCount, u.lightTable, hp, hn, hng, 4, r, accel, s);
             } else if (u.lightCount > 0) {
                 // Next-event estimation: one light, picked by its unshadowed luminance here.
                 float pdf;
@@ -2908,6 +3060,315 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
 }
 
 // ---------------------------------------------------------------------------------------------
+// 1f. ReSTIR DI (Bitterli et al. 2020; MIS weights after Lin et al. 2022): direct light from every light, analytic and
+//     emissive-mesh, at a cost that depends on the resolution, not on the light count. Each pixel keeps a reservoir:
+//     one light sample (element, uv), its confidence M and its contribution weight W, so that f(y) W estimates the
+//     pixel's direct light. Per frame:
+//       restirTemporalKernel  `candidates` draws from the light table (by power) and one per sun, resampled by the
+//                             target function (the sample's unshadowed luminance here); optionally a shadow ray to the
+//                             pick (visibility reuse: an occluded pick gets W = 0, so occluded samples don't spread);
+//                             then last frame's reservoir, reprojected, combined with the generalized balance
+//                             heuristic (last frame's target uses last frame's lights, so moving lights stay unbiased).
+//       restirSpatialKernel   0-2 passes, each combining `spatialSamples` neighbours on the same surface (pairwise MIS
+//                             with confidence weights); the last pass shades: one shadow ray (none if the pixel kept its
+//                             own already-tested pick) and writes diffuse light (albedo divided out) to `direct` and
+//                             specular light for the reflection pass. Its reservoir is next frame's history.
+//     SVGF then denoises the direct light as radiance; the composite needs no loop over the lights.
+// ---------------------------------------------------------------------------------------------
+
+struct RestirParams {
+    uint4  config;   // x = candidates, y = max M, z = RESTIR_* flags, w = spatial samples
+    float4 tuning;   // x = spatial radius (pixels), y = spatial pass index, z = firefly clamp (0 = off), w = chains
+};
+
+constant uint RESTIR_TEMPORAL_VALID = 1, RESTIR_VISIBILITY = 2, RESTIR_SHADE = 4, RESTIR_SPLIT = 8;
+constant uint RESTIR_MAX_SPATIAL = 8;
+
+struct Reservoir {
+    uint   element;   // ELEMENT_NONE = no sample
+    float2 uv;
+    float  W;         // contribution weight
+    float  M;         // confidence (samples' worth, capped)
+    bool   visible;   // this frame: its point's shadow ray was traced from this pixel, and it was visible
+};
+
+inline Reservoir emptyReservoir() {
+    Reservoir r;
+    r.element = ELEMENT_NONE; r.uv = float2(0.0f); r.W = 0.0f; r.M = 0.0f; r.visible = false;
+    return r;
+}
+inline uint4 packReservoir(Reservoir r) {
+    return uint4(r.element, pack_float_to_unorm2x16(r.uv), as_type<uint>(r.W),
+                 min(uint(r.M + 0.5f), 0xFFFFu) | (r.visible ? 0x10000u : 0u));
+}
+inline Reservoir unpackReservoir(uint4 v) {
+    Reservoir r;
+    r.element = v.x; r.uv = unpack_unorm2x16_to_float(v.y); r.W = as_type<float>(v.z); r.M = float(v.w & 0xFFFFu);
+    r.visible = (v.w & 0x10000u) != 0;
+    return r;
+}
+// The stored precision, so a sample is evaluated at the same point wherever it is reused.
+inline float2 quantizeUV(float2 uv) { return unpack_unorm2x16_to_float(pack_float_to_unorm2x16(uv)); }
+
+// The surface at pixel q (false: sky or an emitter, nothing to light).
+inline bool restirSurface(uint2 q, constant Uniforms& u, texture2d<float, access::read> surfacePos,
+                          texture2d<float, access::read> normalDepth, texture2d<float, access::read> geoNormal,
+                          texture2d<float, access::read> albedo, texture2d<float, access::read> material,
+                          thread ShadingPoint& sp, thread float& depth) {
+    float4 pos = surfacePos.read(q);
+    if (pos.w <= 0.0f) return false;
+    float4 nd = normalDepth.read(q);
+    sp.n = nd.xyz;
+    depth = nd.w;
+    sp.ng = geoNormal.read(q).xyz;
+    sp.p = pos.xyz + sp.ng * RAY_EPSILON;
+    sp.v = normalize(u.camPos.xyz - pos.xyz);
+    sp.albedo = max(albedo.read(q).rgb, float3(0.05f));
+    sp.f0 = float3(0.0f);
+    sp.roughness = 1.0f;
+    sp.specular = false;
+    if ((u.flags & FLAG_SPECULAR) != 0) {
+        float4 m = material.read(q);
+        sp.f0 = m.rgb; sp.roughness = m.a; sp.specular = any(m.rgb > 0.0f);
+    }
+    return true;
+}
+
+inline float restirTarget(Reservoir r, thread const ShadingPoint& sp, thread const SceneData& s, device const Light* lights,
+                          device const TriangleInfo* tris, bool prev) {
+    if (r.element == ELEMENT_NONE) return 0.0f;
+    return lightSampleTarget(evalLightSample(r.element, r.uv, sp, s, lights, tris, prev, false), sp);
+}
+
+kernel void restirTemporalKernel(constant Uniforms&               u          [[buffer(0)]],
+                                 SCENE_ACCEL                      accel      [[buffer(1)]],
+                                 device const InstanceData*       instances  [[buffer(6)]],
+                                 constant SceneShading&           shading    [[buffer(7)]],
+                                 device const Light*              lights     [[buffer(8)]],   // + the light table
+                                 constant RestirParams&           rp         [[buffer(9)]],
+                                 device const Light*              prevLights [[buffer(10)]],  // last frame's lights
+                                 texture2d<float, access::read>   surfacePos [[texture(0)]],
+                                 texture2d<float, access::read>   normalDepth [[texture(1)]],
+                                 texture2d<float, access::read>   geoNormal  [[texture(2)]],
+                                 texture2d<float, access::read>   albedo     [[texture(3)]],
+                                 texture2d<float, access::read>   material   [[texture(4)]],
+                                 texture2d<float, access::read>   motion     [[texture(5)]],
+                                 texture2d<float, access::read>   prevND     [[texture(6)]],
+                                 texture2d_array<uint, access::read>  history  [[texture(7)]],   // one slice per chain
+                                 texture2d_array<uint, access::write> outReservoir [[texture(8)]],
+                                 uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    uint chains = uint(rp.tuning.w);
+    ShadingPoint sp;
+    float depth;
+    if (!restirSurface(tid, u, surfacePos, normalDepth, geoNormal, albedo, material, sp, depth)) {
+        for (uint c = 0; c < chains; ++c) outReservoir.write(packReservoir(emptyReservoir()), tid, c);
+        return;
+    }
+    SceneData s;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    device const LightTableEntry* entries = lightTableEntries(lights, u.lightCount);
+    device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
+    Rng rng;
+    rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x2545F491u)));
+
+    // Last frame's pixel (nearest, same surface), shared by the chains.
+    int2 q = int2(-1);
+    float4 mv = motion.read(tid);
+    if ((rp.config.z & RESTIR_TEMPORAL_VALID) != 0 && mv.w > 0.0f) {
+        int2 c = int2(floor(mv.xy + 0.5f));
+        if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)) {
+            float4 pnd = prevND.read(uint2(c));
+            if (pnd.w > 0.0f && abs(pnd.w - mv.z) < 0.1f * mv.z && dot(pnd.xyz, sp.n) > 0.9f) q = c;
+        }
+    }
+
+    uint M = u.lightTable.x > 0 ? rp.config.x : 0u;
+    for (uint chain = 0; chain < chains; ++chain) {
+        // Initial candidates (each chain its own: shared ones made the chains alike, -1.5 dB at 1024 lights): table
+        // draws by power (each weighed target / (M pdf)), and each sun once (target / 1).
+        Reservoir r = emptyReservoir();
+        float wSum = 0.0f, target = 0.0f;
+        float3 point = float3(0.0f);
+        for (uint k = 0; k < M + u.lightTable.y; ++k) {
+            float pdf = 1.0f;
+            uint h0 = rng.nextUint(), h1 = rng.nextUint();
+            uint element = k < M ? sampleLightTable(entries, u.lightTable.x, h0, h1, pdf)
+                                 : ELEMENT_SUN | (k == M ? u.lightTable.z : u.lightTable.w);
+            float2 uv = quantizeUV(rng.next2());
+            LightSampleEval e = evalLightSample(element, uv, sp, s, lights, tris, false, false);
+            float t = lightSampleTarget(e, sp);
+            float w = k < M ? t / (float(M) * pdf) : t;
+            if (w <= 0.0f) continue;
+            wSum += w;
+            if (rng.next() * wSum < w) { r.element = element; r.uv = uv; target = t; point = e.target; }
+        }
+        r.M = 1.0f;
+        r.W = target > 0.0f ? wSum / target : 0.0f;
+        if (r.element != ELEMENT_NONE && (rp.config.z & RESTIR_VISIBILITY) != 0) {
+            if (isVisible(sp.p, point, accel)) r.visible = true; else r.W = 0.0f;
+        }
+        if (q.x >= 0) {
+            Reservoir h = unpackReservoir(history.read(uint2(q), chain));
+            h.M = min(h.M, float(rp.config.y));
+            if (h.M > 0.0f) {
+                // Generalized balance heuristic over the two domains (this frame; last frame, whose target is
+                // approximated at this surface with last frame's lights).
+                float cc = target, hc = restirTarget(h, sp, s, lights, tris, false);
+                float ch = restirTarget(r, sp, s, prevLights, tris, true), hh = restirTarget(h, sp, s, prevLights, tris, true);
+                float mc = r.M * cc / max(r.M * cc + h.M * ch, 1e-30f);
+                float mh = h.M * hh / max(h.M * hh + r.M * hc, 1e-30f);
+                float wc = mc * cc * r.W, wh = mh * hc * h.W;
+                float sum = wc + wh;
+                if (sum > 0.0f && rng.next() * sum < wh) {
+                    r.element = h.element; r.uv = h.uv; target = hc; r.visible = false;
+                }
+                r.W = target > 0.0f ? sum / target : 0.0f;
+                r.M = min(r.M + h.M, float(rp.config.y));
+            }
+        }
+        outReservoir.write(packReservoir(r), tid, chain);
+    }
+}
+
+kernel void restirSpatialKernel(constant Uniforms&               u          [[buffer(0)]],
+                                SCENE_ACCEL                      accel      [[buffer(1)]],
+                                device const InstanceData*       instances  [[buffer(6)]],
+                                constant SceneShading&           shading    [[buffer(7)]],
+                                device const Light*              lights     [[buffer(8)]],
+                                constant RestirParams&           rp         [[buffer(9)]],
+                                texture2d<float, access::read>   surfacePos [[texture(0)]],
+                                texture2d<float, access::read>   normalDepth [[texture(1)]],
+                                texture2d<float, access::read>   geoNormal  [[texture(2)]],
+                                texture2d<float, access::read>   albedo     [[texture(3)]],
+                                texture2d<float, access::read>   material   [[texture(4)]],
+                                texture2d_array<uint, access::read>  inReservoir [[texture(5)]],
+                                texture2d_array<uint, access::write> outReservoir [[texture(6)]],
+                                texture2d<float, access::write>  outDirect  [[texture(7)]],   // with RESTIR_SHADE
+                                texture2d<float, access::write>  outSpecular [[texture(8)]],  // with RESTIR_SHADE and FLAG_SPECULAR
+                                texture2d<float, access::write>  outVisibility [[texture(9)]], // with RESTIR_SPLIT
+                                texture2d<float, access::write>  outBlocker [[texture(10)]],   // with RESTIR_SPLIT
+                                uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    bool shade = (rp.config.z & RESTIR_SHADE) != 0, specular = (u.flags & FLAG_SPECULAR) != 0;
+    bool split = (rp.config.z & RESTIR_SPLIT) != 0;
+    uint chains = uint(rp.tuning.w);
+    ShadingPoint sp;
+    float depth;
+    if (!restirSurface(tid, u, surfacePos, normalDepth, geoNormal, albedo, material, sp, depth)) {
+        for (uint c = 0; c < chains; ++c) outReservoir.write(packReservoir(emptyReservoir()), tid, c);
+        if (shade) {
+            outDirect.write(float4(0.0f), tid);
+            if (specular) outSpecular.write(float4(0.0f), tid);
+            if (split) { outVisibility.write(float4(0.0f), tid); outBlocker.write(float4(0.0f), tid); }
+        }
+        return;
+    }
+    SceneData s;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
+    Rng rng;
+    rng.state = pcgHash(tid.x * 9781u + pcgHash(tid.y + pcgHash(u.frameIndex * 7u + uint(rp.tuning.y) + 0x68E31DA4u)));
+
+    // Neighbours on the same surface, in a disk (shared by the chains).
+    uint wanted = min(rp.config.w, RESTIR_MAX_SPATIAL), count = 0;
+    uint2 nq[RESTIR_MAX_SPATIAL];
+    ShadingPoint nsp[RESTIR_MAX_SPATIAL];
+    for (uint i = 0; i < wanted; ++i) {
+        float radius = rp.tuning.x * sqrt(rng.next()), angle = 2.0f * M_PI_F * rng.next();
+        int2 q = int2(tid) + int2(round(radius * float2(cos(angle), sin(angle))));
+        if (all(q == int2(tid)) || q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+        ShadingPoint qp;
+        float qd;
+        if (!restirSurface(uint2(q), u, surfacePos, normalDepth, geoNormal, albedo, material, qp, qd)) continue;
+        if (abs(qd - depth) > 0.1f * depth || dot(qp.n, sp.n) < 0.9f) continue;
+        nq[count] = uint2(q);
+        nsp[count] = qp;
+        count++;
+    }
+
+    float3 diffuse = float3(0.0f), spec = float3(0.0f);
+    float visibility = 0.0f, penumbra = 0.0f, occluded = 0.0f;
+    for (uint chain = 0; chain < chains; ++chain) {
+        Reservoir r = unpackReservoir(inReservoir.read(tid, chain));
+        // Pairwise MIS with confidence weights: each neighbour's technique is weighed against the canonical one's share
+        // M_c / n (n = neighbours with a reservoir); every sample's weights sum to 1, so the result stays unbiased (for
+        // the target).
+        // Each chain takes its own share of the neighbours (j = chain, chain + chains, ...): the chains together see
+        // them all for a third of the target evaluations.
+        Reservoir nb[RESTIR_MAX_SPATIAL];
+        uint n = 0;
+        float Msum = r.M;
+        for (uint j = 0; j < count; ++j) {
+            Reservoir qr = emptyReservoir();
+            if (j % chains == chain % max(min(count, chains), 1u)) qr = unpackReservoir(inReservoir.read(nq[j], chain));
+            nb[j] = qr;
+            if (qr.M > 0.0f) { n++; Msum += qr.M; }
+        }
+        if (n > 0) {
+            float cShare = r.M / float(n);
+            float cc = restirTarget(r, sp, s, lights, tris, false);
+            float mc = 0.0f, wSum = 0.0f, target = cc;
+            Reservoir picked = r;
+            for (uint j = 0; j < count; ++j) {
+                if (nb[j].M <= 0.0f) continue;
+                float B = (nb[j].M + cShare) / Msum;
+                float jc = restirTarget(r, nsp[j], s, lights, tris, false);    // the canonical sample at the neighbour
+                float jj = restirTarget(nb[j], nsp[j], s, lights, tris, false);
+                float cj = restirTarget(nb[j], sp, s, lights, tris, false);    // the neighbour's sample here
+                mc += B * (cShare * cc) / max(nb[j].M * jc + cShare * cc, 1e-30f);
+                float mj = B * (nb[j].M * jj) / max(nb[j].M * jj + cShare * cj, 1e-30f);
+                float w = mj * cj * nb[j].W;
+                if (w <= 0.0f) continue;
+                wSum += w;
+                if (rng.next() * wSum < w) { picked = nb[j]; picked.visible = false; target = cj; }
+            }
+            float wc = mc * cc * r.W;
+            wSum += wc;
+            if (wc > 0.0f && rng.next() * wSum < wc) { picked = r; target = cc; }
+            r = picked;
+            r.W = target > 0.0f && wSum > 0.0f ? wSum / target : 0.0f;
+            r.M = min(Msum, float(rp.config.y));
+        }
+        if (shade) {
+            // One shadow ray per chain (none if it kept its own already-tested pick). RESTIR_SPLIT: `direct` gets the
+            // unshadowed diffuse light and `visibility` the visibility (and `blocker` the penumbra), which the shadow
+            // denoiser filters; the composite multiplies the two back. (An occluded pick keeps its weight for reuse:
+            // zeroing it here as well as at the initial pick let confident zeros spread through the reuse.)
+            if (r.element != ELEMENT_NONE && r.W > 0.0f) {
+                LightSampleEval e = evalLightSample(r.element, r.uv, sp, s, lights, tris, false, true);
+                float b = 0.0f;
+                float v = r.visible || isVisibleBlocker(sp.p, e.target, accel, b) ? 1.0f : 0.0f;
+                if (b > 0.0f) {
+                    penumbra += (r.element & ELEMENT_TYPE) != ELEMENT_TRIANGLE ? penumbraWidth(lights[r.element & ELEMENT_INDEX], sp.p, b)
+                                                                               : max(0.1f * b, 1e-4f);
+                    occluded += 1.0f;
+                }
+                visibility += v;
+                diffuse += e.diffuse * (r.W * (split ? 1.0f : v));
+                spec += e.specular * (r.W * v);
+            }
+            r.visible = false;
+        }
+        outReservoir.write(packReservoir(r), tid, chain);
+    }
+    if (shade) {
+        float inv = 1.0f / float(chains);
+        diffuse *= inv; spec *= inv;
+        float l = luminance(diffuse) + luminance(spec);
+        if (rp.tuning.z > 0.0f && l > rp.tuning.z) { diffuse *= rp.tuning.z / l; spec *= rp.tuning.z / l; }
+        if (split) {
+            outVisibility.write(float4(visibility * inv, 0.0f, 0.0f, 0.0f), tid);
+            outBlocker.write(roundToHalf(float4(occluded > 0.0f ? penumbra / occluded : 0.0f, 0.0f, 0.0f, 0.0f)), tid);
+        }
+        outDirect.write(roundToHalf(float4(diffuse, 1.0f)), tid);
+        if (specular) outSpecular.write(roundToHalf(float4(spec, 1.0f)), tid);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // 2d. Reflections (specular materials only): one GGX visible-normal ray per pixel for the indirect specular light,
 //     divided by the specular albedo so the denoiser filters a smooth signal (the composite multiplies it back).
 //     Hits are lit by one light sample (one shadow ray) plus this frame's diffuse GI where the hit is on screen
@@ -2930,7 +3391,11 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         float3 hp = h.position + hng * RAY_EPSILON;
         float3 albedo = hitAlbedo(h);
         L += throughput * (b == 0 ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
-        if (u.lightCount > 0) {
+        if (LIGHT_TABLE) {
+            Rng r;
+            r.state = pcgHash(as_type<uint>(rng.next()) + b * 977u);
+            L += throughput * albedo * sampleLightsRIS(s.lights, u.lightCount, u.lightTable, hp, hn, hng, 4, r, accel, s);
+        } else if (u.lightCount > 0) {
             float pdf;
             float uPick = rng.next();
             float uSubset = u.lightCount > LIGHT_CANDIDATES ? rng.next() : 0.0f;
@@ -2977,6 +3442,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                              texture2d<float, access::read>   indirect   [[texture(5)]],   // this frame's diffuse GI
                              texture2d<float, access::write>  outSpecular [[texture(6)]],
                              texture3d<float>                 fogNoiseTex [[texture(7)]],   // with FOG_REFLECTIONS
+                             texture2d<float, access::read>   restirSpecular [[texture(8)]],  // with FLAG_RESTIR
                              constant FogParams&              fog        [[buffer(9)]],
                              uint2 tid [[thread_position_in_grid]])
 {
@@ -3005,7 +3471,9 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float3 result = float3(0.0f);
 
     uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
-    if ((u.flags & FLAG_SHADOW_DENOISER) == 0 && analyticLights > 0) {
+    if ((u.flags & FLAG_RESTIR) != 0) {
+        result += restirSpecular.read(tid).rgb;   // ReSTIR's direct specular (restirSpatialKernel)
+    } else if ((u.flags & FLAG_SHADOW_DENOISER) == 0 && analyticLights > 0) {
         // Direct specular from one light (picked by its diffuse light here): spheres and spots exactly, a uniform
         // point on the sphere; other lights their analytic specular x the visibility of a random point of them.
         float pdf;
@@ -3189,6 +3657,7 @@ kernel void temporalKernel(constant Uniforms&              u           [[buffer(
         variance = max(0.0f, moments.y - moments.x * moments.x);
     }
 
+    variance *= max(u.denoise.w, 1.0f);   // ReSTIR's reused samples are correlated: their variance looks too low
     // Alpha holds the standard deviation: the variance overflows the half-float texture near the lights.
     outIllum.write(roundToHalf(float4(color, sqrt(variance))), tid);
     outMoments.write(float4(moments, len, slowLum), tid);
@@ -3575,7 +4044,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  moments    [[texture(6)]],
                             texture2d<float, access::write> output     [[texture(7)]],
                             texture2d<float, access::read>  denoisedIndirect [[texture(8)]],  // with FLAG_SEPARATE
-                            texture2d<float, access::read>  giDebug    [[texture(9)]],   // written by surfel / cascade GI
+                            texture2d<float, access::read>  giDebug    [[texture(9)]],   // written by cascade GI
                             texture2d<float, access::read>  surfacePos [[texture(10)]],  // with FLAG_SHADOW_DENOISER
                             texture2d<float, access::read>  geoNormal  [[texture(11)]],  // with FLAG_SHADOW_DENOISER
                             texture2d<float, access::read>  material   [[texture(12)]],  // with FLAG_SPECULAR: F0, roughness
@@ -3608,9 +4077,14 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
         float3 p = sp.xyz + ng * RAY_EPSILON;
         illumination = float3(0.0f);
+        if ((u.flags & FLAG_RESTIR) != 0) {
+            // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
+            illumination = meshDirect.read(tid).rgb * vis.r;
+        } else {
         for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * vis[lightGroup(lights[l])];
         if ((u.flags & FLAG_MESH_LIGHTS) != 0) illumination += meshDirect.read(tid).rgb;   // denoised on its own
-        if ((u.flags & FLAG_SPECULAR) != 0) {
+        }
+        if ((u.flags & FLAG_SPECULAR) != 0 && (u.flags & FLAG_RESTIR) == 0) {
             // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
             float4 m = material.read(tid);
             if (any(m.rgb > 0.0f)) {
@@ -4058,8 +4532,8 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         float3 hng, hns;
         orientNormals(h, dir, hng, hns);
         float3 hp = h.position + hng * RAY_EPSILON;
-        float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng,
-                                        pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), u.flags, s);
+        float3 light = giLightIllum(lights, u, lightMap, hp, hns, hng,
+                                    pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), accel, s);
         if (p.interval.z > 0.0f) {
             // Multi-bounce: where this hit point was on screen last frame, add last frame's indirect light there;
             // elsewhere (off screen, occluded) fall back to last frame's average indirect light over all probes.
@@ -4201,439 +4675,6 @@ kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(
     // Debug: probe grid lines over the strongest weight's confidence (dark = no good probe nearby).
     bool grid = any(fmod(float2(tid), float(p.layout.x)) < 1.0f);
     giDebug.write(float4(grid ? float3(0.25f) : float3(saturate(wsum)), 1.0f), tid);
-}
-
-// =============================================================================================
-// Surfel GI (GI mode "Surfels", after EA SEED's GIBS)
-//
-// Small disks ("surfels") are spawned on visible surfaces where coverage is low and stored in their instance's
-// object space, so they ride along with moving objects. Each frame:
-//   begin -> transform (world positions, alive list, grid cell counts) -> scan (cell offsets, indirect dispatch
-//   args) -> scatter (grid lists) -> trace (R rays per surfel; hits are lit by the light maps plus last frame's
-//   surfel irradiance there = multi-bounce; temporal blend) -> gather + spawn (per pixel: weighted average of
-//   nearby surfels; one spawn per 16x16 tile at its least-covered pixel) -> lifecycle (free flagged / stale).
-// Spawning pops the free stack and the lifecycle pass pushes it; they're separate dispatches, so they never race.
-// =============================================================================================
-
-constant uint SURFEL_DEAD = 0xFFFFFFFFu;
-
-struct Surfel {
-    float4 objPosRadius;   // xyz = position in the instance's object space, w = world radius
-    float4 objNormal;      // shading normal, object space
-    float4 objGeomNormal;  // geometric normal, object space
-    uint   instance;       // SURFEL_DEAD = free slot
-    uint   spawnFrame;
-    uint   pad0;
-    uint   pad1;
-};
-
-struct SurfelIrradiance {
-    float4 longMean;       // rgb = irradiance estimate (what pixels read), w = frames accumulated
-    float4 shortMean;      // rgb = fast-moving mean, w = luminance variance (anti-lag)
-};
-
-struct SurfelHeader {
-    atomic_uint aliveCount;
-    atomic_uint freeTop;          // free stack size
-    atomic_uint spawnCount;       // this frame (stats)
-    atomic_uint killCount;        // this frame (stats)
-    uint        aliveDispatch[3]; // threadgroups of 64 over the alive list (indirect dispatch)
-    uint        traceDispatch[3]; // threadgroups of 32 over alive x rays
-    uint        pad[2];
-};
-
-struct SurfelParams {
-    float4 gridMin;   // xyz = grid origin, w = cell size
-    uint4  gridDims;  // xyz = cells, w = cell count
-    uint4  config;    // x = max surfels, y = rays per surfel (power of two <= 32), z = frame, w unused
-    float4 tuning;    // x = target radius in pixels, y = max history, z = pixel angle (2 tan(fovY/2) / height), w unused
-};
-
-inline int3 surfelCell(float3 p, constant SurfelParams& sp) {
-    return clamp(int3(floor((p - sp.gridMin.xyz) / sp.gridMin.w)), int3(0), int3(sp.gridDims.xyz) - 1);
-}
-inline uint surfelCellIndex(int3 c, constant SurfelParams& sp) {
-    return (uint(c.z) * sp.gridDims.y + uint(c.y)) * sp.gridDims.x + uint(c.x);
-}
-
-// Weighted average of the surfels covering point x (shading normal n). Returns rgb + total weight (coverage).
-inline float4 surfelLookup(float3 x, float3 n, constant SurfelParams& sp,
-                           device const uint* cellStart, device const uint* cellSurfels,
-                           device const float4* worldPos, device const float4* worldNormal,
-                           device const SurfelIrradiance* irr) {
-    uint c = surfelCellIndex(surfelCell(x, sp), sp);
-    float3 sum = float3(0.0f);
-    float wsum = 0.0f;
-    for (uint k = cellStart[c]; k < cellStart[c + 1]; ++k) {
-        uint id = cellSurfels[k];
-        float4 pr = worldPos[id];
-        float3 d = x - pr.xyz;
-        float dist = length(d);
-        if (dist >= pr.w) continue;
-        float3 sn = worldNormal[id].xyz;
-        if (abs(dot(d, sn)) > 0.5f * pr.w) continue;   // on a different surface
-        float w = (1.0f - dist / pr.w);
-        w *= w * pow(saturate(dot(n, sn)), 8.0f);
-        sum += w * irr[id].longMean.rgb;
-        wsum += w;
-    }
-    return float4(sum, wsum);
-}
-
-// Buffer indices are shared by all surfel kernels: 0 = SurfelParams (or Uniforms for trace / gather, which then
-// take SurfelParams at 9), 6 = instances, 10 = header, 11 = alive list, 12 = cell counts, 13-15 = world-space
-// position/normal/geometric normal, 16 = cell starts, 17 = scatter cursors, 18 = cell lists, 19 / 20 = previous /
-// current irradiance, 21 = last-used frame, 22 = surfels, 23 = free stack, 24 = kill flags, 25 / 26 = this /
-// last frame's mean surfel irradiance (rgb sums x1024 + count), used where no surfel covers a point.
-kernel void surfelClearKernel(constant SurfelParams& sp [[buffer(0)]], device Surfel* surfels [[buffer(22)]],
-                              device SurfelIrradiance* irrA [[buffer(19)]], device SurfelIrradiance* irrB [[buffer(20)]],
-                              device uint* freeStack [[buffer(23)]], device uint* lastUsed [[buffer(21)]],
-                              device SurfelHeader& header [[buffer(10)]], device atomic_uint* cellCount [[buffer(12)]],
-                              device uint* killFlag [[buffer(24)]],
-                              uint gid [[thread_position_in_grid]])
-{
-    uint maxSurfels = sp.config.x;
-    if (gid < maxSurfels) {
-        surfels[gid].instance = SURFEL_DEAD;
-        irrA[gid].longMean = irrA[gid].shortMean = float4(0.0f);
-        irrB[gid].longMean = irrB[gid].shortMean = float4(0.0f);
-        freeStack[gid] = maxSurfels - 1 - gid;   // pops hand out 0, 1, 2, ...
-        lastUsed[gid] = 0;
-        killFlag[gid] = 0;
-    }
-    if (gid < sp.gridDims.w) atomic_store_explicit(&cellCount[gid], 0, memory_order_relaxed);
-    if (gid == 0) {
-        atomic_store_explicit(&header.aliveCount, 0, memory_order_relaxed);
-        atomic_store_explicit(&header.freeTop, maxSurfels, memory_order_relaxed);
-        atomic_store_explicit(&header.spawnCount, 0, memory_order_relaxed);
-        atomic_store_explicit(&header.killCount, 0, memory_order_relaxed);
-    }
-}
-
-inline float3 surfelAmbient(device const uint* a) {
-    return a[3] > 0 ? float3(a[0], a[1], a[2]) / (1024.0f * float(a[3])) : float3(0.0f);
-}
-
-kernel void surfelBeginKernel(device SurfelHeader& header [[buffer(10)]], device uint* ambientCur [[buffer(25)]]) {
-    ambientCur[0] = ambientCur[1] = ambientCur[2] = ambientCur[3] = 0;
-    atomic_store_explicit(&header.aliveCount, 0, memory_order_relaxed);
-    atomic_store_explicit(&header.spawnCount, 0, memory_order_relaxed);
-    atomic_store_explicit(&header.killCount, 0, memory_order_relaxed);
-}
-
-kernel void surfelTransformKernel(constant SurfelParams& sp [[buffer(0)]], device const Surfel* surfels [[buffer(22)]],
-                                  device const InstanceData* instances [[buffer(6)]],
-                                  device SurfelHeader& header [[buffer(10)]], device uint* aliveList [[buffer(11)]],
-                                  device atomic_uint* cellCount [[buffer(12)]],
-                                  device float4* worldPos [[buffer(13)]], device float4* worldNormal [[buffer(14)]],
-                                  device float4* worldGeomNormal [[buffer(15)]],
-                                  uint gid [[thread_position_in_grid]])
-{
-    if (gid >= sp.config.x) return;
-    Surfel s = surfels[gid];
-    if (s.instance == SURFEL_DEAD) return;
-    InstanceData inst = instances[s.instance];
-    float3 p = (inst.transform * float4(s.objPosRadius.xyz, 1.0f)).xyz;
-    float r = s.objPosRadius.w;
-    worldPos[gid] = float4(p, r);
-    worldNormal[gid] = float4(normalize((inst.normalMatrix * float4(s.objNormal.xyz, 0.0f)).xyz), 0.0f);
-    worldGeomNormal[gid] = float4(normalize((inst.normalMatrix * float4(s.objGeomNormal.xyz, 0.0f)).xyz), 0.0f);
-    aliveList[atomic_fetch_add_explicit(&header.aliveCount, 1, memory_order_relaxed)] = gid;
-    int3 lo = surfelCell(p - r, sp), hi = surfelCell(p + r, sp);
-    for (int z = lo.z; z <= hi.z; ++z)
-        for (int y = lo.y; y <= hi.y; ++y)
-            for (int x = lo.x; x <= hi.x; ++x)
-                atomic_fetch_add_explicit(&cellCount[surfelCellIndex(int3(x, y, z), sp)], 1, memory_order_relaxed);
-}
-
-// One threadgroup of 1024: exclusive prefix sum over the cell counts -> cellStart (and the scatter cursors),
-// counts reset for next frame, indirect dispatch sizes from the alive count. The grid is swept in blocks of 1024
-// consecutive cells (one per thread, so the reads coalesce), carrying the running total between blocks.
-kernel void surfelScanKernel(constant SurfelParams& sp [[buffer(0)]], device SurfelHeader& header [[buffer(10)]],
-                             device atomic_uint* cellCount [[buffer(12)]], device uint* cellStart [[buffer(16)]],
-                             device atomic_uint* cellCursor [[buffer(17)]],
-                             uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]],
-                             uint simd [[simdgroup_index_in_threadgroup]])
-{
-    threadgroup uint simdTotals[32];
-    threadgroup uint blockTotal;
-    uint cells = sp.gridDims.w, running = 0;
-    for (uint base = 0; base < cells; base += 1024) {
-        uint c = base + tid;
-        uint n = c < cells ? atomic_load_explicit(&cellCount[c], memory_order_relaxed) : 0;
-        uint prefix = simd_prefix_exclusive_sum(n);
-        if (lane == 31) simdTotals[simd] = prefix + n;
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (simd == 0) {
-            uint t = simdTotals[lane];
-            uint e = simd_prefix_exclusive_sum(t);
-            simdTotals[lane] = e;
-            if (lane == 31) blockTotal = e + t;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (c < cells) {
-            uint offset = running + simdTotals[simd] + prefix;
-            cellStart[c] = offset;
-            atomic_store_explicit(&cellCursor[c], offset, memory_order_relaxed);
-            atomic_store_explicit(&cellCount[c], 0, memory_order_relaxed);
-        }
-        running += blockTotal;
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (tid == 0) {
-        cellStart[cells] = running;
-        uint alive = atomic_load_explicit(&header.aliveCount, memory_order_relaxed);
-        header.aliveDispatch[0] = (alive + 63) / 64; header.aliveDispatch[1] = 1; header.aliveDispatch[2] = 1;
-        header.traceDispatch[0] = (alive * sp.config.y + 31) / 32; header.traceDispatch[1] = 1; header.traceDispatch[2] = 1;
-    }
-}
-
-kernel void surfelScatterKernel(constant SurfelParams& sp [[buffer(0)]], device SurfelHeader& header [[buffer(10)]],
-                                device const uint* aliveList [[buffer(11)]], device const float4* worldPos [[buffer(13)]],
-                                device atomic_uint* cellCursor [[buffer(17)]], device uint* cellSurfels [[buffer(18)]],
-                                uint gid [[thread_position_in_grid]])
-{
-    if (gid >= atomic_load_explicit(&header.aliveCount, memory_order_relaxed)) return;
-    uint id = aliveList[gid];
-    float4 pr = worldPos[id];
-    int3 lo = surfelCell(pr.xyz - pr.w, sp), hi = surfelCell(pr.xyz + pr.w, sp);
-    for (int z = lo.z; z <= hi.z; ++z)
-        for (int y = lo.y; y <= hi.y; ++y)
-            for (int x = lo.x; x <= hi.x; ++x) {
-                uint c = surfelCellIndex(int3(x, y, z), sp);
-                cellSurfels[atomic_fetch_add_explicit(&cellCursor[c], 1, memory_order_relaxed)] = id;
-            }
-}
-
-// One thread per (surfel, ray); the rays of a surfel are adjacent lanes of one SIMD group and get summed with
-// shuffles, then lane 0 blends the result into the surfel's irradiance (short + long running means, with the
-// long one's history cut when the two disagree beyond noise, i.e. when the lighting changes).
-kernel void surfelTraceKernel(constant Uniforms&               u          [[buffer(0)]],
-                              SCENE_ACCEL                      accel      [[buffer(1)]],
-                              device const float3*             positions  [[buffer(2)]],
-                              device const float3*             normals    [[buffer(3)]],
-                              device const uint*               indices    [[buffer(4)]],
-                              device const MeshData*           meshes     [[buffer(5)]],
-                              device const InstanceData*       instances  [[buffer(6)]],
-                              constant SceneShading&           shading    [[buffer(7)]],
-                              device const Light*              lights     [[buffer(8)]],
-                              constant SurfelParams&           sp         [[buffer(9)]],
-                              device SurfelHeader&             header     [[buffer(10)]],
-                              device const uint*               aliveList  [[buffer(11)]],
-                              device const float4*             worldPos   [[buffer(13)]],
-                              device const float4*             worldNormal [[buffer(14)]],
-                              device const float4*             worldGeomNormal [[buffer(15)]],
-                              device const uint*               cellStart  [[buffer(16)]],
-                              device const uint*               cellSurfels [[buffer(18)]],
-                              device const SurfelIrradiance*   irrPrev    [[buffer(19)]],
-                              device SurfelIrradiance*         irrCur     [[buffer(20)]],
-                              device const uint*               lastUsed   [[buffer(21)]],
-                              device atomic_uint*              ambientCur [[buffer(25)]],
-                              device const uint*               ambientPrev [[buffer(26)]],
-                              texture2d_array<float, access::read> lightMap [[texture(0)]],
-                              uint gid [[thread_position_in_grid]])
-{
-    uint rays = sp.config.y, frame = sp.config.z;
-    uint alive = atomic_load_explicit(&header.aliveCount, memory_order_relaxed);
-    uint slot = gid / rays, rayIndex = gid % rays;
-    bool valid = slot < alive;
-    uint id = valid ? aliveList[slot] : 0;
-    // Surfels not seen for a couple of frames (off screen) only trace every 4th frame.
-    bool visible = valid && frame - lastUsed[id] <= 2u;
-    bool traceNow = valid && (visible || ((id + frame) & 3u) == 0u);
-
-    float3 radiance = float3(0.0f);
-    if (traceNow) {
-        SceneData s;
-        s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-        s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
-        float3 p = worldPos[id].xyz, n = worldNormal[id].xyz, ng = worldGeomNormal[id].xyz;
-        // Stratified over the surfel's rays, randomly rotated per surfel and frame.
-        uint h = pcgHash(id * 9781u + pcgHash(frame));
-        float2 jitter = float2(h & 0xFFFFu, h >> 16) * (1.0f / 65536.0f);
-        float2 uv = fract(float2((float(rayIndex) + 0.5f) / float(rays), float(rayIndex) * 0.618034f) + jitter);
-        float3 d = cosineSampleHemisphere(n, uv);
-        if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
-        Surface hit = traceSurface(makeRay(p + ng * RAY_EPSILON, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
-        if (!hit.hit) {
-            radiance = skyRadiance(u, s, d, 2.0f);
-        } else {
-            float3 hng, hns;
-            orientNormals(hit, d, hng, hns);
-            float3 hp = hit.position + hng * RAY_EPSILON;
-            float3 light = lightIllumCached(lights, u.lightCount, lightMap, hp, hns, hng, pcgHash(h + rayIndex), u.flags, s);
-            float4 bounce = surfelLookup(hit.position, hns, sp, cellStart, cellSurfels, worldPos, worldNormal, irrPrev);
-            // Multi-bounce from last frame's surfels there; where none exist yet (e.g. never seen), their average.
-            light += bounce.w > 0.0f ? bounce.rgb / bounce.w : surfelAmbient(ambientPrev);
-            radiance = hitAlbedo(hit) * light;
-        }
-    }
-    // Sum the rays of this surfel (adjacent lanes; rays is a power of two <= 32).
-    for (uint offset = 1; offset < rays; offset <<= 1)
-        radiance += simd_shuffle_xor(radiance, ushort(offset));
-    if (!valid || rayIndex != 0) return;
-
-    SurfelIrradiance prev = irrPrev[id];
-    if (!traceNow) { irrCur[id] = prev; return; }
-    float3 mean = radiance / float(rays);
-    SurfelIrradiance next;
-    float count = prev.longMean.w;
-    if (count < 0.5f) {
-        next.longMean = float4(mean, 1.0f);
-        next.shortMean = float4(mean, 0.0f);
-    } else {
-        float3 shortMean = mix(prev.shortMean.rgb, mean, 0.25f);
-        float lumDiff = luminance(mean) - luminance(shortMean);
-        float variance = mix(prev.shortMean.w, lumDiff * lumDiff, 0.25f);
-        // Anti-lag: when the fast and slow means disagree by more than ~3 standard errors, the light changed.
-        float stdError = sqrt(variance) * 0.4f + 1e-3f * luminance(shortMean) + 1e-5f;
-        float excess = max(abs(luminance(shortMean) - luminance(prev.longMean.rgb)) / stdError - 3.0f, 0.0f);
-        count = min(count / (1.0f + excess) + 1.0f, sp.tuning.y);
-        next.longMean = float4(mix(prev.longMean.rgb, mean, 1.0f / count), count);
-        next.shortMean = float4(shortMean, variance);
-    }
-    irrCur[id] = next;
-    float3 e = clamp(next.longMean.rgb, 0.0f, 100.0f) * 1024.0f;
-    atomic_fetch_add_explicit(&ambientCur[0], uint(e.r), memory_order_relaxed);
-    atomic_fetch_add_explicit(&ambientCur[1], uint(e.g), memory_order_relaxed);
-    atomic_fetch_add_explicit(&ambientCur[2], uint(e.b), memory_order_relaxed);
-    atomic_fetch_add_explicit(&ambientCur[3], 1, memory_order_relaxed);
-}
-
-// Per pixel (16x16 threadgroups): weighted average of the surfels around the pixel -> indirect light, coverage
-// bookkeeping, then the tile's least-covered pixel may spawn one surfel.
-kernel void surfelGatherSpawnKernel(constant Uniforms&               u          [[buffer(0)]],
-                                    device const InstanceData*       instances  [[buffer(6)]],
-                                    constant SurfelParams&           sp         [[buffer(9)]],
-                                    device SurfelHeader&             header     [[buffer(10)]],
-                                    device const float4*             worldPos   [[buffer(13)]],
-                                    device const float4*             worldNormal [[buffer(14)]],
-                                    device const uint*               cellStart  [[buffer(16)]],
-                                    device const uint*               cellSurfels [[buffer(18)]],
-                                    device SurfelIrradiance*         irrCur     [[buffer(20)]],
-                                    device uint*                     lastUsed   [[buffer(21)]],
-                                    device Surfel*                   surfels    [[buffer(22)]],
-                                    device const uint*               freeStack  [[buffer(23)]],
-                                    device uint*                     killFlag   [[buffer(24)]],
-                                    device const uint*               ambientPrev [[buffer(26)]],
-                                    texture2d<float, access::read>   surfacePos [[texture(0)]],
-                                    texture2d<float, access::read>   normalDepth [[texture(1)]],
-                                    texture2d<float, access::read>   geoNormal  [[texture(2)]],
-                                    texture2d<float, access::write>  outIndirect [[texture(3)]],
-                                    texture2d<float, access::write>  giDebug    [[texture(4)]],
-                                    uint2 tid [[thread_position_in_grid]], uint lid [[thread_index_in_threadgroup]],
-                                    uint simd [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]])
-{
-    threadgroup uint simdMin[8];
-    uint frame = sp.config.z;
-    bool inside = tid.x < u.width && tid.y < u.height;
-    float4 spos = inside ? surfacePos.read(tid) : float4(0.0f);
-    bool needsGI = spos.w > 0.0f;
-    float coverage = 1e9f;
-    float3 x = spos.xyz, n = float3(0.0f, 1.0f, 0.0f);
-    float3 gathered = float3(0.0f);
-    float depth = 1.0f;
-    if (needsGI) {
-        float4 nd = normalDepth.read(tid);
-        n = nd.xyz;
-        depth = nd.w;
-        float rTarget = sp.tuning.x * sp.tuning.z * depth;
-        uint c = surfelCellIndex(surfelCell(x, sp), sp);
-        float3 sum = float3(0.0f);
-        float wsum = 0.0f, best = 0.0f;
-        uint bestId = 0, topHash = 0, topId = SURFEL_DEAD;
-        for (uint k = cellStart[c]; k < cellStart[c + 1]; ++k) {
-            uint id = cellSurfels[k];
-            float4 pr = worldPos[id];
-            if (pr.w > 2.0f * rTarget) killFlag[id] = 1;        // much bigger than wanted here (camera got closer)
-            float r = min(pr.w, 1.5f * rTarget);
-            float3 d = x - pr.xyz;
-            float dist = length(d);
-            if (dist >= r) continue;
-            float3 sn = worldNormal[id].xyz;
-            if (abs(dot(d, sn)) > 0.5f * r) continue;
-            float w = 1.0f - dist / r;
-            w *= w * pow(saturate(dot(n, sn)), 8.0f);
-            if (w <= 0.0f) continue;
-            sum += w * irrCur[id].longMean.rgb;
-            wsum += w;
-            lastUsed[id] = frame;
-            if (w > best) { best = w; bestId = id; }
-            uint hsh = pcgHash(id);
-            if (hsh >= topHash) { topHash = hsh; topId = id; }
-        }
-        coverage = wsum;
-        if (wsum > 2.0f && topId != SURFEL_DEAD) killFlag[topId] = 1;   // over-covered: all pixels pick the same one
-        // Normalized average; thin coverage blends toward the scene-wide mean so holes don't show as dark spots.
-        float3 ambient = surfelAmbient(ambientPrev);
-        gathered = wsum > 0.0f ? mix(ambient, sum / wsum, saturate(wsum * 4.0f)) : ambient;
-        float3 dbg = wsum > 0.0f ? float3((uint3(pcgHash(bestId)) >> uint3(0, 8, 16)) & 0xFFu) / 255.0f * saturate(wsum)
-                                 : float3(1.0f, 0.0f, 0.0f);   // holes in red
-        if (inside) giDebug.write(float4(dbg, 1.0f), tid);
-    } else if (inside) {
-        giDebug.write(float4(0.0f), tid);
-    }
-    if (inside) outIndirect.write(float4(gathered, 1.0f), tid);
-
-    // Tile-wide minimum coverage (key = quantized coverage << 8 | pixel index in the tile).
-    uint key = needsGI ? (uint(min(coverage, 15.99f) * 4096.0f) << 8) | lid : 0xFFFFFFFFu;
-    key = simd_min(key);
-    if (lane == 0) simdMin[simd] = key;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (lid != 0) return;
-    for (uint k = 1; k < 8; ++k) key = min(key, simdMin[k]);
-    if (key == 0xFFFFFFFFu) return;
-    float minCoverage = float(key >> 8) / 4096.0f;
-    const float targetCoverage = 0.3f;   // ~2 overlapping surfels (a surfel's mean weight over its disk is 1/6)
-    if (minCoverage >= targetCoverage) return;
-    uint h = pcgHash((tid.x / 16u) * 73856093u ^ (tid.y / 16u) * 19349663u ^ pcgHash(frame));
-    if (float(h) * (1.0f / 4294967296.0f) > 1.0f - minCoverage / targetCoverage) return;
-
-    // Spawn at that pixel: pop a free slot.
-    uint2 p = (tid / 16u) * 16u + uint2((key & 0xFFu) % 16u, (key & 0xFFu) / 16u);
-    uint top = atomic_fetch_sub_explicit(&header.freeTop, 1, memory_order_relaxed);
-    if (top == 0 || top > sp.config.x) { atomic_fetch_add_explicit(&header.freeTop, 1, memory_order_relaxed); return; }
-    uint id = freeStack[top - 1];
-    float4 ps = surfacePos.read(p);
-    float4 pnd = normalDepth.read(p);
-    float3 png = geoNormal.read(p).xyz;
-    uint instance = uint(ps.w) - 1u;
-    InstanceData inst = instances[instance];
-    float4x4 toObject = transpose(inst.normalMatrix);                 // = inverse(transform)
-    float3x3 linear = float3x3(inst.transform[0].xyz, inst.transform[1].xyz, inst.transform[2].xyz);
-    Surfel s;
-    s.objPosRadius = float4((toObject * float4(ps.xyz, 1.0f)).xyz,
-                            clamp(sp.tuning.x * sp.tuning.z * pnd.w, 0.05f, 0.5f * sp.gridMin.w));
-    s.objNormal = float4(normalize(transpose(linear) * pnd.xyz), 0.0f);
-    s.objGeomNormal = float4(normalize(transpose(linear) * png), 0.0f);
-    s.instance = instance;
-    s.spawnFrame = frame;
-    s.pad0 = s.pad1 = 0;
-    surfels[id] = s;
-    irrCur[id].longMean = float4(0.0f);   // count 0: the first traced frame replaces it
-    irrCur[id].shortMean = float4(0.0f);
-    lastUsed[id] = frame;
-    killFlag[id] = 0;
-    atomic_fetch_add_explicit(&header.spawnCount, 1, memory_order_relaxed);
-}
-
-// Frees surfels flagged by the gather (oversized / over-covered), and stale ones when the pool runs low.
-kernel void surfelLifecycleKernel(constant SurfelParams& sp [[buffer(9)]], device SurfelHeader& header [[buffer(10)]],
-                                  device const uint* aliveList [[buffer(11)]], device const uint* lastUsed [[buffer(21)]],
-                                  device Surfel* surfels [[buffer(22)]], device uint* freeStack [[buffer(23)]],
-                                  device uint* killFlag [[buffer(24)]],
-                                  uint gid [[thread_position_in_grid]])
-{
-    if (gid >= atomic_load_explicit(&header.aliveCount, memory_order_relaxed)) return;
-    uint id = aliveList[gid];
-    uint freeTop = atomic_load_explicit(&header.freeTop, memory_order_relaxed);
-    bool lowOnSpace = freeTop < sp.config.x / 4;
-    bool stale = sp.config.z - lastUsed[id] > 120u;
-    if (killFlag[id] == 0 && !(lowOnSpace && stale)) return;
-    killFlag[id] = 0;
-    surfels[id].instance = SURFEL_DEAD;
-    freeStack[atomic_fetch_add_explicit(&header.freeTop, 1, memory_order_relaxed)] = id;
-    atomic_fetch_add_explicit(&header.killCount, 1, memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------------------------

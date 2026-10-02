@@ -15,6 +15,7 @@ python3 Tools/eval/shadow.py /tmp/run
 | `gi.py` | `gi`: every GI method on Cornell | `refs/gi/` (8-bounce path traced) |
 | `upscale.py` | `upscale`: the upscalers, albedo and direct light | `refs/upscale/` (supersampled 1920×1200) |
 | `stress.py` | `stressq`: stress scene, direct light at 32 / 128 lights, final images, upscalers | `refs/stress/` |
+| `restir.py` | `restirq`: stress-scene direct light at 32 / 128 / 1024 / 4096 lights, each direct-light method; `restircheck`: ReSTIR without reuse vs every light traced, per light type (within the run) | `refs/restir/` (every light traced up to 1024; ReSTIR without reuse at 4096) |
 | `noise.py` | `denoise` (references from `noise`) | `refs/noise/` (render once, see below) |
 | `pngdiff.py` | any two runs: per-image differences (did a refactor change the frames?) | — |
 | `columns.py` | pipe a benchmark table in to pull out named columns | — |

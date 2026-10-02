@@ -28,7 +28,6 @@ final class Benchmark {
         var denoiser = DenoiserSettings()
         var giMode = GIMode.pathTraced   // benchmark settings path trace unless they say otherwise (the app default is cascades)
         var lightMaps = false
-        var surfels = SurfelSettings()
         var cascades = CascadeSettings()
         var cameraPath = false        // fly the camera along cameraPose(progress:), ending at the default pose
         var supersample = false       // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
@@ -38,6 +37,8 @@ final class Benchmark {
         var camera: Camera? = nil                             // fixed camera instead of the scene's default
         var fog: FogSettings? = nil                           // nil = the scene's preset (FogSettings.preset)
         var sky: SkySettings? = nil                           // nil = the scene's preset (SkySettings.preset)
+        var directLight: DirectLightMode? = nil               // nil = METALRENDERER_DIRECT / Auto
+        var restir: RestirSettings? = nil                     // nil = the defaults (then METALRENDERER_RESTIR)
     }
 
     /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
@@ -89,9 +90,8 @@ final class Benchmark {
         return Float(frameInConfig) / Float(max(total - 1, 1))
     }
 
-    /// `METALRENDERER_GI="mode=surfels,rays=8,..."` overrides GI settings in every (non-reference) setting.
-    /// Keys: mode (pt|surfels|cascades), lightmaps, bounces, rays, maxsurfels, radius, shistory, sdenoise,
-    /// spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
+    /// `METALRENDERER_GI="mode=cascades,spacing=4,..."` overrides GI settings in every (non-reference) setting.
+    /// Keys: mode (pt|cascades), lightmaps, bounces, spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
     /// upscaler (metalfx|spatial|custom), lightrays (shadow rays per light group with more than 4 lights),
     /// taauhistory, taauclip.
     static func applyGIOverride(to s: inout RenderSettings) {
@@ -101,16 +101,11 @@ final class Benchmark {
             guard kv.count == 2 else { continue }
             let v = Float(kv[1]) ?? 0
             switch kv[0] {
-            case "mode": s.giMode = ["pt": .pathTraced, "surfels": .surfels, "cascades": .radianceCascades][kv[1]] ?? s.giMode
+            case "mode": s.giMode = ["pt": .pathTraced, "cascades": .radianceCascades][kv[1]] ?? s.giMode
             case "lightmaps": s.lightMaps = v != 0
             case "lightrays": s.manyLightRays = Int(v)
             case "lightreuse": s.manyLightReuse = Int(v)
             case "bounces": s.bounces = Int(v)
-            case "rays": s.surfels.raysPerSurfel = Int(v)
-            case "maxsurfels": s.surfels.maxSurfels = Int(v)
-            case "radius": s.surfels.radiusPixels = v
-            case "shistory": s.surfels.maxHistory = v
-            case "sdenoise": s.surfels.denoiseIndirect = v != 0
             case "spacing": s.cascades.probeSpacing = Int(v)
             case "cascades": s.cascades.cascades = Int(v)
             case "b1": s.cascades.firstInterval = v
@@ -189,6 +184,32 @@ final class Benchmark {
         }
     }
 
+    /// `METALRENDERER_RESTIR="candidates=8,chains=4,temporal=1,maxm=8,spatial=1,k=4,radius=24,vis=0,split=0,sigma=3,passes=4,
+    /// history=8,boost=2"` (the defaults) overrides ReSTIR DI's settings in every setting.
+    static func applyRestirOverride(to r: inout RestirSettings) {
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_RESTIR"] else { return }
+        for item in spec.split(separator: ",") {
+            let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2, let v = Float(kv[1]) else { continue }
+            switch kv[0] {
+            case "candidates": r.candidates = Int(v)
+            case "chains": r.chains = Int(v)
+            case "temporal": r.temporal = v != 0
+            case "maxm": r.maxM = v
+            case "spatial": r.spatialPasses = Int(v)
+            case "k": r.spatialSamples = Int(v)
+            case "radius": r.radius = v
+            case "vis": r.visibilityReuse = v != 0
+            case "split": r.splitVisibility = v != 0
+            case "sigma": r.denoiseSigma = v
+            case "passes": r.denoisePasses = Int(v)
+            case "history": r.denoiseHistory = v
+            case "boost": r.varianceBoost = v
+            default: break
+            }
+        }
+    }
+
     static func applySceneOverride(to s: inout SceneSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_SCENE"] else { return }
         for item in spec.split(separator: ",") {
@@ -205,6 +226,9 @@ final class Benchmark {
             case "mixed": s.kind = .mixed
             case "fog": s.kind = .fog
             case "valley": s.kind = .valley
+            case "market":
+                s.kind = .market
+                if s.lights == SceneSettings().lights { s.lights = SceneSettings.marketLights }
             case "emissivelights" where kv.count == 2: s.emissiveLights = kv[1] != "0"
             case "check" where kv.count == 2: s.lightCheck = kv[1]   // Scene.buildLightCheck; "empty" = just the floor
             case "objects" where kv.count == 2: s.objects = Int(kv[1]) ?? s.objects
@@ -224,6 +248,7 @@ final class Benchmark {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
             guard kv.count == 2, let v = Float(kv[1]) else { continue }
             switch kv[0] {
+            case "on": d.enabled = v != 0
             case "passes": d.atrousPasses = Int(v)
             case "tpasses": d.techniquePasses = Int(v)
             case "sigma": d.luminanceSigma = v
@@ -263,15 +288,14 @@ final class Benchmark {
         return all.filter { c in keys.contains { c.name.contains($0) } }
     }()
 
-    /// GI modes compared by `METALRENDERER_BENCH=gi` (`METALRENDERER_GI_MODES="pt,surfels"` picks a subset).
+    /// GI modes compared by `METALRENDERER_BENCH=gi` (`METALRENDERER_GI_MODES="pt,cascades"` picks a subset).
     private static let giModesUnderTest: [(tag: String, base: Config)] = {
         var pt = Config(name: "", renderScale: 0.5)
         var ptLM = pt; ptLM.lightMaps = true
-        var surfels = pt; surfels.giMode = .surfels
         var cascades = pt; cascades.giMode = .radianceCascades
         var cascadesHQ = cascades; cascadesHQ.cascades.probeSpacing = 4; cascadesHQ.cascades.firstInterval = 0.25
-        pt.name = "pt"; ptLM.name = "pt-lightmaps"; surfels.name = "surfels"; cascades.name = "cascades"; cascadesHQ.name = "cascades-hq"
-        let all = [pt, ptLM, surfels, cascades, cascadesHQ].map { (tag: $0.name, base: $0) }
+        pt.name = "pt"; ptLM.name = "pt-lightmaps"; cascades.name = "cascades"; cascadesHQ.name = "cascades-hq"
+        let all = [pt, ptLM, cascades, cascadesHQ].map { (tag: $0.name, base: $0) }
         guard let pick = ProcessInfo.processInfo.environment["METALRENDERER_GI_MODES"] else { return all }
         let tags = Set(pick.split(separator: ",").map(String.init))
         return all.filter { tags.contains($0.tag) }
@@ -347,16 +371,10 @@ final class Benchmark {
                 Config(name: name, renderScale: 0.5, upscale: 3, giMode: giMode,
                        scene: SceneSettings(kind: .stress, objects: objects, lights: lights))
             }
-            // The stress scene's own GI defaults (RenderSettings.applySceneDefaults): surfels, 8 rays, 64k pool.
-            var stressDefault = stress("stress defaults (surfels), 32 lights", giMode: .surfels)
-            stressDefault.surfels.raysPerSurfel = 8
-            stressDefault.surfels.maxSurfels = 65536
             let lightSweep = [1, 4, 8, 16, 32, 64, 128, 256].map { stress("\($0) lights, 400 objects", lights: $0) }
             let objectSweep = [0, 100, 1000, 2000].map { stress("32 lights, \($0) objects", objects: $0) }
             return [Config(name: "cornell default", renderScale: 0.5, upscale: 3, giMode: .radianceCascades)] + lightSweep + objectSweep + [
                 stress("path traced, 32 lights", giMode: .pathTraced),
-                stress("surfels, 32 lights", giMode: .surfels),
-                stressDefault,
                 { var c = stress("camera move, 32 lights"); c.cameraPath = true; return c }(),
             ]
         case "stressq":
@@ -382,7 +400,6 @@ final class Benchmark {
             var cascadesHQ = CascadeSettings(); cascadesHQ.probeSpacing = 4; cascadesHQ.firstInterval = 0.25
             let methods: [(String, GIMode, CascadeSettings)] = [("cascades", .radianceCascades, CascadeSettings()),
                                                                  ("cascades-hq", .radianceCascades, cascadesHQ),
-                                                                 ("surfels", .surfels, CascadeSettings()),
                                                                  ("pt", .pathTraced, CascadeSettings())]
             for (tag, mode, cascades) in methods {
                 let base = Config(name: "", renderScale: 0.5, giMode: mode, cascades: cascades, scene: stress())
@@ -407,6 +424,57 @@ final class Benchmark {
                 up += [st, mv, cam, ds, dm]
             }
             return direct + gi + up
+        case "restirq":
+            // Direct light (GI off, 640x400) in the stress scene at t = 5 s against references, for each direct-light
+            // method: static (+ previous frame, for flicker) and moving frames, at 32 to 4096 lights. References trace
+            // every light up to Renderer.exactReferenceLights (1024), and accumulate ReSTIR's unbiased initial sampling
+            // above (skip them with METALRENDERER_GI_REFS=0 once they exist; see Tools/eval/restir.py).
+            let refs = ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0"
+            var out: [Config] = []
+            for lights in [32, 128, 1024, 4096] {
+                let scene = SceneSettings(kind: .stress, objects: 400, lights: lights)
+                let base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: scene)
+                if refs {
+                    var ref = base; ref.name = "ref direct \(lights)"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
+                    ref.frames = lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048
+                    out.append(ref)
+                }
+                let modes: [DirectLightMode] = lights <= 128 ? [.exact, .grouped, .restir] : [.grouped, .restir]
+                for mode in modes {
+                    var st = base; st.name = "\(mode.title.lowercased()) static \(lights)"; st.paused = true; st.startTime = 5
+                    st.capturePrevious = true; st.directLight = mode
+                    var mv = base; mv.name = "\(mode.title.lowercased()) moving \(lights)"; mv.directLight = mode
+                    out += [st, mv]
+                }
+            }
+            return out
+        case "restir":
+            // Frame time against light count for each direct-light method, the stress scene at the default settings
+            // (cascades, TAAU 3x from 0.5x), 1 to 16384 lights (exact up to 256, grouped up to 4096); then the night
+            // market. METALRENDERER_BENCH_SPLIT=0 for whole-frame times.
+            func stress(_ lights: Int, _ mode: DirectLightMode) -> Config {
+                var c = Config(name: "\(mode.title.lowercased()), \(lights) lights", renderScale: 0.5, upscale: 3,
+                               giMode: .radianceCascades, scene: SceneSettings(kind: .stress, objects: 400, lights: lights))
+                c.directLight = mode
+                return c
+            }
+            var out: [Config] = []
+            for lights in [1, 4, 32, 256, 1024, 4096, 16384] {
+                if lights <= 256 { out.append(stress(lights, .exact)) }
+                if lights <= 4096 { out.append(stress(lights, .grouped)) }
+                out.append(stress(lights, .restir))
+            }
+            // The night market (its defaults: cascades, fog), paused so the PNGs compare.
+            for lights in [1024, 4096, 16384] {
+                for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir] : [.restir] {
+                    var c = Config(name: "market \(mode.title.lowercased()), \(lights) bulbs", renderScale: 0.5, upscale: 3,
+                                   paused: true, startTime: 5, giMode: .radianceCascades,
+                                   scene: SceneSettings(kind: .market, lights: lights))
+                    c.directLight = mode
+                    out.append(c)
+                }
+            }
+            return out
         case "rt":
             // Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALRENDERER_RT tracer (run once per
             // tracer and compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run),
@@ -416,7 +484,7 @@ final class Benchmark {
             for (tag, sc) in [("cornell", scene(.cornell)), ("stress", scene(.stress))] {
                 out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
                                   frames: 30, scene: sc))
-                for (gtag, mode) in [("pt", GIMode.pathTraced), ("surfels", .surfels), ("cascades", .radianceCascades)] {
+                for (gtag, mode) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
                     out.append(Config(name: "\(tag) \(gtag) static", renderScale: 0.5, paused: true, startTime: 5, frames: 30,
                                       giMode: mode, scene: sc))
                 }
@@ -428,7 +496,7 @@ final class Benchmark {
                 }
             }
             for objects in [0, 400, 1000, 2000] {
-                for (gtag, mode) in [("pt", GIMode.pathTraced), ("surfels", .surfels), ("cascades", .radianceCascades)] {
+                for (gtag, mode) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
                     out += moving("stress \(objects) \(gtag)", mode, scene(.stress, objects: objects))
                 }
             }
@@ -457,22 +525,22 @@ final class Benchmark {
             for (tag, v) in variants {
                 out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
                                   frames: 60, scene: gallery, virtualGeometry: v))
-                out.append(Config(name: "\(tag) surfels static", renderScale: 0.5, paused: true, startTime: 5, frames: 60,
-                                  giMode: .surfels, scene: gallery, virtualGeometry: v))
+                out.append(Config(name: "\(tag) cascades static", renderScale: 0.5, paused: true, startTime: 5, frames: 60,
+                                  giMode: .radianceCascades, scene: gallery, virtualGeometry: v))
                 out.append(Config(name: "\(tag) albedo static", renderScale: 0.5, viewMode: 4, paused: true, startTime: 5, frames: 30,
                                   scene: gallery, virtualGeometry: v))
             }
             for (tag, v) in [("full", vg(false)), ("vg1", vg(true, 1))] {
-                out.append(Config(name: "\(tag) camera", renderScale: 0.5, upscale: 3, giMode: .surfels, cameraPath: true,
+                out.append(Config(name: "\(tag) camera", renderScale: 0.5, upscale: 3, giMode: .radianceCascades, cameraPath: true,
                                   scene: gallery, virtualGeometry: v))
-                for (gtag, mode) in [("surfels", GIMode.surfels), ("cascades", .radianceCascades), ("pt", .pathTraced)] {
+                for (gtag, mode) in [("cascades", GIMode.radianceCascades), ("pt", .pathTraced)] {
                     var close = Config(name: "\(tag) \(gtag) closeup", renderScale: 0.5, paused: true, startTime: 5, capturePrevious: true,
                                        giMode: mode, scene: gallery, virtualGeometry: v)
                     close.camera = Benchmark.galleryCloseup
                     out.append(close)
                 }
-                var shown = Config(name: "\(tag) closeup 3x", renderScale: 0.5, upscale: 3, paused: true, startTime: 5, giMode: .surfels,
-                                   scene: gallery, virtualGeometry: v)
+                var shown = Config(name: "\(tag) closeup 3x", renderScale: 0.5, upscale: 3, paused: true, startTime: 5,
+                                   giMode: .radianceCascades, scene: gallery, virtualGeometry: v)
                 shown.camera = Benchmark.galleryCloseup
                 out.append(shown)
             }
@@ -486,28 +554,21 @@ final class Benchmark {
                 let scene = SceneSettings(kind: kind)
                 let tag = "\(kind)"
                 out.append(Config(name: "\(tag) direct", giEnabled: false, paused: true, startTime: 5, frames: 30, scene: scene))
-                for (name, mode) in [("surfels", GIMode.surfels), ("cascades", .radianceCascades), ("path traced", .pathTraced)] {
-                    var c = Config(name: "\(tag) \(name)", paused: true, startTime: 5, frames: 30, giMode: mode, scene: scene)
-                    c.surfels.raysPerSurfel = 8
-                    c.surfels.maxSurfels = 65536
-                    out.append(c)
+                for (name, mode) in [("cascades", GIMode.radianceCascades), ("path traced", .pathTraced)] {
+                    out.append(Config(name: "\(tag) \(name)", paused: true, startTime: 5, frames: 30, giMode: mode, scene: scene))
                 }
-                var moving = Config(name: "\(tag) moving", giMode: .surfels, scene: scene)
-                moving.surfels.raysPerSurfel = 8
-                moving.surfels.maxSurfels = 65536
-                out.append(moving)
+                out.append(Config(name: "\(tag) moving", giMode: .radianceCascades, scene: scene))
             }
             return out
         case "fog":
-            // The fog scenes, paused at t = 5 with surfel GI: fog off, the preset, without volumes, without fogged
-            // reflections, the other GI techniques; then moving (timing). METALRENDERER_LIGHTS_SCENES="fog|sun" limits them.
+            // The fog scenes, paused at t = 5 with cascade GI: fog off, the preset, without volumes, without fogged
+            // reflections, path-traced GI; then moving (timing). METALRENDERER_LIGHTS_SCENES="fog|sun" limits them.
             var out: [Config] = []
             let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
             for kind in [SceneKind.fog, .spots, .sun, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
                 let tag = "\(kind)", preset = FogSettings.preset(for: kind)
-                var base = Config(name: "", paused: true, startTime: 5, frames: 60, giMode: .surfels, scene: SceneSettings(kind: kind))
-                base.surfels.raysPerSurfel = 8
-                base.surfels.maxSurfels = 65536
+                let base = Config(name: "", paused: true, startTime: 5, frames: 60, giMode: .radianceCascades,
+                                  scene: SceneSettings(kind: kind))
                 var off = preset; off.enabled = false
                 var noVolumes = preset; noVolumes.volumes = false
                 var noReflections = preset; noReflections.reflections = false
@@ -515,10 +576,8 @@ final class Benchmark {
                     var c = base; c.name = "\(tag) \(name)"; c.fog = fog
                     out.append(c)
                 }
-                for (name, mode) in [("cascades", GIMode.radianceCascades), ("path traced", .pathTraced)] {
-                    var c = base; c.name = "\(tag) fog \(name)"; c.giMode = mode
-                    out.append(c)
-                }
+                var pathTraced = base; pathTraced.name = "\(tag) fog path traced"; pathTraced.giMode = .pathTraced
+                out.append(pathTraced)
                 var view = base; view.name = "\(tag) fog scattering"; view.viewMode = 14
                 var moving = base; moving.name = "\(tag) fog moving"; moving.paused = false; moving.frames = nil
                 var shown = moving; shown.name = "\(tag) fog moving 3x"; shown.renderScale = 0.5; shown.upscale = 3
@@ -549,9 +608,7 @@ final class Benchmark {
             for kind in [SceneKind.valley, .sun, .mixed] where only?.contains("\(kind)") ?? true {
                 let tag = "\(kind)", preset = SkySettings.preset(for: kind)
                 var base = Config(name: "", paused: true, startTime: 5, frames: 60, scene: SceneSettings(kind: kind))
-                base.giMode = kind == .valley ? .radianceCascades : .surfels
-                base.surfels.raysPerSurfel = 8
-                base.surfels.maxSurfels = 65536
+                base.giMode = .radianceCascades
                 let times: [(String, Float)] = kind == .valley ? [("morning", -31.5), ("forenoon", 5), ("noon", 13.5), ("afternoon", 40), ("evening", 58.5)]
                                                              : [("t5", 5), ("t20", 20)]
                 for (name, t) in times {
@@ -592,11 +649,9 @@ final class Benchmark {
                     ref.sky = sky
                     out.append(ref)
                     for (mode, giMode, lightMaps) in [("pt", GIMode.pathTraced, false), ("pt-lightmaps", .pathTraced, true),
-                                                       ("surfels", .surfels, false), ("cascades", .radianceCascades, false)] {
+                                                       ("cascades", .radianceCascades, false)] {
                         var c = Config(name: "\(tag) \(mode) \(name)", viewMode: view, paused: true, startTime: 40, frames: 90,
                                        giMode: giMode, lightMaps: lightMaps, scene: scene)
-                        c.surfels.raysPerSurfel = 8
-                        c.surfels.maxSurfels = 65536
                         c.sky = sky
                         out.append(c)
                     }
@@ -612,6 +667,28 @@ final class Benchmark {
                     scene.lightCheck = variant
                     out.append(Config(name: "check \(variant)", giEnabled: false, paused: true, startTime: 5, accumulate: true,
                                       frames: 1024, scene: scene))
+                }
+            }
+            return out
+        case "restircheck":
+            // ReSTIR's sampling is unbiased for every light type: accumulated direct light (GI off), every light traced
+            // against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), in the light-check scenes (one
+            // rect / tube / sphere light, or its emissive-mesh twin) and in scenes with spots, tubes, rects, emissive
+            // meshes, a sun and every type together. Mean luminance and PSNR should agree (Tools/eval/restir.py).
+            var out: [Config] = []
+            var scenes: [(String, SceneSettings)] = ["rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh"].map {
+                var s = SceneSettings(); s.lightCheck = $0; return ($0, s)
+            }
+            scenes += [("spots", SceneSettings(kind: .spots)), ("tubes", SceneSettings(kind: .tubes)),
+                       ("area", SceneSettings(kind: .area)), ("emissive", SceneSettings(kind: .emissive)),
+                       ("mixed", SceneSettings(kind: .mixed)), ("stress32", SceneSettings(kind: .stress, objects: 400, lights: 32))]
+            for (tag, scene) in scenes {
+                for mode in [DirectLightMode.exact, .restir] {
+                    var c = Config(name: "\(tag) \(mode.title.lowercased())", giEnabled: false, paused: true, startTime: 5,
+                                   accumulate: true, frames: 1024, scene: scene)
+                    c.directLight = mode
+                    c.sky = SkySettings()   // constant sky: the sky's own noise stays out of the comparison
+                    out.append(c)
                 }
             }
             return out
@@ -637,7 +714,6 @@ final class Benchmark {
             Config(name: "camera move", renderScale: 0.5, upscale: 3, giMode: .radianceCascades, cameraPath: true),
             Config(name: "camera move, MetalFX temporal", renderScale: 0.5, upscale: 3, upscaler: .metalFX,
                    giMode: .radianceCascades, cameraPath: true),
-            Config(name: "default, surfel GI", renderScale: 0.5, upscale: 3, giMode: .surfels),
             Config(name: "path traced, 3x from 0.5x", renderScale: 0.5, upscale: 3),
             Config(name: "0.75x, no MetalFX"),
         ]
@@ -695,7 +771,6 @@ final class Benchmark {
             Config(name: "scale 2.0x (Retina native)", renderScale: 2.0),
             Config(name: "MetalFX 2x from 0.75x", upscale: 2, upscaler: .metalFX),
             Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
-            Config(name: "default, surfel GI", renderScale: 0.5, upscale: 3, giMode: .surfels),
             Config(name: "path traced, 3x from 0.5x", renderScale: 0.5, upscale: 3),
             Config(name: "path traced + white noise", renderScale: 0.5, upscale: 3, blueNoise: false),
             Config(name: "0.75x no MetalFX + blue noise", blueNoise: true),

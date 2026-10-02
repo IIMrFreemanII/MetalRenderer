@@ -25,6 +25,7 @@ struct Uniforms {
     var jitter = SIMD4<Float>()          // xy = this frame's sub-pixel jitter, zw = previous frame's (pixels)
     var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
     var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
+    var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
 }
 
 enum UniformFlags {
@@ -43,6 +44,18 @@ enum UniformFlags {
     static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
     static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
     static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
+    static let restir: UInt32 = 32768        // direct light from ReSTIR DI (restirTemporalKernel / restirSpatialKernel)
+}
+
+/// ReSTIR DI pass parameters (MSL RestirParams).
+struct GPURestirParams {
+    var config = SIMD4<UInt32>()   // x = candidates, y = max M, z = GPURestirParams flags, w = spatial samples
+    var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = spatial pass index, z = firefly clamp (0 = off)
+
+    static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
+    static let visibilityReuse: UInt32 = 2  // test the initial pick's visibility
+    static let shade: UInt32 = 4            // this spatial pass is the last: shade and write the outputs
+    static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
 }
 
 /// The sky (MSL SkyParams): the per-slot copy lives in the shading arguments (SceneShading), the sky kernels get it directly.
@@ -142,11 +155,14 @@ struct GPUFogParams {
 
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
-    precondition(MemoryLayout<Uniforms>.stride == 224, "Uniforms layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 240, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 16, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
+    precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
+    precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")
+    precondition(MemoryLayout<GPURestirParams>.stride == 32, "GPURestirParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")

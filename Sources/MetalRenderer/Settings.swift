@@ -13,7 +13,7 @@ extension ClosedRange {
 struct DenoiserSettings: Equatable {
     var enabled = true
     var atrousPasses = 4            // 1...5 wavelet passes with step sizes 1, 2, 4, 8, 16 (fewer = sharper, noisier)
-    var techniquePasses = 2         // the same with surfel / cascade GI, where only direct light is filtered: it is
+    var techniquePasses = 2         // the same with cascade GI, where only direct light is filtered: it is
                                     // much less noisy, and 2 passes look the same as 4 (measured) for half the cost
     var luminanceSigma: Float = 2   // luminance edge-stopping, in standard deviations (lower = sharper shadows, noisier)
     var maxHistory: Float = 16      // frames of temporal accumulation (lower = less lag, noisier)
@@ -34,6 +34,57 @@ struct DenoiserSettings: Equatable {
     static let luminanceSigmaRange: ClosedRange<Float> = 0.25...8
     static let maxHistoryRange: ClosedRange<Float> = 2...64
     static let antiLagRange: ClosedRange<Float> = 0...4
+}
+
+/// How direct light from the lights is computed.
+enum DirectLightMode: Int, CaseIterable {
+    case auto       // ReSTIR with many lights (Scene.lightTableThreshold, 256), otherwise grouped (exact up to 4)
+    case exact      // one shadow ray per light (cost grows with the light count; references)
+    case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
+    case restir     // ReSTIR DI: candidates from the light table, temporal + spatial reuse, one shadow ray (O(1))
+
+    var title: String {
+        switch self {
+        case .auto: return "Auto"
+        case .exact: return "Exact"
+        case .grouped: return "Grouped"
+        case .restir: return "ReSTIR"
+        }
+    }
+
+    /// `METALRENDERER_DIRECT=auto|exact|grouped|restir`; `METALRENDERER_LIGHTS=all` is exact.
+    static let initial: DirectLightMode = {
+        let env = ProcessInfo.processInfo.environment
+        if let v = env["METALRENDERER_DIRECT"], let m = allCases.first(where: { "\($0)" == v.lowercased() }) { return m }
+        return env["METALRENDERER_LIGHTS"] == "all" ? .exact : .auto
+    }()
+}
+
+/// ReSTIR DI (Shaders.metal "ReSTIR DI"): reservoir resampling of light samples, so a pixel's cost doesn't depend on the
+/// light count. Defaults from METALRENDERER_BENCH=restirq.
+struct RestirSettings: Equatable {
+    var candidates = 8              // initial candidates per pixel from the light table (plus one per sun)
+    var chains = 4                  // independent reservoirs per pixel, one shadow ray each (4 = the grouped path's rays)
+    var temporal = true             // reuse last frame's reservoir (reprojected)
+    var maxM: Float = 8             // confidence cap (samples' worth a reservoir may stand for): higher = steadier, laggier
+    var spatialPasses = 1           // 0...2 passes of spatial reuse
+    var spatialSamples = 4          // neighbours per pass
+    var radius: Float = 24          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
+    var visibilityReuse = false     // test the initial pick's visibility, so occluded samples aren't reused: less noise but
+                                    // 10% darker (the target ignores visibility), so off
+    var splitVisibility = false     // denoise visibility (shadow denoiser) and unshadowed light (SVGF) apart, multiply back:
+                                    // one visibility channel can't keep coloured shadows (4% too bright), so off
+    var denoiseSigma: Float = 3     // SVGF luminance edge-stopping for ReSTIR's direct light (in standard deviations)
+    var denoisePasses = 4
+    var denoiseHistory: Float = 8   // SVGF history (frames) for ReSTIR's direct light (with splitVisibility: its unshadowed light)
+    var varianceBoost: Float = 2    // reused samples are correlated, so their temporal variance is low: scale it up
+
+    static let candidateRange = 1...32
+    static let chainRange = 1...4
+    static let maxMRange: ClosedRange<Float> = 1...64
+    static let spatialPassRange = 0...2
+    static let spatialSampleRange = 1...8
+    static let radiusRange: ClosedRange<Float> = 4...64
 }
 
 /// Which temporal upscaler turns the traced resolution into the output resolution (when upscaling is on).
@@ -68,28 +119,14 @@ struct UpscalerSettings: Equatable {
 /// How indirect light (global illumination) is computed.
 enum GIMode: Int, CaseIterable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
-    case surfels            // surfel radiance cache (EA SEED GIBS-style)
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
 
     var title: String {
         switch self {
         case .pathTraced: return "Path traced"
-        case .surfels: return "Surfels"
         case .radianceCascades: return "Radiance cascades"
         }
     }
-}
-
-/// Surfel GI parameters.
-struct SurfelSettings: Equatable {
-    var raysPerSurfel = 16          // per visible surfel per frame (off-screen surfels trace every 4th frame)
-    var maxSurfels = 32768
-    var radiusPixels: Float = 8     // target surfel footprint on screen
-    var maxHistory: Float = 64      // frames of temporal accumulation per surfel (cut short when the light changes)
-    var denoiseIndirect = false     // also run the SVGF temporal pass over the gathered result
-
-    static let raysRange = 1...32
-    static let maxSurfelsOptions = [8192, 16384, 32768, 65536]
 }
 
 /// Radiance cascades parameters.
@@ -118,6 +155,7 @@ enum SceneKind: Int, CaseIterable {
     case mixed              // a room at dusk with every light type
     case fog                // a misty hall: sun shafts through tall windows, a searchlight, ground mist
     case valley             // an open valley under the sky: a day cycle, drifting clouds and their shadows
+    case market             // a night market: thousands of festoon bulbs (`lights`), lanterns, lit windows, neon signs
 
     var title: String {
         switch self {
@@ -132,8 +170,12 @@ enum SceneKind: Int, CaseIterable {
         case .mixed: return "Mixed lights"
         case .fog: return "Misty hall"
         case .valley: return "Open valley"
+        case .market: return "Night market"
         }
     }
+
+    /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
+    var hasLightCount: Bool { self == .stress || self == .market }
 }
 
 /// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
@@ -172,7 +214,8 @@ struct SceneSettings: Equatable {
     var lightCheck: String? = nil
 
     static let objectRange = 0...2000
-    static let lightRange = 1...256
+    static let lightRange = 1...16384
+    static let marketLights = 4096       // the night market's default bulb count
 }
 
 /// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
@@ -221,6 +264,8 @@ struct FogSettings: Equatable {
         switch kind {
         case .cornell, .stress, .gallery, .area:
             break
+        case .market:
+            f.enabled = true; f.density = 0.012; f.heightFalloff = 0.08; f.anisotropy = 0.4; f.ambient = 0.5; f.maxDistance = 60
         case .valley:
             f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
             f.maxDistance = 150
@@ -290,7 +335,7 @@ struct SkySettings: Equatable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -326,10 +371,11 @@ struct RenderSettings: Equatable {
     var denoiser = DenoiserSettings()
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
+    var directLight = DirectLightMode.initial
+    var restir = RestirSettings()
     var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
     var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
-    var surfels = SurfelSettings()
     var cascades = CascadeSettings()
     var scene = SceneSettings()
     var rayTracer = RayTracerKind.initial
@@ -339,24 +385,11 @@ struct RenderSettings: Equatable {
     var fog = FogSettings.preset(for: .cornell)
     var sky = SkySettings.preset(for: .cornell)
 
-    /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
-    /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their
-    /// screen-space probes lose ~10 dB to surfels (Tools/eval/stress.py), so it uses surfels; 8 rays per surfel lose
-    /// 0.04 dB against 16 for 2 ms less, and a 64k pool keeps up with camera moves (+2.1 dB).
+    /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
+    /// Reset to Defaults): the GI method, the night market's light count, the fog and the sky.
     mutating func applySceneDefaults(from defaults: RenderSettings) {
-        switch scene.kind {
-        case .cornell:
-            giMode = defaults.giMode
-            surfels = defaults.surfels
-        case .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog:
-            giMode = .surfels
-            surfels = defaults.surfels
-            surfels.raysPerSurfel = 8
-            surfels.maxSurfels = 65536
-        case .valley:   // 400 m across: screen-space cascades don't care, a surfel grid over it would be coarse
-            giMode = .radianceCascades
-            surfels = defaults.surfels
-        }
+        giMode = defaults.giMode
+        if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
         fog = FogSettings.preset(for: scene.kind)
         let image = sky.mode == .image ? sky : nil   // an image the user opened stays
         sky = SkySettings.preset(for: scene.kind)

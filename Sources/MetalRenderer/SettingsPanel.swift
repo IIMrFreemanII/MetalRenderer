@@ -23,6 +23,13 @@ final class SettingsPanel: NSObject {
     private let lights = NSSlider()            // log2 of the light count
     private let lightsValue = NSTextField(labelWithString: "")
     private let lightRays = NSPopUpButton()    // shadow rays per light group (more than 4 lights)
+    // Direct light
+    private let directLight = NSPopUpButton()
+    private let restirCandidates = NSPopUpButton()
+    private let restirSpatial = NSPopUpButton()
+    private let restirTemporal = NSButton(checkboxWithTitle: "Temporal reuse", target: nil, action: nil)
+    private let restirVisibility = NSButton(checkboxWithTitle: "Visibility reuse", target: nil, action: nil)
+    private static let candidateOptions = [4, 8, 16, 32]
     private let renderScale = NSSlider()
     private let renderScaleValue = NSTextField(labelWithString: "")
     private let upscale = NSPopUpButton()
@@ -49,13 +56,6 @@ final class SettingsPanel: NSObject {
     // Global illumination
     private let giMode = NSPopUpButton()
     private let lightMaps = NSButton(checkboxWithTitle: "Light bounces from light maps", target: nil, action: nil)
-    private let surfelRays = NSPopUpButton()
-    private let maxSurfels = NSPopUpButton()
-    private let surfelSize = NSSlider()
-    private let surfelSizeValue = NSTextField(labelWithString: "")
-    private let surfelHistory = NSSlider()
-    private let surfelHistoryValue = NSTextField(labelWithString: "")
-    private let surfelDenoise = NSButton(checkboxWithTitle: "Denoise surfel GI", target: nil, action: nil)
     private let probeSpacing = NSPopUpButton()
     private let cascadeCount = NSSlider()
     private let cascadeCountValue = NSTextField(labelWithString: "")
@@ -92,10 +92,12 @@ final class SettingsPanel: NSObject {
     private let windValue = NSTextField(labelWithString: "")
     private let cloudShadows = NSButton(checkboxWithTitle: "Cloud shadows", target: nil, action: nil)
     private let skyImageButton = NSButton(title: "Choose Image…", target: nil, action: nil)
-    private static let surfelRayOptions = [4, 8, 16, 32]
     private var grid: NSGridView!
     private var modeRows: [GIMode: [Int]] = [:]   // grid rows shown only in that GI mode
     private var stressRows: [Int] = []             // grid rows shown only for the stress scene
+    private var lightCountRows: [Int] = []         // grid rows shown only for scenes with a light count (stress, market)
+    private var groupedRows: [Int] = []            // grid rows shown only for the grouped direct light
+    private var restirRows: [Int] = []             // grid rows shown only for ReSTIR (or Auto)
     private var fogRows: [Int] = []                // grid rows shown only while fog is on
     private var cloudRows: [Int] = []              // grid rows shown only with an atmosphere or image sky
     private var imageRows: [Int] = []              // grid rows shown only with an image sky
@@ -122,8 +124,6 @@ final class SettingsPanel: NSObject {
         configureSlider(sigma, cg(DenoiserSettings.luminanceSigmaRange), ticks: 0, #selector(sigmaChanged))
         configureSlider(history, cg(DenoiserSettings.maxHistoryRange), ticks: 0, #selector(historyChanged))
         configureSlider(antiLag, cg(DenoiserSettings.antiLagRange), ticks: 0, #selector(antiLagChanged))
-        configureSlider(surfelSize, 4...16, ticks: 13, #selector(surfelSizeChanged))
-        configureSlider(surfelHistory, 8...128, ticks: 0, #selector(surfelHistoryChanged))
         configureSlider(cascadeCount, CGFloat(CascadeSettings.cascadeRange.lowerBound)...CGFloat(CascadeSettings.cascadeRange.upperBound),
                         ticks: CascadeSettings.cascadeRange.count, #selector(cascadeCountChanged))
         configureSlider(firstInterval, cg(CascadeSettings.firstIntervalRange), ticks: 0, #selector(firstIntervalChanged))
@@ -153,10 +153,11 @@ final class SettingsPanel: NSObject {
             (rayTracer, RayTracerKind.allCases.map(\.title), #selector(rayTracerChanged)),
             (lightRays, ["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"], #selector(lightRaysChanged)),
             (upscalerKind, UpscalerKind.allCases.map(\.title), #selector(upscalerKindChanged)),
-            (surfelRays, SettingsPanel.surfelRayOptions.map { "\($0) rays" }, #selector(surfelRaysChanged)),
-            (maxSurfels, SurfelSettings.maxSurfelsOptions.map { "\($0 / 1024)k" }, #selector(maxSurfelsChanged)),
             (probeSpacing, CascadeSettings.spacingOptions.map { "\($0) px" }, #selector(probeSpacingChanged)),
             (skyMode, SkyMode.allCases.map(\.title), #selector(skyModeChanged)),
+            (directLight, DirectLightMode.allCases.map { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }, #selector(directLightChanged)),
+            (restirCandidates, SettingsPanel.candidateOptions.map { "\($0) per pixel" }, #selector(restirCandidatesChanged)),
+            (restirSpatial, ["Off", "1 pass", "2 passes"], #selector(restirSpatialChanged)),
         ] as [(NSPopUpButton, [String], Selector)] {
             popup.addItems(withTitles: titles)
             popup.target = self
@@ -173,21 +174,21 @@ final class SettingsPanel: NSObject {
         for (box, action) in [(gi, #selector(giChanged)), (blueNoise, #selector(blueNoiseChanged)),
                               (paused, #selector(pausedChanged)), (denoise, #selector(denoiseChanged)),
                               (separate, #selector(separateChanged)), (lightMaps, #selector(lightMapsChanged)),
-                              (surfelDenoise, #selector(surfelDenoiseChanged)), (cascadeBounce, #selector(cascadeBounceChanged)),
-                              (cascadeDenoise, #selector(cascadeDenoiseChanged)),
+                              (cascadeBounce, #selector(cascadeBounceChanged)), (cascadeDenoise, #selector(cascadeDenoiseChanged)),
                               (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged)),
                               (freezeLOD, #selector(freezeLODChanged)),
                               (specular, #selector(specularChanged)), (emissiveLights, #selector(emissiveLightsChanged)),
                               (fog, #selector(fogChanged)), (fogVolumes, #selector(fogVolumesChanged)),
                               (fogReflections, #selector(fogReflectionsChanged)), (clouds, #selector(cloudsChanged)),
-                              (cloudShadows, #selector(cloudShadowsChanged)), (skyImageButton, #selector(chooseSkyImage))] {
+                              (cloudShadows, #selector(cloudShadowsChanged)), (skyImageButton, #selector(chooseSkyImage)),
+                              (restirTemporal, #selector(restirTemporalChanged)), (restirVisibility, #selector(restirVisibilityChanged))] {
             box.target = self
             box.action = action
         }
         stats.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stats.textColor = .secondaryLabelColor
         for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
-                      surfelSizeValue, surfelHistoryValue, cascadeCountValue, firstIntervalValue, fogDensityValue, fogFalloffValue,
+                      cascadeCountValue, firstIntervalValue, fogDensityValue, fogFalloffValue,
                       fogAnisotropyValue, fogAmbientValue, fogNoiseValue, fogDistanceValue, coverageValue, cloudDensityValue,
                       cloudHeightValue, windValue] {
             value.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -199,14 +200,20 @@ final class SettingsPanel: NSObject {
             [header("Scene")],
             [label("Scene"), sceneKind],
             [label("Objects"), objects, objectsValue],                       // stress
-            [label("Lights"), lights, lightsValue],                          // stress
-            [label("Shadow rays"), lightRays],                               // stress
+            [label("Lights"), lights, lightsValue],                          // stress, market
             [label("Ray tracing"), rayTracer],
             [NSGridCell.emptyContentView, virtualGeometry],
             [label("Geometry error"), vgError, vgErrorValue],
             [NSGridCell.emptyContentView, freezeLOD],
             [NSGridCell.emptyContentView, specular],
             [NSGridCell.emptyContentView, emissiveLights],
+            [header("Direct light")],
+            [label("Method"), directLight],
+            [label("Shadow rays"), lightRays],                               // grouped
+            [label("Candidates"), restirCandidates],                         // ReSTIR
+            [label("Spatial reuse"), restirSpatial],                         // ReSTIR
+            [NSGridCell.emptyContentView, restirTemporal],                   // ReSTIR
+            [NSGridCell.emptyContentView, restirVisibility],                 // ReSTIR
             [header("Rendering")],
             [label("Render scale"), renderScale, renderScaleValue],
             [label("MetalFX upscaling"), upscale],
@@ -219,11 +226,6 @@ final class SettingsPanel: NSObject {
             [label("Method"), giMode],
             [label("Bounces"), bounces, bouncesValue],                       // path traced
             [NSGridCell.emptyContentView, lightMaps],                        // path traced
-            [label("Rays per surfel"), surfelRays],                          // surfels
-            [label("Max surfels"), maxSurfels],                              // surfels
-            [label("Surfel size"), surfelSize, surfelSizeValue],             // surfels
-            [label("Surfel history"), surfelHistory, surfelHistoryValue],    // surfels
-            [NSGridCell.emptyContentView, surfelDenoise],                    // surfels
             [label("Probe spacing"), probeSpacing],                          // cascades
             [label("Cascades"), cascadeCount, cascadeCountValue],            // cascades
             [label("First interval"), firstInterval, firstIntervalValue],    // cascades
@@ -261,12 +263,14 @@ final class SettingsPanel: NSObject {
             [stats],
         ]
         func rowsOf(_ views: [NSView]) -> [Int] { views.compactMap { v in rows.firstIndex { $0.contains(v) } } }
-        stressRows = rowsOf([objects, lights, lightRays])
+        stressRows = rowsOf([objects])
+        lightCountRows = rowsOf([lights])
+        groupedRows = rowsOf([lightRays])
+        restirRows = rowsOf([restirCandidates, restirSpatial, restirTemporal, restirVisibility])
         fogRows = rowsOf([fogDensity, fogFalloff, fogAnisotropy, fogAmbient, fogNoise, fogDistance, fogVolumes, fogReflections])
         cloudRows = rowsOf([clouds, coverage, cloudDensity, cloudHeight, wind, cloudShadows])
         imageRows = rowsOf([skyImageButton])
         modeRows = [.pathTraced: rowsOf([bounces, lightMaps]),
-                    .surfels: rowsOf([surfelRays, maxSurfels, surfelSize, surfelHistory, surfelDenoise]),
                     .radianceCascades: rowsOf([probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise])]
         let grid = NSGridView(views: rows)
         self.grid = grid
@@ -332,9 +336,12 @@ final class SettingsPanel: NSObject {
                 layoutChanged = true
             }
         }
-        for r in stressRows where grid.row(at: r).isHidden != (s.scene.kind != .stress) {
-            grid.row(at: r).isHidden = s.scene.kind != .stress
-            layoutChanged = true
+        for (rows, shown) in [(stressRows, s.scene.kind == .stress), (lightCountRows, s.scene.kind.hasLightCount),
+                              (groupedRows, s.directLight == .grouped), (restirRows, s.directLight == .restir || s.directLight == .auto)] {
+            for r in rows where grid.row(at: r).isHidden != !shown {
+                grid.row(at: r).isHidden = !shown
+                layoutChanged = true
+            }
         }
         for r in fogRows where grid.row(at: r).isHidden != !s.fog.enabled {
             grid.row(at: r).isHidden = !s.fog.enabled
@@ -363,17 +370,14 @@ final class SettingsPanel: NSObject {
         lights.doubleValue = log2(Double(max(s.scene.lights, 1)))
         lightsValue.stringValue = "\(s.scene.lights)"
         lightRays.selectItem(at: s.manyLightRays >= 2 ? 2 : s.manyLightReuse > 0 ? 1 : 0)
+        directLight.selectItem(at: s.directLight.rawValue)
+        restirCandidates.selectItem(at: SettingsPanel.candidateOptions.firstIndex { $0 >= s.restir.candidates } ?? 1)
+        restirSpatial.selectItem(at: RestirSettings.spatialPassRange.clamp(s.restir.spatialPasses))
+        restirTemporal.state = s.restir.temporal ? .on : .off
+        restirVisibility.state = s.restir.visibilityReuse ? .on : .off
         lightRays.isEnabled = s.scene.lights > 4
         giMode.selectItem(at: s.giMode.rawValue)
         lightMaps.state = s.lightMaps ? .on : .off
-        let sf = s.surfels
-        surfelRays.selectItem(at: SettingsPanel.surfelRayOptions.firstIndex { $0 >= sf.raysPerSurfel } ?? 2)
-        maxSurfels.selectItem(at: SurfelSettings.maxSurfelsOptions.firstIndex(of: sf.maxSurfels) ?? 2)
-        surfelSize.doubleValue = Double(sf.radiusPixels)
-        surfelSizeValue.stringValue = String(format: "%.0f px", sf.radiusPixels)
-        surfelHistory.doubleValue = Double(sf.maxHistory)
-        surfelHistoryValue.stringValue = String(format: "%.0f fr", sf.maxHistory)
-        surfelDenoise.state = sf.denoiseIndirect ? .on : .off
         let c = s.cascades
         probeSpacing.selectItem(at: CascadeSettings.spacingOptions.firstIndex(of: c.probeSpacing) ?? 1)
         cascadeCount.integerValue = c.cascades
@@ -382,8 +386,7 @@ final class SettingsPanel: NSObject {
         firstIntervalValue.stringValue = String(format: "%.2f m", c.firstInterval)
         cascadeBounce.state = c.feedback ? .on : .off
         cascadeDenoise.state = c.denoiseIndirect ? .on : .off
-        for control in [giMode, lightMaps, surfelRays, maxSurfels, surfelSize, surfelHistory, surfelDenoise, probeSpacing,
-                        cascadeCount, firstInterval, cascadeBounce, cascadeDenoise] as [NSControl] {
+        for control in [giMode, lightMaps, probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise] as [NSControl] {
             control.isEnabled = s.giEnabled
         }
 
@@ -500,7 +503,7 @@ final class SettingsPanel: NSObject {
         s.scene.kind = SceneKind(rawValue: sceneKind.indexOfSelectedItem) ?? .cornell
         guard s.scene.kind != renderer.settings.scene.kind else { return }
         s.scene.extraModels = []   // opened / dropped models belong to the scene they were added to
-        s.applySceneDefaults(from: renderer.defaultSettings)   // e.g. surfels for the stress hall
+        s.applySceneDefaults(from: renderer.defaultSettings)   // e.g. the night market's light count
         renderer.settings = s
     }
     @objc private func objectsChanged() { renderer.settings.scene.objects = Int((objects.doubleValue / 50).rounded()) * 50 }
@@ -509,14 +512,18 @@ final class SettingsPanel: NSObject {
         renderer.settings.manyLightRays = choice == 2 ? 2 : 1
         renderer.settings.manyLightReuse = choice == 1 ? renderer.defaultSettings.manyLightReuse : 0
     }
+    @objc private func directLightChanged() {
+        renderer.settings.directLight = DirectLightMode(rawValue: directLight.indexOfSelectedItem) ?? .auto
+    }
+    @objc private func restirCandidatesChanged() {
+        renderer.settings.restir.candidates = SettingsPanel.candidateOptions[restirCandidates.indexOfSelectedItem]
+    }
+    @objc private func restirSpatialChanged() { renderer.settings.restir.spatialPasses = restirSpatial.indexOfSelectedItem }
+    @objc private func restirTemporalChanged() { renderer.settings.restir.temporal = restirTemporal.state == .on }
+    @objc private func restirVisibilityChanged() { renderer.settings.restir.visibilityReuse = restirVisibility.state == .on }
     @objc private func lightsChanged() { renderer.settings.scene.lights = 1 << Int(lights.doubleValue.rounded()) }
     @objc private func giModeChanged() { renderer.settings.giMode = GIMode(rawValue: giMode.indexOfSelectedItem) ?? .pathTraced }
     @objc private func lightMapsChanged() { renderer.settings.lightMaps = lightMaps.state == .on }
-    @objc private func surfelRaysChanged() { renderer.settings.surfels.raysPerSurfel = SettingsPanel.surfelRayOptions[surfelRays.indexOfSelectedItem] }
-    @objc private func maxSurfelsChanged() { renderer.settings.surfels.maxSurfels = SurfelSettings.maxSurfelsOptions[maxSurfels.indexOfSelectedItem] }
-    @objc private func surfelSizeChanged() { renderer.settings.surfels.radiusPixels = Float(surfelSize.doubleValue.rounded()) }
-    @objc private func surfelHistoryChanged() { renderer.settings.surfels.maxHistory = Float(surfelHistory.doubleValue.rounded()) }
-    @objc private func surfelDenoiseChanged() { renderer.settings.surfels.denoiseIndirect = surfelDenoise.state == .on }
     @objc private func probeSpacingChanged() { renderer.settings.cascades.probeSpacing = CascadeSettings.spacingOptions[probeSpacing.indexOfSelectedItem] }
     @objc private func cascadeCountChanged() { renderer.settings.cascades.cascades = Int(cascadeCount.doubleValue.rounded()) }
     @objc private func firstIntervalChanged() { renderer.settings.cascades.firstInterval = Float((firstInterval.doubleValue * 20).rounded() / 20) }

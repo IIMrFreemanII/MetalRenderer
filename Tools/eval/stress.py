@@ -17,7 +17,7 @@ for d in runs:
 
 print(f"\n{'run:GI method':24s}{'static':>9s}{'crop':>9s}{'flicker':>9s}{'moving':>9s}{'camera':>9s}    (final image vs 8-bounce reference)")
 for d in runs:
-    for m in ("cascades", "cascades-hq", "surfels", "pt"):
+    for m in ("cascades", "cascades-hq", "pt"):
         st = capture(d, f"{m}-static-32")
         if st is None: continue
         r = ref("stress", "ref8-final-32")

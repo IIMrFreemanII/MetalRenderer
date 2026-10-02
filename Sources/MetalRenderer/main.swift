@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MetalRenderer controls
           Drag mouse   look around          W A S D / Q E   move (hold Shift = faster)
           Space        pause animation      G               toggle global illumination
-          B            toggle blue-noise sampling   M   GI method: path traced, surfels, radiance cascades
+          B            toggle blue-noise sampling   M   GI method: path traced, radiance cascades
           N            toggle denoiser      [ / ]           fewer / more GI bounces
           - / =        lower / raise render resolution   U   MetalFX upscaling: off, 1.5x, 2x, 3x
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length

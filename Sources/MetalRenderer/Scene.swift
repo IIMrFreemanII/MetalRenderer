@@ -133,6 +133,8 @@ final class Scene {
     var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
     private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
+    /// Every light and emissive triangle by power, for ReSTIR DI's candidates (built once, after the lights).
+    private(set) var lightTable = LightTable()
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
@@ -152,6 +154,7 @@ final class Scene {
         case .mixed: buildMixed()
         case .fog: buildFogHall()
         case .valley: buildValley()
+        case .market: buildMarket()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -159,6 +162,7 @@ final class Scene {
         if settings.emissiveLights { buildMeshLights() }
         let (lo, hi) = bounds()
         if lo.x <= hi.x { sceneSphere = SIMD4((lo + hi) / 2, max(length(hi - lo) / 2, 1)) }
+        lightTable = LightTable(scene: self)
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
     }
@@ -221,7 +225,7 @@ final class Scene {
         }
     }
 
-    /// Axis-aligned bounds of all geometry at the current animation time (surfel grid extent),
+    /// Axis-aligned bounds of all geometry at the current animation time (the scene sphere),
     /// from each instance's transformed mesh bounds.
     func bounds() -> (SIMD3<Float>, SIMD3<Float>) {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
@@ -257,9 +261,21 @@ final class Scene {
         }
     }
 
-    /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it.
+    /// More lights than this (analytic + emissive meshes): nothing may loop over the lights or keep something per light
+    /// (Shaders.metal LIGHT_TABLE): no light maps, GI and the path tracer sample the light table.
+    /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off.
+    static let lightTableThreshold = 256
+    var usesLightTable: Bool {
+        switch ProcessInfo.processInfo.environment["METALRENDERER_LIGHT_TABLE"] {
+        case "1": return true
+        case "0": return false
+        default: return lights.count > Scene.lightTableThreshold
+        }
+    }
+
+    /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
     var lightTypeMask: UInt32 {
-        lights.reduce(UInt32(1)) { mask, l in   // spheres always: an empty scene needs some type
+        lights.reduce(usesLightTable ? 0x8000_0001 : UInt32(1)) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
             case .sphere: type = GPULight.sphere
@@ -447,7 +463,9 @@ final class Scene {
             let a = SIMD3<Float>(rng.range(1, 9 - abs(c.x)), rng.range(0.2, min(c.y - 0.5, 5.6 - c.y)), rng.range(1, 9 - abs(c.z)))
             let f = SIMD3<Float>(rng.range(0.1, 0.4), rng.range(0.2, 0.7), rng.range(0.1, 0.4))
             let phase = rng.range(0, 2 * .pi)
-            addLight(color: color * (totalPower / Float(lightCount)), radius: radius, sphereMesh: lightSphere) { t in
+            // Thousands of lights: smaller bulbs (same draws, so up to 256 lights the scene is unchanged).
+            let r = lightCount > 256 ? radius * pow(256 / Float(lightCount), 1.0 / 3) : radius
+            addLight(color: color * (totalPower / Float(lightCount)), radius: r, sphereMesh: lightSphere) { t in
                 c + a * SIMD3(sin(f.x * t + phase), sin(f.y * t + 3 * phase), cos(f.z * t + phase))
             }
         }

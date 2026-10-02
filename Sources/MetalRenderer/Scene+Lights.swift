@@ -2,7 +2,7 @@ import Foundation
 import simd
 
 /// Demo scenes for the light types: one per type (spot, sun, rect, tube, emissive mesh), one with all of them, a
-/// misty hall for the volumetric fog, and an open valley for the sky and clouds. Procedural geometry only, so they load at once; every light moves, sweeps or
+/// misty hall for the volumetric fog, an open valley for the sky and clouds, and a night market for many lights. Procedural geometry only, so they load at once; every light moves, sweeps or
 /// flickers. Their fog settings are presets (FogSettings.preset); the local fog volumes are set up here.
 extension Scene {
     /// Shared meshes and a box helper for the builders below.
@@ -63,6 +63,7 @@ extension Scene {
         case .mixed: return camera([-3.4, 1.7, 3.7], yaw: 0.42, pitch: -0.14)
         case .fog: return camera([1.2, 1.7, 2.6], yaw: -0.04, pitch: 0.1)
         case .valley: return camera([4, 2.2, 38], yaw: -0.15, pitch: 0.12)
+        case .market: return camera([0.6, 1.7, 30], yaw: 0.02, pitch: 0.12)
         case .cornell, .stress, .gallery: return nil
         }
     }
@@ -612,5 +613,135 @@ extension Scene {
         kit.slab([-3.82, 0, -3.22], [-3.78, 1.55, -3.18], black)                    // floor lamp stand
         addLight(.sphere(radius: 0.12), color: SIMD3<Float>(1.0, 0.7, 0.4) * 3) { _ in LightPose(position: [-3.8, 1.7, -3.2]) }
         defaultCamera = Scene.demoCamera(.mixed)!
+    }
+
+    // MARK: - Night market
+
+    /// A street market at night, for many lights (ReSTIR DI): 32 festoon strings strung across a 64 m street carry
+    /// `settings.lights` small bulbs between them (4096 by default, up to 16384; a quarter of the strings chase), with
+    /// 80 swaying paper lanterns, 40 lit canopies over the stalls, about 120 lit windows (some flickering), 24 neon signs
+    /// (emissive meshes, sampled per triangle) and the moon; 60 shoppers walk up and down the street.
+    func buildMarket() {
+        let kit = Kit(self)
+        var rng = SplitMix64(seed: 0x0BA2_AA2E)
+        skyColor = [0.006, 0.009, 0.02]
+        let cobbles = addPBRMaterial(baseColor: [0.2, 0.19, 0.18], metallic: 0, roughness: 0.35)   // damp stone
+        let plaster = [[0.62, 0.55, 0.46], [0.5, 0.42, 0.36], [0.58, 0.6, 0.62], [0.45, 0.32, 0.26], [0.66, 0.62, 0.52]]
+            .map { addMaterial(albedo: SIMD3<Float>($0.map(Float.init))) }
+        let wood = addMaterial(albedo: [0.36, 0.24, 0.14])
+        let cloth = [[0.7, 0.18, 0.12], [0.85, 0.75, 0.6], [0.2, 0.35, 0.6], [0.25, 0.5, 0.3], [0.8, 0.55, 0.15]]
+            .map { addMaterial(albedo: SIMD3<Float>($0.map(Float.init))) }
+        let coat = [[0.2, 0.2, 0.25], [0.45, 0.3, 0.2], [0.15, 0.25, 0.4], [0.5, 0.15, 0.15], [0.35, 0.35, 0.3]]
+            .map { addMaterial(albedo: SIMD3<Float>($0.map(Float.init))) }
+        let wire = addMaterial(albedo: [0.05, 0.05, 0.05])
+        let (halfWidth, halfLength): (Float, Float) = (5, 32)
+
+        addInstance(kit.quad, cobbles, scale([2 * halfWidth + 6, 1, 2 * halfLength + 10]))
+        // Facades: eight buildings a side, 6-12 m tall, each with a grid of lit windows (rect lights facing the street).
+        let warmWindow: [SIMD3<Float>] = [[1.0, 0.72, 0.4], [1.0, 0.82, 0.55], [0.9, 0.9, 1.0]]
+        for side: Float in [-1, 1] {
+            for b in 0..<8 {
+                let z0 = -halfLength + Float(b) * 8, height = rng.range(6, 12)
+                kit.slab([side < 0 ? -halfWidth - 3 : halfWidth, 0, z0], [side < 0 ? -halfWidth : halfWidth + 3, height, z0 + 8],
+                         plaster[rng.int(plaster.count)])
+                for floorY in stride(from: Float(3.4), to: height - 1, by: 2.8) {
+                    for w in 0..<3 where rng.next() < 0.6 {
+                        let z = z0 + 1.6 + Float(w) * 2.4
+                        let c = warmWindow[rng.int(warmWindow.count)] * rng.range(0.25, 0.7)
+                        let flicker = rng.next() < 0.15, phase = rng.range(0, 6.28)
+                        addLight(.rect(width: 1.0, height: 1.3), color: c) { t in
+                            LightPose(position: [side * (halfWidth - 0.01), floorY, z], direction: [-side, 0, 0], tangent: [0, 0, 1],
+                                      scale: SIMD3(repeating: flicker ? 0.75 + 0.25 * sin(7 * t + phase) * sin(3.1 * t) : 1))
+                        }
+                    }
+                }
+            }
+        }
+        // Stalls along both sides: a counter, posts and a tilted canopy with a warm panel under it.
+        for side: Float in [-1, 1] {
+            for k in 0..<20 {
+                let z = -halfLength + 2 + Float(k) * 3.1, x = side * 3.7
+                kit.box([x, 0.5, z], [1.0, 1.0, 2.2], wood)
+                for dz: Float in [-1.05, 1.05] {
+                    kit.box([x - side * 0.45, 1.25, z + dz], [0.06, 2.5, 0.06], wood)
+                    kit.box([x + side * 0.45, 1.05, z + dz], [0.06, 2.1, 0.06], wood)
+                }
+                addInstance(kit.cube, cloth[rng.int(cloth.count)],
+                            translate([x, 2.35, z]) * rotate(side * 0.2, [0, 0, 1]) * scale([1.4, 0.04, 2.4]))
+                addLight(.rect(width: 1.1, height: 1.8), color: SIMD3<Float>(1.0, 0.78, 0.5) * rng.range(0.5, 1.0)) { _ in
+                    LightPose(position: [x, 2.28, z], direction: [0, -1, 0], tangent: [0, 0, 1])
+                }
+                // Goods on the counter.
+                for _ in 0..<3 { kit.box([x + rng.range(-0.3, 0.3), 1.1, z + rng.range(-0.9, 0.9)], SIMD3(repeating: rng.range(0.12, 0.25)),
+                                         cloth[rng.int(cloth.count)], yaw: rng.range(0, 3)) }
+            }
+        }
+        // Festoon strings across the street: a sagging wire between the facades and the bulbs along it.
+        let strings = 32
+        let perString = max(1, settings.lights / strings)
+        let bulbPower: Float = 24 / Float(strings * perString)   // the strings' total intensity doesn't depend on the count
+        let palette: [SIMD3<Float>] = [[1.0, 0.15, 0.1], [0.15, 1.0, 0.25], [0.2, 0.35, 1.0], [1.0, 0.6, 0.1]]
+        let bulbRadius: Float = perString > 128 ? 0.025 : 0.04
+        for i in 0..<strings {
+            let z = -halfLength + 1 + Float(i) * (2 * halfLength - 2) / Float(strings - 1)
+            let y0 = rng.range(5.0, 6.2), sag = rng.range(0.5, 1.0), skew = rng.range(-1.5, 1.5)
+            let chase = i % 4 == 1
+            func point(_ s: Float) -> SIMD3<Float> {   // s in [0, 1] across the street
+                SIMD3(-halfWidth + 2 * halfWidth * s, y0 - 4 * sag * s * (1 - s), z + skew * (s - 0.5))
+            }
+            for seg in 0..<8 {   // the wire, as 8 thin boxes
+                let a = point(Float(seg) / 8), b = point(Float(seg + 1) / 8), d = b - a
+                addInstance(kit.cube, wire, translate((a + b) / 2) * float4x4(simd_quatf(from: [1, 0, 0], to: normalize(d)))
+                                                * scale([length(d), 0.012, 0.012]))
+            }
+            for j in 0..<perString {
+                let s = (Float(j) + 0.5) / Float(perString)
+                let p = point(s) - [0, 0.06, 0]
+                let color = (rng.next() < 0.6 ? Scene.hue([1.0, 0.72, 0.42]) : Scene.hue(palette[rng.int(palette.count)])) * bulbPower
+                let phase = Float(j) * 0.35
+                addLight(.sphere(radius: bulbRadius), color: color, proxyMesh: kit.sphere) { t in
+                    LightPose(position: p, scale: SIMD3(repeating: chase ? 0.55 + 0.45 * max(0, sin(3 * t - phase)) : 1))
+                }
+            }
+        }
+        // Paper lanterns over the stalls, swaying.
+        for k in 0..<80 {
+            let side: Float = k % 2 == 0 ? -1 : 1
+            let anchor = SIMD3<Float>(side * rng.range(2.6, 4.4), rng.range(2.7, 3.3), -halfLength + 1.5 + Float(k / 2) * 1.55)
+            let phase = rng.range(0, 6.28), speed = rng.range(0.8, 1.4)
+            let color = Scene.hue(rng.next() < 0.7 ? [1.0, 0.25, 0.08] : [1.0, 0.55, 0.15]) * 0.12
+            addLight(.sphere(radius: 0.14), color: color) { t in
+                let a = 0.12 * sin(speed * t + phase)
+                return LightPose(position: anchor + [0.5 * sin(a), -0.5 * (1 - cos(a)), 0.3 * sin(0.7 * speed * t + phase)])
+            }
+        }
+        // Neon signs on the facades: three tubes each (emissive capsules, sampled per triangle as mesh lights).
+        let tube = addMesh(Scene.capsuleMesh(halfLength: 0.45, radius: 0.035, segments: 10, rings: 3))
+        let neon: [SIMD3<Float>] = [[1.0, 0.1, 0.5], [0.1, 0.8, 1.0], [0.3, 1.0, 0.2], [1.0, 0.45, 0.05], [0.7, 0.2, 1.0]]
+        for k in 0..<24 {
+            let side: Float = k % 2 == 0 ? -1 : 1
+            let center = SIMD3<Float>(side * (halfWidth - 0.08), rng.range(3.6, 4.8), -halfLength + 2.5 + Float(k / 2) * 5.2)
+            let m = addMaterial(albedo: .zero, emission: Scene.hue(neon[rng.int(neon.count)]) * 3)
+            for (offset, angle) in [(SIMD3<Float>(0, 0.35, 0), Float.pi / 2), (SIMD3<Float>(0, -0.35, 0), Float.pi / 2), (SIMD3<Float>(0, 0, -0.5), 0)] {
+                addInstance(tube, m, translate(center + offset) * rotate(angle, [1, 0, 0]))
+            }
+        }
+        // Shoppers: capsules walking up and down the street (moving occluders).
+        let body = addMesh(Scene.capsuleMesh(halfLength: 0.55, radius: 0.24, segments: 12, rings: 3))
+        for _ in 0..<60 {
+            let x = rng.range(-2.4, 2.4), z0 = rng.range(-halfLength, halfLength), speed = rng.range(0.6, 1.4) * (rng.next() < 0.5 ? -1 : 1)
+            let m = coat[rng.int(coat.count)]
+            addInstance(body, m, matrix_identity_float4x4) { t in
+                var z = z0 + speed * t
+                z = (z + halfLength).truncatingRemainder(dividingBy: 2 * halfLength)
+                if z < 0 { z += 2 * halfLength }
+                return translate([x, 0.8, z - halfLength])
+            }
+        }
+        // The moon.
+        addLight(.sun(angularRadius: 0.0045), color: [0.035, 0.045, 0.07]) { _ in
+            LightPose(position: .zero, direction: normalize([0.3, 0.8, -0.5]))
+        }
+        defaultCamera = Scene.demoCamera(.market)!
     }
 }
