@@ -71,6 +71,32 @@ final class Scene {
         var power: SIMD3<Float>               // sum of emitted radiance x area (object space)
     }
 
+    /// A local fog volume (Shaders.metal FogVolume): a soft-edged box or sphere of denser fog, optionally moving.
+    struct FogVolume {
+        enum Shape {
+            case box(halfExtents: SIMD3<Float>)
+            case sphere(radius: Float)
+        }
+        var shape: Shape
+        var center: SIMD3<Float>
+        var density: Float                      // extinction at its bottom (1/m)
+        var albedo = SIMD3<Float>(repeating: 0.9)
+        var edge: Float = 0.5                   // the density ramps up over this depth inside (m)
+        var noise: Float = 0.6                  // how much the drifting noise modulates it
+        var heightFalloff: Float = 0            // per metre above its bottom (ground mist)
+        var motion: ((Float) -> SIMD3<Float>)? = nil   // centre over time
+
+        var gpu: GPUFogVolume {
+            let (extent, shapeID): (SIMD3<Float>, Float)
+            switch shape {
+            case .box(let e): (extent, shapeID) = (e, 0)
+            case .sphere(let r): (extent, shapeID) = (SIMD3(r, r, r), 1)
+            }
+            return GPUFogVolume(centerShape: SIMD4(center, shapeID), extentDensity: SIMD4(extent, density),
+                                albedoEdge: SIMD4(albedo, edge), params: SIMD4(noise, heightFalloff, 0, 0))
+        }
+    }
+
     /// Instance masks. Shadow and GI rays only test `geometry`, so the visible
     /// light spheres never block their own light.
     static let maskGeometry: UInt32 = 1
@@ -103,6 +129,8 @@ final class Scene {
 
     var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
     var skyAnimation: ((Float) -> SIMD3<Float>)?
+    /// Local fog volumes (used while the fog and its volumes are on), at most GPUFogParams.maxVolumes.
+    var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
     private var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
 
@@ -122,6 +150,7 @@ final class Scene {
         case .tubes: buildTubes()
         case .emissive: buildEmissive()
         case .mixed: buildMixed()
+        case .fog: buildFogHall()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -143,6 +172,7 @@ final class Scene {
             }
         }
         if let skyAnimation { skyColor = skyAnimation(t) }
+        for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
         for l in lights.indices where !lights[l].isMesh {
             let old = lights[l].current.scale
             let pose = lights[l].pose(t)

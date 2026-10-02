@@ -129,6 +129,36 @@ final class ShadowTargets {
     }
 }
 
+/// The volumetric fog's froxel grid: 8x8 traced pixels per froxel, `slices` exponential depth slices.
+final class FogTargets {
+    let renderWidth: Int, renderHeight: Int
+    let columns: Int, rows: Int, slices: Int
+    let scatter: [MTLTexture]     // [2], ping-ponged: rgb = in-scattered light per metre, a = extinction (fogInjectKernel)
+    let integrated: MTLTexture    // rgb = in-scatter from the camera to each slice's far side, a = transmittance
+
+    init(device: MTLDevice, renderWidth: Int, renderHeight: Int, slices: Int) throws {
+        self.renderWidth = renderWidth
+        self.renderHeight = renderHeight
+        let columns = (renderWidth + 7) / 8, rows = (renderHeight + 7) / 8
+        self.columns = columns
+        self.rows = rows
+        self.slices = slices
+        func make(_ label: String) throws -> MTLTexture {
+            let d = MTLTextureDescriptor()
+            d.textureType = .type3D
+            d.pixelFormat = .rgba16Float
+            d.width = columns; d.height = rows; d.depth = slices
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+            t.label = label
+            return t
+        }
+        scatter = [try make("fog scatter0"), try make("fog scatter1")]
+        integrated = try make("fog integrated")
+    }
+}
+
 /// Dispatches that depend only on earlier stages, never on each other. `pass` names the benchmark timing column.
 struct ComputeStage {
     let pass: String
@@ -163,6 +193,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var manyLightsReusePSO: MTLComputePipelineState!
     private var meshLightsPSO: MTLComputePipelineState!
     private var reflectionPSO: MTLComputePipelineState!
+    private var fogInjectPSO: MTLComputePipelineState!
+    private var fogIntegratePSO: MTLComputePipelineState!
+    private var fogReferencePSO: MTLComputePipelineState!
     private var rcPipelines: RCPipelines!
     private var surfelPipelines: SurfelPipelines!
     private var surfelGI: SurfelGI?                    // created on first use of the surfel GI mode
@@ -198,6 +231,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
     private var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
     private var blueNoiseFilled = false
+    // Volumetric fog (Shaders.metal "Volumetric fog"), allocated when first turned on.
+    private var fogNoiseTexture: MTLTexture?    // tiling 3D density noise (FogNoise)
+    private var fogGrid: FogTargets?            // froxel grid at the current render resolution
+    private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
+    private var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
+    private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
+    private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
+    private var dummy2D: MTLTexture!
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] = []
@@ -288,6 +329,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         try loadShaders(for: settings.rayTracer, lightTypes: scene.lightTypeMask)
         try createSceneResources()
         try createBlueNoiseTexture()
+        try createDummyTextures()
         if !upscaleSupported {
             // Without MetalFX, a 0.5x render would just be stretched, so render at 0.75x instead.
             print("MetalFX temporal upscaling is not supported on this GPU; rendering at 0.75x without it")
@@ -348,6 +390,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
         let meshLights = try pipeline("meshLightsKernel")
         let reflection = try pipeline("reflectionKernel")
+        let fogInject = try pipeline("fogInjectKernel")
+        let fogIntegrate = try pipeline("fogIntegrateKernel")
+        let fogReference = try pipeline("fogReferenceKernel")
         let geometryDebug = try pipeline("geometryDebugKernel")
         let rt = kind != .custom ? nil :
             RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
@@ -378,6 +423,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         manyLightsReusePSO = manyLightsReuse
         meshLightsPSO = meshLights
         reflectionPSO = reflection
+        fogInjectPSO = fogInject
+        fogIntegratePSO = fogIntegrate
+        fogReferencePSO = fogReference
         geometryDebugPSO = geometryDebug
         rcPipelines = rc
         rtPipelines = rt
@@ -632,6 +680,81 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                      withBytes: raw.baseAddress!, bytesPerRow: n * MemoryLayout<Float>.stride)
         }
         blueNoiseFilled = true
+    }
+
+    /// 1-texel stand-ins for optional textures, so every texture a kernel declares is bound.
+    private func createDummyTextures() throws {
+        let d3 = MTLTextureDescriptor()
+        d3.textureType = .type3D
+        d3.pixelFormat = .rgba16Float
+        d3.width = 1; d3.height = 1; d3.depth = 1
+        d3.usage = .shaderRead
+        d3.storageMode = .private
+        let d2 = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
+        d2.usage = .shaderRead
+        d2.storageMode = .private
+        guard let t3 = device.makeTexture(descriptor: d3), let t2 = device.makeTexture(descriptor: d2) else {
+            throw RendererError.resourceCreation("dummy textures")
+        }
+        dummy3D = t3
+        dummy2D = t2
+    }
+
+    /// The fog's 3D noise, generated the first time fog is on (~50 ms).
+    private func fogNoise() -> MTLTexture? {
+        if let fogNoiseTexture { return fogNoiseTexture }
+        let n = FogNoise.size
+        let d = MTLTextureDescriptor()
+        d.textureType = .type3D
+        d.pixelFormat = .r8Unorm
+        d.width = n; d.height = n; d.depth = n
+        d.usage = .shaderRead
+        d.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: d) else { return nil }
+        texture.label = "fogNoise"
+        FogNoise.generate().withUnsafeBytes { raw in
+            texture.replace(region: MTLRegionMake3D(0, 0, 0, n, n, n), mipmapLevel: 0, slice: 0,
+                            withBytes: raw.baseAddress!, bytesPerRow: n, bytesPerImage: n * n)
+        }
+        fogNoiseTexture = texture
+        return texture
+    }
+
+    private func fogTargets(width: Int, height: Int) -> FogTargets? {
+        if let g = fogGrid, g.renderWidth == width, g.renderHeight == height { return g }
+        fogGrid = try? FogTargets(device: device, renderWidth: width, renderHeight: height, slices: FogSettings.slices)
+        fogLastFrame = nil
+        return fogGrid
+    }
+
+    private func fogReferenceTexture(width: Int, height: Int) -> MTLTexture? {
+        if let t = fogReference, t.width == width, t.height == height { return t }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        fogReference = device.makeTexture(descriptor: d)
+        fogReference?.label = "fogReference"
+        return fogReference
+    }
+
+    /// This frame's fog parameters for the shaders (flags 0 while fog is off).
+    private func makeFogParams(grid: FogTargets?, historyValid: Bool) -> GPUFogParams {
+        var p = GPUFogParams()
+        let f = settings.fog
+        guard f.enabled, let grid else { return p }
+        let near: Float = 0.2, far = max(f.maxDistance, 1)
+        p.medium = SIMD4(FogSettings.densityRange.clamp(f.density) * (f.density > 0 ? 1 : 0), max(f.heightFalloff, 0),
+                         f.baseHeight, FogSettings.anisotropyRange.clamp(f.anisotropy))
+        p.albedo = SIMD4(f.albedo, max(f.ambient, 0))
+        p.noise = SIMD4(f.noise, max(f.noiseScale, 0.1), animTime, 0.1)
+        p.wind = SIMD4(f.wind, 0)
+        p.grid = SIMD4(near, far, log(far / near), Float(grid.slices))
+        let volumes = f.volumes ? Array(scene.fogVolumes.prefix(GPUFogParams.maxVolumes)) : []
+        for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
+        p.counts = SIMD4(UInt32(grid.columns), UInt32(grid.rows), UInt32(volumes.count),
+                         GPUFogParams.enabled | (historyValid ? GPUFogParams.historyValid : 0)
+                         | (f.reflections ? GPUFogParams.reflections : 0))
+        return p
     }
 
     private func instanceASDescriptor(slot: Int) -> MTLInstanceAccelerationStructureDescriptor {
@@ -947,6 +1070,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
         // 1b. Light-visibility maps, for GI techniques and the path tracer's light-map variant.
         let frameUniforms = uniforms
+        // Volumetric fog: this frame's parameters (the reflections read them too). The froxel history is reprojected
+        // only from the frame just before, with the same far distance.
+        let fogGridTargets = settings.fog.enabled ? fogTargets(width: width, height: height) : nil
+        let fogNoiseTex = fogGridTargets != nil ? fogNoise() : nil
+        let fogOn = fogGridTargets != nil && fogNoiseTex != nil
+        let fogHistory = fogOn && fogLastFrame == frameIndex &- 1 && fogLastFar == settings.fog.maxDistance
+        let fogParams = makeFogParams(grid: fogOn ? fogGridTargets : nil, historyValid: fogHistory)
+        let fogSampleCount = accumCount   // references: frames the fog march has averaged
         var headStages: [ComputeStage] = []
         if usesLightMaps {
             headStages.append(ComputeStage(pass: "lightmap") { [self] enc in
@@ -1012,7 +1143,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 enc.setComputePipelineState(reflectionPSO)
                 enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
                 bindScene(enc, slot: slot)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular])
+                var fp = fogParams
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
+                                  fogNoiseTex ?? dummy3D])
                 dispatch(enc, "reflections", width: width, height: height)
             })
             if settings.denoiser.enabled && !accumulating {
@@ -1157,6 +1291,50 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             if separate { uniforms.flags |= UniformFlags.separateSignals }
         }
 
+        // 3d. Volumetric fog: light the froxel grid in front of the surfaces and integrate it (or, for references,
+        //     march every camera ray). It needs the TLAS, the lights and the G-buffer's depth: first among these stages.
+        var fogReferenceTex: MTLTexture?
+        if fogOn, let g = fogGridTargets, let noise = fogNoiseTex {
+            var fogStages: [ComputeStage] = []
+            if accumulating, let ref = fogReferenceTexture(width: width, height: height) {
+                fogReferenceTex = ref
+                fogStages.append(ComputeStage(pass: "fog") { [self] enc in
+                    var u = frameUniforms, fp = fogParams, count = fogSampleCount
+                    enc.setComputePipelineState(fogReferencePSO)
+                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                    bindScene(enc, slot: slot)
+                    enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                    enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 10)
+                    setTextures(enc, [noise, t.normalDepth[cur], ref])
+                    dispatch(enc, "fog reference", width: width, height: height)
+                })
+                uniforms.flags |= UniformFlags.fog | UniformFlags.fogReference
+            } else {
+                fogStages.append(ComputeStage(pass: "fog") { [self] enc in
+                    var u = frameUniforms, fp = fogParams
+                    enc.setComputePipelineState(fogInjectPSO)
+                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                    bindScene(enc, slot: slot)
+                    enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                    setTextures(enc, [blueNoiseTexture, noise, g.scatter[prev], g.scatter[cur], t.normalDepth[cur]])
+                    enc.dispatchThreads(MTLSize(width: g.columns, height: g.rows, depth: g.slices),
+                                        threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+                })
+                fogStages.append(ComputeStage(pass: "fog") { [self] enc in
+                    var u = frameUniforms, fp = fogParams
+                    enc.setComputePipelineState(fogIntegratePSO)
+                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                    enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                    setTextures(enc, [g.scatter[cur], g.integrated])
+                    dispatch(enc, "fog integrate", width: g.columns, height: g.rows)
+                })
+                fogLastFrame = frameIndex
+                fogLastFar = settings.fog.maxDistance
+                uniforms.flags |= UniformFlags.fog
+            }
+            denoiseStages.insert(contentsOf: fogStages, at: 0)
+        }
+
         if overlap, let enc = beginComputePass("trace") {
             // Light map, trace and cascade probes need only the TLAS; then the cascade chain and the denoiser chain
             // advance in lock-step, one barrier per step. Reflections read the cascades' result: after both.
@@ -1208,8 +1386,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             setTextures(enc, [finalIllumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
-                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular, t.geometryDebug, finalMeshDirect])
+                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular, t.geometryDebug, finalMeshDirect,
+                              fogOn ? fogGridTargets!.integrated : dummy3D, fogReferenceTex ?? dummy2D])
             enc.setBuffer(lightBuffers[slot], offset: 0, index: 1)
+            var fp = fogParams
+            enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
             dispatch(enc, "composite", width: output.width, height: output.height)
         }
 
@@ -1385,6 +1566,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Drops all temporal GI state (surfel pool, cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
+        fogLastFrame = nil
         radianceCascades?.reset()
         surfelGI?.reset()
     }
@@ -1407,6 +1589,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                denoiser: c.denoiser, giMode: c.giMode, lightMaps: c.lightMaps,
                                surfels: c.surfels, cascades: c.cascades, scene: c.scene)
         Benchmark.applySceneOverride(to: &s.scene)
+        s.fog = c.fog ?? FogSettings.preset(for: s.scene.kind)
+        Benchmark.applyFogOverride(to: &s.fog)
         if let rt = c.rayTracer { s.rayTracer = rt }
         if let v = c.virtualGeometry { s.virtualGeometry = v }
         s.denoiser.enabled = c.denoiseEnabled

@@ -62,10 +62,27 @@ final class SettingsPanel: NSObject {
     private let firstIntervalValue = NSTextField(labelWithString: "")
     private let cascadeBounce = NSButton(checkboxWithTitle: "Multi-bounce", target: nil, action: nil)
     private let cascadeDenoise = NSButton(checkboxWithTitle: "Denoise cascade GI", target: nil, action: nil)
+    // Fog
+    private let fog = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
+    private let fogDensity = NSSlider()            // log10 of the density
+    private let fogDensityValue = NSTextField(labelWithString: "")
+    private let fogFalloff = NSSlider()
+    private let fogFalloffValue = NSTextField(labelWithString: "")
+    private let fogAnisotropy = NSSlider()
+    private let fogAnisotropyValue = NSTextField(labelWithString: "")
+    private let fogAmbient = NSSlider()
+    private let fogAmbientValue = NSTextField(labelWithString: "")
+    private let fogNoise = NSSlider()
+    private let fogNoiseValue = NSTextField(labelWithString: "")
+    private let fogDistance = NSSlider()
+    private let fogDistanceValue = NSTextField(labelWithString: "")
+    private let fogVolumes = NSButton(checkboxWithTitle: "Local fog volumes", target: nil, action: nil)
+    private let fogReflections = NSButton(checkboxWithTitle: "Fog in reflections", target: nil, action: nil)
     private static let surfelRayOptions = [4, 8, 16, 32]
     private var grid: NSGridView!
     private var modeRows: [GIMode: [Int]] = [:]   // grid rows shown only in that GI mode
     private var stressRows: [Int] = []             // grid rows shown only for the stress scene
+    private var fogRows: [Int] = []                // grid rows shown only while fog is on
 
     init(renderer: Renderer) {
         self.renderer = renderer
@@ -94,6 +111,13 @@ final class SettingsPanel: NSObject {
         configureSlider(cascadeCount, CGFloat(CascadeSettings.cascadeRange.lowerBound)...CGFloat(CascadeSettings.cascadeRange.upperBound),
                         ticks: CascadeSettings.cascadeRange.count, #selector(cascadeCountChanged))
         configureSlider(firstInterval, cg(CascadeSettings.firstIntervalRange), ticks: 0, #selector(firstIntervalChanged))
+        configureSlider(fogDensity, log10(CGFloat(FogSettings.densityRange.lowerBound))...log10(CGFloat(FogSettings.densityRange.upperBound)),
+                        ticks: 0, #selector(fogDensityChanged))
+        configureSlider(fogFalloff, cg(FogSettings.falloffRange), ticks: 0, #selector(fogFalloffChanged))
+        configureSlider(fogAnisotropy, cg(FogSettings.anisotropyRange), ticks: 0, #selector(fogAnisotropyChanged))
+        configureSlider(fogAmbient, cg(FogSettings.ambientRange), ticks: 0, #selector(fogAmbientChanged))
+        configureSlider(fogNoise, cg(FogSettings.noiseRange), ticks: 0, #selector(fogNoiseChanged))
+        configureSlider(fogDistance, cg(FogSettings.distanceRange), ticks: 0, #selector(fogDistanceChanged))
         // Scene sizes rebuild the scene, so they apply when the slider is released.
         configureSlider(objects, CGFloat(SceneSettings.objectRange.lowerBound)...CGFloat(SceneSettings.objectRange.upperBound),
                         ticks: 0, #selector(objectsChanged))
@@ -132,14 +156,17 @@ final class SettingsPanel: NSObject {
                               (cascadeDenoise, #selector(cascadeDenoiseChanged)),
                               (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged)),
                               (freezeLOD, #selector(freezeLODChanged)),
-                              (specular, #selector(specularChanged)), (emissiveLights, #selector(emissiveLightsChanged))] {
+                              (specular, #selector(specularChanged)), (emissiveLights, #selector(emissiveLightsChanged)),
+                              (fog, #selector(fogChanged)), (fogVolumes, #selector(fogVolumesChanged)),
+                              (fogReflections, #selector(fogReflectionsChanged))] {
             box.target = self
             box.action = action
         }
         stats.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stats.textColor = .secondaryLabelColor
         for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
-                      surfelSizeValue, surfelHistoryValue, cascadeCountValue, firstIntervalValue] {
+                      surfelSizeValue, surfelHistoryValue, cascadeCountValue, firstIntervalValue, fogDensityValue, fogFalloffValue,
+                      fogAnisotropyValue, fogAmbientValue, fogNoiseValue, fogDistanceValue] {
             value.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
             value.alignment = .right
         }
@@ -179,6 +206,16 @@ final class SettingsPanel: NSObject {
             [label("First interval"), firstInterval, firstIntervalValue],    // cascades
             [NSGridCell.emptyContentView, cascadeBounce],                    // cascades
             [NSGridCell.emptyContentView, cascadeDenoise],                   // cascades
+            [header("Fog")],
+            [NSGridCell.emptyContentView, fog],
+            [label("Density"), fogDensity, fogDensityValue],
+            [label("Height falloff"), fogFalloff, fogFalloffValue],
+            [label("Forward scattering"), fogAnisotropy, fogAnisotropyValue],
+            [label("Ambient light"), fogAmbient, fogAmbientValue],
+            [label("Noise"), fogNoise, fogNoiseValue],
+            [label("Distance"), fogDistance, fogDistanceValue],
+            [NSGridCell.emptyContentView, fogVolumes],
+            [NSGridCell.emptyContentView, fogReflections],
             [header("Denoiser")],
             [NSGridCell.emptyContentView, denoise],
             [NSGridCell.emptyContentView, shadowDenoiser],
@@ -193,6 +230,7 @@ final class SettingsPanel: NSObject {
         ]
         func rowsOf(_ views: [NSView]) -> [Int] { views.compactMap { v in rows.firstIndex { $0.contains(v) } } }
         stressRows = rowsOf([objects, lights, lightRays])
+        fogRows = rowsOf([fogDensity, fogFalloff, fogAnisotropy, fogAmbient, fogNoise, fogDistance, fogVolumes, fogReflections])
         modeRows = [.pathTraced: rowsOf([bounces, lightMaps]),
                     .surfels: rowsOf([surfelRays, maxSurfels, surfelSize, surfelHistory, surfelDenoise]),
                     .radianceCascades: rowsOf([probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise])]
@@ -264,6 +302,10 @@ final class SettingsPanel: NSObject {
             grid.row(at: r).isHidden = s.scene.kind != .stress
             layoutChanged = true
         }
+        for r in fogRows where grid.row(at: r).isHidden != !s.fog.enabled {
+            grid.row(at: r).isHidden = !s.fog.enabled
+            layoutChanged = true
+        }
         if layoutChanged { resizeToFit() }
         sceneKind.selectItem(at: s.scene.kind.rawValue)
         rayTracer.selectItem(at: s.rayTracer.rawValue)
@@ -304,6 +346,23 @@ final class SettingsPanel: NSObject {
                         cascadeCount, firstInterval, cascadeBounce, cascadeDenoise] as [NSControl] {
             control.isEnabled = s.giEnabled
         }
+
+        let f = s.fog
+        fog.state = f.enabled ? .on : .off
+        fogDensity.doubleValue = Double(log10(FogSettings.densityRange.clamp(f.density)))
+        fogDensityValue.stringValue = String(format: "%.3g /m", f.density)
+        fogFalloff.doubleValue = Double(f.heightFalloff)
+        fogFalloffValue.stringValue = String(format: "%.2f /m", f.heightFalloff)
+        fogAnisotropy.doubleValue = Double(f.anisotropy)
+        fogAnisotropyValue.stringValue = String(format: "%.2f", f.anisotropy)
+        fogAmbient.doubleValue = Double(f.ambient)
+        fogAmbientValue.stringValue = String(format: "%.2f", f.ambient)
+        fogNoise.doubleValue = Double(f.noise)
+        fogNoiseValue.stringValue = String(format: "%.2f", f.noise)
+        fogDistance.doubleValue = Double(f.maxDistance)
+        fogDistanceValue.stringValue = String(format: "%.0f m", f.maxDistance)
+        fogVolumes.state = f.volumes ? .on : .off
+        fogReflections.state = f.reflections ? .on : .off
 
         renderScale.doubleValue = Double(s.renderScale)
         renderScaleValue.stringValue = String(format: "%.3g×", s.renderScale)
@@ -407,6 +466,19 @@ final class SettingsPanel: NSObject {
     @objc private func firstIntervalChanged() { renderer.settings.cascades.firstInterval = Float((firstInterval.doubleValue * 20).rounded() / 20) }
     @objc private func cascadeBounceChanged() { renderer.settings.cascades.feedback = cascadeBounce.state == .on }
     @objc private func cascadeDenoiseChanged() { renderer.settings.cascades.denoiseIndirect = cascadeDenoise.state == .on }
+    @objc private func fogChanged() { renderer.settings.fog.enabled = fog.state == .on }
+    @objc private func fogDensityChanged() {
+        let d = pow(10, fogDensity.doubleValue)   // two significant digits
+        let scale = pow(10, floor(log10(d)) - 1)
+        renderer.settings.fog.density = Float((d / scale).rounded() * scale)
+    }
+    @objc private func fogFalloffChanged() { renderer.settings.fog.heightFalloff = Float((fogFalloff.doubleValue * 100).rounded() / 100) }
+    @objc private func fogAnisotropyChanged() { renderer.settings.fog.anisotropy = Float((fogAnisotropy.doubleValue * 20).rounded() / 20) }
+    @objc private func fogAmbientChanged() { renderer.settings.fog.ambient = Float((fogAmbient.doubleValue * 20).rounded() / 20) }
+    @objc private func fogNoiseChanged() { renderer.settings.fog.noise = Float((fogNoise.doubleValue * 20).rounded() / 20) }
+    @objc private func fogDistanceChanged() { renderer.settings.fog.maxDistance = Float((fogDistance.doubleValue / 5).rounded() * 5) }
+    @objc private func fogVolumesChanged() { renderer.settings.fog.volumes = fogVolumes.state == .on }
+    @objc private func fogReflectionsChanged() { renderer.settings.fog.reflections = fogReflections.state == .on }
 
     // MARK: - Helpers
 

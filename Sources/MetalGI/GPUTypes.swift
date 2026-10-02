@@ -40,6 +40,8 @@ enum UniformFlags {
     static let specular: UInt32 = 512        // specular materials: material G-buffer, reflection pass, specular composite
     static let reference: UInt32 = 1024      // accumulated reference: reflections follow full paths
     static let meshLights: UInt32 = 2048     // with the shadow denoiser: composite adds the denoised mesh-light direct light
+    static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
+    static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
 }
 
 struct GPUMesh {
@@ -88,6 +90,38 @@ struct GPUEmissiveTriangle {
     var uv12: SIMD4<Float>   // uv1, uv2
 }
 
+/// A local fog volume (MSL FogVolume): a soft-edged box or sphere of denser fog.
+struct GPUFogVolume {
+    var centerShape = SIMD4<Float>()     // xyz = centre, w = shape (0 = box, 1 = sphere)
+    var extentDensity = SIMD4<Float>()   // xyz = half extents (sphere: x = radius), w = extinction at the bottom (1/m)
+    var albedoEdge = SIMD4<Float>()      // rgb = single-scattering albedo, w = edge softness (m)
+    var params = SIMD4<Float>()          // x = noise amount, y = height falloff inside (1/m, from the bottom)
+}
+
+/// Volumetric fog parameters (MSL FogParams), passed with setBytes to the fog kernels, the composite and reflections.
+struct GPUFogParams {
+    static let maxVolumes = 8
+    var medium = SIMD4<Float>()          // x = height-fog extinction at the base (1/m), y = height falloff (1/m),
+                                         // z = base height (constant below), w = anisotropy g (Henyey-Greenstein)
+    var albedo = SIMD4<Float>()          // rgb = height fog's albedo, w = ambient: sky colour x w lights the fog evenly
+    var noise = SIMD4<Float>()           // x = height fog's noise amount, y = noise tile size (m), z = time (s), w = this frame's weight in the froxel history
+    var wind = SIMD4<Float>()            // xyz = wind (m/s): the noise drifts with it
+    var grid = SIMD4<Float>()            // x = near, y = far (view depth), z = log(far / near), w = depth slices
+    var counts = SIMD4<UInt32>()         // x, y = froxel columns and rows, z = volume count, w = FogParams flags
+    var volumes = (GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume(),
+                   GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume())
+
+    static let historyValid: UInt32 = 1  // last frame's froxel grid matches: reproject it
+    static let reflections: UInt32 = 2   // reflection rays are fogged too
+    static let enabled: UInt32 = 4       // fog is on (reflections test it)
+
+    mutating func setVolume(_ i: Int, _ v: GPUFogVolume) {
+        withUnsafeMutableBytes(of: &volumes) { raw in
+            raw.storeBytes(of: v, toByteOffset: i * MemoryLayout<GPUFogVolume>.stride, as: GPUFogVolume.self)
+        }
+    }
+}
+
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 224, "Uniforms layout mismatch")
@@ -96,6 +130,8 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
+    precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
+    precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")

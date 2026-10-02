@@ -36,6 +36,7 @@ final class Benchmark {
         var rayTracer: RayTracerKind? = nil   // nil = METALGI_RT / the default
         var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALGI_VG...)
         var camera: Camera? = nil                             // fixed camera instead of the scene's default
+        var fog: FogSettings? = nil                           // nil = the scene's preset (FogSettings.preset)
     }
 
     /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
@@ -137,6 +138,30 @@ final class Benchmark {
     /// (and is the app's starting scene outside benchmarks). Kinds: cornell, stress, gallery, and the light demos spots,
     /// sun, area, tubes, emissive, mixed; `model=<path>` adds a glTF model as File > Open does; `emissivelights=0`
     /// turns emissive-mesh lights off.
+    /// `METALGI_FOG_SET="density=0.03,g=0.6,..."` overrides fog settings in every setting (after `METALGI_FOG=0/1`).
+    /// Keys: on, density, falloff, base, g, ambient, noise, tile, far, volumes, reflections.
+    static func applyFogOverride(to f: inout FogSettings) {
+        guard let spec = ProcessInfo.processInfo.environment["METALGI_FOG_SET"] else { return }
+        for item in spec.split(separator: ",") {
+            let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2, let v = Float(kv[1]) else { continue }
+            switch kv[0] {
+            case "on": f.enabled = v != 0
+            case "density": f.density = v
+            case "falloff": f.heightFalloff = v
+            case "base": f.baseHeight = v
+            case "g": f.anisotropy = v
+            case "ambient": f.ambient = v
+            case "noise": f.noise = v
+            case "tile": f.noiseScale = v
+            case "far": f.maxDistance = v
+            case "volumes": f.volumes = v != 0
+            case "reflections": f.reflections = v != 0
+            default: break
+            }
+        }
+    }
+
     static func applySceneOverride(to s: inout SceneSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALGI_SCENE"] else { return }
         for item in spec.split(separator: ",") {
@@ -151,6 +176,7 @@ final class Benchmark {
             case "tubes": s.kind = .tubes
             case "emissive": s.kind = .emissive
             case "mixed": s.kind = .mixed
+            case "fog": s.kind = .fog
             case "emissivelights" where kv.count == 2: s.emissiveLights = kv[1] != "0"
             case "check" where kv.count == 2: s.lightCheck = kv[1]   // Scene.buildLightCheck; "empty" = just the floor
             case "objects" where kv.count == 2: s.objects = Int(kv[1]) ?? s.objects
@@ -442,6 +468,48 @@ final class Benchmark {
                 moving.surfels.raysPerSurfel = 8
                 moving.surfels.maxSurfels = 65536
                 out.append(moving)
+            }
+            return out
+        case "fog":
+            // The fog scenes, paused at t = 5 with surfel GI: fog off, the preset, without volumes, without fogged
+            // reflections, the other GI techniques; then moving (timing). METALGI_LIGHTS_SCENES="fog|sun" limits them.
+            var out: [Config] = []
+            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            for kind in [SceneKind.fog, .spots, .sun, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
+                let tag = "\(kind)", preset = FogSettings.preset(for: kind)
+                var base = Config(name: "", paused: true, startTime: 5, frames: 60, giMode: .surfels, scene: SceneSettings(kind: kind))
+                base.surfels.raysPerSurfel = 8
+                base.surfels.maxSurfels = 65536
+                var off = preset; off.enabled = false
+                var noVolumes = preset; noVolumes.volumes = false
+                var noReflections = preset; noReflections.reflections = false
+                for (name, fog) in [("fog off", off), ("fog", preset), ("fog no volumes", noVolumes), ("fog no reflections", noReflections)] {
+                    var c = base; c.name = "\(tag) \(name)"; c.fog = fog
+                    out.append(c)
+                }
+                for (name, mode) in [("cascades", GIMode.radianceCascades), ("path traced", .pathTraced)] {
+                    var c = base; c.name = "\(tag) fog \(name)"; c.giMode = mode
+                    out.append(c)
+                }
+                var view = base; view.name = "\(tag) fog scattering"; view.viewMode = 14
+                var moving = base; moving.name = "\(tag) fog moving"; moving.paused = false; moving.frames = nil
+                var shown = moving; shown.name = "\(tag) fog moving 3x"; shown.renderScale = 0.5; shown.upscale = 3
+                out += [view, moving, shown]
+            }
+            return out
+        case "fogcheck":
+            // The froxel grid against the per-pixel reference march (fogReferenceKernel, 512 frames averaged), direct
+            // light only: the fog's scattering alone (view 14) and the final image. Compare with Tools/eval/pngdiff.py.
+            var out: [Config] = []
+            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            for kind in [SceneKind.fog, .spots, .sun] where only?.contains("\(kind)") ?? true {
+                let scene = SceneSettings(kind: kind), tag = "\(kind)"
+                for (name, view) in [("scattering", 14), ("final", 0)] {
+                    out.append(Config(name: "\(tag) ref \(name)", giEnabled: false, viewMode: view, paused: true, startTime: 5,
+                                      accumulate: true, frames: 512, scene: scene))
+                    out.append(Config(name: "\(tag) grid \(name)", giEnabled: false, viewMode: view, paused: true, startTime: 5,
+                                      frames: 120, scene: scene))
+                }
             }
             return out
         case "lightcheck":

@@ -7,12 +7,19 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * a small Cornell-style room;
   * a **stress test** hall with up to 2000 moving objects and 256 moving lights (see below);
   * the glTF **Gallery**;
-  * six light demos (see "Light types" below).
+  * six light demos (see "Light types" below);
+  * a **Misty hall** for the volumetric fog (see "Volumetric fog" below).
 * **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
   * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
 * **Emissive meshes are lights:** any glowing surface (a neon sign, a screen, a glTF emissive texture) is sampled for direct light with shadow rays, one triangle at a time.
 * **glTF lights:** `KHR_lights_punctual` point, spot and directional lights load with their models.
+* **Volumetric fog and light:** height fog with drifting noise, plus soft-edged local fog volumes (ground mist, a stage haze, a glow around a lamp).
+  * Every light type scatters in it, with ray-traced shadows, so sunlight falls in shafts through windows and spot beams are visible.
+  * It is computed in a camera-aligned voxel grid ("froxels"), 8×8 traced pixels by 64 depth slices.
+  * Reflections are fogged too.
+  * Cost: 0.2–1 ms at 640×400.
+  * It matches a per-pixel ray-marched reference within 1.5% (see below).
 * **Custom ray tracing (default):** the shaders traverse this project's own two-level BVH instead of Metal's acceleration structures.
   * Each mesh gets a bottom-level tree (binned SAH, built once on the CPU).
   * Objects that never move get a top-level tree of their own, also built once.
@@ -109,7 +116,7 @@ These variables apply to the gallery and to models in general:
 * `METALGI_SPECULAR=0` turns specular off.
 
 For the lights:
-* `METALGI_SCENE=spots|sun|area|tubes|emissive|mixed` starts in a light demo scene.
+* `METALGI_SCENE=spots|sun|area|tubes|emissive|mixed|fog` starts in a light demo scene (`fog` = the Misty hall).
 * `emissivelights=0`, added to `METALGI_SCENE` or set as `METALGI_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
 * `METALGI_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
 * `METALGI_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALGI_LIGHTS_SCENES="sun|mixed"` picks scenes.
@@ -117,6 +124,13 @@ For the lights:
   * the sphere matches its twin within 0.1%;
   * the rect within 1%;
   * the tube within 7%, which is the extra light from the capsule twin's end caps.
+
+For the fog:
+* `METALGI_FOG=0` or `1` turns it off or on in every scene's preset.
+* `METALGI_FOG_SET="density=0.03,g=0.6"` overrides its settings. The keys are `on`, `density`, `falloff`, `base`, `g`, `ambient`, `noise`, `tile`, `far`, `volumes` and `reflections`.
+* `METALGI_BENCH=fog` renders each fog scene paused at t = 5 s with surfel GI. It renders fog off, the preset, no local volumes, no fogged reflections, the other GI methods and the scattering view, then moving frames (natively and 3× upscaled).
+* `METALGI_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
+* Both fog modes take `METALGI_LIGHTS_SCENES`.
 
 The models in `Assets/` aren't part of the repository (they're 596 MB); put any glTF files there. The caches in `Assets/.metalgi-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
@@ -153,7 +167,7 @@ The window title and the settings panel show the resolution, frame rate and GPU 
 
 | Setting | Default | Effect |
 |---|---|---|
-| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
+| Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's GI and fog defaults: radiance cascades for the Cornell room, surfels (8 rays, 64k pool) for the others. Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 256. Their total power stays the same, so the brightness barely changes. |
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
@@ -213,6 +227,73 @@ Costs at 960×600 with surfel GI on an M1 Max:
 * **Rect lights:** four of them cost 3 ms of trace time, for their form factors and shadow rays.
 * **Mesh lights:** the mesh-light pass costs 1.5–2.4 ms, mostly its shadow ray.
 
+### Volumetric fog
+
+The fog is a participating medium with single scattering. It has two parts:
+* **Height fog:** exponential above a base height, constant below it.
+* **Local fog volumes:** up to 8 per scene. Each is a box or a sphere, with its own density, albedo, edge softness, height falloff and noise, and it can move.
+
+A tiling 3D noise texture (three octaves of gradient noise, 64³) drifts with the wind and breaks both into patches. Light scatters with a Henyey–Greenstein phase function. Its anisotropy sets how much brighter the fog is looking toward a light. Every light type scatters with ray-traced shadows, including emissive meshes, and an ambient term (the sky colour × a factor) stands in for indirect light.
+
+**Camera view.** The fog lives in a froxel grid: camera-aligned voxels of 8×8 traced pixels by 64 slices, spaced exponentially from 0.2 m to the fog's distance. Each frame:
+1. **`fogInjectKernel`** lights one random point in each froxel.
+   * The point is kept in front of the surface its pixel sees, so light from behind walls and above ceilings doesn't leak into the froxels that straddle them.
+   * It picks one light, mostly by its unshadowed light × the phase function and 10% of the time uniformly. The uniform share keeps lamps from being picked too rarely where an unshadowed sun dominates the weights; rare picks show as speckles.
+   * It traces one shadow ray. The analytic optical depth of the fog toward the light dims the result: closed form for the height fog, overlap length for the volumes. For the sun, that depth is taken only to the edge of the scene's bounding sphere, so fog and surfaces get the same sunlight.
+   * The result is blended into last frame's grid, reprojected (10% new).
+2. **`fogIntegrateKernel`** accumulates in-scattered light and transmittance front to back along each froxel column. It uses an energy-conserving step (Hillaire 2015).
+3. **The composite** reads both at each pixel's depth and applies them before tonemapping. With a temporal upscaler, the lookup moves by the frame's jitter scaled to one froxel, so the upscaler smooths the grid's steps.
+
+**Reflections.** Reflection rays are dimmed by the analytic transmittance. In-scattered light comes from one point at a random distance along the ray, lit by one light sample with one shadow ray; the reflection denoiser removes its noise.
+
+**Accuracy** (`METALGI_BENCH=fogcheck`, against the per-pixel reference). This is direct light only at 960×600. The grid matches the reference except for blur finer than a froxel.
+
+| Scene | Scattering: mean light | Scattering: PSNR | Final image: mean | Final image: PSNR |
+|---|---|---|---|---|
+| Misty hall | +0.3% | 34.5 dB | +1.8% | 32.9 dB |
+| Spot lights | −0.3% | 43.4 dB | +1.4% | 38.7 dB |
+| Sun and sky | −1.4% | 48.6 dB | −0.1% | 42.0 dB |
+
+| Setting | Default | Effect |
+|---|---|---|
+| Fog | per scene | On in the Misty hall and in the spot, sun, tube, emissive and mixed demos. Off in the Cornell room, the stress test, the gallery and the studio. |
+| Density | per scene | The height fog's extinction at and below its base height, from 0.002 to 0.3 per metre (0 leaves only the volumes). |
+| Height falloff | per scene | How fast the height fog thins with height, per metre. |
+| Forward scattering | per scene | Henyey–Greenstein g, from −0.3 to 0.9. Higher values make shafts and beams brighter when you look toward their light. |
+| Ambient light | per scene | The sky colour × this lights the fog evenly. |
+| Noise | per scene | How much the drifting noise breaks up the height fog. |
+| Distance | per scene | The froxel grid's far end, from 10 to 150 m. Fog stops accumulating beyond it, including on the sky. |
+| Local fog volumes | On | The scene's volumes: ground mist in the hall and the garage, haze over the stage, a glow around the orbs, dust in the sun scene's room. |
+| Fog in reflections | On | One more shadow ray per reflection pixel. |
+
+The view menu's last entry, "Fog scattering", shows the fog's in-scattered light alone.
+
+**The Misty hall** is a long stone hall built for the fog:
+* a low sun beyond the far wall shines in through three tall mullioned windows, toward the camera, and swings slowly;
+* a searchlight high on the left wall sweeps the right half of the hall;
+* mist pools over the floor around a lantern;
+* a glowing orb sits in its own cloud.
+
+Fog pass cost on an M1 Max with surfel GI:
+
+| Scene | 960×600 | 640×400 (the default, 3× upscaled) |
+|---|---|---|
+| Misty hall | 1.6 ms | 0.76 ms |
+| Spot lights | 0.66 ms | 0.48 ms |
+| Sun and sky | 0.32 ms | 0.19 ms |
+| Tube lights | 1.2 ms | 0.61 ms |
+| Emissive meshes | 2.1 ms | 1.0 ms |
+| Mixed lights | 0.66 ms | 0.34 ms |
+
+The cost follows the froxels in front of the surfaces and the lights' sample paths. Emissive meshes are dearest: 18 mesh lights, each sample a triangle pick. Fogged reflections add up to 0.8 ms at 960×600, on the stage, whose floor is glossy everywhere. With fog off, frames are unchanged and cost the same.
+
+**Limitations:**
+* Fog doesn't dim the light that reaches surfaces.
+* GI rays ignore the fog; its only indirect light is the ambient term.
+* There is no multiple scattering.
+* Shafts and beams narrower than a froxel (8 traced pixels) are blurred.
+* A froxel that contains a point light averages its very bright core, so the source looks like a small square glow.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -262,13 +343,16 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
        or cascades     probes -> trace + merge per cascade (top down) -> SH projection -> resolve
     2d reflectionKernel glTF specular materials: 1 GGX ray per pixel, hit lit by 1 light sample + this frame's
                        diffuse GI on screen; / specular albedo; temporal + 2 a-trous passes
+                       (fog: dimmed along the ray, + in-scatter from 1 point with 1 light sample)
+    2f fogInjectKernel fog on: per froxel (8x8 px x 64 slices) 1 point in front of the surfaces, 1 light, 1 shadow
+                       ray, blended into last frame's grid; fogIntegrateKernel: in-scatter + transmittance front to back
     3  shadowTemporalKernel  direct light: reproject + clamp per-light visibility, penumbra widths, tile classes
        shadowFilterKernel x3 edge-aware, penumbra-limited 3x3 passes (skips fully lit / shadowed tiles)
     3b temporalKernel  SVGF for indirect light: reproject last frame, reject disocclusions, blend, track variance
                        (surfel / cascade indirect light skips the denoiser unless you enable it)
     4  atrousKernel x4 edge-aware wavelet filter (step 1, 2, 4, 8)
     5  compositeKernel exact unshadowed light (diffuse + GGX) x visibility + indirect, x albedo, + reflections x
-                       specular albedo + emission -> ACES tonemap
+                       specular albedo + emission -> x fog transmittance + fog in-scatter -> ACES tonemap
                        -> drawable (sRGB format: the GPU encodes), or with upscaling linear colour at render resolution
     6  upscale         taauKernel straight into the drawable, or MetalFX into a private texture + a copy
 ```
@@ -289,7 +373,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator |
 | `Benchmark.swift` | Benchmark mode (`METALGI_BENCH`) |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups and emissive-mesh lights; glTF models and their lights |
-| `Scene+Lights.swift` | The six light demo scenes, and the light-check scene the `lightcheck` benchmark renders |
+| `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, and the light-check scene the `lightcheck` benchmark renders |
+| `FogNoise.swift` | The fog's tiling 3D density noise |
 | `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |

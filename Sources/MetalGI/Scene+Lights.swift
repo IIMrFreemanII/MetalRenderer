@@ -1,8 +1,9 @@
 import Foundation
 import simd
 
-/// Demo scenes for the light types: one per type (spot, sun, rect, tube, emissive mesh) and one with all of them.
-/// Procedural geometry only, so they load at once; every light moves, sweeps or flickers.
+/// Demo scenes for the light types: one per type (spot, sun, rect, tube, emissive mesh), one with all of them, and a
+/// misty hall for the volumetric fog. Procedural geometry only, so they load at once; every light moves, sweeps or
+/// flickers. Their fog settings are presets (FogSettings.preset); the local fog volumes are set up here.
 extension Scene {
     /// Shared meshes and a box helper for the builders below.
     private struct Kit {
@@ -60,6 +61,7 @@ extension Scene {
         case .tubes: return camera([2.0, 1.6, 7], yaw: -0.2, pitch: -0.08)
         case .emissive: return camera([0, 2.2, 6.5], pitch: -0.14)
         case .mixed: return camera([-3.4, 1.7, 3.7], yaw: 0.42, pitch: -0.14)
+        case .fog: return camera([1.2, 1.7, 2.6], yaw: -0.04, pitch: 0.1)
         case .cornell, .stress, .gallery: return nil
         }
     }
@@ -160,6 +162,9 @@ extension Scene {
                 return LightPose(position: position, direction: normalize(target - position))
             }
         }
+        // Stage haze, thickest low over the stage.
+        fogVolumes.append(FogVolume(shape: .box(halfExtents: [10, 3.5, 7]), center: [0, 3.5, -2], density: 0.05,
+                                    edge: 2, noise: 0.7, heightFalloff: 0.15))
         defaultCamera = Scene.demoCamera(.spots)!
     }
 
@@ -224,6 +229,9 @@ extension Scene {
         }
         skyAnimation = { t in simd_mix(SIMD3<Float>(0.38, 0.28, 0.3) * 0.25, SIMD3<Float>(0.3, 0.45, 0.8) * 0.24,
                                        SIMD3(repeating: warmth(t))) }
+        // Dust in the room, so the sun's shafts through its windows show.
+        fogVolumes.append(FogVolume(shape: .box(halfExtents: [3.5, 1.7, 3]), center: [6.5, 1.7, -7], density: 0.08,
+                                    edge: 0.3, noise: 0.5))
         defaultCamera = Scene.demoCamera(.sun)!
     }
 
@@ -317,6 +325,9 @@ extension Scene {
         addLight(.tube(length: 3, radius: 0.03), color: Scene.hue([1.0, 0.55, 0.1]) * 2) { t in
             LightPose(position: [9.9, 2.2, -3], direction: [0, 0.15 * sin(0.4 * t), 1])
         }
+        // Low mist over the floor (the box reaches below it, so its soft edge doesn't thin the mist at the floor).
+        fogVolumes.append(FogVolume(shape: .box(halfExtents: [10, 1, 8]), center: [0, 0.5, 0], density: 0.9,
+                                    edge: 0.5, noise: 0.9, heightFalloff: 2.2))
         defaultCamera = Scene.demoCamera(.tubes)!
     }
 
@@ -348,6 +359,7 @@ extension Scene {
         // A warm orb on a plinth, and a cool screen on the right wall.
         kit.box([-5, 0.5, -3], [0.8, 1, 0.8], white)
         kit.ball([-5, 1.45, -3], 0.4, addMaterial(albedo: .zero, emission: [1.0, 0.55, 0.2] * 5))
+        fogVolumes.append(FogVolume(shape: .sphere(radius: 1.8), center: [-5, 1.45, -3], density: 0.15, edge: 1, noise: 0.8))
         addInstance(kit.quad, addMaterial(albedo: .zero, emission: [0.55, 0.7, 1.0] * 2.5),
                     translate([7.95, 2.2, -2.5]) * rotate(.pi / 2, [0, 0, 1]) * scale([1.8, 1, 3.2]))
 
@@ -367,6 +379,91 @@ extension Scene {
             }
         }
         defaultCamera = Scene.demoCamera(.emissive)!
+    }
+
+    // MARK: - Misty hall
+
+    /// A long stone hall in fog: a low sun beyond the far wall shines in through its three tall mullioned windows,
+    /// straight down the hall toward the camera, cutting shafts through the fog onto the floor (and thin ones through
+    /// the side windows), swinging slowly; a searchlight high on the left wall sweeps the right half of the hall; mist
+    /// pools over the floor around a lantern; a glowing orb sits in a cloud of its own.
+    func buildFogHall() {
+        let kit = Kit(self)
+        skyColor = [0.12, 0.13, 0.16]
+        let floor = addPBRMaterial(baseColor: [0.32, 0.31, 0.3], metallic: 0, roughness: 0.18)   // polished stone
+        let stone = addMaterial(albedo: [0.62, 0.58, 0.52])
+        let dark = addMaterial(albedo: [0.25, 0.23, 0.21])
+        let wood = addMaterial(albedo: [0.4, 0.26, 0.15])
+        let bronze = addPBRMaterial(baseColor: [0.85, 0.6, 0.35], metallic: 1, roughness: 0.3)
+        let (x0, x1, z0, z1, h): (Float, Float, Float, Float, Float) = (-6, 6, -24, 4, 9)
+        addInstance(kit.quad, floor, translate([0, 0, (z0 + z1) / 2]) * scale([x1 - x0, 1, z1 - z0]))
+        kit.slab([x0 - 0.4, h, z0 - 0.4], [x1 + 0.3, h + 0.3, z1 + 0.3], stone)   // ceiling
+        kit.slab([x0, 0, z1], [x1, h, z1 + 0.3], stone)                           // wall behind the camera
+        kit.slab([x1, 0, z0], [x1 + 0.3, h, z1], stone)                           // right wall
+        /// A wall with window openings: `openings` = (low, high) along the wall's axis, sills at y 2.5 ... 8; each
+        /// opening gets a mullion and a transom. `wall(lo, hi)` places a slab spanning [lo, hi] along that axis.
+        func windowWall(_ from: Float, _ to: Float, openings: [(Float, Float)], wall: (Float, Float, Float, Float) -> Void,
+                        bar: (Float, Float, Float, Float) -> Void) {
+            wall(from, to, 0, 2.5)
+            wall(from, to, 8, h)
+            var at = from
+            for (a, b) in openings {
+                wall(at, a, 2.5, 8)
+                bar((a + b) / 2 - 0.06, (a + b) / 2 + 0.06, 2.5, 8)    // mullion
+                bar(a, b, 5.6, 5.72)                                 // transom
+                at = b
+            }
+            wall(at, to, 2.5, 8)
+        }
+        // Far wall (z0): three tall windows.
+        windowWall(x0 - 0.4, x1 + 0.3, openings: [(-3.6, -1.8), (-0.9, 0.9), (1.8, 3.6)],
+                   wall: { a, b, y0, y1 in kit.slab([a, y0, z0 - 0.4], [b, y1, z0], stone) },
+                   bar: { a, b, y0, y1 in kit.slab([a, y0, z0 - 0.3], [b, y1, z0 - 0.1], dark) })
+        // Left wall (x0): five windows.
+        windowWall(z0, z1, openings: [-20, -15, -10, -5, 0].map { ($0 - 0.8, $0 + 0.8) },
+                   wall: { a, b, y0, y1 in kit.slab([x0 - 0.4, y0, a], [x0, y1, b], stone) },
+                   bar: { a, b, y0, y1 in kit.slab([x0 - 0.3, y0, a], [x0 - 0.1, y1, b], dark) })
+        // Columns along both sides, a balcony on the right, benches and a statue.
+        for cz: Float in [-22, -17, -12, -7, -2] {
+            for cx: Float in [-4.6, 4.6] { kit.box([cx, h / 2, cz], [0.7, h, 0.7], stone) }
+        }
+        kit.slab([4.95, 4.0, -20], [x1, 4.25, -8], stone)
+        kit.slab([4.95, 4.25, -20], [5.05, 4.7, -8], dark)                      // its railing
+        for bz: Float in [-4.5, -9.5] {
+            kit.box([-1.6, 0.25, bz], [0.5, 0.5, 2.4], wood)
+            kit.box([1.6, 0.25, bz], [0.5, 0.5, 2.4], wood)
+        }
+        kit.box([0, 0.5, -13], [1.4, 1, 1.4], stone)
+        kit.box([0, 1.6, -13], [0.5, 1.2, 0.5], bronze, yaw: 0.4)
+        kit.ball([0, 2.55, -13], 0.35, bronze)
+        // The far end: a low dais with a glowing orb in its own cloud.
+        kit.slab([x0, 0, z0], [x1, 0.3, -21.5], stone)
+        kit.box([3.4, 0.8, -20.5], [0.6, 1, 0.6], stone)
+        kit.ball([3.4, 1.7, -20.5], 0.4, addMaterial(albedo: .zero, emission: [1.0, 0.6, 0.3] * 6))
+
+        // The low sun beyond the far wall, a little to the left, swinging +-10 degrees.
+        let e = Scene.degrees(24)
+        addLight(.sun(angularRadius: Scene.degrees(0.27)), color: SIMD3<Float>(1.0, 0.88, 0.72) * 5) { t in
+            let a = Scene.degrees(-14 + 10 * sin(0.12 * t))
+            return LightPose(position: .zero, direction: [cos(e) * sin(a), sin(e), -cos(e) * cos(a)])
+        }
+        // A searchlight high on the left wall, between two columns, sweeping the right half of the hall.
+        let searchlight = SIMD3<Float>(-3.9, 7.3, -14.5)
+        kit.box(searchlight + [-0.45, 0.1, 0], [0.5, 0.4, 0.4], dark)
+        kit.slab([-5.4, 7.1, -14.6], [-4.6, 7.2, -14.4], dark)                   // its bracket
+        addLight(.spot(radius: 0.15, inner: Scene.degrees(4), outer: Scene.degrees(7)), color: SIMD3<Float>(0.8, 0.9, 1.0) * 450) { t in
+            let target = SIMD3<Float>(2.2 + 1.6 * sin(0.33 * t), 0, -6 + 3 * sin(0.21 * t + 1))
+            return LightPose(position: searchlight, direction: normalize(target - searchlight))
+        }
+        // A lantern in the mist, bobbing a little.
+        addLight(.sphere(radius: 0.08), color: SIMD3<Float>(1.0, 0.6, 0.25) * 5) { t in
+            LightPose(position: [-3, 1.0 + 0.1 * sin(0.8 * t), -17])
+        }
+        fogVolumes.append(FogVolume(shape: .box(halfExtents: [6, 1.2, 5]), center: [0, 0.4, -17], density: 0.6,
+                                    edge: 0.8, noise: 0.9, heightFalloff: 2))
+        fogVolumes.append(FogVolume(shape: .sphere(radius: 2), center: [3.4, 1.7, -20.5], density: 0.12,
+                                    albedo: [1.0, 0.9, 0.8], edge: 1.2, noise: 0.8))
+        defaultCamera = Scene.demoCamera(.fog)!
     }
 
     // MARK: - Mixed

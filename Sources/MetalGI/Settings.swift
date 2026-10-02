@@ -116,6 +116,7 @@ enum SceneKind: Int, CaseIterable {
     case tubes              // a garage with fluorescent and neon tube lights
     case emissive           // a dark room lit only by emissive meshes (neon shapes, a screen, a spinning ring)
     case mixed              // a room at dusk with every light type
+    case fog                // a misty hall: sun shafts through tall windows, a searchlight, ground mist
 
     var title: String {
         switch self {
@@ -128,6 +129,7 @@ enum SceneKind: Int, CaseIterable {
         case .tubes: return "Tube lights"
         case .emissive: return "Emissive meshes"
         case .mixed: return "Mixed lights"
+        case .fog: return "Misty hall"
         }
     }
 }
@@ -184,6 +186,59 @@ struct VirtualGeometrySettings: Equatable {
     static let poolOptions = [256, 512, 768, 1024, 2048]
 }
 
+/// Volumetric fog (Shaders.metal "Volumetric fog"): exponential height fog with drifting noise, plus the scene's
+/// local fog volumes. Each scene kind has a preset (`preset(for:)`); the volumes themselves come with the scene.
+struct FogSettings: Equatable {
+    var enabled = false
+    var density: Float = 0.02           // height fog's extinction at and below its base height (1/m); 0 = volumes only
+    var heightFalloff: Float = 0.1      // per metre above the base height (0 = the same density everywhere)
+    var baseHeight: Float = 0
+    var anisotropy: Float = 0.5         // Henyey-Greenstein g: > 0 scatters forward (brightest looking toward a light)
+    var ambient: Float = 1              // the sky colour x this lights the fog evenly (stands in for indirect light)
+    var albedo = SIMD3<Float>(repeating: 0.9)
+    var noise: Float = 0.4              // how much the drifting noise modulates the height fog (volumes have their own)
+    var noiseScale: Float = 6           // noise tile size (m)
+    var wind = SIMD3<Float>(0.35, 0.05, 0.15)   // m/s
+    var maxDistance: Float = 40         // the froxel grid's far end (view depth); beyond, no more fog accumulates
+    var volumes = true                  // the scene's local fog volumes
+    var reflections = true              // fog along reflection rays (one more shadow ray per reflection)
+
+    static let densityRange: ClosedRange<Float> = 0.002...0.3   // log slider
+    static let falloffRange: ClosedRange<Float> = 0...1
+    static let anisotropyRange: ClosedRange<Float> = -0.3...0.9
+    static let ambientRange: ClosedRange<Float> = 0...4
+    static let noiseRange: ClosedRange<Float> = 0...1
+    static let distanceRange: ClosedRange<Float> = 10...150
+    static let slices = 64              // froxel depth slices (the grid is 8x8 traced pixels per froxel)
+    /// `METALGI_FOG=0/1` turns fog off or on in every preset.
+    static let override: Bool? = ProcessInfo.processInfo.environment["METALGI_FOG"].map { $0 != "0" }
+
+    /// The fog that suits scene `kind`: off in the Cornell room, stress test, gallery and studio.
+    static func preset(for kind: SceneKind) -> FogSettings {
+        var f = FogSettings()
+        switch kind {
+        case .cornell, .stress, .gallery, .area:
+            break
+        case .spots:
+            f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
+        case .sun:
+            f.enabled = true; f.density = 0.025; f.heightFalloff = 0.1; f.anisotropy = 0.3; f.noise = 0.3
+            f.maxDistance = 100
+        case .tubes:
+            f.enabled = true; f.density = 0.05; f.heightFalloff = 0; f.anisotropy = 0.3; f.maxDistance = 30
+        case .emissive:
+            f.enabled = true; f.density = 0.02; f.heightFalloff = 0; f.anisotropy = 0.3; f.maxDistance = 30
+        case .mixed:
+            f.enabled = true; f.density = 0.03; f.heightFalloff = 0; f.anisotropy = 0.2; f.maxDistance = 30
+        case .fog:
+            f.enabled = true; f.density = 0.045; f.heightFalloff = 0.04; f.anisotropy = 0.7; f.ambient = 0.25; f.noise = 0.6
+            f.maxDistance = 60
+        }
+        if let override { f.enabled = override }
+        return f
+    }
+}
+
 /// Everything the settings panel and the keyboard shortcuts can change.
 struct RenderSettings: Equatable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
@@ -208,6 +263,7 @@ struct RenderSettings: Equatable {
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALGI_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALGI_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
+    var fog = FogSettings.preset(for: .cornell)
 
     /// Applies the GI defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults). Radiance cascades suit the open Cornell room. In the cluttered stress hall their
@@ -218,12 +274,13 @@ struct RenderSettings: Equatable {
         case .cornell:
             giMode = defaults.giMode
             surfels = defaults.surfels
-        case .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed:
+        case .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog:
             giMode = .surfels
             surfels = defaults.surfels
             surfels.raysPerSurfel = 8
             surfels.maxSurfels = 65536
         }
+        fog = FogSettings.preset(for: scene.kind)
     }
 
     static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
@@ -231,7 +288,8 @@ struct RenderSettings: Equatable {
     static let bounceRange = 1...8
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
-                            "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost"]
+                            "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
+                            "Fog scattering"]
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13
