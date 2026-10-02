@@ -39,6 +39,8 @@ final class Benchmark {
         var sky: SkySettings? = nil                           // nil = the scene's preset (SkySettings.preset)
         var directLight: DirectLightMode? = nil               // nil = METALRENDERER_DIRECT / Auto
         var restir: RestirSettings? = nil                     // nil = the defaults (then METALRENDERER_RESTIR)
+        var restirGI: RestirGISettings? = nil                 // nil = the defaults (then METALRENDERER_RESTIR_GI)
+        var accumulateTechnique = false   // with accumulate: average giMode's frames instead of path tracing (restirgicheck)
     }
 
     /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
@@ -91,7 +93,7 @@ final class Benchmark {
     }
 
     /// `METALRENDERER_GI="mode=cascades,spacing=4,..."` overrides GI settings in every (non-reference) setting.
-    /// Keys: mode (pt|cascades), lightmaps, bounces, spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
+    /// Keys: mode (pt|cascades|restir), lightmaps, bounces, spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
     /// upscaler (metalfx|spatial|custom), lightrays (shadow rays per light group with more than 4 lights),
     /// taauhistory, taauclip.
     static func applyGIOverride(to s: inout RenderSettings) {
@@ -101,7 +103,7 @@ final class Benchmark {
             guard kv.count == 2 else { continue }
             let v = Float(kv[1]) ?? 0
             switch kv[0] {
-            case "mode": s.giMode = ["pt": .pathTraced, "cascades": .radianceCascades][kv[1]] ?? s.giMode
+            case "mode": s.giMode = ["pt": .pathTraced, "cascades": .radianceCascades, "restir": .restirGI][kv[1]] ?? s.giMode
             case "lightmaps": s.lightMaps = v != 0
             case "lightrays": s.manyLightRays = Int(v)
             case "lightreuse": s.manyLightReuse = Int(v)
@@ -210,6 +212,40 @@ final class Benchmark {
         }
     }
 
+    /// `METALRENDERER_RESTIR_GI="quarter=0,bounces=2,lightmaps=0,feedback=1,dfeedback=1,fallback=1,temporal=1,maxm=2,age=30,
+    /// spatial=0,k=2,unbiased=1,radius=30,dmin=0.02,denoise=1,sigma=3,passes=2,history=8,boost=2,antilag=0"` (the defaults)
+    /// overrides ReSTIR GI's settings in every setting.
+    static func applyRestirGIOverride(to r: inout RestirGISettings) {
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_RESTIR_GI"] else { return }
+        for item in spec.split(separator: ",") {
+            let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2, let v = Float(kv[1]) else { continue }
+            switch kv[0] {
+            case "quarter": r.quarterBudget = v != 0
+            case "bounces": r.bounces = Int(v)
+            case "lightmaps": r.lightMaps = v != 0
+            case "feedback": r.feedback = v != 0
+            case "dfeedback": r.denoisedFeedback = v != 0
+            case "fallback": r.feedbackFallback = v != 0
+            case "temporal": r.temporal = v != 0
+            case "maxm": r.maxM = v
+            case "age": r.maxAge = Int(v)
+            case "spatial": r.spatialPasses = Int(v)
+            case "k": r.spatialSamples = Int(v)
+            case "unbiased": r.unbiased = v != 0
+            case "radius": r.radius = v
+            case "dmin": r.minDistance = v
+            case "denoise": r.denoise = v != 0
+            case "sigma": r.denoiseSigma = v
+            case "passes": r.denoisePasses = Int(v)
+            case "history": r.denoiseHistory = v
+            case "boost": r.varianceBoost = v
+            case "antilag": r.antiLag = v
+            default: print("METALRENDERER_RESTIR_GI: unknown key \(kv[0])")
+            }
+        }
+    }
+
     static func applySceneOverride(to s: inout SceneSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_SCENE"] else { return }
         for item in spec.split(separator: ",") {
@@ -294,8 +330,11 @@ final class Benchmark {
         var ptLM = pt; ptLM.lightMaps = true
         var cascades = pt; cascades.giMode = .radianceCascades
         var cascadesHQ = cascades; cascadesHQ.cascades.probeSpacing = 4; cascadesHQ.cascades.firstInterval = 0.25
+        var restirGI = pt; restirGI.giMode = .restirGI
+        var restirGIQ = restirGI; restirGIQ.restirGI = RestirGISettings(); restirGIQ.restirGI!.quarterBudget = true
         pt.name = "pt"; ptLM.name = "pt-lightmaps"; cascades.name = "cascades"; cascadesHQ.name = "cascades-hq"
-        let all = [pt, ptLM, cascades, cascadesHQ].map { (tag: $0.name, base: $0) }
+        restirGI.name = "restirgi"; restirGIQ.name = "restirgi-q"
+        let all = [pt, ptLM, cascades, cascadesHQ, restirGI, restirGIQ].map { (tag: $0.name, base: $0) }
         guard let pick = ProcessInfo.processInfo.environment["METALRENDERER_GI_MODES"] else { return all }
         let tags = Set(pick.split(separator: ",").map(String.init))
         return all.filter { tags.contains($0.tag) }
@@ -396,17 +435,23 @@ final class Benchmark {
                 return (refs ? [ref] : []) + [st, mv, cam]
             }
             var gi: [Config] = refs ? [Config(name: "ref8 final 32", renderScale: 0.5, bounces: 8, paused: true, startTime: 5,
-                                              accumulate: true, frames: 1024, scene: stress())] : []
+                                              accumulate: true, frames: 1024, scene: stress()),
+                                       Config(name: "ref8 indirect 32", renderScale: 0.5, bounces: 8, viewMode: 6, paused: true,
+                                              startTime: 5, accumulate: true, frames: 1024, scene: stress())] : []
             var cascadesHQ = CascadeSettings(); cascadesHQ.probeSpacing = 4; cascadesHQ.firstInterval = 0.25
-            let methods: [(String, GIMode, CascadeSettings)] = [("cascades", .radianceCascades, CascadeSettings()),
-                                                                 ("cascades-hq", .radianceCascades, cascadesHQ),
-                                                                 ("pt", .pathTraced, CascadeSettings())]
-            for (tag, mode, cascades) in methods {
-                let base = Config(name: "", renderScale: 0.5, giMode: mode, cascades: cascades, scene: stress())
+            var quarter = RestirGISettings(); quarter.quarterBudget = true
+            let methods: [(String, GIMode, CascadeSettings, RestirGISettings?)] = [
+                ("cascades", .radianceCascades, CascadeSettings(), nil), ("cascades-hq", .radianceCascades, cascadesHQ, nil),
+                ("pt", .pathTraced, CascadeSettings(), nil), ("restirgi", .restirGI, CascadeSettings(), nil),
+                ("restirgi-q", .restirGI, CascadeSettings(), quarter)]
+            for (tag, mode, cascades, restirGI) in methods {
+                var base = Config(name: "", renderScale: 0.5, giMode: mode, cascades: cascades, scene: stress())
+                base.restirGI = restirGI
                 var st = base; st.name = "\(tag) static 32"; st.paused = true; st.startTime = 5; st.capturePrevious = true
+                var ind = st; ind.name = "\(tag) indirect 32"; ind.viewMode = 6; ind.capturePrevious = false
                 var mv = base; mv.name = "\(tag) moving 32"
                 var cam = base; cam.name = "\(tag) camera 32"; cam.cameraPath = true
-                gi += [st, mv, cam]
+                gi += [st, ind, mv, cam]
             }
             var up: [Config] = refs ? [
                 Config(name: "ref albedo 1.5x", renderScale: 1.5, viewMode: 4, paused: true, startTime: 5, accumulate: true,
@@ -533,7 +578,7 @@ final class Benchmark {
             for (tag, v) in [("full", vg(false)), ("vg1", vg(true, 1))] {
                 out.append(Config(name: "\(tag) camera", renderScale: 0.5, upscale: 3, giMode: .radianceCascades, cameraPath: true,
                                   scene: gallery, virtualGeometry: v))
-                for (gtag, mode) in [("cascades", GIMode.radianceCascades), ("pt", .pathTraced)] {
+                for (gtag, mode) in [("cascades", GIMode.radianceCascades), ("pt", .pathTraced), ("restirgi", .restirGI)] {
                     var close = Config(name: "\(tag) \(gtag) closeup", renderScale: 0.5, paused: true, startTime: 5, capturePrevious: true,
                                        giMode: mode, scene: gallery, virtualGeometry: v)
                     close.camera = Benchmark.galleryCloseup
@@ -649,7 +694,7 @@ final class Benchmark {
                     ref.sky = sky
                     out.append(ref)
                     for (mode, giMode, lightMaps) in [("pt", GIMode.pathTraced, false), ("pt-lightmaps", .pathTraced, true),
-                                                       ("cascades", .radianceCascades, false)] {
+                                                       ("cascades", .radianceCascades, false), ("restirgi", .restirGI, false)] {
                         var c = Config(name: "\(tag) \(mode) \(name)", viewMode: view, paused: true, startTime: 40, frames: 90,
                                        giMode: giMode, lightMaps: lightMaps, scene: scene)
                         c.sky = sky
@@ -690,6 +735,25 @@ final class Benchmark {
                     c.sky = SkySettings()   // constant sky: the sky's own noise stays out of the comparison
                     out.append(c)
                 }
+            }
+            return out
+        case "restirgicheck":
+            // ReSTIR GI is unbiased: accumulated indirect light (the "Indirect only" view, 2 bounces, unclamped) of
+            // path tracing against ReSTIR GI without reuse (the same paths, as reservoirs), with temporal and (unbiased)
+            // spatial reuse, and with the quarter budget, in Cornell and the stress hall (Tools/eval/restirgi.py).
+            var out: [Config] = []
+            for (tag, scene) in [("cornell", SceneSettings()), ("stress", SceneSettings(kind: .stress, objects: 400, lights: 32))] {
+                let base = Config(name: "", renderScale: 0.5, viewMode: 6, paused: true, startTime: 5, accumulate: true,
+                                  frames: 1024, scene: scene, sky: SkySettings())
+                var pt = base; pt.name = "\(tag) pt"
+                var noReuse = base; noReuse.name = "\(tag) restirgi noreuse"; noReuse.giMode = .restirGI; noReuse.accumulateTechnique = true
+                // No multi-bounce feedback (it isn't in the paths), and spatial reuse on (unbiased, the default when on).
+                var r = RestirGISettings(); r.feedback = false; r.temporal = false; r.spatialPasses = 0
+                noReuse.restirGI = r
+                r.temporal = true; r.spatialPasses = 1
+                var reuse = noReuse; reuse.name = "\(tag) restirgi reuse"; reuse.restirGI = r
+                var quarter = reuse; quarter.name = "\(tag) restirgi quarter"; quarter.restirGI!.quarterBudget = true
+                out += [pt, noReuse, reuse, quarter]
             }
             return out
         case "vgdebug":

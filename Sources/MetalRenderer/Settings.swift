@@ -120,13 +120,50 @@ struct UpscalerSettings: Equatable {
 enum GIMode: Int, CaseIterable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
+    case restirGI           // ReSTIR GI: per-pixel paths whose first bounce is reused over time and space, + SVGF
 
     var title: String {
         switch self {
         case .pathTraced: return "Path traced"
         case .radianceCascades: return "Radiance cascades"
+        case .restirGI: return "ReSTIR GI"
         }
     }
+}
+
+/// ReSTIR GI (Shaders.metal "ReSTIR GI"): one path per pixel (or per 2x2 block) whose first bounce is resampled over
+/// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
+struct RestirGISettings: Equatable {
+    var quarterBudget = false       // one fresh path per 2x2 block per frame (a rotating pixel): 4x cheaper paths, but
+                                    // pixels that lost their history wait up to 4 frames (-5 to -15 dB in motion), so off
+    var bounces = 2                 // path length (the first bounce is the reused sample)
+    var lightMaps = false           // light the paths' hits from the light maps instead of shadow rays
+    var feedback = true             // multi-bounce: the paths' last hits add last frame's indirect light where on screen
+                                    // (+16 dB in Cornell with the fallback: 2 bounces miss a quarter of the light)
+    var denoisedFeedback = true     // ...the denoised indirect light (else the raw one)
+    var feedbackFallback = true     // ...and off screen, last frame's mean indirect light
+    var temporal = true             // reuse last frame's reservoir (reprojected): half the flicker
+    var maxM: Float = 2             // confidence cap: higher = steadier, laggier (16: -0.5 dB still, -2 to -4.5 dB moving)
+    var maxAge = 30                 // the pixel's fresh paths a sample may outlive (its light is from when it was traced)
+    var spatialPasses = 0           // 0...2 passes of spatial reuse: unbiased, but after the denoiser no better (and 2-13
+                                    // ms at 640x400), so off
+    var spatialSamples = 2          // neighbours per pass (1 scored as 5)
+    var unbiased = true             // spatial reuse: visibility in the targets, two rays per neighbour (without: cheaper,
+                                    // but 8-17% darker in the stress hall, where neighbours see different light)
+    var radius: Float = 30          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
+    var minDistance: Float = 0.02   // floor of the sample distance in the target (m): no spikes from very close samples
+    var denoise = true              // SVGF on the result
+    var denoiseSigma: Float = 3     // SVGF luminance edge-stopping (in standard deviations)
+    var denoisePasses = 2
+    var denoiseHistory: Float = 8   // SVGF history (frames)
+    var varianceBoost: Float = 2    // reused samples are correlated, so their temporal variance is low: scale it up
+    var antiLag: Float = 0          // SVGF anti-lag for the result (DenoiserSettings.antiLag)
+
+    static let maxMRange: ClosedRange<Float> = 1...64
+    static let maxAgeRange = 1...255
+    static let spatialPassRange = 0...2
+    static let spatialSampleRange = 1...8
+    static let radiusRange: ClosedRange<Float> = 4...64
 }
 
 /// Radiance cascades parameters.
@@ -373,6 +410,7 @@ struct RenderSettings: Equatable {
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     var directLight = DirectLightMode.initial
     var restir = RestirSettings()
+    var restirGI = RestirGISettings()
     var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
     var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)

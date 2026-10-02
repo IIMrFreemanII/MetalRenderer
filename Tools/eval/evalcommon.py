@@ -53,6 +53,12 @@ def flicker(a, b):
     return np.sqrt(np.mean((a - b) ** 2)) * 255
 
 
+def mean_luminance(a):
+    """Mean linear (Rec. 709) luminance of an sRGB image: a brightness ratio against a reference checks for bias."""
+    linear = np.where(a <= 0.04045, a / 12.92, ((a + 0.055) / 1.055) ** 2.4)
+    return float(np.mean(linear @ [0.2126, 0.7152, 0.0722]))
+
+
 def crop(a, box):
     return a[box[1]:box[3], box[0]:box[2]]
 

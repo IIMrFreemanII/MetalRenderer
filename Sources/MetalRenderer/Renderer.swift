@@ -187,6 +187,43 @@ final class RestirTargets {
     }
 }
 
+/// ReSTIR GI's per-pixel state (Shaders.metal "ReSTIR GI"). A reservoir is two textures: rgba32F (x_s, W) and rgba32Uint
+/// (normal, light, M | age | flags).
+final class RestirGITargets {
+    let width: Int, height: Int
+    let reservoir: [(a: MTLTexture, b: MTLTexture)]   // [2], ping-ponged: the final reservoirs, next frame's history
+    let temporal: (a: MTLTexture, b: MTLTexture)      // restirGITemporalKernel's reservoirs
+    let spatial: (a: MTLTexture, b: MTLTexture)       // the initial samples, then between two spatial passes
+    let feedback: [MTLTexture]                        // [2] rgba16F, ping-ponged: the raw indirect light (multi-bounce)
+    let ambient: [MTLBuffer]                          // [2], ping-ponged: the mean indirect light (rgb sums, count)
+
+    init(device: MTLDevice, width: Int, height: Int) throws {
+        self.width = width
+        self.height = height
+        func make(_ label: String, _ format: MTLPixelFormat) throws -> MTLTexture {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+            t.label = label
+            return t
+        }
+        func pair(_ label: String) throws -> (a: MTLTexture, b: MTLTexture) {
+            (try make("\(label) a", .rgba32Float), try make("\(label) b", .rgba32Uint))
+        }
+        reservoir = [try pair("restir gi reservoir0"), try pair("restir gi reservoir1")]
+        temporal = try pair("restir gi temporal")
+        spatial = try pair("restir gi spatial")
+        feedback = [try make("restir gi feedback0", .rgba16Float), try make("restir gi feedback1", .rgba16Float)]
+        ambient = try (0..<2).map { _ in
+            guard let b = device.makeBuffer(length: 16, options: .storageModePrivate) else {
+                throw RendererError.resourceCreation("restir gi ambient")
+            }
+            return b
+        }
+    }
+}
+
 /// Dispatches that depend only on earlier stages, never on each other. `pass` names the benchmark timing column.
 struct ComputeStage {
     let pass: String
@@ -221,6 +258,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var manyLightsReusePSO: MTLComputePipelineState!
     private var restirTemporalPSO: MTLComputePipelineState!
     private var restirSpatialPSO: MTLComputePipelineState!
+    private var restirGIInitialPSO: MTLComputePipelineState!
+    private var restirGITemporalPSO: MTLComputePipelineState!
+    private var restirGISpatialPSO: MTLComputePipelineState!
     private var meshLightsPSO: MTLComputePipelineState!
     private var reflectionPSO: MTLComputePipelineState!
     private var fogInjectPSO: MTLComputePipelineState!
@@ -301,6 +341,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var lastFrameLights: [GPULight] = []
     private var restirGrid: RestirTargets?
     private var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
+    private var restirGIGrid: RestirGITargets?
+    private var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
     private var instanceAS: [MTLAccelerationStructure] = []
     private var instanceScratch: [MTLBuffer] = []
     private var instanceASBuilt = Set<Int>()
@@ -338,6 +380,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var prevJitter = SIMD2<Float>(repeating: 0)
     // Benchmark reference: average raw frames of a paused scene instead of denoising.
     private var accumulating = false
+    private var referenceGIMode: GIMode?                // benchmark references: accumulate this GI method instead of paths
     private var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
     private var accumCount: UInt32 = 0
     private var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
@@ -446,6 +489,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
         let restirTemporal = try pipeline("restirTemporalKernel")
         let restirSpatial = try pipeline("restirSpatialKernel")
+        let restirGIInitial = try pipeline("restirGIInitialKernel")
+        let restirGITemporal = try pipeline("restirGITemporalKernel")
+        let restirGISpatial = try pipeline("restirGISpatialKernel")
         let meshLights = try pipeline("meshLightsKernel")
         let reflection = try pipeline("reflectionKernel")
         let fogInject = try pipeline("fogInjectKernel")
@@ -482,6 +528,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         manyLightsReusePSO = manyLightsReuse
         restirTemporalPSO = restirTemporal
         restirSpatialPSO = restirSpatial
+        restirGIInitialPSO = restirGIInitial
+        restirGITemporalPSO = restirGITemporal
+        restirGISpatialPSO = restirGISpatial
         meshLightsPSO = meshLights
         reflectionPSO = reflection
         fogInjectPSO = fogInject
@@ -587,6 +636,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         prevLightBuffers = []
         lastFrameLights = []
         restirWritten = false
+        restirGIWritten = false
         instanceAS = []
         instanceScratch = []
         instanceASBuilt = []
@@ -1421,6 +1471,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if settings.giEnabled && giMode == .radianceCascades {
             giStages = radianceCascadeStages(uniforms: uniforms, targets: t, slot: slot)
         }
+        // ReSTIR GI writes t.indirect too: after the trace (its G-buffer), before the reflections (they read it).
+        let restirGIOn = settings.giEnabled && giMode == .restirGI
+        if restirGIOn, let gg = restirGITargets(width: width, height: height) {
+            giStages = restirGIStages(grid: gg, uniforms: frameUniforms, targets: t, slot: slot)
+        }
+        restirGIWritten = restirGIOn && restirGIGrid != nil
 
         // 3. Denoise (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
         //    Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
@@ -1450,10 +1506,19 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         restirDenoiseUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(settings.restir.denoiseSigma)
         restirDenoiseUniforms.denoise.w = max(settings.restir.varianceBoost, 1)
         restirDenoiseUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(settings.restir.denoiseHistory)
+        // ReSTIR GI's indirect light: the same, with its own settings.
+        let rgi = settings.restirGI
+        var restirGIDenoiseUniforms = frameUniforms
+        restirGIDenoiseUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(rgi.denoiseSigma)
+        restirGIDenoiseUniforms.denoise.w = max(rgi.varianceBoost, 1)
+        restirGIDenoiseUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(rgi.denoiseHistory)
+        restirGIDenoiseUniforms.denoise.z = DenoiserSettings.antiLagRange.clamp(rgi.antiLag)
         func denoiseUniforms(_ d: DenoiseTargets) -> Uniforms {
-            restirOn && d === (restirSplit ? t.denoise[3] : t.denoise[0]) ? restirDenoiseUniforms : frameUniforms
+            if restirGIOn && d === t.denoise[1] { return restirGIDenoiseUniforms }
+            return restirOn && d === (restirSplit ? t.denoise[3] : t.denoise[0]) ? restirDenoiseUniforms : frameUniforms
         }
-        if separate && denoiseIndirect { signals.append(([t.indirect], t.denoise[1], techniqueGI ? 1 : passCount)) }
+        let indirectPasses = restirGIOn ? DenoiserSettings.passRange.clamp(rgi.denoisePasses) : techniqueGI ? 1 : passCount
+        if separate && denoiseIndirect { signals.append(([t.indirect], t.denoise[1], indirectPasses)) }
         // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
         // of its own (first, so finalIllumination keeps the indirect light last); otherwise it joins the direct light.
         let meshLights = !scene.meshLights.isEmpty && !restirOn   // ReSTIR samples their triangles from the light table
@@ -1899,17 +1964,105 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var usesSpecular: Bool { settings.specular && scene.hasSpecular }
 
     private var usesLightMaps: Bool {
-        settings.giEnabled && !accumulating && (activeGIMode != .pathTraced || settings.lightMaps) && !scene.usesLightTable
+        let wanted: Bool
+        switch activeGIMode {
+        case .pathTraced: wanted = settings.lightMaps
+        case .radianceCascades: wanted = true
+        case .restirGI: wanted = settings.restirGI.lightMaps
+        }
+        return settings.giEnabled && !accumulating && wanted && !scene.usesLightTable
     }
 
-    /// References always path trace, so they stay ground truth whatever GI mode is selected.
-    private var activeGIMode: GIMode { accumulating ? .pathTraced : settings.giMode }
+    /// References always path trace, so they stay ground truth whatever GI mode is selected (but
+    /// METALRENDERER_BENCH=restirgicheck, which accumulates ReSTIR GI against them).
+    private var activeGIMode: GIMode { accumulating ? referenceGIMode ?? .pathTraced : settings.giMode }
 
     private var techniqueDenoisesIndirect: Bool {
         switch activeGIMode {
         case .pathTraced: return true
         case .radianceCascades: return settings.cascades.denoiseIndirect
+        case .restirGI: return settings.restirGI.denoise
         }
+    }
+
+    private func restirGITargets(width: Int, height: Int) -> RestirGITargets? {
+        if let r = restirGIGrid, r.width == width, r.height == height { return r }
+        restirGIGrid = try? RestirGITargets(device: device, width: width, height: height)
+        restirGIWritten = false
+        return restirGIGrid
+    }
+
+    /// ReSTIR GI's stages for this frame: initial paths, temporal reuse, spatial reuse (the last pass writes t.indirect).
+    private func restirGIStages(grid g: RestirGITargets, uniforms: Uniforms, targets t: RenderTargets, slot: Int) -> [ComputeStage] {
+        let cur = Int(frameIndex & 1), prev = cur ^ 1
+        let r = settings.restirGI
+        let width = t.width, height = t.height
+        let lightMaps = usesLightMaps && r.lightMaps
+        // Multi-bounce feedback: last frame's indirect light, denoised (still in the denoiser's ping-pong textures until
+        // this frame's denoiser runs) or raw (kept by the last spatial pass).
+        let denoised = t.denoise[1]
+        let denoisedFeedback = [denoised.history, denoised.pingB, denoised.pingA, denoised.pingB, denoised.pingA][
+            DenoiserSettings.passRange.clamp(r.denoisePasses) - 1]
+        let useDenoised = r.denoisedFeedback && r.denoise && settings.denoiser.enabled && !accumulating
+        let feedbackSource = useDenoised ? denoisedFeedback : g.feedback[prev]
+        let feedback = r.feedback && restirGIWritten && (historyValid || !useDenoised)
+        var flags: UInt32 = (r.temporal && restirGIWritten ? GPURestirGIParams.temporalValid : 0)
+            | (lightMaps ? GPURestirGIParams.lightMaps : 0) | (feedback ? GPURestirGIParams.feedback : 0)
+            | (r.unbiased ? GPURestirGIParams.unbiased : 0) | (r.feedback && !useDenoised ? GPURestirGIParams.keepFeedback : 0)
+            | (r.feedback && r.feedbackFallback ? GPURestirGIParams.fallback : 0)
+        let maxM = UInt32(RestirGISettings.maxMRange.clamp(r.maxM))
+        let samples = UInt32(RestirGISettings.spatialSampleRange.clamp(r.spatialSamples))
+        let radius = RestirGISettings.radiusRange.clamp(r.radius) * Float(width) / 960
+        let clamp: Float = accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as ReSTIR DI
+        let params = GPURestirGIParams(config: SIMD4(flags, maxM, samples, 0),
+                                       tuning: SIMD4(radius, max(r.minDistance, 0), clamp, 0),
+                                       extra: SIMD4(r.quarterBudget ? 1 : 0, UInt32(RenderSettings.bounceRange.clamp(r.bounces)),
+                                                    UInt32(RestirGISettings.maxAgeRange.clamp(r.maxAge)), 0))
+        var stages: [ComputeStage] = []
+        stages.append(ComputeStage(pass: "restir gi initial") { [self] enc in
+            var u = uniforms, p = params
+            enc.setComputePipelineState(restirGIInitialPSO)
+            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            bindScene(enc, slot: slot)
+            enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, lightMap, t.normalDepth[prev],
+                              feedbackSource, g.spatial.a, g.spatial.b])
+            enc.setBuffer(g.ambient[prev], offset: 0, index: 10)
+            if r.quarterBudget { dispatch(enc, "restir gi initial", width: (width + 1) / 2, height: (height + 1) / 2) }
+            else { dispatch(enc, "restir gi initial", width: width, height: height) }
+        })
+        stages.append(ComputeStage(pass: "restir gi temporal") { [self] enc in
+            var u = uniforms, p = params
+            enc.setComputePipelineState(restirGITemporalPSO)
+            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.motion, t.normalDepth[prev], g.spatial.a, g.spatial.b,
+                              g.reservoir[prev].a, g.reservoir[prev].b, g.temporal.a, g.temporal.b])
+            enc.setBuffer(g.ambient[cur], offset: 0, index: 10)
+            dispatch(enc, "restir gi temporal", width: width, height: height)
+        })
+        let passes = RestirGISettings.spatialPassRange.clamp(r.spatialPasses)
+        flags &= ~GPURestirGIParams.temporalValid
+        for i in 0..<max(passes, 1) {
+            let last = i == max(passes, 1) - 1
+            let src = i == 0 ? g.temporal : g.spatial, dst = last ? g.reservoir[cur] : g.spatial
+            var p = params
+            p.config.x = flags | (last ? GPURestirGIParams.shade : 0)
+            p.config.z = passes == 0 ? 0 : samples
+            p.config.w = UInt32(i)
+            stages.append(ComputeStage(pass: "restir gi spatial") { [self] enc in
+                var u = uniforms, p = p
+                enc.setComputePipelineState(restirGISpatialPSO)
+                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                bindScene(enc, slot: slot)
+                enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, src.a, src.b, dst.a, dst.b, t.indirect, t.giDebug,
+                                  g.feedback[cur]])
+                enc.setBuffer(g.ambient[cur], offset: 0, index: 10)
+                dispatch(enc, "restir gi spatial", width: width, height: height)
+            })
+        }
+        return stages
     }
 
     /// Radiance-cascade stages for this frame (they write t.indirect and t.giDebug); empty if allocation failed.
@@ -1934,6 +2087,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func resetGIState() {
         historyValid = false
         restirWritten = false
+        restirGIWritten = false
         skyRefreshed = nil
         fogLastFrame = nil
         radianceCascades?.reset()
@@ -1969,11 +2123,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if let d = c.directLight { s.directLight = d }
         s.restir = c.restir ?? RestirSettings()
         Benchmark.applyRestirOverride(to: &s.restir)
+        s.restirGI = c.restirGI ?? RestirGISettings()
+        Benchmark.applyRestirGIOverride(to: &s.restirGI)
         settings = s
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
+        referenceGIMode = c.accumulate && c.accumulateTechnique ? c.giMode : nil
         referenceDirectMode = c.accumulate && (c.directLight == .exact || c.directLight == .restir) ? c.directLight : nil
         accumCount = 0
         supersampling = c.accumulate && c.supersample
@@ -2078,8 +2235,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         fpsFrames = 0
         fpsTime = now
         let s = settings
-        let gi = !s.giEnabled ? "GI off" : s.giMode == .pathTraced ? "GI path traced, \(s.bounces) bounce\(s.bounces == 1 ? "" : "s")"
-                                                                   : "GI \(s.giMode.title.lowercased())"
+        func withBounces(_ name: String, _ n: Int) -> String { "GI \(name), \(n) bounce\(n == 1 ? "" : "s")" }
+        let gi = !s.giEnabled ? "GI off" : s.giMode == .pathTraced ? withBounces("path traced", s.bounces)
+            : s.giMode == .restirGI ? withBounces("ReSTIR", s.restirGI.bounces) : "GI \(s.giMode.title.lowercased())"
         let upscalerName = s.upscaler == .custom ? "TAAU" : s.upscaler == .metalFXSpatial ? "MetalFX spatial" : "MetalFX"
         let res = outWidth > width ? String(format: "%ld×%ld → %@ %ld×%ld", width, height, upscalerName, outWidth, outHeight)
                                    : String(format: "%ld×%ld", width, height)
@@ -2140,8 +2298,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         case "m": settings.giMode = GIMode(rawValue: (settings.giMode.rawValue + 1) % GIMode.allCases.count) ?? .pathTraced
         case "b": settings.blueNoise.toggle()
         case "n": settings.denoiser.enabled.toggle()
-        case "[": settings.bounces = max(RenderSettings.bounceRange.lowerBound, settings.bounces - 1)
-        case "]": settings.bounces = min(RenderSettings.bounceRange.upperBound, settings.bounces + 1)
+        case "[", "]":
+            let step = key == "[" ? -1 : 1
+            if settings.giMode == .restirGI { settings.restirGI.bounces = RenderSettings.bounceRange.clamp(settings.restirGI.bounces + step) }
+            else { settings.bounces = RenderSettings.bounceRange.clamp(settings.bounces + step) }
         case "-": settings.renderScale = max(RenderSettings.renderScaleRange.lowerBound, settings.renderScale - RenderSettings.renderScaleStep)
         case "=", "+": settings.renderScale = min(RenderSettings.renderScaleRange.upperBound, settings.renderScale + RenderSettings.renderScaleStep)
         case "1", "2", "3", "4", "5", "6", "7", "8": settings.viewMode = Int(key)! - 1

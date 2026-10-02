@@ -58,9 +58,10 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * The gallery's 2.6 GB of 4K textures need 14 MB from the overview and 46–65 MB close up.
 * **Direct light:** ray-traced soft shadows. With up to 4 lights, each light gets one shadow ray per pixel. With more, lights are split into 4 colour groups, and each pixel picks one light per group, weighted by how much light it would get from it unshadowed, then traces one shadow ray to it. That's 4 rays per pixel whatever the light count, but picking still weighs every light.
 * **ReSTIR DI for many lights (default above 256 lights):** each pixel draws a few candidate lights from a power-weighted alias table in O(1), keeps one by resampling, and reuses last frame's and its neighbours' picks. The cost depends on the resolution, not the light count: 16384 lights cost 17 ms where 4096 lights cost 53 ms with the grouped picker (see "Many lights" below).
-* **Global illumination, two methods** (switch with **M** or in the settings panel):
+* **Global illumination, three methods** (switch with **M** or in the settings panel):
   * **Radiance cascades (default):** probes on a screen grid trace world-space rays over distance intervals that grow 4× per cascade. The cascades are merged top-down, giving each probe its incoming light without noise.
   * **Path traced:** a 1-sample-per-pixel diffuse path is traced for 1 to 8 bounces. Each bounce samples one light directly (next-event estimation), picked in proportion to its unshadowed light there, and picks up sky light. The result is denoised.
+  * **ReSTIR GI:** the same paths, but each path's first bounce is kept as a reservoir sample and resampled from frame to frame (optionally also from neighbouring pixels, unbiased). Its paths' last hits add last frame's indirect light (multi-bounce). It is the most accurate method: 42.2 dB in the Cornell room and 36.4 dB in the stress hall, against 36.1 and 25.5 dB for radiance cascades, for 2–3× their cost (see "Indirect light (ReSTIR GI)" below).
   * Radiance cascades get **multi-bounce** light, and light their ray hits from per-light **light-visibility maps**, so they need no shadow rays.
 * **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). The sun's map is orthographic instead, over the scene's bounding sphere. Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps").
 * **Upscaling (optional):** the frame is traced at low resolution with sub-pixel jitter, and a temporal upscaler rebuilds a sharper, anti-aliased image at up to 3× the resolution. It's on by default at 3×. Press **U** to cycle through off, 1.5×, 2× and 3×. The settings panel picks the upscaler:
@@ -140,6 +141,10 @@ For many lights:
 * `METALRENDERER_BENCH=restir` times the stress scene at 1 to 16384 lights with each method (exact up to 256, grouped up to 4096), then the Night market at 1024, 4096 and 16384 bulbs.
 * `METALRENDERER_BENCH=restirq` renders direct light only (640×400) at 32, 128, 1024 and 4096 lights with each method, still and moving, against accumulated references (every light traced up to 1024 lights; above that, ReSTIR without reuse, which is unbiased). `METALRENDERER_BENCH=restircheck` accumulates ReSTIR without reuse against every light traced in each light-type scene, to check it's unbiased. `Tools/eval/restir.py` scores both.
 
+For ReSTIR GI:
+* `METALRENDERER_RESTIR_GI="quarter=0,bounces=2,lightmaps=0,feedback=1,dfeedback=1,fallback=1,temporal=1,maxm=2,age=30,spatial=0,k=2,unbiased=1,radius=30,dmin=0.02,denoise=1,sigma=3,passes=2,history=8,boost=2,antilag=0"` overrides its settings in every benchmark setting (these are the defaults).
+* `METALRENDERER_BENCH=restirgicheck` accumulates indirect light (2 bounces, unclamped, no feedback) of path tracing against ReSTIR GI without reuse, with temporal and unbiased spatial reuse, and with the quarter budget, in the Cornell room and the stress hall. `Tools/eval/restirgi.py` scores it: the mean brightness ratios should be 1.00.
+
 For the fog:
 * `METALRENDERER_FOG=0` or `1` turns it off or on in every scene's preset.
 * `METALRENDERER_FOG_SET="density=0.03,g=0.6"` overrides its settings. The keys are `on`, `density`, `falloff`, `base`, `g`, `ambient`, `noise`, `tile`, `far`, `volumes` and `reflections`.
@@ -157,7 +162,7 @@ For the sky:
 
 The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com): install it before cloning (`brew install git-lfs && git lfs install`), or run `git lfs pull` afterwards. `.gitattributes` sends 3D models (`.glb`, `.fbx`, `.obj`, `.usd(z)`, `.blend`), HDR skies (`.hdr`, `.exr`) and the buffers and textures under `Assets/` to LFS. Put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
-Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALRENDERER_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALRENDERER_GI_MODES` picks the methods, for example `pt,pt-lightmaps,cascades,cascades-hq`. `METALRENDERER_GI` overrides GI settings everywhere, for example `mode=pt,bounces=4` or `mode=cascades,spacing=4,b1=0.25`. `METALRENDERER_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
+Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALRENDERER_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALRENDERER_GI_MODES` picks the methods, for example `pt,pt-lightmaps,cascades,cascades-hq,restirgi,restirgi-q`. `METALRENDERER_GI` overrides GI settings everywhere, for example `mode=pt,bounces=4`, `mode=cascades,spacing=4,b1=0.25` or `mode=restir`. `METALRENDERER_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
 
 `Tools/eval/` scores the saved PNGs against reference images committed in `Tools/eval/refs/` (PSNR and flicker; see its README).
 
@@ -171,9 +176,9 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | W A S D, Q E | Move, down/up (hold Shift to move faster) |
 | Space | Pause animation |
 | G | Toggle global illumination |
-| M | GI method: path traced, radiance cascades |
+| M | GI method: path traced, radiance cascades, ReSTIR GI |
 | N | Toggle denoiser (shows the raw 1-spp signal) |
-| [ ] | Fewer / more GI bounces (path traced) |
+| [ ] | Fewer / more GI bounces (path traced, ReSTIR GI) |
 | - = | Lower / raise render resolution |
 | U | MetalFX upscaling: off, 1.5×, 2×, 3× (output is capped at the window's pixel size) |
 | B | Toggle blue-noise sampling (on by default; the tile is generated at startup, which takes about 0.5 s) |
@@ -309,6 +314,61 @@ ReSTIR is 2.3–2.9 dB below the grouped picker on still frames and 4.2–5.7 dB
   * Zeroing occluded samples' weights after shading: 30% darker, because the confident zeros spread through reuse.
   * Denoising visibility (shadow denoiser) and unshadowed light (SVGF) apart: one visibility channel can't hold coloured shadows (4% too bright).
   * One chain instead of 4: cheaper, but visibly noisier. Sharing one set of candidates across the chains: −1.5 dB at 1024 lights.
+
+### Indirect light (ReSTIR GI)
+
+ReSTIR GI (Ouyang et al. 2021) keeps the path tracer's one path per pixel but reuses its first bounce. A sample is the path's first hit point x_s, its normal and the light L leaving it toward the pixel (everything the rest of the path gathered).
+
+* **Exact reconnection.** Secondary hits shade as diffuse here (their albedo doesn't depend on the direction), so L is the same toward any pixel, and another pixel can reconnect to x_s exactly. Samples are treated as points on surfaces (area measure), so the Jacobian of a reconnection is part of the target function: luminance(L) × the pixel's cosine lobe × cos at x_s / distance².
+* **The path tracer's own lobe.** The pixel's lobe is the path tracer's direction pdf (cosine about the shading normal, with directions below the triangle mirrored above it), not cos/π, so a fresh sample's estimate equals the path tracer's.
+* **`restirGIInitialKernel`**: the path, with the path tracer's bounces, next-event estimation and sky, as a reservoir (M = 1, W = 1/pdf). Its last hit adds last frame's denoised indirect light where that point was on screen, and last frame's mean indirect light elsewhere (as the radiance cascades do).
+* **`restirGITemporalKernel`**: last frame's reservoir at the reprojected pixel (depth and normal tests), merged by confidence, capped at M = 2. A sample older than 30 of its pixel's fresh paths is dropped, since its light was gathered under old lights.
+* **`restirGISpatialKernel`**: optional spatial reuse (off by default), then one visibility ray to the pick, skipped when it is the pixel's own fresh path. It writes the indirect light, which SVGF denoises (σ 3, 2 passes, 8 frames, variance doubled for the correlated samples).
+* **Unbiased spatial reuse.** A neighbour's samples are hit points of its own paths, so it can never produce a point it doesn't see. Weighing its technique as if it could darkened the stress hall by 8%. With unbiased reuse on, the targets include visibility: one ray from each neighbour to this pixel's sample and one from this pixel to each neighbour's. Without them it is cheaper but 8–17% darker in the stress hall.
+* **Quarter budget** (optional): one thread per 2×2 block traces a rotating pixel, so each pixel gets a fresh path every 4th frame. Sample ages count only those frames; counting every frame dropped long-lived samples, which are the bright ones, and darkened the image by 2–6%.
+* **Unbiased:** without feedback, accumulated ReSTIR GI matches accumulated path tracing in the Cornell room and the stress hall, without reuse, with temporal and spatial reuse, and with the quarter budget: mean brightness ratio 1.00 in each (`METALRENDERER_BENCH=restirgicheck`).
+
+Settings panel (Global illumination, with ReSTIR GI selected):
+
+| Setting | Default | Effect |
+|---|---|---|
+| Rays | 1 per pixel | 1 per 2×2 pixels: the quarter budget (see below). |
+| Bounces | 2 | Path length; the first bounce is the reused sample. Also `[` and `]`. |
+| Multi-bounce | On | The paths' last hits add last frame's indirect light (on screen) or its mean (off screen). |
+| Temporal reuse | On | Resample last frame's reservoir (reprojected). |
+| Spatial reuse | Off | 1 or 2 passes over 2 neighbours' reservoirs each. |
+| Unbiased spatial reuse | On | Visibility in the spatial targets: two rays per neighbour. |
+
+Quality (640×400, against the 8-bounce path-traced references; `METALRENDERER_BENCH=gi` and `stressq`, `Tools/eval/gi.py` and `stress.py`; mean is the indirect light's brightness against the reference's) and whole-frame GPU ms at the default setting (custom upscaler 3× from 640×400, `METALRENDERER_BENCH_SPLIT=0`, M1 Max):
+
+| Cornell room | GPU ms | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
+|---|---|---|---|---|---|---|---|---|
+| Path traced, 2 bounces | 8.6 | 25.7 dB | 24.4 dB | 21.1 dB | 0.76 | 25.6 dB | 25.5 dB | 0.30 |
+| Radiance cascades | **2.9** | 36.1 dB | 34.7 dB | 31.1 dB | 0.95 | 36.1 dB | 36.1 dB | **0.05** |
+| **ReSTIR GI** | 8.4 | **42.2 dB** | **43.3 dB** | **38.8 dB** | 1.01 | **41.9 dB** | **41.7 dB** | 0.45 |
+| ReSTIR GI, quarter budget | 4.8 | 41.8 dB | 42.6 dB | 38.1 dB | 1.01 | 36.7 dB | 26.5 dB | 0.37 |
+
+| Stress hall, 32 lights | GPU ms | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
+|---|---|---|---|---|---|---|---|---|
+| Path traced, 2 bounces | 19.3 | 32.5 dB | 35.1 dB | 27.0 dB | 0.81 | 31.3 dB | 31.2 dB | 0.66 |
+| Radiance cascades | **9.0** | 25.5 dB | 28.0 dB | 22.2 dB | 0.92 | 25.3 dB | 25.3 dB | 0.76 |
+| **ReSTIR GI** | 21.5 | **36.4 dB** | **38.2 dB** | **34.5 dB** | 1.02 | **35.8 dB** | **35.6 dB** | 0.71 |
+| ReSTIR GI, quarter budget | 12.4 | 35.6 dB | 37.3 dB | 33.3 dB | 1.02 | 28.6 dB | 27.1 dB | **0.60** |
+
+* **Gallery close-up** (PBR, full detail): 32.4 dB, against 31.1 dB path traced and 30.7 dB with cascades.
+* **Night market** (4096 bulbs, fog off, against an 8-bounce reference rendered for this test): 30.4 dB, against 30.0 dB path traced and 29.5 dB with cascades. Whole frame: 27.6 ms, against 26.8 and 18.7 ms (with the scene's fog).
+* **Why it isn't the default:** it costs 2–3× as much as radiance cascades (8.4 vs 2.9 ms in the Cornell room). The paths cost what the path tracer's do: 5.2 ms at 640×400 in the Cornell room and 12 ms in the stress hall.
+* **The quarter budget** is 1.7× cheaper and nearly as good on still frames (−0.4 to −0.8 dB), but a pixel that loses its history (disocclusion, camera moves) waits up to 4 frames for a fresh path: −5 to −15 dB in motion. So it's off by default.
+
+What mattered, measured with these benchmarks:
+* **Multi-bounce feedback.** With 2 bounces and nothing more, the image reaches 77–81% of the reference's brightness, and ReSTIR GI scores like the path tracer (25.9 and 31.7 dB). Last frame's indirect light where the path ends on screen raised that to 31.4 and 34.3 dB. The mean of last frame's indirect light for points off screen raised it to 42.2 and 36.4 dB.
+* **A third bounce** adds 1.4 dB in the Cornell room and 0.8 dB in the stress hall, for 2.5 and 6 ms more. So the default is 2.
+
+What didn't help:
+* **Reuse doesn't lower the error here; it lowers flicker.** On raw frames, temporal reuse is a big gain: the stress hall's indirect light goes from 13.4 to 18.1 dB and its flicker from 41 to 7.2. After SVGF, though, no reuse at all scores as well or slightly better: 43.1 and 36.6 dB still, 42.8 and 36.1 dB moving. But it flickers about 40% more (0.62 and 1.04, against 0.45 and 0.71). The denoiser already averages over time, and reused samples lag behind moving lights. That's why the confidence cap is 2: a cap of 16 costs 0.5 dB on still frames and 2–4.5 dB in motion.
+* **Spatial reuse.** Unbiased, it adds no PSNR after the denoiser, whatever the neighbour count (1 to 5), and costs 3–12 ms for its rays. Before visibility was part of the targets, it even added noise: picks a pixel couldn't see contributed nothing. So it's off by default.
+* **The denoiser's settings** (σ 2–5, 1–3 passes, history 4–16, variance boost 1–4) moved scores by at most 0.5 dB. Anti-lag never triggers: the raw signal is too noisy for its test.
+* **One bounce** with feedback costs about 5 ms in the Cornell room and scores 35.5 dB, below the cascades' 36.1 dB at 2.9 ms.
 
 ### Volumetric fog
 
@@ -584,6 +644,8 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   | Radiance cascades | **3.0** | 36.1 dB | **34.7 dB** | 31.1 dB | 36.1 dB | 36.1 dB | **0.05** |
   | Radiance cascades, 4 px probes | 3.7 | **36.6 dB** | **34.8 dB** | **31.5 dB** | **36.6 dB** | **36.6 dB** | 0.05 |
 
+  ReSTIR GI, measured later with the custom upscaler, scores 42.2 dB static and 38.8 dB indirect here (see "Indirect light (ReSTIR GI)").
+
   The path tracer's large error is mostly missing energy: in this white room, light keeps bouncing well past 2 bounces. Its image reaches only about 88% of the reference's brightness, while radiance cascades get multi-bounce light almost for free.
   * **Radiance cascades** have no temporal accumulation, so they follow moving lights best and barely flicker. Their probes are interpolated across edges, though, which can show as thin light or dark streaks along object edges.
   * All quality columns are measured on 640×400 frames without MetalFX.
@@ -625,7 +687,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     | Radiance cascades, 4 px probes | — | 27.4 dB | 29.9 dB | 0.69 | 27.1 dB | 27.1 dB |
     | Path traced, 2 bounces | 16.3 | **32.5 dB** | **35.0 dB** | **0.65** | **31.2 dB** | **31.2 dB** |
 
-    Radiance cascades, the best choice in the Cornell room, lose 7 dB to the path tracer here: their probes sit on a screen grid and are interpolated across the edges of hundreds of small objects. (Surfel GI, since removed, scored about 35.6 dB here for 10 ms.) Sampled lights cost the GI nothing: every method scores within 0.15 dB of its score with every light traced, and the path tracer gains 0.9 dB.
+    ReSTIR GI scores 36.4 dB static and 35.8 dB moving here (see "Indirect light (ReSTIR GI)"). Radiance cascades, the best choice in the Cornell room, lose 7 dB to the path tracer here: their probes sit on a screen grid and are interpolated across the edges of hundreds of small objects. (Surfel GI, since removed, scored about 35.6 dB here for 10 ms.) Sampled lights cost the GI nothing: every method scores within 0.15 dB of its score with every light traced, and the path tracer gains 0.9 dB.
   * **Upscalers in the stress scene** (3× from 640×400, against supersampled 1920×1200 frames):
 
     | | Albedo static | Flicker | Albedo moving | Camera move | Direct static | Direct moving |
@@ -692,10 +754,11 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
    * Collapse the binary trees into 4-wide nodes, so a ray tests four boxes per fetch and pushes less. The GPU LBVH would need a collapse pass too, or the single loop would diverge again.
    * Give the LBVH SAH-quality top levels, for example with treelet restructuring or PLOC: a CPU SAH tree traces 4–7% faster.
    * With 2000 objects the frame still costs 1.4 ms more than with 400; sorting secondary rays by direction for coherence is the other thing to try.
-4. **Better GI caching:** radiance cascades fall back to the scene's average indirect light at points no screen pixel covers, and lose 7 dB to the path tracer in cluttered scenes like the stress hall. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
-5. **Deforming meshes:** update vertices in a compute pass, then refit that mesh's bottom-level tree with a bottom-up box pass like `rtFitKernel` (or call `refit` on its BLAS with the Metal tracer).
-6. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
-9. **Virtual geometry:** a GPU-built (or treelet-optimized) BLAS over the cut would let the cut update every frame; LOD cross-fades would hide the rare pop; the Metal tracer could build BLASes over the cut too.
-10. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.
-7. **Rasterized G-buffer:** generate primary visibility with a raster pass to save one ray per pixel.
-8. **Custom upscaler at 2× and 1.5×:** it matches MetalFX in motion at 3× but trails by up to 0.7 dB in camera moves at lower factors. Tuning per factor (its motion cuts are scaled by the factor today), or a per-pixel disocclusion test that doesn't misfire on jittered edges, would be the next step.
+4. **Better GI caching:** radiance cascades and ReSTIR GI's multi-bounce feedback fall back to the scene's average indirect light at points no screen pixel covers, and cascades lose 7 dB to the path tracer in cluttered scenes like the stress hall. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
+5. **Cheaper ReSTIR GI:** its paths cost what the path tracer's do, so it runs at 2–3× the cascades' cost. Half-resolution reservoirs (with full-resolution reuse), or paths that end in a world-space radiance cache after one bounce, would cut that. The multi-bounce feedback alone, which made most of its gain, could also be given to the plain path tracer. And a denoiser that uses the reservoirs' confidence (ReBLUR or ReLAX-style) might turn reuse's lower raw noise into a lower error, which SVGF doesn't.
+6. **Deforming meshes:** update vertices in a compute pass, then refit that mesh's bottom-level tree with a bottom-up box pass like `rtFitKernel` (or call `refit` on its BLAS with the Metal tracer).
+7. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
+8. **Virtual geometry:** a GPU-built (or treelet-optimized) BLAS over the cut would let the cut update every frame; LOD cross-fades would hide the rare pop; the Metal tracer could build BLASes over the cut too.
+9. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.
+10. **Rasterized G-buffer:** generate primary visibility with a raster pass to save one ray per pixel.
+11. **Custom upscaler at 2× and 1.5×:** it matches MetalFX in motion at 3× but trails by up to 0.7 dB in camera moves at lower factors. Tuning per factor (its motion cuts are scaled by the factor today), or a per-pixel disocclusion test that doesn't misfire on jittered edges, would be the next step.

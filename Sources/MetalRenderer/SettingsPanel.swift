@@ -63,6 +63,13 @@ final class SettingsPanel: NSObject {
     private let firstIntervalValue = NSTextField(labelWithString: "")
     private let cascadeBounce = NSButton(checkboxWithTitle: "Multi-bounce", target: nil, action: nil)
     private let cascadeDenoise = NSButton(checkboxWithTitle: "Denoise cascade GI", target: nil, action: nil)
+    private let rgiRays = NSPopUpButton()
+    private let rgiBounces = NSSlider()
+    private let rgiBouncesValue = NSTextField(labelWithString: "")
+    private let rgiSpatial = NSPopUpButton()
+    private let rgiTemporal = NSButton(checkboxWithTitle: "Temporal reuse", target: nil, action: nil)
+    private let rgiUnbiased = NSButton(checkboxWithTitle: "Unbiased spatial reuse", target: nil, action: nil)
+    private let rgiFeedback = NSButton(checkboxWithTitle: "Multi-bounce", target: nil, action: nil)
     // Fog
     private let fog = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
     private let fogDensity = NSSlider()            // log10 of the density
@@ -127,6 +134,8 @@ final class SettingsPanel: NSObject {
         configureSlider(cascadeCount, CGFloat(CascadeSettings.cascadeRange.lowerBound)...CGFloat(CascadeSettings.cascadeRange.upperBound),
                         ticks: CascadeSettings.cascadeRange.count, #selector(cascadeCountChanged))
         configureSlider(firstInterval, cg(CascadeSettings.firstIntervalRange), ticks: 0, #selector(firstIntervalChanged))
+        configureSlider(rgiBounces, CGFloat(RenderSettings.bounceRange.lowerBound)...CGFloat(RenderSettings.bounceRange.upperBound),
+                        ticks: RenderSettings.bounceRange.count, #selector(rgiBouncesChanged))
         configureSlider(fogDensity, log10(CGFloat(FogSettings.densityRange.lowerBound))...log10(CGFloat(FogSettings.densityRange.upperBound)),
                         ticks: 0, #selector(fogDensityChanged))
         configureSlider(fogFalloff, cg(FogSettings.falloffRange), ticks: 0, #selector(fogFalloffChanged))
@@ -158,6 +167,8 @@ final class SettingsPanel: NSObject {
             (directLight, DirectLightMode.allCases.map { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }, #selector(directLightChanged)),
             (restirCandidates, SettingsPanel.candidateOptions.map { "\($0) per pixel" }, #selector(restirCandidatesChanged)),
             (restirSpatial, ["Off", "1 pass", "2 passes"], #selector(restirSpatialChanged)),
+            (rgiRays, ["1 per pixel", "1 per 2×2 pixels"], #selector(rgiRaysChanged)),
+            (rgiSpatial, ["Off", "1 pass", "2 passes"], #selector(rgiSpatialChanged)),
         ] as [(NSPopUpButton, [String], Selector)] {
             popup.addItems(withTitles: titles)
             popup.target = self
@@ -181,13 +192,15 @@ final class SettingsPanel: NSObject {
                               (fog, #selector(fogChanged)), (fogVolumes, #selector(fogVolumesChanged)),
                               (fogReflections, #selector(fogReflectionsChanged)), (clouds, #selector(cloudsChanged)),
                               (cloudShadows, #selector(cloudShadowsChanged)), (skyImageButton, #selector(chooseSkyImage)),
-                              (restirTemporal, #selector(restirTemporalChanged)), (restirVisibility, #selector(restirVisibilityChanged))] {
+                              (restirTemporal, #selector(restirTemporalChanged)), (restirVisibility, #selector(restirVisibilityChanged)),
+                              (rgiTemporal, #selector(rgiTemporalChanged)), (rgiUnbiased, #selector(rgiUnbiasedChanged)),
+                              (rgiFeedback, #selector(rgiFeedbackChanged))] {
             box.target = self
             box.action = action
         }
         stats.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stats.textColor = .secondaryLabelColor
-        for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
+        for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, rgiBouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
                       cascadeCountValue, firstIntervalValue, fogDensityValue, fogFalloffValue,
                       fogAnisotropyValue, fogAmbientValue, fogNoiseValue, fogDistanceValue, coverageValue, cloudDensityValue,
                       cloudHeightValue, windValue] {
@@ -231,6 +244,12 @@ final class SettingsPanel: NSObject {
             [label("First interval"), firstInterval, firstIntervalValue],    // cascades
             [NSGridCell.emptyContentView, cascadeBounce],                    // cascades
             [NSGridCell.emptyContentView, cascadeDenoise],                   // cascades
+            [label("Rays"), rgiRays],                                        // ReSTIR GI
+            [label("Bounces"), rgiBounces, rgiBouncesValue],                 // ReSTIR GI
+            [NSGridCell.emptyContentView, rgiFeedback],                      // ReSTIR GI
+            [NSGridCell.emptyContentView, rgiTemporal],                      // ReSTIR GI
+            [label("Spatial reuse"), rgiSpatial],                            // ReSTIR GI
+            [NSGridCell.emptyContentView, rgiUnbiased],                      // ReSTIR GI
             [header("Fog")],
             [NSGridCell.emptyContentView, fog],
             [label("Density"), fogDensity, fogDensityValue],
@@ -271,7 +290,8 @@ final class SettingsPanel: NSObject {
         cloudRows = rowsOf([clouds, coverage, cloudDensity, cloudHeight, wind, cloudShadows])
         imageRows = rowsOf([skyImageButton])
         modeRows = [.pathTraced: rowsOf([bounces, lightMaps]),
-                    .radianceCascades: rowsOf([probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise])]
+                    .radianceCascades: rowsOf([probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise]),
+                    .restirGI: rowsOf([rgiRays, rgiBounces, rgiFeedback, rgiTemporal, rgiSpatial, rgiUnbiased])]
         let grid = NSGridView(views: rows)
         self.grid = grid
         grid.rowSpacing = 8
@@ -386,7 +406,17 @@ final class SettingsPanel: NSObject {
         firstIntervalValue.stringValue = String(format: "%.2f m", c.firstInterval)
         cascadeBounce.state = c.feedback ? .on : .off
         cascadeDenoise.state = c.denoiseIndirect ? .on : .off
-        for control in [giMode, lightMaps, probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise] as [NSControl] {
+        let rg = s.restirGI
+        rgiRays.selectItem(at: rg.quarterBudget ? 1 : 0)
+        rgiBounces.integerValue = rg.bounces
+        rgiBouncesValue.stringValue = "\(rg.bounces)"
+        rgiFeedback.state = rg.feedback ? .on : .off
+        rgiTemporal.state = rg.temporal ? .on : .off
+        rgiSpatial.selectItem(at: RestirGISettings.spatialPassRange.clamp(rg.spatialPasses))
+        rgiUnbiased.state = rg.unbiased ? .on : .off
+        rgiUnbiased.isEnabled = s.giEnabled && rg.spatialPasses > 0
+        for control in [giMode, lightMaps, probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise,
+                        rgiRays, rgiBounces, rgiFeedback, rgiTemporal, rgiSpatial] as [NSControl] {
             control.isEnabled = s.giEnabled
         }
 
@@ -529,6 +559,12 @@ final class SettingsPanel: NSObject {
     @objc private func firstIntervalChanged() { renderer.settings.cascades.firstInterval = Float((firstInterval.doubleValue * 20).rounded() / 20) }
     @objc private func cascadeBounceChanged() { renderer.settings.cascades.feedback = cascadeBounce.state == .on }
     @objc private func cascadeDenoiseChanged() { renderer.settings.cascades.denoiseIndirect = cascadeDenoise.state == .on }
+    @objc private func rgiRaysChanged() { renderer.settings.restirGI.quarterBudget = rgiRays.indexOfSelectedItem == 1 }
+    @objc private func rgiBouncesChanged() { renderer.settings.restirGI.bounces = Int(rgiBounces.doubleValue.rounded()) }
+    @objc private func rgiFeedbackChanged() { renderer.settings.restirGI.feedback = rgiFeedback.state == .on }
+    @objc private func rgiTemporalChanged() { renderer.settings.restirGI.temporal = rgiTemporal.state == .on }
+    @objc private func rgiSpatialChanged() { renderer.settings.restirGI.spatialPasses = rgiSpatial.indexOfSelectedItem }
+    @objc private func rgiUnbiasedChanged() { renderer.settings.restirGI.unbiased = rgiUnbiased.state == .on }
     @objc private func fogChanged() { renderer.settings.fog.enabled = fog.state == .on }
     @objc private func fogDensityChanged() {
         let d = pow(10, fogDensity.doubleValue)   // two significant digits

@@ -9,11 +9,6 @@ runs = sys.argv[1:]
 pick_up_refs("restir", runs, [f"ref-direct-{n}" for n in LIGHTS])
 
 
-def mean_luminance(a):
-    linear = np.where(a <= 0.04045, a / 12.92, ((a + 0.055) / 1.055) ** 2.4)
-    return float(np.mean(linear @ [0.2126, 0.7152, 0.0722]))
-
-
 header = False
 for d in runs:
     for n in LIGHTS:

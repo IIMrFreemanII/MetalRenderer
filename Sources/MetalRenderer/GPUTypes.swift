@@ -58,6 +58,21 @@ struct GPURestirParams {
     static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
 }
 
+/// ReSTIR GI pass parameters (MSL RestirGIParams).
+struct GPURestirGIParams {
+    var config = SIMD4<UInt32>()   // x = GPURestirGIParams flags, y = max M, z = spatial samples, w = spatial pass index
+    var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = minimum distance in the target (m), z = firefly clamp (0 = off)
+    var extra = SIMD4<UInt32>()    // x = 1: quarter budget, y = bounces, z = max sample age (frames)
+
+    static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
+    static let shade: UInt32 = 2            // this spatial pass is the last: trace the visibility ray, write `indirect`
+    static let lightMaps: UInt32 = 4        // light the paths' hits from the light maps (no shadow rays)
+    static let feedback: UInt32 = 8         // multi-bounce: the paths' last hits add last frame's indirect light
+    static let unbiased: UInt32 = 16        // spatial reuse traces a ray per neighbour (visibility in its MIS weight)
+    static let keepFeedback: UInt32 = 32    // the last spatial pass also keeps its result for next frame's feedback
+    static let fallback: UInt32 = 64        // feedback: off-screen path ends add last frame's mean indirect light
+}
+
 /// The sky (MSL SkyParams): the per-slot copy lives in the shading arguments (SceneShading), the sky kernels get it directly.
 struct GPUSkyParams {
     var sun = SIMD4<Float>()          // xyz = toward the sun (unit), w = its angular radius
@@ -163,6 +178,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")
     precondition(MemoryLayout<GPURestirParams>.stride == 32, "GPURestirParams layout mismatch")
+    precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
