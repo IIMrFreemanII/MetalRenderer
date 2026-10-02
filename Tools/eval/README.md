@@ -5,7 +5,7 @@ Python 3 scripts (numpy, Pillow) that score the PNGs a benchmark run saves again
 frames of a still scene, in 8-bit levels.
 
 ```bash
-METALGI_BENCH=shadow METALGI_GI_REFS=0 METALGI_BENCH_DIR=/tmp/run .build/release/MetalGI
+METALRENDERER_BENCH=shadow METALRENDERER_GI_REFS=0 METALRENDERER_BENCH_DIR=/tmp/run .build/release/MetalRenderer
 python3 Tools/eval/shadow.py /tmp/run
 ```
 
@@ -19,7 +19,7 @@ python3 Tools/eval/shadow.py /tmp/run
 | `pngdiff.py` | any two runs: per-image differences (did a refactor change the frames?) | — |
 | `columns.py` | pipe a benchmark table in to pull out named columns | — |
 
-Each mode's "ref …" settings render the references; once they exist, skip them with `METALGI_GI_REFS=0`. When a run
+Each mode's "ref …" settings render the references; once they exist, skip them with `METALRENDERER_GI_REFS=0`. When a run
 does render them, the scorer copies them into `refs/<mode>/`. Re-render and commit them after any change that alters
 the ground truth: scene, lights, materials, or the light transport itself.
 

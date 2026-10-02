@@ -4,11 +4,11 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
-/// Headless-ish benchmark mode, enabled with `METALGI_BENCH=1 swift run -c release`.
+/// Headless-ish benchmark mode, enabled with `METALRENDERER_BENCH=1 swift run -c release`.
 ///
 /// Runs a fixed list of render settings with a deterministic animation clock, times every GPU
 /// pass (each pass goes into its own command buffer so `gpuStartTime`/`gpuEndTime` isolate it),
-/// prints a table and quits. Set `METALGI_BENCH_DIR=<folder>` to also save a PNG per setting.
+/// prints a table and quits. Set `METALRENDERER_BENCH_DIR=<folder>` to also save a PNG per setting.
 final class Benchmark {
     struct Config {
         var name: String
@@ -33,8 +33,8 @@ final class Benchmark {
         var cameraPath = false        // fly the camera along cameraPose(progress:), ending at the default pose
         var supersample = false       // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
         var scene = SceneSettings()
-        var rayTracer: RayTracerKind? = nil   // nil = METALGI_RT / the default
-        var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALGI_VG...)
+        var rayTracer: RayTracerKind? = nil   // nil = METALRENDERER_RT / the default
+        var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALRENDERER_VG...)
         var camera: Camera? = nil                             // fixed camera instead of the scene's default
         var fog: FogSettings? = nil                           // nil = the scene's preset (FogSettings.preset)
         var sky: SkySettings? = nil                           // nil = the scene's preset (SkySettings.preset)
@@ -76,7 +76,7 @@ final class Benchmark {
             start.yaw = -0.9
             start.pitch = -0.25
         }
-        if ProcessInfo.processInfo.environment["METALGI_PAN"] == "rotate" { start.position = c.position; start.pitch = c.pitch }   // yaw only
+        if ProcessInfo.processInfo.environment["METALRENDERER_PAN"] == "rotate" { start.position = c.position; start.pitch = c.pitch }   // yaw only
         c.position = start.position + (c.position - start.position) * p
         c.yaw = start.yaw + (c.yaw - start.yaw) * p
         c.pitch = start.pitch + (c.pitch - start.pitch) * p
@@ -89,13 +89,13 @@ final class Benchmark {
         return Float(frameInConfig) / Float(max(total - 1, 1))
     }
 
-    /// `METALGI_GI="mode=surfels,rays=8,..."` overrides GI settings in every (non-reference) setting.
+    /// `METALRENDERER_GI="mode=surfels,rays=8,..."` overrides GI settings in every (non-reference) setting.
     /// Keys: mode (pt|surfels|cascades), lightmaps, bounces, rays, maxsurfels, radius, shistory, sdenoise,
     /// spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
     /// upscaler (metalfx|spatial|custom), lightrays (shadow rays per light group with more than 4 lights),
     /// taauhistory, taauclip.
     static func applyGIOverride(to s: inout RenderSettings) {
-        guard let spec = ProcessInfo.processInfo.environment["METALGI_GI"] else { return }
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_GI"] else { return }
         for item in spec.split(separator: ",") {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
             guard kv.count == 2 else { continue }
@@ -130,19 +130,19 @@ final class Benchmark {
             case "taaulanczos": s.taau.lanczosHistory = v != 0
             case "taaulzthresh": s.taau.lanczosThreshold = v
             case "taauedge": s.taau.edgeMotionCut = v
-            default: print("METALGI_GI: unknown key \(kv[0])")
+            default: print("METALRENDERER_GI: unknown key \(kv[0])")
             }
         }
     }
 
-    /// `METALGI_SCENE="stress,objects=400,lights=32"` loads the stress scene (with these sizes) in every setting
+    /// `METALRENDERER_SCENE="stress,objects=400,lights=32"` loads the stress scene (with these sizes) in every setting
     /// (and is the app's starting scene outside benchmarks). Kinds: cornell, stress, gallery, and the light demos spots,
     /// sun, area, tubes, emissive, mixed; `model=<path>` adds a glTF model as File > Open does; `emissivelights=0`
     /// turns emissive-mesh lights off.
-    /// `METALGI_FOG_SET="density=0.03,g=0.6,..."` overrides fog settings in every setting (after `METALGI_FOG=0/1`).
+    /// `METALRENDERER_FOG_SET="density=0.03,g=0.6,..."` overrides fog settings in every setting (after `METALRENDERER_FOG=0/1`).
     /// Keys: on, density, falloff, base, g, ambient, noise, tile, far, volumes, reflections.
     static func applyFogOverride(to f: inout FogSettings) {
-        guard let spec = ProcessInfo.processInfo.environment["METALGI_FOG_SET"] else { return }
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_FOG_SET"] else { return }
         for item in spec.split(separator: ",") {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
             guard kv.count == 2, let v = Float(kv[1]) else { continue }
@@ -163,10 +163,10 @@ final class Benchmark {
         }
     }
 
-    /// `METALGI_SKY_SET="coverage=0.6,clouds=0,..."` overrides sky settings in every setting (after `METALGI_SKY`).
+    /// `METALRENDERER_SKY_SET="coverage=0.6,clouds=0,..."` overrides sky settings in every setting (after `METALRENDERER_SKY`).
     /// Keys: clouds, coverage, density, base, thickness, scale, erosion, wind, winddir, shadows, strength, exposure, over.
     static func applySkyOverride(to s: inout SkySettings) {
-        guard let spec = ProcessInfo.processInfo.environment["METALGI_SKY_SET"] else { return }
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_SKY_SET"] else { return }
         for item in spec.split(separator: ",") {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
             guard kv.count == 2, let v = Float(kv[1]) else { continue }
@@ -190,7 +190,7 @@ final class Benchmark {
     }
 
     static func applySceneOverride(to s: inout SceneSettings) {
-        guard let spec = ProcessInfo.processInfo.environment["METALGI_SCENE"] else { return }
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_SCENE"] else { return }
         for item in spec.split(separator: ",") {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
             switch kv[0] {
@@ -211,15 +211,15 @@ final class Benchmark {
             case "lights" where kv.count == 2: s.lights = Int(kv[1]) ?? s.lights
             case "model" where kv.count == 2:   // as if opened: in front of the default camera
                 s.extraModels.append(ExtraModel(path: kv[1], position: [Float(s.extraModels.count) * 1.8 - 0.9, 0, 2], yaw: 0))
-            default: print("METALGI_SCENE: unknown key \(kv[0])")
+            default: print("METALRENDERER_SCENE: unknown key \(kv[0])")
             }
         }
     }
 
-    /// `METALGI_DENOISE="passes=3,tpasses=2,sigma=1,history=16,antilag=1,separate=1"` overrides the denoiser in every setting,
+    /// `METALRENDERER_DENOISE="passes=3,tpasses=2,sigma=1,history=16,antilag=1,separate=1"` overrides the denoiser in every setting,
     /// so parameter sweeps need no rebuild.
     static func applyDenoiserOverride(to d: inout DenoiserSettings) {
-        guard let spec = ProcessInfo.processInfo.environment["METALGI_DENOISE"] else { return }
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_DENOISE"] else { return }
         for item in spec.split(separator: ",") {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
             guard kv.count == 2, let v = Float(kv[1]) else { continue }
@@ -235,7 +235,7 @@ final class Benchmark {
             case "shistory": d.shadowHistory = v
             case "sclamp": d.shadowClamp = v
             case "ssigma": d.shadowSigma = v
-            default: print("METALGI_DENOISE: unknown key \(kv[0])")
+            default: print("METALRENDERER_DENOISE: unknown key \(kv[0])")
             }
         }
     }
@@ -246,24 +246,24 @@ final class Benchmark {
         var spanMs: Double          // first pass start -> last pass end
     }
 
-    static let isEnabled = ProcessInfo.processInfo.environment["METALGI_BENCH"] != nil
-    /// Each pass in its own command buffer, for per-pass timings (default). `METALGI_BENCH_SPLIT=0` encodes frames
+    static let isEnabled = ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] != nil
+    /// Each pass in its own command buffer, for per-pass timings (default). `METALRENDERER_BENCH_SPLIT=0` encodes frames
     /// exactly like normal mode (one command buffer) and reports only the whole-frame GPU time.
-    static let splitPasses = ProcessInfo.processInfo.environment["METALGI_BENCH_SPLIT"] != "0"
+    static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_SPLIT"] != "0"
     static let passOrder = ["tlas", "lightmap", "trace", "temporal", "atrous", "composite", "upscale"]
 
-    /// `METALGI_BENCH=quality` renders the same frames natively and upscaled (with PNGs) for image comparisons.
-    /// `METALGI_BENCH=noise` renders white- and blue-noise sampling next to converged references, all at t = 5 s.
-    /// `METALGI_BENCH=denoise` renders a few frames for scoring denoiser changes against saved `noise` references.
-    /// `METALGI_BENCH_ONLY="32 lights, 400|camera"` keeps only the settings whose names contain one of these substrings.
+    /// `METALRENDERER_BENCH=quality` renders the same frames natively and upscaled (with PNGs) for image comparisons.
+    /// `METALRENDERER_BENCH=noise` renders white- and blue-noise sampling next to converged references, all at t = 5 s.
+    /// `METALRENDERER_BENCH=denoise` renders a few frames for scoring denoiser changes against saved `noise` references.
+    /// `METALRENDERER_BENCH_ONLY="32 lights, 400|camera"` keeps only the settings whose names contain one of these substrings.
     let configs: [Config] = {
-        let all = Benchmark.configs(for: ProcessInfo.processInfo.environment["METALGI_BENCH"] ?? "")
-        guard let only = ProcessInfo.processInfo.environment["METALGI_BENCH_ONLY"] else { return all }
+        let all = Benchmark.configs(for: ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? "")
+        guard let only = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_ONLY"] else { return all }
         let keys = only.split(separator: "|").map(String.init)
         return all.filter { c in keys.contains { c.name.contains($0) } }
     }()
 
-    /// GI modes compared by `METALGI_BENCH=gi` (`METALGI_GI_MODES="pt,surfels"` picks a subset).
+    /// GI modes compared by `METALRENDERER_BENCH=gi` (`METALRENDERER_GI_MODES="pt,surfels"` picks a subset).
     private static let giModesUnderTest: [(tag: String, base: Config)] = {
         var pt = Config(name: "", renderScale: 0.5)
         var ptLM = pt; ptLM.lightMaps = true
@@ -272,16 +272,16 @@ final class Benchmark {
         var cascadesHQ = cascades; cascadesHQ.cascades.probeSpacing = 4; cascadesHQ.cascades.firstInterval = 0.25
         pt.name = "pt"; ptLM.name = "pt-lightmaps"; surfels.name = "surfels"; cascades.name = "cascades"; cascadesHQ.name = "cascades-hq"
         let all = [pt, ptLM, surfels, cascades, cascadesHQ].map { (tag: $0.name, base: $0) }
-        guard let pick = ProcessInfo.processInfo.environment["METALGI_GI_MODES"] else { return all }
+        guard let pick = ProcessInfo.processInfo.environment["METALRENDERER_GI_MODES"] else { return all }
         let tags = Set(pick.split(separator: ",").map(String.init))
         return all.filter { tags.contains($0.tag) }
     }()
 
     private static func giConfigs() -> [Config] {
         // 8-bounce, unclamped path-traced references at t = 5 s with the default camera. Skip them with
-        // METALGI_GI_REFS=0 once they exist.
+        // METALRENDERER_GI_REFS=0 once they exist.
         var refs: [Config] = []
-        if ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0" {
+        if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
             let ref = Config(name: "ref8 0.5x", renderScale: 0.5, bounces: 8, paused: true, startTime: 5, accumulate: true, frames: 4096)
             var refIndirect = ref; refIndirect.name = "ref8 indirect 0.5x"; refIndirect.viewMode = 6
             var refHQ = ref; refHQ.name = "ref8 1.5x"; refHQ.renderScale = 1.5; refHQ.frames = 1024
@@ -302,18 +302,18 @@ final class Benchmark {
         switch mode {
         case "gi": return giConfigs()
         case "upscale":
-            // Upscalers against supersampled native 1920x1200 references at t = 5 s (skip them with METALGI_GI_REFS=0
+            // Upscalers against supersampled native 1920x1200 references at t = 5 s (skip them with METALRENDERER_GI_REFS=0
             // once they exist): the albedo view isolates edges and anti-aliasing, direct light adds shading.
-            // METALGI_UPSCALERS="metalfx,custom,spatial" picks the upscalers.
+            // METALRENDERER_UPSCALERS="metalfx,custom,spatial" picks the upscalers.
             var refs: [Config] = []
-            if ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0" {
+            if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
                 refs = [Config(name: "ref albedo", renderScale: 1.5, viewMode: 4, paused: true, startTime: 5, accumulate: true,
                                frames: 512, supersample: true),
                         Config(name: "ref direct", renderScale: 1.5, giEnabled: false, paused: true, startTime: 5, accumulate: true,
                                frames: 1024, supersample: true)]
             }
             let kinds: [(String, UpscalerKind)] = [("metalfx", .metalFX), ("custom", .custom), ("spatial", .metalFXSpatial)]
-            let pick = ProcessInfo.processInfo.environment["METALGI_UPSCALERS"].map { Set($0.split(separator: ",").map(String.init)) }
+            let pick = ProcessInfo.processInfo.environment["METALRENDERER_UPSCALERS"].map { Set($0.split(separator: ",").map(String.init)) }
             return refs + kinds.filter { pick?.contains($0.0) ?? true }.flatMap { tag, kind -> [Config] in [
                 Config(name: "albedo static \(tag)", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4, paused: true,
                        startTime: 5, capturePrevious: true),
@@ -327,10 +327,10 @@ final class Benchmark {
             ] }
         case "shadow":
             // Direct light only (GI off), for the shadow denoiser: a converged reference at t = 5 s (skip it with
-            // METALGI_GI_REFS=0 once it exists), then static (+ previous frame), moving and camera-move frames that
+            // METALRENDERER_GI_REFS=0 once it exists), then static (+ previous frame), moving and camera-move frames that
             // all end at t = 5 s with the default camera.
             var refs: [Config] = []
-            if ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0" {
+            if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
                 refs = [Config(name: "ref direct", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
                                accumulate: true, frames: 4096)]
             }
@@ -342,7 +342,7 @@ final class Benchmark {
             ]
         case "stress":
             // Stress scene at the default settings (cascades, TAAU 3x from 0.5x): frame time against light count,
-            // object count and GI method. METALGI_BENCH_SPLIT=0 for whole-frame times.
+            // object count and GI method. METALRENDERER_BENCH_SPLIT=0 for whole-frame times.
             func stress(_ name: String, objects: Int = 400, lights: Int = 32, giMode: GIMode = .radianceCascades) -> Config {
                 Config(name: name, renderScale: 0.5, upscale: 3, giMode: giMode,
                        scene: SceneSettings(kind: .stress, objects: objects, lights: lights))
@@ -361,12 +361,12 @@ final class Benchmark {
             ]
         case "stressq":
             // Stress-scene quality, all at t = 5 s against converged references (every light traced each frame; skip
-            // them with METALGI_GI_REFS=0 once they exist, see Tools/eval/stress.py):
+            // them with METALRENDERER_GI_REFS=0 once they exist, see Tools/eval/stress.py):
             // * direct light only (640x400) at 32 and 128 lights;
             // * the GI methods (640x400, no upscaling) against an 8-bounce path-traced reference;
             // * the upscalers (3x from 640x400) on albedo and direct light against supersampled 1920x1200 references.
-            // Run again with METALGI_LIGHTS=all for the brute-force baseline, METALGI_DENOISE=shadows=0 for SVGF.
-            let refs = ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0"
+            // Run again with METALRENDERER_LIGHTS=all for the brute-force baseline, METALRENDERER_DENOISE=shadows=0 for SVGF.
+            let refs = ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0"
             func stress(_ lights: Int = 32) -> SceneSettings { SceneSettings(kind: .stress, objects: 400, lights: lights) }
             let direct = [32, 128].flatMap { lights -> [Config] in
                 let base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: stress(lights))
@@ -408,7 +408,7 @@ final class Benchmark {
             }
             return direct + gi + up
         case "rt":
-            // Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALGI_RT tracer (run once per
+            // Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALRENDERER_RT tracer (run once per
             // tracer and compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run),
             // then moving frames for timing on both scenes at several stress-scene sizes, alternating the two tracers.
             func scene(_ kind: SceneKind, objects: Int = 400) -> SceneSettings { SceneSettings(kind: kind, objects: objects, lights: 32) }
@@ -445,8 +445,8 @@ final class Benchmark {
             let gallery = SceneSettings(kind: .gallery)
             var out: [Config] = []
             // Path-traced references (full BRDF, full-detail meshes, 4 bounces) for Tools/eval/gallery.py; skip them
-            // with METALGI_GI_REFS=0 once they exist.
-            if ProcessInfo.processInfo.environment["METALGI_GI_REFS"] != "0" {
+            // with METALRENDERER_GI_REFS=0 once they exist.
+            if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
                 out.append(Config(name: "ref overview", renderScale: 0.5, bounces: 4, paused: true, startTime: 5, accumulate: true,
                                   frames: 1024, scene: gallery, virtualGeometry: vg(false)))
                 var refClose = Config(name: "ref closeup", renderScale: 0.5, bounces: 4, paused: true, startTime: 5, accumulate: true,
@@ -479,9 +479,9 @@ final class Benchmark {
             return out
         case "lights":
             // The light demo scenes, paused at t = 5: direct light only, each GI technique, then moving (timing).
-            // METALGI_LIGHTS_SCENES="sun|mixed" limits the scenes.
+            // METALRENDERER_LIGHTS_SCENES="sun|mixed" limits the scenes.
             var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
             for kind in [SceneKind.spots, .sun, .area, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
                 let scene = SceneSettings(kind: kind)
                 let tag = "\(kind)"
@@ -500,9 +500,9 @@ final class Benchmark {
             return out
         case "fog":
             // The fog scenes, paused at t = 5 with surfel GI: fog off, the preset, without volumes, without fogged
-            // reflections, the other GI techniques; then moving (timing). METALGI_LIGHTS_SCENES="fog|sun" limits them.
+            // reflections, the other GI techniques; then moving (timing). METALRENDERER_LIGHTS_SCENES="fog|sun" limits them.
             var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
             for kind in [SceneKind.fog, .spots, .sun, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
                 let tag = "\(kind)", preset = FogSettings.preset(for: kind)
                 var base = Config(name: "", paused: true, startTime: 5, frames: 60, giMode: .surfels, scene: SceneSettings(kind: kind))
@@ -529,7 +529,7 @@ final class Benchmark {
             // The froxel grid against the per-pixel reference march (fogReferenceKernel, 512 frames averaged), direct
             // light only: the fog's scattering alone (view 14) and the final image. Compare with Tools/eval/pngdiff.py.
             var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
             for kind in [SceneKind.fog, .spots, .sun] where only?.contains("\(kind)") ?? true {
                 let scene = SceneSettings(kind: kind), tag = "\(kind)"
                 for (name, view) in [("scattering", 14), ("final", 0)] {
@@ -543,9 +543,9 @@ final class Benchmark {
         case "sky":
             // The sky scenes paused at sunrise, mid-morning, noon and evening (the valley's day; the sun scene's and
             // the mixed room's own times), with clouds on and off, cloud shadows off, then moving (timing).
-            // METALGI_LIGHTS_SCENES="valley|sun" limits the scenes; METALGI_SKY=<image> tests an image sky.
+            // METALRENDERER_LIGHTS_SCENES="valley|sun" limits the scenes; METALRENDERER_SKY=<image> tests an image sky.
             var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALGI_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
+            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
             for kind in [SceneKind.valley, .sun, .mixed] where only?.contains("\(kind)") ?? true {
                 let tag = "\(kind)", preset = SkySettings.preset(for: kind)
                 var base = Config(name: "", paused: true, startTime: 5, frames: 60, scene: SceneSettings(kind: kind))
@@ -708,7 +708,7 @@ final class Benchmark {
     let warmupFrames = 60
     let measuredFrames = 240
     let fixedDt: Float = 1.0 / 60.0
-    let captureDir = ProcessInfo.processInfo.environment["METALGI_BENCH_DIR"].map { URL(fileURLWithPath: $0) }
+    let captureDir = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_DIR"].map { URL(fileURLWithPath: $0) }
 
     private(set) var configIndex = 0
     private(set) var frameInConfig = 0
@@ -745,7 +745,7 @@ final class Benchmark {
 
     func report(gpuName: String) -> String {
         lock.lock(); let all = records; lock.unlock()
-        var out = "\nMetalGI benchmark — \(gpuName) — \(warmupFrames) warm-up + \(measuredFrames) measured frames per setting\n"
+        var out = "\nMetalRenderer benchmark — \(gpuName) — \(warmupFrames) warm-up + \(measuredFrames) measured frames per setting\n"
         out += "GPU times are medians in ms (p95 for the total). Frames are serialized so passes never overlap.\n\"span\" = first pass start to last pass end, including gaps between command buffers.\n\n"
         // One column per pass that ran: passOrder first, then any others (e.g. GI technique passes) by name.
         let seen = Set(all.flatMap { $0.passMs.keys })

@@ -676,20 +676,20 @@ final class Scene {
 
     // MARK: - glTF models
 
-    /// Where the Gallery scene finds its models: `METALGI_ASSETS`, or `Assets/` next to `Package.swift`.
+    /// Where the Gallery scene finds its models: `METALRENDERER_ASSETS`, or `Assets/` next to `Package.swift`.
     static let assetsDirectory: URL = {
-        if let dir = ProcessInfo.processInfo.environment["METALGI_ASSETS"] { return URL(fileURLWithPath: dir) }
+        if let dir = ProcessInfo.processInfo.environment["METALRENDERER_ASSETS"] { return URL(fileURLWithPath: dir) }
         return URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Assets")
     }()
 
-    /// The glTF files in `assetsDirectory`, sorted by name. `METALGI_GALLERY="owl|demon"` keeps the files whose names
+    /// The glTF files in `assetsDirectory`, sorted by name. `METALRENDERER_GALLERY="owl|demon"` keeps the files whose names
     /// contain one of these strings (quicker test runs).
     static func galleryFiles() -> [URL] {
         let files = (try? FileManager.default.contentsOfDirectory(at: assetsDirectory, includingPropertiesForKeys: nil)) ?? []
         var models = files.filter { ["glb", "gltf"].contains($0.pathExtension.lowercased()) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        if let only = ProcessInfo.processInfo.environment["METALGI_GALLERY"] {
+        if let only = ProcessInfo.processInfo.environment["METALRENDERER_GALLERY"] {
             let keys = only.split(separator: "|").map { $0.lowercased() }
             models = models.filter { url in keys.contains { url.lastPathComponent.lowercased().contains($0) } }
         }

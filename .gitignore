@@ -6,7 +6,9 @@
 xcuserdata/
 DerivedData/
 __pycache__/
-# benchmark captures (METALGI_BENCH_DIR): keep them outside the repo, or here
+# benchmark captures (METALRENDERER_BENCH_DIR): keep them outside the repo, or here
 /bench-out/
-# virtual-geometry / texture caches built from Assets/ on first load
-/Assets/.metalgi-cache/
+# glTF models (not part of the repository) and the virtual-geometry / texture caches built from them
+/Assets/
+# graphify knowledge-graph cache
+/graphify-out/cache/

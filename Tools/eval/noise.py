@@ -1,4 +1,4 @@
-"""usage: noise.py <run-dir> ... — scores METALGI_BENCH=denoise runs against the METALGI_BENCH=noise references in refs/noise/."""
+"""usage: noise.py <run-dir> ... — scores METALRENDERER_BENCH=denoise runs against the METALRENDERER_BENCH=noise references in refs/noise/."""
 import os, sys
 from evalcommon import *
 

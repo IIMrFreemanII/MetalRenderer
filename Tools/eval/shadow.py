@@ -1,4 +1,4 @@
-"""usage: shadow.py <run-dir> ... — scores METALGI_BENCH=shadow (Cornell direct light, 640x400) against refs/shadow/."""
+"""usage: shadow.py <run-dir> ... — scores METALRENDERER_BENCH=shadow (Cornell direct light, 640x400) against refs/shadow/."""
 import os, sys
 from evalcommon import *
 

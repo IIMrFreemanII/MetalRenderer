@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes a synthetic equirectangular HDR sky (Radiance .hdr) for testing MetalGI's image skies:
+"""Writes a synthetic equirectangular HDR sky (Radiance .hdr) for testing MetalRenderer's image skies:
 a blue-to-white gradient, a brown-green ground, a few soft cloud blobs and a bright sun disc (0.3 degrees,
 at the given elevation and azimuth). u = 0.5 faces -z, v = 0 is straight up, as Shaders.metal equirectSample.
 

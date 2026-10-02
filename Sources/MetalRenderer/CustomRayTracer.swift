@@ -39,12 +39,12 @@ struct VGView {
 /// See BVH.swift for the node format.
 ///
 /// The dynamic TLAS is rebuilt from scratch every frame on the GPU as an LBVH (Karras 2012): moving instances are
-/// sorted along a Morton curve and the tree follows from the sorted keys, all in parallel. `METALGI_RT_BUILD=cpu`
+/// sorted along a Morton curve and the tree follows from the sorted keys, all in parallel. `METALRENDERER_RT_BUILD=cpu`
 /// builds it on the CPU with binned SAH instead (a better tree, for comparing trace speed).
 final class CustomRayTracer {
     private let device: MTLDevice
     var pipelines: RTPipelines!   // set by the renderer once the custom-RT shaders are compiled
-    static let cpuBuild = ProcessInfo.processInfo.environment["METALGI_RT_BUILD"] == "cpu"
+    static let cpuBuild = ProcessInfo.processInfo.environment["METALRENDERER_RT_BUILD"] == "cpu"
     let blasNodes: MTLBuffer
     let triangles: MTLBuffer
     private var tlasNodes: [MTLBuffer] = []       // per slot: static TLAS nodes, then the dynamic TLAS
@@ -65,16 +65,16 @@ final class CustomRayTracer {
     private let instanceCount: Int
     private let paddedCount: Int                  // moving instances rounded up to a power of two (sort size)
     /// Virtual meshes, if the scene has any. Default: each virtual instance traced through an SAH BLAS over its
-    /// current cut (VirtualBLAS). METALGI_VG_MODE=clusters: a third top-level tree over this frame's cut of clusters,
+    /// current cut (VirtualBLAS). METALRENDERER_VG_MODE=clusters: a third top-level tree over this frame's cut of clusters,
     /// selected and streamed on the GPU (VirtualGeometry).
     let virtualGeometry: VirtualGeometry?
     let virtualBLAS: VirtualBLAS?
-    static let clusterMode = ProcessInfo.processInfo.environment["METALGI_VG_MODE"] == "clusters"
+    static let clusterMode = ProcessInfo.processInfo.environment["METALRENDERER_VG_MODE"] == "clusters"
     private let dummy: MTLBuffer                  // stands in for the virtual-geometry buffers without any
-    /// Traversal counters (METALGI_RT_STATS=1 compiles them in): rays, top-level nodes, bottom-level nodes,
+    /// Traversal counters (METALRENDERER_RT_STATS=1 compiles them in): rays, top-level nodes, bottom-level nodes,
     /// instance entries, cluster entries, triangle tests.
     let stats: MTLBuffer
-    static let statsEnabled = ProcessInfo.processInfo.environment["METALGI_RT_STATS"] == "1"
+    static let statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
 
     /// Root ref of the dynamic TLAS: its first node when it has 2+ instances, the instance itself when it has one.
     private var dynamicRoot: UInt32 {
@@ -164,7 +164,7 @@ final class CustomRayTracer {
         print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms",
                      blas.nodes.count, blas.triangles.count / 3, staticIds.count, staticNodes.count, staticDepth, dynamicIds.count,
                      (CACurrentMediaTime() - start) * 1000))
-        if ProcessInfo.processInfo.environment["METALGI_RT_CHECK"] == "1" { selfTest(scene: scene) }
+        if ProcessInfo.processInfo.environment["METALRENDERER_RT_CHECK"] == "1" { selfTest(scene: scene) }
     }
 
     /// RTScene: 8 GPU addresses, then the static and dynamic root refs and the cluster tree's first node.
@@ -194,7 +194,7 @@ final class CustomRayTracer {
                           blasRoot: blasRoot, mask: inst.mask)
     }
 
-    /// CPU build (`METALGI_RT_BUILD=cpu` only): this frame's instance data and dynamic TLAS.
+    /// CPU build (`METALRENDERER_RT_BUILD=cpu` only): this frame's instance data and dynamic TLAS.
     func update(slot: Int, scene: Scene) {
         guard CustomRayTracer.cpuBuild else { return }
         let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
@@ -334,7 +334,7 @@ final class CustomRayTracer {
         enc.useResource(stats, usage: [.read, .write])
     }
 
-    // MARK: - Self-test (METALGI_RT_CHECK=1)
+    // MARK: - Self-test (METALRENDERER_RT_CHECK=1)
 
     /// CPU traversal of one BLAS (the same algorithm as the shader): closest hit t along an object-space ray.
     private func intersectBLAS(root: UInt32, o: SIMD3<Float>, d: SIMD3<Float>, tmax: Float) -> Float {

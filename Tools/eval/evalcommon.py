@@ -1,8 +1,8 @@
 """Shared helpers for the benchmark scorers in this folder.
 
-Every scorer reads PNGs saved by a benchmark run (`METALGI_BENCH=<mode> METALGI_BENCH_DIR=<run-dir>`) and compares
+Every scorer reads PNGs saved by a benchmark run (`METALRENDERER_BENCH=<mode> METALRENDERER_BENCH_DIR=<run-dir>`) and compares
 them with converged reference images in refs/<mode>/. A run that renders the references (the "ref ..." settings,
-skipped with METALGI_GI_REFS=0) refreshes refs/<mode>/ automatically, so re-render them after any change that
+skipped with METALRENDERER_GI_REFS=0) refreshes refs/<mode>/ automatically, so re-render them after any change that
 alters the ground truth (scene, lights, materials) and commit the new files.
 """
 import glob, os, shutil
@@ -34,7 +34,7 @@ def load(path):
 def ref(mode, name):
     path = f"{refs_dir(mode)}/{name}.png"
     if not os.path.exists(path):
-        raise SystemExit(f"missing reference {path}: run METALGI_BENCH={mode} once without METALGI_GI_REFS=0")
+        raise SystemExit(f"missing reference {path}: run METALRENDERER_BENCH={mode} once without METALRENDERER_GI_REFS=0")
     return load(path)
 
 

@@ -1,4 +1,4 @@
-// MetalGI shaders: ray traced direct light + path traced global illumination + SVGF-style denoiser.
+// MetalRenderer shaders: ray traced direct light + path traced global illumination + SVGF-style denoiser.
 // Compiled at runtime by Renderer.swift — press R in the app to hot-reload after editing.
 
 #include <metal_stdlib>

@@ -1,4 +1,4 @@
-# MetalGI
+# MetalRenderer
 
 A minimal real-time ray tracer for macOS and Metal, with dynamic lights and global illumination.
 It's built for Apple Silicon and tuned for an M1 Max.
@@ -33,7 +33,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * Moving objects and light spheres get a top-level tree rebuilt from scratch on the GPU every frame as an LBVH: Morton codes, a bitonic sort, the Karras hierarchy and a bottom-up box pass. This takes 0.08–0.12 ms for 400–2000 objects.
   * Rays walk both levels in a single loop.
   * On an M1 Max, which has no ray-tracing hardware, this is 19–24% faster per frame than Metal's intersector in the stress test, and on par in the Cornell room (see below).
-  * Metal's acceleration structures stay one click away in the settings panel ("Ray tracing"), and so does `METALGI_RT=metal`.
+  * Metal's acceleration structures stay one click away in the settings panel ("Ray tracing"), and so does `METALRENDERER_RT=metal`.
 * **glTF models:** `.glb` and `.gltf` files load with their node hierarchy and metallic-roughness materials.
   * The **Gallery** scene shows every model in `Assets/` on plinths, two of them on turntables, under 8 moving lights.
   * File > Open… (⌘O) or dropping files on the window adds models to any scene.
@@ -41,7 +41,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * Scenes load in the background while the old one keeps rendering.
 * **Virtual geometry (Nanite-style, default with the custom tracer):** meshes of 65k+ triangles become level-of-detail DAGs of 128-triangle clusters.
   * Everything is this project's own code: clustering, quadric simplification with locked group borders, seam- and border-aware collapses, and the DAG.
-  * Each model is built once (about 7 s per 2M triangles) and cached in `Assets/.metalgi-cache/`.
+  * Each model is built once (about 7 s per 2M triangles) and cached in `Assets/.metalrenderer-cache/`.
   * Every few frames a background thread picks Nanite's cut for each instance: every cluster whose simplification error projects to under 1 traced pixel and whose parent's doesn't.
   * Each instance whose cut changed gets a fresh SAH BLAS over exactly those triangles, read from the memory-mapped cache, so the OS streams pages from disk.
   * Rays see one tight tree per model.
@@ -77,7 +77,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
 You need Xcode 15 or newer and macOS 13 or newer.
 
 ```bash
-cd MetalGI
+cd MetalRenderer
 swift run -c release
 ```
 
@@ -88,68 +88,68 @@ You can also open `Package.swift` in Xcode, choose **My Mac**, and press Run. Us
 ### Benchmark mode
 
 ```bash
-METALGI_BENCH=1 swift run -c release
+METALRENDERER_BENCH=1 swift run -c release
 ```
 
-This runs a fixed animation through a list of settings (GI bounces, denoiser, render scale, MetalFX upscaling), times each GPU pass, prints a table, and quits. Set `METALGI_BENCH_DIR=<folder>` to also save one PNG per setting. Use `METALGI_BENCH=quality` to render the same frames natively and with MetalFX instead, so you can compare the PNGs. Use `METALGI_BENCH=noise` to render white- and blue-noise sampling next to converged reference images, made by averaging thousands of frames of the paused scene. Use `METALGI_BENCH=denoise` to render a few frames for scoring denoiser changes against those references. Set `METALGI_DENOISE`, for example `passes=3,tpasses=2,sigma=2,history=16,antilag=1,separate=1`, to override the denoiser in every setting without rebuilding (`tpasses` is the pass count with surfel or cascade GI).
+This runs a fixed animation through a list of settings (GI bounces, denoiser, render scale, MetalFX upscaling), times each GPU pass, prints a table, and quits. Set `METALRENDERER_BENCH_DIR=<folder>` to also save one PNG per setting. Use `METALRENDERER_BENCH=quality` to render the same frames natively and with MetalFX instead, so you can compare the PNGs. Use `METALRENDERER_BENCH=noise` to render white- and blue-noise sampling next to converged reference images, made by averaging thousands of frames of the paused scene. Use `METALRENDERER_BENCH=denoise` to render a few frames for scoring denoiser changes against those references. Set `METALRENDERER_DENOISE`, for example `passes=3,tpasses=2,sigma=2,history=16,antilag=1,separate=1`, to override the denoiser in every setting without rebuilding (`tpasses` is the pass count with surfel or cascade GI).
 
-Each pass runs in its own command buffer so it can be timed, which serializes the whole frame. Set `METALGI_BENCH_SPLIT=0` to encode frames exactly as the app does (one command buffer, with radiance cascades overlapping the denoiser) and report only whole-frame GPU time. `METALGI_OVERLAP=0` turns that overlap off, for A/B timing.
+Each pass runs in its own command buffer so it can be timed, which serializes the whole frame. Set `METALRENDERER_BENCH_SPLIT=0` to encode frames exactly as the app does (one command buffer, with radiance cascades overlapping the denoiser) and report only whole-frame GPU time. `METALRENDERER_OVERLAP=0` turns that overlap off, for A/B timing.
 
-Use `METALGI_BENCH=shadow` to score direct-light denoising (static, moving and camera-move frames against a converged reference). Use `METALGI_BENCH=upscale` to score the upscalers against supersampled native 1920×1200 references, on the albedo view and on direct light. `METALGI_UPSCALERS=metalfx,custom,spatial` picks the upscalers, and `METALGI_GI=upscaler=metalfx` switches every setting to one (`scale=0.75,factor=2` tests another upscale factor against the same references). Its "pan" frames fly the camera over the frozen scene; `METALGI_PAN=rotate` makes that a pure rotation. `METALGI_DENOISE` also takes `shadows=0` (SVGF for direct light), `spasses`, `shistory`, `sclamp` and `ssigma`. `METALGI_GI` takes `blue` and the custom upscaler's `taau…` keys (see `Benchmark.swift`).
+Use `METALRENDERER_BENCH=shadow` to score direct-light denoising (static, moving and camera-move frames against a converged reference). Use `METALRENDERER_BENCH=upscale` to score the upscalers against supersampled native 1920×1200 references, on the albedo view and on direct light. `METALRENDERER_UPSCALERS=metalfx,custom,spatial` picks the upscalers, and `METALRENDERER_GI=upscaler=metalfx` switches every setting to one (`scale=0.75,factor=2` tests another upscale factor against the same references). Its "pan" frames fly the camera over the frozen scene; `METALRENDERER_PAN=rotate` makes that a pure rotation. `METALRENDERER_DENOISE` also takes `shadows=0` (SVGF for direct light), `spasses`, `shistory`, `sclamp` and `ssigma`. `METALRENDERER_GI` takes `blue` and the custom upscaler's `taau…` keys (see `Benchmark.swift`).
 
-Use `METALGI_BENCH=stress` to time the stress scene against light count (1 to 256), object count (0 to 2000) and GI method, and `METALGI_BENCH=stressq` to score its direct light at 32 and 128 lights, and its final image, against converged references. `METALGI_SCENE=stress,objects=400,lights=32` loads the stress scene in every setting of any mode. `METALGI_LIGHTS=all` traces one shadow ray per light again (the brute-force baseline), `METALGI_GI=lightrays=2` sets the shadow rays per light group, and `METALGI_TLAS=<frames>` sets the rebuild interval of Metal's TLAS (1 = every frame; the custom tracer rebuilds its own every frame). `METALGI_BENCH_ONLY="32 lights|camera"` runs only the settings whose names contain one of these strings.
+Use `METALRENDERER_BENCH=stress` to time the stress scene against light count (1 to 256), object count (0 to 2000) and GI method, and `METALRENDERER_BENCH=stressq` to score its direct light at 32 and 128 lights, and its final image, against converged references. `METALRENDERER_SCENE=stress,objects=400,lights=32` loads the stress scene in every setting of any mode. `METALRENDERER_LIGHTS=all` traces one shadow ray per light again (the brute-force baseline), `METALRENDERER_GI=lightrays=2` sets the shadow rays per light group, and `METALRENDERER_TLAS=<frames>` sets the rebuild interval of Metal's TLAS (1 = every frame; the custom tracer rebuilds its own every frame). `METALRENDERER_BENCH_ONLY="32 lights|camera"` runs only the settings whose names contain one of these strings.
 
-`METALGI_RT=metal|custom` picks the ray tracer for every setting. Use `METALGI_BENCH=rt` to compare the two:
-* It first renders paused frames in every GI mode on both scenes with the `METALGI_RT` tracer. Run it once per tracer and diff the PNGs with `Tools/eval/pngdiff.py`.
+`METALRENDERER_RT=metal|custom` picks the ray tracer for every setting. Use `METALRENDERER_BENCH=rt` to compare the two:
+* It first renders paused frames in every GI mode on both scenes with the `METALRENDERER_RT` tracer. Run it once per tracer and diff the PNGs with `Tools/eval/pngdiff.py`.
 * Then it times moving frames at 0–2000 objects, alternating the two tracers.
 
-`METALGI_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALGI_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup. `METALGI_RT_STATS=1` compiles traversal counters in, and benchmarks print them per setting: nodes, instance and cluster entries, and triangle tests per ray.
+`METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALRENDERER_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup. `METALRENDERER_RT_STATS=1` compiles traversal counters in, and benchmarks print them per setting: nodes, instance and cluster entries, and triangle tests per ray.
 
-Use `METALGI_BENCH=gallery` for the glTF gallery. It renders path-traced references (full BRDF, full-detail meshes, 4 bounces; skip them with `METALGI_GI_REFS=0`), then the overview and a close-up with full-detail meshes and with virtual geometry at 0.5, 1 and 2 px, alternating so heat affects them alike, and the camera fly-through. Score it with `Tools/eval/gallery.py`.
+Use `METALRENDERER_BENCH=gallery` for the glTF gallery. It renders path-traced references (full BRDF, full-detail meshes, 4 bounces; skip them with `METALRENDERER_GI_REFS=0`), then the overview and a close-up with full-detail meshes and with virtual geometry at 0.5, 1 and 2 px, alternating so heat affects them alike, and the camera fly-through. Score it with `Tools/eval/gallery.py`.
 
 These variables apply to the gallery and to models in general:
-* `METALGI_SCENE=gallery` starts the app in the gallery; `model=<path>` adds a model, as File > Open does.
-* `METALGI_GALLERY="owl|demon"` loads only the matching files; `METALGI_ASSETS=<folder>` uses another folder.
+* `METALRENDERER_SCENE=gallery` starts the app in the gallery; `model=<path>` adds a model, as File > Open does.
+* `METALRENDERER_GALLERY="owl|demon"` loads only the matching files; `METALRENDERER_ASSETS=<folder>` uses another folder.
 * Virtual geometry:
-  * `METALGI_VG=0` turns it off; `METALGI_VG_TAU=<px>` sets the allowed error.
-  * `METALGI_VG_MODE=clusters` uses the GPU-driven cluster variant (see below), with `METALGI_VG_POOL=<MB>` for its page pool.
-  * `METALGI_VG_SYNC=0|1` forces background or synchronous cut updates; benchmarks run them synchronously.
-  * `METALGI_VG_TEST=<model.glb>` builds a model's DAG, checks its invariants, round-trips the cache file and exits.
-  * `METALGI_BENCH=vgdebug` renders every geometry debug view at the gallery overview and close-up, with virtual geometry and (for triangles, triangle size and cost) full-detail meshes; set `METALGI_BENCH_DIR` for the PNGs.
+  * `METALRENDERER_VG=0` turns it off; `METALRENDERER_VG_TAU=<px>` sets the allowed error.
+  * `METALRENDERER_VG_MODE=clusters` uses the GPU-driven cluster variant (see below), with `METALRENDERER_VG_POOL=<MB>` for its page pool.
+  * `METALRENDERER_VG_SYNC=0|1` forces background or synchronous cut updates; benchmarks run them synchronously.
+  * `METALRENDERER_VG_TEST=<model.glb>` builds a model's DAG, checks its invariants, round-trips the cache file and exits.
+  * `METALRENDERER_BENCH=vgdebug` renders every geometry debug view at the gallery overview and close-up, with virtual geometry and (for triangles, triangle size and cost) full-detail meshes; set `METALRENDERER_BENCH_DIR` for the PNGs.
 * Textures:
-  * `METALGI_TEXTURE_STREAMING=0` loads every texture whole, capped at `METALGI_TEXTURE_SIZE` (default 2048).
-  * `METALGI_TEXTURE_BUDGET=<MB>` sets the streaming heap.
-  * `METALGI_TEXTURE_DEBUG=1` prints each texture's wanted and resident level.
-* `METALGI_SPECULAR=0` turns specular off.
+  * `METALRENDERER_TEXTURE_STREAMING=0` loads every texture whole, capped at `METALRENDERER_TEXTURE_SIZE` (default 2048).
+  * `METALRENDERER_TEXTURE_BUDGET=<MB>` sets the streaming heap.
+  * `METALRENDERER_TEXTURE_DEBUG=1` prints each texture's wanted and resident level.
+* `METALRENDERER_SPECULAR=0` turns specular off.
 
 For the lights:
-* `METALGI_SCENE=spots|sun|area|tubes|emissive|mixed|fog` starts in a light demo scene (`fog` = the Misty hall).
-* `emissivelights=0`, added to `METALGI_SCENE` or set as `METALGI_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
-* `METALGI_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
-* `METALGI_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALGI_LIGHTS_SCENES="sun|mixed"` picks scenes.
-* `METALGI_BENCH=lightcheck` cross-checks the closed-form area lights. A rect, a tube and a sphere light are each rendered over a floor next to an emissive-mesh twin of the same shape and radiance, converged over 1024 frames. The mesh estimator is unbiased, so the pairs should match:
+* `METALRENDERER_SCENE=spots|sun|area|tubes|emissive|mixed|fog` starts in a light demo scene (`fog` = the Misty hall).
+* `emissivelights=0`, added to `METALRENDERER_SCENE` or set as `METALRENDERER_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
+* `METALRENDERER_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
+* `METALRENDERER_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALRENDERER_LIGHTS_SCENES="sun|mixed"` picks scenes.
+* `METALRENDERER_BENCH=lightcheck` cross-checks the closed-form area lights. A rect, a tube and a sphere light are each rendered over a floor next to an emissive-mesh twin of the same shape and radiance, converged over 1024 frames. The mesh estimator is unbiased, so the pairs should match:
   * the sphere matches its twin within 0.1%;
   * the rect within 1%;
   * the tube within 7%, which is the extra light from the capsule twin's end caps.
 
 For the fog:
-* `METALGI_FOG=0` or `1` turns it off or on in every scene's preset.
-* `METALGI_FOG_SET="density=0.03,g=0.6"` overrides its settings. The keys are `on`, `density`, `falloff`, `base`, `g`, `ambient`, `noise`, `tile`, `far`, `volumes` and `reflections`.
-* `METALGI_BENCH=fog` renders each fog scene paused at t = 5 s with surfel GI. It renders fog off, the preset, no local volumes, no fogged reflections, the other GI methods and the scattering view, then moving frames (natively and 3× upscaled).
-* `METALGI_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
-* Both fog modes take `METALGI_LIGHTS_SCENES`.
+* `METALRENDERER_FOG=0` or `1` turns it off or on in every scene's preset.
+* `METALRENDERER_FOG_SET="density=0.03,g=0.6"` overrides its settings. The keys are `on`, `density`, `falloff`, `base`, `g`, `ambient`, `noise`, `tile`, `far`, `volumes` and `reflections`.
+* `METALRENDERER_BENCH=fog` renders each fog scene paused at t = 5 s with surfel GI. It renders fog off, the preset, no local volumes, no fogged reflections, the other GI methods and the scattering view, then moving frames (natively and 3× upscaled).
+* `METALRENDERER_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
+* Both fog modes take `METALRENDERER_LIGHTS_SCENES`.
 
 For the sky:
-* `METALGI_SCENE=valley` starts in the Open valley.
-* `METALGI_SKY=constant`, `atmosphere` or an image path overrides every scene's sky.
-* `METALGI_SKY_SET="coverage=0.5,wind=20"` overrides the clouds. The keys are `clouds`, `coverage`, `density`, `base`, `thickness`, `scale`, `erosion`, `wind`, `winddir`, `shadows`, `strength`, `exposure` and `over` (clouds over an image).
+* `METALRENDERER_SCENE=valley` starts in the Open valley.
+* `METALRENDERER_SKY=constant`, `atmosphere` or an image path overrides every scene's sky.
+* `METALRENDERER_SKY_SET="coverage=0.5,wind=20"` overrides the clouds. The keys are `clouds`, `coverage`, `density`, `base`, `thickness`, `scale`, `erosion`, `wind`, `winddir`, `shadows`, `strength`, `exposure` and `over` (clouds over an image).
 * `Tools/test-assets/make-test-sky.py out.hdr [elevation] [azimuth]` writes a synthetic equirectangular test sky with a sun.
-* `METALGI_BENCH=sky` renders the valley at morning, forenoon, noon, afternoon and evening, from the ground and from the air, plus the sun and mixed scenes. It adds clear-sky, no-cloud-shadow and constant-sky variants, then moving frames. It takes `METALGI_LIGHTS_SCENES`.
-* `METALGI_BENCH=skycheck` renders the valley in the afternoon, with a cloud shadow's edge in view. Each GI method runs against a 4-bounce path-traced reference, for the final image and indirect light, with cloud shadows on and off.
+* `METALRENDERER_BENCH=sky` renders the valley at morning, forenoon, noon, afternoon and evening, from the ground and from the air, plus the sun and mixed scenes. It adds clear-sky, no-cloud-shadow and constant-sky variants, then moving frames. It takes `METALRENDERER_LIGHTS_SCENES`.
+* `METALRENDERER_BENCH=skycheck` renders the valley in the afternoon, with a cloud shadow's edge in view. Each GI method runs against a 4-bounce path-traced reference, for the final image and indirect light, with cloud shadows on and off.
 
-The models in `Assets/` aren't part of the repository (they're 596 MB); put any glTF files there. The caches in `Assets/.metalgi-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
+The models in `Assets/` aren't part of the repository (they're 596 MB); put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
-Use `METALGI_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALGI_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALGI_GI_MODES` picks the methods, for example `pt,pt-lightmaps,surfels,cascades,cascades-hq`. `METALGI_GI` overrides GI settings everywhere, for example `mode=surfels,rays=8` or `mode=cascades,spacing=4,b1=0.25`. `METALGI_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
+Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALRENDERER_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALRENDERER_GI_MODES` picks the methods, for example `pt,pt-lightmaps,surfels,cascades,cascades-hq`. `METALRENDERER_GI` overrides GI settings everywhere, for example `mode=surfels,rays=8` or `mode=cascades,spacing=4,b1=0.25`. `METALRENDERER_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
 
 `Tools/eval/` scores the saved PNGs against reference images committed in `Tools/eval/refs/` (PSNR and flicker; see its README).
 
@@ -261,7 +261,7 @@ A tiling 3D noise texture (three octaves of gradient noise, 64³) drifts with th
 
 **Reflections.** Reflection rays are dimmed by the analytic transmittance. In-scattered light comes from one point at a random distance along the ray, lit by one light sample with one shadow ray; the reflection denoiser removes its noise.
 
-**Accuracy** (`METALGI_BENCH=fogcheck`, against the per-pixel reference). This is direct light only at 960×600. The grid matches the reference except for blur finer than a froxel.
+**Accuracy** (`METALRENDERER_BENCH=fogcheck`, against the per-pixel reference). This is direct light only at 960×600. The grid matches the reference except for blur finer than a froxel.
 
 | Scene | Scattering: mean light | Scattering: PSNR | Final image: mean | Final image: PSNR |
 |---|---|---|---|---|
@@ -388,7 +388,7 @@ The View popup and key 9 cycle six views of what the primary rays hit. They run 
 | Triangle size | Projected edge length in traced pixels: blue ⅛ px, green 1 px, red 8 px and more. Virtual geometry at the default error is mostly green-yellow; full-detail meshes are blue (sub-pixel triangles). |
 | Traversal cost | Node visits plus half the triangle tests of each primary ray, log scale: blue few, red ~500. Custom tracer only; Metal's intersector can't be counted, so the view is magenta. |
 
-With the Metal tracer, the clusters, groups and LOD views are grey, because Metal traces full-detail meshes. The views work in both virtual-geometry runtimes. In `METALGI_VG_MODE=clusters`, cluster colours follow a cluster's place in the page pool, so they change when it is streamed again.
+With the Metal tracer, the clusters, groups and LOD views are grey, because Metal traces full-detail meshes. The views work in both virtual-geometry runtimes. In `METALRENDERER_VG_MODE=clusters`, cluster colours follow a cluster's place in the page pool, so they change when it is streamed again.
 
 ### Denoiser settings
 
@@ -454,7 +454,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `SurfelGI.swift` | Surfel GI: surfel pool, spatial grid, per-frame passes |
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator |
-| `Benchmark.swift` | Benchmark mode (`METALGI_BENCH`) |
+| `Benchmark.swift` | Benchmark mode (`METALRENDERER_BENCH`) |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups and emissive-mesh lights; glTF models and their lights |
 | `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, and the light-check scene the `lightcheck` benchmark renders |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
@@ -466,19 +466,19 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `MeshSimplifier.swift` | Quadric half-edge-collapse simplifier with locked borders and seam-aware attribute handling |
 | `VirtualGeometryBuilder.swift` | The cluster LOD DAG, cluster pages and the cache file format |
 | `VirtualBLAS.swift` | Virtual geometry at run time (default): the cut per instance and a background SAH BLAS over it |
-| `VirtualGeometry.swift` | The GPU-driven variant (`METALGI_VG_MODE=clusters`): GPU cut, page pool and streaming, cluster tree |
+| `VirtualGeometry.swift` | The GPU-driven variant (`METALRENDERER_VG_MODE=clusters`): GPU cut, page pool and streaming, cluster tree |
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders.metal` |
 | `Shaders.metal` | All GPU code |
 
 ## Notes for M1 / M2 Macs
 
-M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, and the ray budget is the main cost here. That is also why this project's own BVH traversal can beat it (see the stress test); on M3 and later, compare the two again with `METALGI_BENCH=rt`:
+M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, and the ray budget is the main cost here. That is also why this project's own BVH traversal can beat it (see the stress test); on M3 and later, compare the two again with `METALRENDERER_BENCH=rt`:
 
 * By default the frame is traced at 0.5× the window size in points and upscaled 3× (1280×800 points → 640×400 traced → 1920×1200). Press `-` or `=` to change the traced resolution, and **U** to change the upscale factor.
 * MetalFX temporal upscaling works on M1. With path-traced GI, the default resolution setting costs about 6.0 ms of GPU time on an M1 Max (custom upscaler), against 43 ms for a native 1920×1200 frame and 11.5 ms for a 960×600 frame stretched to the window. The stretched frame matches or loses to the upscaled one on image quality. If the GPU doesn't support MetalFX, the app renders at 0.75× without upscaling.
 * With radiance-cascade GI (the default), the default frame costs about 2.4–2.8 ms with the custom upscaler (2.5 ms while the camera moves), against 3.0–3.1 ms with MetalFX. Only direct light goes through a denoiser in this mode.
 * **Where the default frame's time goes** (M1 Max, per pass, serialized): upscaler 0.6 ms (0.7 while the camera moves; MetalFX takes 0.7–1.3 ms plus a 0.04 ms copy), trace 0.71, radiance cascades 0.61 (probes 0.07, trace 0.43, SH 0.01, resolve 0.11), shadow denoiser 0.25 (temporal 0.17, 3 filter passes 0.08), light map 0.10, composite 0.05, TLAS refit 0.04.
-* **Shadow denoiser vs SVGF on direct light** (640×400, PSNR against a 4096-frame reference, `METALGI_BENCH=shadow`):
+* **Shadow denoiser vs SVGF on direct light** (640×400, PSNR against a 4096-frame reference, `METALRENDERER_BENCH=shadow`):
 
   | | Static | Contact crop | Flicker | Moving | Camera move | GPU ms |
   |---|---|---|---|---|---|---|
@@ -486,7 +486,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   | Shadow denoiser | **48.9 dB** | **43.0 dB** | 0.15 | **43.9 dB** | **43.1 dB** | **0.25** |
 
   SVGF's long history smears moving shadows, because motion vectors move surfaces, not shadows. The shadow denoiser's clamp fixes that, and filtering visibility rather than colour keeps the shading sharp.
-* **Upscalers** (PSNR against supersampled native 1920×1200 frames, `METALGI_BENCH=upscale`; "pan" = camera move over the frozen scene):
+* **Upscalers** (PSNR against supersampled native 1920×1200 frames, `METALRENDERER_BENCH=upscale`; "pan" = camera move over the frozen scene):
 
   | 3× from 640×400 | Albedo static | Flicker | Albedo moving | Camera move | Pan | Direct static | Direct moving | Pass |
   |---|---|---|---|---|---|---|---|---|
@@ -505,7 +505,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   * **Dilation within about one input pixel.** Taking the closest surface's motion over the whole 3×3 dragged the foreground's motion 4–5 output pixels into the background. That background then fetched stale history and left trails behind edges.
 
   At 2× and 1.5× it still trails MetalFX by up to 0.7 dB in camera moves.
-* **Comparing the GI methods** on an M1 Max, at the default setting (640×400 traced → MetalFX 3× → 1920×1200). PSNR is measured against the 8-bounce path-traced references (higher is better); GPU times are whole frames (`METALGI_BENCH_SPLIT=0`) from short benchmark runs.
+* **Comparing the GI methods** on an M1 Max, at the default setting (640×400 traced → MetalFX 3× → 1920×1200). PSNR is measured against the 8-bounce path-traced references (higher is better); GPU times are whole frames (`METALRENDERER_BENCH_SPLIT=0`) from short benchmark runs.
 
   | GI method | GPU ms | Static | Contact crop | Indirect only | Moving | Camera move | Flicker |
   |---|---|---|---|---|---|---|---|
@@ -519,7 +519,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   * **Surfels** are the most accurate on static scenes and in contact areas.
   * **Radiance cascades** have no temporal accumulation, so they follow moving lights best and barely flicker. Their probes are interpolated across edges, though, which can show as thin light or dark streaks along object edges.
   * All quality columns are measured on 640×400 frames without MetalFX.
-* **Stress test** (M1 Max, radiance cascades and the custom upscaler 3× from 640×400 unless noted; whole-frame GPU ms, best of two `METALGI_BENCH=stress` runs with `METALGI_BENCH_SPLIT=0`). "Before" is one shadow ray per light with the TLAS rebuilt every 256 frames; the next row adds the 16-frame rebuild; "now" adds light sampling with reuse and the lighter spheres. All of these were measured with Metal's acceleration structures, before the custom ray tracer, which takes 1.9–3 ms off the busier rows (see "Custom ray tracing vs Metal's" below):
+* **Stress test** (M1 Max, radiance cascades and the custom upscaler 3× from 640×400 unless noted; whole-frame GPU ms, best of two `METALRENDERER_BENCH=stress` runs with `METALRENDERER_BENCH_SPLIT=0`). "Before" is one shadow ray per light with the TLAS rebuilt every 256 frames; the next row adds the 16-frame rebuild; "now" adds light sampling with reuse and the lighter spheres. All of these were measured with Metal's acceleration structures, before the custom ray tracer, which takes 1.9–3 ms off the busier rows (see "Custom ray tracing vs Metal's" below):
 
   | 400 objects | 1 light | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
   |---|---|---|---|---|---|---|---|---|
@@ -535,7 +535,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   * **The TLAS was degrading.** A refit keeps the tree built for where the objects were, and with 400 objects moving freely, rays got 35% slower over 256 frames of refits. Rebuilding every 16 frames traces as fast as rebuilding every frame, for the refit's median cost.
   * **Shadow rays no longer grow with the light count.** Choosing each pixel's lights still weighs every light, but that's arithmetic, not rays. It runs in its own kernel (`manyLightsKernel`): inside `traceKernel`, whose register use limits occupancy, the same loop cost 4× as much. The remaining growth from 8 to 256 lights is that loop (about 2 ms), the composite's loop over all lights (0.8 ms at 256) and the light maps.
   * **Merging static objects into one acceleration structure didn't help.** Baking every unmoving object into one mesh (one instance instead of one each) made rays about 25% slower: walls and pillars lose their tight, flat instance boxes, which the top-level tree culls cheaply, and their big triangles split badly inside one tree. Merging only the small static clutter was within noise (−0.5 to +0.2 ms over 400–2000 objects), so it isn't used. What did help: the stress scene's small spheres use 320 triangles instead of 1280, which traces 5–6% faster and looks the same at their size.
-  * **Quality** (direct light only, 640×400, PSNR against references that trace every light for 1024 frames, `METALGI_BENCH=stressq`, scored by `Tools/eval/stress.py`):
+  * **Quality** (direct light only, 640×400, PSNR against references that trace every light for 1024 frames, `METALRENDERER_BENCH=stressq`, scored by `Tools/eval/stress.py`):
 
     | | 32 lights static | moving | flicker | 128 lights static | moving | flicker |
     |---|---|---|---|---|---|---|
@@ -569,7 +569,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
 
     The custom upscaler stays sharper and better in motion, but on a still frame full of small objects it flickers three times as much as MetalFX (on the Cornell room it was 0.05). Objects narrower than an input pixel show up only in some jitter phases, so the colour clip, which trusts the current frame, removes them and they pop back later. Turning off the clip's history cut removes the flicker (0.21) but costs 1.2 dB static and 0.9 dB moving; dead zones and a min/max hull test traded the two without winning. MetalFX and FSR 2 protect such pixels with thin-feature "locks", which this upscaler doesn't have yet.
 * **Custom ray tracing vs Metal's** (M1 Max, stress scene, 32 lights, moving, custom upscaler 3× from 640×400).
-  * Whole frames (`METALGI_BENCH_SPLIT=0`, two alternating runs each):
+  * Whole frames (`METALRENDERER_BENCH_SPLIT=0`, two alternating runs each):
 
     | | Metal | Custom |
     |---|---|---|
@@ -577,7 +577,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     | Stress, 400 objects, scene default (surfels) | 10.09 ms | **8.21 ms** |
     | Stress, 2000 objects, radiance cascades | 12.59 ms | **9.60 ms** |
 
-  * Per pass (`METALGI_BENCH=rt`), Metal → custom:
+  * Per pass (`METALRENDERER_BENCH=rt`), Metal → custom:
 
     | Pass | 400 objects | 2000 objects |
     |---|---|---|
@@ -588,7 +588,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     | Light maps | 0.56 → 0.54 ms | 1.05 → 0.99 ms |
     | Top-level tree | 0.07 → 0.08 ms | 0.08 → 0.12 ms |
 
-  * Quality (`METALGI_BENCH=stressq`): every direct-light, GI and upscaler score is within ±0.2 dB of Metal's.
+  * Quality (`METALRENDERER_BENCH=stressq`): every direct-light, GI and upscaler score is within ±0.2 dB of Metal's.
   * Paused frames differ from Metal's by RMS 0.02–0.3 of an 8-bit level. The few larger differences are soft-shadow pixels where an any-hit shadow ray reports a different occluder, which shifts the penumbra estimate.
   * What mattered, in order:
     * **One loop for both levels.** Nesting the per-instance bottom-level loop inside the top-level loop let SIMD lanes in different levels wait on each other. Merging them (entering an instance pushes a marker and switches the ray to object space; popping the marker switches back) almost halved closest-hit cost: path-traced trace 12.97 → 6.73 ms at 400 objects. Before that, the custom tracer was 35% *slower* than Metal on closest hits.
@@ -598,10 +598,10 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     * A smaller stack (32 entries) changed nothing.
     * Bigger leaves (a higher SAH traversal cost) were 2–4% slower.
     * A watertight triangle test (Woop et al.) was 30% slower and changed no image. The upscaled moving frames that differ from Metal's along silhouettes come from depth and motion differing in the last float bits, which the upscaler's depth-edge and clip decisions amplify; native frames match bit for bit.
-    * An SAH-built moving-object tree (`METALGI_RT_BUILD=cpu`) traces only 4–7% faster than the GPU LBVH.
+    * An SAH-built moving-object tree (`METALRENDERER_RT_BUILD=cpu`) traces only 4–7% faster than the GPU LBVH.
 * MetalFX's built-in denoiser (`MTLFXTemporalDenoisedScaler`) also runs on an M1 Max under macOS 27, but it costs 4.2 ms at 640×400 → 1920×1200. That's more than this project's SVGF denoiser plus the temporal scaler it would replace (about 1.5 ms together). On M3 and later, with ray tracing hardware, it may be worth swapping passes 3, 4 and 6 for it.
 
-* **glTF gallery** (11 Tripo models, 17.9M triangles, 67 textures of up to 4096², M1 Max, 640×400; `METALGI_BENCH=gallery`, `Tools/eval/gallery.py`).
+* **glTF gallery** (11 Tripo models, 17.9M triangles, 67 textures of up to 4096², M1 Max, 640×400; `METALRENDERER_BENCH=gallery`, `Tools/eval/gallery.py`).
   * Virtual geometry against full-detail meshes, same scene and custom tracer (GPU ms per frame):
 
     | | Full detail | VG 1 px | VG 2 px |
@@ -617,7 +617,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   * PBR against the path-traced references (close-up, full detail): 32.4 dB with surfel GI, 30.7 dB with cascades, 31.1 dB path traced. Average colour per region matches within 0.5% on the glossy floor, 1–3% on the steel plinths, about 5% on the bronze owl. The reflection pass costs 0.4 ms on a still frame and 0.6–1.0 ms in motion.
   * Texture streaming: 14 MB resident from the overview and 46–65 MB close up, against 2.6 GB for all levels (or 711 MB capped at 2048). Images match fully resident 4K textures at 56–77 dB. Uploads are capped at 48 MB per frame.
   * What mattered:
-    * **One SAH tree per model over the cut, not a tree of clusters.** The first runtime selected the cut on the GPU, streamed cluster groups into a 768 MB pool (buddy allocator, LRU, Nanite's residency rules) and built a per-frame LBVH over the selected clusters, each with its own little BVH. It works (`METALGI_VG_MODE=clusters`) but traces 2× slower than full detail. Rays visit 8.6 nodes per ray inside models instead of 3.8, because cluster boxes overlap. Splitting the tree per instance to drop the per-cluster transform changed nothing, and an offline SAH over the same clusters would only save 15%.
+    * **One SAH tree per model over the cut, not a tree of clusters.** The first runtime selected the cut on the GPU, streamed cluster groups into a 768 MB pool (buddy allocator, LRU, Nanite's residency rules) and built a per-frame LBVH over the selected clusters, each with its own little BVH. It works (`METALRENDERER_VG_MODE=clusters`) but traces 2× slower than full detail. Rays visit 8.6 nodes per ray inside models instead of 3.8, because cluster boxes overlap. Splitting the tree per instance to drop the per-cluster transform changed nothing, and an offline SAH over the same clusters would only save 15%.
     * **Simplification that keeps going:** locking only group borders (not the mesh's own open edges), letting seam and border vertices slide along their seams, a relaxed pass across UV seams for fragmented Tripo atlases when the strict one gets stuck, passing stuck groups up a level, and filling clusters spatially. That took the DAG from 883 root groups per model (full-detail fragments, always drawn) to one 366-triangle root, and the cut from 62k clusters to 3.9k.
     * **Texture levels from the largest UV stretch** (as GPUs do) and a histogram instead of a minimum: UV slivers and close self-reflections had asked for 4K mips of models 100 px tall (600 MB resident instead of 14).
   * In close-ups, Metal's intersector on the full-detail meshes is about 12% faster than this tracer with virtual geometry (11.1 vs 13.7 ms); from the overview, and in the stress scene, the custom tracer is faster.

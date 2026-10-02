@@ -1,4 +1,4 @@
-"""usage: gi.py <run-dir> ... — scores METALGI_BENCH=gi (Cornell, every GI method) against the 8-bounce references in refs/gi/."""
+"""usage: gi.py <run-dir> ... — scores METALRENDERER_BENCH=gi (Cornell, every GI method) against the 8-bounce references in refs/gi/."""
 import glob, os, sys
 from evalcommon import *
 

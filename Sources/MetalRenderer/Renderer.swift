@@ -364,7 +364,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         if let benchmark {
             applyBenchmarkConfig(benchmark.current)
-        } else if ProcessInfo.processInfo.environment["METALGI_SCENE"] != nil {
+        } else if ProcessInfo.processInfo.environment["METALRENDERER_SCENE"] != nil {
             // Starting scene: loads in the background like a switch in the panel.
             var s = settings
             Benchmark.applySceneOverride(to: &s.scene)
@@ -386,7 +386,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let source = try String(contentsOf: shaderURL, encoding: .utf8)
             let options = MTLCompileOptions()
             // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
-            // 3.0 and then need METALGI_RT=metal.
+            // 3.0 and then need METALRENDERER_RT=metal.
             if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
             options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
                                           "RT_STATS": NSNumber(value: CustomRayTracer.statsEnabled ? 1 : 0)]
@@ -1124,7 +1124,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         u.flags = (historyValid ? UniformFlags.historyValid : 0) | (settings.denoiser.enabled ? UniformFlags.denoise : 0)
         if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
         if usesSpecular { u.flags |= UniformFlags.specular }
-        // References trace every light (lower variance per frame); METALGI_LIGHTS=all does it everywhere (baseline).
+        // References trace every light (lower variance per frame); METALRENDERER_LIGHTS=all does it everywhere (baseline).
         if accumulating || Renderer.allLights { u.flags |= UniformFlags.allLights }
         if settings.lightMaps && activeGIMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
         u.viewMode = UInt32(settings.viewMode)
@@ -1256,7 +1256,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // Radiance cascades and the direct-light denoiser don't touch each other's textures (unless the denoiser also
         // filters the cascades' output), so their dispatches can overlap on the GPU: the shared encoder is then
         // concurrent, with explicit barriers between dependent stages. Benchmark per-pass timing keeps everything serial,
-        // and METALGI_OVERLAP=0 turns overlapping off for A/B timing.
+        // and METALRENDERER_OVERLAP=0 turns overlapping off for A/B timing.
         let splitPasses = benchmark != nil && Benchmark.splitPasses
         let overlap = !splitPasses && Renderer.overlapEnabled && settings.giEnabled && activeGIMode == .radianceCascades
             && !settings.cascades.denoiseIndirect
@@ -1681,7 +1681,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
             print("  " + ts.summary)
-            if ProcessInfo.processInfo.environment["METALGI_TEXTURE_DEBUG"] != nil { print(ts.details) }
+            if ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_DEBUG"] != nil { print(ts.details) }
         }
         if let benchmark, benchmark.isMeasuring, CustomRayTracer.statsEnabled, let customRT {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
@@ -1707,7 +1707,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     start = min(start, p.cmd.gpuStartTime)
                     end = max(end, p.cmd.gpuEndTime)
                 }
-                if passes.isEmpty {   // METALGI_BENCH_SPLIT=0: the whole frame is one command buffer, as in normal mode
+                if passes.isEmpty {   // METALRENDERER_BENCH_SPLIT=0: the whole frame is one command buffer, as in normal mode
                     passMs["frame"] = (cb.gpuEndTime - cb.gpuStartTime) * 1000
                     start = cb.gpuStartTime
                     end = cb.gpuEndTime
@@ -1916,18 +1916,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// sRGB, so shaders and MetalFX write linear color and the GPU encodes it.
     static let drawableFormat = MTLPixelFormat.bgra8Unorm_srgb
-    private static let shadowDenoiserAllowed = ProcessInfo.processInfo.environment["METALGI_SHADOWS"] != "0"
-    private static let allLights = ProcessInfo.processInfo.environment["METALGI_LIGHTS"] == "all"
-    private static let overlapEnabled = ProcessInfo.processInfo.environment["METALGI_OVERLAP"] != "0"
-    /// Frames between full TLAS rebuilds (refits in between). `METALGI_TLAS=1` rebuilds every frame.
-    private static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALGI_TLAS"] ?? "") ?? 16)
+    private static let shadowDenoiserAllowed = ProcessInfo.processInfo.environment["METALRENDERER_SHADOWS"] != "0"
+    private static let allLights = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS"] == "all"
+    private static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
+    /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
+    private static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
 
-    /// Threadgroup size per kernel name (8x8 if not listed). `METALGI_TG="trace=16x8,atrous=32x4"` overrides it for sweeps.
+    /// Threadgroup size per kernel name (8x8 if not listed). `METALRENDERER_TG="trace=16x8,atrous=32x4"` overrides it for sweeps.
     /// Measured on an M1 Max: trace 16x8 is ~2% faster than 8x8, atrous 16x16 ~5%; others don't care.
     private static let threadgroupSizes: [String: MTLSize] = {
         var sizes: [String: MTLSize] = ["trace": MTLSize(width: 16, height: 8, depth: 1),
                                         "atrous": MTLSize(width: 16, height: 16, depth: 1)]
-        for item in (ProcessInfo.processInfo.environment["METALGI_TG"] ?? "").split(separator: ",") {
+        for item in (ProcessInfo.processInfo.environment["METALRENDERER_TG"] ?? "").split(separator: ",") {
             let kv = item.split(separator: "="), wh = kv.count == 2 ? kv[1].split(separator: "x").compactMap { Int($0) } : []
             if wh.count == 2 { sizes[String(kv[0])] = MTLSize(width: wh[0], height: wh[1], depth: 1) }
         }
@@ -1963,7 +1963,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         if let ts = textureStreamer { sceneName += String(format: " — textures %.0f MB", ts.stats.residentMB) }
         if frozenLOD != nil && scene.usesVirtualGeometry { sceneName += " — LOD frozen" }
-        view?.window?.title = String(format: "MetalGI%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
+        view?.window?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
                                      sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
                                      RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")

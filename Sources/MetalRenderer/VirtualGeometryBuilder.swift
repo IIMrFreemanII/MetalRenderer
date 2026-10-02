@@ -304,7 +304,7 @@ enum VirtualGeometryBuilder {
         return mesh
     }
 
-    /// DAG invariants the cut relies on (METALGI_VG_CHECK=1). Returns a list of problems (empty = fine).
+    /// DAG invariants the cut relies on (METALRENDERER_VG_CHECK=1). Returns a list of problems (empty = fine).
     static func check(_ mesh: VirtualMesh) -> [String] {
         var problems: [String] = []
         func contains(_ outer: SIMD4<Float>, _ inner: SIMD4<Float>) -> Bool {
@@ -350,19 +350,19 @@ enum VirtualGeometryBuilder {
     private static let magic: UInt32 = 0x3156_474D   // "MGV1"
     static let version: UInt32 = 4
 
-    /// Cache file for `model` (by name, size and modification time): next to it in `.metalgi-cache/`, or in
-    /// ~/Library/Caches/MetalGI if that isn't writable.
+    /// Cache file for `model` (by name, size and modification time): next to it in `.metalrenderer-cache/`, or in
+    /// ~/Library/Caches/MetalRenderer if that isn't writable.
     static func cacheURL(for model: URL) -> URL {
         let attrs = (try? FileManager.default.attributesOfItem(atPath: model.path)) ?? [:]
         let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
         let mtime = Int((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
         let name = "\(model.deletingPathExtension().lastPathComponent)-\(size)-\(mtime)-v\(version).mgv"
-        let local = model.deletingLastPathComponent().appendingPathComponent(".metalgi-cache")
+        let local = model.deletingLastPathComponent().appendingPathComponent(".metalrenderer-cache")
         if (try? FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)) != nil,
            FileManager.default.isWritableFile(atPath: local.path) {
             return local.appendingPathComponent(name)
         }
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MetalGI")
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MetalRenderer")
         try? FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
         return caches.appendingPathComponent(name)
     }

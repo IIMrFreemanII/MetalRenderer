@@ -45,7 +45,7 @@ struct Quadric {
 ///   that keep seams in place. The returned error is the square root of the largest cost accepted: an object-space
 ///   distance, the LOD DAG's error metric.
 enum MeshSimplifier {
-    static let debugStuck = ProcessInfo.processInfo.environment["METALGI_VG_DEBUG"] != nil
+    static let debugStuck = ProcessInfo.processInfo.environment["METALRENDERER_VG_DEBUG"] != nil
     /// `locked(posId)`: positions shared with other groups (the group border), which must not move.
     /// `relaxed`: also move vertices where UV charts meet (more than one seam), mapping each UV copy to the target's
     /// nearest one: textures may stretch a little, so the builder only uses it when the strict pass gets stuck,

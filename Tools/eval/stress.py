@@ -1,4 +1,4 @@
-"""usage: stress.py <run-dir> ... — scores METALGI_BENCH=stressq (stress scene, 640x400) against refs/stress/."""
+"""usage: stress.py <run-dir> ... — scores METALRENDERER_BENCH=stressq (stress scene, 640x400) against refs/stress/."""
 import os, sys
 from evalcommon import *
 

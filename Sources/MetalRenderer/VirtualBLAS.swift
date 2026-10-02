@@ -6,7 +6,7 @@ import simd
 /// CPU, and every instance whose cut changed gets a fresh SAH BLAS over exactly the cut's triangles, built in the
 /// background from the memory-mapped cache (the OS streams the pages it touches from disk). Rays then traverse one
 /// tight tree per model, which the custom tracer walks like any other instance, instead of a tree of overlapping
-/// clusters (VirtualGeometry, METALGI_VG_MODE=clusters: 2.3x the node visits inside models).
+/// clusters (VirtualGeometry, METALRENDERER_VG_MODE=clusters: 2.3x the node visits inside models).
 ///
 /// GPU memory holds only the current cuts: about one triangle per traced pixel at the default error of 1 px.
 final class VirtualBLAS {
@@ -29,7 +29,7 @@ final class VirtualBLAS {
     private var tables: [MTLBuffer] = []                 // per slot: Entry per VG instance
     private var current: [(buffer: MTLBuffer?, entry: Entry, selection: [UInt32])]
     private var retired: [(MTLBuffer, UInt32)] = []      // freed once the GPU is past that frame
-    private let worker = DispatchQueue(label: "metalgi.vg.blas", qos: .userInitiated)
+    private let worker = DispatchQueue(label: "metalrenderer.vg.blas", qos: .userInitiated)
     private let lock = NSLock()
     private var busy = false
     private var finished: [(index: Int, buffer: MTLBuffer?, entry: Entry, selection: [UInt32])] = []

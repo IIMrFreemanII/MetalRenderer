@@ -1,4 +1,4 @@
-"""usage: upscale.py <run-dir> ... — scores METALGI_BENCH=upscale against the supersampled 1920x1200 references in refs/upscale/."""
+"""usage: upscale.py <run-dir> ... — scores METALRENDERER_BENCH=upscale against the supersampled 1920x1200 references in refs/upscale/."""
 import os, sys
 from evalcommon import *
 

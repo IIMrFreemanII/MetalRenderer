@@ -60,10 +60,10 @@ struct BuddyAllocator {
 final class VirtualGeometry {
     static let capacity = 65536          // most clusters selected per frame (the cluster tree's leaves)
     static let requestCapacity = 4096
-    /// Streaming and LOD updates on the calling thread (deterministic): benchmarks, or METALGI_VG_SYNC=1; =0 forces the
+    /// Streaming and LOD updates on the calling thread (deterministic): benchmarks, or METALRENDERER_VG_SYNC=1; =0 forces the
     /// background path even in benchmarks.
     static let sync: Bool = {
-        let env = ProcessInfo.processInfo.environment["METALGI_VG_SYNC"]
+        let env = ProcessInfo.processInfo.environment["METALRENDERER_VG_SYNC"]
         return env == "1" || (Benchmark.isEnabled && env != "0")
     }()
 
@@ -105,7 +105,7 @@ final class VirtualGeometry {
     private var pendingRequests: [Int: Float] = [:]    // group -> priority (projected error)
     private var loaded: [Int] = []                     // groups whose pages finished copying, in load order
     private var deferredFrees: [(offset: Int, order: Int, frame: UInt32)] = []
-    private let copyQueue = DispatchQueue(label: "metalgi.vg.copy", qos: .userInitiated)
+    private let copyQueue = DispatchQueue(label: "metalrenderer.vg.copy", qos: .userInitiated)
     private var completedFrame: UInt32 = 0
     private(set) var stats = (selected: 0, overflow: false, residentGroups: 0, pending: 0, loadedThisFrame: 0)
     var bytesPerFrame = 32 << 20

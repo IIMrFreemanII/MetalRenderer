@@ -5,7 +5,7 @@ import Metal
 /// Streams material textures at full resolution under a memory budget.
 ///
 /// * On first load, every image of a model is decoded at full size, mipmapped on the GPU and written with its whole mip
-///   chain to a cache file next to the model (`.metalgi-cache/<model>-<size>-<mtime>-t1.mgt`), read back memory-mapped.
+///   chain to a cache file next to the model (`.metalrenderer-cache/<model>-<size>-<mtime>-t1.mgt`), read back memory-mapped.
 /// * Textures are sparse (allocated in a sparse heap the size of the budget): at first only their small mips (up to
 ///   `residentBaseSize` pixels, and the packed mip tail) are mapped and uploaded.
 /// * Every frame the shaders record, per texture, the finest mip level primary and sharp reflection hits sampled
@@ -13,7 +13,7 @@ import Metal
 ///   within a per-frame upload budget, and when the heap is full unmaps the finest levels of textures nobody needed
 ///   lately. Shaders clamp the level to what's resident (`minLod`, per frame slot), so a missing level is only blur.
 final class TextureStreamer {
-    static let enabled = ProcessInfo.processInfo.environment["METALGI_TEXTURE_STREAMING"] != "0"
+    static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_STREAMING"] != "0"
     static let residentBaseSize = 128             // levels at most this big are always resident
     private static let magic: UInt32 = 0x3154_474D   // "MGT1"
 

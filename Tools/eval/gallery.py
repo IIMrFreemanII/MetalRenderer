@@ -1,4 +1,4 @@
-"""usage: gallery.py <run-dir> ... — scores METALGI_BENCH=gallery (glTF models, PBR, virtual geometry) against the
+"""usage: gallery.py <run-dir> ... — scores METALRENDERER_BENCH=gallery (glTF models, PBR, virtual geometry) against the
 path-traced references in refs/gallery/ (full BRDF, full-detail meshes, 4 bounces, 1024 frames)."""
 import os, sys
 from evalcommon import *

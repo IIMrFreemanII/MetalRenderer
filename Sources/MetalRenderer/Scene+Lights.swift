@@ -74,7 +74,7 @@ extension Scene {
 
     // MARK: - Light check
 
-    /// Benchmark scene (METALGI_BENCH=lightcheck): a floor, a box, and one light — "rect", "tube" or "sphere" — or,
+    /// Benchmark scene (METALRENDERER_BENCH=lightcheck): a floor, a box, and one light — "rect", "tube" or "sphere" — or,
     /// with a "-mesh" suffix, an emissive mesh of the same shape and radiance, sampled as a mesh light. The mesh
     /// estimator is unbiased, so converged images of the two check the analytic light's closed form.
     func buildLightCheck(_ check: String) {

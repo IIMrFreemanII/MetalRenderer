@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "MetalGI",
+    name: "MetalRenderer",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "MetalGI",
-            path: "Sources/MetalGI",
+            name: "MetalRenderer",
+            path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process this file.
             exclude: ["Shaders.metal"]

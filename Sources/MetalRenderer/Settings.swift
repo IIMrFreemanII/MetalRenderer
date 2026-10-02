@@ -7,7 +7,7 @@ extension ClosedRange {
 
 /// SVGF denoiser parameters. All but the pass counts and `separateSignals` reach the shaders through `Uniforms.denoise`.
 ///
-/// Defaults were tuned with `METALGI_BENCH=denoise` against converged reference images. Compared with the original
+/// Defaults were tuned with `METALRENDERER_BENCH=denoise` against converged reference images. Compared with the original
 /// settings (5 passes, sigma 4, 32 frames, combined signal) they gain about 3 dB on static scenes and 4.7 dB on
 /// moving ones, for ~0.4 ms more GPU time at 640x400 and slightly more frame-to-frame flicker.
 struct DenoiserSettings: Equatable {
@@ -148,8 +148,8 @@ enum RayTracerKind: Int, CaseIterable {
         }
     }
 
-    /// `METALGI_RT=metal|custom` picks the starting tracer (benchmarks: for every setting).
-    static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALGI_RT"] == "metal" ? .metal : .custom
+    /// `METALRENDERER_RT=metal|custom` picks the starting tracer (benchmarks: for every setting).
+    static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALRENDERER_RT"] == "metal" ? .metal : .custom
 }
 
 /// A glTF model the user opened or dropped into the scene.
@@ -167,8 +167,8 @@ struct SceneSettings: Equatable {
     var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
     /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
     /// Off: they only light what GI rays happen to hit, as before.
-    var emissiveLights = ProcessInfo.processInfo.environment["METALGI_EMISSIVE_LIGHTS"] != "0"
-    /// Benchmarks only (METALGI_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
+    var emissiveLights = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0"
+    /// Benchmarks only (METALRENDERER_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
     var lightCheck: String? = nil
 
     static let objectRange = 0...2000
@@ -177,9 +177,9 @@ struct SceneSettings: Equatable {
 
 /// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
 struct VirtualGeometrySettings: Equatable {
-    var enabled = ProcessInfo.processInfo.environment["METALGI_VG"] != "0"
-    var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALGI_VG_TAU"] ?? "") ?? 1   // traced pixels
-    var poolMB = Int(ProcessInfo.processInfo.environment["METALGI_VG_POOL"] ?? "") ?? 768
+    var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
+    var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
+    var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     var freeze = false
@@ -212,8 +212,8 @@ struct FogSettings: Equatable {
     static let noiseRange: ClosedRange<Float> = 0...1
     static let distanceRange: ClosedRange<Float> = 10...150
     static let slices = 64              // froxel depth slices (the grid is 8x8 traced pixels per froxel)
-    /// `METALGI_FOG=0/1` turns fog off or on in every preset.
-    static let override: Bool? = ProcessInfo.processInfo.environment["METALGI_FOG"].map { $0 != "0" }
+    /// `METALRENDERER_FOG=0/1` turns fog off or on in every preset.
+    static let override: Bool? = ProcessInfo.processInfo.environment["METALRENDERER_FOG"].map { $0 != "0" }
 
     /// The fog that suits scene `kind`: off in the Cornell room, stress test, gallery and studio.
     static func preset(for kind: SceneKind) -> FogSettings {
@@ -283,8 +283,8 @@ struct SkySettings: Equatable {
     static let windRange: ClosedRange<Float> = 0...40
     static let mapSize = 1024           // sky texture side, per hemisphere
     static let shadowMapSize = 256
-    /// `METALGI_SKY=constant|atmosphere|<image path>` overrides every preset's mode.
-    static let override: String? = ProcessInfo.processInfo.environment["METALGI_SKY"]
+    /// `METALRENDERER_SKY=constant|atmosphere|<image path>` overrides every preset's mode.
+    static let override: String? = ProcessInfo.processInfo.environment["METALRENDERER_SKY"]
 
     /// The sky that suits scene `kind`: the atmosphere for the outdoor and window-lit scenes, a constant colour inside.
     static func preset(for kind: SceneKind) -> SkySettings {
@@ -334,8 +334,8 @@ struct RenderSettings: Equatable {
     var scene = SceneSettings()
     var rayTracer = RayTracerKind.initial
     var virtualGeometry = VirtualGeometrySettings()
-    var specular = ProcessInfo.processInfo.environment["METALGI_SPECULAR"] != "0"   // GGX specular for glTF materials
-    var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALGI_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
+    var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
+    var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
     var fog = FogSettings.preset(for: .cornell)
     var sky = SkySettings.preset(for: .cornell)
 

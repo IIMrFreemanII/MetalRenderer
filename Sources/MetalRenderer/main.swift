@@ -23,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           styleMask: [.titled, .closable, .resizable, .miniaturizable],
                           backing: .buffered,
                           defer: false)
-        window.title = "MetalGI"
+        window.title = "MetalRenderer"
         window.center()
 
         let view = RenderView(frame: rect, device: device)
@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         print("""
-        MetalGI controls
+        MetalRenderer controls
           Drag mouse   look around          W A S D / Q E   move (hold Shift = faster)
           Space        pause animation      G               toggle global illumination
           B            toggle blue-noise sampling   M   GI method: path traced, surfels, radiance cascades
@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Render Settings…", action: #selector(toggleSettings(_:)), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit MetalGI",
+        appMenu.addItem(withTitle: "Quit MetalRenderer",
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -99,14 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// `METALGI_VG_TEST=<model.glb>`: builds the model's virtual geometry, checks the DAG, round-trips the cache file
+/// `METALRENDERER_VG_TEST=<model.glb>`: builds the model's virtual geometry, checks the DAG, round-trips the cache file
 /// and exits (no window).
-if let path = ProcessInfo.processInfo.environment["METALGI_VG_TEST"] {
+if let path = ProcessInfo.processInfo.environment["METALRENDERER_VG_TEST"] {
     let url = URL(fileURLWithPath: path)
     do {
         let model = try GLTFLoader.load(url)
         var built: [(index: Int, mesh: VirtualMesh)] = []
-        for (i, m) in model.meshes.enumerated() where m.indices.count / 3 >= (Int(ProcessInfo.processInfo.environment["METALGI_VG_MIN"] ?? "") ?? VirtualGeometryBuilder.minTriangles) {
+        for (i, m) in model.meshes.enumerated() where m.indices.count / 3 >= (Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_MIN"] ?? "") ?? VirtualGeometryBuilder.minTriangles) {
             let mesh = VirtualGeometryBuilder.build(positions: m.positions, normals: m.normals, uvs: m.uvs, indices: m.indices,
                                                     name: "\(model.name)#\(i)")
             let problems = VirtualGeometryBuilder.check(mesh)
