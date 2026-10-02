@@ -64,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    func applicationWillTerminate(_ notification: Notification) { SettingsStore.flush() }
+
     /// File > Open…: glTF models, placed in front of the camera, or an HDR environment image for the sky.
     @objc private func openModels(_ sender: Any?) {
         let panel = NSOpenPanel()

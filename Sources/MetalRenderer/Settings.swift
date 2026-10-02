@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import simd
 
 extension ClosedRange {
     func clamp(_ value: Bound) -> Bound { Swift.min(Swift.max(value, lowerBound), upperBound) }
@@ -10,7 +11,7 @@ extension ClosedRange {
 /// Defaults were tuned with `METALRENDERER_BENCH=denoise` against converged reference images. Compared with the original
 /// settings (5 passes, sigma 4, 32 frames, combined signal) they gain about 3 dB on static scenes and 4.7 dB on
 /// moving ones, for ~0.4 ms more GPU time at 640x400 and slightly more frame-to-frame flicker.
-struct DenoiserSettings: Equatable {
+struct DenoiserSettings: Equatable, Codable {
     var enabled = true
     var atrousPasses = 4            // 1...5 wavelet passes with step sizes 1, 2, 4, 8, 16 (fewer = sharper, noisier)
     var techniquePasses = 2         // the same with cascade GI, where only direct light is filtered: it is
@@ -34,10 +35,13 @@ struct DenoiserSettings: Equatable {
     static let luminanceSigmaRange: ClosedRange<Float> = 0.25...8
     static let maxHistoryRange: ClosedRange<Float> = 2...64
     static let antiLagRange: ClosedRange<Float> = 0...4
+    static let shadowClampRange: ClosedRange<Float> = 0.05...2
+    static let shadowSigmaRange: ClosedRange<Float> = 0.5...8
+    static let varianceBoostRange: ClosedRange<Float> = 1...8   // ReSTIR's denoiser inputs (RestirSettings, RestirGISettings)
 }
 
 /// How direct light from the lights is computed.
-enum DirectLightMode: Int, CaseIterable {
+enum DirectLightMode: Int, CaseIterable, Codable {
     case auto       // ReSTIR with many lights (Scene.lightTableThreshold, 256), otherwise grouped (exact up to 4)
     case exact      // one shadow ray per light (cost grows with the light count; references)
     case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
@@ -62,7 +66,7 @@ enum DirectLightMode: Int, CaseIterable {
 
 /// ReSTIR DI (Shaders.metal "ReSTIR DI"): reservoir resampling of light samples, so a pixel's cost doesn't depend on the
 /// light count. Defaults from METALRENDERER_BENCH=restirq.
-struct RestirSettings: Equatable {
+struct RestirSettings: Equatable, Codable {
     var candidates = 8              // initial candidates per pixel from the light table (plus one per sun)
     var chains = 4                  // independent reservoirs per pixel, one shadow ray each (4 = the grouped path's rays)
     var temporal = true             // reuse last frame's reservoir (reprojected)
@@ -88,7 +92,7 @@ struct RestirSettings: Equatable {
 }
 
 /// Which temporal upscaler turns the traced resolution into the output resolution (when upscaling is on).
-enum UpscalerKind: Int, CaseIterable {
+enum UpscalerKind: Int, CaseIterable, Codable {
     case metalFX            // MetalFX temporal scaler
     case metalFXSpatial     // MetalFX spatial scaler: cheaper, but no temporal anti-aliasing (jitter off)
     case custom             // this project's TAAU pass (taauKernel), the default
@@ -103,7 +107,7 @@ enum UpscalerKind: Int, CaseIterable {
 }
 
 /// Tuning for the custom upscaler.
-struct UpscalerSettings: Equatable {
+struct UpscalerSettings: Equatable, Codable {
     var maxHistory: Float = 12      // max accumulated sample weight (~frames): higher = smoother, more lag
     var clipWidth: Float = 1.5      // history colour box, in standard deviations of the 3x3 input neighbourhood
     var motionCut: Float = 1        // history weight / (1 + motionCut * motion in output pixels), at 3x (scaled for others)
@@ -114,10 +118,36 @@ struct UpscalerSettings: Equatable {
     var dilationRadius: Float = 1.17   // across depth edges: closest surface among samples this close (input px); 0 = 3x3
     var lanczosHistory = true       // resample a moving history with Lanczos-3 (much less blur than Catmull-Rom)...
     var lanczosThreshold: Float = 0.03   // ...where the input neighbourhood's colour deviation exceeds this (edges, detail)
+
+    static let maxHistoryRange: ClosedRange<Float> = 2...32
+    static let clipWidthRange: ClosedRange<Float> = 0.5...4
+    static let motionCutRange: ClosedRange<Float> = 0...8
+    static let edgeMotionCutRange: ClosedRange<Float> = 0...32
+    static let clipCutRange: ClosedRange<Float> = 0...64
+    static let sharpnessRange: ClosedRange<Float> = 0.5...8
+    static let dilationRange: ClosedRange<Float> = 0...2
+    static let lanczosThresholdRange: ClosedRange<Float> = 0...0.2
+}
+
+/// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
+enum ToneMap: Int, CaseIterable, Codable {
+    case aces       // Narkowicz's ACES fit: contrasty, saturated highlights shift toward white
+    case agx        // AgX (Troy Sobotka), polynomial fit: softer, keeps bright saturated lights from going flat
+    case reinhard   // luminance Reinhard: gentle, keeps hue
+    case none       // clamp: linear up to 1
+
+    var title: String {
+        switch self {
+        case .aces: return "ACES"
+        case .agx: return "AgX"
+        case .reinhard: return "Reinhard"
+        case .none: return "None (clamp)"
+        }
+    }
 }
 
 /// How indirect light (global illumination) is computed.
-enum GIMode: Int, CaseIterable {
+enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
     case restirGI           // ReSTIR GI: per-pixel paths whose first bounce is reused over time and space, + SVGF
@@ -133,7 +163,7 @@ enum GIMode: Int, CaseIterable {
 
 /// ReSTIR GI (Shaders.metal "ReSTIR GI"): one path per pixel (or per 2x2 block) whose first bounce is resampled over
 /// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
-struct RestirGISettings: Equatable {
+struct RestirGISettings: Equatable, Codable {
     var quarterBudget = false       // one fresh path per 2x2 block per frame (a rotating pixel): 4x cheaper paths, but
                                     // pixels that lost their history wait up to 4 frames (-5 to -15 dB in motion), so off
     var bounces = 2                 // path length (the first bounce is the reused sample)
@@ -164,10 +194,11 @@ struct RestirGISettings: Equatable {
     static let spatialPassRange = 0...2
     static let spatialSampleRange = 1...8
     static let radiusRange: ClosedRange<Float> = 4...64
+    static let minDistanceRange: ClosedRange<Float> = 0.001...0.2
 }
 
 /// Radiance cascades parameters.
-struct CascadeSettings: Equatable {
+struct CascadeSettings: Equatable, Codable {
     var probeSpacing = 8            // cascade-0 probe spacing in traced pixels (4 or 8)
     var cascades = 4
     var firstInterval: Float = 0.4  // cascade-0 ray length in meters; each cascade's interval is 4x longer
@@ -180,7 +211,7 @@ struct CascadeSettings: Equatable {
 }
 
 /// Which scene is loaded.
-enum SceneKind: Int, CaseIterable {
+enum SceneKind: Int, CaseIterable, Codable {
     case cornell            // small Cornell-style room: 5 objects (2 moving), 3 moving lights
     case stress             // stress test: a hall with `objects` (mostly moving) objects and `lights` moving lights
     case gallery            // the glTF models in Assets/ on plinths, 8 moving lights
@@ -213,10 +244,12 @@ enum SceneKind: Int, CaseIterable {
 
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
+    /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s), or nil.
+    var dayCycle: Float? { self == .sun ? 60 : self == .valley ? 180 : nil }
 }
 
 /// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
-enum RayTracerKind: Int, CaseIterable {
+enum RayTracerKind: Int, CaseIterable, Codable {
     case custom             // this project's BVHs: per-mesh BLAS + static TLAS (CPU, once) + dynamic TLAS (every frame)
     case metal              // Metal's acceleration structures and intersector
 
@@ -232,14 +265,14 @@ enum RayTracerKind: Int, CaseIterable {
 }
 
 /// A glTF model the user opened or dropped into the scene.
-struct ExtraModel: Equatable {
+struct ExtraModel: Equatable, Codable {
     var path: String
     var position: SIMD3<Float>
     var yaw: Float
 }
 
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
-struct SceneSettings: Equatable {
+struct SceneSettings: Equatable, Codable {
     var kind = SceneKind.cornell
     var objects = 400
     var lights = 32
@@ -256,7 +289,7 @@ struct SceneSettings: Equatable {
 }
 
 /// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
-struct VirtualGeometrySettings: Equatable {
+struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
@@ -270,7 +303,7 @@ struct VirtualGeometrySettings: Equatable {
 
 /// Volumetric fog (Shaders.metal "Volumetric fog"): exponential height fog with drifting noise, plus the scene's
 /// local fog volumes. Each scene kind has a preset (`preset(for:)`); the volumes themselves come with the scene.
-struct FogSettings: Equatable {
+struct FogSettings: Equatable, Codable {
     var enabled = false
     var density: Float = 0.02           // height fog's extinction at and below its base height (1/m); 0 = volumes only
     var heightFalloff: Float = 0.1      // per metre above the base height (0 = the same density everywhere)
@@ -291,6 +324,19 @@ struct FogSettings: Equatable {
     static let ambientRange: ClosedRange<Float> = 0...4
     static let noiseRange: ClosedRange<Float> = 0...1
     static let distanceRange: ClosedRange<Float> = 10...150
+    static let baseHeightRange: ClosedRange<Float> = -10...20
+    static let noiseScaleRange: ClosedRange<Float> = 1...30
+    static let windSpeedRange: ClosedRange<Float> = 0...3
+
+    /// The wind's horizontal speed and heading (degrees from +x toward +z), for the panel; its vertical part stays.
+    var windSpeed: Float {
+        get { simd_length(SIMD2(wind.x, wind.z)) }
+        set { let a = windDirection * .pi / 180; wind.x = newValue * cos(a); wind.z = newValue * sin(a) }
+    }
+    var windDirection: Float {
+        get { atan2(wind.z, wind.x) * 180 / .pi }
+        set { let v = windSpeed, a = newValue * .pi / 180; wind.x = v * cos(a); wind.z = v * sin(a) }
+    }
     static let slices = 64              // froxel depth slices (the grid is 8x8 traced pixels per froxel)
     /// `METALRENDERER_FOG=0/1` turns fog off or on in every preset.
     static let override: Bool? = ProcessInfo.processInfo.environment["METALRENDERER_FOG"].map { $0 != "0" }
@@ -327,7 +373,7 @@ struct FogSettings: Equatable {
 }
 
 /// Where the sky comes from (Shaders.metal "Sky and clouds").
-enum SkyMode: Int, CaseIterable {
+enum SkyMode: Int, CaseIterable, Codable {
     case constant           // one colour (the scene's), as indoor scenes use
     case atmosphere         // physically based atmosphere; the sun light's colour follows it
     case image              // an HDR environment image (.hdr, .exr); its sun drives the sun light
@@ -342,7 +388,7 @@ enum SkyMode: Int, CaseIterable {
 }
 
 /// The sky and its clouds. Each scene kind has a preset (`preset(for:)`).
-struct SkySettings: Equatable {
+struct SkySettings: Equatable, Codable {
     var mode = SkyMode.constant
     var imagePath: String? = nil        // .image: the environment file
     var imageExposure: Float = 0        // .image: stops on top of the automatic scale
@@ -363,6 +409,8 @@ struct SkySettings: Equatable {
     static let densityRange: ClosedRange<Float> = 0.005...0.1
     static let cloudBaseRange: ClosedRange<Float> = 300...4000
     static let windRange: ClosedRange<Float> = 0...40
+    static let cloudThicknessRange: ClosedRange<Float> = 200...4000
+    static let cloudScaleRange: ClosedRange<Float> = 500...16000
     static let mapSize = 1024           // sky texture side, per hemisphere
     static let shadowMapSize = 256
     /// `METALRENDERER_SKY=constant|atmosphere|<image path>` overrides every preset's mode.
@@ -395,7 +443,7 @@ struct SkySettings: Equatable {
 }
 
 /// Everything the settings panel and the keyboard shortcuts can change.
-struct RenderSettings: Equatable {
+struct RenderSettings: Equatable, Codable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
     var upscaleFactor: CGFloat = 3     // MetalFX output / traced resolution; 0 = off
     var upscaler = UpscalerKind.custom  // sharper and steadier than MetalFX here, as good in motion at 3x, ~0.6 ms cheaper
@@ -422,6 +470,13 @@ struct RenderSettings: Equatable {
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
     var fog = FogSettings.preset(for: .cornell)
     var sky = SkySettings.preset(for: .cornell)
+    // Camera and animation
+    var exposure: Float = 0            // stops (EV) before the tone curve
+    var toneMap = ToneMap.aces
+    var fovDegrees: Float = 60         // vertical field of view
+    var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
+    var timeScale: Float = 1           // animation speed (Pause stops it too)
+    var timeOfDay: Float = 0           // the sun and valley scenes: offset into the day cycle, as a fraction of it
 
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults): the GI method, the night market's light count, the fog and the sky.
@@ -434,6 +489,12 @@ struct RenderSettings: Equatable {
         if let image { sky.mode = .image; sky.imagePath = image.imagePath; sky.imageExposure = image.imageExposure }
     }
 
+    static let exposureRange: ClosedRange<Float> = -4...4
+    static let fovRange: ClosedRange<Float> = 30...110
+    static let moveSpeedRange: ClosedRange<Float> = 0.5...20
+    static let timeScaleRange: ClosedRange<Float> = 0...4
+    static let manyLightReuseRange = 0...8
+    static let textureBudgetOptions = [256, 512, 1024, 2048, 4096]
     static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
     static let renderScaleStep: CGFloat = 0.125
     static let bounceRange = 1...8

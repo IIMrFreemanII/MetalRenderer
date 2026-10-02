@@ -26,6 +26,7 @@ struct Uniforms {
     var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
     var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
     var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
+    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value)
 }
 
 enum UniformFlags {
@@ -170,7 +171,7 @@ struct GPUFogParams {
 
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
-    precondition(MemoryLayout<Uniforms>.stride == 240, "Uniforms layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 16, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")

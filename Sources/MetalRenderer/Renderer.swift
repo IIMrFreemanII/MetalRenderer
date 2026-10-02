@@ -361,9 +361,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         didSet {
             guard settings != oldValue else { return }
             if settings.giMode != oldValue.giMode { resetGIState() }
+            if persistSettings { SettingsStore.save(settings) }
             onSettingsChanged?(settings)
         }
     }
+    private var persistSettings = false         // the app (not benchmarks), once the saved settings are loaded
+    /// GPU pass timings for the settings panel (GPUProfiler): per frame, then averaged over the stats interval.
+    var profilePasses = false
+    var onPassTimes: (([(name: String, ms: Double)]) -> Void)?
+    var passProfilingSupported: Bool { GPUProfiler.isSupported(on: device) }
+    /// This frame's direct-light method with Auto resolved, for the panel's denoiser caption.
+    var directModeInUse: DirectLightMode { activeDirectMode }
     var onSettingsChanged: ((RenderSettings) -> Void)?
     var onTogglePanel: (() -> Void)?            // Tab key
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
@@ -395,6 +403,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     // Stats
     private var gpuMs: Double = 0
+    private lazy var profiler = GPUProfiler(device: device, framesInFlight: Renderer.maxFramesInFlight)
+    private var passTimeOrder: [String] = [], passTimeSums: [String: Double] = [:]
+    private var passTimeFrameMs = 0.0, passTimeFrames = 0
     private var fpsFrames = 0
     private var fpsTime = CACurrentMediaTime()
     private var fps: Double = 0
@@ -438,12 +449,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         if let benchmark {
             applyBenchmarkConfig(benchmark.current)
-        } else if ProcessInfo.processInfo.environment["METALRENDERER_SCENE"] != nil {
-            // Starting scene: loads in the background like a switch in the panel.
-            var s = settings
-            Benchmark.applySceneOverride(to: &s.scene)
-            s.applySceneDefaults(from: defaultSettings)
+        } else {
+            // Last session's settings, then the METALRENDERER_* overrides. A different scene loads in the background
+            // like a switch in the panel.
+            var s = SettingsStore.load(over: defaultSettings) ?? settings
+            if !upscaleSteps.contains(s.upscaleFactor) { s.upscaleFactor = defaultSettings.upscaleFactor }
+            Benchmark.applyInteractiveOverrides(to: &s, defaults: defaultSettings)
             settings = s
+            persistSettings = true
+            SettingsStore.dumpIfRequested(settings)
         }
     }
 
@@ -1029,10 +1043,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// The sky's passes, ahead of the frame's main encoder: the cloud noise and the atmosphere's tables (once), then
     /// this frame's sky texels, the cloud-shadow map and the sky texture's mips (encodeSkyTexels).
-    private func encodeSky(_ cb: MTLCommandBuffer) {
+    private func encodeSky(_ cb: MTLCommandBuffer, profile: GPUProfiler.Frame?) {
+        func compute() -> MTLComputeCommandEncoder? { profile?.compute(cb, "sky") ?? cb.makeComputeCommandEncoder() }
         guard let sky = skyMap, let shape = cloudShape, let detail = cloudDetail, let shadow = cloudShadowMap,
               let tLUT = transmittanceLUT, let msLUT = multiScatterLUT, let mean = skyMean,
-              let enc = cb.makeComputeCommandEncoder() else { return }
+              let enc = compute() else { return }
         if !cloudNoiseReady {   // once: the cloud noise and the atmosphere's tables (the second reads the first)
             enc.setComputePipelineState(cloudNoisePSO)
             enc.setTexture(shape, index: 0)
@@ -1046,21 +1061,24 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [tLUT, msLUT])
             dispatch(enc, "multiple scattering", width: msLUT.width, height: msLUT.height)
             enc.endEncoding()
-            if let blit = cb.makeBlitCommandEncoder() {
+            if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
                 blit.generateMipmaps(for: shape)
                 blit.generateMipmaps(for: detail)
                 blit.endEncoding()
             }
             cloudNoiseReady = true
-            guard let next = cb.makeComputeCommandEncoder() else { return }
-            encodeSkyTexels(next, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb)
+            guard let next = compute() else { return }
+            encodeSkyTexels(next, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb,
+                            profile: profile)
             return
         }
-        encodeSkyTexels(enc, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb)
+        encodeSkyTexels(enc, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb,
+                        profile: profile)
     }
 
     private func encodeSkyTexels(_ enc: MTLComputeCommandEncoder, sky: MTLTexture, shape: MTLTexture, detail: MTLTexture,
-                                 shadow: MTLTexture, tLUT: MTLTexture, msLUT: MTLTexture, mean: MTLBuffer, cb: MTLCommandBuffer) {
+                                 shadow: MTLTexture, tLUT: MTLTexture, msLUT: MTLTexture, mean: MTLBuffer, cb: MTLCommandBuffer,
+                                 profile: GPUProfiler.Frame?) {
         var p = skyParams
         // The clear sky's mean radiance (lights the clouds and the ground), then this frame's sky texels.
         enc.setComputePipelineState(skyMeanPSO)
@@ -1082,7 +1100,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             dispatch(enc, "cloud shadow", width: shadow.width, height: shadow.height)
         }
         enc.endEncoding()
-        if let blit = cb.makeBlitCommandEncoder() {
+        if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
             blit.generateMipmaps(for: sky)
             blit.endEncoding()
         }
@@ -1200,7 +1218,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if heldKeys.contains("e") { move.y += 1 }
         if heldKeys.contains("q") { move.y -= 1 }
         if length(move) > 0 {
-            let speed: Float = NSEvent.modifierFlags.contains(.shift) ? 8 : 2.5
+            let speed = settings.moveSpeed * (NSEvent.modifierFlags.contains(.shift) ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
         }
     }
@@ -1218,6 +1236,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         (u.camPos, u.camRight, u.camUp, u.camForward) = pack(camera)
         (u.prevCamPos, u.prevCamRight, u.prevCamUp, u.prevCamForward) = pack(prevCamera)
         u.skyColor = SIMD4<Float>(scene.skyColor, 0)
+        u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, 0)
         u.width = UInt32(width)
         u.height = UInt32(height)
         u.frameIndex = frameIndex
@@ -1335,8 +1354,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
         updateCamera(dt: dt)
-        if !settings.paused { animTime += dt }
-        scene.update(time: animTime)
+        camera.fovY = settings.fovDegrees * .pi / 180
+        if !settings.paused { animTime += dt * settings.timeScale }
+        // The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
+        scene.update(time: animTime, dayTime: animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0))
 
         let slot = Int(frameIndex) % Renderer.maxFramesInFlight
         // Viewpoint virtual geometry picks its detail for: the camera, or where it was when "Freeze LOD" was turned on.
@@ -1362,17 +1383,23 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             passBuffers.append((name, cb))
             return cb
         }
+        // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
+        let frameProfile = profilePasses && benchmark == nil ? profiler?.beginFrame(slot: slot) : nil
         // Radiance cascades and the direct-light denoiser don't touch each other's textures (unless the denoiser also
         // filters the cascades' output), so their dispatches can overlap on the GPU: the shared encoder is then
-        // concurrent, with explicit barriers between dependent stages. Benchmark per-pass timing keeps everything serial,
-        // and METALRENDERER_OVERLAP=0 turns overlapping off for A/B timing.
+        // concurrent, with explicit barriers between dependent stages. Per-pass timing (benchmark or panel) keeps
+        // everything serial, and METALRENDERER_OVERLAP=0 turns overlapping off for A/B timing.
         let splitPasses = benchmark != nil && Benchmark.splitPasses
-        let overlap = !splitPasses && Renderer.overlapEnabled && settings.giEnabled && activeGIMode == .radianceCascades
-            && !settings.cascades.denoiseIndirect
+        let overlap = !splitPasses && frameProfile == nil && Renderer.overlapEnabled && settings.giEnabled
+            && activeGIMode == .radianceCascades && !settings.cascades.denoiseIndirect
         var openEncoder: MTLComputeCommandEncoder?
+        var openPass = ""
         func beginComputePass(_ name: String) -> MTLComputeCommandEncoder? {
-            if openEncoder != nil && !splitPasses { return openEncoder }   // normal mode: one shared encoder
+            // Normal mode: one shared encoder (profiling: one per pass name).
+            if openEncoder != nil && !splitPasses && (frameProfile == nil || name == openPass) { return openEncoder }
             openEncoder?.endEncoding()
+            openPass = name
+            if let frameProfile { openEncoder = frameProfile.compute(cmd, name); return openEncoder }
             openEncoder = overlap ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent)
                                   : passBuffer(name).makeComputeCommandEncoder()
             return openEncoder
@@ -1391,7 +1418,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
-        if builtRayTracer == .metal, let asEncoder = passBuffer("tlas").makeAccelerationStructureCommandEncoder() {
+        if builtRayTracer == .metal,
+           let asEncoder = frameProfile?.accelerationStructure(cmd, "tlas") ?? passBuffer("tlas").makeAccelerationStructureCommandEncoder() {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
             if instanceASBuilt.contains(slot) {
                 asEncoder.refit(sourceAccelerationStructure: instanceAS[slot], descriptor: instanceASDescriptor(slot: slot),
@@ -1410,7 +1438,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         textureStreamer?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, cmd: passBuffer("textures"))
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
         // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
-        if let customRT, let enc = passBuffer("tlas").makeComputeCommandEncoder() {
+        if let customRT, let enc = frameProfile?.compute(cmd, "tlas") ?? passBuffer("tlas").makeComputeCommandEncoder() {
             let view = VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
             customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: view)
             enc.endEncoding()
@@ -1428,7 +1456,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             uniforms.flags |= UniformFlags.blueNoise
         }
         let cur = Int(frameIndex & 1), prev = cur ^ 1
-        if skyActive { encodeSky(passBuffer("sky")) }
+        if skyActive { encodeSky(passBuffer("sky"), profile: frameProfile) }
 
         // 1b. Light-visibility maps, for GI techniques and the path tracer's light-map variant.
         let frameUniforms = uniforms
@@ -1900,7 +1928,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 var start = Double.infinity, end = 0.0
                 for p in passes {
                     p.cmd.waitUntilCompleted()
-                    passMs[p.name] = (p.cmd.gpuEndTime - p.cmd.gpuStartTime) * 1000
+                    passMs[p.name, default: 0] += (p.cmd.gpuEndTime - p.cmd.gpuStartTime) * 1000   // a name can recur
                     start = min(start, p.cmd.gpuStartTime)
                     end = max(end, p.cmd.gpuEndTime)
                 }
@@ -1912,9 +1940,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 bench.record(.init(config: benchConfig, passMs: passMs, spanMs: (end - start) * 1000))
             }
             writeCapture?()
+            let times = frameProfile?.resolve()
             semaphore.signal()
             let ms = (cb.gpuEndTime - cb.gpuStartTime) * 1000
-            DispatchQueue.main.async { self?.gpuMs = ms }
+            DispatchQueue.main.async {
+                self?.gpuMs = ms
+                if let times { self?.addPassTimes(times, frameMs: ms) }
+            }
         }
         for p in passBuffers { p.cmd.commit() }
         cmd.commit()
@@ -2125,6 +2157,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         Benchmark.applyRestirOverride(to: &s.restir)
         s.restirGI = c.restirGI ?? RestirGISettings()
         Benchmark.applyRestirGIOverride(to: &s.restirGI)
+        Benchmark.applyViewOverride(to: &s, interactive: false)
         settings = s
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
@@ -2258,6 +2291,28 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
                                      RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         onStats?(stats)
+        if passTimeFrames > 0 {
+            let n = Double(passTimeFrames)
+            var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
+            let other = passTimeFrameMs / n - times.reduce(0) { $0 + $1.ms }
+            if other > 0.005 { times.append((name: "other", ms: other)) }   // MetalFX, its copy, texture streaming
+            onPassTimes?(times)
+            passTimeOrder = []
+            passTimeSums = [:]
+            passTimeFrameMs = 0
+            passTimeFrames = 0
+        }
+    }
+
+    /// One frame's pass timings, summed until the stats line shows their average.
+    private func addPassTimes(_ times: [(name: String, ms: Double)], frameMs: Double) {
+        guard profilePasses else { return }
+        for t in times {
+            if passTimeSums[t.name] == nil { passTimeOrder.append(t.name) }
+            passTimeSums[t.name, default: 0] += t.ms
+        }
+        passTimeFrameMs += frameMs
+        passTimeFrames += 1
     }
 
     /// Adds glTF models to the scene, side by side 2.5 m in front of the camera on the floor, facing it

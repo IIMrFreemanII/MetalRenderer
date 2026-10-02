@@ -36,6 +36,8 @@ final class Scene {
         case rect(width: Float, height: Float)                  // one-sided panel, color = radiance
         case tube(length: Float, radius: Float)                 // capsule, color = intensity (as a sphere of that power)
         case mesh(Int)                                          // an emissive instance: index into `meshLights`
+
+        var isSun: Bool { if case .sun = self { return true } else { return false } }
     }
 
     /// Where a light is and how bright, at one time.
@@ -169,18 +171,20 @@ final class Scene {
 
     // MARK: - Animation
 
-    func update(time t: Float) {
+    /// Poses everything at time `t`; suns and the sky colour follow `dayTime` instead (Time of day offsets it).
+    func update(time t: Float, dayTime: Float? = nil) {
+        let day = dayTime ?? t
         for i in instances.indices {
             instances[i].prevTransform = instances[i].transform
             if let animation = instances[i].animation {
                 instances[i].transform = animation(t)
             }
         }
-        if let skyAnimation { skyColor = skyAnimation(t) }
+        if let skyAnimation { skyColor = skyAnimation(day) }
         for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
         for l in lights.indices where !lights[l].isMesh {
             let old = lights[l].current.scale
-            let pose = lights[l].pose(t)
+            let pose = lights[l].pose(lights[l].kind.isSun ? day : t)
             lights[l].current = pose
             let s = lights[l].proxyInstance
             if s >= 0 { instances[s].transform = proxyTransform(lights[l].kind, pose) }

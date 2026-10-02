@@ -40,6 +40,7 @@ struct Uniforms {
     float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off), w = variance scale
     uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
     uint4 lightTable;       // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
+    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none
 };
 
 struct MeshData {
@@ -4476,6 +4477,34 @@ inline float3 acesFilm(float3 x) {
     return saturate((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f));
 }
 
+// AgX (Troy Sobotka), with the polynomial fit of its default contrast curve by Benjamin Wrensch ("minimal AgX"):
+// into the AgX working space, log2 between its EV limits, the curve, back. The curve's output is display-encoded
+// (gamma 2.2), and the drawable wants linear, hence the pow at the end.
+inline float3 agxFilm(float3 c) {
+    const float3x3 toAgx = float3x3(0.842479062253094f, 0.0423282422610123f, 0.0423756549057051f,
+                                    0.0784335999999992f, 0.878468636469772f, 0.0784336f,
+                                    0.0792237451477643f, 0.0791661274605434f, 0.879142973793104f);
+    const float3x3 fromAgx = float3x3(1.19687900512017f, -0.0528968517574562f, -0.0529716355144438f,
+                                      -0.0980208811401368f, 1.15190312990417f, -0.0980434501171241f,
+                                      -0.0990297440797205f, -0.0989611768448433f, 1.15107367264116f);
+    const float minEV = -12.47393f, maxEV = 4.026069f;
+    float3 x = (clamp(log2(max(toAgx * c, 1e-10f)), minEV, maxEV) - minEV) / (maxEV - minEV);
+    float3 x2 = x * x, x4 = x2 * x2;
+    x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
+    return pow(saturate(fromAgx * x), float3(2.2f));
+}
+
+/// Exposure, then the selected curve (RenderSettings.toneMap).
+inline float3 toneMap(float3 c, float4 post) {
+    c *= post.x;
+    switch (uint(post.y)) {
+        case 1: return agxFilm(c);
+        case 2: return c / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f)));   // Reinhard on luminance: keeps hue
+        case 3: return c;
+        default: return acesFilm(c);
+    }
+}
+
 kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
                             texture2d<float, access::read>  denoised   [[texture(0)]],
                             texture2d<float, access::read>  direct     [[texture(1)]],
@@ -4588,7 +4617,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 14: c = fogged.rgb; break;                           // fog scattering alone
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
-    if (hdr) c = acesFilm(c);
+    if (hdr) c = toneMap(c, u.post);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
     output.write(float4(saturate(c), 1.0f), tid);
 }

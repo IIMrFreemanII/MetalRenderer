@@ -93,9 +93,10 @@ final class Benchmark {
     }
 
     /// `METALRENDERER_GI="mode=cascades,spacing=4,..."` overrides GI settings in every (non-reference) setting.
-    /// Keys: mode (pt|cascades|restir), lightmaps, bounces, spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
-    /// upscaler (metalfx|spatial|custom), lightrays (shadow rays per light group with more than 4 lights),
-    /// taauhistory, taauclip.
+    /// Keys: on (GI at all), mode (pt|cascades|restir), lightmaps, bounces, spacing, cascades, b1, feedback, cdenoise, blue (blue-noise sampling), scale (render scale), factor (upscale factor),
+    /// upscaler (metalfx|spatial|custom), lightrays (shadow rays per light group with more than 4 lights), lightreuse,
+    /// and the custom upscaler's taauhistory, taauclip, taaumotion, taaucut, taaukernel, taaukernelmv, taaudilate,
+    /// taaulanczos, taaulzthresh, taauedge.
     static func applyGIOverride(to s: inout RenderSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_GI"] else { return }
         for item in spec.split(separator: ",") {
@@ -103,6 +104,7 @@ final class Benchmark {
             guard kv.count == 2 else { continue }
             let v = Float(kv[1]) ?? 0
             switch kv[0] {
+            case "on": s.giEnabled = v != 0
             case "mode": s.giMode = ["pt": .pathTraced, "cascades": .radianceCascades, "restir": .restirGI][kv[1]] ?? s.giMode
             case "lightmaps": s.lightMaps = v != 0
             case "lightrays": s.manyLightRays = Int(v)
@@ -137,12 +139,18 @@ final class Benchmark {
     /// sun, area, tubes, emissive, mixed; `model=<path>` adds a glTF model as File > Open does; `emissivelights=0`
     /// turns emissive-mesh lights off.
     /// `METALRENDERER_FOG_SET="density=0.03,g=0.6,..."` overrides fog settings in every setting (after `METALRENDERER_FOG=0/1`).
-    /// Keys: on, density, falloff, base, g, ambient, noise, tile, far, volumes, reflections.
+    /// Keys: on, density, falloff, base, g, ambient, noise, tile, far, volumes, reflections, albedo (r:g:b), wind (x:y:z, m/s).
     static func applyFogOverride(to f: inout FogSettings) {
         guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_FOG_SET"] else { return }
         for item in spec.split(separator: ",") {
             let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
-            guard kv.count == 2, let v = Float(kv[1]) else { continue }
+            guard kv.count == 2 else { continue }
+            let xyz = kv[1].split(separator: ":").compactMap { Float($0) }
+            if xyz.count == 3 && (kv[0] == "albedo" || kv[0] == "wind") {
+                if kv[0] == "albedo" { f.albedo = SIMD3(xyz[0], xyz[1], xyz[2]) } else { f.wind = SIMD3(xyz[0], xyz[1], xyz[2]) }
+                continue
+            }
+            guard let v = Float(kv[1]) else { continue }
             switch kv[0] {
             case "on": f.enabled = v != 0
             case "density": f.density = v
@@ -244,6 +252,49 @@ final class Benchmark {
             default: print("METALRENDERER_RESTIR_GI: unknown key \(kv[0])")
             }
         }
+    }
+
+    /// `METALRENDERER_VIEW="exposure=1,tonemap=agx,fov=70,speed=5,timescale=0.5,tod=0.25"` overrides the camera and
+    /// animation settings in every setting. Outside benchmarks it also takes view (the view mode's index) and paused,
+    /// which benchmark settings choose themselves.
+    static func applyViewOverride(to s: inout RenderSettings, interactive: Bool) {
+        guard let spec = ProcessInfo.processInfo.environment["METALRENDERER_VIEW"] else { return }
+        for item in spec.split(separator: ",") {
+            let kv = item.split(separator: "=").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard kv.count == 2 else { continue }
+            if kv[0] == "tonemap" {
+                if let t = ToneMap.allCases.first(where: { "\($0)" == kv[1].lowercased() }) { s.toneMap = t }
+                continue
+            }
+            guard let v = Float(kv[1]) else { continue }
+            switch kv[0] {
+            case "exposure": s.exposure = v
+            case "fov": s.fovDegrees = v
+            case "speed": s.moveSpeed = v
+            case "timescale": s.timeScale = v
+            case "tod": s.timeOfDay = v
+            case "view" where interactive: s.viewMode = Int(v)
+            case "paused" where interactive: s.paused = v != 0
+            case "view", "paused": break
+            default: print("METALRENDERER_VIEW: unknown key \(kv[0])")
+            }
+        }
+    }
+
+    /// The app outside benchmarks: the starting scene and every override above, over the saved or default settings.
+    static func applyInteractiveOverrides(to s: inout RenderSettings, defaults: RenderSettings) {
+        let env = ProcessInfo.processInfo.environment
+        if env["METALRENDERER_SCENE"] != nil {
+            applySceneOverride(to: &s.scene)
+            s.applySceneDefaults(from: defaults)
+        }
+        applyGIOverride(to: &s)
+        applyFogOverride(to: &s.fog)
+        applySkyOverride(to: &s.sky)
+        applyDenoiserOverride(to: &s.denoiser)
+        applyRestirOverride(to: &s.restir)
+        applyRestirGIOverride(to: &s.restirGI)
+        applyViewOverride(to: &s, interactive: true)
     }
 
     static func applySceneOverride(to s: inout SceneSettings) {
