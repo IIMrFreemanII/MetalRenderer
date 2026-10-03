@@ -5,9 +5,10 @@ import UniformTypeIdentifiers
 /// It never becomes the key window, so WASD and the keyboard shortcuts keep working while it's open.
 /// Keyboard changes show up here too: the renderer reports every settings change to its settings observers.
 ///
-/// Rows sit in collapsible sections; each row may have a condition (shown only for some modes) and may be "advanced"
-/// (shown only with Show advanced). The older rows have a property and an action each; the advanced ones are built
-/// by the bind helpers at the end (`floatRow`, `intRow`, `checkRow`, `popupRow`), which pair a control with a key path.
+/// The rows come from `SettingsTable`: its sections are the panel's collapsible sections, and each `SettingSpec` with
+/// a control becomes a row (`makeRow`), with the spec's condition (shown only for some modes), its "advanced" mark
+/// (shown only with Show advanced) and what enables it. A few rows are more than one setting behind one control
+/// (`customRow`).
 final class SettingsPanel: NSObject {
     let panel: NSPanel
     private let renderer: Renderer
@@ -16,97 +17,6 @@ final class SettingsPanel: NSObject {
     private let showAdvancedBox = NSButton(checkboxWithTitle: "Show advanced", target: nil, action: nil)
     private let copyEnv = NSButton(title: "Copy as Env", target: nil, action: nil)
     private let denoiserCaption = NSTextField(wrappingLabelWithString: "")
-    private let sceneKind = NSPopUpButton()
-    private let rayTracer = NSPopUpButton()
-    private let virtualGeometry = NSButton(checkboxWithTitle: "Virtual geometry (LOD)", target: nil, action: nil)
-    private let freezeLOD = NSButton(checkboxWithTitle: "Freeze LOD (L)", target: nil, action: nil)
-    private let specular = NSButton(checkboxWithTitle: "Specular (glTF PBR)", target: nil, action: nil)
-    private let emissiveLights = NSButton(checkboxWithTitle: "Emissive surfaces are lights", target: nil, action: nil)
-    private let vgError = NSSlider()               // log2 of the allowed error in traced pixels
-    private let vgErrorValue = NSTextField(labelWithString: "")
-    private let objects = NSSlider()
-    private let objectsValue = NSTextField(labelWithString: "")
-    private let lights = NSSlider()            // log2 of the light count
-    private let lightsValue = NSTextField(labelWithString: "")
-    private let lightRays = NSPopUpButton()    // shadow rays per light group (more than 4 lights)
-    // Direct light
-    private let directLight = NSPopUpButton()
-    private let restirCandidates = NSPopUpButton()
-    private let restirSpatial = NSPopUpButton()
-    private let restirTemporal = NSButton(checkboxWithTitle: "Temporal reuse", target: nil, action: nil)
-    private let restirVisibility = NSButton(checkboxWithTitle: "Visibility reuse", target: nil, action: nil)
-    private static let candidateOptions = [4, 8, 16, 32]
-    private let renderScale = NSSlider()
-    private let renderScaleValue = NSTextField(labelWithString: "")
-    private let upscale = NSPopUpButton()
-    private let upscalerKind = NSPopUpButton()
-    private let gi = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
-    private let bounces = NSSlider()
-    private let bouncesValue = NSTextField(labelWithString: "")
-    private let blueNoise = NSButton(checkboxWithTitle: "Blue-noise sampling", target: nil, action: nil)
-    private let paused = NSButton(checkboxWithTitle: "Pause animation", target: nil, action: nil)
-    private let viewMode = NSPopUpButton()
-    private let denoise = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
-    private let separate = NSButton(checkboxWithTitle: "Separate direct / indirect", target: nil, action: nil)
-    private let shadowDenoiser = NSButton(checkboxWithTitle: "Shadow denoiser (direct light)", target: nil, action: nil)
-    private let shadowPasses = NSSlider()
-    private let shadowPassesValue = NSTextField(labelWithString: "")
-    private let passes = NSSlider()
-    private let passesValue = NSTextField(labelWithString: "")
-    private let sigma = NSSlider()
-    private let sigmaValue = NSTextField(labelWithString: "")
-    private let history = NSSlider()
-    private let historyValue = NSTextField(labelWithString: "")
-    private let antiLag = NSSlider()
-    private let antiLagValue = NSTextField(labelWithString: "")
-    // Global illumination
-    private let giMode = NSPopUpButton()
-    private let lightMaps = NSButton(checkboxWithTitle: "Light bounces from light maps", target: nil, action: nil)
-    private let probeSpacing = NSPopUpButton()
-    private let cascadeCount = NSSlider()
-    private let cascadeCountValue = NSTextField(labelWithString: "")
-    private let firstInterval = NSSlider()
-    private let firstIntervalValue = NSTextField(labelWithString: "")
-    private let cascadeBounce = NSButton(checkboxWithTitle: "Multi-bounce", target: nil, action: nil)
-    private let cascadeDenoise = NSButton(checkboxWithTitle: "Denoise cascade GI", target: nil, action: nil)
-    private let rgiRays = NSPopUpButton()
-    private let rgiBounces = NSSlider()
-    private let rgiBouncesValue = NSTextField(labelWithString: "")
-    private let rgiSpatial = NSPopUpButton()
-    private let rgiTemporal = NSButton(checkboxWithTitle: "Temporal reuse", target: nil, action: nil)
-    private let rgiUnbiased = NSButton(checkboxWithTitle: "Unbiased spatial reuse", target: nil, action: nil)
-    private let rgiFeedback = NSButton(checkboxWithTitle: "Multi-bounce", target: nil, action: nil)
-    // Fog
-    private let fog = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
-    private let fogDensity = NSSlider()            // log10 of the density
-    private let fogDensityValue = NSTextField(labelWithString: "")
-    private let fogFalloff = NSSlider()
-    private let fogFalloffValue = NSTextField(labelWithString: "")
-    private let fogAnisotropy = NSSlider()
-    private let fogAnisotropyValue = NSTextField(labelWithString: "")
-    private let fogAmbient = NSSlider()
-    private let fogAmbientValue = NSTextField(labelWithString: "")
-    private let fogNoise = NSSlider()
-    private let fogNoiseValue = NSTextField(labelWithString: "")
-    private let fogDistance = NSSlider()
-    private let fogDistanceValue = NSTextField(labelWithString: "")
-    private let fogVolumes = NSButton(checkboxWithTitle: "Local fog volumes", target: nil, action: nil)
-    private let fogReflections = NSButton(checkboxWithTitle: "Fog in reflections", target: nil, action: nil)
-    private let fogAlbedo = NSColorWell(style: .minimal)
-    // Sky
-    private let skyMode = NSPopUpButton()
-    private let clouds = NSButton(checkboxWithTitle: "Clouds", target: nil, action: nil)
-    private let coverage = NSSlider()
-    private let coverageValue = NSTextField(labelWithString: "")
-    private let cloudDensity = NSSlider()
-    private let cloudDensityValue = NSTextField(labelWithString: "")
-    private let cloudHeight = NSSlider()
-    private let cloudHeightValue = NSTextField(labelWithString: "")
-    private let wind = NSSlider()
-    private let windValue = NSTextField(labelWithString: "")
-    private let cloudShadows = NSButton(checkboxWithTitle: "Cloud shadows", target: nil, action: nil)
-    private let skyImageButton = NSButton(title: "Choose Image…", target: nil, action: nil)
-    private let clearModels = NSButton(title: "Clear Added Models", target: nil, action: nil)
 
     private var grid: NSGridView!
     private var footer: NSStackView!
@@ -118,7 +28,7 @@ final class SettingsPanel: NSObject {
     private var advancedRows = Set<Int>()
     private var headerRows: [Int: SectionHeader] = [:]
     private var sectionOf: [Int] = []
-    // Controls built by the bind helpers: their targets, and how each shows the settings.
+    // The controls' targets, and how each control shows the settings.
     private var actions: [Action] = []
     private var refreshers: [(RenderSettings) -> Void] = []
     // Panel state kept between launches (the render settings themselves are saved by SettingsStore).
@@ -138,94 +48,13 @@ final class SettingsPanel: NSObject {
         panel.becomesKeyOnlyIfNeeded = true   // sliders and checkboxes don't need key status
         panel.hidesOnDeactivate = true
 
-        configureSlider(renderScale, RenderSettings.renderScaleRange, ticks: 15, #selector(renderScaleChanged))
-        configureSlider(bounces, CGFloat(RenderSettings.bounceRange.lowerBound)...CGFloat(RenderSettings.bounceRange.upperBound),
-                        ticks: RenderSettings.bounceRange.count, #selector(bouncesChanged))
-        configureSlider(passes, CGFloat(DenoiserSettings.passRange.lowerBound)...CGFloat(DenoiserSettings.passRange.upperBound),
-                        ticks: DenoiserSettings.passRange.count, #selector(passesChanged))
-        configureSlider(shadowPasses, CGFloat(DenoiserSettings.passRange.lowerBound)...CGFloat(DenoiserSettings.passRange.upperBound),
-                        ticks: DenoiserSettings.passRange.count, #selector(shadowPassesChanged))
-        configureSlider(sigma, cg(DenoiserSettings.luminanceSigmaRange), ticks: 0, #selector(sigmaChanged))
-        configureSlider(history, cg(DenoiserSettings.maxHistoryRange), ticks: 0, #selector(historyChanged))
-        configureSlider(antiLag, cg(DenoiserSettings.antiLagRange), ticks: 0, #selector(antiLagChanged))
-        configureSlider(cascadeCount, CGFloat(CascadeSettings.cascadeRange.lowerBound)...CGFloat(CascadeSettings.cascadeRange.upperBound),
-                        ticks: CascadeSettings.cascadeRange.count, #selector(cascadeCountChanged))
-        configureSlider(firstInterval, cg(CascadeSettings.firstIntervalRange), ticks: 0, #selector(firstIntervalChanged))
-        configureSlider(rgiBounces, CGFloat(RenderSettings.bounceRange.lowerBound)...CGFloat(RenderSettings.bounceRange.upperBound),
-                        ticks: RenderSettings.bounceRange.count, #selector(rgiBouncesChanged))
-        configureSlider(fogDensity, log10(CGFloat(FogSettings.densityRange.lowerBound))...log10(CGFloat(FogSettings.densityRange.upperBound)),
-                        ticks: 0, #selector(fogDensityChanged))
-        configureSlider(fogFalloff, cg(FogSettings.falloffRange), ticks: 0, #selector(fogFalloffChanged))
-        configureSlider(fogAnisotropy, cg(FogSettings.anisotropyRange), ticks: 0, #selector(fogAnisotropyChanged))
-        configureSlider(fogAmbient, cg(FogSettings.ambientRange), ticks: 0, #selector(fogAmbientChanged))
-        configureSlider(fogNoise, cg(FogSettings.noiseRange), ticks: 0, #selector(fogNoiseChanged))
-        configureSlider(fogDistance, cg(FogSettings.distanceRange), ticks: 0, #selector(fogDistanceChanged))
-        configureSlider(coverage, cg(SkySettings.coverageRange), ticks: 0, #selector(coverageChanged))
-        configureSlider(cloudDensity, cg(SkySettings.densityRange), ticks: 0, #selector(cloudDensityChanged))
-        configureSlider(cloudHeight, cg(SkySettings.cloudBaseRange), ticks: 0, #selector(cloudHeightChanged))
-        configureSlider(wind, cg(SkySettings.windRange), ticks: 0, #selector(windChanged))
-        // Scene sizes rebuild the scene, so they apply when the slider is released.
-        configureSlider(objects, CGFloat(SceneSettings.objectRange.lowerBound)...CGFloat(SceneSettings.objectRange.upperBound),
-                        ticks: 0, #selector(objectsChanged))
-        configureSlider(lights, 0...log2(CGFloat(SceneSettings.lightRange.upperBound)),
-                        ticks: Int(log2(Double(SceneSettings.lightRange.upperBound))) + 1, #selector(lightsChanged))
-        objects.isContinuous = false
-        lights.isContinuous = false
-        configureSlider(vgError, log2(CGFloat(VirtualGeometrySettings.pixelErrorRange.lowerBound))...log2(CGFloat(VirtualGeometrySettings.pixelErrorRange.upperBound)),
-                        ticks: 0, #selector(vgErrorChanged))
-        for (popup, titles, action) in [
-            (giMode, GIMode.allCases.map(\.title), #selector(giModeChanged)),
-            (sceneKind, SceneKind.allCases.map(\.title), #selector(sceneKindChanged)),
-            (rayTracer, RayTracerKind.allCases.map(\.title), #selector(rayTracerChanged)),
-            (lightRays, ["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"], #selector(lightRaysChanged)),
-            (upscalerKind, UpscalerKind.allCases.map(\.title), #selector(upscalerKindChanged)),
-            (probeSpacing, CascadeSettings.spacingOptions.map { "\($0) px" }, #selector(probeSpacingChanged)),
-            (skyMode, SkyMode.allCases.map(\.title), #selector(skyModeChanged)),
-            (directLight, DirectLightMode.allCases.map { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }, #selector(directLightChanged)),
-            (restirCandidates, SettingsPanel.candidateOptions.map { "\($0) per pixel" }, #selector(restirCandidatesChanged)),
-            (restirSpatial, ["Off", "1 pass", "2 passes"], #selector(restirSpatialChanged)),
-            (rgiRays, ["1 per pixel", "1 per 2×2 pixels"], #selector(rgiRaysChanged)),
-            (rgiSpatial, ["Off", "1 pass", "2 passes"], #selector(rgiSpatialChanged)),
-        ] as [(NSPopUpButton, [String], Selector)] {
-            popup.addItems(withTitles: titles)
-            popup.target = self
-            popup.action = action
-        }
-
-        upscale.addItems(withTitles: upscaleSteps.map { $0 == 0 ? "Off" : String(format: "%g×", $0) })
-        upscale.target = self
-        upscale.action = #selector(upscaleChanged)
-        upscale.isEnabled = upscaleSteps.count > 1
-        viewMode.addItems(withTitles: RenderSettings.viewModes)
-        viewMode.target = self
-        viewMode.action = #selector(viewModeChanged)
-        for (box, action) in [(gi, #selector(giChanged)), (blueNoise, #selector(blueNoiseChanged)),
-                              (paused, #selector(pausedChanged)), (denoise, #selector(denoiseChanged)),
-                              (separate, #selector(separateChanged)), (lightMaps, #selector(lightMapsChanged)),
-                              (cascadeBounce, #selector(cascadeBounceChanged)), (cascadeDenoise, #selector(cascadeDenoiseChanged)),
-                              (shadowDenoiser, #selector(shadowDenoiserChanged)), (virtualGeometry, #selector(virtualGeometryChanged)),
-                              (freezeLOD, #selector(freezeLODChanged)),
-                              (specular, #selector(specularChanged)), (emissiveLights, #selector(emissiveLightsChanged)),
-                              (fog, #selector(fogChanged)), (fogVolumes, #selector(fogVolumesChanged)),
-                              (fogReflections, #selector(fogReflectionsChanged)), (clouds, #selector(cloudsChanged)),
-                              (cloudShadows, #selector(cloudShadowsChanged)), (skyImageButton, #selector(chooseSkyImage)),
-                              (restirTemporal, #selector(restirTemporalChanged)), (restirVisibility, #selector(restirVisibilityChanged)),
-                              (rgiTemporal, #selector(rgiTemporalChanged)), (rgiUnbiased, #selector(rgiUnbiasedChanged)),
-                              (rgiFeedback, #selector(rgiFeedbackChanged)), (clearModels, #selector(clearModelsChanged)),
-                              (fogAlbedo, #selector(fogAlbedoChanged)), (showAdvancedBox, #selector(showAdvancedChanged)),
-                              (copyEnv, #selector(copyAsEnv))] as [(NSControl, Selector)] {
-            box.target = self
-            box.action = action
+        for (control, action) in [(showAdvancedBox, #selector(showAdvancedChanged)), (copyEnv, #selector(copyAsEnv))] {
+            control.target = self
+            control.action = action
         }
         denoiserCaption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         denoiserCaption.textColor = .secondaryLabelColor
         denoiserCaption.preferredMaxLayoutWidth = 330
-        for value in [vgErrorValue, objectsValue, lightsValue, renderScaleValue, bouncesValue, rgiBouncesValue, passesValue, shadowPassesValue, sigmaValue, historyValue, antiLagValue,
-                      cascadeCountValue, firstIntervalValue, fogDensityValue, fogFalloffValue,
-                      fogAnisotropyValue, fogAmbientValue, fogNoiseValue, fogDistanceValue, coverageValue, cloudDensityValue,
-                      cloudHeightValue, windValue] {
-            styleValue(value)
-        }
         buildRows()
 
         let grid = NSGridView(views: rows)
@@ -262,210 +91,131 @@ final class SettingsPanel: NSObject {
 
     // MARK: - Rows
 
-    /// Every row, top to bottom. `add(_:advanced:when:)` records a row's condition; `section` starts a collapsible section.
+    /// Every row, top to bottom: `SettingsTable`'s sections and their specs.
     private func buildRows() {
-        let isRestir: (RenderSettings) -> Bool = { $0.directLight == .restir || $0.directLight == .auto }
-        let isRestirGI: (RenderSettings) -> Bool = { $0.giMode == .restirGI }
-        let hasClouds: (RenderSettings) -> Bool = { $0.sky.mode != .constant }
-
-        section("Scene")
-        add([label("Scene"), sceneKind])
-        add([label("Objects"), objects, objectsValue], when: { $0.scene.kind == .stress })
-        add([label("Lights"), lights, lightsValue], when: { $0.scene.kind.hasLightCount })
-        add([label("Ray tracing"), rayTracer])
-        add([NSGridCell.emptyContentView, virtualGeometry])
-        add([label("Geometry error"), vgError, vgErrorValue])
-        add([NSGridCell.emptyContentView, freezeLOD])
-        add([NSGridCell.emptyContentView, specular])
-        add([NSGridCell.emptyContentView, emissiveLights])
-        add([NSGridCell.emptyContentView, clearModels], when: { !$0.scene.extraModels.isEmpty })
-
-        section("Camera and time")
-        add(floatRow("Exposure", \.exposure, RenderSettings.exposureRange, step: 0.1) { String(format: "%+.1f EV", $0) })
-        add(popupRow("Tone map", \.toneMap, ToneMap.allCases.map { ($0.title, $0) }))
-        add(floatRow("Field of view", \.fovDegrees, RenderSettings.fovRange, step: 1) { String(format: "%.0f°", $0) })
-        add(floatRow("Move speed", \.moveSpeed, RenderSettings.moveSpeedRange, step: 0.5, log: true) { String(format: "%g m/s", $0) })
-        add([NSGridCell.emptyContentView, paused])
-        add(floatRow("Time scale", \.timeScale, RenderSettings.timeScaleRange, step: 0.05) { String(format: "%.2f×", $0) })
-        add(floatRow("Time of day", \.timeOfDay, 0...1, step: 0.01) { String(format: "%.0f%%", $0 * 100) },
-            when: { $0.scene.kind.dayCycle != nil })
-
-        section("Direct light")
-        add([label("Method"), directLight])
-        add([label("Shadow rays"), lightRays], when: { $0.directLight == .grouped })
-        add(intRow("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" },
-            advanced: true, when: { $0.directLight == .grouped && $0.manyLightRays < 2 })
-        add([label("Candidates"), restirCandidates], when: isRestir)
-        add([label("Spatial reuse"), restirSpatial], when: isRestir)
-        add([NSGridCell.emptyContentView, restirTemporal], when: isRestir)
-        add([NSGridCell.emptyContentView, restirVisibility], when: isRestir)
-        add(intRow("Chains", \.restir.chains, RestirSettings.chainRange), advanced: true, when: isRestir)
-        add(floatRow("Max M", \.restir.maxM, RestirSettings.maxMRange, step: 1, log: true) { String(format: "%.0f", $0) },
-            advanced: true, when: isRestir)
-        add(intRow("Neighbours", \.restir.spatialSamples, RestirSettings.spatialSampleRange), advanced: true,
-            when: { isRestir($0) && $0.restir.spatialPasses > 0 })
-        add(floatRow("Radius", \.restir.radius, RestirSettings.radiusRange, step: 1) { String(format: "%.0f px", $0) },
-            advanced: true, when: { isRestir($0) && $0.restir.spatialPasses > 0 })
-        add(checkRow("Light grid (ReGIR candidates)", \.restir.grid.enabled), when: isRestir)
-        let isGrid: (RenderSettings) -> Bool = { isRestir($0) && $0.restir.grid.enabled }
-        add(intRow("Grid share", \.restir.grid.share, RegirSettings.shareRange) { "\($0) cand." }, advanced: true, when: isGrid)
-        add(intRow("Grid cells", \.restir.grid.cells, RegirSettings.cellRange) { "\($0)³" }, advanced: true, when: isGrid)
-        add(intRow("Grid levels", \.restir.grid.levels, RegirSettings.levelRange), advanced: true, when: isGrid)
-        add(floatRow("Cell size", \.restir.grid.cellSize, RegirSettings.cellSizeRange, step: 0.25, log: true) { String(format: "%.2f m", $0) },
-            advanced: true, when: isGrid)
-        add(floatRow("Level scale", \.restir.grid.levelScale, RegirSettings.scaleRange, step: 0.5) { String(format: "%.1f×", $0) },
-            advanced: true, when: isGrid)
-        add(intRow("Grid slots", \.restir.grid.slots, RegirSettings.slotRange), advanced: true, when: isGrid)
-        add(intRow("Grid candidates", \.restir.grid.candidates, RegirSettings.candidateRange), advanced: true, when: isGrid)
-        add(checkRow("Split visibility (shadow denoiser)", \.restir.splitVisibility), advanced: true, when: isRestir)
-        add(intRow("Filter passes", \.restir.denoisePasses, DenoiserSettings.passRange), advanced: true, when: isRestir)
-        add(floatRow("Edge tolerance (σ)", \.restir.denoiseSigma, DenoiserSettings.luminanceSigmaRange, step: 0.05) { String(format: "%.2f", $0) },
-            advanced: true, when: isRestir)
-        add(floatRow("History length", \.restir.denoiseHistory, DenoiserSettings.maxHistoryRange, step: 1) { String(format: "%.0f fr", $0) },
-            advanced: true, when: isRestir)
-        add(floatRow("Variance boost", \.restir.varianceBoost, DenoiserSettings.varianceBoostRange, step: 0.25) { String(format: "%.2f×", $0) },
-            advanced: true, when: isRestir)
-
-        section("Rendering")
-        add([label("Render scale"), renderScale, renderScaleValue])
-        add([label("MetalFX upscaling"), upscale])
-        add([label("Upscaler"), upscalerKind])
-        let taau: (RenderSettings) -> Bool = { $0.upscaler == .custom && $0.upscaleFactor > 1 }
-        add(floatRow("TAAU history", \.taau.maxHistory, UpscalerSettings.maxHistoryRange, step: 0.5) { String(format: "%g fr", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Colour clip", \.taau.clipWidth, UpscalerSettings.clipWidthRange, step: 0.05) { String(format: "%.2f σ", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Sharpness", \.taau.kernelSharpness, UpscalerSettings.sharpnessRange, step: 0.25) { String(format: "%.2f", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Sharpness, moving", \.taau.kernelSharpnessMoving, UpscalerSettings.sharpnessRange, step: 0.25) { String(format: "%.2f", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Motion cut", \.taau.motionCut, UpscalerSettings.motionCutRange, step: 0.1) { String(format: "%.1f", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Edge motion cut", \.taau.edgeMotionCut, UpscalerSettings.edgeMotionCutRange, step: 0.5) { String(format: "%.1f", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Clip cut", \.taau.clipCut, UpscalerSettings.clipCutRange, step: 1) { String(format: "%.0f", $0) },
-            advanced: true, when: taau)
-        add(floatRow("Edge dilation", \.taau.dilationRadius, UpscalerSettings.dilationRange, step: 0.01) { $0 == 0 ? "3×3" : String(format: "%.2f px", $0) },
-            advanced: true, when: taau)
-        add(checkRow("Lanczos history", \.taau.lanczosHistory), advanced: true, when: taau)
-        add(floatRow("Lanczos threshold", \.taau.lanczosThreshold, UpscalerSettings.lanczosThresholdRange, step: 0.005) { String(format: "%.3f", $0) },
-            advanced: true, when: { taau($0) && $0.taau.lanczosHistory })
-        add([NSGridCell.emptyContentView, blueNoise])
-        add([label("View"), viewMode])
-
-        section("Global illumination")
-        add([NSGridCell.emptyContentView, gi])
-        add([label("Method"), giMode])
-        add([label("Bounces"), bounces, bouncesValue], when: { $0.giMode == .pathTraced })
-        add([NSGridCell.emptyContentView, lightMaps], when: { $0.giMode == .pathTraced })
-        add([label("Probe spacing"), probeSpacing], when: { $0.giMode == .radianceCascades })
-        add([label("Cascades"), cascadeCount, cascadeCountValue], when: { $0.giMode == .radianceCascades })
-        add([label("First interval"), firstInterval, firstIntervalValue], when: { $0.giMode == .radianceCascades })
-        add([NSGridCell.emptyContentView, cascadeBounce], when: { $0.giMode == .radianceCascades })
-        add([NSGridCell.emptyContentView, cascadeDenoise], when: { $0.giMode == .radianceCascades })
-        add([label("Rays"), rgiRays], when: isRestirGI)
-        add([label("Bounces"), rgiBounces, rgiBouncesValue], when: isRestirGI)
-        add([NSGridCell.emptyContentView, rgiFeedback], when: isRestirGI)
-        add([NSGridCell.emptyContentView, rgiTemporal], when: isRestirGI)
-        add([label("Spatial reuse"), rgiSpatial], when: isRestirGI)
-        add([NSGridCell.emptyContentView, rgiUnbiased], when: isRestirGI)
-        add(checkRow("Light bounces from light maps", \.restirGI.lightMaps), advanced: true, when: isRestirGI)
-        add(checkRow("Multi-bounce from denoised light", \.restirGI.denoisedFeedback), advanced: true,
-            when: { isRestirGI($0) && $0.restirGI.feedback })
-        add(checkRow("Multi-bounce off screen (mean)", \.restirGI.feedbackFallback), advanced: true,
-            when: { isRestirGI($0) && $0.restirGI.feedback })
-        add(floatRow("Max M", \.restirGI.maxM, RestirGISettings.maxMRange, step: 1, log: true) { String(format: "%.0f", $0) },
-            advanced: true, when: isRestirGI)
-        add(intRow("Max age", \.restirGI.maxAge, RestirGISettings.maxAgeRange) { "\($0) fr" }, advanced: true, when: isRestirGI)
-        add(intRow("Neighbours", \.restirGI.spatialSamples, RestirGISettings.spatialSampleRange), advanced: true,
-            when: { isRestirGI($0) && $0.restirGI.spatialPasses > 0 })
-        add(floatRow("Radius", \.restirGI.radius, RestirGISettings.radiusRange, step: 1) { String(format: "%.0f px", $0) },
-            advanced: true, when: { isRestirGI($0) && $0.restirGI.spatialPasses > 0 })
-        add(floatRow("Min distance", \.restirGI.minDistance, RestirGISettings.minDistanceRange, step: 0.001, log: true) { String(format: "%.3f m", $0) },
-            advanced: true, when: isRestirGI)
-        add(checkRow("Denoise ReSTIR GI", \.restirGI.denoise), advanced: true, when: isRestirGI)
-        let rgiDenoise: (RenderSettings) -> Bool = { isRestirGI($0) && $0.restirGI.denoise }
-        add(intRow("Filter passes", \.restirGI.denoisePasses, DenoiserSettings.passRange), advanced: true, when: rgiDenoise)
-        add(floatRow("Edge tolerance (σ)", \.restirGI.denoiseSigma, DenoiserSettings.luminanceSigmaRange, step: 0.05) { String(format: "%.2f", $0) },
-            advanced: true, when: rgiDenoise)
-        add(floatRow("History length", \.restirGI.denoiseHistory, DenoiserSettings.maxHistoryRange, step: 1) { String(format: "%.0f fr", $0) },
-            advanced: true, when: rgiDenoise)
-        add(floatRow("Variance boost", \.restirGI.varianceBoost, DenoiserSettings.varianceBoostRange, step: 0.25) { String(format: "%.2f×", $0) },
-            advanced: true, when: rgiDenoise)
-        add(floatRow("Anti-lag", \.restirGI.antiLag, DenoiserSettings.antiLagRange, step: 0.1) { $0 == 0 ? "off" : String(format: "%.1f", $0) },
-            advanced: true, when: rgiDenoise)
-
-        section("Fog")
-        let fogOn: (RenderSettings) -> Bool = { $0.fog.enabled }
-        add([NSGridCell.emptyContentView, fog])
-        add([label("Density"), fogDensity, fogDensityValue], when: fogOn)
-        add([label("Height falloff"), fogFalloff, fogFalloffValue], when: fogOn)
-        add([label("Forward scattering"), fogAnisotropy, fogAnisotropyValue], when: fogOn)
-        add([label("Ambient light"), fogAmbient, fogAmbientValue], when: fogOn)
-        add([label("Noise"), fogNoise, fogNoiseValue], when: fogOn)
-        add([label("Distance"), fogDistance, fogDistanceValue], when: fogOn)
-        add([NSGridCell.emptyContentView, fogVolumes], when: fogOn)
-        add([NSGridCell.emptyContentView, fogReflections], when: fogOn)
-        add(floatRow("Base height", \.fog.baseHeight, FogSettings.baseHeightRange, step: 0.25) { String(format: "%.2f m", $0) },
-            advanced: true, when: fogOn)
-        add(floatRow("Noise tile", \.fog.noiseScale, FogSettings.noiseScaleRange, step: 0.5) { String(format: "%.1f m", $0) },
-            advanced: true, when: fogOn)
-        add(floatRow("Wind", \.fog.windSpeed, FogSettings.windSpeedRange, step: 0.05) { String(format: "%.2f m/s", $0) },
-            advanced: true, when: fogOn)
-        add(floatRow("Wind direction", \.fog.windDirection, -180...180, step: 5) { String(format: "%.0f°", $0) },
-            advanced: true, when: fogOn)
-        add([label("Albedo"), fogAlbedo], advanced: true, when: fogOn)
-
-        section("Sky")
-        add([label("Sky"), skyMode])
-        add([NSGridCell.emptyContentView, skyImageButton], when: { $0.sky.mode == .image })
-        add(floatRow("Image exposure", \.sky.imageExposure, RenderSettings.exposureRange, step: 0.1) { String(format: "%+.1f EV", $0) },
-            advanced: true, when: { $0.sky.mode == .image })
-        add([NSGridCell.emptyContentView, clouds], when: hasClouds)
-        add([label("Coverage"), coverage, coverageValue], when: hasClouds)
-        add([label("Cloud density"), cloudDensity, cloudDensityValue], when: hasClouds)
-        add([label("Cloud height"), cloudHeight, cloudHeightValue], when: hasClouds)
-        add([label("Wind"), wind, windValue], when: hasClouds)
-        add([NSGridCell.emptyContentView, cloudShadows], when: hasClouds)
-        add(floatRow("Cloud thickness", \.sky.cloudThickness, SkySettings.cloudThicknessRange, step: 50) { String(format: "%.0f m", $0) },
-            advanced: true, when: hasClouds)
-        add(floatRow("Cloud size", \.sky.cloudScale, SkySettings.cloudScaleRange, step: 100, log: true) { String(format: "%.0f m", $0) },
-            advanced: true, when: hasClouds)
-        add(floatRow("Erosion", \.sky.erosion, 0...1, step: 0.01) { String(format: "%.2f", $0) }, advanced: true, when: hasClouds)
-        add(floatRow("Wind direction", \.sky.windDirection, 0...360, step: 5) { String(format: "%.0f°", $0) },
-            advanced: true, when: hasClouds)
-        add(floatRow("Shadow strength", \.sky.shadowStrength, 0...1, step: 0.05) { String(format: "%.2f", $0) },
-            advanced: true, when: { hasClouds($0) && $0.sky.shadows })
-
-        section("Denoiser")
-        add([denoiserCaption])
-        add([NSGridCell.emptyContentView, denoise])
-        add([NSGridCell.emptyContentView, shadowDenoiser])
-        add([label("Shadow passes"), shadowPasses, shadowPassesValue])
-        let shadowsOn: (RenderSettings) -> Bool = { $0.denoiser.enabled && $0.denoiser.shadowDenoiser }
-        add(floatRow("Shadow history", \.denoiser.shadowHistory, DenoiserSettings.maxHistoryRange, step: 1) { String(format: "%.0f fr", $0) },
-            advanced: true, when: shadowsOn)
-        add(floatRow("Shadow clamp", \.denoiser.shadowClamp, DenoiserSettings.shadowClampRange, step: 0.05) { String(format: "%.2f σ", $0) },
-            advanced: true, when: shadowsOn)
-        add(floatRow("Shadow edges (σ)", \.denoiser.shadowSigma, DenoiserSettings.shadowSigmaRange, step: 0.25) { String(format: "%.2f", $0) },
-            advanced: true, when: shadowsOn)
-        add([NSGridCell.emptyContentView, separate])
-        add([label("Filter passes"), passes, passesValue])
-        add([label("Edge tolerance (σ)"), sigma, sigmaValue])
-        add([label("History length"), history, historyValue])
-        add([label("Anti-lag"), antiLag, antiLagValue])
-
-        section("Memory", advanced: true)
-        add(popupRow("Geometry pool", \.virtualGeometry.poolMB, VirtualGeometrySettings.poolOptions.map { ("\($0) MB", $0) }),
-            advanced: true)
-        add(popupRow("Texture budget", \.textureBudgetMB, RenderSettings.textureBudgetOptions.map { ("\($0) MB", $0) }),
-            advanced: true)
-
+        for section in SettingsTable.sections {
+            self.section(section.title, advanced: section.advanced)
+            for spec in section.rows {
+                guard let views = makeRow(spec) else { continue }   // a setting with only an env name
+                if let enabled = spec.enabled, views.count > 1, let control = views[1] as? NSControl {   // after the label
+                    refreshers.append { control.isEnabled = enabled($0) }
+                }
+                add(views, advanced: spec.advanced || section.advanced, when: spec.visible)
+            }
+        }
         sectionOf = []
         var current = 0
         for r in rows.indices {
             if headerRows[r] != nil { current = r }
             sectionOf.append(current)
+        }
+    }
+
+    /// The row for `spec`: its control, wired to the setting both ways.
+    private func makeRow(_ spec: SettingSpec) -> [NSView]? {
+        switch spec.control {
+        case nil:
+            return nil
+        case .slider(let model):
+            let slider = NSSlider(), value = NSTextField(labelWithString: "")
+            styleValue(value)
+            slider.minValue = model.range.lowerBound
+            slider.maxValue = model.range.upperBound
+            slider.numberOfTickMarks = model.ticks
+            slider.allowsTickMarkValuesOnly = model.ticks > 0
+            slider.isContinuous = model.live
+            onChange(slider) { [unowned self] in model.move(&self.renderer.settings, slider.doubleValue) }
+            refreshers.append { s in
+                slider.doubleValue = model.position(s)
+                value.stringValue = model.text(s)
+            }
+            return [label(spec.title), slider, value]
+        case .checkbox(let get, let set):
+            let box = NSButton(checkboxWithTitle: spec.title, target: nil, action: nil)
+            onChange(box) { [unowned self] in set(&self.renderer.settings, box.state == .on) }
+            refreshers.append { box.state = get($0) ? .on : .off }
+            return [NSGridCell.emptyContentView, box]
+        case .popup(let titles, let selected, let select):
+            let popup = NSPopUpButton()
+            popup.addItems(withTitles: titles)
+            onChange(popup) { [unowned self] in select(&self.renderer.settings, popup.indexOfSelectedItem) }
+            refreshers.append { popup.selectItem(at: selected($0)) }
+            return [label(spec.title), popup]
+        case .custom(let row):
+            return customRow(row, title: spec.title)
+        }
+    }
+
+    /// The rows that are more than one setting behind one control.
+    private func customRow(_ row: SettingSpec.Custom, title: String) -> [NSView] {
+        func popup(_ titles: [String], _ changed: @escaping (NSPopUpButton) -> Void) -> NSPopUpButton {
+            let popup = NSPopUpButton()
+            popup.addItems(withTitles: titles)
+            onChange(popup) { changed(popup) }
+            return popup
+        }
+        switch row {
+        case .scene:   // a new scene brings its own defaults and drops the models added to the old one
+            let kinds = popup(SceneKind.allCases.map(\.title)) { [unowned self] popup in
+                var s = self.renderer.settings
+                s.scene.kind = SceneKind(rawValue: popup.indexOfSelectedItem) ?? .cornell
+                guard s.scene.kind != self.renderer.settings.scene.kind else { return }
+                s.scene.extraModels = []
+                s.applySceneDefaults(from: self.renderer.defaultSettings)   // e.g. the night market's light count
+                self.renderer.settings = s
+            }
+            refreshers.append { kinds.selectItem(at: $0.scene.kind.rawValue) }
+            return [label(title), kinds]
+        case .clearModels:
+            let button = NSButton(title: "Clear Added Models", target: nil, action: nil)
+            onChange(button) { [unowned self] in self.renderer.settings.scene.extraModels = [] }
+            return [NSGridCell.emptyContentView, button]
+        case .lightRays:   // shadow rays per light group and whether one ray's picks are reused: two settings
+            let rays = popup(["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"]) { [unowned self] popup in
+                let choice = popup.indexOfSelectedItem
+                self.renderer.settings.manyLightRays = choice == 2 ? 2 : 1
+                self.renderer.settings.manyLightReuse = choice == 1 ? self.renderer.defaultSettings.manyLightReuse : 0
+            }
+            refreshers.append { s in
+                rays.selectItem(at: s.manyLightRays >= 2 ? 2 : s.manyLightReuse > 0 ? 1 : 0)
+                rays.isEnabled = s.scene.lights > 4
+            }
+            return [label(title), rays]
+        case .upscale:   // the factors this GPU's MetalFX supports
+            let steps = upscaleSteps
+            let factor = popup(steps.map { $0 == 0 ? "Off" : String(format: "%g×", $0) }) { [unowned self] popup in
+                self.renderer.settings.upscaleFactor = steps[popup.indexOfSelectedItem]
+            }
+            factor.isEnabled = steps.count > 1
+            refreshers.append { factor.selectItem(at: steps.firstIndex(of: $0.upscaleFactor) ?? 0) }
+            return [label(title), factor]
+        case .skyMode:   // an image needs a file first
+            let mode = popup(SkyMode.allCases.map(\.title)) { [unowned self] popup in
+                let mode = SkyMode(rawValue: popup.indexOfSelectedItem) ?? .constant
+                if mode == .image && self.renderer.settings.sky.imagePath == nil { self.chooseSkyImage() }
+                else { self.renderer.settings.sky.mode = mode }
+            }
+            refreshers.append { mode.selectItem(at: $0.sky.mode.rawValue) }
+            return [label(title), mode]
+        case .skyImage:
+            let button = NSButton(title: "Choose Image…", target: nil, action: nil)
+            onChange(button) { [unowned self] in self.chooseSkyImage() }
+            refreshers.append { button.title = $0.sky.imagePath.map { "Image: " + ($0 as NSString).lastPathComponent } ?? "Choose Image…" }
+            return [NSGridCell.emptyContentView, button]
+        case .fogAlbedo:
+            let well = NSColorWell(style: .minimal)
+            onChange(well) { [unowned self] in
+                guard let c = well.color.usingColorSpace(.sRGB) else { return }
+                let round = { (v: CGFloat) in Float((v * 100).rounded() / 100) }
+                self.renderer.settings.fog.albedo = [round(c.redComponent), round(c.greenComponent), round(c.blueComponent)]
+            }
+            refreshers.append {
+                let a = $0.fog.albedo
+                well.color = NSColor(srgbRed: CGFloat(a.x), green: CGFloat(a.y), blue: CGFloat(a.z), alpha: 1)
+            }
+            return [label(title), well]
+        case .denoiserCaption:
+            return [denoiserCaption]
         }
     }
 
@@ -594,115 +344,6 @@ final class SettingsPanel: NSObject {
         applyVisibility(s)
         for refresh in refreshers { refresh(s) }
         updateDenoiserCaption(s)
-        sceneKind.selectItem(at: s.scene.kind.rawValue)
-        rayTracer.selectItem(at: s.rayTracer.rawValue)
-        virtualGeometry.state = s.virtualGeometry.enabled ? .on : .off
-        specular.state = s.specular ? .on : .off
-        virtualGeometry.isEnabled = s.rayTracer == .custom   // Metal would need its acceleration structures rebuilt per cut
-        vgError.doubleValue = Double(log2(s.virtualGeometry.pixelError))
-        vgErrorValue.stringValue = String(format: "%.2g px", s.virtualGeometry.pixelError)
-        vgError.isEnabled = s.rayTracer == .custom && s.virtualGeometry.enabled
-        freezeLOD.state = s.virtualGeometry.freeze ? .on : .off
-        emissiveLights.state = s.scene.emissiveLights ? .on : .off
-        freezeLOD.isEnabled = vgError.isEnabled
-        objects.integerValue = s.scene.objects
-        objectsValue.stringValue = "\(s.scene.objects)"
-        lights.doubleValue = log2(Double(max(s.scene.lights, 1)))
-        lightsValue.stringValue = "\(s.scene.lights)"
-        lightRays.selectItem(at: s.manyLightRays >= 2 ? 2 : s.manyLightReuse > 0 ? 1 : 0)
-        directLight.selectItem(at: s.directLight.rawValue)
-        restirCandidates.selectItem(at: SettingsPanel.candidateOptions.firstIndex { $0 >= s.restir.candidates } ?? 1)
-        restirSpatial.selectItem(at: RestirSettings.spatialPassRange.clamp(s.restir.spatialPasses))
-        restirTemporal.state = s.restir.temporal ? .on : .off
-        restirVisibility.state = s.restir.visibilityReuse ? .on : .off
-        lightRays.isEnabled = s.scene.lights > 4
-        giMode.selectItem(at: s.giMode.rawValue)
-        lightMaps.state = s.lightMaps ? .on : .off
-        let c = s.cascades
-        probeSpacing.selectItem(at: CascadeSettings.spacingOptions.firstIndex(of: c.probeSpacing) ?? 1)
-        cascadeCount.integerValue = c.cascades
-        cascadeCountValue.stringValue = "\(c.cascades)"
-        firstInterval.doubleValue = Double(c.firstInterval)
-        firstIntervalValue.stringValue = String(format: "%.2f m", c.firstInterval)
-        cascadeBounce.state = c.feedback ? .on : .off
-        cascadeDenoise.state = c.denoiseIndirect ? .on : .off
-        let rg = s.restirGI
-        rgiRays.selectItem(at: rg.quarterBudget ? 1 : 0)
-        rgiBounces.integerValue = rg.bounces
-        rgiBouncesValue.stringValue = "\(rg.bounces)"
-        rgiFeedback.state = rg.feedback ? .on : .off
-        rgiTemporal.state = rg.temporal ? .on : .off
-        rgiSpatial.selectItem(at: RestirGISettings.spatialPassRange.clamp(rg.spatialPasses))
-        rgiUnbiased.state = rg.unbiased ? .on : .off
-        rgiUnbiased.isEnabled = s.giEnabled && rg.spatialPasses > 0
-        for control in [giMode, lightMaps, probeSpacing, cascadeCount, firstInterval, cascadeBounce, cascadeDenoise,
-                        rgiRays, rgiBounces, rgiFeedback, rgiTemporal, rgiSpatial] as [NSControl] {
-            control.isEnabled = s.giEnabled
-        }
-
-        let f = s.fog
-        fog.state = f.enabled ? .on : .off
-        fogDensity.doubleValue = Double(log10(FogSettings.densityRange.clamp(f.density)))
-        fogDensityValue.stringValue = String(format: "%.3g /m", f.density)
-        fogFalloff.doubleValue = Double(f.heightFalloff)
-        fogFalloffValue.stringValue = String(format: "%.2f /m", f.heightFalloff)
-        fogAnisotropy.doubleValue = Double(f.anisotropy)
-        fogAnisotropyValue.stringValue = String(format: "%.2f", f.anisotropy)
-        fogAmbient.doubleValue = Double(f.ambient)
-        fogAmbientValue.stringValue = String(format: "%.2f", f.ambient)
-        fogNoise.doubleValue = Double(f.noise)
-        fogNoiseValue.stringValue = String(format: "%.2f", f.noise)
-        fogDistance.doubleValue = Double(f.maxDistance)
-        fogDistanceValue.stringValue = String(format: "%.0f m", f.maxDistance)
-        fogVolumes.state = f.volumes ? .on : .off
-        fogReflections.state = f.reflections ? .on : .off
-        fogAlbedo.color = NSColor(srgbRed: CGFloat(f.albedo.x), green: CGFloat(f.albedo.y), blue: CGFloat(f.albedo.z), alpha: 1)
-        let sky = s.sky
-        skyMode.selectItem(at: sky.mode.rawValue)
-        clouds.state = (sky.mode == .image ? sky.cloudsOverImage : sky.clouds) ? .on : .off   // over an image: in front of it
-        coverage.doubleValue = Double(sky.coverage)
-        coverageValue.stringValue = String(format: "%.2f", sky.coverage)
-        cloudDensity.doubleValue = Double(sky.density)
-        cloudDensityValue.stringValue = String(format: "%.3f /m", sky.density)
-        cloudHeight.doubleValue = Double(sky.cloudBase)
-        cloudHeightValue.stringValue = String(format: "%.0f m", sky.cloudBase)
-        wind.doubleValue = Double(sky.windSpeed)
-        windValue.stringValue = String(format: "%.0f m/s", sky.windSpeed)
-        cloudShadows.state = sky.shadows ? .on : .off
-        skyImageButton.title = sky.imagePath.map { "Image: " + ($0 as NSString).lastPathComponent } ?? "Choose Image…"
-        for control in [coverage, cloudDensity, cloudHeight, wind, cloudShadows] as [NSControl] {
-            control.isEnabled = sky.mode == .image ? sky.cloudsOverImage : sky.clouds
-        }
-
-        renderScale.doubleValue = Double(s.renderScale)
-        renderScaleValue.stringValue = String(format: "%.3g×", s.renderScale)
-        upscale.selectItem(at: upscaleSteps.firstIndex(of: s.upscaleFactor) ?? 0)
-        upscalerKind.selectItem(at: s.upscaler.rawValue)
-        upscalerKind.isEnabled = upscaleSteps.count > 1 && s.upscaleFactor > 1
-        gi.state = s.giEnabled ? .on : .off
-        bounces.integerValue = s.bounces
-        bouncesValue.stringValue = "\(s.bounces)"
-        bounces.isEnabled = s.giEnabled
-        blueNoise.state = s.blueNoise ? .on : .off
-        paused.state = s.paused ? .on : .off
-        viewMode.selectItem(at: s.viewMode)
-
-        let d = s.denoiser
-        denoise.state = d.enabled ? .on : .off
-        separate.state = d.separateSignals ? .on : .off
-        passes.integerValue = d.passes(for: s.giMode)   // the slider edits the count of the selected GI method
-        passesValue.stringValue = "\(d.passes(for: s.giMode))"
-        sigma.doubleValue = Double(d.luminanceSigma)
-        sigmaValue.stringValue = String(format: "%.2f", d.luminanceSigma)
-        history.doubleValue = Double(d.maxHistory)
-        historyValue.stringValue = String(format: "%.0f fr", d.maxHistory)
-        antiLag.doubleValue = Double(d.antiLag)
-        antiLagValue.stringValue = d.antiLag == 0 ? "off" : String(format: "%.1f", d.antiLag)
-        shadowDenoiser.state = d.shadowDenoiser ? .on : .off
-        shadowPasses.integerValue = d.shadowPasses
-        shadowPassesValue.stringValue = "\(d.shadowPasses)"
-        for control in [separate, passes, sigma, history, antiLag, shadowDenoiser] as [NSControl] { control.isEnabled = d.enabled }
-        shadowPasses.isEnabled = d.enabled && d.shadowDenoiser
     }
 
     /// Which signals the Denoiser section's generic rows (passes, σ, history, anti-lag) filter, and which have their own
@@ -736,33 +377,8 @@ final class SettingsPanel: NSObject {
         }
     }
 
-    // MARK: - Controls -> settings
+    // MARK: - Buttons
 
-    @objc private func renderScaleChanged() {
-        let step = RenderSettings.renderScaleStep
-        renderer.settings.renderScale = (CGFloat(renderScale.doubleValue) / step).rounded() * step
-    }
-    @objc private func upscaleChanged() { renderer.settings.upscaleFactor = upscaleSteps[upscale.indexOfSelectedItem] }
-    @objc private func upscalerKindChanged() {
-        renderer.settings.upscaler = UpscalerKind(rawValue: upscalerKind.indexOfSelectedItem) ?? .metalFX
-    }
-    @objc private func giChanged() { renderer.settings.giEnabled = gi.state == .on }
-    @objc private func bouncesChanged() { renderer.settings.bounces = Int(bounces.doubleValue.rounded()) }
-    @objc private func blueNoiseChanged() { renderer.settings.blueNoise = blueNoise.state == .on }
-    @objc private func pausedChanged() { renderer.settings.paused = paused.state == .on }
-    @objc private func viewModeChanged() { renderer.settings.viewMode = viewMode.indexOfSelectedItem }
-    @objc private func denoiseChanged() { renderer.settings.denoiser.enabled = denoise.state == .on }
-    @objc private func separateChanged() { renderer.settings.denoiser.separateSignals = separate.state == .on }
-    @objc private func passesChanged() {
-        let n = Int(passes.doubleValue.rounded())
-        if renderer.settings.giMode == .pathTraced { renderer.settings.denoiser.atrousPasses = n }
-        else { renderer.settings.denoiser.techniquePasses = n }
-    }
-    @objc private func shadowDenoiserChanged() { renderer.settings.denoiser.shadowDenoiser = shadowDenoiser.state == .on }
-    @objc private func shadowPassesChanged() { renderer.settings.denoiser.shadowPasses = Int(shadowPasses.doubleValue.rounded()) }
-    @objc private func sigmaChanged() { renderer.settings.denoiser.luminanceSigma = Float((sigma.doubleValue * 20).rounded() / 20) }
-    @objc private func historyChanged() { renderer.settings.denoiser.maxHistory = Float(history.doubleValue.rounded()) }
-    @objc private func antiLagChanged() { renderer.settings.denoiser.antiLag = Float((antiLag.doubleValue * 10).rounded() / 10) }
     @objc private func resetToDefaults() {
         var s = renderer.defaultSettings
         s.scene = renderer.settings.scene   // render settings only; the loaded scene and tracer stay
@@ -770,99 +386,19 @@ final class SettingsPanel: NSObject {
         s.applySceneDefaults(from: renderer.defaultSettings)
         renderer.settings = s
     }
-    @objc private func specularChanged() { renderer.settings.specular = specular.state == .on }
-    @objc private func emissiveLightsChanged() { renderer.settings.scene.emissiveLights = emissiveLights.state == .on }
-    @objc private func freezeLODChanged() { renderer.settings.virtualGeometry.freeze = freezeLOD.state == .on }
-    @objc private func virtualGeometryChanged() { renderer.settings.virtualGeometry.enabled = virtualGeometry.state == .on }
-    @objc private func vgErrorChanged() {
-        renderer.settings.virtualGeometry.pixelError = Float((pow(2, vgError.doubleValue) * 4).rounded() / 4)
-    }
-    @objc private func rayTracerChanged() {
-        renderer.settings.rayTracer = RayTracerKind(rawValue: rayTracer.indexOfSelectedItem) ?? .custom
-    }
-    @objc private func sceneKindChanged() {
-        var s = renderer.settings
-        s.scene.kind = SceneKind(rawValue: sceneKind.indexOfSelectedItem) ?? .cornell
-        guard s.scene.kind != renderer.settings.scene.kind else { return }
-        s.scene.extraModels = []   // opened / dropped models belong to the scene they were added to
-        s.applySceneDefaults(from: renderer.defaultSettings)   // e.g. the night market's light count
-        renderer.settings = s
-    }
-    @objc private func clearModelsChanged() { renderer.settings.scene.extraModels = [] }
-    @objc private func objectsChanged() { renderer.settings.scene.objects = Int((objects.doubleValue / 50).rounded()) * 50 }
-    @objc private func lightRaysChanged() {
-        let choice = lightRays.indexOfSelectedItem   // 0: 1 ray, 1: 1 ray + reuse, 2: 2 rays
-        renderer.settings.manyLightRays = choice == 2 ? 2 : 1
-        renderer.settings.manyLightReuse = choice == 1 ? renderer.defaultSettings.manyLightReuse : 0
-    }
-    @objc private func directLightChanged() {
-        renderer.settings.directLight = DirectLightMode(rawValue: directLight.indexOfSelectedItem) ?? .auto
-    }
-    @objc private func restirCandidatesChanged() {
-        renderer.settings.restir.candidates = SettingsPanel.candidateOptions[restirCandidates.indexOfSelectedItem]
-    }
-    @objc private func restirSpatialChanged() { renderer.settings.restir.spatialPasses = restirSpatial.indexOfSelectedItem }
-    @objc private func restirTemporalChanged() { renderer.settings.restir.temporal = restirTemporal.state == .on }
-    @objc private func restirVisibilityChanged() { renderer.settings.restir.visibilityReuse = restirVisibility.state == .on }
-    @objc private func lightsChanged() { renderer.settings.scene.lights = 1 << Int(lights.doubleValue.rounded()) }
-    @objc private func giModeChanged() { renderer.settings.giMode = GIMode(rawValue: giMode.indexOfSelectedItem) ?? .pathTraced }
-    @objc private func lightMapsChanged() { renderer.settings.lightMaps = lightMaps.state == .on }
-    @objc private func probeSpacingChanged() { renderer.settings.cascades.probeSpacing = CascadeSettings.spacingOptions[probeSpacing.indexOfSelectedItem] }
-    @objc private func cascadeCountChanged() { renderer.settings.cascades.cascades = Int(cascadeCount.doubleValue.rounded()) }
-    @objc private func firstIntervalChanged() { renderer.settings.cascades.firstInterval = Float((firstInterval.doubleValue * 20).rounded() / 20) }
-    @objc private func cascadeBounceChanged() { renderer.settings.cascades.feedback = cascadeBounce.state == .on }
-    @objc private func cascadeDenoiseChanged() { renderer.settings.cascades.denoiseIndirect = cascadeDenoise.state == .on }
-    @objc private func rgiRaysChanged() { renderer.settings.restirGI.quarterBudget = rgiRays.indexOfSelectedItem == 1 }
-    @objc private func rgiBouncesChanged() { renderer.settings.restirGI.bounces = Int(rgiBounces.doubleValue.rounded()) }
-    @objc private func rgiFeedbackChanged() { renderer.settings.restirGI.feedback = rgiFeedback.state == .on }
-    @objc private func rgiTemporalChanged() { renderer.settings.restirGI.temporal = rgiTemporal.state == .on }
-    @objc private func rgiSpatialChanged() { renderer.settings.restirGI.spatialPasses = rgiSpatial.indexOfSelectedItem }
-    @objc private func rgiUnbiasedChanged() { renderer.settings.restirGI.unbiased = rgiUnbiased.state == .on }
-    @objc private func fogChanged() { renderer.settings.fog.enabled = fog.state == .on }
-    @objc private func fogDensityChanged() {
-        let d = pow(10, fogDensity.doubleValue)   // two significant digits
-        let scale = pow(10, floor(log10(d)) - 1)
-        renderer.settings.fog.density = Float((d / scale).rounded() * scale)
-    }
-    @objc private func fogFalloffChanged() { renderer.settings.fog.heightFalloff = Float((fogFalloff.doubleValue * 100).rounded() / 100) }
-    @objc private func fogAnisotropyChanged() { renderer.settings.fog.anisotropy = Float((fogAnisotropy.doubleValue * 20).rounded() / 20) }
-    @objc private func fogAmbientChanged() { renderer.settings.fog.ambient = Float((fogAmbient.doubleValue * 20).rounded() / 20) }
-    @objc private func fogNoiseChanged() { renderer.settings.fog.noise = Float((fogNoise.doubleValue * 20).rounded() / 20) }
-    @objc private func fogDistanceChanged() { renderer.settings.fog.maxDistance = Float((fogDistance.doubleValue / 5).rounded() * 5) }
-    @objc private func fogVolumesChanged() { renderer.settings.fog.volumes = fogVolumes.state == .on }
-    @objc private func fogReflectionsChanged() { renderer.settings.fog.reflections = fogReflections.state == .on }
-    @objc private func fogAlbedoChanged() {
-        guard let c = fogAlbedo.color.usingColorSpace(.sRGB) else { return }
-        let round = { (v: CGFloat) in Float((v * 100).rounded() / 100) }
-        renderer.settings.fog.albedo = [round(c.redComponent), round(c.greenComponent), round(c.blueComponent)]
-    }
-    @objc private func skyModeChanged() {
-        let mode = SkyMode(rawValue: skyMode.indexOfSelectedItem) ?? .constant
-        if mode == .image && renderer.settings.sky.imagePath == nil { chooseSkyImage(); return }
-        renderer.settings.sky.mode = mode
-    }
-    @objc private func chooseSkyImage() {
+    private func chooseSkyImage() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = SkyImage.fileExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.message = "Choose an equirectangular HDR image (.hdr or .exr) for the sky"
         if panel.runModal() == .OK, let url = panel.url { renderer.addModels([url]) } else { update(from: renderer.settings) }
     }
-    @objc private func cloudsChanged() {
-        if renderer.settings.sky.mode == .image { renderer.settings.sky.cloudsOverImage = clouds.state == .on }
-        else { renderer.settings.sky.clouds = clouds.state == .on }
-    }
-    @objc private func coverageChanged() { renderer.settings.sky.coverage = Float((coverage.doubleValue * 100).rounded() / 100) }
-    @objc private func cloudDensityChanged() { renderer.settings.sky.density = Float((cloudDensity.doubleValue * 1000).rounded() / 1000) }
-    @objc private func cloudHeightChanged() { renderer.settings.sky.cloudBase = Float((cloudHeight.doubleValue / 50).rounded() * 50) }
-    @objc private func windChanged() { renderer.settings.sky.windSpeed = Float(wind.doubleValue.rounded()) }
-    @objc private func cloudShadowsChanged() { renderer.settings.sky.shadows = cloudShadows.state == .on }
     @objc private func showAdvancedChanged() {
         showAdvanced = showAdvancedBox.state == .on
         UserDefaults.standard.set(showAdvanced, forKey: "panel.advanced")
         applyVisibility(renderer.settings)
     }
     @objc private func copyAsEnv() {
-        let env = EnvExport.string(for: renderer.settings, defaults: renderer.defaultSettings)
+        let env = SettingsEnv.export(renderer.settings, defaults: renderer.defaultSettings)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(env, forType: .string)
         print("Copied: \(env)")
@@ -905,7 +441,7 @@ final class SettingsPanel: NSObject {
         override var isFlipped: Bool { true }
     }
 
-    /// Target for a control built by a bind helper.
+    /// A control's target.
     private final class Action: NSObject {
         let run: () -> Void
         init(_ run: @escaping () -> Void) { self.run = run }
@@ -919,75 +455,12 @@ final class SettingsPanel: NSObject {
         control.action = #selector(Action.fire)
     }
 
-    /// [label, slider, value] for a Float setting, rounded to `step`; `log` spaces the slider logarithmically.
-    private func floatRow(_ title: String, _ key: WritableKeyPath<RenderSettings, Float>, _ range: ClosedRange<Float>,
-                          step: Float, log: Bool = false, format: @escaping (Float) -> String) -> [NSView] {
-        let slider = NSSlider(), value = NSTextField(labelWithString: "")
-        styleValue(value)
-        let position = { (v: Float) in Double(log ? log2(v) : v) }
-        slider.minValue = position(range.lowerBound)
-        slider.maxValue = position(range.upperBound)
-        slider.isContinuous = true
-        onChange(slider) { [unowned self] in
-            let v = log ? pow(2, Float(slider.doubleValue)) : Float(slider.doubleValue)
-            self.renderer.settings[keyPath: key] = range.clamp((v / step).rounded() * step)
-        }
-        refreshers.append { s in
-            slider.doubleValue = position(range.clamp(s[keyPath: key]))
-            value.stringValue = format(s[keyPath: key])
-        }
-        return [label(title), slider, value]
-    }
-
-    /// [label, slider, value] for an Int setting (tick marks for short ranges).
-    private func intRow(_ title: String, _ key: WritableKeyPath<RenderSettings, Int>, _ range: ClosedRange<Int>,
-                        format: @escaping (Int) -> String = { "\($0)" }) -> [NSView] {
-        let slider = NSSlider(), value = NSTextField(labelWithString: "")
-        styleValue(value)
-        configureSlider(slider, CGFloat(range.lowerBound)...CGFloat(range.upperBound), ticks: range.count <= 16 ? range.count : 0, nil)
-        onChange(slider) { [unowned self] in self.renderer.settings[keyPath: key] = range.clamp(Int(slider.doubleValue.rounded())) }
-        refreshers.append { s in
-            slider.integerValue = s[keyPath: key]
-            value.stringValue = format(s[keyPath: key])
-        }
-        return [label(title), slider, value]
-    }
-
-    /// [empty, checkbox] for a Bool setting.
-    private func checkRow(_ title: String, _ key: WritableKeyPath<RenderSettings, Bool>) -> [NSView] {
-        let box = NSButton(checkboxWithTitle: title, target: nil, action: nil)
-        onChange(box) { [unowned self] in self.renderer.settings[keyPath: key] = box.state == .on }
-        refreshers.append { s in box.state = s[keyPath: key] ? .on : .off }
-        return [NSGridCell.emptyContentView, box]
-    }
-
-    /// [label, popup] choosing among `options` (title, value).
-    private func popupRow<T: Equatable>(_ title: String, _ key: WritableKeyPath<RenderSettings, T>, _ options: [(String, T)]) -> [NSView] {
-        let popup = NSPopUpButton()
-        popup.addItems(withTitles: options.map(\.0))
-        onChange(popup) { [unowned self] in self.renderer.settings[keyPath: key] = options[popup.indexOfSelectedItem].1 }
-        refreshers.append { s in popup.selectItem(at: options.firstIndex { $0.1 == s[keyPath: key] } ?? -1) }
-        return [label(title), popup]
-    }
-
     private func styleValue(_ value: NSTextField) {
         value.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         value.alignment = .right
     }
 
     private func label(_ text: String) -> NSView { NSTextField(labelWithString: text) }
-
-    private func cg(_ r: ClosedRange<Float>) -> ClosedRange<CGFloat> { CGFloat(r.lowerBound)...CGFloat(r.upperBound) }
-
-    private func configureSlider(_ slider: NSSlider, _ range: ClosedRange<CGFloat>, ticks: Int, _ action: Selector?) {
-        slider.minValue = Double(range.lowerBound)
-        slider.maxValue = Double(range.upperBound)
-        slider.numberOfTickMarks = ticks
-        slider.allowsTickMarkValuesOnly = ticks > 0
-        slider.isContinuous = true
-        slider.target = self
-        slider.action = action
-    }
 }
 
 extension SettingsPanel: NSWindowDelegate {

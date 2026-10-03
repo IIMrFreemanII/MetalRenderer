@@ -92,6 +92,8 @@ You can also open `Package.swift` in Xcode, choose **My Mac**, and press Run. Us
 
 > The app finds `Shaders.metal` through its source path, so run it from this folder rather than copying the binary somewhere else.
 
+`swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
+
 ### Benchmark mode
 
 ```bash
@@ -205,7 +207,7 @@ The window title and the Debug window show the resolution, frame rate and GPU ti
 * **Camera and time:** exposure (EV) and the tone curve, the field of view, the move speed, the animation's speed, and, in the sun and valley scenes, the time of day (an offset into the day cycle that moves only the sun and the sky; it works while paused). At their defaults (0 EV, ACES, 60°, 1×) images are bit-identical to before.
 * **Denoiser:** a caption says what the generic rows (passes, σ, history, anti-lag) filter in the current mode. ReSTIR DI and ReSTIR GI filter their own signal with their own settings, under Show advanced in their sections.
 * **Remembered:** settings are saved (UserDefaults) half a second after each change and restored at the next launch, except the pause, the view, Freeze LOD and added models. `METALRENDERER_SETTINGS=default` starts from the defaults instead. Benchmarks never read or write them.
-* **Copy as Env** puts the `METALRENDERER_*` variables that reproduce the current settings on the clipboard, listing only what differs from the defaults (fog and sky from the scene's preset). They work in a normal launch, where they override the saved settings, and in benchmarks, where they apply to every setting. `METALRENDERER_DUMP_SETTINGS=1` prints the settings as JSON at startup, to compare two launches. The camera pose and where added models were placed aren't included.
+* **Copy as Env** puts the `METALRENDERER_*` variables that reproduce the current settings on the clipboard, listing only what differs from the defaults (fog and sky from the scene's preset). They work in a normal launch, where they override the saved settings, and in benchmarks, where they apply to every setting. A key the app doesn't know, or a value it can't read, is reported on the console and skipped. `METALRENDERER_DUMP_SETTINGS=1` prints the settings as JSON at startup, to compare two launches. The camera pose and where added models were placed aren't included.
 
 The environment variables, in a normal launch and in benchmarks: `METALRENDERER_SCENE`, `METALRENDERER_GI` (now also `on=0` for GI off), `METALRENDERER_DENOISE`, `METALRENDERER_RESTIR`, `METALRENDERER_RESTIR_GI`, `METALRENDERER_FOG_SET` (now also `albedo=r:g:b` and `wind=x:y:z`), `METALRENDERER_SKY_SET`, and `METALRENDERER_VIEW="exposure=1,tonemap=agx,fov=70,speed=5,timescale=0.5,tod=0.25"` (plus `view=<index>` and `paused=1` outside benchmarks). The plain ones (`METALRENDERER_DIRECT`, `_RT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`) set defaults, as before.
 
@@ -621,9 +623,10 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `BVH.swift` | The custom ray tracer's node format and CPU builder (binned SAH) for bottom-level and static top-level trees |
 | `CustomRayTracer.swift` | The custom ray tracer's buffers, the per-frame GPU build of the moving objects' tree, its argument buffer |
 | `Settings.swift` | Every user-adjustable setting, with defaults and ranges |
-| `SettingsPanel.swift` | The Render Settings panel |
+| `SettingsTable.swift` | Every setting once: its place in the settings, its `METALRENDERER_*` name and its panel row |
+| `SettingsPanel.swift` | The Render Settings panel, built from the table |
 | `SettingsStore.swift` | Saves and restores the settings between launches |
-| `EnvExport.swift` | Copy as Env: the `METALRENDERER_*` variables for the current settings |
+| `SettingsEnv.swift` | The settings as `METALRENDERER_*` variables, both ways: Copy as Env and the parser, from the table |
 | `GPUProfiler.swift` | The Debug window's GPU pass timings (timestamp counters at encoder boundaries) |
 | `DebugPanel.swift` | The Debug window: frame graph, pass timings, scene, virtual geometry, textures, memory, traversal counters |
 | `Upscaler.swift` | MetalFX temporal (or spatial) scaler and the sub-pixel jitter sequence |

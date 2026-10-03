@@ -77,7 +77,9 @@ pure speed change.
 
 * `METALRENDERER_BENCH_ONLY="32 lights|camera"` keeps only the settings whose names contain one of these substrings.
 * `METALRENDERER_SCENE="stress,objects=400,lights=32"` loads that scene in every setting.
-* Override strings, parsed in Benchmark.swift (~95–330), apply to every setting:
+* Override strings apply to every setting. Their keys are the env names in `SettingsTable.swift` (one line per
+  setting: add a setting there and it gets its key, its Copy as Env entry and its panel row); `SettingsEnv.apply`
+  reads them and reports unknown keys:
   * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,upscaler=metalfx|custom|spatial,on=0,…"`;
   * `METALRENDERER_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
 * Plain defaults: `METALRENDERER_RT=metal|custom`, `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,

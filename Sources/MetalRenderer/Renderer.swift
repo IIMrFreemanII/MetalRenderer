@@ -466,7 +466,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             // like a switch in the panel.
             var s = SettingsStore.load(over: defaultSettings) ?? settings
             if !upscaleSteps.contains(s.upscaleFactor) { s.upscaleFactor = defaultSettings.upscaleFactor }
-            Benchmark.applyInteractiveOverrides(to: &s, defaults: defaultSettings)
+            SettingsEnv.applyAll(to: &s, defaults: defaultSettings)
             settings = s
             persistSettings = true
             SettingsStore.dumpIfRequested(settings)
@@ -2406,22 +2406,23 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                bounces: c.bounces, blueNoise: c.blueNoise, paused: c.paused, viewMode: c.viewMode,
                                denoiser: c.denoiser, giMode: c.giMode, lightMaps: c.lightMaps,
                                cascades: c.cascades, scene: c.scene)
-        Benchmark.applySceneOverride(to: &s.scene)
+        // The METALRENDERER_* lists override every setting of the run (SettingsEnv; the keys are SettingsTable's).
+        SettingsEnv.apply(.scene, to: &s)
         s.fog = c.fog ?? FogSettings.preset(for: s.scene.kind)
-        Benchmark.applyFogOverride(to: &s.fog)
+        SettingsEnv.apply(.fogSet, to: &s)
         s.sky = c.sky ?? SkySettings.preset(for: s.scene.kind)
-        Benchmark.applySkyOverride(to: &s.sky)
+        SettingsEnv.apply(.skySet, to: &s)
         if let rt = c.rayTracer { s.rayTracer = rt }
         if let v = c.virtualGeometry { s.virtualGeometry = v }
         s.denoiser.enabled = c.denoiseEnabled
-        Benchmark.applyDenoiserOverride(to: &s.denoiser)
-        if !c.accumulate { Benchmark.applyGIOverride(to: &s) }
+        SettingsEnv.apply(.denoise, to: &s)
+        if !c.accumulate { SettingsEnv.apply(.gi, to: &s) }   // references keep their own GI settings
         if let d = c.directLight { s.directLight = d }
         s.restir = c.restir ?? RestirSettings()
-        Benchmark.applyRestirOverride(to: &s.restir)
+        SettingsEnv.apply(.restir, to: &s)
         s.restirGI = c.restirGI ?? RestirGISettings()
-        Benchmark.applyRestirGIOverride(to: &s.restirGI)
-        Benchmark.applyViewOverride(to: &s, interactive: false)
+        SettingsEnv.apply(.restirGI, to: &s)
+        SettingsEnv.apply(.view, to: &s)
         settings = s
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
