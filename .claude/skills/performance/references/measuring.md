@@ -73,6 +73,8 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 
 Scorers print PSNR in dB (higher is better) and flicker in 8-bit levels. References live in `Tools/eval/refs/<mode>/`.
 A run that renders the "ref …" settings refreshes them. Skip them with `METALRENDERER_GI_REFS=0` once they exist.
+A reference's noise depends on the settings rendered before it in the same run (the frame counter, which seeds the
+samples, runs on): two builds render the same reference bit for bit only with the same `METALRENDERER_BENCH_ONLY`.
 Re-render them only when the ground truth changes (the scene, lights, materials or light transport), never for a
 pure speed change.
 

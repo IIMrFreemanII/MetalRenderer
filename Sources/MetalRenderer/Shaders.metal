@@ -1469,6 +1469,32 @@ uint pickLight(device const Light* lights, uint lightCount, float3 p, float3 n, 
     return picked;
 }
 
+// The same pick by the lights' unshadowed specular light at p toward v (lightSpecular), for a direct specular sample:
+// `specular` = the picked light's. specular / pdf is then the candidates' summed specular in the picked light's
+// colour, so the estimate never exceeds what the lights can give and needs no firefly clamp. (A pick by diffuse
+// light, as above, gives a light with a strong highlight but little diffuse light here a small pdf: its samples
+// were bright enough to be clamped, and the highlights came out dark.)
+uint pickLightSpecular(device const Light* lights, uint lightCount, float3 p, float3 n, float3 ng, float3 v, float3 f0,
+                       float roughness, float u, float uSubset, thread float& pdf, thread float3& specular) {
+    float total = 0.0f, pickedWeight = 0.0f;
+    uint picked = lightCount;
+    specular = float3(0.0f);
+    u = min(u, 0.99999f);
+    LightSubset ls = lightSubset(lightCount, uSubset);
+    for (uint j = 0; j < ls.count; ++j) {
+        uint i = lightSubsetIndex(ls, j, lightCount);
+        float3 sp = lightSpecular(lights[i], p, n, ng, v, f0, roughness);
+        float w = luminance(sp);
+        if (w <= 0.0f) continue;
+        total += w;
+        float q = w / total;
+        if (u < q) { picked = i; pickedWeight = w; specular = sp; u /= q; }
+        else u = (u - q) / (1.0f - q);
+    }
+    pdf = total > 0.0f ? pickedWeight / (total * ls.scale) : 0.0f;
+    return picked;
+}
+
 // Half width of a light's penumbra in world units, for an occluder at distance d from the receiver:
 // w = r d / (D - d) for a light of radius r at distance D (as in PCSS); the sun: d tan(angular radius).
 // 0 = the sample was visible.
@@ -4222,40 +4248,50 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float roughness = m.a, a = roughness * roughness;
     float NoV = max(dot(n, v), 1e-4f);
     float3 albedo = specularAlbedo(f0, 1.0f, roughness, NoV);
-    float3 result = float3(0.0f);
+    float3 result = float3(0.0f), direct = float3(0.0f);
 
     uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
     if (flagOn(u.flags, FLAG_RESTIR)) {
-        result += restirSpecular.read(tid).rgb;   // ReSTIR's direct specular (restirSpatialKernel)
+        direct += restirSpecular.read(tid).rgb;   // ReSTIR's direct specular (restirSpatialKernel)
     } else if (!flagOn(u.flags, FLAG_SHADOW_DENOISER) && analyticLights > 0) {
-        // Direct specular from one light (picked by its diffuse light here): spheres and spots exactly, a uniform
-        // point on the sphere; other lights their analytic specular x the visibility of a random point of them.
+        // Direct specular from one light, with one shadow ray to a random point of it.
         float pdf;
         float uPick = rng.next();
         float uSubset = analyticLights > LIGHT_CANDIDATES ? rng.next() : 0.0f;
-        uint li = pickLight(lights, analyticLights, p, n, ng, uPick, uSubset, pdf);
         float2 r = rng.next2();
-        if (li < analyticLights) {
-            Light light = lights[li];
-            uint type = lightType(light);
-            float3 x = lightShadowTarget(light, p, r);
-            if (type == LIGHT_SPHERE || type == LIGHT_SPOT) {
-                float3 toX = x - p;
-                float d2 = dot(toX, toX);
-                float3 l = toX * rsqrt(d2);
-                float cosX = dot(normalize(x - light.positionRadius.xyz), -l);
-                float NoL = dot(n, l);
-                if (cosX > 0.0f && NoL > 0.0f && dot(ng, l) > 0.0f && isVisible(p, x, accel)) {
-                    float rad = light.positionRadius.w;
-                    float3 Le = light.color.rgb / (M_PI_F * rad * rad);
-                    if (type == LIGHT_SPOT) Le *= spotFactor(light, -l);
-                    float3 h = normalize(l + v);
-                    float3 F = schlick(f0, 1.0f, dot(v, h));
-                    float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
-                    result += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
+        if (!flagOn(u.flags, FLAG_REFERENCE)) {
+            // The light is picked by its specular light here, and that analytic specular (what the composite adds
+            // with the shadow denoiser) x the ray's visibility is the sample: only the pick and the shadow are noisy.
+            float3 unshadowed;
+            uint li = pickLightSpecular(lights, analyticLights, p, n, ng, v, f0, roughness, uPick, uSubset, pdf, unshadowed);
+            if (li < analyticLights && isVisible(p, lightShadowTarget(lights[li], p, r), accel))
+                direct += unshadowed * (sunVisibilityScale(lights[li], p, s) / pdf);
+        } else {
+            // References: the light is picked by its diffuse light here; spheres and spots exactly, a uniform point
+            // on the sphere; other lights their analytic specular x the visibility of a random point of them.
+            uint li = pickLight(lights, analyticLights, p, n, ng, uPick, uSubset, pdf);
+            if (li < analyticLights) {
+                Light light = lights[li];
+                uint type = lightType(light);
+                float3 x = lightShadowTarget(light, p, r);
+                if (type == LIGHT_SPHERE || type == LIGHT_SPOT) {
+                    float3 toX = x - p;
+                    float d2 = dot(toX, toX);
+                    float3 l = toX * rsqrt(d2);
+                    float cosX = dot(normalize(x - light.positionRadius.xyz), -l);
+                    float NoL = dot(n, l);
+                    if (cosX > 0.0f && NoL > 0.0f && dot(ng, l) > 0.0f && isVisible(p, x, accel)) {
+                        float rad = light.positionRadius.w;
+                        float3 Le = light.color.rgb / (M_PI_F * rad * rad);
+                        if (type == LIGHT_SPOT) Le *= spotFactor(light, -l);
+                        float3 h = normalize(l + v);
+                        float3 F = schlick(f0, 1.0f, dot(v, h));
+                        float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
+                        direct += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
+                    }
+                } else if (isVisible(p, x, accel)) {
+                    direct += lightSpecular(light, p, n, ng, v, f0, roughness) * (sunVisibilityScale(light, p, s) / pdf);
                 }
-            } else if (isVisible(p, x, accel)) {
-                result += lightSpecular(light, p, n, ng, v, f0, roughness) * (sunVisibilityScale(light, p, s) / pdf);
             }
         }
     }
@@ -4288,10 +4324,12 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             result += weight * radiance;
         }
     }
-    result /= max(albedo, float3(1e-3f));
-    float lum = luminance(result);
+    // The firefly clamp is for the reflection ray's light (a small bright emitter seen by few rays). The direct
+    // specular is bounded by the lights' analytic specular (ReSTIR's by its own clamp), and clamping it darkened
+    // the highlights.
+    float lum = luminance(result / max(albedo, float3(1e-3f)));
     if (lum > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) result *= FIREFLY_CLAMP / lum;
-    outSpecular.write(roundToHalf(float4(result, 1.0f)), tid);
+    outSpecular.write(roundToHalf(float4((result + direct) / max(albedo, float3(1e-3f)), 1.0f)), tid);
 }
 
 // ---------------------------------------------------------------------------------------------

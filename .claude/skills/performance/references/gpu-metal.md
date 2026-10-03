@@ -63,6 +63,10 @@ fewer threads run at once and memory latency stops being hidden.
 * Outside such loops the same rewrite is neutral: don't bother. A small array written once and read a few times is
   cheaper than reading its contents again from textures: ReSTIR's spatial kernels keep ~1 KB of neighbour surfaces
   and reservoirs in arrays, and re-reading them instead cost +0.1–0.2 ms (DI) and +11% (GI spatial).
+* **Pick a sample by what it estimates.** A sample's value / pdf is only bounded when the pdf follows the integrand.
+  reflectionKernel picked its direct-specular light by diffuse light and then clamped the bright samples that made:
+  highlights 2–6% dark and noisy. Picked by specular light (`pickLightSpecular`), no clamp is needed (+5 to +16 dB
+  on `speccheck`'s SVGF rows). A firefly clamp downstream of a mismatched pdf is a bias, not a fix.
 * Kernel timings shift by ±0.3 ms with unrelated edits to the same kernel (the compiler lays it out differently).
   Trust only alternating A/B rounds of the pass's own column (`ab.sh -c "<pass>"`).
 * **Compile out what's off.** Copy these patterns:

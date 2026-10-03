@@ -491,7 +491,7 @@ extension Benchmark {
         picked([.area, .spots, .tubes]).flatMap { kind -> [Config] in
             let base = Config("", gi: nil, scene: SceneSettings(kind: kind)) { $0.toneMap = .none; $0.exposure = -2 }
                 .sky { $0 = SkySettings() }
-            let still = base.still().frames(60)
+            let still = base.still(previous: true).frames(60)
             return references([base.named("\(kind) ref").reference(frames: 1024)]) + [
                 still.named("\(kind) shadow denoiser"),
                 still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },

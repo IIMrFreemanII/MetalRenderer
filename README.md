@@ -137,7 +137,7 @@ For the lights:
 * `emissivelights=0`, added to `METALRENDERER_SCENE` or set as `METALRENDERER_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
 * `METALRENDERER_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
 * `METALRENDERER_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALRENDERER_LIGHTS_SCENES="sun|mixed"` picks scenes.
-* `METALRENDERER_BENCH=speccheck` checks that direct specular light is counted once. It renders the studio, the stage and the garage with direct light only through each direct-light path (shadow denoiser, SVGF, ReSTIR) and against an accumulated reference; `Tools/eval/specular.py` prints each image's brightness over the reference's, which should be 1.00.
+* `METALRENDERER_BENCH=speccheck` checks that direct specular light is counted once. It renders the studio, the stage and the garage with direct light only through each direct-light path (shadow denoiser, SVGF, ReSTIR) and against an accumulated reference; `Tools/eval/specular.py` prints each image's brightness over the reference's, which should be 1.00, its PSNR and its flicker.
 * `METALRENDERER_BENCH=lightcheck` cross-checks the closed-form area lights. A rect, a tube and a sphere light are each rendered over a floor next to an emissive-mesh twin of the same shape and radiance, converged over 1024 frames. The mesh estimator is unbiased, so the pairs should match:
   * the sphere matches its twin within 0.1%;
   * the rect within 1%;
@@ -793,7 +793,17 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
   | Stage (spot lights) | 1.02 → **1.00** | 43.9 → **46.8 dB** |
   | Garage (tube lights) | 1.05 → **1.00** | 38.9 → **49.9 dB** |
 
-  The gallery close-up gains 0.1 dB with cascades, 0.5 dB path traced and 1.1 dB with ReSTIR GI. Without the extra ray the reflection pass is 11–33% faster where lights are analytic: whole frames 10.08 → 9.28 ms in the Misty hall (fog off, 960×600), 6.83 → 6.01 ms in the garage and 3.93 → 3.75 ms on the stage (3× upscaled, fog), measured after the variants table above. ReSTIR and SVGF direct light were not affected, and scenes without specular materials render bit for bit as before. The check also shows the SVGF path 2–6% dark; that is not fixed here.
+  The gallery close-up gains 0.1 dB with cascades, 0.5 dB path traced and 1.1 dB with ReSTIR GI. Without the extra ray the reflection pass is 11–33% faster where lights are analytic: whole frames 10.08 → 9.28 ms in the Misty hall (fog off, 960×600), 6.83 → 6.01 ms in the garage and 3.93 → 3.75 ms on the stage (3× upscaled, fog), measured after the variants table above. ReSTIR and SVGF direct light were not affected, and scenes without specular materials render bit for bit as before.
+* **Highlights were dark without the shadow denoiser** (SVGF on direct light, or no denoiser; fixed October 2026). There the reflection pass adds the lights' direct specular from one sampled light. It picked that light by its *diffuse* light at the pixel, so a light with a strong highlight but little diffuse light there had a small pdf, its samples came out several times too bright, and the pass's firefly clamp cut them: the highlights lost energy, and what was left was noisy. Now the light is picked by its specular light (`pickLightSpecular`), and the sample is that analytic specular × the shadow ray's visibility, which is what the composite adds with the shadow denoiser. A sample can't exceed the lights' summed specular, so the direct term is no longer clamped; the clamp stays on the reflection ray's light. `METALRENDERER_BENCH=speccheck`, SVGF path:
+
+  | | Brightness / reference | PSNR |
+  |---|---|---|
+  | Studio (area lights) | 0.94 → **1.00** | 32.7 → **48.4 dB** |
+  | Stage (spot lights) | 0.97 → **1.00** | 40.4 → **45.4 dB** |
+  | Garage (tube lights) | 0.98 → **1.00** | 39.9 → **49.3 dB** |
+
+  With `METALRENDERER_DENOISE=shadows=0` the gallery gains 0.2–1.3 dB and its close-ups flicker a quarter less (0.54–0.58 → 0.39–0.47). The pass costs the same (−8% to +4% per scene). References keep the old sampling, exact for spheres and spots, and render bit for bit as before; so does everything with the shadow denoiser.
+  * What didn't do as well: only moving the direct specular out of the clamp (44.5, 43.6 and 48.7 dB, with visible fireflies on the stage), or clamping it at 4× like the other direct-light samplers (43.9, 43.3 and 46.6 dB). The pick was the problem; the clamp only showed it.
 * **Custom ray tracing vs Metal's** (M1 Max, stress scene, 32 lights, moving, custom upscaler 3× from 640×400).
   * Whole frames (`METALRENDERER_BENCH_SPLIT=0`, two alternating runs each):
 
