@@ -382,8 +382,10 @@ final class CustomRayTracer {
         return out
     }
 
-    func bind(_ enc: MTLComputeCommandEncoder, slot: Int) {
+    /// Binds the scene's argument buffer; with `declare` (the first bind in an encoder) also declares what it points at.
+    func bind(_ enc: MTLComputeCommandEncoder, slot: Int, declare: Bool = true) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
+        guard declare else { return }
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot]] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
                          + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
         enc.useResource(stats, usage: [.read, .write])

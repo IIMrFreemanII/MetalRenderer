@@ -33,6 +33,10 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
   The Debug window shows the same number as "encode".
   Read it in split mode. With `METALRENDERER_BENCH_SPLIT=0` a whole run lands at either 1× or 2× the value, for the
   same binary, so an A/B of `cpu` there needs five rounds or more to mean anything.
+  * It resolves about 0.1 ms. For a change of tens of microseconds, time the code itself: in a scratch copy of each
+    build, add two static accumulators around the function (`CACurrentMediaTime()` at its start, a `defer` that adds
+    the difference), print "µs per frame" every 100 frames from `commit`, and compare the two builds' lines. That is
+    how the scene binds (34 → 18 µs) and clusters mode's bookkeeping (50 → 1.2 µs) were measured.
 * **Split mode** (the default) runs each pass in its own command buffer, so the frame is serialized and there's no
   overlap.
 * **`METALRENDERER_BENCH_SPLIT=0`** encodes frames exactly as the app does, with one command buffer. It reports only
@@ -90,7 +94,8 @@ pure speed change.
 * Plain defaults: `METALRENDERER_RT=metal|custom`, `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,
   `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
 * Performance knobs:
-  * `METALRENDERER_TG="trace=16x8,atrous=16x16"` sets threadgroup sizes;
+  * `METALRENDERER_TG="trace=16x8,atrous=16x16"` sets threadgroup sizes (a kernel by its `Kernel` case in
+    Pipelines.swift, capitals and spaces aside);
   * `METALRENDERER_TLAS=<frames>` sets Metal's TLAS rebuild interval;
   * `METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving tree on the CPU with SAH;
   * `METALRENDERER_RT_STATS=1` turns on the traversal counters, printed per setting;

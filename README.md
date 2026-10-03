@@ -806,6 +806,18 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
 
   * In `gi`, the full-budget ReSTIR GI settings are 0.10–0.15 ms (1.2–1.9%) slower and the high-quality cascades 0.03 ms (1%), in every round. No helper accounts for it: putting any one back by hand, or all of a kernel's, leaves the frame within ±0.1 ms of where it was, forcing the helpers inline makes it slower (+0.21 ms), and the previous commit's shaders with one never-taken extra call in a kernel the benchmark doesn't even run are slower by the same 0.1 ms (1.2%). The helper files alone, with the old kernels, cost nothing (0.00 ms). So this is how the compiler's module-wide decisions fall for a given source, not a cost of a helper: expect any shader edit to move unrelated kernels by about 1%, and judge a change of that size against a control edit (`measuring.md`).
   * Left different on purpose, because making them alike changes images: next-event estimation at a path's hit (the path tracer, ReSTIR GI and the reflections take their branches in different orders; the cascades' and the path tracer's light-map branch draw 8 candidates and clamp, the others 4 and don't), the ambient fixed point (1024 in the cascades, 256 in ReSTIR GI), and a light sample's distance floor (1e-6 at surfaces, 1e-4 in fog). The two bottom-up fit kernels keep their own walk-up loops (device-scope fences around a coherent pointer).
+* **Per-frame CPU: what a frame repeats** (October 2026; M1 Max, each measured with a timer around the code itself, in µs per frame over 100 frames, since the benchmark's `cpu` column moves by 0.1–0.2 ms from run to run):
+
+  | Change | Where | Before | After |
+  |---|---|---|---|
+  | The scene's resources are declared once per encoder, not at every dispatch that traces | Night market, ReSTIR, 11 scene binds per frame | 34 µs | 18 µs |
+  | Clusters mode's page table is copied to a frame slot only when it changed, the resident count is kept instead of recounted, and nothing is sorted when nothing was requested | gallery, `METALRENDERER_VG_MODE=clusters`, 40104 groups, settled view | 50 µs | 1.2 µs |
+
+  * What a bind still costs is its ten `setBuffer` calls: those stay, because the kernels in between use the same indices for their own buffers.
+  * What didn't help: one staging buffer per frame slot and one pair of encoders per frame for the texture streamer's uploads, in place of a buffer and two encoders per texture. The streamer's CPU time over a gallery run (49 MB uploaded in 234 levels) was 9.4 ms before and 9.9 ms after, so it kept its simple form.
+  * Threadgroup sizes are now looked up by `Kernel` instead of by a name string (too small to measure: a tidier table). `METALRENDERER_TG` names a kernel by its `Kernel` case, capitals and spaces aside (`trace=16x8`, `restir gi initial=8x8`).
+  * Images are unchanged (`stressq`, `marketq`, `vgdebug`). In clusters mode 12 of `vgdebug`'s 18 views can be compared: the triangle and cluster colourings and the traversal cost there follow the order the GPU hands out cluster slots in, and differ between two runs of the same build.
+
 * **Small GPU items that measured nothing** (October 2026). Seven ideas from the code audit, each tried as a copy of the shaders against the current ones with the same binary (`METALRENDERER_SHADERS`), whole frames, five alternating rounds (the same shaders against themselves: 0.00–0.02 ms). None is in the code:
 
   | Idea | Tried | Whole frame |

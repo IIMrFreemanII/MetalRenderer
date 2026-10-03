@@ -1095,10 +1095,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                 threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 4))
             enc.setComputePipelineState(pipelines[.transmittanceLUT])
             enc.setTexture(tLUT, index: 0)
-            dispatch(enc, "transmittance", width: tLUT.width, height: tLUT.height)
+            dispatch(enc, .transmittanceLUT, width: tLUT.width, height: tLUT.height)
             enc.setComputePipelineState(pipelines[.multiScatterLUT])
             setTextures(enc, [tLUT, msLUT])
-            dispatch(enc, "multiple scattering", width: msLUT.width, height: msLUT.height)
+            dispatch(enc, .multiScatterLUT, width: msLUT.width, height: msLUT.height)
             profile.end(enc)
             if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
                 blit.generateMipmaps(for: shape)
@@ -1136,7 +1136,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setComputePipelineState(pipelines[.cloudShadow])
             enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
             setTextures(enc, [shape, detail, shadow])
-            dispatch(enc, "cloud shadow", width: shadow.width, height: shadow.height)
+            dispatch(enc, .cloudShadow, width: shadow.width, height: shadow.height)
         }
         profile.end(enc)
         if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
@@ -1849,7 +1849,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
             bind(enc, .geometryDebug, c.uniforms, sceneSlot: plan.slot)
             enc.setTexture(t.geometryDebug, index: 0)
-            dispatch(enc, "geometry debug", width: size.width, height: size.height)
+            dispatch(enc, .geometryDebug, width: size.width, height: size.height)
             if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
         }
 
@@ -1875,7 +1875,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
-            dispatch(enc, "composite", width: output.width, height: output.height)
+            dispatch(enc, .composite, width: output.width, height: output.height)
         }
 
         // 4b. Supersampled reference: average the composited frames (from halfway through, once lighting has converged).
@@ -1889,7 +1889,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setComputePipelineState(pipelines[.accumulateColor])
             enc.setBytes(&params, length: MemoryLayout<SIMD2<UInt32>>.stride, index: 0)
             setTextures(enc, [t.upscaleColor, accum, drawable.texture])
-            dispatch(enc, "accumulate color", width: size.width, height: size.height)
+            dispatch(enc, .accumulateColor, width: size.width, height: size.height)
         }
 
         // 5. Upscale into the drawable: the custom TAAU pass, or MetalFX (copied in; both sRGB formats, so the GPU
@@ -1969,6 +1969,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 if let times { self?.addPassTimes(times, frameMs: ms) }
             }
         }
+        sceneDeclaredIn = nil
         for p in buffers { p.cmd.commit() }
         cmd.commit()
         // Benchmark: finish this frame before encoding the next, so passes from consecutive frames
@@ -2001,7 +2002,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let uniforms = plan.uniforms, slot = plan.slot
         return [ComputeStage(pass: "regir") { [self] enc in
             bind(enc, .regirBuild, uniforms, sceneSlot: slot)
-            dispatch(enc, "regir build", width: grid.buffer.length / MemoryLayout<GPURegirReservoir>.stride, height: 1)
+            dispatch(enc, .regirBuild, width: grid.buffer.length / MemoryLayout<GPURegirReservoir>.stride, height: 1)
         }]
     }
 
@@ -2023,7 +2024,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
                               t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
                               t.visibility, t.blocker, t.material])
-            dispatch(enc, "trace", width: size.width, height: size.height)
+            dispatch(enc, .trace, width: size.width, height: size.height)
         })
         return stages
     }
@@ -2049,7 +2050,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
                               fogNoise ?? dummy3D, restirSpecular ?? dummy2D])
-            dispatch(enc, "reflections", width: size.width, height: size.height)
+            dispatch(enc, .reflection, width: size.width, height: size.height)
         }]
         guard plan.svgf else { return (trace, []) }
         let d = t.denoise[2]
@@ -2059,7 +2060,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
             setTextures(enc, [t.specular, t.specular, t.motion, t.normalDepth[cur], t.normalDepth[prev],
                               d.history, d.moments[prev], d.pingA, d.moments[cur]])
-            dispatch(enc, "temporal", width: size.width, height: size.height)
+            dispatch(enc, .temporal, width: size.width, height: size.height)
         }]
         for i in 0..<2 {
             let pass = d.atrousPass(i)
@@ -2068,7 +2069,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 bind(enc, .atrous, uniforms)
                 enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
                 setTextures(enc, [pass.src, t.normalDepth[cur], pass.dst])
-                dispatch(enc, "atrous", width: size.width, height: size.height)
+                dispatch(enc, .atrous, width: size.width, height: size.height)
             })
         }
         composite.specular = d.pingB
@@ -2102,7 +2103,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setBuffer(previousLights, offset: 0, index: 10)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.motion, t.normalDepth[prev],
                               rg.reservoir[prev], rg.temporal])
-            dispatch(enc, "restir temporal", width: size.width, height: size.height)
+            dispatch(enc, .restirTemporal, width: size.width, height: size.height)
         }]
         let passes = RestirSettings.spatialPassRange.clamp(r.spatialPasses)
         flags &= ~GPURestirParams.temporalValid
@@ -2119,7 +2120,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, src, dst, t.direct, rg.specular,
                                   t.visibility, t.blocker])
-                dispatch(enc, "restir spatial", width: size.width, height: size.height)
+                dispatch(enc, .restirSpatial, width: size.width, height: size.height)
             })
         }
         return stages
@@ -2141,7 +2142,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
                                   t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
                                   t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
-                dispatch(enc, "many lights", width: size.width, height: size.height)
+                dispatch(enc, .manyLights, width: size.width, height: size.height)
             })
         }
         if plan.meshLights {
@@ -2151,7 +2152,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 bind(enc, .meshLights, uniforms, sceneSlot: slot)
                 enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
-                dispatch(enc, "mesh lights", width: size.width, height: size.height)
+                dispatch(enc, .meshLights, width: size.width, height: size.height)
             })
         }
         return stages
@@ -2183,7 +2184,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 bind(enc, .shadowFilter, uniforms)
                 enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
                 setTextures(enc, [pass.src, t.normalDepth[cur], s.penumbra, s.meta[cur], s.tiles, pass.dst])
-                dispatch(enc, "shadow filter", width: size.width, height: size.height)
+                dispatch(enc, .shadowFilter, width: size.width, height: size.height)
             })
         }
         composite.illumination = [chain[passes - 1].dst]
@@ -2204,7 +2205,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             bind(enc, .accumulate, uniforms)
             enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 1)
             setTextures(enc, [t.direct, t.indirect, accum.direct, accum.indirect, t.specular, accum.specular])
-            dispatch(enc, "accumulate", width: size.width, height: size.height)
+            dispatch(enc, .accumulate, width: size.width, height: size.height)
         }]
     }
 
@@ -2261,7 +2262,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
                 setTextures(enc, [s.noisy[0], s.noisy.last!, t.motion, t.normalDepth[cur], t.normalDepth[prev],
                                   d.history, d.moments[prev], d.pingA, d.moments[cur]])
-                dispatch(enc, "temporal", width: size.width, height: size.height)
+                dispatch(enc, .temporal, width: size.width, height: size.height)
             }
         }]
         for i in 0..<(signals.map(\.passes).max() ?? 0) {
@@ -2272,7 +2273,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     bind(enc, .atrous, s.uniforms)
                     enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
                     setTextures(enc, [pass.src, t.normalDepth[cur], pass.dst])
-                    dispatch(enc, "atrous", width: size.width, height: size.height)
+                    dispatch(enc, .atrous, width: size.width, height: size.height)
                 }
             })
         }
@@ -2302,7 +2303,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
                 enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 10)
                 setTextures(enc, [noise, t.normalDepth[cur], ref])
-                dispatch(enc, "fog reference", width: size.width, height: size.height)
+                dispatch(enc, .fogReference, width: size.width, height: size.height)
             }]
         }
         composite.uniforms.flags |= UniformFlags.fog
@@ -2320,7 +2321,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 bind(enc, .fogIntegrate, uniforms)
                 enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
                 setTextures(enc, [g.scatter[cur], g.integrated])
-                dispatch(enc, "fog integrate", width: g.columns, height: g.rows)
+                dispatch(enc, .fogIntegrate, width: g.columns, height: g.rows)
             },
         ]
     }
@@ -2329,11 +2330,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Scene buffers at the indices every ray-tracing kernel uses (1 = TLAS, 2...8 = geometry, instances, lights).
     private func bindScene(_ enc: MTLComputeCommandEncoder, slot: Int) {
+        // What the scene's argument buffers point at is declared once per encoder (it holds for every dispatch in
+        // it, and the frame's stages mostly share one); the bindings are set every time, since the kernels in
+        // between use the same indices for their own buffers.
+        let declare = sceneDeclaredIn !== enc
         if let customRT {
-            customRT.bind(enc, slot: slot)
+            customRT.bind(enc, slot: slot, declare: declare)
         } else {
             enc.setAccelerationStructure(instanceAS[slot], bufferIndex: 1)
-            enc.useResources(primitiveASResources, usage: .read)   // BLASes referenced indirectly by the TLAS
+            if declare { enc.useResources(primitiveASResources, usage: .read) }   // BLASes referenced indirectly by the TLAS
         }
         enc.setBuffer(positionBuffer, offset: 0, index: 2)
         enc.setBuffer(normalBuffer, offset: 0, index: 3)
@@ -2344,6 +2349,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var gp = regirParams   // the light grid (ReGIR): ReSTIR DI's, GI's, the reflections' and the fog's candidates
         enc.setBuffer(regirBuffer ?? regirGrid(count: 1), offset: 0, index: 11)
         enc.setBytes(&gp, length: MemoryLayout<GPURegirParams>.stride, index: 12)
+        enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
+        guard declare else { return }
+        sceneDeclaredIn = enc
         enc.useResources(shadingResources, usage: .read)
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
         if let textureStreamer {
@@ -2351,8 +2359,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.useResource(textureStreamer.minLodBuffer(slot: slot), usage: .read)
             enc.useResource(textureStreamer.feedbackBuffer(slot: slot), usage: [.read, .write])
         }
-        enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
     }
+    /// The encoder `bindScene` last declared the scene's resources in (kept so its address can't be another's;
+    /// dropped when the frame is committed).
+    private var sceneDeclaredIn: MTLComputeCommandEncoder?
 
     /// Specular shading is on and the scene has materials with a specular lobe (glTF ones).
     private var usesSpecular: Bool { settings.specular && scene.hasSpecular }
@@ -2419,8 +2429,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, lightMap, t.normalDepth[prev],
                               feedbackSource, g.spatial.a, g.spatial.b])
             enc.setBuffer(g.ambient[prev], offset: 0, index: 10)
-            if r.quarterBudget { dispatch(enc, "restir gi initial", width: (width + 1) / 2, height: (height + 1) / 2) }
-            else { dispatch(enc, "restir gi initial", width: width, height: height) }
+            if r.quarterBudget { dispatch(enc, .restirGIInitial, width: (width + 1) / 2, height: (height + 1) / 2) }
+            else { dispatch(enc, .restirGIInitial, width: width, height: height) }
         })
         stages.append(ComputeStage(pass: "restir gi temporal") { [self] enc in
             var p = params
@@ -2429,7 +2439,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.motion, t.normalDepth[prev], g.spatial.a, g.spatial.b,
                               g.reservoir[prev].a, g.reservoir[prev].b, g.temporal.a, g.temporal.b])
             enc.setBuffer(g.ambient[cur], offset: 0, index: 10)
-            dispatch(enc, "restir gi temporal", width: width, height: height)
+            dispatch(enc, .restirGITemporal, width: width, height: height)
         })
         let passes = RestirGISettings.spatialPassRange.clamp(r.spatialPasses)
         flags &= ~GPURestirGIParams.temporalValid
@@ -2447,7 +2457,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, src.a, src.b, dst.a, dst.b, t.indirect, t.giDebug,
                                   g.feedback[cur]])
                 enc.setBuffer(g.ambient[cur], offset: 0, index: 10)
-                dispatch(enc, "restir gi spatial", width: width, height: height)
+                dispatch(enc, .restirGISpatial, width: width, height: height)
             })
         }
         return stages
@@ -2586,16 +2596,23 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
     private static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
 
-    /// Threadgroup size per kernel name (8x8 if not listed). `METALRENDERER_TG="trace=16x8,atrous=32x4"` overrides it for sweeps.
+    /// Threadgroup size per kernel (8x8 unless set here), indexed by `Kernel`. `METALRENDERER_TG="trace=16x8,atrous=32x4"`
+    /// overrides it for sweeps: a kernel goes by its `Kernel` case, capitals and spaces aside ("restir gi initial").
     /// Measured on an M1 Max: trace 16x8 is ~2% faster than 8x8, atrous 16x16 ~5%; others don't care.
     /// The shadow temporal kernel's 8x8 group is its tile (it declares max_total_threads_per_threadgroup(64)): leave it.
-    private static let threadgroupSizes: [String: MTLSize] = {
-        var sizes: [String: MTLSize] = ["trace": MTLSize(width: 16, height: 8, depth: 1),
-                                        "atrous": MTLSize(width: 16, height: 16, depth: 1),
-                                        "regir build": MTLSize(width: 64, height: 1, depth: 1)]
+    private static let threadgroupSizes: [MTLSize] = {
+        var sizes = [MTLSize](repeating: MTLSize(width: 8, height: 8, depth: 1), count: Kernel.allCases.count)
+        sizes[Kernel.trace.rawValue] = MTLSize(width: 16, height: 8, depth: 1)
+        sizes[Kernel.atrous.rawValue] = MTLSize(width: 16, height: 16, depth: 1)
+        sizes[Kernel.regirBuild.rawValue] = MTLSize(width: 64, height: 1, depth: 1)
         for item in (ProcessInfo.processInfo.environment["METALRENDERER_TG"] ?? "").split(separator: ",") {
             let kv = item.split(separator: "="), wh = kv.count == 2 ? kv[1].split(separator: "x").compactMap { Int($0) } : []
-            if wh.count == 2 { sizes[String(kv[0])] = MTLSize(width: wh[0], height: wh[1], depth: 1) }
+            let name = (kv.first ?? "").lowercased().filter { $0 != " " }
+            if wh.count == 2, let kernel = Kernel.allCases.first(where: { "\($0)".lowercased() == name }) {
+                sizes[kernel.rawValue] = MTLSize(width: wh[0], height: wh[1], depth: 1)
+            } else {
+                print("METALRENDERER_TG: can't read \(item) (kernel=WxH, kernels as in Pipelines.swift)")
+            }
         }
         return sizes
     }()
@@ -2611,9 +2628,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return SIMD3(Float(h0 >> 8), Float(h1 >> 8), Float(h2 >> 8)) * (1.0 / 16777216.0)
     }
 
-    private func dispatch(_ enc: MTLComputeCommandEncoder, _ kernel: String, width: Int, height: Int) {
+    private func dispatch(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, width: Int, height: Int) {
         enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
-                            threadsPerThreadgroup: Renderer.threadgroupSizes[kernel] ?? MTLSize(width: 8, height: 8, depth: 1))
+                            threadsPerThreadgroup: Renderer.threadgroupSizes[kernel.rawValue])
     }
 
     private func updateTitle(width: Int, height: Int, outWidth: Int, outHeight: Int) {

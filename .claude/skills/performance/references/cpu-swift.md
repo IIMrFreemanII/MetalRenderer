@@ -34,6 +34,13 @@ nothing.
   * Don't format `String`s per frame, except for the window title and labels at a low rate.
   * Closures that capture `self` per frame allocate. The completed handler is the one accepted exception. Keep it
     small and capture locals, not `self` state you then read.
+* **Declare once per encoder, bind every time.** `useResources` / `useHeap` hold for every dispatch in an encoder,
+  and the frame's stages mostly share one: `bindScene` declares the scene's resources the first time it sees an
+  encoder (`sceneDeclaredIn`) and only sets the buffers after that (34 → 18 µs a frame in the market). The
+  `setBuffer` calls must stay: kernels in between use the same indices.
+* **Copy per-slot tables when they change, not every frame.** A generation counter on the CPU copy and one per slot
+  (`VirtualGeometry.pageGeneration`): 50 → 1.2 µs a frame for clusters mode's 40104-entry page table. Keep counts as
+  running totals where the data is written (`setPage`), not as a `filter { }.count` per frame.
 * **Uploads:**
   * small, per-dispatch constants use `setBytes` (the `Uniforms` pattern);
   * arrays use the per-slot shared buffer, filled with `withUnsafeBytes { contents().copyMemory(...) }`
