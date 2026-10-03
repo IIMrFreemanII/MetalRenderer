@@ -14,26 +14,45 @@ It rebuilds the current tree, runs the mode on both binaries with `METALRENDERER
 `METALRENDERER_GI_REFS=0`, and compares the PNGs by name. It prints the count and exits 0 when all are identical.
 The benchmark steps time by a fixed 1/60 s, so animated settings are comparable too.
 
-Pick the modes by what the change touched. Start with `quick`, then narrow the longer ones with a filter (an
-unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names):
+Pick the modes by what the change touched. Start with `quick`, then add the ones for the area:
 
 | Touched | Modes |
 |---|---|
 | Anything in the frame loop | `quick` |
 | GI (path traced, cascades, ReSTIR GI), the denoiser | `gi`, `denoise`, `restirgicheck` |
-| Direct light, many lights, ReSTIR DI, the light grid | `stressq`, `restircheck`, `shadow`, `lightcheck` |
+| Direct light, many lights, ReSTIR DI, the light grid | `stressq`, `shadow`, `lightcheck`, `restircheck` |
 | Fog, sky, clouds | `fogcheck`, `skycheck` |
 | Upscalers, the output path | `upscale`, `quality`, `hwrtq` |
-| Tracers, acceleration structures | `rt`, `hwrtq`, and any mode with `-- METALRENDERER_RT=metal` (see below: Metal's tracer isn't repeatable) |
+| Tracers, acceleration structures | `rt`, `hwrt` (both tracers), and any mode with `-- METALRENDERER_RT=metal` |
 | Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
 | Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery` (needs the LFS models in both trees) |
 | Capability fallbacks | any mode with `-- METALRENDERER_CAPS=rt` and the like |
 
+What a mode costs, per run, on an M4 Max under macOS 27.0 without the references (`same.sh` runs it twice):
+
+| Mode | Images | Seconds | | Mode | Images | Seconds |
+|---|---|---|---|---|---|---|
+| `quick` | 7 | 9 | | `skycheck` | 20 | 40 |
+| `denoise` | 7 | 5 | | `fogcheck` | 12 | 44 |
+| `shadow` | 5 | 10 | | `stressq` | 45 | 45 |
+| `vgdebug` | 18 | 11 | | `upscale` | 21 | 47 |
+| `quality` | 8 | 25 | | `hwrtq` | 24 | 48 |
+| `gi` | 42 | 30 | | `rt` | 24 | 52 |
+| `api` | 14 | 31 | | `lightcheck` | 6 | 55 |
+| | | | | `restirgicheck` | 8 | 63 |
+| | | | | `hwrt` | 24 | 64 |
+| | | | | `restircheck` | 36 | 330-550 |
+
+Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
+other sixteen together take about ten minutes per binary, so twenty for a comparison.
+
 When images differ:
 * **Run `same.sh --self <mode> "<filter>"`.** It compares the baseline with itself. A setting that differs there
-  differs from run to run and can't prove anything: Metal's own tracer does (a few rays hit the other of two
-  coplanar triangles), and so may MetalFX. Prove those paths with the custom tracer and the custom upscaler, and
-  score the rest (`Tools/eval/hwrt.py` and the other scorers) instead of diffing.
+  differs from run to run and can't prove anything. On the M4 Max every mode in the table repeated bit for bit,
+  MetalFX and Metal's hardware tracer included. That isn't a given elsewhere: 9d3e661 saw Metal's tracer differ
+  from itself. For a setting that doesn't repeat, prove the path with the custom tracer or the custom upscaler,
+  and score the rest (`Tools/eval/hwrt.py` and the other scorers: a refactor leaves the scores within the ±0.2 dB
+  that single frames swing by).
 * **Otherwise the change is real.** `python3 Tools/eval/pngdiff.py <a> <b>` gives the size per image in 8-bit levels
   (it needs numpy and Pillow). A difference of 1 level everywhere is usually reordered floating-point math, a few
   pixels with large differences usually a changed condition, and noise all over a changed random seed or sample
