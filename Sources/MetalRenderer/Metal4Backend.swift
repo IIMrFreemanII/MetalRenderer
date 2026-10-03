@@ -357,7 +357,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         table.setResource(accelerationStructure.gpuResourceID, bufferIndex: bufferIndex)
     }
 
-    // What Metal 3 is told a kernel reaches through an argument buffer: here it only has to be resident.
+    // What Metal 3 is told a kernel reaches through an argument buffer: here it only has to be resident, which one
+    // declaration a frame keeps it (`keep` notes the frame it was last used in).
+    var declarationScope: AnyObject { self }
     func useResource(_ resource: MTLResource, usage: MTLResourceUsage) { keep(resource) }
     func useResources(_ resources: [MTLResource], usage: MTLResourceUsage) { resources.forEach(keep) }
     func useHeap(_ heap: MTLHeap) { keep(heap) }

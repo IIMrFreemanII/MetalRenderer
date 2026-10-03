@@ -1,6 +1,6 @@
 import simd
 
-// Structs shared with Shaders.metal.
+// Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).
 // Their memory layout MUST match the MSL structs of the same name exactly,
 // so every struct is built from 16-byte vectors/matrices plus groups of four 32-bit scalars.
 
@@ -27,6 +27,11 @@ struct Uniforms {
     var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
     var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
     var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value)
+
+    /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
+    static let traceBounces: UInt32 = 1      // the path tracer's indirect light (`bounces` > 0)
+    static let traceManyLights: UInt32 = 2   // more analytic lights than shadow-denoiser groups
+    var tracePassFlags: UInt32 { (bounces > 0 ? Uniforms.traceBounces : 0) | (lightGroupEnd.w > 4 ? Uniforms.traceManyLights : 0) }
 }
 
 enum UniformFlags {
@@ -86,6 +91,15 @@ struct GPURestirGIParams {
     static let unbiased: UInt32 = 16        // spatial reuse traces a ray per neighbour (visibility in its MIS weight)
     static let keepFeedback: UInt32 = 32    // the last spatial pass also keeps its result for next frame's feedback
     static let fallback: UInt32 = 64        // feedback: off-screen path ends add last frame's mean indirect light
+    static let feedbackSet: UInt32 = 128    // multi-bounce is on (`feedback` is still off on a history's first frame)
+    // Not in config.x: restirGIInitialKernel derives them from `extra`, and so does initialPassFlags, to compile them in.
+    static let quarter: UInt32 = 256        // extra.x: quarter budget
+    static let oneBounce: UInt32 = 512      // extra.y: the paths end at their first hit
+
+    /// restirGIInitialKernel's own flags (MSL `own` there).
+    var initialPassFlags: UInt32 {
+        config.x | (extra.x != 0 ? GPURestirGIParams.quarter : 0) | (extra.y <= 1 ? GPURestirGIParams.oneBounce : 0)
+    }
 }
 
 /// The sky (MSL SkyParams): the per-slot copy lives in the shading arguments (SceneShading), the sky kernels get it directly.
@@ -175,6 +189,13 @@ struct GPUFogParams {
     static let historyValid: UInt32 = 1  // last frame's froxel grid matches: reproject it
     static let reflections: UInt32 = 2   // reflection rays are fogged too
     static let enabled: UInt32 = 4       // fog is on (reflections test it)
+
+    /// reflectionKernel's own flag (MSL REFLECT_FOG), for the variant with it compiled in.
+    static let reflectionsFogged: UInt32 = 1
+    var reflectionPassFlags: UInt32 {
+        counts.w & (GPUFogParams.enabled | GPUFogParams.reflections) == GPUFogParams.enabled | GPUFogParams.reflections
+            ? GPUFogParams.reflectionsFogged : 0
+    }
 
     mutating func setVolume(_ i: Int, _ v: GPUFogVolume) {
         withUnsafeMutableBytes(of: &volumes) { raw in

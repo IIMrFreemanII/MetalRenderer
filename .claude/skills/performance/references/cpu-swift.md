@@ -13,7 +13,7 @@ nothing.
 | CPU work | `simulate`, `detailView`, `writeFrameData` | the scene, the slot's buffers |
 | Plan | `planFrame` → `FramePlan` | reads settings, scene and last frame's flags once; allocates lazily made targets |
 | Stages | `headStages`, `giStages`, `restirStages`, `svgfStages`, `fogStages`, … | read the plan only; fill `CompositeInputs` |
-| Encoding | `encode`, `encodeOutput`, `commit` | `FramePasses` owns the command buffers and the open encoder |
+| Encoding | `encode`, `encodeOutput`, `commit` | a `FrameEncoder` (`Metal3Frame`, `Metal4Frame`) owns the command buffers and the open encoder |
 | History | `finishFrame` | the only place that sets what the next frame reuses |
 
 * **A new pass is a stage builder.** It takes the `FramePlan`, returns `[ComputeStage]` and joins a group in
@@ -34,6 +34,13 @@ nothing.
   * Don't format `String`s per frame, except for the window title and labels at a low rate.
   * Closures that capture `self` per frame allocate. The completed handler is the one accepted exception. Keep it
     small and capture locals, not `self` state you then read.
+* **Declare once per encoder, bind every time.** `useResources` / `useHeap` hold for every dispatch in an encoder,
+  and the frame's stages mostly share one: `bindScene` declares the scene's resources the first time it sees an
+  encoder (`sceneDeclaredIn`) and only sets the buffers after that (34 → 18 µs a frame in the market). The
+  `setBuffer` calls must stay: kernels in between use the same indices.
+* **Copy per-slot tables when they change, not every frame.** A generation counter on the CPU copy and one per slot
+  (`VirtualGeometry.pageGeneration`): 50 → 1.2 µs a frame for clusters mode's 40104-entry page table. Keep counts as
+  running totals where the data is written (`setPage`), not as a `filter { }.count` per frame.
 * **Uploads:**
   * small, per-dispatch constants use `setBytes` (the `Uniforms` pattern);
   * arrays use the per-slot shared buffer, filled with `withUnsafeBytes { contents().copyMemory(...) }`
@@ -94,7 +101,7 @@ nothing.
 
 ## 4. CPU↔GPU data layout
 
-* Every struct shared with MSL lives in `GPUTypes.swift` and must match `Shaders.metal` byte for byte:
+* Every struct shared with MSL lives in `GPUTypes.swift` and must match `Shaders/Types.metal` byte for byte:
   * `SIMD3<Float>` ↔ `float3` is 16 bytes with 16-byte alignment;
   * `packed_float3` in MSL is 12 bytes, and Swift has no direct equivalent (use three `Float`s);
   * `Bool` sizes differ, so use `UInt32` flags (as `GPUFogParams` does).

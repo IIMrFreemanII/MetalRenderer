@@ -14,7 +14,7 @@ struct RTInstance {
     var pad1: UInt32 = 0
 }
 
-/// Kernels that build the dynamic TLAS (Shaders.metal, "per-frame build of the dynamic top-level tree").
+/// Kernels that build the dynamic TLAS (Shaders/BVHBuild.metal).
 struct RTPipelines {
     let prep, keys, sortLocal, sortGlobal, hierarchy, fit: MTLComputePipelineState
     let vg: VGPipelines
@@ -41,10 +41,13 @@ struct VGView {
 /// The dynamic TLAS is rebuilt from scratch every frame on the GPU as an LBVH (Karras 2012): moving instances are
 /// sorted along a Morton curve and the tree follows from the sorted keys, all in parallel. `METALRENDERER_RT_BUILD=cpu`
 /// builds it on the CPU with binned SAH instead (a better tree, for comparing trace speed).
-/// Totals of the custom tracer's traversal counters (Shaders.metal RT_COUNT): 0 rays, 1 top nodes, 2 bottom nodes,
-/// 3 instance entries, 4 cluster entries, 5 triangle tests, 6 top nodes inside virtual instances.
+/// Totals of the custom tracer's traversal counters (RT_COUNT in Shaders/Intersect.metal): 0 rays, 1 top nodes, 2 bottom nodes,
+/// 3 instance entries, 4 cluster entries, 5 triangle tests, 6 top nodes inside virtual instances, 7 pushes the full
+/// traversal stack turned away (each one a subtree a ray skipped: RT_STACK is then too small for the scene's trees).
 struct TraversalStats {
-    var counts = [UInt64](repeating: 0, count: 7)
+    static let count = 8
+    var counts = [UInt64](repeating: 0, count: TraversalStats.count)
+    var stackOverflows: UInt64 { counts[7] }
 
     static func + (a: TraversalStats, b: TraversalStats) -> TraversalStats {
         TraversalStats(counts: zip(a.counts, b.counts).map { $0 + $1 })
@@ -56,6 +59,7 @@ struct TraversalStats {
     var description: String {
         String(format: "rays %.0fk: per ray %.1f top nodes (%.1f inside virtual instances), %.1f bottom nodes, %.2f instance entries, %.2f cluster entries, %.1f triangle tests",
                max(rays, 1) / 1000, perRay(1), perRay(6), perRay(2), perRay(3), perRay(4), perRay(5))
+            + (stackOverflows > 0 ? ", \(stackOverflows) STACK OVERFLOWS (rays skipped subtrees: raise RT_STACK)" : ", no stack overflows")
     }
 }
 
@@ -211,7 +215,7 @@ final class CustomRayTracer {
         if ProcessInfo.processInfo.environment["METALRENDERER_RT_CHECK"] == "1" { selfTest(scene: scene) }
     }
 
-    /// RTScene (96 bytes, asserted in Shaders.metal): 10 GPU addresses, then the static and dynamic root refs and the
+    /// RTScene (96 bytes, asserted in Shaders/Intersect.metal): 10 GPU addresses, then the static and dynamic root refs and the
     /// cluster tree's first node.
     private func writeArgs(slot: Int) {
         let p = sceneArgs[slot].contents()
@@ -366,20 +370,22 @@ final class CustomRayTracer {
     /// differences: a reset from the CPU doesn't stick then (the GPU's atomics write their cached values back over it).
     func readCounters() -> [UInt32] {
         let c = stats.contents().bindMemory(to: UInt32.self, capacity: 8)
-        return (0..<7).map { c[$0] }
+        return (0..<TraversalStats.count).map { c[$0] }
     }
 
     /// Traversal counter totals since the last call (then resets them). Only with the GPU idle (benchmarks wait for
     /// each frame), see `readCounters`.
     func takeStats() -> TraversalStats {
         let c = stats.contents().bindMemory(to: UInt32.self, capacity: 8)
-        let out = TraversalStats(counts: (0..<7).map { UInt64(c[$0]) })
+        let out = TraversalStats(counts: (0..<TraversalStats.count).map { UInt64(c[$0]) })
         memset(stats.contents(), 0, 32)
         return out
     }
 
-    func bind(_ enc: ComputePass, slot: Int) {
+    /// Binds the scene's argument buffer; with `declare` (the first bind in an encoder) also declares what it points at.
+    func bind(_ enc: ComputePass, slot: Int, declare: Bool = true) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
+        guard declare else { return }
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot]] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
                          + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
         enc.useResource(stats, usage: [.read, .write])

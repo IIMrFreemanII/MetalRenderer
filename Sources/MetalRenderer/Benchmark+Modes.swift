@@ -6,12 +6,12 @@ import Foundation
 extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
-        "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
+        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
-        "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "fogcheck": fogcheck,
+        "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug,
     ]
 
@@ -69,6 +69,14 @@ extension Benchmark {
         Config("MetalFX 2x from 1.0x", scale: 1.0, upscale: 2) { $0.upscaler = .metalFX },
         Config("MetalFX 3x from 0.67x", scale: 2.0 / 3.0, upscale: 3) { $0.upscaler = .metalFX },
     ] }
+
+    /// One picture of the app's default look (cascades, TAAU 3x from 0.5x), paused at t = 5 s, to check what a change
+    /// does: the METALRENDERER_* lists pick anything else (scene, GI, view, ...). Its 60 warm-up frames, then
+    /// `METALRENDERER_SHOT_FRAMES` (default 30).
+    private static func shot() -> [Config] {
+        let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
+        return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
+    }
 
     /// Fast smoke tests: the default setting, MetalFX temporal and spatial, camera moves, path traced, 0.75x native.
     private static func quick() -> [Config] {
@@ -376,7 +384,7 @@ extension Benchmark {
     /// Hardware ray tracing and MetalFX's denoising scaler against what they replace: each ray tracer (the custom BVH,
     /// Metal's acceleration structures) with each output (`outputs`), moving frames at 3x from 640x400, path traced and
     /// with radiance cascades, in the Cornell room and the stress hall. The tracers alternate, so heat affects them
-    /// alike. Settings this GPU can't run are skipped (Capabilities). Time it with METALRENDERER_BENCH_PRESENT=0.
+    /// alike. Settings this GPU can't run are skipped (Capabilities).
     private static func hwrt() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
@@ -554,6 +562,23 @@ extension Benchmark {
             var scene = SceneSettings()
             scene.lightCheck = variant
             return Config("check \(variant)", gi: nil, scene: scene).reference(frames: 1024)
+        }
+    }
+
+    /// Direct specular light is counted once: the glossy light scenes with direct light only (so the reflections see lit
+    /// surfaces and nothing else), each direct-light path against the accumulated reference (Tools/eval/specular.py).
+    /// The shadow denoiser adds direct specular in the composite, SVGF and references in the reflection pass, ReSTIR
+    /// from its reservoirs. No tone curve and 2 stops down, so highlights compare linearly instead of clipping.
+    private static func speccheck() -> [Config] {
+        picked([.area, .spots, .tubes]).flatMap { kind -> [Config] in
+            let base = Config("", gi: nil, scene: SceneSettings(kind: kind)) { $0.toneMap = .none; $0.exposure = -2 }
+                .sky { $0 = SkySettings() }
+            let still = base.still(previous: true).frames(60)
+            return references([base.named("\(kind) ref").reference(frames: 1024)]) + [
+                still.named("\(kind) shadow denoiser"),
+                still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },
+                still.named("\(kind) restir").direct(.restir),
+            ]
         }
     }
 

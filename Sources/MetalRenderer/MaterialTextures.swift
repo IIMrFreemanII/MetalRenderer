@@ -13,24 +13,25 @@ enum MaterialTextures {
         guard !sources.isEmpty else { return [] }
         let start = CFAbsoluteTimeGetCurrent()
         var decoded = [(pixels: MTLBuffer, width: Int, height: Int)?](repeating: nil, count: sources.count)
-        let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: sources.count) { i in
-            guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil) else { return }
-            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                                            kCGImageSourceThumbnailMaxPixelSize: maxSize,
-                                            kCGImageSourceCreateThumbnailWithTransform: false]
-            guard let image = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return }
-            let w = image.width, h = image.height
-            guard let buffer = device.makeBuffer(length: w * h * 4, options: .storageModeShared) else { return }
-            var space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
-            if space.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB)! }   // e.g. greyscale images
-            guard let ctx = CGContext(data: buffer.contents(), width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                      space: space,
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
-            else { return }
-            ctx.interpolationQuality = .none
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))   // memory order R G B x
-            lock.lock(); decoded[i] = (buffer, w, h); lock.unlock()
+        decoded.withUnsafeMutableBufferPointer { slots in
+            DispatchQueue.concurrentPerform(iterations: sources.count) { i in
+                guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil) else { return }
+                let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                kCGImageSourceThumbnailMaxPixelSize: maxSize,
+                                                kCGImageSourceCreateThumbnailWithTransform: false]
+                guard let image = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return }
+                let w = image.width, h = image.height
+                guard let buffer = device.makeBuffer(length: w * h * 4, options: .storageModeShared) else { return }
+                var space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+                if space.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB)! }   // e.g. greyscale images
+                guard let ctx = CGContext(data: buffer.contents(), width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: space,
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+                else { return }
+                ctx.interpolationQuality = .none
+                ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))   // memory order R G B x
+                slots[i] = (buffer, w, h)   // its own slot: no lock
+            }
         }
 
         guard let cmd = queue.makeCommandBuffer(), let blit = cmd.makeBlitCommandEncoder() else {

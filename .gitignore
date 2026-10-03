@@ -12,3 +12,4 @@ __pycache__/
 /Assets/.metalrenderer-cache/
 # graphify knowledge graph (regenerate with: graphify update .)
 /graphify-out/
+.idea

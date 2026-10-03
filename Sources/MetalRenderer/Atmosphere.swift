@@ -3,7 +3,7 @@ import Foundation
 import ImageIO
 import simd
 
-/// The sky's atmosphere on the CPU, with the constants of Shaders.metal ("Sky and clouds"): the sun light's colour,
+/// The sky's atmosphere on the CPU, with the constants of Shaders/Sky.metal ("Sky and clouds"): the sun light's colour,
 /// its irradiance through the atmosphere. (The sky itself is drawn on the GPU.)
 enum Atmosphere {
     static let ground: Float = 6360e3, top: Float = 6460e3
@@ -51,7 +51,7 @@ struct SkyImage {
 
     static let fileExtensions: Set<String> = ["hdr", "exr"]
 
-    /// Direction of texel (x, y): u = 0.5 faces -z, v = 0 is straight up (as Shaders.metal equirectSample).
+    /// Direction of texel (x, y): u = 0.5 faces -z, v = 0 is straight up (as equirectSample in Shaders/Sky.metal).
     static func direction(u: Float, v: Float) -> SIMD3<Float> {
         let phi = (u - 0.5) * 2 * Float.pi, theta = v * Float.pi
         return SIMD3(sin(theta) * sin(phi), cos(theta), -sin(theta) * cos(phi))

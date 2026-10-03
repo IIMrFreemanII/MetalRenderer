@@ -307,11 +307,12 @@ final class TextureStreamer {
     /// Decodes each image at full size, mipmaps it on the GPU (sRGB-correct for colour maps) and writes all levels.
     private static func write(_ sources: [Scene.TextureSource], to url: URL, device: MTLDevice, queue: MTLCommandQueue) throws {
         var images = [CGImage?](repeating: nil, count: sources.count)
-        let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: sources.count) { i in
-            guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil),
-                  let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return }
-            lock.lock(); images[i] = image; lock.unlock()
+        images.withUnsafeMutableBufferPointer { slots in
+            DispatchQueue.concurrentPerform(iterations: sources.count) { i in
+                guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil),
+                      let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return }
+                slots[i] = image   // its own slot: no lock
+            }
         }
         var header = Data()
         func put<T>(_ v: T) { withUnsafeBytes(of: v) { header.append(contentsOf: $0) } }

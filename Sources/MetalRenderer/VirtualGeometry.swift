@@ -2,7 +2,7 @@ import Foundation
 import Metal
 import simd
 
-/// Kernels of virtual geometry's per-frame cut (Shaders.metal, "Virtual geometry").
+/// Kernels of virtual geometry's per-frame cut (Shaders/VirtualGeometry.metal).
 struct VGPipelines {
     let reset, cut, finish, pad, hierarchy, fit: MTLComputePipelineState
 }
@@ -97,6 +97,18 @@ final class VirtualGeometry {
     }
     private var groups: [Group] = []
     private var groupPage: [UInt32]          // CPU master residency table (pool offset / 16, or ~0)
+    /// Counts the table's changes: a frame slot's copy is rewritten only when it is behind (`slotPageGeneration`).
+    private var pageGeneration = 0
+    private var slotPageGeneration: [Int] = []
+    private var residentGroups = 0           // entries of groupPage that are not ~0
+
+    /// The one place the residency table is written.
+    private func setPage(_ g: Int, _ page: UInt32) {
+        guard groupPage[g] != page else { return }
+        residentGroups += (page != .max ? 1 : 0) - (groupPage[g] != .max ? 1 : 0)
+        groupPage[g] = page
+        pageGeneration += 1
+    }
     private let meshes: [VirtualMesh]
     private var allocator: BuddyAllocator
 
@@ -193,7 +205,7 @@ final class VirtualGeometry {
         for g in groups.indices where groups[g].isRoot {
             guard allocate(g) else { throw RendererError.resourceCreation("virtual geometry pool too small for the root pages") }
             copyPage(g)
-            groupPage[g] = UInt32(groups[g].poolOffset / 16)
+            setPage(g, UInt32(groups[g].poolOffset / 16))
             rootBytes += groups[g].pageSize
         }
         stats.residentGroups = groups.filter { $0.poolOffset >= 0 }.count
@@ -233,7 +245,7 @@ final class VirtualGeometry {
 
     // MARK: Per frame
 
-    /// Shaders.metal VGParams (48 bytes).
+    /// VGParams in Shaders/VirtualGeometry.metal (48 bytes).
     struct Params {
         var camPos: SIMD4<Float>
         var tau: Float
@@ -243,7 +255,11 @@ final class VirtualGeometry {
     /// Encodes the cut and the cluster tree build. `nodeBase`: the tree's first node in `tlasNodes`.
     func encode(_ enc: ComputePass, slot: Int, rt: RTPipelines, vg: VGPipelines, instanceData: MTLBuffer,
                 tlasNodes: MTLBuffer, nodeBase: Int, camPos: SIMD3<Float>, pixelScale: Float, tau: Float, frame: UInt32) {
-        groupPage.withUnsafeBytes { groupPageBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        if slotPageGeneration.count <= slot { slotPageGeneration += [Int](repeating: -1, count: slot + 1 - slotPageGeneration.count) }
+        if slotPageGeneration[slot] != pageGeneration {   // residency changed since this slot's copy was written
+            groupPage.withUnsafeBytes { groupPageBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            slotPageGeneration[slot] = pageGeneration
+        }
         func dispatch(_ pso: MTLComputePipelineState, _ threads: Int, group: Int = 64) {
             enc.setComputePipelineState(pso)
             enc.dispatchThreads(MTLSize(width: max(threads, 1), height: 1, depth: 1),
@@ -324,7 +340,7 @@ final class VirtualGeometry {
 
         for g in done {
             groups[g].inFlight = false
-            groupPage[g] = UInt32(groups[g].poolOffset / 16)
+            setPage(g, UInt32(groups[g].poolOffset / 16))
         }
         deferredFrees.removeAll { f in
             guard f.frame &+ UInt32(framesInFlight) <= completed else { return false }
@@ -332,6 +348,12 @@ final class VirtualGeometry {
             return true
         }
 
+        guard !requests.isEmpty else {   // the usual frame once the view has settled: nothing to load
+            stats.pending = 0
+            stats.loadedThisFrame = 0
+            stats.residentGroups = residentGroups
+            return
+        }
         var budget = bytesPerFrame
         var started: [Int] = []
         let order = requests.sorted { $0.value > $1.value }
@@ -374,7 +396,7 @@ final class VirtualGeometry {
         // Requests that didn't fit wait for the next frame (the GPU asks again while they're still wanted).
         stats.pending = requests.count
         stats.loadedThisFrame = started.count
-        stats.residentGroups = groups.indices.filter { groupPage[$0] != .max }.count
+        stats.residentGroups = residentGroups
     }
 
     /// Frees resident leaf groups (no resident children) that weren't drawn in the last frames, oldest first,
@@ -389,7 +411,7 @@ final class VirtualGeometry {
         candidates.sort { used[$0] < used[$1] }
         var freed = 0
         for g in candidates {
-            groupPage[g] = .max
+            setPage(g, .max)
             for p in groups[g].parents { groups[p].residentChildren -= 1 }
             deferredFrees.append((groups[g].poolOffset, groups[g].order, frame))
             freed += BuddyAllocator.minBlock << groups[g].order

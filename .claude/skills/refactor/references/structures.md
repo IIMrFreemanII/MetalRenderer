@@ -53,13 +53,18 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
 
 ## Pipelines: `Pipelines.swift`
 
-* **What it is.** `Kernel` has a case per compute function (`trace` ↔ `traceKernel`). `Pipelines` is the whole set
+* **What it is.** `Kernel` has a case per compute function in Shaders/*.metal (`trace` ↔ `traceKernel`). `Pipelines` is the whole set
   as one value, compiled in the background for one tracer and one set of light types and swapped in between frames.
 * **Plugging in.** One `Kernel` case named after the MSL function. Kernels that exist only for the custom tracer go
   after `rtPrep`. A compile-time variant is a macro set in `Pipelines.compile` or a function constant set where
   `Pipelines.init` makes each pipeline.
-* **Signs it was bypassed.** `makeComputePipelineState` or `makeLibrary` anywhere else; a pipeline stored as its own
-  property; a compile on the main thread or in the frame loop.
+* **Flags a configuration fixes.** A big kernel's variants have them compiled in (`KernelVariants`): a new bit of
+  `Uniforms.flags` or of a kernel's own flags that stays the same from frame to frame joins `Kernel.fixedFlags` or
+  `fixedPassFlags`, and the shader reads it with `flagOn` / `passOn` (Shaders/Types.metal).
+* **Signs it was bypassed.** `makeComputePipelineState` or `makeLibrary` outside Pipelines.swift (both go through
+  `Pipelines.makeState`, which uses Metal 4's compiler when there is one); a pipeline stored as its own property; a
+  compile on the main thread or in the frame loop; `(u.flags & FLAG_…) != 0` in a kernel that has variants.
+* **Guard.** `KernelVariantsTests`.
 
 ## Capabilities: `Capabilities.swift`
 
@@ -80,13 +85,15 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
 * **Plugging in.** A new pass binds and dispatches through `ComputePass` only, so both back ends get it. Something
   one API can't do yet is said in one place, with the reason and the OS version (as for mipmaps and the denoising
   scaler under Metal 4).
-* **Signs it was bypassed.** `MTLComputeCommandEncoder` in a stage builder; `api == .metal4` checks scattered over
+* **Where the frame ends up** is a `RenderSurface` (RenderSurface.swift): the window's `MTKView`, or the
+  `OffscreenSurface` every benchmark run draws into. The renderer asks it for the output texture and never for a view.
+* **Signs it was bypassed.** `MTLComputeCommandEncoder` in a stage builder; `MTKView` or `currentDrawable` in Renderer; `api == .metal4` checks scattered over
   the stages; a feature that renders under one API and silently does nothing under the other.
 * **Guard.** None that runs by itself. For a refactor, `same.sh <mode> -- METALRENDERER_API=metal4` shows Metal 4
   still draws what it drew. Metal 3 against Metal 4 is the `api` mode run once per API and `pngdiff.py` between the
   two folders (the mode's comment in Benchmark+Modes.swift).
 
-## Layouts shared with the shaders: `GPUTypes.swift` ↔ `Shaders.metal`
+## Layouts shared with the shaders: `GPUTypes.swift` ↔ `Shaders/*.metal`
 
 * **What it is.** Each struct both sides read has a `precondition(MemoryLayout<…>.stride == N)` in
   `validateGPULayouts` and a `static_assert(sizeof(…) == N, …)` in the shader that names its Swift twin.

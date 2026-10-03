@@ -1,6 +1,6 @@
 import Metal
 
-/// Matches `RCParams` in Shaders.metal.
+/// Matches `RCParams` in Shaders/RadianceCascades.metal.
 struct RCParams {
     var grids: SIMD4<UInt32>      // xy = this cascade's probe grid, zw = the next cascade's
     var layout: SIMD4<UInt32>     // x = probe spacing (px), y = direction tile side, z = cascade, w = 1 if last
@@ -16,7 +16,7 @@ struct RCPipelines {
     let resolve: MTLComputePipelineState
 }
 
-/// Radiance cascades GI: screen-space probes, world-space ray intervals, merged top-down (see Shaders.metal).
+/// Radiance cascades GI: screen-space probes, world-space ray intervals, merged top-down (see Shaders/RadianceCascades.metal).
 /// Owns the per-cascade probe textures and radiance atlases for one render size and set of settings.
 final class RadianceCascades {
     struct Cascade {
@@ -30,7 +30,7 @@ final class RadianceCascades {
         let merged: MTLTexture        // probe-major atlas: probe (x, y) owns texels [x, y] * dirSide ..< +dirSide
     }
 
-    static let maxCascades = 5          // RC_MAX_CASCADES in Shaders.metal (CascadeSettings.cascadeRange)
+    static let maxCascades = 5          // RC_MAX_CASCADES in the shader (CascadeSettings.cascadeRange)
 
     let width: Int
     let height: Int

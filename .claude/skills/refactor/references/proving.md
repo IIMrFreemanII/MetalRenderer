@@ -1,7 +1,7 @@
 # Proving a refactor changed nothing
 
 The baseline is the feature as it was before the pass, built in its own worktree (`scripts/baseline.sh`), so it
-loads its own `Shaders.metal`. Every proof compares the current tree with it. How the benchmark works, its modes
+loads its own shaders (`Shaders.metal` and `Shaders/`). Every proof compares the current tree with it. How the benchmark works, its modes
 and its noise are in the `performance` skill's [measuring.md](../../performance/references/measuring.md).
 
 ## Images
@@ -22,6 +22,7 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | GI (path traced, cascades, ReSTIR GI), the denoiser | `gi`, `denoise`, `restirgicheck` |
 | Direct light, many lights, ReSTIR DI, the light grid | `stressq`, `shadow`, `lightcheck`, `restircheck` |
 | Fog, sky, clouds | `fogcheck`, `skycheck` |
+| Reflections, specular light | `speccheck` |
 | Upscalers, the output path | `upscale`, `quality`, `hwrtq` |
 | Tracers, acceleration structures | `rt`, `hwrt` (both tracers), and any mode with `-- METALRENDERER_RT=metal` |
 | Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
@@ -32,19 +33,19 @@ What a mode costs, per run, on an M4 Max under macOS 27.0 without the references
 
 | Mode | Images | Seconds | | Mode | Images | Seconds |
 |---|---|---|---|---|---|---|
-| `quick` | 7 | 9 | | `skycheck` | 20 | 40 |
-| `denoise` | 7 | 5 | | `fogcheck` | 12 | 44 |
-| `shadow` | 5 | 10 | | `stressq` | 45 | 45 |
-| `vgdebug` | 18 | 11 | | `upscale` | 21 | 47 |
-| `quality` | 8 | 25 | | `hwrtq` | 24 | 48 |
-| `gi` | 42 | 30 | | `rt` | 24 | 52 |
-| `api` | 14 | 31 | | `lightcheck` | 6 | 55 |
-| | | | | `restirgicheck` | 8 | 63 |
-| | | | | `hwrt` | 24 | 64 |
-| | | | | `restircheck` | 36 | 330-550 |
+| `shadow` | 5 | 2 | | `quality` | 8 | 16 |
+| `denoise` | 7 | 4 | | `hwrtq` | 24 | 17-25 |
+| `vgdebug` | 18 | 4 | | `gi` | 42 | 20 |
+| `lightcheck` | 6 | 6 | | `rt` | 24 | 21 |
+| `quick` | 7 | 7 | | `hwrt` | 24 | 24 |
+| `api` | 14 | 10 | | `skycheck` | 20 | 28 |
+| `speccheck` | 18 | 10 | | `fogcheck` | 12 | 30 |
+| `upscale` | 21 | 11 | | `stressq` | 45 | 42 |
+| | | | | `restirgicheck` | 8 | 60 |
+| | | | | `restircheck` | 36 | minutes |
 
 Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
-other sixteen together take about ten minutes per binary, so twenty for a comparison.
+other seventeen together take about five minutes per binary, so ten for a comparison.
 
 When images differ:
 * **Run `same.sh --self <mode> "<filter>"`.** It compares the baseline with itself. A setting that differs there
@@ -83,11 +84,14 @@ one on the same run folder and `diff` what they print.
 
 ## Tests
 
-`swift test` runs without a GPU and takes seconds once built. It guards:
+`swift test` takes about 40 s (it compiles the kernel variants on the GPU). It guards:
 * `SettingsTableTests`: env names are unique, every setting and random panel states round-trip, bad input is
   skipped, sliders show what they set.
 * `BenchmarkModesTests`: every mode builds named settings, the modifiers, env overrides, scene presets.
 * `CapabilitiesTests`: fallbacks for each missing capability, the benchmark's skips, upscaler names.
+* `KernelVariantsTests`: the flag values in Swift match the shaders', and the variants compile.
+* `ShaderSourceTests`: every piece in `Shaders/` is included once, and compile errors name the piece.
+* `BVHTests`, `CacheTests`: the parallel BVH build equals the serial one; cache files are written whole.
 
 Green tests prove the tables. They say nothing about the frame: that takes images.
 
@@ -101,7 +105,7 @@ Green tests prove the tables. They say nothing about the frame: that takes image
 
 Add `-c "GPU total,cpu"` when the pass touched per-frame CPU work. Read the medians; a delta below about 0.4 ms
 without the same sign in every round is noise (measuring.md, "A/B protocol"). For whole-frame claims add
-`METALRENDERER_BENCH_SPLIT=0` to both sides, and `METALRENDERER_BENCH_PRESENT=0` where the display paces the frame.
+`METALRENDERER_BENCH_SPLIT=0` to both sides.
 
 ## What could not be run
 

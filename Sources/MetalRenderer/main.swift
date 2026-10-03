@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var renderer: Renderer!
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
+    private var offscreen: OffscreenSurface?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -14,6 +15,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Capabilities.current = Capabilities(device: device)
         print("GPU: \(device.name). \(Capabilities.current.summary)")
+
+        if Headless.isEnabled {
+            // No window, no menu, no panels: the benchmark draws into offscreen textures and quits when done.
+            let surface = OffscreenSurface(device: device)
+            offscreen = surface
+            do {
+                renderer = try Renderer(device: device, surface: surface)
+            } catch {
+                fatalError("Renderer failed to start:\n\(error)")
+            }
+            return
+        }
 
         buildMenu()
 
@@ -25,9 +38,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "MetalRenderer"
         window.center()
 
+        // The window first, the renderer on the next turn of the run loop: its start (the scene, the textures) then
+        // happens with the window on screen.
         let view = RenderView(frame: rect, device: device)
+        window.contentView = view
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(view)
+        NSApp.activate(ignoringOtherApps: true)
+        Launch.mark("window")
+        DispatchQueue.main.async { [self] in start(view) }
+    }
+
+    private func start(_ view: RenderView) {
+        view.configureForRenderer()
         do {
-            renderer = try Renderer(view: view)
+            renderer = try Renderer(device: view.device!, surface: view)
         } catch {
             fatalError("Renderer failed to start:\n\(error)")
         }
@@ -35,19 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.inputHandler = renderer
         view.onDropModels = { [weak self] urls in self?.renderer.addModels(urls) }
 
-        window.contentView = view
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
-        NSApp.activate(ignoringOtherApps: true)
-
         if !Benchmark.isEnabled {
-            let panel = SettingsPanel(renderer: renderer)
-            panel.show(nextTo: window)
-            settingsPanel = panel
-            renderer.onTogglePanel = { [weak self] in self?.toggleSettings(nil) }
-            debugPanel = DebugPanel(renderer: renderer)
-            if DebugPanel.wasVisible { debugPanel?.show(nextTo: window, below: panel.panel) }
-            renderer.onToggleDebug = { [weak self] in self?.toggleDebug(nil) }
+            // The panels after the first frame: laying out the settings panel takes about 0.35 s of the main thread,
+            // which would otherwise come before it. (And after three seconds without one, so they are there when the
+            // shaders failed to compile.)
+            renderer.onFirstFrame = { [weak self] in self?.showPanels() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.showPanels() }
         }
 
         print("""
@@ -58,11 +76,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
           - / =        lower / raise render resolution   U   MetalFX upscaling: off, 1.5x, 2x, 3x
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
-          R            hot-reload Shaders.metal (edit it while the app runs)
+          R            hot-reload the shaders (edit Shaders/*.metal while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
+    }
+
+    private func showPanels() {
+        guard settingsPanel == nil else { return }
+        let panel = SettingsPanel(renderer: renderer)
+        panel.show(nextTo: window)
+        settingsPanel = panel
+        renderer.onTogglePanel = { [weak self] in self?.toggleSettings(nil) }
+        debugPanel = DebugPanel(renderer: renderer)
+        if DebugPanel.wasVisible { debugPanel?.show(nextTo: window, below: panel.panel) }
+        renderer.onToggleDebug = { [weak self] in self?.toggleDebug(nil) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -143,8 +172,10 @@ if let path = ProcessInfo.processInfo.environment["METALRENDERER_VG_TEST"] {
     exit(0)
 }
 
+setlinebuf(stdout)   // whole lines also into a pipe or a file: a log is complete when the app is stopped
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
+// Headless: no Dock icon, and the app never becomes active, so the focus stays where it was.
+app.setActivationPolicy(Headless.isEnabled ? .prohibited : .regular)
 app.run()

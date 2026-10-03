@@ -16,11 +16,15 @@ protocol ComputePass {
     func memoryBarrier(scope: MTLBarrierScope)
     func dispatchThreads(_ threadsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize)
     func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize)
+    /// What `useResource`, `useResources` and `useHeap` hold for: Metal 3's encoder, Metal 4's frame. The renderer
+    /// declares the scene's resources once per scope (`Renderer.bindScene`).
+    var declarationScope: AnyObject { get }
 }
 
 /// Metal 3: straight through to the encoder. One reference wide, so passing it as `ComputePass` allocates nothing.
 struct Metal3Pass: ComputePass {
     let enc: MTLComputeCommandEncoder
+    var declarationScope: AnyObject { enc }
 
     func setComputePipelineState(_ state: MTLComputePipelineState) { enc.setComputePipelineState(state) }
     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { enc.setBytes(bytes, length: length, index: index) }

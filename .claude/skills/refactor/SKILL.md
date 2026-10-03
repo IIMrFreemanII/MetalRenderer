@@ -60,7 +60,8 @@ Four rules:
    .claude/skills/refactor/scripts/same.sh quick
    ```
    and the modes that cover what the candidate touched ([references/proving.md](references/proving.md) has the
-   table). `same.sh` builds the current tree, runs the mode on both binaries and compares the images. When a proof
+   table). `same.sh` builds the current tree, runs the mode on both binaries and compares the images. The runs are
+   offscreen, like every benchmark run (the `offscreen` skill); never launch the binary without `METALRENDERER_BENCH`. When a proof
    fails, find out why before anything else: either the candidate changed behaviour (fix it or drop it), or the
    setting differs from run to run (`same.sh --self` tells). Never carry a failing proof into the next candidate:
    two changes later nobody can tell which one broke the image.
@@ -114,7 +115,7 @@ These are interfaces to things outside the code, so a refactor that changes one 
 * `Tools/eval/refs`: re-rendered only when the ground truth changes, never for a refactor.
 * The saved-settings format (`SettingsStore`): a renamed `RenderSettings` field drops the value the user had saved.
 * Disk cache formats without a version bump (the `.metalrenderer-cache` folders next to the models).
-* Swift↔MSL struct layouts (`validateGPULayouts` in GPUTypes.swift, `static_assert` in Shaders.metal).
+* Swift↔MSL struct layouts (`validateGPULayouts` in GPUTypes.swift, `static_assert` in Shaders/*.metal).
 
 ## The report and the commit message
 

@@ -90,7 +90,7 @@ final class Scene {
         var power: SIMD3<Float>               // sum of emitted radiance x area (object space)
     }
 
-    /// A local fog volume (Shaders.metal FogVolume): a soft-edged box or sphere of denser fog, optionally moving.
+    /// A local fog volume (FogVolume in Shaders/Types.metal): a soft-edged box or sphere of denser fog, optionally moving.
     struct FogVolume {
         enum Shape {
             case box(halfExtents: SIMD3<Float>)
@@ -345,7 +345,7 @@ final class Scene {
     }
 
     /// More lights than this (analytic + emissive meshes): nothing may loop over the lights or keep something per light
-    /// (Shaders.metal LIGHT_TABLE): no light maps, GI and the path tracer sample the light table.
+    /// (LIGHT_TABLE in Shaders/Types.metal): no light maps, GI and the path tracer sample the light table.
     /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off. Set once, by init.
     static let lightTableThreshold = 256
     private(set) var usesLightTable = false

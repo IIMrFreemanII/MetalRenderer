@@ -6,7 +6,7 @@
 #   baseline.sh --remove   remove the baseline
 #
 # Checks the working tree out as it is now (uncommitted changes and untracked files included; or <ref>, a commit)
-# into the git worktree ../MetalGI-base and builds it in release, so the baseline binary loads its own Shaders.metal.
+# into the git worktree ../MetalGI-base and builds it in release, so the baseline binary loads its own shaders.
 # Nothing is committed or stashed in this tree. Run it before the first edit: a baseline made later holds the
 # refactor it should be compared with, so an existing one is never replaced.
 #

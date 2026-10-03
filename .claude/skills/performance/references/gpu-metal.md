@@ -5,7 +5,10 @@ memory, and counters that can be sampled only at encoder boundaries. M1/M2 have 
 intersector is software and the project's own BVH (`CUSTOM_RT`) can beat it. On M3 and later, re-check with
 `METALRENDERER_BENCH=rt`.
 
-The shaders are compiled at runtime from `Sources/MetalRenderer/Shaders.metal` (MSL 3.2, `Pipelines.compile`), so
+The shaders are compiled at runtime (MSL 3.2, `Pipelines.compile`) from `Sources/MetalRenderer/Shaders.metal`, the
+entry file, and the pieces it lists in `Sources/MetalRenderer/Shaders/` (one per subject; `ShaderSource.swift` joins
+them with `#line` markers, so a compile error names the piece and its line; a new piece needs one `#include` line in
+the entry, in the order the pieces build on each other, and no Swift rebuild). So
 press **R** in the app to hot-reload them. The whole set of pipelines is built in the background before the swap, so
 frames keep flowing during a compile and a failed reload keeps the old ones. Keep it that way.
 
@@ -48,7 +51,7 @@ textures per pixel and do little math. To speed them up:
   stay losslessly compressed. For private textures uploaded once (material textures, sky maps), call
   `blit.optimizeContentsForGPUAccess(texture:)` after the upload. This is unused so far and needs an A/B.
 * **Streaming:** sparse textures in an `MTLHeap` with GPU mip feedback (TextureStreamer.swift) keep memory bounded.
-  Feedback writes use relaxed atomics (Shaders.metal ~863). Keep them sparse.
+  Feedback writes use relaxed atomics (`sampleMaterial`, Shaders/Surface.metal). Keep them sparse.
 
 ## 3. Occupancy and registers: the default suspect for big kernels
 
@@ -58,18 +61,37 @@ fewer threads run at once and memory latency stops being hidden.
 * Keep live variables few and short-lived. Recompute cheap values instead of carrying them across a trace call.
 * Avoid dynamically indexed local arrays and run-time vector indices (`v[g]`) **inside a loop over many items**:
   they become stack memory traffic per iteration. Use vector lanes with `select`, and `dot(v, groupMask(g))` /
-  `v += groupMask(g) * x` for a channel picked at run time (Shaders.metal `groupMask`). Measured (stress hall, 1024
+  `v += groupMask(g) * x` for a channel picked at run time (`groupMask`). Measured (stress hall, 1024
   lights): manyLightsKernel −8% with one ray, −14% with two; composite −12%.
 * Outside such loops the same rewrite is neutral: don't bother. A small array written once and read a few times is
   cheaper than reading its contents again from textures: ReSTIR's spatial kernels keep ~1 KB of neighbour surfaces
   and reservoirs in arrays, and re-reading them instead cost +0.1–0.2 ms (DI) and +11% (GI spatial).
+* **Pick a sample by what it estimates.** A sample's value / pdf is only bounded when the pdf follows the integrand.
+  reflectionKernel picked its direct-specular light by diffuse light and then clamped the bright samples that made:
+  highlights 2–6% dark and noisy. Picked by specular light (`pickLightSpecular`), no clamp is needed (+5 to +16 dB
+  on `speccheck`'s SVGF rows). A firefly clamp downstream of a mismatched pdf is a bias, not a fix.
 * Kernel timings shift by ±0.3 ms with unrelated edits to the same kernel (the compiler lays it out differently).
   Trust only alternating A/B rounds of the pass's own column (`ab.sh -c "<pass>"`).
 * **Compile out what's off.** Copy these patterns:
-  * function constants: `lightTypesConstant` / `LIGHT_SPEC` (Shaders.metal:137) strips unused light types per scene;
+  * kernel variants, for anything a configuration fixes for every frame. Test a bit of `Uniforms.flags` with
+    `flagOn(u.flags, FLAG_X)` and a bit of the kernel's own flag word with `passOn(word, X)` (Shaders/Types.metal), and name
+    the bit in `Kernel.fixedFlags` / `fixedPassFlags` (Pipelines.swift). `bind(enc, kernel, uniforms, pass:)` then
+    picks the variant with those bits as function constants; it is compiled in the background on first use and the
+    general pipeline (run-time tests) runs until it is ready. A bit left out of the masks is still correct, only
+    not compiled in. A fact that is not a flag becomes one in a word made twice, in MSL and in Swift
+    (`tracePassFlags`, `initialPassFlags`): keep the two identical, `swift test` checks the constants and
+    measuring.md's safe-math diff checks the result.
+  * function constants: `lightTypesConstant` / `LIGHT_SPEC` strips unused light types per scene;
   * preprocessor macros: `CUSTOM_RT`, `RT_STATS` (`Pipelines.compile`).
 
-  A runtime `if (feature)` on a uniform is cheap for divergence, but it still reserves registers for both paths.
+  A runtime `if (feature)` on a uniform is cheap for divergence, but both paths stay in the kernel. Measured
+  (variants against general pipelines): what pays is a path with a **ray cast** in it. traceKernel with the bounce
+  loop and the per-light shadow rays compiled out −24%; restirTemporalKernel without its visibility ray and
+  restirSpatialKernel's merge-only passes −8% together; reflectionKernel without the references' second bounce −7%;
+  restirGIInitialKernel with one bounce −13%. A flag that guards a texture read, a clamp or the blue-noise sampler
+  is worth 0–2%: restirGISpatialKernel, rcTraceMergeKernel and meshLightsKernel got no variants for that reason, and
+  a compiled-in bounce count measured the same as the uniform's. Don't give a bit that flips on a history's first
+  frame (`*_VALID`) to the masks: its variant would be compiled for one frame.
 * **Threadgroup size.** `Renderer.threadgroupSizes`. The defaults are 8×8, `trace` 16×8 (+2%)
   and `atrous` 16×16 (+5%). Sweep with `METALRENDERER_TG="trace=32x4,atrous=8x8"` and keep winners only if they hold
   across alternating runs.
@@ -93,16 +115,14 @@ fewer threads run at once and memory latency stops being hidden.
 
 * Atomics are relaxed throughout (`memory_order_relaxed`). Keep it that way unless ordering is needed: MSL 3.2
   device-scope fences are used in `rtFitKernel` for the bottom-up LBVH fit.
-* **Simdgroup intrinsics aren't used yet.** `simd_sum`, `simd_prefix_exclusive_sum`, `simd_ballot`, `simd_shuffle`
-  and `quad_*` replace threadgroup-memory round-trips and barriers in:
-  * `skyMeanKernel` (Shaders.metal:2478, threadgroup reduction of `sums[64]`);
-  * `rtKeysKernel` (5199, centroid bounds);
-  * the LBVH sort (`rtSortLocalKernel`, 5250);
-  * the ambient accumulations in `restirGISpatialKernel` (~3808, sparse grid) and `rcSHKernel` (~5084, per probe).
-    These use one global atomic per thread: reduce per simdgroup, then let lane 0 add.
-
-  Only worth it when the pass shows up in timings.
-* **Threadgroup tiles:** `shadowTemporalKernel` (Shaders.metal:4191) loads a tile with an apron into `threadgroup
+* **Simdgroup intrinsics** (`simd_sum`, `simd_min` / `simd_max`, `simd_all`, `simd_is_first`,
+  `simd_prefix_exclusive_sum`, `simd_ballot`) replace threadgroup-memory round-trips and barriers. In use:
+  `shadowTemporalKernel` (`simd_all` to mark settled tiles) and `rtKeysKernel` (`simd_min` / `simd_max` for the
+  centroid bounds). Every thread of a group must reach the call: no early `return` above it.
+  * Don't expect a gain from them on a small pass. `rcSHKernel` adds four atomics per probe to one 16-byte buffer;
+    with `simd_sum` and one add per SIMD group the frame measured the same (0.00 ± 0.02 ms, October 2026), so it
+    kept its simple form. `restirGISpatialKernel`'s ambient sums are already 1 pixel in 64.
+* **Threadgroup tiles:** `shadowTemporalKernel` (Shaders/Denoise.metal) loads a tile with an apron into `threadgroup
   half4` arrays, then filters from them. Use `half` in tiles, as few barriers as possible
   (`threadgroup_barrier(mem_flags::mem_threadgroup)`), and stay well below 32 KB per group so several groups stay
   resident.
@@ -147,7 +167,47 @@ fewer threads run at once and memory latency stops being hidden.
 * Untracked hazard tracking with explicit fences can remove driver overhead, but it's unused here and easy to get
   wrong. Adopt it only with an A/B that shows a win, plus `pngdiff.py` proof that the frames are identical.
 
-## 9. GPU tools
+## 9. Shader helpers: use them, don't copy
+
+A new kernel starts from these (each replaced several hand-written copies; all are `inline` and compile to what the
+copies did, checked bit for bit under `METALRENDERER_MATH=safe`):
+
+| Need | Helper | In |
+|---|---|---|
+| The scene bundle from the kernel's bindings | `sceneData(...)`, `sceneLights(...)` for kernels that trace no surfaces, `bindLightSampling(s, u.lightTable, regirGrid, regir)` | Surface.metal |
+| The sample stream | `makeSampler(blueNoise, u, pixel, dimension, seed)` with `pixelSeed(tid, frame, SEED_*)`; a kernel gets its own dimension range and salt | Sampling.metal |
+| One item by weight, in one pass | `StreamPick` (`streamPick(u)`, `offer(w)`, `total`) | Sampling.metal |
+| A diffuse bounce | `sampleBounce(n, ng, u)` | Sampling.metal |
+| The firefly clamp | `x *= fireflyScale(u, luminance(x))`, or `fireflyScale(lum, limit)` for a limit that is a setting | Sampling.metal |
+| A point on a light-table triangle | `triangleLightPoint(s, lights, tris, index, uv, prev)` | Lights.metal |
+| RIS candidates from the grid, the table and the suns | `lightCandidate(...)`, `lightCandidateWeight(...)` | LightSampling.metal |
+| "Is this the same surface?" | `sameSurface(nd, depth, n, tolerance, minCos)` with `REUSE_*`, `FEEDBACK_*`, `REFLECTION_*` | LightSampling.metal |
+| Last frame's pixel of a pixel | `reprojectNearest(u, mv, n, prevND)` | LightSampling.metal |
+| The pixel that shows a world point | `surfacePixel(...)`, `lastFramePixel(u, prevPosition, n, prevND, q)` | LightSampling.metal |
+| Spatial reuse | `diskNeighbour(...)`, `pairwiseMIS(...)` | LightSampling.metal |
+| Edge stopping on depth and normal | `depthGradient(...)`, `geometryWeights(...)` | Denoise.metal |
+| A Karras tree's node range, a box's world box | `karrasRange(keys, n, i)`, `boxToWorld(lo, hi, m)` | BVHBuild.metal |
+
+Rules that kept the refactor bit-identical, and keep a helper honest:
+
+* A helper returns the factors, and the caller multiplies them in the order it always did: `a * b * c` and
+  `a * (b * c)` round differently (`geometryWeights` returns depth and normal weights as two values for this reason).
+* A scale of exactly 1 is free: `x *= cond ? k : 1` is what `if (cond) x *= k` computed.
+* Keep the order of random draws. ReSTIR DI's initial candidates draw in another order than the other two candidate
+  loops (no table numbers for the suns, quantised uv), so they share only the weight.
+* Verify with safe math on both sides (`pngdiff.py`: max 0.0 on every image), then time with the default fast math.
+
+Three things look like copies and are not, because they differ in what they compute. Next-event estimation at a
+path's hit: the path tracer, ReSTIR GI and the reflections take their branches in different orders, and `giLightIllum`
+(the cascades, and the path tracer's light-map branch) draws 8 candidates and clamps where the others draw 4 and
+do not. The ambient fixed point: 1024 in
+the cascades, `RGI_AMBIENT_SCALE` (256) in ReSTIR GI. The distance floor of a light sample: 1e-6 at surfaces, 1e-4
+in fog. Making any of them alike changes images, so it is a change to measure, not a clean-up.
+
+The two bottom-up fit kernels (`rtFitKernel`, `vgFitKernel`) keep their own walk-up loops: the loop writes through a
+`coherent(device)` pointer between device-scope fences, and that stays visible in the kernel.
+
+## 10. GPU tools
 
 * **Debug window** (I or ⌘I):
   * frame graph (blue = GPU ms, orange = CPU frame interval);

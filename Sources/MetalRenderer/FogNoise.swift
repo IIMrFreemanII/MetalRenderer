@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Tiling 3D noise for the volumetric fog's density (Shaders.metal fogNoise): three octaves of gradient noise
+/// Tiling 3D noise for the volumetric fog's density (fogNoise in Shaders/Fog.metal): three octaves of gradient noise
 /// (Perlin) whose lattices repeat every `size` voxels, normalised to mean 0.5 with values in [0, 1].
 enum FogNoise {
     static let size = 64
