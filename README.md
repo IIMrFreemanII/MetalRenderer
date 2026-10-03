@@ -90,7 +90,9 @@ swift run -c release
 
 You can also open `Package.swift` in Xcode, choose **My Mac**, and press Run. Use the Release scheme for real frame rates.
 
-> The app finds its shaders through its source path, so run it from this folder rather than copying the binary somewhere else.
+> The app finds its shaders through its source path, so run it from this folder rather than copying the binary somewhere else. `METALRENDERER_SHADERS=<path to a Shaders.metal>` points it at another copy of them.
+
+The window opens first; the shaders compile in the background (after an edit that takes two to three seconds, otherwise Metal has them cached and the first frame is there after a quarter of a second). If they fail to compile, the error is printed with the file and line, the window stays empty, and **R** tries again.
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
@@ -190,7 +192,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | [ ] | Fewer / more GI bounces (path traced, ReSTIR GI) |
 | - = | Lower / raise render resolution |
 | U | MetalFX upscaling: off, 1.5×, 2×, 3× (output is capped at the window's pixel size) |
-| B | Toggle blue-noise sampling (on by default; the tile is generated at startup, which takes about 0.5 s) |
+| B | Toggle blue-noise sampling (on by default; the tile is generated once, in the background of the first launch, and kept in `~/Library/Caches/MetalRenderer`) |
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (cascades: probe grid over interpolation confidence) |
 | 9, 0 | Cycle the geometry debug views (see below); back to the final image |
 | L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
@@ -633,7 +635,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `Upscaler.swift` | MetalFX temporal (or spatial) scaler and the sub-pixel jitter sequence |
 | `TemporalUpscaler.swift` | The custom upscaler's history textures and dispatch (`taauKernel`) |
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
-| `BlueNoise.swift` | Void-and-cluster blue-noise generator |
+| `BlueNoise.swift` | Void-and-cluster blue-noise generator, and the tile's cache file |
+| `CacheFile.swift` | Where the app keeps what it derives (`~/Library/Caches/MetalRenderer`) and how it writes it; the launch timer |
 | `Benchmark.swift` | Benchmark mode (`METALRENDERER_BENCH`): a setting of a run (`Config`), the frame clock, timing table and PNG capture |
 | `Benchmark+Modes.swift` | The benchmark modes: each one's list of settings |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
@@ -803,6 +806,20 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
 
   * In `gi`, the full-budget ReSTIR GI settings are 0.10–0.15 ms (1.2–1.9%) slower and the high-quality cascades 0.03 ms (1%), in every round. No helper accounts for it: putting any one back by hand, or all of a kernel's, leaves the frame within ±0.1 ms of where it was, forcing the helpers inline makes it slower (+0.21 ms), and the previous commit's shaders with one never-taken extra call in a kernel the benchmark doesn't even run are slower by the same 0.1 ms (1.2%). The helper files alone, with the old kernels, cost nothing (0.00 ms). So this is how the compiler's module-wide decisions fall for a given source, not a cost of a helper: expect any shader edit to move unrelated kernels by about 1%, and judge a change of that size against a control edit (`measuring.md`).
   * Left different on purpose, because making them alike changes images: next-event estimation at a path's hit (the path tracer, ReSTIR GI and the reflections take their branches in different orders; the cascades' and the path tracer's light-map branch draw 8 candidates and clamp, the others 4 and don't), the ambient fixed point (1024 in the cascades, 256 in ReSTIR GI), and a light sample's distance floor (1e-6 at surfaces, 1e-4 in fog). The two bottom-up fit kernels keep their own walk-up loops (device-scope fences around a coherent pointer).
+* **Launch: the first frame after a quarter of a second** (October 2026; M1 Max, time from the process's start, the line `Launch: …` the app prints):
+
+  | | Window | First frame |
+  |---|---|---|
+  | Before | 0.17 s | 1.15 s |
+  | After | 0.15 s | 0.24 s |
+  | Before, after a shader edit | 2.66 s | 3.65 s |
+  | After, after a shader edit | 0.15 s | 2.80 s |
+
+  * The blue-noise tile took 0.5 s to generate inside the first frame, on every launch. It is now read from a cache file (64 KB); on the very first launch it is generated in the background, and until it is in, sampling is white noise through the general pipelines (so no kernel variant is compiled for those frames).
+  * The settings panel takes 0.35 s to lay out. It is now built after the first frame instead of before it.
+  * The shaders compile in the background (`startCompilingShaders`): the window is up at once, and the scene, the textures and the noise are prepared meanwhile. Metal's cache makes that 2 ms on an ordinary launch; after a shader edit it is 1.9 s for the source and 0.6 s for the pipelines, which is what is left of the 2.8 s. A failed compile no longer stops the app.
+  * The fog's noise (50 ms) and an HDR sky image (a few hundred ms to decode) are made in the background too: the fog appears a few frames late, the sky shows its constant colour (or the image at its last exposure) until the image is in. Benchmarks do all of this up front, so their frames are the same as before (`quick`, `stressq`, `skycheck`, `fogcheck`: identical images).
+
 * **Direct specular was counted twice with the shadow denoiser** (fixed October 2026). With the shadow denoiser, the composite adds the analytic lights' direct specular (exact GGX × the denoised visibility), and the reflection pass is meant to leave it out. But only the composite's uniforms carried the shadow-denoiser flag, so the reflection pass kept adding its own sample of the same light: highlights of lights on glossy surfaces came out too bright, and the pass cast a shadow ray per pixel for it. The flag now reaches every kernel of the frame. `METALRENDERER_BENCH=speccheck` (direct light only, against an accumulated reference, `Tools/eval/specular.py`):
 
   | Shadow denoiser path | Brightness / reference | PSNR |

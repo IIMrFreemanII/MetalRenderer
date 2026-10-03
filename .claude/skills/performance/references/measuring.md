@@ -150,7 +150,10 @@ means for measuring:
 3. Read the medians across rounds, not the best run. Treat a delta below about 0.4 ms (or 2–3% on small passes) as
    noise unless it has the same sign in every round.
 4. For whole-frame claims, repeat with `METALRENDERER_BENCH_SPLIT=0`.
-5. **A shader edit moves kernels it doesn't touch.** The shaders compile as one module, and the compiler's decisions
+5. **Shader against shader, one binary:** `METALRENDERER_SHADERS=<copy>/Shaders.metal` runs another copy of the shader
+   files (the entry and its `Shaders/` folder), so a shader-only change needs no second build: copy the files, edit the
+   copy, and give `ab.sh` the same binary with the variable set on one side.
+6. **A shader edit moves kernels it doesn't touch.** The shaders compile as one module, and the compiler's decisions
    in one kernel depend on the rest of it: the previous shaders plus one never-taken call in a kernel the benchmark
    doesn't run made ReSTIR GI frames 0.1 ms (1.2%) slower, in the same way a clean refactor of other kernels did.
    Per-pass columns then mislead (a pass whose source is unchanged shows a delta), and a frame can sit in one of two
@@ -162,3 +165,18 @@ means for measuring:
    * don't chase it helper by helper. Putting single helpers back by hand, or forcing them inline, moved the frame
      by another ±0.1 ms without a pattern.
 
+
+## Launch time
+
+The app prints one line when its first frame is on screen, with the steps on the way, in ms since the process started
+(`Launch` in CacheFile.swift):
+
+```
+Launch: window after 155 ms, renderer after 190 ms, shaders after 207 ms, first frame after 242 ms
+```
+
+* Launch several times and drop the first run after a build: a new binary's first start is 0.3 s slower.
+* `METALRENDERER_SETTINGS=default` skips the saved settings, so every run starts the same scene.
+* "After a shader edit" needs a cache miss on each run: point `METALRENDERER_SHADERS` at copies that each differ in a
+  constant every kernel uses (a comment alone recompiles the source but finds the pipelines in the cache).
+* Output is line-buffered, so the line is in a redirected log while the app still runs.

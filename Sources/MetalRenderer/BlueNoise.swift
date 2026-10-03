@@ -80,6 +80,23 @@ enum BlueNoise {
         return rank.map { (Float($0) + 0.5) / Float(count) }
     }
 
+    /// The default tile, kept in the user's cache folder: generating it takes about half a second.
+    static var cacheURL: URL { CacheFile.userFolder.appendingPathComponent("bluenoise-\(size)-s1.9-seed1-v1.bin") }
+
+    /// The cached tile, if it is there and whole.
+    static func cached() -> [Float]? {
+        guard let data = try? Data(contentsOf: cacheURL), data.count == size * size * MemoryLayout<Float>.stride else { return nil }
+        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+    }
+
+    /// The default tile: from the cache, or generated now and cached for the next launch.
+    static func tile() -> [Float] {
+        if let values = cached() { return values }
+        let values = generate()
+        try? CacheFile.write(values.withUnsafeBytes { Data($0) }, to: cacheURL)
+        return values
+    }
+
     private struct SplitMix64 {
         var state: UInt64
         init(seed: UInt64) { state = seed }

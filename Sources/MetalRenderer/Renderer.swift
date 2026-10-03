@@ -249,9 +249,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private let queue: MTLCommandQueue
     private weak var view: MTKView?
     private var scene = Scene()
-    private let shaderURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .appendingPathComponent("Shaders.metal")
+    /// The shaders' entry file: next to this source file, or `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which
+    /// lets one binary run another copy of the shaders (an A/B of a shader change without a second build).
+    private let shaderURL = ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0) }
+        ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Shaders.metal")
 
     /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
@@ -290,15 +291,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
     /// The tracer the scene's structures were built for (and the pipelines compiled for).
     private var builtRayTracer = RayTracerKind.initial
-    private var blueNoiseTexture: MTLTexture!   // filled the first time blue noise is turned on
+    private var blueNoiseTexture: MTLTexture!   // the blue-noise tile (zeros until `blueNoiseReady`)
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
     static func lightMapSize(lightCount: Int) -> Int {
         lightCount <= 16 ? 128 : max(32, Int(128 * (16 / Double(lightCount)).squareRoot()) / 8 * 8)
     }
     private var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
-    private var blueNoiseFilled = false
+    private var blueNoiseReady = false
     // Volumetric fog (Shaders/Fog.metal), allocated when first turned on.
     private var fogNoiseTexture: MTLTexture?    // tiling 3D density noise (FogNoise)
+    private var fogNoisePending = false         // being generated in the background
     private var fogGrid: FogTargets?            // froxel grid at the current render resolution
     private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
     private var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
@@ -317,6 +319,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var skyMean: MTLBuffer?             // the sky's mean radiance per hemisphere (skyMeanKernel), for the next frame
     private var skyImage: (path: String, exposure: Float, image: SkyImage, texture: MTLTexture)?
     private var skyImageFailed: String?         // a path that didn't load (not retried every frame)
+    private var skyImageLoading = false         // one is being decoded in the background
     private var skyParams = GPUSkyParams()      // this frame's (also written into the shading arguments)
     private var skyActive = false               // this frame uses the sky texture
     private var skyRefreshed: (sky: SkySettings, scene: ObjectIdentifier)?   // what the sky texture was fully drawn for
@@ -375,6 +378,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Every frame once its GPU work is done (main thread): the CPU time since the previous frame started and the GPU
     /// time, both in ms. For the Debug window's graph; nil while it's hidden.
     var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
+    /// Called once, on the main thread, when the first frame has been drawn.
+    var onFirstFrame: (() -> Void)?
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
     private(set) var defaultSettings = RenderSettings()
     /// Resolution, fps and GPU time, refreshed twice a second.
@@ -447,11 +452,19 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
 
-        pipelines = try Pipelines(device: device, source: shaderURL, kind: settings.rayTracer, lightTypes: scene.lightTypeMask,
-                                  stats: CustomRayTracer.statsEnabled)
         try createDummyTextures()
         try createSceneResources()
         try createBlueNoiseTexture()
+        if benchmark != nil {
+            // Benchmarks start with everything in place: the same frames every run.
+            pipelines = try Pipelines(device: device, source: shaderURL, kind: builtRayTracer, lightTypes: scene.lightTypeMask,
+                                      stats: CustomRayTracer.statsEnabled)
+            customRT?.pipelines = pipelines.rt
+        } else {
+            // The app compiles them in the background: a second or two after a shader edit (Metal's cache has them
+            // otherwise), during which the window is up and the scene, the textures and the noise load.
+            startCompilingShaders()
+        }
         if !upscaleSupported {
             // Without MetalFX, a 0.5x render would just be stretched, so render at 0.75x instead.
             print("MetalFX temporal upscaling is not supported on this GPU; rendering at 0.75x without it")
@@ -470,7 +483,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             settings = s
             persistSettings = true
             SettingsStore.dumpIfRequested(settings)
+            if settings.fog.enabled { _ = fogNoise() }   // starts making it now, not at the first frame
         }
+        Launch.mark("renderer")
     }
 
     // MARK: - Setup
@@ -615,7 +630,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if builtRayTracer == .custom {
             customRT = try prepared?.customRT ?? CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight,
                                                                  poolMB: settings.virtualGeometry.poolMB)
-            customRT?.pipelines = pipelines.rt
+            if let pipelines { customRT?.pipelines = pipelines.rt }   // nil at launch: set when they arrive
         }
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
@@ -753,26 +768,41 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         primitiveASResources = primitiveAS.map { $0 as MTLResource }
     }
 
-    private func createBlueNoiseTexture() throws {
+    /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
+    private static func blueNoiseTexture(_ device: MTLDevice, values: [Float]?) throws -> MTLTexture {
         let n = BlueNoise.size
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: n, height: n, mipmapped: false)
         d.usage = .shaderRead
         d.storageMode = .shared
         guard let texture = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture blueNoise") }
         texture.label = "blueNoise"
-        blueNoiseTexture = texture
+        (values ?? [Float](repeating: 0, count: n * n)).withUnsafeBytes { raw in
+            texture.replace(region: MTLRegionMake2D(0, 0, n, n), mipmapLevel: 0,
+                            withBytes: raw.baseAddress!, bytesPerRow: n * MemoryLayout<Float>.stride)
+        }
+        return texture
     }
 
-    /// Generating the tile takes ~0.5 s, so it only happens once blue noise is first used.
-    private func fillBlueNoiseTextureIfNeeded() {
-        guard !blueNoiseFilled else { return }
-        let n = BlueNoise.size
-        let values = BlueNoise.generate()
-        values.withUnsafeBytes { raw in
-            blueNoiseTexture.replace(region: MTLRegionMake2D(0, 0, n, n), mipmapLevel: 0,
-                                     withBytes: raw.baseAddress!, bytesPerRow: n * MemoryLayout<Float>.stride)
+    /// The tile comes from the cache file. Without one (the first launch) generating it takes about half a second:
+    /// the app does that in the background and samples with white noise until the tile is in (`blueNoiseReady`);
+    /// a benchmark waits for it.
+    private func createBlueNoiseTexture() throws {
+        if let values = benchmark != nil ? BlueNoise.tile() : BlueNoise.cached() {
+            blueNoiseTexture = try Renderer.blueNoiseTexture(device, values: values)
+            blueNoiseReady = true
+            return
         }
-        blueNoiseFilled = true
+        blueNoiseTexture = try Renderer.blueNoiseTexture(device, values: nil)
+        let device = device
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let texture = try? Renderer.blueNoiseTexture(device, values: BlueNoise.tile())
+            DispatchQueue.main.async {
+                guard let self, let texture else { return }
+                self.blueNoiseTexture = texture   // frames in flight keep the old one
+                self.blueNoiseReady = true
+                self.skyRefreshed = nil           // the sky's bake reads the tile whatever the setting
+            }
+        }
     }
 
     /// 1-texel stand-ins for optional textures, so every texture a kernel declares is bound.
@@ -800,9 +830,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         dummyArray = ta
     }
 
-    /// The fog's 3D noise, generated the first time fog is on (~50 ms).
-    private func fogNoise() -> MTLTexture? {
-        if let fogNoiseTexture { return fogNoiseTexture }
+    /// The fog's 3D noise (~50 ms to generate). Any thread.
+    private static func fogNoiseTexture(_ device: MTLDevice) -> MTLTexture? {
         let n = FogNoise.size
         let d = MTLTextureDescriptor()
         d.textureType = .type3D
@@ -816,8 +845,29 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             texture.replace(region: MTLRegionMake3D(0, 0, 0, n, n, n), mipmapLevel: 0, slice: 0,
                             withBytes: raw.baseAddress!, bytesPerRow: n, bytesPerImage: n * n)
         }
-        fogNoiseTexture = texture
         return texture
+    }
+
+    /// The fog's noise, made the first time fog is on: in the background (nil until it is ready, so the fog shows a
+    /// few frames late), or right here in a benchmark.
+    private func fogNoise() -> MTLTexture? {
+        if let fogNoiseTexture { return fogNoiseTexture }
+        if benchmark != nil {
+            fogNoiseTexture = Renderer.fogNoiseTexture(device)
+            return fogNoiseTexture
+        }
+        if !fogNoisePending {
+            fogNoisePending = true
+            let device = device
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let texture = Renderer.fogNoiseTexture(device)
+                DispatchQueue.main.async {
+                    self?.fogNoiseTexture = texture
+                    self?.fogNoisePending = false
+                }
+            }
+        }
+        return nil
     }
 
     private func fogTargets(width: Int, height: Int) -> FogTargets? {
@@ -911,27 +961,57 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func skyImageFor(_ path: String, exposure: Float) -> (image: SkyImage, texture: MTLTexture)? {
         if let s = skyImage, s.path == path, s.exposure == exposure { return (s.image, s.texture) }
         if skyImageFailed == path { return nil }
-        do {
-            let image = try SkyImage.load(path: path, exposure: exposure)
-            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: image.width, height: image.height,
-                                                             mipmapped: false)
-            d.usage = .shaderRead
-            d.storageMode = .shared
-            guard let texture = device.makeTexture(descriptor: d) else { return nil }
-            texture.label = "sky image"
-            image.pixels.withUnsafeBytes { raw in
-                texture.replace(region: MTLRegionMake2D(0, 0, image.width, image.height), mipmapLevel: 0,
-                                withBytes: raw.baseAddress!, bytesPerRow: image.width * 16)
+        if benchmark != nil {
+            // A benchmark loads it here, so its first frame has it.
+            switch Result(catching: { try Renderer.loadSkyImage(device, path: path, exposure: exposure) }) {
+            case .success(let loaded): skyImage = (path, exposure, loaded.image, loaded.texture)
+            case .failure(let error):
+                print("Sky image failed to load (\(path)): \(error)")
+                skyImageFailed = path
             }
-            skyImage = (path, exposure, image, texture)
-            let sun = image.sunDirection.map { String(format: "sun toward (%.3f, %.3f, %.3f), %.2f° across, irradiance %.2f", $0.x, $0.y, $0.z, 2 * image.sunAngularRadius * 180 / .pi, 0.2126 * image.sunIrradiance.x + 0.7152 * image.sunIrradiance.y + 0.0722 * image.sunIrradiance.z) } ?? "no sun"
-            print("Sky image: \((path as NSString).lastPathComponent), \(image.width)×\(image.height), \(sun)")
-            return (image, texture)
-        } catch {
-            print("Sky image failed to load (\(path)): \(error)")
-            skyImageFailed = path
-            return nil
+            return skyImage.map { ($0.image, $0.texture) }
         }
+        // The app decodes it in the background (a 2K image takes a few hundred ms), one load at a time: until it is in,
+        // the sky is the image at its last exposure, or the constant colour.
+        if !skyImageLoading {
+            skyImageLoading = true
+            let device = device
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let result = Result { try Renderer.loadSkyImage(device, path: path, exposure: exposure) }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.skyImageLoading = false
+                    switch result {
+                    case .success(let loaded):
+                        self.skyImage = (path, exposure, loaded.image, loaded.texture)
+                        self.skyRefreshed = nil   // a full bake with the new image
+                    case .failure(let error):
+                        print("Sky image failed to load (\(path)): \(error)")
+                        self.skyImageFailed = path
+                    }
+                }
+            }
+        }
+        if let s = skyImage, s.path == path { return (s.image, s.texture) }
+        return nil
+    }
+
+    /// Decodes the image and uploads it. Any thread.
+    private static func loadSkyImage(_ device: MTLDevice, path: String, exposure: Float) throws -> (image: SkyImage, texture: MTLTexture) {
+        let image = try SkyImage.load(path: path, exposure: exposure)
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: image.width, height: image.height,
+                                                         mipmapped: false)
+        d.usage = .shaderRead
+        d.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture sky image") }
+        texture.label = "sky image"
+        image.pixels.withUnsafeBytes { raw in
+            texture.replace(region: MTLRegionMake2D(0, 0, image.width, image.height), mipmapLevel: 0,
+                            withBytes: raw.baseAddress!, bytesPerRow: image.width * 16)
+        }
+        let sun = image.sunDirection.map { String(format: "sun toward (%.3f, %.3f, %.3f), %.2f° across, irradiance %.2f", $0.x, $0.y, $0.z, 2 * image.sunAngularRadius * 180 / .pi, 0.2126 * image.sunIrradiance.x + 0.7152 * image.sunIrradiance.y + 0.0722 * image.sunIrradiance.z) } ?? "no sun"
+        print("Sky image: \((path as NSString).lastPathComponent), \(image.width)×\(image.height), \(sun)")
+        return (image, texture)
     }
 
     /// This frame's sky: the sun (from the atmosphere, or the image's), which also sets the scene's sun light (its
@@ -1239,6 +1319,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// One frame: the scene's next state and its upload, the frame's plan, the stages the plan asks for, their
     /// encoding, the output, and what the frame leaves for the next one. Each step is a function below.
     func draw(in view: MTKView) {
+        guard pipelines != nil else { return }   // launch: the shaders are still compiling (startCompilingShaders)
         noteFrameStart()
         let size = frameSize(in: view)
         guard let t = renderTargets(for: size) else { return }
@@ -1497,10 +1578,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
-        if settings.blueNoise {
-            fillBlueNoiseTextureIfNeeded()
-            u.flags |= UniformFlags.blueNoise
-        }
+        if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
         p.uniforms = u
 
         // Radiance cascades and the direct-light denoiser don't touch each other's textures (unless the denoiser also
@@ -1881,6 +1959,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             semaphore.signal()
             let ms = (cb.gpuEndTime - cb.gpuStartTime) * 1000
             DispatchQueue.main.async {
+                Launch.firstFrame()
+                if let first = self?.onFirstFrame {
+                    self?.onFirstFrame = nil
+                    first()
+                }
                 self?.gpuMs = ms
                 if let self, let onFrameTime = self.onFrameTime { onFrameTime(cpuInterval, ms) }
                 if let times { self?.addPassTimes(times, frameMs: ms) }
@@ -1903,7 +1986,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// `pass`: the kernel's own flags, for the kernels with variants (Kernel.fixedPassFlags).
     private func bind(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, _ uniforms: Uniforms, pass: UInt32 = 0, sceneSlot: Int? = nil) {
         var u = uniforms
-        enc.setComputePipelineState(pipelines.state(kernel, flags: u.flags, pass: pass, wait: benchmark != nil))
+        // While the blue-noise tile is on its way (a first launch), the general pipelines: a variant for the flags
+        // of those few frames would be compiled for nothing.
+        let awaitingNoise = settings.blueNoise && !blueNoiseReady
+        enc.setComputePipelineState(awaitingNoise ? pipelines[kernel]
+                                                  : pipelines.state(kernel, flags: u.flags, pass: pass, wait: benchmark != nil))
         enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
         if let sceneSlot { bindScene(enc, slot: sceneSlot) }
     }
@@ -2597,7 +2684,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Recompiles the shaders and remakes every pipeline (R key, traversal counters), in the background: frames keep
     /// the old pipelines until the new set is ready, and for good if the compile fails. `done` gets the outcome (main thread).
     func reloadShaders(then done: ((Bool) -> Void)? = nil) {
-        let device = device, url = shaderURL, kind = pipelines.kind, lightTypes = pipelines.lightTypes
+        // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
+        let device = device, url = shaderURL
+        let kind = pipelines?.kind ?? builtRayTracer, lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
         let stats = CustomRayTracer.statsEnabled
         shaderQueue.async { [weak self] in
             let result = Result { try Pipelines(device: device, source: url, kind: kind, lightTypes: lightTypes, stats: stats) }
@@ -2606,7 +2695,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 switch result {
                 case .success(let made):
                     // A scene with another tracer or other light types came in meanwhile: compile again, for that one.
-                    guard made.kind == self.pipelines.kind, made.lightTypes == self.pipelines.lightTypes else {
+                    if let current = self.pipelines, made.kind != current.kind || made.lightTypes != current.lightTypes {
                         return self.reloadShaders(then: done)
                     }
                     self.pipelines = made
@@ -2616,10 +2705,22 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     self.upscalerReset = true
                     done?(true)
                 case .failure(let error):
-                    print("Shader reload failed (keeping previous version):\n\(error)")
+                    print(self.pipelines == nil ? "Shaders failed to compile (fix them and press R):\n\(error)"
+                                                : "Shader reload failed (keeping previous version):\n\(error)")
+                    if self.pipelines == nil { self.view?.window?.title = "MetalRenderer — the shaders failed to compile (see the console, then press R)" }
                     done?(false)
                 }
             }
+        }
+    }
+
+    /// The launch's compile, in the background (the app; a benchmark compiles in `init`). Until it is done `draw`
+    /// returns at once, and with it everything that needs pipelines: scene loads start there. A failure is printed
+    /// and leaves the window empty; R compiles again.
+    private func startCompilingShaders() {
+        view?.window?.title = "MetalRenderer — compiling shaders…"
+        reloadShaders { ok in
+            Launch.mark(ok ? "shaders" : "shaders (failed)")
         }
     }
     private let shaderQueue = DispatchQueue(label: "MetalRenderer.shaders", qos: .userInitiated)   // reloads, one at a time
