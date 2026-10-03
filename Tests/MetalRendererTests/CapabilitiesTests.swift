@@ -6,7 +6,7 @@ final class CapabilitiesTests: XCTestCase {
     private var none: Capabilities {
         var c = Capabilities()
         c.metalRayTracing = false; c.hardwareRayTracing = false
-        c.metalFXUpscaling = false; c.metalFXDenoiser = false; c.metal4 = false
+        c.metalFXUpscaling = false; c.metalFXDenoiser = false; c.metal4 = false; c.metal4RayTracing = false
         return c
     }
 
@@ -46,6 +46,18 @@ final class CapabilitiesTests: XCTestCase {
         (c, notes) = settings { $0.api = .metal4 }.clamped(to: caps)
         XCTAssertEqual(c.api, .metal3)
         XCTAssertEqual(notes.count, 1)
+    }
+
+    func testMetalRayTracingOnMetal4NeedsItsOwnSupport() {
+        var caps = Capabilities()
+        caps.metal4RayTracing = false   // M1 Max: Metal 4 and Metal ray tracing, but not together
+        let s = settings { $0.rayTracer = .metal; $0.api = .metal4 }
+        XCTAssertEqual(s.missing(in: caps), "Metal 4 ray tracing")
+        let (c, notes) = s.clamped(to: caps)
+        XCTAssertEqual(c.api, .metal3)
+        XCTAssertEqual(c.rayTracer, .metal, "the ray tracer stays")
+        XCTAssertEqual(notes.count, 1)
+        XCTAssertNil(settings { $0.rayTracer = .custom; $0.api = .metal4 }.missing(in: caps), "the custom BVH runs on Metal 4")
     }
 
     func testTheDenoiserIsOnlyNeededWhileUpscaling() {
