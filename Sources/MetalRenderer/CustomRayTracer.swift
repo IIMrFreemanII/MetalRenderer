@@ -260,7 +260,7 @@ final class CustomRayTracer {
 
     /// GPU build: every instance's RTInstance, the dynamic TLAS from this frame's instance data, and the
     /// virtual-geometry cut and its cluster tree.
-    func encodeBuild(_ enc: MTLComputeCommandEncoder, slot: Int, instanceData: MTLBuffer, view: VGView) {
+    func encodeBuild(_ enc: ComputePass, slot: Int, instanceData: MTLBuffer, view: VGView) {
         guard instanceCount > 0, let pipelines else { return }
         if !CustomRayTracer.cpuBuild {
             var count = UInt32(instanceCount)
@@ -286,7 +286,7 @@ final class CustomRayTracer {
 
     /// An LBVH over `leafBoxes` (Morton keys, bitonic sort, Karras hierarchy, bottom-up boxes) into `nodes` from
     /// `nodeBase` on. Dispatches cover `capacity` leaves; the kernels skip what lies beyond the actual count.
-    static func encodeLBVH(_ enc: MTLComputeCommandEncoder, rt: RTPipelines, counts: LBVHCounts, capacity: Int,
+    static func encodeLBVH(_ enc: ComputePass, rt: RTPipelines, counts: LBVHCounts, capacity: Int,
                            leafBoxes: MTLBuffer, keys: MTLBuffer, values: MTLBuffer, nodes: MTLBuffer, nodeBase: Int,
                            nodeParent: MTLBuffer, leafParent: MTLBuffer, counters: MTLBuffer) {
         func dispatch(_ pso: MTLComputePipelineState, _ threads: Int, group: Int = 64) {
@@ -325,7 +325,7 @@ final class CustomRayTracer {
 
     /// Bitonic sort of (key, value) pairs: whole 2048-key blocks in threadgroup memory, then the cross-block stages.
     /// Dispatches cover `capacity`; the kernels skip what lies beyond the padded count in `counts`.
-    static func encodeSort(_ enc: MTLComputeCommandEncoder, rt: RTPipelines, counts: LBVHCounts, capacity: Int,
+    static func encodeSort(_ enc: ComputePass, rt: RTPipelines, counts: LBVHCounts, capacity: Int,
                            keys: MTLBuffer, values: MTLBuffer) {
         func dispatch(_ pso: MTLComputePipelineState, _ threads: Int) {
             enc.setComputePipelineState(pso)
@@ -378,7 +378,7 @@ final class CustomRayTracer {
         return out
     }
 
-    func bind(_ enc: MTLComputeCommandEncoder, slot: Int) {
+    func bind(_ enc: ComputePass, slot: Int) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot]] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
                          + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)

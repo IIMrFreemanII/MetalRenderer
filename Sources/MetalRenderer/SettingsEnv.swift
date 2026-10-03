@@ -16,6 +16,7 @@ enum SettingsEnv {
         var d = defaults
         d.directLight = .auto
         d.rayTracer = .custom
+        d.api = .metal3
         d.specular = true
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true

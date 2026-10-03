@@ -164,10 +164,26 @@ final class Benchmark {
     static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_SPLIT"] != "0"
     static let passOrder = ["tlas", "lightmap", "trace", "temporal", "atrous", "composite", "upscale"]
 
-    /// This run's settings: the mode's list (Benchmark+Modes.swift). `METALRENDERER_BENCH_ONLY="32 lights, 400|camera"`
-    /// keeps only the settings whose names contain one of these substrings.
+    /// The settings of `list` this GPU can run; the others are named with what they need (Capabilities).
+    static func supported(_ list: [Config], on caps: Capabilities) -> (run: [Config], skipped: [String]) {
+        var run: [Config] = [], skipped: [String] = []
+        for c in list {
+            if let missing = c.resolvedSettings().missing(in: caps) { skipped.append("\(c.name) (needs \(missing))") }
+            else { run.append(c) }
+        }
+        return (run, skipped)
+    }
+
+    /// This run's settings: the mode's list (Benchmark+Modes.swift), without the settings this GPU can't run.
+    /// `METALRENDERER_BENCH_ONLY="32 lights, 400|camera"` keeps only the settings whose names contain one of these substrings.
     let configs: [Config] = {
-        let all = Benchmark.configs(for: ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? "")
+        let (all, skipped) = Benchmark.supported(Benchmark.configs(for: ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? ""),
+                                                 on: Capabilities.current)
+        skipped.forEach { print("skipped: \($0)") }
+        if all.isEmpty {
+            print("Nothing to run: this GPU supports none of the mode's settings.")
+            exit(0)
+        }
         guard let only = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_ONLY"] else { return all }
         let keys = only.split(separator: "|").map(String.init)
         let kept = all.filter { c in keys.contains { c.name.contains($0) } }
@@ -264,21 +280,17 @@ final class Benchmark {
 
     // MARK: - Frame capture
 
-    /// Encodes a copy of `texture` (bgra8Unorm_srgb: the bytes are already sRGB-encoded) into a shared buffer and returns a closure that writes it as PNG.
-    func encodeCapture(of texture: MTLTexture, into cmd: MTLCommandBuffer, device: MTLDevice) -> (() -> Void)? {
-        guard let dir = captureDir,
-              let blit = cmd.makeBlitCommandEncoder() else { return nil }
+    /// A buffer for a copy of `texture` (bgra8Unorm_srgb: the bytes are already sRGB-encoded; the frame encodes the
+    /// copy, FrameEncoder.capture) and a closure that writes it as PNG.
+    func capture(of texture: MTLTexture, device: MTLDevice) -> (buffer: MTLBuffer, write: () -> Void)? {
+        guard let dir = captureDir else { return nil }
         let w = texture.width, h = texture.height, rowBytes = w * 4
         guard let buffer = device.makeBuffer(length: rowBytes * h, options: .storageModeShared) else { return nil }
-        blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
-                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0), sourceSize: MTLSize(width: w, height: h, depth: 1),
-                  to: buffer, destinationOffset: 0, destinationBytesPerRow: rowBytes, destinationBytesPerImage: rowBytes * h)
-        blit.endEncoding()
         let fileName = String(format: "%02d-", configIndex) + current.name
             .replacingOccurrences(of: "[^A-Za-z0-9.]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-")) + (framesLeftInConfig == 2 ? "-prev" : "") + ".png"
         let url = dir.appendingPathComponent(fileName)
-        return {
+        return (buffer, {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
             guard let ctx = CGContext(data: buffer.contents(), width: w, height: h, bitsPerComponent: 8,
@@ -288,6 +300,6 @@ final class Benchmark {
                   let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
             CGImageDestinationAddImage(dest, image, nil)
             CGImageDestinationFinalize(dest)
-        }
+        })
     }
 }

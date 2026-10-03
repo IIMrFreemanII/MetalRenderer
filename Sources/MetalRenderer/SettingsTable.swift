@@ -62,17 +62,18 @@ extension GIMode: EnvNamed {
     var envName: String { ["pt", "cascades", "restir"][rawValue] }
 }
 extension UpscalerKind: EnvNamed {
-    var envName: String { ["metalfx", "spatial", "custom"][rawValue] }
+    var envName: String { ["metalfx", "spatial", "custom", "denoiser"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
+extension RenderAPI: EnvNamed {}
 extension SceneKind: EnvNamed {}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
     // One value each.
-    case direct = "METALRENDERER_DIRECT", rt = "METALRENDERER_RT", specular = "METALRENDERER_SPECULAR"
+    case direct = "METALRENDERER_DIRECT", rt = "METALRENDERER_RT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
@@ -124,6 +125,7 @@ struct SettingSpec {
     var advanced = false                            // shown only with Show advanced
     var visible: ((RenderSettings) -> Bool)?        // nil: always
     var enabled: ((RenderSettings) -> Bool)?        // nil: always
+    var available: ((Int) -> Bool)?                 // a popup's items this GPU can run (Capabilities); nil: all
     var env: Env?                                   // its `variable` is meaningful once `env(_:_:)` named it
     private var named = false
 
@@ -146,6 +148,8 @@ struct SettingSpec {
     func advanced(_ on: Bool = true) -> SettingSpec { var s = self; s.advanced = on; return s }
     func when(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.visible = condition; return s }
     func enabled(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.enabled = condition; return s }
+    /// A popup's items by index: the panel greys out the ones `item` rejects.
+    func available(_ item: @escaping (Int) -> Bool) -> SettingSpec { var s = self; s.available = item; return s }
 
     // MARK: Constructors
 
@@ -238,6 +242,9 @@ struct SettingSpec {
 }
 
 extension RenderSettings {
+    /// MetalFX's denoising scaler is the upscaler: it denoises the raw light, and SVGF and the shadow denoiser are off.
+    var neuralDenoiser: Bool { upscaleFactor > 1 && upscaler == .metalFXDenoised }
+
     /// The denoiser's wavelet passes for the selected GI method: the panel's one slider edits whichever count applies.
     var filterPasses: Int {
         get { denoiser.passes(for: giMode) }
@@ -282,7 +289,10 @@ enum SettingsTable {
                 .env(.scene, "objects").when { $0.scene.kind == .stress },
             S.slider("Lights", \.scene.lights, SceneSettings.lightRange, log: true, live: false)
                 .env(.scene, "lights").when { $0.scene.kind.hasLightCount },
-            S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt),
+            S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
+                .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
+            S.popup("Graphics API", \.api, titled(\.title)).env(.api)
+                .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),
@@ -354,7 +364,8 @@ enum SettingsTable {
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "MetalFX upscaling"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
-            S.popup("Upscaler", \.upscaler, titled(\.title)).env(.gi, "upscaler").enabled { $0.upscaleFactor > 1 },
+            S.popup("Upscaler", \.upscaler, titled(\.title)).env(.gi, "upscaler").enabled { $0.upscaleFactor > 1 }
+                .available { UpscalerKind.allCases[$0] != .metalFXDenoised || Capabilities.current.metalFXDenoiser },
             tune("TAAU history", \.taau.maxHistory, UpscalerSettings.maxHistoryRange, step: 0.5, "taauhistory", fmt("%g fr")),
             tune("Colour clip", \.taau.clipWidth, UpscalerSettings.clipWidthRange, step: 0.05, "taauclip", fmt("%.2f σ")),
             tune("Sharpness", \.taau.kernelSharpness, UpscalerSettings.sharpnessRange, step: 0.25, "taaukernel", fmt("%.2f")),
@@ -477,11 +488,13 @@ enum SettingsTable {
     }()
 
     private static let denoiser: Section = {
-        let on: When = { $0.denoiser.enabled }
-        let shadows: When = { $0.denoiser.enabled && $0.denoiser.shadowDenoiser }
+        // With the MetalFX denoiser as the upscaler, it denoises in place of everything here.
+        let ours: When = { !$0.neuralDenoiser }
+        let on: When = { $0.denoiser.enabled && ours($0) }
+        let shadows: When = { on($0) && $0.denoiser.shadowDenoiser }
         return Section(title: "Denoiser", rows: [
             S.custom(.denoiserCaption),
-            S.check("Enabled", \.denoiser.enabled).env(.denoise, "on"),
+            S.check("Enabled", \.denoiser.enabled).env(.denoise, "on").enabled(ours),
             S.check("Shadow denoiser (direct light)", \.denoiser.shadowDenoiser).env(.denoise, "shadows").enabled(on),
             S.slider("Shadow passes", \.denoiser.shadowPasses, DenoiserSettings.passRange).env(.denoise, "spasses").enabled(shadows),
             S.slider("Shadow history", \.denoiser.shadowHistory, DenoiserSettings.maxHistoryRange, step: 1, fmt("%.0f fr"))

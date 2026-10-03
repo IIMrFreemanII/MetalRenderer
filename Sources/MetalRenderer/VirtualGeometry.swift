@@ -241,7 +241,7 @@ final class VirtualGeometry {
     }
 
     /// Encodes the cut and the cluster tree build. `nodeBase`: the tree's first node in `tlasNodes`.
-    func encode(_ enc: MTLComputeCommandEncoder, slot: Int, rt: RTPipelines, vg: VGPipelines, instanceData: MTLBuffer,
+    func encode(_ enc: ComputePass, slot: Int, rt: RTPipelines, vg: VGPipelines, instanceData: MTLBuffer,
                 tlasNodes: MTLBuffer, nodeBase: Int, camPos: SIMD3<Float>, pixelScale: Float, tau: Float, frame: UInt32) {
         groupPage.withUnsafeBytes { groupPageBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
         func dispatch(_ pso: MTLComputePipelineState, _ threads: Int, group: Int = 64) {

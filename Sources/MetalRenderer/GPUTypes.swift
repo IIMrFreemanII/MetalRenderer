@@ -46,6 +46,7 @@ enum UniformFlags {
     static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
     static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
     static let restir: UInt32 = 32768        // direct light from ReSTIR DI (restirTemporalKernel / restirSpatialKernel)
+    static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).

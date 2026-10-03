@@ -138,6 +138,10 @@ final class SettingsPanel: NSObject {
         case .popup(let titles, let selected, let select):
             let popup = NSPopUpButton()
             popup.addItems(withTitles: titles)
+            if let available = spec.available {   // what this GPU can't run stays listed, greyed out
+                popup.autoenablesItems = false
+                for (i, item) in popup.itemArray.enumerated() { item.isEnabled = available(i) }
+            }
             onChange(popup) { [unowned self] in select(&self.renderer.settings, popup.indexOfSelectedItem) }
             refreshers.append { popup.selectItem(at: selected($0)) }
             return [label(spec.title), popup]
@@ -350,7 +354,9 @@ final class SettingsPanel: NSObject {
     /// filter (mirrors Renderer.planFrame and denoiseSignals).
     private func updateDenoiserCaption(_ s: RenderSettings) {
         let text: String
-        if !s.denoiser.enabled {
+        if s.neuralDenoiser {
+            text = "The MetalFX denoiser (Rendering > Upscaler) denoises as it upscales: these are off."
+        } else if !s.denoiser.enabled {
             text = "Off: the composite shows the raw samples."
         } else {
             let restir = renderer.directModeInUse == .restir
@@ -383,6 +389,7 @@ final class SettingsPanel: NSObject {
         var s = renderer.defaultSettings
         s.scene = renderer.settings.scene   // render settings only; the loaded scene and tracer stay
         s.rayTracer = renderer.settings.rayTracer
+        s.api = renderer.settings.api
         s.applySceneDefaults(from: renderer.defaultSettings)
         renderer.settings = s
     }

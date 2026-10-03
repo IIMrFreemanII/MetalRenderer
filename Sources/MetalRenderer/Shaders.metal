@@ -192,6 +192,7 @@ constant uint FLAG_FOG           = 4096; // the composite applies the volumetric
 constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference march instead of the froxel grid
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
 constant uint FLAG_RESTIR        = 32768; // direct light from ReSTIR DI (restirTemporalKernel, restirSpatialKernel)
+constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
@@ -4775,6 +4776,11 @@ inline float3 agxFilm(float3 c) {
     return pow(saturate(fromAgx * x), float3(2.2f));
 }
 
+/// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
+inline bool viewIsHDR(uint mode) {
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13));
+}
+
 /// Exposure, then the selected curve (RenderSettings.toneMap).
 inline float3 toneMap(float3 c, float4 post) {
     c *= post.x;
@@ -4805,6 +4811,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  meshDirect [[texture(15)]],   // with FLAG_MESH_LIGHTS: denoised mesh-light direct light
                             texture3d<float>                fogGrid    [[texture(16)]],   // with FLAG_FOG: integrated froxels
                             texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
+                            texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
+                            texture2d<float, access::write> outRoughness [[texture(19)]],
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -4859,12 +4867,16 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
 
     // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.
     float3 specular = directSpecular;
+    float3 guideSpecular = float3(0.0f);   // what MetalFX's denoiser is told the surface reflects, and how sharply
+    float guideRoughness = 1.0f;
     if ((u.flags & FLAG_SPECULAR) != 0) {
         float4 m = material.read(tid);
         float4 ndc = nd.read(tid);
         if (any(m.rgb > 0.0f) && ndc.w > 0.0f) {
             float3 v = normalize(u.camPos.xyz - surfacePos.read(tid).xyz);
             float3 sa = specularAlbedo(m.rgb, 1.0f, m.a, max(dot(ndc.xyz, v), 1e-4f));
+            guideSpecular = sa;
+            guideRoughness = m.a;
             float3 traced = specularTex.read(tid).rgb;
             bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || (u.flags & FLAG_REFERENCE) != 0;
             specular += sa * (tracedAll ? traced : traced + finalIndirect);
@@ -4885,21 +4897,42 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
     }
 
     float3 c;
-    bool hdr = true;
     switch (u.viewMode) {
         case 1: c = albedo * d + emission; break;                 // raw direct
         case 2: c = albedo * i; break;                            // raw indirect
-        case 3: { float4 n = nd.read(tid); c = n.w > 0.0f ? n.xyz * 0.5f + 0.5f : float3(0.0f); hdr = false; break; }
-        case 4: c = albedo; hdr = false; break;
-        case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); hdr = false; break; }
+        case 3: { float4 n = nd.read(tid); c = n.w > 0.0f ? n.xyz * 0.5f + 0.5f : float3(0.0f); break; }
+        case 4: c = albedo; break;
+        case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); break; }
         case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
-        case 7: c = giDebug.read(tid).rgb; hdr = false; break;    // GI technique's debug view
-        case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; hdr = false; break;
+        case 7: c = giDebug.read(tid).rgb; break;                 // GI technique's debug view
+        case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
-    if (hdr) c = toneMap(c, u.post);
+    if ((u.flags & FLAG_HDR_OUTPUT) != 0) {
+        // MetalFX's denoising scaler takes the light as it is: noisy, linear and unbounded (tonemapKernel follows it),
+        // with what the surface reflects to guide it (next to the albedo, the normals, the depth and the motion).
+        output.write(float4(max(c, 0.0f), 1.0f), tid);
+        outSpecularAlbedo.write(float4(guideSpecular, 1.0f), tid);
+        outRoughness.write(float4(guideRoughness), tid);
+        return;
+    }
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
+    output.write(float4(saturate(c), 1.0f), tid);
+}
+
+// 4c. Tone map, after MetalFX's denoising scaler (FLAG_HDR_OUTPUT): its output is the denoised light at the output
+//     resolution, still linear and unbounded. This applies the exposure and the tone curve the composite left out
+//     and writes the drawable.
+kernel void tonemapKernel(constant Uniforms&              u        [[buffer(0)]],
+                          texture2d<float, access::read>  upscaled [[texture(0)]],
+                          texture2d<float, access::write> output   [[texture(1)]],
+                          uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    float3 c = max(upscaled.read(tid).rgb, 0.0f);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
     output.write(float4(saturate(c), 1.0f), tid);
 }
 

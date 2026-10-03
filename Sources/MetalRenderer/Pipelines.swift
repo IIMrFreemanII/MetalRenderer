@@ -12,7 +12,7 @@ enum Kernel: Int, CaseIterable {
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
-    case composite, accumulateColor, taau
+    case composite, accumulateColor, taau, tonemap
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
     case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit
@@ -28,6 +28,7 @@ enum Kernel: Int, CaseIterable {
 /// set between two frames.
 struct Pipelines {
     let kind: RayTracerKind
+    let api: RenderAPI             // Metal 4: compiled and specialised by its compiler (MTL4Compiler)
     let lightTypes: UInt32
     let library: MTLLibrary        // kept: another set of light types specialises it again without recompiling
     private let states: [MTLComputePipelineState?]
@@ -49,9 +50,11 @@ struct Pipelines {
 
     /// Compiles `source` for `kind` unless `library` already is that, then makes every pipeline, in parallel. Safe to
     /// call from any thread; `stats` (the traversal counters, RT_STATS) is read by the caller for that reason.
-    init(device: MTLDevice, source: URL, kind: RayTracerKind, lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil) throws {
+    /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`.
+    init(device: MTLDevice, source: URL, kind: RayTracerKind, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
+         lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil) throws {
         let start = CACurrentMediaTime()
-        let library = try library ?? Pipelines.compile(device: device, source: source, kind: kind, stats: stats)
+        let library = try library ?? Pipelines.compile(device: device, source: source, kind: kind, stats: stats, compiler: compiler)
         let compiled = CACurrentMediaTime()
         let kernels = Kernel.allCases.filter { kind == .custom || !$0.customOnly }
         var states = [MTLComputePipelineState?](repeating: nil, count: Kernel.allCases.count)
@@ -63,8 +66,20 @@ struct Pipelines {
                     let constants = MTLFunctionConstantValues()
                     var types = lightTypes
                     constants.setConstantValue(&types, type: .uint, index: 0)
-                    let function = try library.makeFunction(name: kernels[i].function, constantValues: constants)
-                    slots[kernels[i].rawValue] = try device.makeComputePipelineState(function: function)   // its own slot: no lock
+                    if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+                        let function = MTL4LibraryFunctionDescriptor()
+                        function.library = library
+                        function.name = kernels[i].function
+                        let specialized = MTL4SpecializedFunctionDescriptor()
+                        specialized.functionDescriptor = function
+                        specialized.constantValues = constants
+                        let descriptor = MTL4ComputePipelineDescriptor()
+                        descriptor.computeFunctionDescriptor = specialized
+                        slots[kernels[i].rawValue] = try compiler.makeComputePipelineState(descriptor: descriptor)
+                    } else {
+                        let function = try library.makeFunction(name: kernels[i].function, constantValues: constants)
+                        slots[kernels[i].rawValue] = try device.makeComputePipelineState(function: function)   // its own slot: no lock
+                    }
                 } catch {
                     lock.lock(); failure = failure ?? error; lock.unlock()
                 }
@@ -72,6 +87,7 @@ struct Pipelines {
         }
         if let failure { throw failure }
         self.kind = kind
+        self.api = api
         self.lightTypes = lightTypes
         self.library = library
         self.states = states
@@ -82,7 +98,8 @@ struct Pipelines {
         }
     }
 
-    private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool) throws -> MTLLibrary {
+    private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
+                                compiler: AnyObject?) throws -> MTLLibrary {
         let source = try String(contentsOf: url, encoding: .utf8)
         let options = MTLCompileOptions()
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
@@ -94,6 +111,12 @@ struct Pipelines {
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
         if #available(macOS 15.0, *), ProcessInfo.processInfo.environment["METALRENDERER_MATH"] == "relaxed" {
             options.mathMode = .relaxed
+        }
+        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+            let descriptor = MTL4LibraryDescriptor()
+            descriptor.source = source
+            descriptor.options = options
+            return try compiler.makeLibrary(descriptor: descriptor)
         }
         return try device.makeLibrary(source: source, options: options)
     }

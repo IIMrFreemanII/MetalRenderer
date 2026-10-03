@@ -93,7 +93,7 @@ final class RadianceCascades {
     /// must run in order (each depends on the one before). Also needs this frame's light map and G-buffer (normalDepth,
     /// surfacePos), so the caller runs them after the trace and light-map passes; stage 0 needs only the TLAS.
     /// `bindScene` binds buffers 1...8.
-    func stages(pipelines: RCPipelines, uniforms: Uniforms, bindScene: @escaping (MTLComputeCommandEncoder) -> Void,
+    func stages(pipelines: RCPipelines, uniforms: Uniforms, bindScene: @escaping (ComputePass) -> Void,
                 lightMap: MTLTexture, normalDepth: MTLTexture, prevNormalDepth: MTLTexture,
                 targets t: RenderTargets) -> [ComputeStage] {
         let cur = frame & 1, prev = cur ^ 1
