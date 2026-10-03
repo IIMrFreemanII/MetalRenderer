@@ -169,6 +169,10 @@ enum GLTFLoader {
 
     static func load(_ url: URL) throws -> GLTFModel {
         let file = try Data(contentsOf: url, options: .mappedIfSafe)
+        // A clone without git-lfs checks out the pointer text in place of the model.
+        if file.starts(with: Data("version https://git-lfs".utf8)) {
+            throw GLTFError.invalid("\(url.lastPathComponent) is a Git LFS pointer, not the model: install git-lfs and run git lfs pull")
+        }
         var json: Data
         var bin: Data?
         if file.count >= 12, file.prefix(4) == Data("glTF".utf8) {
