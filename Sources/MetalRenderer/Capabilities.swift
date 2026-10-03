@@ -10,6 +10,9 @@ struct Capabilities: Equatable {
     var metalFXUpscaling = true     // MetalFX temporal and spatial scalers
     var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26)
     var metal4 = true               // Metal 4's command queue, argument tables and compiler (macOS 26)
+    /// Metal 4's acceleration structures, for Metal ray tracing on Metal 4. Metal has no query for it, only a validation
+    /// error ("this device does not support Metal 4 ray tracing", M1 Max); the M4 Max, with ray-tracing hardware, has it.
+    var metal4RayTracing = true
 
     /// The running device's. Everything until `main` sets it: tests have no device.
     static var current = Capabilities()
@@ -25,9 +28,11 @@ struct Capabilities: Equatable {
         if #available(macOS 26.0, *) {
             metalFXDenoiser = MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
             metal4 = device.supportsFamily(.metal4)
+            metal4RayTracing = metal4 && hardwareRayTracing
         } else {
             metalFXDenoiser = false
             metal4 = false
+            metal4RayTracing = false
         }
         if let keep = env["METALRENDERER_CAPS"]?.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             metalRayTracing = metalRayTracing && keep.contains("rt")
@@ -35,6 +40,7 @@ struct Capabilities: Equatable {
             metalFXUpscaling = metalFXUpscaling && keep.contains("metalfx")
             metalFXDenoiser = metalFXDenoiser && keep.contains("denoiser")
             metal4 = metal4 && keep.contains("metal4")
+            metal4RayTracing = metal4RayTracing && metal4 && hardwareRayTracing
         }
     }
 
@@ -42,7 +48,7 @@ struct Capabilities: Equatable {
     var summary: String {
         func mark(_ on: Bool) -> String { on ? "yes" : "no" }
         let rt = !metalRayTracing ? "no" : hardwareRayTracing ? "hardware" : "software"
-        return "Metal ray tracing: \(rt), MetalFX upscaling: \(mark(metalFXUpscaling)), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4))"
+        return "Metal ray tracing: \(rt), MetalFX upscaling: \(mark(metalFXUpscaling)), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing)))"
     }
 }
 
@@ -53,6 +59,9 @@ extension RenderSettings {
         if rayTracer == .metal && !caps.metalRayTracing { needs.append("Metal ray tracing") }
         if upscaleFactor > 1 && upscaler == .metalFXDenoised && !caps.metalFXDenoiser { needs.append("the MetalFX denoiser") }
         if api == .metal4 && !caps.metal4 { needs.append("Metal 4") }
+        if rayTracer == .metal && api == .metal4 && caps.metalRayTracing && caps.metal4 && !caps.metal4RayTracing {
+            needs.append("Metal 4 ray tracing")
+        }
         return needs.isEmpty ? nil : needs.joined(separator: " and ")
     }
 
@@ -70,6 +79,10 @@ extension RenderSettings {
         if s.api == .metal4 && !caps.metal4 {
             s.api = .metal3
             notes.append("Metal 4 is not supported on this GPU or system: using Metal 3")
+        }
+        if s.rayTracer == .metal && s.api == .metal4 && !caps.metal4RayTracing {
+            s.api = .metal3
+            notes.append("Metal 4 ray tracing is not supported on this GPU: using Metal 3 with Metal ray tracing")
         }
         return (s, notes)
     }
