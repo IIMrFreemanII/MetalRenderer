@@ -38,7 +38,6 @@ kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0
                           device const MeshData*           meshes     [[buffer(5)]],
                           device const InstanceData*       instances  [[buffer(6)]],
                           constant SceneShading&           shading    [[buffer(7)]],
-                          device const Light*              lights     [[buffer(8)]],
                           constant RCProbeBatch&           batch      [[buffer(9)]],
                           constant uint&                   cascadeCount [[buffer(10)]],
                           array<texture2d<float, access::write>, RC_MAX_CASCADES> probePos [[texture(0)]],   // xyz, w = view depth (-1 = none)
@@ -52,9 +51,7 @@ kernel void rcProbeKernel(constant Uniforms&               u          [[buffer(0
     uint local = gid - k.w;
     if (local >= k.x * k.y) return;
     uint2 tid = uint2(local % k.x, local / k.x);
-    SceneData s;
-    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, nullptr, 0u);   // no lights: it only traces
 
     float2 pixel = min((float2(tid) + 0.5f) * float(k.z), float2(u.width, u.height) - 0.5f);
     float2 uv = pixel / float2(u.width, u.height);
@@ -122,10 +119,8 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     float3 dir = equalAreaOctDecode((float2(bc) + 0.5f) / float(dirSide) * 2.0f - 1.0f);
     if (dot(dir, ng) < -0.05f) { merged.write(float4(0.0f), texel); return; }   // below the surface: never used
 
-    SceneData s;
-    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
-    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
     bool last = p.layout.w != 0;
     Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
@@ -140,18 +135,9 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         if (p.interval.z > 0.0f) {
             // Multi-bounce: where this hit point was on screen last frame, add last frame's indirect light there;
             // elsewhere (off screen, occluded) fall back to last frame's average indirect light over all probes.
-            float prevDepth;
-            float2 pp = projectToPixel(h.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward,
-                                       float2(u.width, u.height), prevDepth);
-            bool found = false;
-            if (prevDepth > 0.0f && all(pp >= 0.0f) && pp.x < float(u.width) && pp.y < float(u.height)) {
-                uint2 q = uint2(pp);
-                float4 nd = prevND.read(q);
-                if (nd.w > 0.0f && abs(nd.w - prevDepth) < 0.05f * prevDepth && dot(nd.xyz, hns) > 0.8f) {
-                    light += prevIndirect.read(q).rgb;
-                    found = true;
-                }
-            }
+            uint2 q;
+            bool found = lastFramePixel(u, h.prevPosition, hns, prevND, q);
+            if (found) light += prevIndirect.read(q).rgb;
             if (!found && prevAmbient[3] > 0)
                 light += float3(prevAmbient[0], prevAmbient[1], prevAmbient[2]) / (1024.0f * float(prevAmbient[3]));
         }

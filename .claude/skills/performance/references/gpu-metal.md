@@ -169,7 +169,47 @@ fewer threads run at once and memory latency stops being hidden.
 * Untracked hazard tracking with explicit fences can remove driver overhead, but it's unused here and easy to get
   wrong. Adopt it only with an A/B that shows a win, plus `pngdiff.py` proof that the frames are identical.
 
-## 9. GPU tools
+## 9. Shader helpers: use them, don't copy
+
+A new kernel starts from these (each replaced several hand-written copies; all are `inline` and compile to what the
+copies did, checked bit for bit under `METALRENDERER_MATH=safe`):
+
+| Need | Helper | In |
+|---|---|---|
+| The scene bundle from the kernel's bindings | `sceneData(...)`, `sceneLights(...)` for kernels that trace no surfaces, `bindLightSampling(s, u.lightTable, regirGrid, regir)` | Surface.metal |
+| The sample stream | `makeSampler(blueNoise, u, pixel, dimension, seed)` with `pixelSeed(tid, frame, SEED_*)`; a kernel gets its own dimension range and salt | Sampling.metal |
+| One item by weight, in one pass | `StreamPick` (`streamPick(u)`, `offer(w)`, `total`) | Sampling.metal |
+| A diffuse bounce | `sampleBounce(n, ng, u)` | Sampling.metal |
+| The firefly clamp | `x *= fireflyScale(u, luminance(x))`, or `fireflyScale(lum, limit)` for a limit that is a setting | Sampling.metal |
+| A point on a light-table triangle | `triangleLightPoint(s, lights, tris, index, uv, prev)` | Lights.metal |
+| RIS candidates from the grid, the table and the suns | `lightCandidate(...)`, `lightCandidateWeight(...)` | LightSampling.metal |
+| "Is this the same surface?" | `sameSurface(nd, depth, n, tolerance, minCos)` with `REUSE_*`, `FEEDBACK_*`, `REFLECTION_*` | LightSampling.metal |
+| Last frame's pixel of a pixel | `reprojectNearest(u, mv, n, prevND)` | LightSampling.metal |
+| The pixel that shows a world point | `surfacePixel(...)`, `lastFramePixel(u, prevPosition, n, prevND, q)` | LightSampling.metal |
+| Spatial reuse | `diskNeighbour(...)`, `pairwiseMIS(...)` | LightSampling.metal |
+| Edge stopping on depth and normal | `depthGradient(...)`, `geometryWeights(...)` | Denoise.metal |
+| A Karras tree's node range, a box's world box | `karrasRange(keys, n, i)`, `boxToWorld(lo, hi, m)` | BVHBuild.metal |
+
+Rules that kept the refactor bit-identical, and keep a helper honest:
+
+* A helper returns the factors, and the caller multiplies them in the order it always did: `a * b * c` and
+  `a * (b * c)` round differently (`geometryWeights` returns depth and normal weights as two values for this reason).
+* A scale of exactly 1 is free: `x *= cond ? k : 1` is what `if (cond) x *= k` computed.
+* Keep the order of random draws. ReSTIR DI's initial candidates draw in another order than the other two candidate
+  loops (no table numbers for the suns, quantised uv), so they share only the weight.
+* Verify with safe math on both sides (`pngdiff.py`: max 0.0 on every image), then time with the default fast math.
+
+Three things look like copies and are not, because they differ in what they compute. Next-event estimation at a
+path's hit: the path tracer, ReSTIR GI and the reflections take their branches in different orders, and `giLightIllum`
+(the cascades, and the path tracer's light-map branch) draws 8 candidates and clamps where the others draw 4 and
+do not. The ambient fixed point: 1024 in
+the cascades, `RGI_AMBIENT_SCALE` (256) in ReSTIR GI. The distance floor of a light sample: 1e-6 at surfaces, 1e-4
+in fog. Making any of them alike changes images, so it is a change to measure, not a clean-up.
+
+The two bottom-up fit kernels (`rtFitKernel`, `vgFitKernel`) keep their own walk-up loops: the loop writes through a
+`coherent(device)` pointer between device-scope fences, and that stays visible in the kernel.
+
+## 10. GPU tools
 
 * **Debug window** (I or ⌘I):
   * frame graph (blue = GPU ms, orange = CPU frame interval);

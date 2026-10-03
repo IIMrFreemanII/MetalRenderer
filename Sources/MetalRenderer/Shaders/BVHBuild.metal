@@ -4,6 +4,15 @@
 // ---------------------------------------------------------------------------------------------
 #if CUSTOM_RT
 
+// A box (lo, hi) moved by m: the box of the moved box (centre + |M| x half extent).
+inline void boxToWorld(thread float3& lo, thread float3& hi, float4x4 m) {
+    float3 c = (lo + hi) * 0.5f, e = (hi - lo) * 0.5f;
+    float3 wc = (m * float4(c, 1.0f)).xyz;
+    float3 we = abs(m[0].xyz) * e.x + abs(m[1].xyz) * e.y + abs(m[2].xyz) * e.z;
+    lo = wc - we;
+    hi = wc + we;
+}
+
 // Every instance's RTInstance (world -> object rows = the first three columns of the inverse-transpose), and each
 // moving instance's world box: leafBoxes[2k] = (min, instance id bits), leafBoxes[2k + 1] = (max, mask bits).
 kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
@@ -28,12 +37,10 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
     out[i] = r;
     uint k = dynSlot[i];
     if (k == RT_NONE) return;
-    // World box of the mesh box: centre + |M| * half extent.
-    float3 c = (lo.xyz + hi.xyz) * 0.5f, e = (hi.xyz - lo.xyz) * 0.5f;
-    float3 wc = (inst.transform * float4(c, 1.0f)).xyz;
-    float3 we = abs(inst.transform[0].xyz) * e.x + abs(inst.transform[1].xyz) * e.y + abs(inst.transform[2].xyz) * e.z;
-    leafBoxes[2 * k]     = float4(wc - we, as_type<float>(i));
-    leafBoxes[2 * k + 1] = float4(wc + we, as_type<float>(inst.pad0));
+    float3 worldLo = lo.xyz, worldHi = hi.xyz;
+    boxToWorld(worldLo, worldHi, inst.transform);   // the mesh box's world box
+    leafBoxes[2 * k]     = float4(worldLo, as_type<float>(i));
+    leafBoxes[2 * k + 1] = float4(worldHi, as_type<float>(inst.pad0));
 }
 
 inline uint rtExpandBits(uint v) {   // 10 bits -> every third bit
@@ -144,21 +151,11 @@ inline int rtDelta(device const uint* keys, int n, int i, int j) {
     return a != b ? int(clz(a ^ b)) : 32 + int(clz(uint(i ^ j)));   // equal keys: the index breaks the tie
 }
 
-// Karras 2012: internal node i of n - 1 (n = moving instances, >= 2), from the sorted keys. Writes both child refs
-// and the parent links the bottom-up pass follows (bit 31 = right child), and clears the arrival counters.
-kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   // y = index of node 0 in the buffer
-                              device const uint*    keys       [[buffer(1)]],
-                              device const uint*    values     [[buffer(2)]],
-                              device const float4*  leafBoxes  [[buffer(3)]],
-                              device BVHNode*       nodes      [[buffer(4)]],   // this tree's nodes (node 0 = root)
-                              device uint*          nodeParent [[buffer(5)]],
-                              device uint*          leafParent [[buffer(6)]],
-                              device atomic_uint*   counters   [[buffer(7)]],
-                              constant uint2&       counts     [[buffer(8)]],   // x = n
-                              uint gid [[thread_position_in_grid]])
-{
-    int n = int(counts.x), i = int(gid);
-    if (i >= n - 1) return;
+// Karras 2012: the sorted keys [first, last] that internal node i of n - 1 covers, and where they split: the left
+// child covers [first, split], the right one [split + 1, last] (a child covering one key is that leaf). Shared by
+// this tree and virtual geometry's cluster tree.
+struct KarrasRange { int first, last, split; };
+inline KarrasRange karrasRange(device const uint* keys, int n, int i) {
     int d = rtDelta(keys, n, i, i + 1) - rtDelta(keys, n, i, i - 1) >= 0 ? 1 : -1;
     int deltaMin = rtDelta(keys, n, i, i - d);
     int lmax = 2;
@@ -175,7 +172,28 @@ kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   
         if (t <= 1) break;
     }
     int split = i + s * d + min(d, 0);
-    int first = min(i, j), last = max(i, j);
+    KarrasRange range;
+    range.first = min(i, j); range.last = max(i, j); range.split = split;
+    return range;
+}
+
+// Internal node i of n - 1 (n = moving instances, >= 2), from the sorted keys. Writes both child refs
+// and the parent links the bottom-up pass follows (bit 31 = right child), and clears the arrival counters.
+kernel void rtHierarchyKernel(constant uint2&       params     [[buffer(0)]],   // y = index of node 0 in the buffer
+                              device const uint*    keys       [[buffer(1)]],
+                              device const uint*    values     [[buffer(2)]],
+                              device const float4*  leafBoxes  [[buffer(3)]],
+                              device BVHNode*       nodes      [[buffer(4)]],   // this tree's nodes (node 0 = root)
+                              device uint*          nodeParent [[buffer(5)]],
+                              device uint*          leafParent [[buffer(6)]],
+                              device atomic_uint*   counters   [[buffer(7)]],
+                              constant uint2&       counts     [[buffer(8)]],   // x = n
+                              uint gid [[thread_position_in_grid]])
+{
+    int n = int(counts.x), i = int(gid);
+    if (i >= n - 1) return;
+    KarrasRange range = karrasRange(keys, n, i);
+    int first = range.first, last = range.last, split = range.split;
 
     uint left, right;
     if (first == split) {

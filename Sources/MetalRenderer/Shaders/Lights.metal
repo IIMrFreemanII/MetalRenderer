@@ -295,6 +295,13 @@ struct MeshLightPoint {
     bool   valid;
 };
 
+// Places mp (its tri, b1, b2) with the instance transform m: the point, the triangle's normal and twice its area.
+inline void placeMeshLightPoint(thread MeshLightPoint& mp, float4x4 m) {
+    mp.x = (m * float4(mp.tri.v0.xyz + mp.tri.e1.xyz * mp.b1 + mp.tri.e2.xyz * mp.b2, 1.0f)).xyz;
+    mp.cr = cross((m * float4(mp.tri.e1.xyz, 0.0f)).xyz, (m * float4(mp.tri.e2.xyz, 0.0f)).xyz);
+    mp.area2 = length(mp.cr);
+}
+
 MeshLightPoint sampleMeshLightPoint(Light light, float2 u, thread const SceneData& s) {
     MeshLightPoint mp;
     mp.valid = false;
@@ -312,9 +319,7 @@ MeshLightPoint sampleMeshLightPoint(Light light, float2 u, thread const SceneDat
     float su = sqrt(saturate((u.x - prev) / mp.prob));   // u.x rescaled within the pick: uniform again
     mp.b1 = su * (1.0f - u.y); mp.b2 = su * u.y;
     InstanceData inst = s.instances[as_type<uint>(light.params.w)];
-    mp.x = (inst.transform * float4(mp.tri.v0.xyz + mp.tri.e1.xyz * mp.b1 + mp.tri.e2.xyz * mp.b2, 1.0f)).xyz;
-    mp.cr = cross((inst.transform * float4(mp.tri.e1.xyz, 0.0f)).xyz, (inst.transform * float4(mp.tri.e2.xyz, 0.0f)).xyz);
-    mp.area2 = length(mp.cr);
+    placeMeshLightPoint(mp, inst.transform);
     mp.material = inst.materialIndex;
     mp.valid = mp.area2 > 0.0f;
     return mp;
@@ -402,20 +407,17 @@ inline uint lightSubsetIndex(LightSubset ls, uint j, uint lightCount) {
 // pick (including the subset's), so sample / pdf is unbiased.
 uint pickLight(device const Light* lights, uint lightCount, float3 p, float3 n, float3 ng, float u, float uSubset,
                thread float& pdf) {
-    float total = 0.0f, pickedWeight = 0.0f;
+    float pickedWeight = 0.0f;
     uint picked = lightCount;
-    u = min(u, 0.99999f);
+    StreamPick pick = streamPick(u);
     LightSubset ls = lightSubset(lightCount, uSubset);
     for (uint j = 0; j < ls.count; ++j) {
         uint i = lightSubsetIndex(ls, j, lightCount);
         float w = luminance(lightUnshadowed(lights[i], p, n, ng));
         if (w <= 0.0f) continue;
-        total += w;
-        float q = w / total;
-        if (u < q) { picked = i; pickedWeight = w; u /= q; }
-        else u = (u - q) / (1.0f - q);
+        if (pick.offer(w)) { picked = i; pickedWeight = w; }
     }
-    pdf = total > 0.0f ? pickedWeight / (total * ls.scale) : 0.0f;
+    pdf = pick.total > 0.0f ? pickedWeight / (pick.total * ls.scale) : 0.0f;
     return picked;
 }
 
@@ -426,22 +428,19 @@ uint pickLight(device const Light* lights, uint lightCount, float3 p, float3 n, 
 // were bright enough to be clamped, and the highlights came out dark.)
 uint pickLightSpecular(device const Light* lights, uint lightCount, float3 p, float3 n, float3 ng, float3 v, float3 f0,
                        float roughness, float u, float uSubset, thread float& pdf, thread float3& specular) {
-    float total = 0.0f, pickedWeight = 0.0f;
+    float pickedWeight = 0.0f;
     uint picked = lightCount;
     specular = float3(0.0f);
-    u = min(u, 0.99999f);
+    StreamPick pick = streamPick(u);
     LightSubset ls = lightSubset(lightCount, uSubset);
     for (uint j = 0; j < ls.count; ++j) {
         uint i = lightSubsetIndex(ls, j, lightCount);
         float3 sp = lightSpecular(lights[i], p, n, ng, v, f0, roughness);
         float w = luminance(sp);
         if (w <= 0.0f) continue;
-        total += w;
-        float q = w / total;
-        if (u < q) { picked = i; pickedWeight = w; specular = sp; u /= q; }
-        else u = (u - q) / (1.0f - q);
+        if (pick.offer(w)) { picked = i; pickedWeight = w; specular = sp; }
     }
-    pdf = total > 0.0f ? pickedWeight / (total * ls.scale) : 0.0f;
+    pdf = pick.total > 0.0f ? pickedWeight / (pick.total * ls.scale) : 0.0f;
     return picked;
 }
 
@@ -479,6 +478,22 @@ inline device const LightTableEntry* lightTableEntries(device const Light* light
 }
 inline device const TriangleInfo* lightTableTriangles(device const Light* lights, uint lightCount, uint entries) {
     return (device const TriangleInfo*)(lightTableEntries(lights, lightCount) + entries);
+}
+
+// A light-table triangle's point at uv (uniform over the triangle: pdf = 1 / area), on its instance as it is this
+// frame or (prev) was last frame. `lights` = the light buffer `tris` belongs to.
+inline MeshLightPoint triangleLightPoint(thread const SceneData& s, device const Light* lights,
+                                         device const TriangleInfo* tris, uint index, float2 uv, bool prev) {
+    MeshLightPoint mp;
+    mp.tri = s.emissive[index];
+    InstanceData inst = s.instances[as_type<uint>(lights[tris[index].light].params.w)];
+    float su = sqrt(uv.x);
+    mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
+    placeMeshLightPoint(mp, prev ? inst.prevTransform : inst.transform);
+    mp.prob = 1.0f;
+    mp.material = inst.materialIndex;
+    mp.valid = mp.area2 > 0.0f;
+    return mp;
 }
 
 // One element in proportion to the table's probabilities, from two random uints.

@@ -32,6 +32,29 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.skyParams = &shading.skyParams;
 }
 
+// A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that
+// evaluate lights but trace no surfaces (no geometry buffers), and `bindLightSampling` adds what the light table's
+// and the light grid's samplers read.
+inline SceneData sceneData(device const float3* positions, device const float3* normals, device const uint* indices,
+                           device const MeshData* meshes, device const InstanceData* instances,
+                           constant SceneShading& shading, device const Light* lights, uint lightCount) {
+    SceneData s;
+    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
+    s.instances = instances;
+    bindShading(s, shading);
+    s.lights = lights; s.lightCount = lightCount;
+    s.lightTable = uint4(0u); s.regirGrid = nullptr;
+    return s;
+}
+inline SceneData sceneLights(device const InstanceData* instances, constant SceneShading& shading,
+                             device const Light* lights, uint lightCount) {
+    return sceneData(nullptr, nullptr, nullptr, nullptr, instances, shading, lights, lightCount);
+}
+inline void bindLightSampling(thread SceneData& s, uint4 lightTable, device const RegirReservoir* grid,
+                              constant RegirParams& regir) {
+    s.lightTable = lightTable; s.regirGrid = grid; s.regir = &regir;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sky lookups. The sky texture holds each hemisphere in an equal-area square (Shirley-Chiu's concentric map from
 // the square to the disk, then Lambert's from the disk to the hemisphere), so every texel covers the same solid

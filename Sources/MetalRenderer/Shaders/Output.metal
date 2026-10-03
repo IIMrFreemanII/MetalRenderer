@@ -38,13 +38,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
-    SceneData s;
-    s.positions = positions;
-    s.normals = normals;
-    s.indices = indices;
-    s.meshes = meshes;
-    s.instances = instances;
-    bindShading(s, shading);
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, nullptr, 0u);   // no lights
 
     float3 dir = primaryDirection(u, tid);
     Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);

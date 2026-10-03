@@ -104,29 +104,20 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
         for (uint c = 0; c < chains; ++c) outReservoir.write(packReservoir(emptyReservoir()), tid, c);
         return;
     }
-    SceneData s;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    SceneData s = sceneLights(instances, shading, lights, u.lightCount);
     device const LightTableEntry* entries = lightTableEntries(lights, u.lightCount);
     device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
     Rng rng;
     rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_DI);
 
     // Last frame's pixel (nearest, same surface), shared by the chains.
-    int2 q = int2(-1);
-    float4 mv = motion.read(tid);
-    if (passOn(rp.config.z, RESTIR_TEMPORAL_VALID) && mv.w > 0.0f) {
-        int2 c = int2(floor(mv.xy + 0.5f));
-        if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)) {
-            float4 pnd = prevND.read(uint2(c));
-            if (pnd.w > 0.0f && abs(pnd.w - mv.z) < 0.1f * mv.z && dot(pnd.xyz, sp.n) > 0.9f) q = c;
-        }
-    }
+    int2 q = passOn(rp.config.z, RESTIR_TEMPORAL_VALID) ? reprojectNearest(u, motion.read(tid), sp.n, prevND) : int2(-1);
 
     uint M = u.lightTable.x > 0 ? rp.config.x : 0u;
     // The light grid's cell (ReGIR): Mg of the M candidates come from it, each with its reservoir's W in place of
     // 1 / pdf. The same constant 1 / M weight for both sources keeps the mix unbiased; the table draws cover what the
     // cell's slots missed. Outside the grid (or with it off) every candidate is a table draw, as before.
-    s.regirGrid = regirGrid; s.regir = &regir;
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
     RegirCell cell = regirLookup(regir, sp.p);
     uint Mg = cell.valid ? min(regir.consume.x, M) : 0u;
     for (uint chain = 0; chain < chains; ++chain) {
@@ -153,7 +144,7 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
             }
             LightSampleEval e = evalLightSample(element, uv, sp, s, lights, tris, false, false);
             float t = lightSampleTarget(e, sp);
-            float w = k < M ? t * Wsrc / float(M) : t;
+            float w = lightCandidateWeight(k, M, t, Wsrc);
             if (w <= 0.0f) continue;
             wSum += w;
             if (rng.next() * wSum < w) { r.element = element; r.uv = uv; target = t; point = e.target; }
@@ -220,8 +211,7 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
         }
         return;
     }
-    SceneData s;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    SceneData s = sceneLights(instances, shading, lights, u.lightCount);
     device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
     Rng rng;
     rng.state = pcgHash(tid.x * 9781u + pcgHash(tid.y + pcgHash(u.frameIndex * 7u + uint(rp.tuning.y) + 0x68E31DA4u)));
@@ -231,13 +221,12 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
     uint2 nq[RESTIR_MAX_SPATIAL];
     ShadingPoint nsp[RESTIR_MAX_SPATIAL];
     for (uint i = 0; i < wanted; ++i) {
-        float radius = rp.tuning.x * sqrt(rng.next()), angle = 2.0f * M_PI_F * rng.next();
-        int2 q = int2(tid) + int2(round(radius * float2(cos(angle), sin(angle))));
-        if (all(q == int2(tid)) || q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+        int2 q;
+        if (!diskNeighbour(tid, rp.tuning.x, u, rng, q)) continue;
         ShadingPoint qp;
         float qd;
         if (!restirSurface(uint2(q), u, surfacePos, normalDepth, geoNormal, albedo, material, qp, qd)) continue;
-        if (abs(qd - depth) > 0.1f * depth || dot(qp.n, sp.n) < 0.9f) continue;
+        if (abs(qd - depth) > REUSE_DEPTH * depth || dot(qp.n, sp.n) < REUSE_NORMAL) continue;
         nq[count] = uint2(q);
         nsp[count] = qp;
         count++;
@@ -268,13 +257,12 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
             Reservoir picked = r;
             for (uint j = 0; j < count; ++j) {
                 if (nb[j].M <= 0.0f) continue;
-                float B = (nb[j].M + cShare) / Msum;
                 float jc = restirTarget(r, nsp[j], s, lights, tris, false);    // the canonical sample at the neighbour
                 float jj = restirTarget(nb[j], nsp[j], s, lights, tris, false);
                 float cj = restirTarget(nb[j], sp, s, lights, tris, false);    // the neighbour's sample here
-                mc += B * (cShare * cc) / max(nb[j].M * jc + cShare * cc, 1e-30f);
-                float mj = B * (nb[j].M * jj) / max(nb[j].M * jj + cShare * cj, 1e-30f);
-                float w = mj * cj * nb[j].W;
+                float2 mis = pairwiseMIS(nb[j].M, cShare, Msum, cc, jc, jj, cj);
+                mc += mis.x;
+                float w = mis.y * cj * nb[j].W;
                 if (w <= 0.0f) continue;
                 wSum += w;
                 if (rng.next() * wSum < w) { picked = nb[j]; picked.visible = false; target = cj; }
@@ -311,8 +299,8 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
     if (shade) {
         float inv = 1.0f / float(chains);
         diffuse *= inv; spec *= inv;
-        float l = luminance(diffuse) + luminance(spec);
-        if (rp.tuning.z > 0.0f && l > rp.tuning.z) { diffuse *= rp.tuning.z / l; spec *= rp.tuning.z / l; }
+        float clampScale = fireflyScale(luminance(diffuse) + luminance(spec), rp.tuning.z);
+        diffuse *= clampScale; spec *= clampScale;
         if (split) {
             outVisibility.write(float4(visibility * inv, 0.0f, 0.0f, 0.0f), tid);
             outBlocker.write(roundToHalf(float4(occluded > 0.0f ? penumbra / occluded : 0.0f, 0.0f, 0.0f, 0.0f)), tid);

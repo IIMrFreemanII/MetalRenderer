@@ -169,25 +169,18 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
         writeGIReservoir(outA, outB, tid, emptyGIReservoir());
         return;
     }
-    SceneData s;
-    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
-    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
 
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = gid;           // quarter budget: per block, so the traced pixels' samples stay well spread
-    rng.frame = u.frameIndex;
-    rng.dimension = 128;       // past traceKernel's, the reflections' and the direct-light kernels' dimensions
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI);
+    // The window is per block with the quarter budget, so the traced pixels' samples stay well spread; the dimensions
+    // start past traceKernel's, the reflections' and the direct-light kernels'.
+    Sampler rng = makeSampler(blueNoise, u, gid, 128, pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI));
 
     // The path, as traceKernel's: its first hit is the sample, the rest is the light leaving it.
     GIReservoir r = emptyGIReservoir();
     r.M = 1.0f;
     r.flags = GI_SAMPLE_VISIBLE;
-    float3 d = cosineSampleHemisphere(rc.n, rng.next2());
-    if (dot(d, rc.ng) <= 0.0f) d -= 2.0f * dot(d, rc.ng) * rc.ng;   // keep it above the triangle
+    float3 d = sampleBounce(rc.n, rc.ng, rng.next2());
     Surface h = traceSurface(makeRay(rc.p, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
     float3 Lo = float3(0.0f);
     if (!h.hit) {
@@ -225,25 +218,15 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                 // Multi-bounce: the path's last hit adds last frame's indirect light where it was on screen (elsewhere,
                 // with RGI_FALLBACK, last frame's mean indirect light, as the radiance cascades do).
                 if (passOn(own, RGI_FEEDBACK_SET) && (own & RGI_FEEDBACK) != 0) {
-                    float prevDepth;
-                    float2 pp = projectToPixel(h.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward,
-                                               float2(u.width, u.height), prevDepth);
-                    bool found = false;
-                    if (prevDepth > 0.0f && all(pp >= 0.0f) && pp.x < float(u.width) && pp.y < float(u.height)) {
-                        uint2 q = uint2(pp);
-                        float4 nd = prevND.read(q);
-                        if (nd.w > 0.0f && abs(nd.w - prevDepth) < 0.05f * prevDepth && dot(nd.xyz, hn) > 0.8f) {
-                            Lo += throughput * feedback.read(q).rgb;
-                            found = true;
-                        }
-                    }
+                    uint2 q;
+                    bool found = lastFramePixel(u, h.prevPosition, hn, prevND, q);
+                    if (found) Lo += throughput * feedback.read(q).rgb;
                     if (!found && passOn(own, RGI_FALLBACK) && ambient[3] > 0)
                         Lo += throughput * float3(ambient[0], ambient[1], ambient[2]) / float(RGI_AMBIENT_SCALE * ambient[3]);
                 }
                 break;
             }
-            d = cosineSampleHemisphere(hn, rng.next2());
-            if (dot(d, hng) <= 0.0f) d -= 2.0f * dot(d, hng) * hng;
+            d = sampleBounce(hn, hng, rng.next2());
             h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
                 Lo += throughput * skyRadiance(u, s, d, 2.0f);
@@ -252,8 +235,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
             orientNormals(h, d, hng, hn);
         }
     }
-    float l = luminance(Lo);
-    if (l > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) Lo *= FIREFLY_CLAMP / l;
+    Lo *= fireflyScale(u, luminance(Lo));
     r.Lo = Lo;
     r = quantizeGIReservoir(r);
     // One candidate: W = 1 / pdf, the pdf in area measure (k(w) cos_s / d^2) or solid angle (sky).
@@ -286,41 +268,35 @@ kernel void restirGITemporalKernel(constant Uniforms&                 u         
         return;
     }
     GIReservoir r = readGIReservoir(initialA, initialB, tid);
-    float4 mv = motion.read(tid);
-    if (passOn(gp.config.x, RGI_TEMPORAL_VALID) && mv.w > 0.0f) {
-        // Last frame's pixel (nearest, same surface).
-        int2 c = int2(floor(mv.xy + 0.5f));
-        if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)) {
-            float4 pnd = prevND.read(uint2(c));
-            if (pnd.w > 0.0f && abs(pnd.w - mv.z) < 0.1f * mv.z && dot(pnd.xyz, rc.n) > 0.9f) {
-                GIReservoir h = readGIReservoir(historyA, historyB, uint2(c));
-                h.M = min(h.M, float(gp.config.y));
-                h.flags &= ~GI_SAMPLE_VISIBLE;
-                // Age counts the pixel's fresh paths since the sample's (the quarter budget's come every 4th frame).
-                // Too old (lit by old lights): replaced by this frame's path. Dropping long-lived samples is biased
-                // (they are the bright ones that keep winning), so maxAge is a compromise with moving lights.
-                if (r.M > 0.0f) {
-                    h.age += 1;
-                    if (h.age > gp.extra.z) h.M = 0.0f;
-                }
-                if (h.M > 0.0f) {
-                    // Generalized balance heuristic over the two domains, last frame's target approximated at this
-                    // frame's surface: the weights reduce to the confidences.
-                    Rng rng;
-                    rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI_HISTORY);
-                    float dMin2 = gp.tuning.y * gp.tuning.y;
-                    float cc = giTarget(r, rc, dMin2), hc = giTarget(h, rc, dMin2);
-                    float Msum = r.M + h.M;
-                    float wc = r.M / Msum * cc * r.W, wh = h.M / Msum * hc * h.W;
-                    float sum = wc + wh, target = cc;
-                    if (sum > 0.0f && rng.next() * sum < wh) {
-                        r = h;
-                        target = hc;
-                    }
-                    r.W = target > 0.0f ? sum / target : 0.0f;
-                    r.M = min(Msum, float(gp.config.y));
-                }
+    // Last frame's pixel (nearest, same surface).
+    int2 c = passOn(gp.config.x, RGI_TEMPORAL_VALID) ? reprojectNearest(u, motion.read(tid), rc.n, prevND) : int2(-1);
+    if (c.x >= 0) {
+        GIReservoir h = readGIReservoir(historyA, historyB, uint2(c));
+        h.M = min(h.M, float(gp.config.y));
+        h.flags &= ~GI_SAMPLE_VISIBLE;
+        // Age counts the pixel's fresh paths since the sample's (the quarter budget's come every 4th frame).
+        // Too old (lit by old lights): replaced by this frame's path. Dropping long-lived samples is biased
+        // (they are the bright ones that keep winning), so maxAge is a compromise with moving lights.
+        if (r.M > 0.0f) {
+            h.age += 1;
+            if (h.age > gp.extra.z) h.M = 0.0f;
+        }
+        if (h.M > 0.0f) {
+            // Generalized balance heuristic over the two domains, last frame's target approximated at this
+            // frame's surface: the weights reduce to the confidences.
+            Rng rng;
+            rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI_HISTORY);
+            float dMin2 = gp.tuning.y * gp.tuning.y;
+            float cc = giTarget(r, rc, dMin2), hc = giTarget(h, rc, dMin2);
+            float Msum = r.M + h.M;
+            float wc = r.M / Msum * cc * r.W, wh = h.M / Msum * hc * h.W;
+            float sum = wc + wh, target = cc;
+            if (sum > 0.0f && rng.next() * sum < wh) {
+                r = h;
+                target = hc;
             }
+            r.W = target > 0.0f ? sum / target : 0.0f;
+            r.M = min(Msum, float(gp.config.y));
         }
     }
     writeGIReservoir(outA, outB, tid, r);
@@ -363,12 +339,11 @@ kernel void restirGISpatialKernel(constant Uniforms&                 u          
     GIReservoir nb[RGI_MAX_SPATIAL];
     float Msum = 0.0f;
     for (uint i = 0; i < wanted; ++i) {
-        float radius = gp.tuning.x * sqrt(rng.next()), angle = 2.0f * M_PI_F * rng.next();
-        int2 q = int2(tid) + int2(round(radius * float2(cos(angle), sin(angle))));
-        if (all(q == int2(tid)) || q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+        int2 q;
+        if (!diskNeighbour(tid, gp.tuning.x, u, rng, q)) continue;
         GIReceiver qr;
         if (!giReceiver(uint2(q), surfacePos, normalDepth, geoNormal, qr)) continue;
-        if (abs(qr.depth - rc.depth) > 0.1f * rc.depth || dot(qr.n, rc.n) < 0.9f) continue;
+        if (abs(qr.depth - rc.depth) > REUSE_DEPTH * rc.depth || dot(qr.n, rc.n) < REUSE_NORMAL) continue;
         GIReservoir qs = readGIReservoir(inA, inB, uint2(q));
         if (qs.M <= 0.0f) continue;
         nrc[count] = qr;
@@ -387,7 +362,6 @@ kernel void restirGISpatialKernel(constant Uniforms&                 u          
         float mc = 0.0f, wSum = 0.0f, target = cc;
         GIReservoir picked = r;
         for (uint j = 0; j < count; ++j) {
-            float B = (nb[j].M + cShare) / Msum;
             // Unbiased: the targets include visibility. A neighbour's samples are its paths' hits, all visible from it:
             // its technique can't make samples it doesn't see, and weighing light it can't see as if it could darkens
             // (~8% in the stress hall). And here, a neighbour's sample this pixel can't see would be a wasted pick
@@ -397,9 +371,9 @@ kernel void restirGISpatialKernel(constant Uniforms&                 u          
             float jj = giTarget(nb[j], nrc[j], dMin2);
             float cj = giTarget(nb[j], rc, dMin2);       // the neighbour's sample here
             if (unbiased && cj > 0.0f && !giSampleVisible(rc.p, nb[j], accel)) cj = 0.0f;
-            mc += B * (cShare * cc) / max(nb[j].M * jc + cShare * cc, 1e-30f);
-            float mj = B * (nb[j].M * jj) / max(nb[j].M * jj + cShare * cj, 1e-30f);
-            float w = mj * cj * nb[j].W;
+            float2 mis = pairwiseMIS(nb[j].M, cShare, Msum, cc, jc, jj, cj);
+            mc += mis.x;
+            float w = mis.y * cj * nb[j].W;
             if (w <= 0.0f) continue;
             wSum += w;
             if (rng.next() * wSum < w) {
@@ -435,8 +409,7 @@ kernel void restirGISpatialKernel(constant Uniforms&                 u          
             if (visible) L = r.Lo * (g * r.W);
         }
     }
-    float l = luminance(L);
-    if (gp.tuning.z > 0.0f && l > gp.tuning.z) L *= gp.tuning.z / l;
+    L *= fireflyScale(luminance(L), gp.tuning.z);
     outIndirect.write(roundToHalf(float4(L, 1.0f)), tid);
     if (keepFeedback) outFeedback.write(roundToHalf(float4(L, 1.0f)), tid);
     if (passOn(gp.config.x, RGI_FALLBACK) && all(tid % RGI_AMBIENT_STRIDE == 0u)) {

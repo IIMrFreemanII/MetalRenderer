@@ -64,14 +64,9 @@ inline float regirCellTarget(uint element, float2 uv, float3 centre, float dmin2
                              device const TriangleInfo* tris, thread const SceneData& s) {
     uint index = element & ELEMENT_INDEX;
     if ((element & ELEMENT_TYPE) == ELEMENT_TRIANGLE) {
-        EmissiveTriangle tri = s.emissive[index];
-        InstanceData inst = s.instances[as_type<uint>(lights[tris[index].light].params.w)];
-        float4x4 m = inst.transform;
-        float su = sqrt(uv.x), b1 = su * (1.0f - uv.y), b2 = su * uv.y;
-        float3 x = (m * float4(tri.v0.xyz + tri.e1.xyz * b1 + tri.e2.xyz * b2, 1.0f)).xyz;
-        float area2 = length(cross((m * float4(tri.e1.xyz, 0.0f)).xyz, (m * float4(tri.e2.xyz, 0.0f)).xyz));
-        float d2 = max(length_squared(x - centre), dmin2);
-        return tris[index].radianceLum * (0.5f * area2) / (M_PI_F * d2);
+        MeshLightPoint mp = triangleLightPoint(s, lights, tris, index, uv, false);
+        float d2 = max(length_squared(mp.x - centre), dmin2);
+        return tris[index].radianceLum * (0.5f * mp.area2) / (M_PI_F * d2);
     }
     // Field by field: the first 32 bytes serve every type but the rect (its area is in params).
     float4 positionRadius = lights[index].positionRadius, color = lights[index].color;
@@ -100,8 +95,7 @@ kernel void regirBuildKernel(constant Uniforms&         u         [[buffer(0)]],
     float cellSize = gp.origin[level].w;
     float3 centre = gp.origin[level].xyz + (float3(cc) + 0.5f) * cellSize;
     float dmin2 = 0.75f * cellSize * cellSize;
-    SceneData s;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    SceneData s = sceneLights(instances, shading, lights, u.lightCount);
     device const LightTableEntry* entries = lightTableEntries(lights, u.lightCount);
     device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
     Rng rng;

@@ -35,19 +35,14 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         }
         if (!reference) {
             // Diffuse GI at the hit: this frame's indirect light where the hit point is visible on screen.
-            float depth;
-            float2 px = projectToPixel(h.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, float2(u.width, u.height), depth);
             float3 gi = skyAmbient(u, s) * 0.3f;
-            if (depth > 0.0f && all(px >= 0.0f) && px.x < float(u.width) && px.y < float(u.height)) {
-                uint2 q = uint2(px);
-                float4 nd = normalDepth.read(q);
-                if (nd.w > 0.0f && abs(nd.w - depth) < 0.03f * depth && dot(nd.xyz, hn) > 0.7f) gi = indirect.read(q).rgb;
-            }
+            uint2 q;
+            if (surfacePixel(h.position - u.camPos.xyz, hn, u.camRight, u.camUp, u.camForward, u, normalDepth,
+                             REFLECTION_DEPTH, REFLECTION_NORMAL, q)) gi = indirect.read(q).rgb;
             return L + throughput * albedo * gi;
         }
         if (b >= bounces) return L;
-        float3 d = cosineSampleHemisphere(hn, rng.next2());
-        if (dot(d, hng) <= 0.0f) d -= 2.0f * dot(d, hng) * hng;
+        float3 d = sampleBounce(hn, hng, rng.next2());
         throughput *= albedo;
         h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
         dir = d;
@@ -84,17 +79,11 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float4 sp = surfacePos.read(tid), m = material.read(tid);
     if (sp.w <= 0.0f || all(m.rgb <= 0.0f)) { outSpecular.write(float4(0.0f), tid); return; }
 
-    SceneData s;
-    s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
-    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = tid;
-    rng.frame = u.frameIndex;
-    rng.dimension = 40;   // past the trace kernel's dimensions
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pcgHash(tid.x * 7919u + pcgHash(tid.y + pcgHash(u.frameIndex * 31u + 17u)));
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
+    // Dimensions past the trace kernel's.
+    Sampler rng = makeSampler(blueNoise, u, tid, 40,
+                              pcgHash(tid.x * 7919u + pcgHash(tid.y + pcgHash(u.frameIndex * 31u + 17u))));
 
     float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
@@ -182,7 +171,6 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     // The firefly clamp is for the reflection ray's light (a small bright emitter seen by few rays). The direct
     // specular is bounded by the lights' analytic specular (ReSTIR's by its own clamp), and clamping it darkened
     // the highlights.
-    float lum = luminance(result / max(albedo, float3(1e-3f)));
-    if (lum > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) result *= FIREFLY_CLAMP / lum;
+    result *= fireflyScale(u, luminance(result / max(albedo, float3(1e-3f))));
     outSpecular.write(roundToHalf(float4((result + direct) / max(albedo, float3(1e-3f)), 1.0f)), tid);
 }

@@ -50,8 +50,8 @@ kernel void temporalKernel(constant Uniforms&              u           [[buffer(
             if (q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
             float4 pnd = prevND.read(uint2(q));
             if (pnd.w <= 0.0f) continue;
-            if (abs(pnd.w - mv.z) > 0.1f * mv.z) continue;        // depth mismatch -> disoccluded
-            if (dot(pnd.xyz, nd.xyz) < 0.9f) continue;             // normal mismatch
+            if (abs(pnd.w - mv.z) > REUSE_DEPTH * mv.z) continue;   // depth mismatch -> disoccluded
+            if (dot(pnd.xyz, nd.xyz) < REUSE_NORMAL) continue;      // normal mismatch
             float w = bilinear[i];
             float4 m = prevMoments.read(uint2(q));
             histColor += history.read(uint2(q)).rgb * w;
@@ -130,6 +130,19 @@ kernel void temporalKernel(constant Uniforms&              u           [[buffer(
 
 constant float kernelWeights[3] = { 3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f };
 
+// Edge stopping on geometry, shared by the a-trous filters (illumination here, shadow visibility in 3b): the
+// screen-space depth gradient at p, which makes the depth test tolerant on slanted surfaces, and a tap's weights
+// (x = depth, y = normal: the cosine between the normals to `normalPower`).
+inline float2 depthGradient(texture2d<float, access::read> nd, int2 p, int2 maxP, float depth) {
+    float zr = nd.read(uint2(clamp(p + int2(1, 0), int2(0), maxP))).w;
+    float zd = nd.read(uint2(clamp(p + int2(0, 1), int2(0), maxP))).w;
+    return float2(zr > 0.0f ? zr - depth : 0.0f, zd > 0.0f ? zd - depth : 0.0f);
+}
+inline float2 geometryWeights(float4 cnd, float4 qnd, float2 depthGrad, float2 offset, float normalPower) {
+    return float2(exp(-abs(cnd.w - qnd.w) / (abs(dot(depthGrad, offset)) + 0.01f * cnd.w + 1e-4f)),
+                  pow(max(0.0f, dot(cnd.xyz, qnd.xyz)), normalPower));
+}
+
 kernel void atrousKernel(constant Uniforms&              u        [[buffer(0)]],
                          constant int&                   stepSize [[buffer(1)]],
                          texture2d<float, access::read>  inIllum  [[texture(0)]],
@@ -158,10 +171,7 @@ kernel void atrousKernel(constant Uniforms&              u        [[buffer(0)]],
         }
     }
 
-    // Screen-space depth gradient, used to make the depth test tolerant on slanted surfaces.
-    float zr = nd.read(uint2(clamp(p + int2(1, 0), int2(0), maxP))).w;
-    float zd = nd.read(uint2(clamp(p + int2(0, 1), int2(0), maxP))).w;
-    float2 depthGrad = float2(zr > 0.0f ? zr - cnd.w : 0.0f, zd > 0.0f ? zd - cnd.w : 0.0f);
+    float2 depthGrad = depthGradient(nd, p, maxP, cnd.w);
 
     float centerLum = luminance(center.rgb);
     float phiL = u.denoise.x * sqrt(max(variance, 0.0f)) + 1e-4f;
@@ -177,11 +187,9 @@ kernel void atrousKernel(constant Uniforms&              u        [[buffer(0)]],
             float4 qnd = nd.read(uint2(q));
             if (qnd.w <= 0.0f) continue;
 
-            float2 offset = float2(dx, dy) * float(stepSize);
-            float wDepth = exp(-abs(cnd.w - qnd.w) / (abs(dot(depthGrad, offset)) + 0.01f * cnd.w + 1e-4f));
-            float wNormal = pow(max(0.0f, dot(cnd.xyz, qnd.xyz)), 128.0f);
+            float2 wGeometry = geometryWeights(cnd, qnd, depthGrad, float2(dx, dy) * float(stepSize), 128.0f);
             float wLum = exp(-abs(centerLum - luminance(qc.rgb)) / phiL);
-            float w = kernelWeights[abs(dx)] * kernelWeights[abs(dy)] * wDepth * wNormal * wLum;
+            float w = kernelWeights[abs(dx)] * kernelWeights[abs(dy)] * wGeometry.x * wGeometry.y * wLum;
 
             sumColor += qc.rgb * w;
             sumVariance += w * w * qc.a * qc.a;
@@ -278,7 +286,7 @@ kernel void shadowTemporalKernel(constant Uniforms&              u          [[bu
                     int2 q = base + offsets[i];
                     if (q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
                     float4 pnd = prevND.read(uint2(q));
-                    if (pnd.w <= 0.0f || abs(pnd.w - mv.z) > 0.1f * mv.z || dot(pnd.xyz, nd.xyz) < 0.9f) continue;
+                    if (pnd.w <= 0.0f || abs(pnd.w - mv.z) > REUSE_DEPTH * mv.z || dot(pnd.xyz, nd.xyz) < REUSE_NORMAL) continue;
                     hist += history.read(uint2(q)) * bilinear[i];
                     histLen += prevMeta.read(uint2(q)).z * bilinear[i];
                     weightSum += bilinear[i];
@@ -343,9 +351,7 @@ kernel void shadowFilterKernel(constant Uniforms&              u        [[buffer
     int step = int(params.w);
     int2 p = int2(tid);
     int2 maxP = int2(u.width - 1, u.height - 1);
-    float zr = nd.read(uint2(clamp(p + int2(1, 0), int2(0), maxP))).w;
-    float zd = nd.read(uint2(clamp(p + int2(0, 1), int2(0), maxP))).w;
-    float2 depthGrad = float2(zr > 0.0f ? zr - cnd.w : 0.0f, zd > 0.0f ? zd - cnd.w : 0.0f);
+    float2 depthGrad = depthGradient(nd, p, maxP, cnd.w);
 
     // Visibility edge-stopping, scaled by the standard error of the temporal average, and a per-light reach
     // factor: taps beyond the light's penumbra (step > radius) don't contribute.
@@ -361,10 +367,8 @@ kernel void shadowFilterKernel(constant Uniforms&              u        [[buffer
             float4 qnd = nd.read(uint2(q));
             if (qnd.w <= 0.0f) continue;
             float4 qv = inVis.read(uint2(q));
-            float2 offset = float2(dx, dy) * float(step);
-            float wDepth = exp(-abs(cnd.w - qnd.w) / (abs(dot(depthGrad, offset)) + 0.01f * cnd.w + 1e-4f));
-            float wNormal = pow(max(0.0f, dot(cnd.xyz, qnd.xyz)), 64.0f);
-            float4 w = k[abs(dx)] * k[abs(dy)] * wDepth * wNormal * exp(-abs(qv - center) / phi);
+            float2 wGeometry = geometryWeights(cnd, qnd, depthGrad, float2(dx, dy) * float(step), 64.0f);
+            float4 w = k[abs(dx)] * k[abs(dy)] * wGeometry.x * wGeometry.y * exp(-abs(qv - center) / phi);
             if (dx != 0 || dy != 0) w *= reach;
             sum += qv * w;
             weightSum += w;

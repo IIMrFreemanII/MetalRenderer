@@ -150,3 +150,15 @@ means for measuring:
 3. Read the medians across rounds, not the best run. Treat a delta below about 0.4 ms (or 2–3% on small passes) as
    noise unless it has the same sign in every round.
 4. For whole-frame claims, repeat with `METALRENDERER_BENCH_SPLIT=0`.
+5. **A shader edit moves kernels it doesn't touch.** The shaders compile as one module, and the compiler's decisions
+   in one kernel depend on the rest of it: the previous shaders plus one never-taken call in a kernel the benchmark
+   doesn't run made ReSTIR GI frames 0.1 ms (1.2%) slower, in the same way a clean refactor of other kernels did.
+   Per-pass columns then mislead (a pass whose source is unchanged shows a delta), and a frame can sit in one of two
+   states about 0.1 ms apart from launch to launch. So for a delta of about 1% of a frame:
+   * compare whole frames (`METALRENDERER_BENCH_SPLIT=0`) with 5 rounds; the same shaders against themselves give
+     0.00–0.02 ms that way;
+   * run a control: the baseline with a dead edit of the same kind. If the control moves the frame as much, the
+     delta is not the change's;
+   * don't chase it helper by helper. Putting single helpers back by hand, or forcing them inline, moved the frame
+     by another ±0.1 ms without a pattern.
+

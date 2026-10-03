@@ -39,25 +39,11 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
 
-    SceneData s;
-    s.positions = positions;
-    s.normals = normals;
-    s.indices = indices;
-    s.meshes = meshes;
-    s.instances = instances;
-    bindShading(s, shading);
-    s.lights = lights;
-    s.lightCount = u.lightCount;
-    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
     bool specular = flagOn(u.flags, FLAG_SPECULAR);
 
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = tid;
-    rng.frame = u.frameIndex;
-    rng.dimension = 0;
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_TRACE);
+    Sampler rng = makeSampler(blueNoise, u, tid, 0, pixelSeed(tid, u.frameIndex, SEED_TRACE));
 
     // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
     float2 size = float2(u.width, u.height);
@@ -184,8 +170,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         float3 origin = p;
         float3 normal = n, geomNormal = ng;
         for (uint b = 0; b < u.bounces; ++b) {
-            float3 d = cosineSampleHemisphere(normal, rng.next2());
-            if (dot(d, geomNormal) <= 0.0f) d -= 2.0f * dot(d, geomNormal) * geomNormal;   // keep it above the triangle
+            float3 d = sampleBounce(normal, geomNormal, rng.next2());
             Ray r = makeRay(origin, d, 0.0f, INFINITY);
             Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
@@ -219,8 +204,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             normal = hn;
             geomNormal = hng;
         }
-        float l = luminance(indirect);
-        if (l > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) indirect *= FIREFLY_CLAMP / l;
+        indirect *= fireflyScale(u, luminance(indirect));
     }
 
     outDirect.write(float4(direct, 1.0f), tid);
@@ -262,13 +246,8 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
     float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
 
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = tid;
-    rng.frame = u.frameIndex;
-    rng.dimension = 64;   // other blue-noise windows than traceKernel's
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
+    // Other blue-noise windows than traceKernel's.
+    Sampler rng = makeSampler(blueNoise, u, tid, 64, pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS));
 
     // The two rays' picks ride in the lanes of float2 / uint2 (one ray leaves the second lane unused): arrays indexed by
     // the ray would sit in memory, inside the loop over the lights.
@@ -356,29 +335,18 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
     float3 n = nd.xyz, ng = geoNormal.read(tid).xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
 
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = tid;
-    rng.frame = u.frameIndex;
-    rng.dimension = 64;   // other blue-noise windows than traceKernel's
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
+    // Other blue-noise windows than traceKernel's.
+    Sampler rng = makeSampler(blueNoise, u, tid, 64, pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS));
 
     float3 direct = float3(0.0f);
     float4 visibility = float4(0.0f), blocker = float4(0.0f);
 
     uint4 prevPick = uint4(0xFFFFu);
     float4 prevW = float4(0.0f);
-    float4 mv = motion.read(tid);
-    if (config.z != 0 && mv.w > 0.0f) {
-        int2 q = int2(floor(mv.xy + 0.5f));
-        if (q.x >= 0 && q.y >= 0 && q.x < int(u.width) && q.y < int(u.height)) {
-            float4 pnd = prevND.read(uint2(q));
-            if (pnd.w > 0.0f && abs(pnd.w - mv.z) < 0.1f * mv.z && dot(pnd.xyz, n) > 0.9f) {
-                prevPick = prevReservoir.read(uint2(q));
-                prevW = prevReservoirW.read(uint2(q));
-            }
-        }
+    int2 q = config.z != 0 ? reprojectNearest(u, motion.read(tid), n, prevND) : int2(-1);
+    if (q.x >= 0) {
+        prevPick = prevReservoir.read(uint2(q));
+        prevW = prevReservoirW.read(uint2(q));
     }
     float4 sel = float4(rng.next2(), rng.next2());
     float4 reuseSel = float4(rng.next2(), rng.next2());
@@ -391,17 +359,15 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         bool4 here = uint4(g) == uint4(0u, 1u, 2u, 3u);
         float2 r = rng.next2();
         // This frame's candidate: exact pick over the group's lights (pdf = weight / total, so W = total / weight).
-        float total = 0.0f, pickedWeight = 0.0f, s = min(dot(sel, channel), 0.99999f);
+        float pickedWeight = 0.0f;
+        StreamPick pick = streamPick(dot(sel, channel));
         uint picked = end;
         for (uint i = start; i < end; ++i) {
             float w = luminance(lightUnshadowed(lights[i], p, n, ng));
             if (w <= 0.0f) continue;
-            total += w;
-            float q = w / total;
-            if (s < q) { picked = i; pickedWeight = w; s /= q; }
-            else s = (s - q) / (1.0f - q);
+            if (pick.offer(w)) { picked = i; pickedWeight = w; }
         }
-        float weightSum = picked < end ? total : 0.0f;   // M = 1 * target(pick) * W
+        float weightSum = picked < end ? pick.total : 0.0f;   // M = 1 * target(pick) * W
         float M = 1.0f;
         uint y = picked;
         float targetY = pickedWeight;
@@ -429,7 +395,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
         float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
-        visibility = select(visibility, float4(visible && total > 0.0f ? saturate(cloud * targetY * W / total) : 0.0f), here);
+        visibility = select(visibility, float4(visible && pick.total > 0.0f ? saturate(cloud * targetY * W / pick.total) : 0.0f), here);
         blocker = select(blocker, float4(penumbraWidth(light, p, b)), here);
         if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * W);
         outPick = select(outPick, uint4(y | (uint(min(M, float(maxM))) << 16)), here);
@@ -472,36 +438,28 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
     float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
 
-    SceneData s;
-    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = tid;
-    rng.frame = u.frameIndex;
-    rng.dimension = 96;   // other blue-noise windows than the trace and many-lights kernels'
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pcgHash(tid.x * 31u + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x5bd1e995u)));
+    SceneData s = sceneLights(instances, shading, lights, u.lightCount);
+    // Other blue-noise windows than the trace and many-lights kernels'.
+    Sampler rng = makeSampler(blueNoise, u, tid, 96,
+                              pcgHash(tid.x * 31u + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x5bd1e995u))));
 
     // One light by its proxy's luminance (weighted reservoir over all of them: there are few).
-    float total = 0.0f, pickedWeight = 0.0f, uPick = min(rng.next(), 0.99999f);
+    float pickedWeight = 0.0f;
+    StreamPick pick = streamPick(rng.next());
     uint picked = count;
     for (uint i = 0; i < count; ++i) {
         float w = luminance(meshLightUnshadowed(lights[first + i], p, n, ng));
         if (w <= 0.0f) continue;
-        total += w;
-        float q = w / total;
-        if (uPick < q) { picked = i; pickedWeight = w; uPick /= q; }
-        else uPick = (uPick - q) / (1.0f - q);
+        if (pick.offer(w)) { picked = i; pickedWeight = w; }
     }
     float2 r = rng.next2();
     float3 result = float3(0.0f);
     if (picked < count) {
         float3 target;
-        result = sampleMeshLight(lights[first + picked], p, n, ng, r, s, target) * (total / pickedWeight);
+        result = sampleMeshLight(lights[first + picked], p, n, ng, r, s, target) * (pick.total / pickedWeight);
         if (any(result > 0.0f) && !isVisible(p, target, accel)) result = float3(0.0f);
     }
-    float l = luminance(result);
-    if (l > 4.0f * FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) result *= 4.0f * FIREFLY_CLAMP / l;
+    result *= fireflyScale(u, luminance(result), 4.0f * FIREFLY_CLAMP);
     outMeshDirect.write(roundToHalf(float4(result, 1.0f)), tid);
     if (addToDirect != 0) direct.write(direct.read(tid) + float4(result, 0.0f), tid);
 }

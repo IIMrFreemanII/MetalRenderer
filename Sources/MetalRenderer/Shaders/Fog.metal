@@ -185,23 +185,14 @@ float3 fogSampleElement(uint element, float2 uv, float3 p, thread const SceneDat
                         bool exact, thread float3& target, thread float3& l) {
     uint index = element & ELEMENT_INDEX;
     if ((element & ELEMENT_TYPE) != ELEMENT_TRIANGLE) return lightVolumeSample(s.lights[index], p, uv, s, target, l);
-    MeshLightPoint mp;
-    mp.tri = s.emissive[index];
-    InstanceData inst = s.instances[as_type<uint>(s.lights[tris[index].light].params.w)];
-    float4x4 m = inst.transform;
-    float su = sqrt(uv.x);
-    mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
-    float3 x = (m * float4(mp.tri.v0.xyz + mp.tri.e1.xyz * mp.b1 + mp.tri.e2.xyz * mp.b2, 1.0f)).xyz;
-    float3 cr = cross((m * float4(mp.tri.e1.xyz, 0.0f)).xyz, (m * float4(mp.tri.e2.xyz, 0.0f)).xyz);
-    float3 w = x - p;
+    MeshLightPoint mp = triangleLightPoint(s, s.lights, tris, index, uv, false);
+    float3 w = mp.x - p;
     float d2 = dot(w, w);
     l = w * rsqrt(max(d2, 1e-12f));
     target = p + w * 0.99f;
-    float area2 = length(cr);
-    if (area2 <= 0.0f) return float3(0.0f);
-    float g = abs(dot(cr, l)) / area2 / max(d2, 1e-4f) * (0.5f * area2);   // two-sided; uniform point: pdf = 1 / area
+    if (mp.area2 <= 0.0f) return float3(0.0f);
+    float g = abs(dot(mp.cr, l)) / mp.area2 / max(d2, 1e-4f) * (0.5f * mp.area2);   // two-sided; uniform point: pdf = 1 / area
     if (!exact) return float3(tris[index].radianceLum * g);
-    mp.material = inst.materialIndex;
     return meshLightPointEmission(mp, s) * g;
 }
 
@@ -214,26 +205,24 @@ float3 fogSampleElement(uint element, float2 uv, float3 p, thread const SceneDat
 constant float FOG_UNIFORM_PICKS = 0.1f;
 
 uint pickFogLight(device const Light* lights, uint lightCount, float3 p, float3 v, float g, float3 u, thread float& pdf) {
-    float total = 0.0f, count = 0.0f, weighted = 0.0f, uniform = 0.0f;
+    float weighted = 0.0f, uniform = 0.0f;
     uint pickW = lightCount, pickU = lightCount;
     bool useUniform = u.z < FOG_UNIFORM_PICKS;
-    float uw = min(u.x, 0.99999f), uu = min(u.z / FOG_UNIFORM_PICKS, 0.99999f);   // uu: uniform again within its branch
+    // Two picks side by side: by weight, and uniform (every light that reaches p offered with weight 1, so its total
+    // is their count). u.z / FOG_UNIFORM_PICKS is uniform again within its branch.
+    StreamPick byWeight = streamPick(u.x), evenly = streamPick(u.z / FOG_UNIFORM_PICKS);
     LightSubset ls = lightSubset(lightCount, u.y);
     for (uint j = 0; j < ls.count; ++j) {
         uint i = lightSubsetIndex(ls, j, lightCount);
         float3 l;
         float w = luminance(lightVolumeWeight(lights[i], p, l)) * phaseHG(-dot(l, v), g);
         if (w <= 0.0f) continue;
-        total += w;
-        count += 1.0f;
-        float q = w / total;   // weighted reservoir
-        if (uw < q) { pickW = i; weighted = w; uw /= q; } else uw = (uw - q) / (1.0f - q);
-        q = 1.0f / count;      // uniform reservoir
-        if (uu < q) { pickU = i; uniform = w; uu /= q; } else uu = (uu - q) / (1.0f - q);
+        if (byWeight.offer(w)) { pickW = i; weighted = w; }
+        if (evenly.offer(1.0f)) { pickU = i; uniform = w; }
     }
-    if (total <= 0.0f) { pdf = 0.0f; return lightCount; }
+    if (byWeight.total <= 0.0f) { pdf = 0.0f; return lightCount; }
     float w = useUniform ? uniform : weighted;
-    pdf = ((1.0f - FOG_UNIFORM_PICKS) * w / total + FOG_UNIFORM_PICKS / count) / ls.scale;
+    pdf = ((1.0f - FOG_UNIFORM_PICKS) * w / byWeight.total + FOG_UNIFORM_PICKS / evenly.total) / ls.scale;
     return useUniform ? pickU : pickW;
 }
 
@@ -264,25 +253,14 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
         float2 pickedUV = float2(0.0f);
         float wSum = 0.0f, pickedTarget = 0.0f;
         for (uint k = 0; k < M + s.lightTable.y; ++k) {
-            float Wsrc = 1.0f;
-            uint element;
-            float2 uv;
-            if (k < Mg) {
-                if (!regirDraw(s, p, rng, element, uv, Wsrc)) continue;
-            } else {
-                float tablePdf = 1.0f;
-                uint h0 = rng.nextUint(), h1 = rng.nextUint();
-                element = k < M ? sampleLightTable(entries, s.lightTable.x, h0, h1, tablePdf)
-                                : ELEMENT_SUN | (k == M ? s.lightTable.z : s.lightTable.w);
-                uv = rng.next2();
-                Wsrc = 1.0f / tablePdf;
-            }
+            LightCandidate c;
+            if (!lightCandidate(k, Mg, M, s.lightTable, entries, p, s, rng, c)) continue;
             float3 target, l;
-            float t = luminance(fogSampleElement(element, uv, p, s, tris, false, target, l)) * phaseHG(-dot(l, v), g);
-            float w = k < M ? t * Wsrc / float(M) : t;
+            float t = luminance(fogSampleElement(c.element, c.uv, p, s, tris, false, target, l)) * phaseHG(-dot(l, v), g);
+            float w = lightCandidateWeight(k, M, t, c.W);
             if (w <= 0.0f) continue;
             wSum += w;
-            if (rng.next() * wSum < w) { picked = element; pickedUV = uv; pickedTarget = t; }
+            if (rng.next() * wSum < w) { picked = c.element; pickedUV = c.uv; pickedTarget = t; }
         }
         if (picked == ELEMENT_NONE || pickedTarget <= 0.0f) return ambient;
         float3 target, l;
@@ -339,10 +317,6 @@ inline float4 fogHistory(constant Uniforms& u, constant FogParams& f, texture3d<
 
 kernel void fogInjectKernel(constant Uniforms&                u          [[buffer(0)]],
                             SCENE_ACCEL                       accel      [[buffer(1)]],
-                            device const float3*              positions  [[buffer(2)]],
-                            device const float3*              normals    [[buffer(3)]],
-                            device const uint*                indices    [[buffer(4)]],
-                            device const MeshData*            meshes     [[buffer(5)]],
                             device const InstanceData*        instances  [[buffer(6)]],
                             constant SceneShading&            shading    [[buffer(7)]],
                             device const Light*               lights     [[buffer(8)]],
@@ -359,24 +333,12 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     uint3 dims = uint3(f.counts.x, f.counts.y, uint(f.grid.w));
     if (any(tid >= dims)) return;
     bool historyValid = (f.counts.w & FOG_HISTORY_VALID) != 0;
-    SceneData s;
-    s.positions = positions;
-    s.normals = normals;
-    s.indices = indices;
-    s.meshes = meshes;
-    s.instances = instances;
-    bindShading(s, shading);
-    s.lights = lights;
-    s.lightCount = u.lightCount;
-    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
+    SceneData s = sceneLights(instances, shading, lights, u.lightCount);
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
 
-    Sampler rng;
-    rng.blueNoise = blueNoise;
-    rng.pixel = tid.xy + uint2(37u, 71u) * tid.z;   // a different blue-noise window per slice
-    rng.frame = u.frameIndex;
-    rng.dimension = 0;
-    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
-    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(tid.z + pcgHash(u.frameIndex))));
+    // A different blue-noise window per slice.
+    Sampler rng = makeSampler(blueNoise, u, tid.xy + uint2(37u, 71u) * tid.z, 0,
+                              pcgHash(tid.x + pcgHash(tid.y + pcgHash(tid.z + pcgHash(u.frameIndex)))));
 
     // A random point of the froxel that the camera sees: in front of the surface of the pixel it projects to. Points
     // no pixel sees (behind a wall, above a ceiling) would leak their light into the froxels that straddle the
@@ -439,10 +401,6 @@ inline float4 fogFromGrid(constant FogParams& f, texture3d<float> integrated, fl
 // ground truth for the froxel grid.
 kernel void fogReferenceKernel(constant Uniforms&                u          [[buffer(0)]],
                                SCENE_ACCEL                       accel      [[buffer(1)]],
-                               device const float3*              positions  [[buffer(2)]],
-                               device const float3*              normals    [[buffer(3)]],
-                               device const uint*                indices    [[buffer(4)]],
-                               device const MeshData*            meshes     [[buffer(5)]],
                                device const InstanceData*        instances  [[buffer(6)]],
                                constant SceneShading&            shading    [[buffer(7)]],
                                device const Light*               lights     [[buffer(8)]],
@@ -456,16 +414,8 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
                                uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
-    SceneData s;
-    s.positions = positions;
-    s.normals = normals;
-    s.indices = indices;
-    s.meshes = meshes;
-    s.instances = instances;
-    bindShading(s, shading);
-    s.lights = lights;
-    s.lightCount = u.lightCount;
-    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
+    SceneData s = sceneLights(instances, shading, lights, u.lightCount);
+    bindLightSampling(s, u.lightTable, regirGrid, regir);
     Rng rng;
     rng.state = pixelSeed(tid, u.frameIndex, SEED_FOG_REFERENCE);
 

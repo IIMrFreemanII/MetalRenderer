@@ -4,6 +4,13 @@
 
 inline float luminance(float3 c) { return dot(c, float3(0.2126f, 0.7152f, 0.0722f)); }
 
+// The firefly clamp: the factor that brings light of luminance `lum` down to `limit` (1 below it, or with the clamp
+// off: FLAG_NO_CLAMP for the built-in limit, a limit of 0 for one that is a setting).
+inline float fireflyScale(constant Uniforms& u, float lum, float limit = FIREFLY_CLAMP) {
+    return lum > limit && !flagOn(u.flags, FLAG_NO_CLAMP) ? limit / lum : 1.0f;
+}
+inline float fireflyScale(float lum, float limit) { return limit > 0.0f && lum > limit ? limit / lum : 1.0f; }
+
 // Round to the nearest half before writing a half-float texture. The texture write itself may round
 // toward zero, and the denoiser's history feedback amplifies that bias into visible darkening.
 inline float4 roundToHalf(float4 v) { return float4(half4(v)); }
@@ -79,6 +86,21 @@ struct Sampler {
     }
 };
 
+// A kernel's sample stream: `pixel` picks the blue-noise window, `dimension` is where the kernel's dimensions start
+// (kernels of one frame use ranges apart: trace 0, reflections 40, the direct-light kernels 64, mesh lights 96,
+// ReSTIR GI 128), `seed` starts the white-noise stream.
+inline Sampler makeSampler(texture2d<float, access::read> blueNoise, constant Uniforms& u, uint2 pixel, uint dimension,
+                           uint seed) {
+    Sampler rng;
+    rng.blueNoise = blueNoise;
+    rng.pixel = pixel;
+    rng.frame = u.frameIndex;
+    rng.dimension = dimension;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
+    rng.rng.state = seed;
+    return rng;
+}
+
 
 // Cosine-weighted hemisphere sample around n (pdf = cos / pi).
 inline float3 cosineSampleHemisphere(float3 n, float2 u) {
@@ -92,4 +114,33 @@ inline float3 cosineSampleHemisphere(float3 n, float2 u) {
     float3 t  = float3(1.0f + s * n.x * n.x * a, s * b, -s * n.x);
     float3 bt = float3(b, s + n.y * n.y * a, -n.y);
     return normalize(t * local.x + bt * local.y + n * local.z);
+}
+
+// A streaming pick of one item in proportion to its weight (weighted reservoir sampling), in one pass and from one
+// random number, which is rescaled after each decision so it is uniform again for the next. The pick's probability
+// is its weight / total.
+struct StreamPick {
+    float u;        // in [0, 1)
+    float total;    // the weights offered so far
+    // Offers an item of weight w > 0: true if it replaces the pick.
+    bool offer(float w) {
+        total += w;
+        float q = w / total;
+        if (u < q) { u /= q; return true; }
+        u = (u - q) / (1.0f - q);
+        return false;
+    }
+};
+inline StreamPick streamPick(float u) {
+    StreamPick pick;
+    pick.u = min(u, 0.99999f);
+    pick.total = 0.0f;
+    return pick;
+}
+
+// A diffuse bounce's direction: cosine-weighted around the shading normal n, mirrored to stay above the triangle (ng).
+inline float3 sampleBounce(float3 n, float3 ng, float2 u) {
+    float3 d = cosineSampleHemisphere(n, u);
+    if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
+    return d;
 }

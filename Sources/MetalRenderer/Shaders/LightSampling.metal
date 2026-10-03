@@ -23,28 +23,15 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
     e.diffuse = e.specular = float3(0.0f);
     uint index = element & ELEMENT_INDEX;
     if ((element & ELEMENT_TYPE) == ELEMENT_TRIANGLE) {
-        MeshLightPoint mp;
-        mp.tri = s.emissive[index];
-        InstanceData inst = s.instances[as_type<uint>(lights[tris[index].light].params.w)];
-        float4x4 m = prev ? inst.prevTransform : inst.transform;
-        float su = sqrt(uv.x);
-        mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
-        float3 x = (m * float4(mp.tri.v0.xyz + mp.tri.e1.xyz * mp.b1 + mp.tri.e2.xyz * mp.b2, 1.0f)).xyz;
-        float3 cr = cross((m * float4(mp.tri.e1.xyz, 0.0f)).xyz, (m * float4(mp.tri.e2.xyz, 0.0f)).xyz);
-        float3 w = x - sp.p;
+        MeshLightPoint mp = triangleLightPoint(s, lights, tris, index, uv, prev);
+        float3 w = mp.x - sp.p;
         float d2 = dot(w, w);
         float3 l = w * rsqrt(max(d2, 1e-12f));
         e.target = sp.p + w * 0.99f;   // pulled toward p: an emitter traced at a coarser level of detail doesn't shadow itself
-        float area2 = length(cr);
-        float cosP = dot(sp.n, l), cosL = abs(dot(cr, l)) / max(area2, 1e-12f);   // emission is two-sided
-        if (cosP <= 0.0f || dot(sp.ng, l) <= 0.0f || area2 <= 0.0f) return e;
-        float g = cosP * cosL / max(d2, 1e-6f) * (0.5f * area2) / M_PI_F;      // uniform point: pdf = 1 / area
-        if (exact) {
-            mp.material = inst.materialIndex;
-            e.diffuse = meshLightPointEmission(mp, s) * g;
-        } else {
-            e.diffuse = float3(tris[index].radianceLum * g);
-        }
+        float cosP = dot(sp.n, l), cosL = abs(dot(mp.cr, l)) / max(mp.area2, 1e-12f);   // emission is two-sided
+        if (cosP <= 0.0f || dot(sp.ng, l) <= 0.0f || mp.area2 <= 0.0f) return e;
+        float g = cosP * cosL / max(d2, 1e-6f) * (0.5f * mp.area2) / M_PI_F;   // uniform point: pdf = 1 / area
+        e.diffuse = exact ? meshLightPointEmission(mp, s) * g : float3(tris[index].radianceLum * g);
         return e;
     }
     Light light = lights[index];
@@ -59,6 +46,25 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
 inline float lightSampleTarget(thread const LightSampleEval& e, thread const ShadingPoint& sp) {
     return luminance(sp.albedo * e.diffuse + e.specular);
 }
+
+// Candidate k of a sampler's RIS over the lights at p: the first Mg come from the light grid, the rest of the M from
+// the light table, then each sun once. W = 1 / the pdf of its source (the suns: 1). False for an empty grid slot.
+// (ReSTIR DI's initial candidates are drawn in their own order, with quantised uv: restirTemporalKernel.)
+struct LightCandidate { uint element; float2 uv; float W; };
+inline bool lightCandidate(uint k, uint Mg, uint M, uint4 table, device const LightTableEntry* entries, float3 p,
+                           thread const SceneData& s, thread Rng& rng, thread LightCandidate& c) {
+    c.W = 1.0f;
+    if (k < Mg) return regirDraw(s, p, rng, c.element, c.uv, c.W);
+    float pdf = 1.0f;
+    uint h0 = rng.nextUint(), h1 = rng.nextUint();
+    c.element = k < M ? sampleLightTable(entries, table.x, h0, h1, pdf) : ELEMENT_SUN | (k == M ? table.z : table.w);
+    c.uv = rng.next2();
+    c.W = 1.0f / pdf;
+    return true;
+}
+// Its RIS weight for the target t: the grid's and the table's M candidates share one strategy (t W / M), a sun is
+// its own (t).
+inline float lightCandidateWeight(uint k, uint M, float t, float W) { return k < M ? t * W / float(M) : t; }
 
 // Direct light at a point from one light sample picked by RIS among `candidates` table draws and the suns (one each),
 // by unshadowed luminance, with one shadow ray: an unbiased estimate of the light from every light. For GI's hits and
@@ -77,28 +83,37 @@ float3 sampleLightsRIS(device const Light* lights, uint lightCount, uint4 table,
     float2 pickedUV = float2(0.0f);
     float wSum = 0.0f, pickedTarget = 0.0f;
     for (uint k = 0; k < M + table.y; ++k) {
-        float Wsrc = 1.0f;
-        uint element;
-        float2 uv;
-        if (k < Mg) {
-            if (!regirDraw(s, p, rng, element, uv, Wsrc)) continue;
-        } else {
-            float pdf = 1.0f;
-            uint h0 = rng.nextUint(), h1 = rng.nextUint();
-            element = k < M ? sampleLightTable(entries, table.x, h0, h1, pdf) : ELEMENT_SUN | (k == M ? table.z : table.w);
-            uv = rng.next2();
-            Wsrc = 1.0f / pdf;
-        }
-        float t = lightSampleTarget(evalLightSample(element, uv, sp, s, lights, tris, false, false), sp);
-        float w = k < M ? t * Wsrc / float(M) : t;   // the suns: one candidate each, from their own strategy
+        LightCandidate c;
+        if (!lightCandidate(k, Mg, M, table, entries, p, s, rng, c)) continue;
+        float t = lightSampleTarget(evalLightSample(c.element, c.uv, sp, s, lights, tris, false, false), sp);
+        float w = lightCandidateWeight(k, M, t, c.W);
         if (w <= 0.0f) continue;
         wSum += w;
-        if (rng.next() * wSum < w) { picked = element; pickedUV = uv; pickedTarget = t; }
+        if (rng.next() * wSum < w) { picked = c.element; pickedUV = c.uv; pickedTarget = t; }
     }
     if (picked == ELEMENT_NONE || pickedTarget <= 0.0f) return float3(0.0f);
     LightSampleEval e = evalLightSample(picked, pickedUV, sp, s, lights, tris, false, true);
     if (!isVisible(p, e.target, accel)) return float3(0.0f);
     return e.diffuse * (wSum / pickedTarget);
+}
+
+// Is `nd` (a G-buffer's normal and view depth, depth <= 0 = nothing there) the surface with normal n expected at
+// `depth`? The tolerances (relative depth, cosine between the normals), by what the match is used for:
+constant float REUSE_DEPTH = 0.1f, REUSE_NORMAL = 0.9f;             // history and neighbours reused as the pixel's own
+constant float FEEDBACK_DEPTH = 0.05f, FEEDBACK_NORMAL = 0.8f;      // last frame's light at a path's hit
+constant float REFLECTION_DEPTH = 0.03f, REFLECTION_NORMAL = 0.7f;  // this frame's GI at a reflection ray's hit
+inline bool sameSurface(float4 nd, float depth, float3 n, float depthTolerance, float minCos) {
+    return nd.w > 0.0f && abs(nd.w - depth) < depthTolerance * depth && dot(nd.xyz, n) > minCos;
+}
+
+// Last frame's pixel for a pixel with motion vector mv (xy = where it was, in pixels; z = the depth expected there;
+// w > 0 = valid) and normal n: the nearest pixel if it shows the same surface, else -1.
+inline int2 reprojectNearest(constant Uniforms& u, float4 mv, float3 n, texture2d<float, access::read> prevND) {
+    if (!(mv.w > 0.0f)) return int2(-1);
+    int2 c = int2(floor(mv.xy + 0.5f));
+    if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)
+        && sameSurface(prevND.read(uint2(c)), mv.z, n, REUSE_DEPTH, REUSE_NORMAL)) return c;
+    return int2(-1);
 }
 
 // Continuous pixel coordinate (no jitter, y down) of camera-relative vector v, for a camera given as
@@ -107,6 +122,43 @@ inline float2 projectToPixel(float3 v, float4 right, float4 up, float4 forward, 
     depth = dot(v, forward.xyz);
     float2 ndc = float2(dot(v, right.xyz) / (depth * right.w), dot(v, up.xyz) / (depth * up.w));
     return float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f) * size;
+}
+
+// The pixel that shows a surface point (v = the point - the camera, n = its normal) in a frame's G-buffer, for that
+// frame's camera: false when the point is off screen or another surface covers it.
+inline bool surfacePixel(float3 v, float3 n, float4 right, float4 up, float4 forward, constant Uniforms& u,
+                         texture2d<float, access::read> normalDepth, float depthTolerance, float minCos,
+                         thread uint2& q) {
+    float depth;
+    float2 px = projectToPixel(v, right, up, forward, float2(u.width, u.height), depth);
+    if (!(depth > 0.0f && all(px >= 0.0f) && px.x < float(u.width) && px.y < float(u.height))) return false;
+    q = uint2(px);
+    return sameSurface(normalDepth.read(q), depth, n, depthTolerance, minCos);
+}
+// The same in last frame's G-buffer, for a point where it was last frame: where a path's hit reads last frame's light.
+inline bool lastFramePixel(constant Uniforms& u, float3 prevPosition, float3 n, texture2d<float, access::read> prevND,
+                           thread uint2& q) {
+    return surfacePixel(prevPosition - u.prevCamPos.xyz, n, u.prevCamRight, u.prevCamUp, u.prevCamForward, u, prevND,
+                        FEEDBACK_DEPTH, FEEDBACK_NORMAL, q);
+}
+
+// Spatial reuse (ReSTIR DI and GI). A random pixel in the disk of `radius` around tid: false for tid itself and for a
+// pixel off screen.
+inline bool diskNeighbour(uint2 tid, float radius, constant Uniforms& u, thread Rng& rng, thread int2& q) {
+    float r = radius * sqrt(rng.next()), angle = 2.0f * M_PI_F * rng.next();
+    q = int2(tid) + int2(round(r * float2(cos(angle), sin(angle))));
+    return !(all(q == int2(tid)) || q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height));
+}
+
+// Pairwise MIS with confidence weights (Bitterli 2022, as in Lin et al. 2022), for one neighbour of confidence Mj
+// against the canonical sample's share cShare = M_c / n (n = neighbours with a reservoir, Msum = every M). The
+// targets: cc, jc = the canonical sample's here and at the neighbour; jj, cj = the neighbour's sample's there and
+// here. x = what this neighbour adds to the canonical sample's weight m_c, y = the neighbour's sample's weight m_j.
+// Every sample's weights sum to 1, so the result stays unbiased (for the target).
+inline float2 pairwiseMIS(float Mj, float cShare, float Msum, float cc, float jc, float jj, float cj) {
+    float B = (Mj + cShare) / Msum;
+    return float2(B * (cShare * cc) / max(Mj * jc + cShare * cc, 1e-30f),
+                  B * (Mj * jj) / max(Mj * jj + cShare * cj, 1e-30f));
 }
 
 // ---------------------------------------------------------------------------------------------

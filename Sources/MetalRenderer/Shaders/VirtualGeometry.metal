@@ -156,23 +156,8 @@ kernel void vgHierarchyKernel(constant uint2&       params       [[buffer(0)]], 
 {
     int n = int(counts.x), i = int(gid);
     if (i >= n - 1) return;
-    int d = rtDelta(keys, n, i, i + 1) - rtDelta(keys, n, i, i - 1) >= 0 ? 1 : -1;
-    int deltaMin = rtDelta(keys, n, i, i - d);
-    int lmax = 2;
-    while (rtDelta(keys, n, i, i + lmax * d) > deltaMin) lmax *= 2;
-    int l = 0;
-    for (int t = lmax / 2; t >= 1; t /= 2)
-        if (rtDelta(keys, n, i, i + (l + t) * d) > deltaMin) l += t;
-    int j = i + l * d;
-    int deltaNode = rtDelta(keys, n, i, j);
-    int s = 0;
-    for (int div = 2; ; div *= 2) {
-        int t = (l + div - 1) / div;
-        if (rtDelta(keys, n, i, i + (s + t) * d) > deltaNode) s += t;
-        if (t <= 1) break;
-    }
-    int split = i + s * d + min(d, 0);
-    int first = min(i, j), last = max(i, j);
+    KarrasRange range = karrasRange(keys, n, i);
+    int first = range.first, last = range.last, split = range.split;
     bool mine = vgSameInstance(keys, first, last);
     nodeInstance[i] = mine ? selected[values[first]].x : 0xFFFFFFFFu;
     if (i == 0) roots[0] = params.y | (mine ? RT_ENTER : 0u);
@@ -195,14 +180,6 @@ kernel void vgHierarchyKernel(constant uint2&       params       [[buffer(0)]], 
     nodes[i].lo0.w = as_type<float>(left);
     nodes[i].lo1.w = as_type<float>(right);
     atomic_store_explicit(&counters[i], 0u, memory_order_relaxed);
-}
-
-inline void vgToWorld(thread float3& lo, thread float3& hi, float4x4 m) {
-    float3 c = (lo + hi) * 0.5f, e = (hi - lo) * 0.5f;
-    float3 wc = (m * float4(c, 1.0f)).xyz;
-    float3 we = abs(m[0].xyz) * e.x + abs(m[1].xyz) * e.y + abs(m[2].xyz) * e.z;
-    lo = wc - we;
-    hi = wc + we;
 }
 
 // Bottom-up boxes for the cluster tree (as rtFitKernel): boxes stay in their instance's object space up to the node
@@ -231,7 +208,7 @@ kernel void vgFitKernel(constant uint2&                  counts       [[buffer(8
         uint p = link & 0x7FFFFFFFu;
         if (inst != 0xFFFFFFFFu && nodeInstance[p] == 0xFFFFFFFFu) {   // the parent spans several instances
             float3 h3 = hi.xyz;
-            vgToWorld(lo, h3, instances[inst].transform);
+            boxToWorld(lo, h3, instances[inst].transform);
             hi.xyz = h3;
         }
         if ((link >> 31) != 0) { nodes[p].lo1.xyz = lo; nodes[p].hi1 = hi; }
