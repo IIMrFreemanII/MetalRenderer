@@ -277,6 +277,41 @@ enum GLTFLoader {
             }
             return out
         }
+        /// An accessor of 32-bit float vectors, read straight into SIMD values (the usual case for positions, normals
+        /// and texture coordinates: no intermediate array, no per-component type test). `load` reads one vector at a
+        /// byte offset. nil when the accessor holds another type: `readFloats` converts those.
+        func readVectors<T>(_ index: Int, _ n: Int, _ load: (UnsafeRawBufferPointer, Int) -> T) throws -> [T]? {
+            let a = try accessor(index)
+            let comps = components(a.type)
+            guard a.componentType == 5126, comps >= n, let bv = a.bufferView else { return nil }
+            let v = try view(bv)
+            let stride = v.stride ?? comps * 4
+            let base = v.offset + (a.byteOffset ?? 0)
+            guard a.count == 0 || base + (a.count - 1) * stride + comps * 4 <= v.data.count else {
+                throw GLTFError.invalid("accessor \(index) runs past its buffer")
+            }
+            return v.data.withUnsafeBytes { raw in
+                [T](unsafeUninitializedCapacity: a.count) { out, count in
+                    for i in 0..<a.count { (out.baseAddress! + i).initialize(to: load(raw, base + i * stride)) }
+                    count = a.count
+                }
+            }
+        }
+        func readVec3(_ index: Int) throws -> [SIMD3<Float>] {
+            if let fast = try readVectors(index, 3, { raw, o in
+                SIMD3(raw.loadUnaligned(fromByteOffset: o, as: Float.self), raw.loadUnaligned(fromByteOffset: o + 4, as: Float.self),
+                      raw.loadUnaligned(fromByteOffset: o + 8, as: Float.self))
+            }) { return fast }
+            let f = try readFloats(index, 3)
+            return (0..<f.count / 3).map { SIMD3(f[3 * $0], f[3 * $0 + 1], f[3 * $0 + 2]) }
+        }
+        func readVec2(_ index: Int) throws -> [SIMD2<Float>] {
+            if let fast = try readVectors(index, 2, { raw, o in
+                SIMD2(raw.loadUnaligned(fromByteOffset: o, as: Float.self), raw.loadUnaligned(fromByteOffset: o + 4, as: Float.self))
+            }) { return fast }
+            let f = try readFloats(index, 2)
+            return (0..<f.count / 2).map { SIMD2(f[2 * $0], f[2 * $0 + 1]) }
+        }
         func readIndices(_ index: Int) throws -> [UInt32] {
             let a = try accessor(index)
             guard let bv = a.bufferView else { throw GLTFError.invalid("index accessor without data") }
@@ -288,18 +323,17 @@ enum GLTFLoader {
             guard a.count == 0 || base + (a.count - 1) * stride + size <= v.data.count else {
                 throw GLTFError.invalid("index accessor runs past its buffer")
             }
-            var out = [UInt32](repeating: 0, count: a.count)
-            v.data.withUnsafeBytes { raw in
-                for i in 0..<a.count {
-                    let o = base + i * stride
-                    switch size {
-                    case 4: out[i] = raw.loadUnaligned(fromByteOffset: o, as: UInt32.self)
-                    case 2: out[i] = UInt32(raw.loadUnaligned(fromByteOffset: o, as: UInt16.self))
-                    default: out[i] = UInt32(raw.load(fromByteOffset: o, as: UInt8.self))
+            let count = a.count
+            return v.data.withUnsafeBytes { raw in
+                [UInt32](unsafeUninitializedCapacity: count) { out, written in
+                    switch size {   // one loop per index type: the test is not in the loop
+                    case 4: for i in 0..<count { out[i] = raw.loadUnaligned(fromByteOffset: base + i * stride, as: UInt32.self) }
+                    case 2: for i in 0..<count { out[i] = UInt32(raw.loadUnaligned(fromByteOffset: base + i * stride, as: UInt16.self)) }
+                    default: for i in 0..<count { out[i] = UInt32(raw.load(fromByteOffset: base + i * stride, as: UInt8.self)) }
                     }
+                    written = count
                 }
             }
-            return out
         }
 
         // Meshes: one GLTFModel.Mesh per triangle primitive.
@@ -312,22 +346,23 @@ enum GLTFLoader {
                     continue
                 }
                 guard let posIndex = p.attributes["POSITION"] else { continue }
-                let pos = try readFloats(posIndex, 3)
-                let count = pos.count / 3
-                let positions = (0..<count).map { SIMD3(pos[3 * $0], pos[3 * $0 + 1], pos[3 * $0 + 2]) }
+                let positions = try readVec3(posIndex)
+                let count = positions.count
                 let indices = try p.indices.map(readIndices) ?? (0..<UInt32(count)).map { $0 }
                 guard indices.allSatisfy({ Int($0) < count }) else { throw GLTFError.invalid("index out of range in mesh \(mi)") }
                 var normals: [SIMD3<Float>]
                 if let ni = p.attributes["NORMAL"] {
-                    let n = try readFloats(ni, 3)
-                    normals = (0..<count).map { SIMD3(n[3 * $0], n[3 * $0 + 1], n[3 * $0 + 2]) }
+                    normals = try readVec3(ni)
+                    if normals.count > count { normals.removeLast(normals.count - count) }
+                    guard normals.count == count else { throw GLTFError.invalid("mesh \(mi): \(normals.count) normals for \(count) positions") }
                 } else {
                     normals = GLTFLoader.vertexNormals(positions, indices)
                 }
                 var uvs = [SIMD2<Float>](repeating: .zero, count: count)
                 if let ti = p.attributes["TEXCOORD_0"] {
-                    let t = try readFloats(ti, 2)
-                    uvs = (0..<count).map { SIMD2(t[2 * $0], t[2 * $0 + 1]) }
+                    uvs = try readVec2(ti)
+                    if uvs.count > count { uvs.removeLast(uvs.count - count) }
+                    guard uvs.count == count else { throw GLTFError.invalid("mesh \(mi): \(uvs.count) texture coordinates for \(count) positions") }
                 }
                 model.meshes.append(.init(positions: positions, normals: normals, uvs: uvs, indices: indices, material: p.material))
                 ours.append(model.meshes.count - 1)

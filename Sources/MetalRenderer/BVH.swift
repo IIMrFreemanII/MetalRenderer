@@ -64,7 +64,7 @@ struct AABB {
 
 enum BVHBuilder {
     /// A built tree before it is written as child-pair nodes: `order` holds primitive indices, leaves own ranges of it.
-    private struct Node {
+    struct Node {
         var box: AABB
         var left = -1, right = -1      // -1 = leaf
         var start = 0, count = 0
@@ -73,52 +73,82 @@ enum BVHBuilder {
 
     private static let bins = 16
     private static let traversalCost: Float = 1   // relative to one primitive test
+    /// A range of more primitives than this is split and its two halves are built at the same time, level after
+    /// level: a big mesh's tree is built on every core. Below it a subtree is built by one thread.
+    static let parallelGrain = 1 << 15
 
-    /// Binned-SAH build over `boxes`. `maxLeaf` = most primitives per leaf (1 for instances).
-    /// Raw pointers and scratch bins allocated once per build: this runs over ~18M triangles for the gallery.
-    private static func build(boxes: [AABB], masks: [UInt32]?, maxLeaf: Int) -> (nodes: [Node], order: [Int]) {
-        let n = boxes.count
-        var order = Array(0..<n)
-        var nodes: [Node] = []
-        guard n > 0 else { return (nodes, order) }
-        nodes.reserveCapacity(2 * n)
-        let centroids = UnsafeMutablePointer<SIMD3<Float>>.allocate(capacity: n)
-        defer { centroids.deallocate() }
-        for i in 0..<n { centroids[i] = boxes[i].centroid }
-        let binBoxes = UnsafeMutablePointer<AABB>.allocate(capacity: bins)
-        let binCounts = UnsafeMutablePointer<Int>.allocate(capacity: bins)
+    /// A subtree as it was built: its nodes in depth-first order with indices local to it, or a node whose halves
+    /// were built apart.
+    private indirect enum Part {
+        case built([Node])
+        case split(Node, Part, Part)
+        var count: Int {
+            switch self {
+            case .built(let nodes): return nodes.count
+            case .split(_, let l, let r): return 1 + l.count + r.count
+            }
+        }
+    }
+
+    /// One builder's bins: allocated once per subtree, not per node.
+    private struct BinScratch {
+        let boxes = UnsafeMutablePointer<AABB>.allocate(capacity: 3 * bins)    // per axis
+        let counts = UnsafeMutablePointer<Int>.allocate(capacity: 3 * bins)
         let rightArea = UnsafeMutablePointer<Float>.allocate(capacity: bins)
         let rightCount = UnsafeMutablePointer<Int>.allocate(capacity: bins)
-        defer { binBoxes.deallocate(); binCounts.deallocate(); rightArea.deallocate(); rightCount.deallocate() }
+        func free() { boxes.deallocate(); counts.deallocate(); rightArea.deallocate(); rightCount.deallocate() }
+    }
 
-        boxes.withUnsafeBufferPointer { bx in
-            order.withUnsafeMutableBufferPointer { ord in
-                func makeNode(_ start: Int, _ end: Int) -> Int {
+    /// Binned-SAH build over `boxes`. `maxLeaf` = most primitives per leaf (1 for instances). Raw pointers and scratch
+    /// bins: this runs over ~18M triangles for the gallery. A node's split depends only on its own range of `order`,
+    /// so the halves of a large range are built in parallel and the result is the same tree, node for node, as a
+    /// build by one thread (`grain` = .max; BVHTests checks it).
+    static func build(boxes: [AABB], masks: [UInt32]?, maxLeaf: Int, grain: Int = parallelGrain) -> (nodes: [Node], order: [Int]) {
+        let n = boxes.count
+        var order = Array(0..<n)
+        guard n > 0 else { return ([], order) }
+        // The boxes in the order of `order`, moved along with it: a node reads its primitives as one contiguous range.
+        // (Measured the same speed as reading them through the index array: the passes are not what the build costs.)
+        let prims = UnsafeMutablePointer<AABB>.allocate(capacity: n)
+        defer { prims.deallocate() }
+        boxes.withUnsafeBufferPointer { prims.initialize(from: $0.baseAddress!, count: n) }
+
+        let root: Part = order.withUnsafeMutableBufferPointer { ord in
+            do {
+                /// The node over ord[start..<end], and where it splits: ord is partitioned around `mid`. mid < 0: a leaf.
+                func split(_ start: Int, _ end: Int, _ scratch: BinScratch) -> (node: Node, mid: Int) {
+                    let binBoxes = scratch.boxes, binCounts = scratch.counts
+                    let rightArea = scratch.rightArea, rightCount = scratch.rightCount
                     var box = AABB(), cbox = AABB()
                     var mask: UInt32 = 0
                     for i in start..<end {
-                        let k = ord[i]
-                        box.grow(bx[k])
-                        cbox.grow(centroids[k])
-                        if let masks { mask |= masks[k] }
+                        box.grow(prims[i])
+                        cbox.grow(prims[i].centroid)
+                        if let masks { mask |= masks[ord[i]] }
                     }
-                    let index = nodes.count
-                    nodes.append(Node(box: box, start: start, count: end - start, mask: mask))
                     let count = end - start
-                    if count == 1 { return index }
+                    let node = Node(box: box, start: start, count: count, mask: mask)
+                    if count == 1 { return (node, -1) }
 
-                    // Best split over all three axes.
+                    // Best split over all three axes. The primitives are binned along the three at once (one pass
+                    // over them instead of three: the pass is what a big node costs); an axis the centroids don't
+                    // spread along bins everything in bin 0 and is left out of the sweep.
                     var bestCost = Float.infinity, bestAxis = -1, bestBin = 0
                     let extent = cbox.hi - cbox.lo
+                    for b in 0..<(3 * bins) { binBoxes[b] = AABB(); binCounts[b] = 0 }
+                    let lo3 = cbox.lo
+                    var scale3 = SIMD3<Float>(repeating: 0)
+                    for axis in 0..<3 where extent[axis] > 0 { scale3[axis] = Float(bins) / extent[axis] }
+                    for i in start..<end {
+                        let box = prims[i]
+                        let f = (box.centroid - lo3) * scale3
+                        let b0 = min(bins - 1, Int(f.x)), b1 = bins + min(bins - 1, Int(f.y)), b2 = 2 * bins + min(bins - 1, Int(f.z))
+                        binBoxes[b0].grow(box); binCounts[b0] += 1
+                        binBoxes[b1].grow(box); binCounts[b1] += 1
+                        binBoxes[b2].grow(box); binCounts[b2] += 1
+                    }
                     for axis in 0..<3 where extent[axis] > 0 {
-                        for b in 0..<bins { binBoxes[b] = AABB(); binCounts[b] = 0 }
-                        let scale = Float(bins) / extent[axis], lo = cbox.lo[axis]
-                        for i in start..<end {
-                            let k = ord[i]
-                            let b = min(bins - 1, Int((centroids[k][axis] - lo) * scale))
-                            binBoxes[b].grow(bx[k])
-                            binCounts[b] += 1
-                        }
+                        let binBoxes = binBoxes + axis * bins, binCounts = binCounts + axis * bins
                         // Sweep: right-side areas and counts first, then left to right.
                         var acc = AABB(), c = 0
                         for b in stride(from: bins - 1, to: 0, by: -1) {
@@ -135,7 +165,7 @@ enum BVHBuilder {
                     }
                     let parentArea = max(box.area, 1e-20)
                     let splitCost = traversalCost + bestCost / parentArea
-                    if count <= maxLeaf && Float(count) <= splitCost { return index }
+                    if count <= maxLeaf && Float(count) <= splitCost { return (node, -1) }
 
                     var mid: Int
                     if bestAxis >= 0 {
@@ -143,24 +173,81 @@ enum BVHBuilder {
                         let lo = cbox.lo[bestAxis]
                         var i = start, j = end - 1
                         while i <= j {
-                            if min(bins - 1, Int((centroids[ord[i]][bestAxis] - lo) * scale)) <= bestBin { i += 1 }
-                            else { ord.swapAt(i, j); j -= 1 }
+                            if min(bins - 1, Int((prims[i].centroid[bestAxis] - lo) * scale)) <= bestBin { i += 1 }
+                            else {
+                                ord.swapAt(i, j)
+                                let moved = prims[i]; prims[i] = prims[j]; prims[j] = moved
+                                j -= 1
+                            }
                         }
                         mid = i
                     } else {
                         mid = (start + end) / 2   // all centroids coincide: split the list in half
                     }
                     if mid == start || mid == end { mid = (start + end) / 2 }
-                    let l = makeNode(start, mid)
-                    let r = makeNode(mid, end)
+                    return (node, mid)
+                }
+                /// One thread's build of ord[start..<end] into `nodes`, depth first. Returns the subtree's root.
+                func serial(_ start: Int, _ end: Int, _ scratch: BinScratch, into nodes: inout [Node]) -> Int {
+                    let (node, mid) = split(start, end, scratch)
+                    let index = nodes.count
+                    nodes.append(node)
+                    if mid < 0 { return index }
+                    let l = serial(start, mid, scratch, into: &nodes)
+                    let r = serial(mid, end, scratch, into: &nodes)
                     nodes[index].left = l
                     nodes[index].right = r
                     return index
                 }
-                _ = makeNode(0, n)
+                func part(_ start: Int, _ end: Int) -> Part {
+                    let scratch = BinScratch()
+                    defer { scratch.free() }
+                    if end - start <= grain {
+                        var nodes: [Node] = []
+                        nodes.reserveCapacity(2 * (end - start))
+                        _ = serial(start, end, scratch, into: &nodes)
+                        return .built(nodes)
+                    }
+                    let (node, mid) = split(start, end, scratch)
+                    if mid < 0 { return .built([node]) }
+                    let halves = UnsafeMutablePointer<Part?>.allocate(capacity: 2)
+                    halves.initialize(repeating: nil, count: 2)
+                    defer { halves.deinitialize(count: 2); halves.deallocate() }
+                    DispatchQueue.concurrentPerform(iterations: 2) { h in   // its own slot each: no lock
+                        halves[h] = h == 0 ? part(start, mid) : part(mid, end)
+                    }
+                    return .split(node, halves[0]!, halves[1]!)
+                }
+                return part(0, n)
             }
         }
+        if case .built(let nodes) = root { return (nodes, order) }
+        let total = root.count
+        let nodes = [Node](unsafeUninitializedCapacity: total) { buffer, count in
+            count = flatten(root, into: buffer.baseAddress!, at: 0)
+        }
         return (nodes, order)
+    }
+
+    /// Writes a subtree's nodes in depth-first order from `base` on, with their indices made absolute. Returns its size.
+    private static func flatten(_ part: Part, into out: UnsafeMutablePointer<Node>, at base: Int) -> Int {
+        switch part {
+        case .built(let nodes):
+            for (i, node) in nodes.enumerated() {
+                var node = node
+                if node.left >= 0 { node.left += base; node.right += base }
+                (out + base + i).initialize(to: node)
+            }
+            return nodes.count
+        case .split(let node, let l, let r):
+            let left = flatten(l, into: out, at: base + 1)
+            let right = flatten(r, into: out, at: base + 1 + left)
+            var node = node
+            node.left = base + 1
+            node.right = base + 1 + left
+            (out + base).initialize(to: node)
+            return 1 + left + right
+        }
     }
 
     /// Writes a built tree as child-pair nodes in depth-first order, starting at `nodeBase` (absolute indices).
@@ -173,10 +260,10 @@ enum BVHBuilder {
             let slot = out.count
             out.append(BVHNode())
             let n = tree[i]
-            for (k, c) in [n.left, n.right].enumerated() {
-                let r = ref(c)
-                out[slot].setChild(k, lo: tree[c].box.lo, hi: tree[c].box.hi, ref: r, mask: tree[c].mask)
-            }
+            let left = ref(n.left)   // depth first: the left subtree's nodes, then the right one's
+            out[slot].setChild(0, lo: tree[n.left].box.lo, hi: tree[n.left].box.hi, ref: left, mask: tree[n.left].mask)
+            let right = ref(n.right)
+            out[slot].setChild(1, lo: tree[n.right].box.lo, hi: tree[n.right].box.hi, ref: right, mask: tree[n.right].mask)
             return nodeBase + slot
         }
         if tree[0].left >= 0 { return UInt32(write(0)) }
@@ -201,43 +288,75 @@ enum BVHBuilder {
     /// One BLAS per mesh, all in one node buffer and one triangle buffer. Meshes are built in parallel.
     static func buildBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh]) -> BLASResult {
         var trees = [(nodes: [Node], order: [Int])](repeating: ([], []), count: meshes.count)
-        let lock = NSLock()
+        // Each mesh's first triangle in the shared triangle buffer (its triangles keep their count, reordered).
+        var triBases = [Int](repeating: 0, count: meshes.count + 1)
+        for (m, mesh) in meshes.enumerated() { triBases[m + 1] = triBases[m] + Int(mesh.indexCount) / 3 }
+        var result = BLASResult()
+        result.triangles = [SIMD4<Float>](repeating: .zero, count: 3 * triBases[meshes.count])
         positions.withUnsafeBufferPointer { pos in
             indices.withUnsafeBufferPointer { idx in
-                DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
-                    let mesh = meshes[m]
-                    let triCount = Int(mesh.indexCount) / 3
-                    var boxes: [AABB] = []
-                    boxes.reserveCapacity(triCount)
-                    for t in 0..<triCount {
-                        var b = AABB()
-                        for k in 0..<3 { b.grow(pos[Int(idx[Int(mesh.firstIndex) + 3 * t + k])]) }
-                        boxes.append(b)
+                trees.withUnsafeMutableBufferPointer { slots in
+                    result.triangles.withUnsafeMutableBufferPointer { tris in
+                        DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
+                            let mesh = meshes[m]
+                            let triCount = Int(mesh.indexCount) / 3, first = Int(mesh.firstIndex)
+                            var boxes: [AABB] = []
+                            boxes.reserveCapacity(triCount)
+                            for t in 0..<triCount {
+                                var b = AABB()
+                                for k in 0..<3 { b.grow(pos[Int(idx[first + 3 * t + k])]) }
+                                boxes.append(b)
+                            }
+                            let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+                            // The mesh's triangles in leaf order, into its own range of the buffer.
+                            var out = 3 * triBases[m]
+                            for t in tree.order {
+                                let base = first + 3 * t
+                                let p0 = pos[Int(idx[base])], p1 = pos[Int(idx[base + 1])], p2 = pos[Int(idx[base + 2])]
+                                tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
+                                tris[out + 1] = SIMD4(p1 - p0, 0)
+                                tris[out + 2] = SIMD4(p2 - p0, 0)
+                                out += 3
+                            }
+                            slots[m] = tree   // its own slot: no lock
+                        }
                     }
-                    let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
-                    lock.lock(); trees[m] = tree; lock.unlock()
                 }
             }
         }
-        var result = BLASResult()
-        result.nodes.reserveCapacity(trees.reduce(0) { $0 + $1.nodes.count / 2 + 1 })
-        result.triangles.reserveCapacity(3 * indices.count / 3)
-        for (m, mesh) in meshes.enumerated() {
-            let (tree, order) = trees[m]
-            let triBase = result.triangles.count / 3
-            for t in order {
-                let base = Int(mesh.firstIndex) + 3 * t
-                let p0 = positions[Int(indices[base])], p1 = positions[Int(indices[base + 1])], p2 = positions[Int(indices[base + 2])]
-                result.triangles.append(SIMD4(p0, Float(bitPattern: UInt32(t))))
-                result.triangles.append(SIMD4(p1 - p0, 0))
-                result.triangles.append(SIMD4(p2 - p0, 0))
+        // Each mesh's nodes go to its own range of the node buffer: a tree of n leaves has n - 1 child-pair nodes (a
+        // lone leaf gets a root of its own), so the ranges are known up front and the meshes are written in parallel.
+        var nodeBases = [Int](repeating: 0, count: meshes.count + 1)
+        for m in meshes.indices {
+            let count = trees[m].nodes.count
+            nodeBases[m + 1] = nodeBases[m] + (count == 0 ? 0 : max((count - 1) / 2, 1))
+        }
+        result.nodes = [BVHNode](repeating: BVHNode(), count: nodeBases[meshes.count])
+        var roots = [UInt32](repeating: BVHNode.none, count: meshes.count)
+        var depths = [Int](repeating: 0, count: meshes.count)
+        result.nodes.withUnsafeMutableBufferPointer { out in
+            roots.withUnsafeMutableBufferPointer { rootSlots in
+            depths.withUnsafeMutableBufferPointer { depthSlots in
+                DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
+                    let triBase = triBases[m]
+                    var local: [BVHNode] = []
+                    local.reserveCapacity(nodeBases[m + 1] - nodeBases[m])
+                    rootSlots[m] = emit(trees[m].nodes, nodeBase: nodeBases[m], into: &local, forceInternalRoot: true) { n in
+                        BVHNode.blasLeaf(first: triBase + n.start, count: n.count)
+                    }
+                    precondition(local.count == nodeBases[m + 1] - nodeBases[m])
+                    for (i, node) in local.enumerated() { out[nodeBases[m] + i] = node }
+                    depthSlots[m] = depth(trees[m].nodes)
+                }
             }
-            let root = emit(tree, nodeBase: 0, into: &result.nodes, forceInternalRoot: true) { n in
-                BVHNode.blasLeaf(first: triBase + n.start, count: n.count)
             }
+        }
+        for m in meshes.indices {
+            let tree = trees[m].nodes
+            let root = roots[m]
             result.roots.append(root)
             result.bounds.append(tree.first?.box ?? AABB())
-            result.maxDepth = max(result.maxDepth, depth(tree))
+            result.maxDepth = max(result.maxDepth, depths[m])
         }
         return result
     }

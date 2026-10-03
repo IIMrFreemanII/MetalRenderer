@@ -160,7 +160,6 @@ enum VirtualGeometryBuilder {
 
         var clusters: [Cluster] = []
         var groups: [(members: [Int], error: Float, sphere: SIMD4<Float>, level: Int)] = []
-        let lock = NSLock()
 
         positions.withUnsafeBufferPointer { P in
         normals.withUnsafeBufferPointer { N in
@@ -207,31 +206,33 @@ enum VirtualGeometryBuilder {
                 let lockedPositions = shared
                 // Simplify every group in parallel, then cluster its result.
                 var results = [(tris: [UInt32], error: Float, outputs: [Cluster])?](repeating: nil, count: parts.count)
-                DispatchQueue.concurrentPerform(iterations: isLast ? 0 : parts.count) { g in
-                    let members = parts[g].map { current[$0] }
-                    var tris: [UInt32] = []
-                    for m in members { tris += clusters[m].triangles }
-                    var (simplified, err) = MeshSimplifier.simplify(triangles: tris, positions: P, posId: PID, uvs: UV,
-                                                                     targetTriangles: tris.count / 6,
-                                                                     locked: { lockedPositions[Int($0)] })
-                    if simplified.count > tris.count * 3 / 4 {
-                        // Stuck on UV seams: finish with the relaxed pass (textures may stretch slightly at this LOD).
-                        let (relaxed, rerr) = MeshSimplifier.simplify(triangles: simplified, positions: P, posId: PID, uvs: UV,
-                                                                      targetTriangles: tris.count / 6, relaxed: true,
-                                                                      locked: { lockedPositions[Int($0)] })
-                        simplified = relaxed
-                        err = max(err, rerr)
+                results.withUnsafeMutableBufferPointer { slots in
+                    DispatchQueue.concurrentPerform(iterations: isLast ? 0 : parts.count) { g in
+                        let members = parts[g].map { current[$0] }
+                        var tris: [UInt32] = []
+                        for m in members { tris += clusters[m].triangles }
+                        var (simplified, err) = MeshSimplifier.simplify(triangles: tris, positions: P, posId: PID, uvs: UV,
+                                                                         targetTriangles: tris.count / 6,
+                                                                         locked: { lockedPositions[Int($0)] })
+                        if simplified.count > tris.count * 3 / 4 {
+                            // Stuck on UV seams: finish with the relaxed pass (textures may stretch slightly at this LOD).
+                            let (relaxed, rerr) = MeshSimplifier.simplify(triangles: simplified, positions: P, posId: PID, uvs: UV,
+                                                                          targetTriangles: tris.count / 6, relaxed: true,
+                                                                          locked: { lockedPositions[Int($0)] })
+                            simplified = relaxed
+                            err = max(err, rerr)
+                        }
+                        if simplified.isEmpty || simplified.count > tris.count * 85 / 100 {
+                            // Stuck (all border, say): pass the group up unchanged, so it meets new neighbours next level.
+                            simplified = tris
+                            err = 0
+                        }
+                        let error = max(err, members.map { clusters[$0].selfError }.max() ?? 0)
+                        var s = members.map { clusters[$0].selfSphere }.reduce(clusters[members[0]].sphere, union)
+                        for m in members { s = union(s, clusters[m].sphere) }
+                        let outputs = makeClusters(simplified, selfError: error, selfSphere: s, childGroup: Int32(groupBase + g))
+                        slots[g] = (simplified, error, outputs)   // its own slot: no lock
                     }
-                    if simplified.isEmpty || simplified.count > tris.count * 85 / 100 {
-                        // Stuck (all border, say): pass the group up unchanged, so it meets new neighbours next level.
-                        simplified = tris
-                        err = 0
-                    }
-                    let error = max(err, members.map { clusters[$0].selfError }.max() ?? 0)
-                    var s = members.map { clusters[$0].selfSphere }.reduce(clusters[members[0]].sphere, union)
-                    for m in members { s = union(s, clusters[m].sphere) }
-                    let outputs = makeClusters(simplified, selfError: error, selfSphere: s, childGroup: Int32(groupBase + g))
-                    lock.lock(); results[g] = (simplified, error, outputs); lock.unlock()
                 }
                 var next: [Int] = []
                 for (g, part) in parts.enumerated() {
