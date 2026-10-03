@@ -96,7 +96,7 @@ extension Scene {
                 addInstance(kit.quad, addMaterial(albedo: .zero, emission: radiance),
                             float4x4(SIMD4(t * 1.2, 0), SIMD4(nn, 0), SIMD4(b * 0.6, 0), SIMD4(center, 1)))
             } else {
-                addLight(.rect(width: 1.2, height: 0.6), color: radiance) { _ in pose }
+                addLight(.rect(width: 1.2, height: 0.6), color: radiance, motion: .constant) { _ in pose }
             }
         case "tube":
             let intensity = SIMD3<Float>(3, 3, 3), length: Float = 1.6, r: Float = 0.05
@@ -106,7 +106,7 @@ extension Scene {
                             addMaterial(albedo: .zero, emission: 2 * intensity / (.pi * r * length)),
                             translate(center) * Scene.alignY(axis))
             } else {
-                addLight(.tube(length: length, radius: r), color: intensity) { _ in LightPose(position: center, direction: axis) }
+                addLight(.tube(length: length, radius: r), color: intensity, motion: .constant) { _ in LightPose(position: center, direction: axis) }
             }
         case "empty":
             break
@@ -115,7 +115,7 @@ extension Scene {
             if mesh {
                 addInstance(kit.sphere, addMaterial(albedo: .zero, emission: intensity / (.pi * r * r)), translate(center) * scale(r))
             } else {
-                addLight(.sphere(radius: r), color: intensity) { _ in LightPose(position: center) }
+                addLight(.sphere(radius: r), color: intensity, motion: .constant) { _ in LightPose(position: center) }
             }
         }
         defaultCamera = Scene.camera([0, 3.2, 4.2], pitch: -0.55)
@@ -262,7 +262,7 @@ extension Scene {
         // Softboxes face the objects; the window panel sits on the back wall, the long panel on the ceiling.
         let target = SIMD3<Float>(0, 0.6, -2.6)
         let left = SIMD3<Float>(-4.5, 3.2, 1.2)
-        addLight(.rect(width: 1.6, height: 1.2), color: SIMD3<Float>(1.0, 0.92, 0.82) * 7) { _ in
+        addLight(.rect(width: 1.6, height: 1.2), color: SIMD3<Float>(1.0, 0.92, 0.82) * 7, motion: .constant) { _ in
             LightPose(position: left, direction: normalize(target - left))
         }
         addLight(.rect(width: 1.2, height: 1.2), color: SIMD3<Float>(0.85, 0.9, 1.0) * 6) { t in
@@ -270,10 +270,10 @@ extension Scene {
             let p = target + SIMD3<Float>(4.2 * sin(a), 2.0 + 0.6 * sin(0.5 * t), 4.2 * cos(a))
             return LightPose(position: p, direction: normalize(target - p))
         }
-        addLight(.rect(width: 5, height: 0.5), color: SIMD3<Float>(1.0, 0.97, 0.92) * 6) { _ in
+        addLight(.rect(width: 5, height: 0.5), color: SIMD3<Float>(1.0, 0.97, 0.92) * 6, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -2.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }
-        addLight(.rect(width: 3.2, height: 2.2), color: SIMD3<Float>(0.75, 0.85, 1.0) * 2.2) { _ in
+        addLight(.rect(width: 3.2, height: 2.2), color: SIMD3<Float>(0.75, 0.85, 1.0) * 2.2, motion: .constant) { _ in
             LightPose(position: [3.5, 2.6, -6.97], direction: [0, 0, 1], tangent: [1, 0, 0])
         }
         defaultCamera = Scene.demoCamera(.area)!
@@ -309,16 +309,16 @@ extension Scene {
         // Fluorescent tubes: three rows of two along X, just below the ceiling.
         for z: Float in [-5, -2, 1] {
             for x: Float in [-3.2, 3.2] {
-                addLight(.tube(length: 1.5, radius: 0.025), color: SIMD3<Float>(0.95, 0.97, 1.0) * 2.2) { _ in
+                addLight(.tube(length: 1.5, radius: 0.025), color: SIMD3<Float>(0.95, 0.97, 1.0) * 2.2, motion: .constant) { _ in
                     LightPose(position: [x, 3.3, z], direction: [1, 0, 0])
                 }
             }
         }
         // Neon: pink along the back wall, a cyan upright on the left (flickering), an amber one on the right.
-        addLight(.tube(length: 4, radius: 0.03), color: Scene.hue([1.0, 0.2, 0.6]) * 2.5) { _ in
+        addLight(.tube(length: 4, radius: 0.03), color: Scene.hue([1.0, 0.2, 0.6]) * 2.5, motion: .constant) { _ in
             LightPose(position: [0, 2.5, -7.9], direction: [1, 0, 0])
         }
-        addLight(.tube(length: 2, radius: 0.03), color: Scene.hue([0.15, 0.9, 1.0]) * 2) { t in
+        addLight(.tube(length: 2, radius: 0.03), color: Scene.hue([0.15, 0.9, 1.0]) * 2, motion: .scaleOnly) { t in
             // Mostly on, with bursts of quick dropouts.
             let k = Float(Int(t * 12) &* 7919 % 101) / 101
             let burst = sin(0.9 * t) > 0.6
@@ -597,7 +597,7 @@ extension Scene {
             return LightPose(position: .zero, direction: [cos(e) * sin(az), sin(e), cos(e) * cos(az)])
         }
         skyColor = SIMD3<Float>(0.35, 0.3, 0.45) * 0.3
-        addLight(.rect(width: 1.2, height: 0.6), color: SIMD3<Float>(1.0, 0.85, 0.65) * 4) { _ in
+        addLight(.rect(width: 1.2, height: 0.6), color: SIMD3<Float>(1.0, 0.85, 0.65) * 4, motion: .constant) { _ in
             LightPose(position: [0, h - 0.02, 0], direction: [0, -1, 0], tangent: [1, 0, 0])
         }
         let lamp = SIMD3<Float>(4.4, 1.35, -3.6)
@@ -607,11 +607,11 @@ extension Scene {
             let target = SIMD3<Float>(3.5 + 0.4 * sin(0.3 * t), 0.8, -3.3)
             return LightPose(position: lamp, direction: normalize(target - lamp))
         }
-        addLight(.tube(length: 2.4, radius: 0.02), color: SIMD3<Float>(0.8, 0.9, 1.0) * 1.2) { _ in
+        addLight(.tube(length: 2.4, radius: 0.02), color: SIMD3<Float>(0.8, 0.9, 1.0) * 1.2, motion: .constant) { _ in
             LightPose(position: [-0.3, 1.86, -3.8], direction: [1, 0, 0])
         }
         kit.slab([-3.82, 0, -3.22], [-3.78, 1.55, -3.18], black)                    // floor lamp stand
-        addLight(.sphere(radius: 0.12), color: SIMD3<Float>(1.0, 0.7, 0.4) * 3) { _ in LightPose(position: [-3.8, 1.7, -3.2]) }
+        addLight(.sphere(radius: 0.12), color: SIMD3<Float>(1.0, 0.7, 0.4) * 3, motion: .constant) { _ in LightPose(position: [-3.8, 1.7, -3.2]) }
         defaultCamera = Scene.demoCamera(.mixed)!
     }
 
@@ -649,7 +649,7 @@ extension Scene {
                         let z = z0 + 1.6 + Float(w) * 2.4
                         let c = warmWindow[rng.int(warmWindow.count)] * rng.range(0.25, 0.7)
                         let flicker = rng.next() < 0.15, phase = rng.range(0, 6.28)
-                        addLight(.rect(width: 1.0, height: 1.3), color: c) { t in
+                        addLight(.rect(width: 1.0, height: 1.3), color: c, motion: flicker ? .scaleOnly : .constant) { t in
                             LightPose(position: [side * (halfWidth - 0.01), floorY, z], direction: [-side, 0, 0], tangent: [0, 0, 1],
                                       scale: SIMD3(repeating: flicker ? 0.75 + 0.25 * sin(7 * t + phase) * sin(3.1 * t) : 1))
                         }
@@ -668,7 +668,7 @@ extension Scene {
                 }
                 addInstance(kit.cube, cloth[rng.int(cloth.count)],
                             translate([x, 2.35, z]) * rotate(side * 0.2, [0, 0, 1]) * scale([1.4, 0.04, 2.4]))
-                addLight(.rect(width: 1.1, height: 1.8), color: SIMD3<Float>(1.0, 0.78, 0.5) * rng.range(0.5, 1.0)) { _ in
+                addLight(.rect(width: 1.1, height: 1.8), color: SIMD3<Float>(1.0, 0.78, 0.5) * rng.range(0.5, 1.0), motion: .constant) { _ in
                     LightPose(position: [x, 2.28, z], direction: [0, -1, 0], tangent: [0, 0, 1])
                 }
                 // Goods on the counter.
@@ -699,7 +699,7 @@ extension Scene {
                 let p = point(s) - [0, 0.06, 0]
                 let color = (rng.next() < 0.6 ? Scene.hue([1.0, 0.72, 0.42]) : Scene.hue(palette[rng.int(palette.count)])) * bulbPower
                 let phase = Float(j) * 0.35
-                addLight(.sphere(radius: bulbRadius), color: color, proxyMesh: kit.sphere) { t in
+                addLight(.sphere(radius: bulbRadius), color: color, proxyMesh: kit.sphere, motion: chase ? .scaleOnly : .constant) { t in
                     LightPose(position: p, scale: SIMD3(repeating: chase ? 0.55 + 0.45 * max(0, sin(3 * t - phase)) : 1))
                 }
             }

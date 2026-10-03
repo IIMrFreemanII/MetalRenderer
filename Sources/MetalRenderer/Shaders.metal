@@ -213,10 +213,27 @@ inline float luminance(float3 c) { return dot(c, float3(0.2126f, 0.7152f, 0.0722
 // toward zero, and the denoiser's history feedback amplifies that bias into visible darkening.
 inline float4 roundToHalf(float4 v) { return float4(half4(v)); }
 
+// "No hit" / "unbounded" distances are INFINITY. Test for them with isFar, not isinf or == INFINITY: fast math (the
+// default) may assume there are no infinities and fold those away, but it can't fold a comparison with a finite number.
+constant float FAR_DISTANCE = 1e30f;
+inline bool isFar(float t) { return t >= FAR_DISTANCE; }
+
 inline uint pcgHash(uint v) {
     uint state = v * 747796405u + 2891336453u;
     uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
+}
+
+// A kernel's per-pixel, per-frame seed. Kernels that run in the same frame must not share a salt: two streams from
+// one seed pick correlated samples (a light and a bounce direction, say).
+constant uint SEED_TRACE             = 0u;
+constant uint SEED_FOG_REFERENCE     = 0x5bd1e995u;
+constant uint SEED_MANY_LIGHTS       = 0x9E3779B9u;   // manyLightsKernel / manyLightsReuseKernel: one of them runs
+constant uint SEED_RESTIR_DI         = 0x2545F491u;
+constant uint SEED_RESTIR_GI         = 0x85EBCA6Bu;
+constant uint SEED_RESTIR_GI_HISTORY = 0x7F4A7C15u;
+inline uint pixelSeed(uint2 pixel, uint frame, uint salt) {
+    return pcgHash(pixel.x + pcgHash(pixel.y + pcgHash(frame ^ salt)));
 }
 
 // Simple per-pixel random stream (white noise).
@@ -390,6 +407,7 @@ struct RTScene {
     uint virtualBase;                     // the cluster tree's first node
     uint pad;
 };
+static_assert(sizeof(RTScene) == 96, "RTScene: CustomRayTracer.writeArgs writes these offsets");
 
 #ifndef RT_STATS
 #define RT_STATS 0
@@ -412,6 +430,7 @@ struct VGBlas {
     uint                  triangles;   // 0 = no BLAS yet (the instance is skipped)
     uint                  pad;
 };
+static_assert(sizeof(VGBlas) == 32, "VGBlas: VirtualBLAS.Entry");
 
 // A virtual-geometry cluster's data in the pool (VirtualGeometryBuilder.clusterBlob): header (2 x uint4), BVH
 // nodes, vertices (position + octahedral normal), UVs (half2), triangles (three 8-bit local indices).
@@ -1496,7 +1515,10 @@ struct RegirParams {
     uint4  consume;                    // x = grid candidates per pixel (0 = grid off), y = frame seed
 };
 
+static_assert(sizeof(RegirParams) == 96, "RegirParams: GPURegirParams");
+
 struct RegirReservoir { uint element; uint uv; float W; float target; };   // uv packed unorm2x16; target = the cell's
+static_assert(sizeof(RegirReservoir) == 16, "RegirReservoir: GPURegirReservoir");
 
 struct RegirCell { uint base; bool valid; };   // base = the first slot of the point's cell
 
@@ -1776,13 +1798,13 @@ kernel void lightMapKernel(constant Uniforms&                     u         [[bu
         float R = light.params.w;
         float3 origin = light.params.xyz + w * (R * 1.05f) + (t * f.x + b * f.y) * R;
         float d = intersectDistance(makeRay(origin, -w, 0.0f, INFINITY), MASK_GEOMETRY, accel);
-        lightMap.write(float4(isinf(d) ? 1e30f : d), tid.xy, tid.z);
+        lightMap.write(float4(isFar(d) ? FAR_DISTANCE : d), tid.xy, tid.z);
         return;
     }
     float3 dir = equalAreaOctDecode(f);
     float start = lightMapStart(light);
     float t = intersectDistance(makeRay(lightMapCenter(light) + dir * start, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel);
-    lightMap.write(float4(isinf(t) ? 1e30f : start + t), tid.xy, tid.z);
+    lightMap.write(float4(isFar(t) ? FAR_DISTANCE : start + t), tid.xy, tid.z);
 }
 
 // 2x2 PCF of "map depth >= depth - bias" around continuous texel coordinate tc.
@@ -1962,7 +1984,7 @@ float4 fogMedium(float3 p, constant FogParams& f, float n) {
 float heightFogDepth(float3 o, float3 d, float t, constant FogParams& f) {
     float rho = f.medium.x, b = f.medium.y, h = o.y - f.medium.z;
     if (rho <= 0.0f || t <= 0.0f) return 0.0f;
-    if (abs(d.y) < 1e-4f) return isinf(t) ? INFINITY : rho * exp(-b * max(h, 0.0f)) * t;
+    if (abs(d.y) < 1e-4f) return isFar(t) ? INFINITY : rho * exp(-b * max(h, 0.0f)) * t;
     float base = clamp(-h / d.y, 0.0f, t);   // where the ray crosses the base height, within [0, t]
     // Below the base: [0, base] going up, [base, t] going down. Above: the rest.
     float below = d.y > 0.0f ? base : t - base;
@@ -1971,7 +1993,7 @@ float heightFogDepth(float3 o, float3 d, float t, constant FogParams& f) {
     if (a1 > a0) {
         if (b < 1e-5f) return tau + rho * (a1 - a0);
         float e0 = exp(-b * max(h + d.y * a0, 0.0f));
-        float e1 = isinf(a1) ? 0.0f : exp(-b * max(h + d.y * a1, 0.0f));
+        float e1 = isFar(a1) ? 0.0f : exp(-b * max(h + d.y * a1, 0.0f));
         tau += rho * (e0 - e1) / (b * d.y);
     }
     return tau;
@@ -2370,7 +2392,7 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
     s.lightCount = u.lightCount;
     s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
     Rng rng;
-    rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x5bd1e995u)));
+    rng.state = pixelSeed(tid, u.frameIndex, SEED_FOG_REFERENCE);
 
     float3 dir = primaryDirection(u, tid);
     float viewDepth = normalDepth.read(tid).w;
@@ -2698,6 +2720,7 @@ kernel void skyKernel(constant SkyParams&                       sp        [[buff
 // The clear sky's cosine-weighted mean radiance over the upper hemisphere (the atmosphere, or the image), from 64
 // directions: lights the clouds and the ground from around, before this frame's skyKernel. (Not the clouded sky:
 // clouds lit by their own darkness would darken each other frame after frame.)
+[[max_total_threads_per_threadgroup(64)]]
 kernel void skyMeanKernel(constant SkyParams&    sp            [[buffer(0)]],
                           device float4*         skyMean       [[buffer(1)]],
                           texture2d<float>       image         [[texture(0)]],
@@ -2844,7 +2867,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     rng.frame = u.frameIndex;
     rng.dimension = 0;
     rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
-    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex)));
+    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_TRACE);
 
     // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
     float2 size = float2(u.width, u.height);
@@ -3054,7 +3077,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
     rng.frame = u.frameIndex;
     rng.dimension = 64;   // other blue-noise windows than traceKernel's
     rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
-    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x9E3779B9u)));
+    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
 
     uint rays = clamp(raysPerGroup, 1u, MAX_RAYS_PER_GROUP);
     float4 sel[MAX_RAYS_PER_GROUP];
@@ -3145,7 +3168,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
     rng.frame = u.frameIndex;
     rng.dimension = 64;   // other blue-noise windows than traceKernel's
     rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
-    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x9E3779B9u)));
+    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
 
     float3 direct = float3(0.0f);
     float4 visibility = float4(0.0f), blocker = float4(0.0f);
@@ -3397,7 +3420,7 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
     device const LightTableEntry* entries = lightTableEntries(lights, u.lightCount);
     device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
     Rng rng;
-    rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x2545F491u)));
+    rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_DI);
 
     // Last frame's pixel (nearest, same surface), shared by the chains.
     int2 q = int2(-1);
@@ -3785,9 +3808,9 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
     rng.blueNoise = blueNoise;
     rng.pixel = gid;           // quarter budget: per block, so the traced pixels' samples stay well spread
     rng.frame = u.frameIndex;
-    rng.dimension = 64;        // past traceKernel's and the reflections' dimensions
+    rng.dimension = 128;       // past traceKernel's, the reflections' and the direct-light kernels' dimensions
     rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
-    rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x9E3779B9u)));
+    rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI);
 
     // The path, as traceKernel's: its first hit is the sample, the rest is the light leaving it.
     GIReservoir r = emptyGIReservoir();
@@ -3914,7 +3937,7 @@ kernel void restirGITemporalKernel(constant Uniforms&                 u         
                     // Generalized balance heuristic over the two domains, last frame's target approximated at this
                     // frame's surface: the weights reduce to the confidences.
                     Rng rng;
-                    rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x7F4A7C15u)));
+                    rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI_HISTORY);
                     float dMin2 = gp.tuning.y * gp.tuning.y;
                     float cc = giTarget(r, rc, dMin2), hc = giTarget(h, rc, dMin2);
                     float Msum = r.M + h.M;
@@ -4435,6 +4458,7 @@ kernel void atrousKernel(constant Uniforms&              u        [[buffer(0)]],
 // ---------------------------------------------------------------------------------------------
 
 // params: x = max history frames, y = clamp width (standard deviations), z = edge-stopping width, w = step size
+[[max_total_threads_per_threadgroup(64)]]   // the 8x8 group is the tile (plus its apron) below
 kernel void shadowTemporalKernel(constant Uniforms&              u          [[buffer(0)]],
                                  constant float4&                params     [[buffer(1)]],
                                  texture2d<float, access::read>  visibility [[texture(0)]],
@@ -5446,6 +5470,7 @@ inline uint rtExpandBits(uint v) {   // 10 bits -> every third bit
 
 // One threadgroup of 1024: centroid bounds of the moving instances, then 30-bit Morton keys, padded to `padded`
 // (a power of two) with keys that sort last.
+[[max_total_threads_per_threadgroup(1024)]]
 kernel void rtKeysKernel(constant uint2&       counts    [[buffer(0)]],   // x = moving instances, y = padded count
                          device const float4*  leafBoxes [[buffer(1)]],
                          device uint*          keys      [[buffer(2)]],
@@ -5497,6 +5522,7 @@ inline void rtSortStep(threadgroup uint* sk, threadgroup uint* sv, uint n, uint 
 // Bitonic sort of (key, value) pairs, ascending. params.y = 0: sort each 2048-key block (alternating directions,
 // as bitonic merging needs); params.y = k > 2048: finish stage k inside each block (j < 2048). The padded count
 // comes from `counts` (y), possibly written on the GPU: dispatches cover a capacity and skip what's beyond it.
+[[max_total_threads_per_threadgroup(1024)]]
 kernel void rtSortLocalKernel(constant uint2&  params [[buffer(0)]],
                               device uint*     keys   [[buffer(1)]],
                               device uint*     values [[buffer(2)]],
@@ -5640,6 +5666,7 @@ struct VGCluster {
     uint pageOffset;       // bytes into the page
     uint triangles;
 };
+static_assert(sizeof(VGCluster) == 80, "VGCluster: VirtualGeometryBuilder.VGCluster (also the on-disk format)");
 
 struct VGInstance {
     uint instance;         // scene instance
@@ -5649,6 +5676,7 @@ struct VGInstance {
     float4 lo;             // the mesh's bounds (object space), for Morton keys
     float4 hi;
 };
+static_assert(sizeof(VGInstance) == 48, "VGInstance: VirtualGeometry writes three 16-byte rows");
 
 struct VGParams {
     float4 camPos;         // xyz, w = pixels per unit of error at distance 1 (traced height / (2 tan(fovY / 2)))
@@ -5661,6 +5689,7 @@ struct VGParams {
     uint   nodeBase;       // the cluster tree's first node in the top-level node buffer
     uint   pad;
 };
+static_assert(sizeof(VGParams) == 48, "VGParams: VirtualGeometry's Params");
 
 kernel void vgResetKernel(device uint* counters [[buffer(0)]]) {   // selected, requests, overflow
     counters[0] = 0; counters[1] = 0; counters[2] = 0;
@@ -5708,7 +5737,7 @@ kernel void vgCutKernel(constant VGParams&           p           [[buffer(0)]],
     InstanceData inst = instances[vi.instance];
     float4x4 m = inst.transform;
     float scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
-    if (c.hi.w != INFINITY && vgProjected(c.parentSphere, c.hi.w, m, scale, p.camPos) <= p.tau) return;   // coarser is enough
+    if (!isFar(c.hi.w) && vgProjected(c.parentSphere, c.hi.w, m, scale, p.camPos) <= p.tau) return;   // coarser is enough
     if (c.childGroup != 0xFFFFFFFFu) {
         float own = vgProjected(c.selfSphere, c.lo.w, m, scale, p.camPos);
         if (own > p.tau) {

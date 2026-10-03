@@ -233,6 +233,13 @@ final class VirtualGeometry {
 
     // MARK: Per frame
 
+    /// Shaders.metal VGParams (48 bytes).
+    struct Params {
+        var camPos: SIMD4<Float>
+        var tau: Float
+        var workCount, instanceCount, capacity, frame, requestCapacity, nodeBase, pad: UInt32
+    }
+
     /// Encodes the cut and the cluster tree build. `nodeBase`: the tree's first node in `tlasNodes`.
     func encode(_ enc: MTLComputeCommandEncoder, slot: Int, rt: RTPipelines, vg: VGPipelines, instanceData: MTLBuffer,
                 tlasNodes: MTLBuffer, nodeBase: Int, camPos: SIMD3<Float>, pixelScale: Float, tau: Float, frame: UInt32) {
@@ -241,11 +248,6 @@ final class VirtualGeometry {
             enc.setComputePipelineState(pso)
             enc.dispatchThreads(MTLSize(width: max(threads, 1), height: 1, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: min(group, pso.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
-        }
-        struct Params {
-            var camPos: SIMD4<Float>
-            var tau: Float
-            var workCount, instanceCount, capacity, frame, requestCapacity, nodeBase, pad: UInt32
         }
         var p = Params(camPos: SIMD4(camPos, pixelScale), tau: tau, workCount: UInt32(workCount), instanceCount: UInt32(instanceCount),
                        capacity: UInt32(VirtualGeometry.capacity), frame: frame, requestCapacity: UInt32(VirtualGeometry.requestCapacity),

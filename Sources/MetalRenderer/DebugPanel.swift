@@ -14,6 +14,7 @@ struct DebugInfo {
 
     var stats = ""
     var cpuMs = 0.0                     // the CPU's frame interval, averaged
+    var encodeMs = 0.0                  // the CPU's own work per frame (simulation, uploads, encoding), averaged
     var sceneTitle = ""
     var instances = 0, virtualInstances = 0, triangles = 0
     var analyticLights = 0, meshLights = 0, suns = 0
@@ -177,7 +178,7 @@ final class DebugPanel: NSObject {
     private func refresh() {
         guard panel.isVisible else { return }
         let d = renderer.debugInfo()
-        stats.stringValue = d.stats + String(format: " — CPU %.1f ms", d.cpuMs)
+        stats.stringValue = d.stats + String(format: " — CPU %.1f ms (encode %.2f)", d.cpuMs, d.encodeMs)
 
         let lights = [(d.analyticLights, "analytic"), (d.meshLights, "mesh"), (d.suns, d.suns == 1 ? "sun" : "suns")]
             .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }

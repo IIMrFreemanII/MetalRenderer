@@ -17,6 +17,14 @@ final class Scene {
         var prevTransform: float4x4
         var animation: ((Float) -> float4x4)?
         var virtualMesh = -1                  // >= 0: index into `virtualMeshes` (then `mesh` is -1)
+        /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; the custom ray
+        /// tracer reads its rows as the world -> object matrix).
+        var normalMatrix = matrix_identity_float4x4
+        /// A light's proxy whose light moves (`LightMotion.animated`): `Scene.update` re-poses it every frame.
+        var poseAnimated = false
+
+        /// Never moves: its transform is the one it was added with (the ray tracers' static trees).
+        var isStatic: Bool { animation == nil && !poseAnimated }
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -48,10 +56,19 @@ final class Scene {
         var scale = SIMD3<Float>(repeating: 1)   // multiplies the colour (flicker, the sun's colour over the day)
     }
 
+    /// What of a light's pose changes over time: `update` re-evaluates only that, and only an `animated` light's proxy
+    /// is a moving instance for the ray tracers. (Suns are always re-posed: they follow the time of day.)
+    enum LightMotion {
+        case animated      // position / direction (and maybe scale)
+        case scaleOnly     // fixed in place, its brightness or colour changes (flicker, chases)
+        case constant      // nothing
+    }
+
     struct Light {
         var kind: LightKind
         var color: SIMD3<Float>               // see LightKind for the units
         var pose: (Float) -> LightPose
+        var motion = LightMotion.animated
         var current = LightPose(position: .zero)
         var proxyInstance = -1                // visible emissive shape that follows the light (maskLights)
         var proxyMaterial = -1
@@ -112,8 +129,8 @@ final class Scene {
     private(set) var virtualMeshes: [VirtualMesh] = []
     private(set) var virtualMeshNames: [String] = []
     let usesVirtualGeometry: Bool
-    /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only).
-    var hasSpecular: Bool { materials.contains { $0.params.x > 0 } }
+    /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
+    private(set) var hasSpecular = false
     private(set) var indices: [UInt32] = []
     private(set) var meshes: [GPUMesh] = []
     private(set) var materials: [GPUMaterial] = []
@@ -121,8 +138,17 @@ final class Scene {
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
     private(set) var emissiveTriangles: [GPUEmissiveTriangle] = []
-    /// Materials changed since the renderer last uploaded them (light proxies whose brightness is animated).
-    var materialsChanged = false
+    /// The materials changed since the renderer last took this (light proxies whose brightness is animated): the
+    /// smallest range that holds them all.
+    private var materialsDirty: Range<Int>?
+    /// What `update` has to touch every frame, found once by init (nil while it builds the scene: everything then).
+    private var animated: (instances: [Int], lights: [Int], scaledLights: [Int])?
+    /// The lights whose GPU record changes from frame to frame (moving, flickering, the mesh lights of moving
+    /// instances), and each instance's rank + 1 among the virtual ones (0 = not virtual).
+    private var changingLights: [Int] = []
+    private var virtualRank: [UInt32] = []
+    /// The first sun among the lights (the sky follows it), if any.
+    private(set) var firstSun: Int?
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
@@ -167,6 +193,30 @@ final class Scene {
         lightTable = LightTable(scene: self)
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
+
+        // Nothing is added from here on: what the frame loop asks for every frame is fixed.
+        hasSpecular = materials.contains { $0.params.x > 0 }
+        switch ProcessInfo.processInfo.environment["METALRENDERER_LIGHT_TABLE"] {
+        case "1": usesLightTable = true
+        case "0": usesLightTable = false
+        default: usesLightTable = lights.count > Scene.lightTableThreshold
+        }
+        firstSun = lights.firstIndex { $0.kind.isSun }
+        var rank: UInt32 = 0
+        virtualRank = instances.map { inst in
+            guard inst.virtualMesh >= 0 else { return 0 }
+            rank += 1
+            return rank
+        }
+        func moves(_ l: Light) -> Bool { l.kind.isSun || l.motion == .animated }
+        animated = (instances: instances.indices.filter { !instances[$0].isStatic },
+                    lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
+                    scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
+        changingLights = lights.indices.filter {
+            if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
+            return moves(lights[$0]) || lights[$0].motion == .scaleOnly
+        }
+        materialsDirty = nil
     }
 
     // MARK: - Animation
@@ -174,25 +224,49 @@ final class Scene {
     /// Poses everything at time `t`; suns and the sky colour follow `dayTime` instead (Time of day offsets it).
     func update(time t: Float, dayTime: Float? = nil) {
         let day = dayTime ?? t
-        for i in instances.indices {
+        func move(_ i: Int) {
             instances[i].prevTransform = instances[i].transform
-            if let animation = instances[i].animation {
-                instances[i].transform = animation(t)
+            if let animation = instances[i].animation { setTransform(i, animation(t)) }
+        }
+        // A light's pose; `placed`: its position and direction too (otherwise only its scale is taken).
+        func pose(_ l: Int, placed: Bool) {
+            let old = lights[l].current.scale
+            let pose = lights[l].pose(lights[l].kind.isSun ? day : t)
+            if placed {
+                lights[l].current = pose
+                let s = lights[l].proxyInstance
+                if s >= 0 { setTransform(s, proxyTransform(lights[l].kind, pose)) }
+            } else {
+                lights[l].current.scale = pose.scale
             }
+            let material = lights[l].proxyMaterial
+            if material >= 0 && pose.scale != old {
+                materials[material].emission = SIMD4(lights[l].proxyEmission * pose.scale, 1)
+                materialsDirty = materialsDirty.map { min($0.lowerBound, material)..<max($0.upperBound, material + 1) }
+                    ?? material..<material + 1
+            }
+        }
+        if let animated {
+            for i in animated.instances { move(i) }
+            for l in animated.lights { pose(l, placed: true) }
+            for l in animated.scaledLights { pose(l, placed: false) }
+        } else {
+            for i in instances.indices { move(i) }
+            for l in lights.indices where !lights[l].isMesh { pose(l, placed: true) }
         }
         if let skyAnimation { skyColor = skyAnimation(day) }
         for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
-        for l in lights.indices where !lights[l].isMesh {
-            let old = lights[l].current.scale
-            let pose = lights[l].pose(lights[l].kind.isSun ? day : t)
-            lights[l].current = pose
-            let s = lights[l].proxyInstance
-            if s >= 0 { instances[s].transform = proxyTransform(lights[l].kind, pose) }
-            if lights[l].proxyMaterial >= 0 && pose.scale != old {
-                materials[lights[l].proxyMaterial].emission = SIMD4(lights[l].proxyEmission * pose.scale, 1)
-                materialsChanged = true
-            }
-        }
+    }
+
+    private func setTransform(_ i: Int, _ transform: float4x4) {
+        instances[i].transform = transform
+        instances[i].normalMatrix = transform.inverse.transpose
+    }
+
+    /// The range of materials changed since the last call (nil: none), which is then forgotten.
+    func takeMaterialsDirty() -> Range<Int>? {
+        defer { materialsDirty = nil }
+        return materialsDirty
     }
 
     /// Unit direction perpendicular to `n`: horizontal if possible.
@@ -250,32 +324,31 @@ final class Scene {
 
     /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
     /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
-    func gpuInstanceData() -> [GPUInstanceData] {
-        var virtualRank: UInt32 = 0
-        return instances.map {
-            var vg: UInt32 = 0
-            if $0.virtualMesh >= 0 { virtualRank += 1; vg = virtualRank }
-            return GPUInstanceData(transform: $0.transform,
-                                   prevTransform: $0.prevTransform,
-                                   normalMatrix: $0.transform.inverse.transpose,
-                                   meshIndex: $0.mesh >= 0 ? UInt32($0.mesh) : UInt32(meshes.count + $0.virtualMesh),
-                                   materialIndex: UInt32($0.material),
-                                   pad0: $0.mask,
-                                   pad1: vg)
+    /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
+    /// only the ones that move, the rest being unchanged.
+    func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool) {
+        func write(_ i: Int) {
+            let inst = instances[i]
+            out[i] = GPUInstanceData(transform: inst.transform,
+                                     prevTransform: inst.prevTransform,
+                                     normalMatrix: inst.normalMatrix,
+                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh) : UInt32(meshes.count + inst.virtualMesh),
+                                     materialIndex: UInt32(inst.material),
+                                     pad0: inst.mask,
+                                     pad1: virtualRank[i])
+        }
+        if !all, let animated {
+            for i in animated.instances { write(i) }
+        } else {
+            for i in instances.indices { write(i) }
         }
     }
 
     /// More lights than this (analytic + emissive meshes): nothing may loop over the lights or keep something per light
     /// (Shaders.metal LIGHT_TABLE): no light maps, GI and the path tracer sample the light table.
-    /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off.
+    /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off. Set once, by init.
     static let lightTableThreshold = 256
-    var usesLightTable: Bool {
-        switch ProcessInfo.processInfo.environment["METALRENDERER_LIGHT_TABLE"] {
-        case "1": return true
-        case "0": return false
-        default: return lights.count > Scene.lightTableThreshold
-        }
-    }
+    private(set) var usesLightTable = false
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
     var lightTypeMask: UInt32 {
@@ -293,44 +366,52 @@ final class Scene {
         }
     }
 
-    func gpuLights() -> [GPULight] {
-        lights.map { l in
-            let p = l.current
-            func color(_ type: Float) -> SIMD4<Float> { SIMD4(l.color * p.scale, Float(l.group) + 4 * type) }
-            switch l.kind {
-            case .sphere(let r):
-                return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.sphere),
-                                axis: .zero, params: .zero)
-            case .spot(let r, let inner, let outer):
-                return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.spot),
-                                axis: SIMD4(normalize(p.direction), 0),
-                                params: SIMD4(cos(outer), cos(max(inner, 0)) + (inner >= outer ? 1e-4 : 0), 0, 0))
-            case .sun(let angle):
-                return GPULight(positionRadius: SIMD4(0, 0, 0, angle), color: color(GPULight.sun),
-                                axis: SIMD4(normalize(p.direction), 0), params: sceneSphere)
-            case .rect(let w, let h):
-                let (t, n, _) = Scene.rectFrame(p)
-                return GPULight(positionRadius: SIMD4(p.position, 0), color: color(GPULight.rect),
-                                axis: SIMD4(n, 0), params: SIMD4(t * (w / 2), h / 2))
-            case .tube(let length, let r):
-                return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.tube),
-                                axis: SIMD4(normalize(p.direction) * (length / 2), 0), params: .zero)
-            case .mesh(let i):
-                let m = meshLights[i]
-                let t = instances[m.instance].transform
-                let linear = float3x3(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z),
-                                      SIMD3(t.columns.1.x, t.columns.1.y, t.columns.1.z),
-                                      SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
-                let maxScale = max(length(linear.columns.0), length(linear.columns.1), length(linear.columns.2))
-                let areaScale = pow(abs(linear.determinant), 2.0 / 3.0)
-                let c = t * SIMD4(m.center, 1)
-                let n = m.flatness > 0 ? normalize(linear.inverse.transpose * m.normal) : SIMD3<Float>(0, 1, 0)
-                return GPULight(positionRadius: SIMD4(c.x, c.y, c.z, m.radius * maxScale),
-                                color: SIMD4(m.power * areaScale, 4 * GPULight.mesh),
-                                axis: SIMD4(n, 0),
-                                params: SIMD4(Float(bitPattern: UInt32(m.firstTriangle)), Float(bitPattern: UInt32(m.triangleCount)),
-                                              m.flatness, Float(bitPattern: UInt32(m.instance))))
-            }
+    /// `all`: every light (a scene's first frame); otherwise only the ones whose record changes over time.
+    func writeLights(into out: UnsafeMutableBufferPointer<GPULight>, all: Bool) {
+        if all {
+            for l in lights.indices { out[l] = gpuLight(l) }
+        } else {
+            for l in changingLights { out[l] = gpuLight(l) }
+        }
+    }
+
+    private func gpuLight(_ index: Int) -> GPULight {
+        let l = lights[index]
+        let p = l.current
+        func color(_ type: Float) -> SIMD4<Float> { SIMD4(l.color * p.scale, Float(l.group) + 4 * type) }
+        switch l.kind {
+        case .sphere(let r):
+            return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.sphere),
+                            axis: .zero, params: .zero)
+        case .spot(let r, let inner, let outer):
+            return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.spot),
+                            axis: SIMD4(normalize(p.direction), 0),
+                            params: SIMD4(cos(outer), cos(max(inner, 0)) + (inner >= outer ? 1e-4 : 0), 0, 0))
+        case .sun(let angle):
+            return GPULight(positionRadius: SIMD4(0, 0, 0, angle), color: color(GPULight.sun),
+                            axis: SIMD4(normalize(p.direction), 0), params: sceneSphere)
+        case .rect(let w, let h):
+            let (t, n, _) = Scene.rectFrame(p)
+            return GPULight(positionRadius: SIMD4(p.position, 0), color: color(GPULight.rect),
+                            axis: SIMD4(n, 0), params: SIMD4(t * (w / 2), h / 2))
+        case .tube(let length, let r):
+            return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.tube),
+                            axis: SIMD4(normalize(p.direction) * (length / 2), 0), params: .zero)
+        case .mesh(let i):
+            let m = meshLights[i]
+            let t = instances[m.instance].transform
+            let linear = float3x3(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z),
+                                  SIMD3(t.columns.1.x, t.columns.1.y, t.columns.1.z),
+                                  SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+            let maxScale = max(length(linear.columns.0), length(linear.columns.1), length(linear.columns.2))
+            let areaScale = pow(abs(linear.determinant), 2.0 / 3.0)
+            let c = t * SIMD4(m.center, 1)
+            let n = m.flatness > 0 ? normalize(linear.inverse.transpose * m.normal) : SIMD3<Float>(0, 1, 0)
+            return GPULight(positionRadius: SIMD4(c.x, c.y, c.z, m.radius * maxScale),
+                            color: SIMD4(m.power * areaScale, 4 * GPULight.mesh),
+                            axis: SIMD4(n, 0),
+                            params: SIMD4(Float(bitPattern: UInt32(m.firstTriangle)), Float(bitPattern: UInt32(m.triangleCount)),
+                                          m.flatness, Float(bitPattern: UInt32(m.instance))))
         }
     }
 
@@ -551,7 +632,8 @@ final class Scene {
                              mask: UInt32 = Scene.maskGeometry,
                              animation: ((Float) -> float4x4)? = nil) -> Int {
         instances.append(Instance(mesh: mesh, material: material, mask: mask,
-                                  transform: transform, prevTransform: transform, animation: animation))
+                                  transform: transform, prevTransform: transform, animation: animation,
+                                  normalMatrix: transform.inverse.transpose))
         return instances.count - 1
     }
 
@@ -560,15 +642,17 @@ final class Scene {
         addLight(.sphere(radius: radius), color: color, proxyMesh: sphereMesh) { LightPose(position: path($0)) }
     }
 
-    private var lightSphereMesh = -1
+    private var lightSphereMesh = -1, lightQuadMesh = -1          // the proxies' shared shapes
+    private var lightCapsuleMeshes: [SIMD2<Float>: Int] = [:]     // by (length, radius)
 
     /// Adds a light and, but for the sun, the emissive shape that shows it (maskLights: it never blocks light).
     /// The shape's radiance makes it look as bright as the light is: I / (pi r^2) for a sphere of intensity I,
     /// the radiance itself for a rect, 2 I / (pi r length) for a tube (a cylinder whose broadside intensity per unit
     /// length, radiance x 2r, is the 4 I / (pi length) the shaders give it).
     @discardableResult
-    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, pose: @escaping (Float) -> LightPose) -> Int {
-        var light = Light(kind: kind, color: color, pose: pose)
+    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, motion: LightMotion = .animated,
+                  pose: @escaping (Float) -> LightPose) -> Int {
+        var light = Light(kind: kind, color: color, pose: pose, motion: motion)
         var mesh = -1, emission = SIMD3<Float>(repeating: 0)
         switch kind {
         case .sphere(let r), .spot(let r, _, _):
@@ -576,10 +660,14 @@ final class Scene {
             mesh = proxyMesh ?? lightSphereMesh
             emission = color / (.pi * r * r)
         case .rect:
-            mesh = proxyMesh ?? addMesh(Scene.quadMesh())
+            if proxyMesh == nil && lightQuadMesh < 0 { lightQuadMesh = addMesh(Scene.quadMesh()) }
+            mesh = proxyMesh ?? lightQuadMesh
             emission = color
         case .tube(let length, let r):
-            mesh = proxyMesh ?? addMesh(Scene.capsuleMesh(halfLength: length / 2, radius: r))
+            if proxyMesh == nil && lightCapsuleMeshes[SIMD2(length, r)] == nil {
+                lightCapsuleMeshes[SIMD2(length, r)] = addMesh(Scene.capsuleMesh(halfLength: length / 2, radius: r))
+            }
+            mesh = proxyMesh ?? lightCapsuleMeshes[SIMD2(length, r)]!
             emission = 2 * color / (.pi * r * length)
         case .sun, .mesh:
             break
@@ -588,6 +676,7 @@ final class Scene {
             light.proxyMaterial = addMaterial(albedo: .zero, emission: emission)
             light.proxyEmission = emission
             light.proxyInstance = addInstance(mesh, light.proxyMaterial, matrix_identity_float4x4, mask: Scene.maskLights)
+            instances[light.proxyInstance].poseAnimated = motion == .animated   // otherwise init's first update places it for good
         }
         lights.append(light)
         return lights.count - 1
@@ -814,7 +903,7 @@ final class Scene {
                 addLight(kind, color: color) { pose(animation($0)) }
             } else {
                 let fixed = pose(transform)
-                addLight(kind, color: color) { _ in fixed }
+                addLight(kind, color: color, motion: .constant) { _ in fixed }
             }
         }
     }

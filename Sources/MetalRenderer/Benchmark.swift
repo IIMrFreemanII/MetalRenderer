@@ -364,7 +364,7 @@ final class Benchmark {
         var config: Int
         var passMs: [String: Double]
         var spanMs: Double          // first pass start -> last pass end
-        var cpuMs: Double
+        var cpuMs: Double           // the CPU's work in draw (simulation, uploads, encoding), without the waits
     }
 
     static let isEnabled = ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] != nil
@@ -996,7 +996,7 @@ final class Benchmark {
     func report(gpuName: String) -> String {
         lock.lock(); let all = records; lock.unlock()
         var out = "\nMetalRenderer benchmark — \(gpuName) — \(warmupFrames) warm-up + \(measuredFrames) measured frames per setting\n"
-        out += "GPU times are medians in ms (p95 for the total). Frames are serialized so passes never overlap.\n\"span\" = first pass start to last pass end, including gaps between command buffers.\n\n"
+        out += "GPU times are medians in ms (p95 for the total). Frames are serialized so passes never overlap.\n\"span\" = first pass start to last pass end, including gaps between command buffers. \"cpu\" = the CPU's work per frame.\n\n"
         // One column per pass that ran: passOrder first, then any others (e.g. GI technique passes) by name.
         let seen = Set(all.flatMap { $0.passMs.keys })
         let passes = Benchmark.passOrder.filter(seen.contains) + seen.subtracting(Benchmark.passOrder).sorted()

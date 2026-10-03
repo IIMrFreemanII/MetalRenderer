@@ -281,7 +281,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var normalBuffer: MTLBuffer!
     private var indexBuffer: MTLBuffer!
     private var meshBuffer: MTLBuffer!
-    private var materialBuffer: MTLBuffer!
+    /// Per slot: animated light proxies change their materials' emission while older frames are still being drawn.
+    private var materialBuffers: [MTLBuffer] = []
+    private var materialsPending: [Range<Int>?] = []   // per slot: the materials changed since it was last written
+    private var frameDataWritten: [Bool] = []          // per slot: a frame's instances and lights have been written to it
+    /// This frame's instance and light records, kept from frame to frame: only what moves or flickers is rewritten, then
+    /// each goes to the slot's buffer in one copy. (Writing the records straight into the shared buffers costs the GPU
+    /// 0.35 ms a frame with 16384 moving lights: they stay in the CPU's caches. A large memcpy doesn't leave them there.)
+    private var instanceStage: [GPUInstanceData] = [], lightStage: [GPULight] = []
+    private var stageComplete = false                  // the stages hold every record
     private var uvBuffer: MTLBuffer!
     private var emissiveBuffer: MTLBuffer!            // emissive-mesh lights' triangles (MSL EmissiveTriangle)
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
@@ -340,8 +348,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var instanceDescBuffers: [MTLBuffer] = []
     private var instanceDataBuffers: [MTLBuffer] = []
     private var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
-    private var prevLightBuffers: [MTLBuffer] = []  // per slot: the frame before's lights (ReSTIR's temporal reuse)
-    private var lastFrameLights: [GPULight] = []
     private var restirGrid: RestirTargets?
     private var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
     private var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
@@ -428,6 +434,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var frameIntervalMs = 0.0           // CPU time between the starts of the last two frames
     private var frameIntervalSum = 0.0, frameIntervalCount = 0
     private var cpuMs = 0.0                     // frameIntervalMs averaged over the stats interval
+    /// The CPU's own work in `draw` (simulation, uploads, encoding; not the waits for a frame slot or the drawable),
+    /// averaged over the stats interval. The frame interval is GPU-bound and hides it.
+    private var encodeMs = 0.0, encodeSum = 0.0, encodeCount = 0
     // Traversal counters (Debug window, custom tracer): summed per frame, averaged per stats interval.
     private var traversalSum = TraversalStats(), traversalFrames = 0
     private var traversalLast: [UInt32]?
@@ -501,6 +510,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
             options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
                                           "RT_STATS": NSNumber(value: CustomRayTracer.statsEnabled ? 1 : 0)]
+            // Fast math is the default (relaxed costs ~0.2 ms a frame in the stress scene and renders the same image);
+            // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
+            if #available(macOS 15.0, *), ProcessInfo.processInfo.environment["METALRENDERER_MATH"] == "relaxed" {
+                options.mathMode = .relaxed
+            }
             library = try device.makeLibrary(source: source, options: options)
         }
         let constants = MTLFunctionConstantValues()
@@ -625,15 +639,31 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         rayTracer == .custom && settings.virtualGeometry.enabled
     }
 
-    private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?) throws -> PreparedScene {
-        let virtual = wantsVirtualGeometry(rayTracer)
-        let newScene = current.flatMap { $0.usesVirtualGeometry == virtual ? $0 : nil } ?? Scene(sceneSettings, virtualGeometry: virtual)
+    /// What a scene load reads from `settings`, copied on the main thread: `prepareScene` runs in the background while
+    /// the panel and the keyboard keep changing `settings`.
+    private struct LoadOptions {
+        var virtualGeometry: Bool
+        var poolMB: Int
+        var textureBudgetMB: Int
+    }
+    private var loadOptions: LoadOptions {
+        LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
+                    textureBudgetMB: settings.textureBudgetMB)
+    }
+
+    /// `current`: the scene being drawn, reused when only the ray tracer changes; `instances` is then the main thread's
+    /// copy of its instances (the frame loop keeps animating the scene while this runs).
+    private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?,
+                              instances: [Scene.Instance]? = nil, options: LoadOptions) throws -> PreparedScene {
+        let virtual = rayTracer == .custom && options.virtualGeometry
+        let reused = current.flatMap { $0.usesVirtualGeometry == virtual ? $0 : nil }
+        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual)
         let streamer = newScene.textures.isEmpty || !TextureStreamer.isSupported(device) ? nil
-            : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: settings.textureBudgetMB,
+            : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
                                   slots: Renderer.maxFramesInFlight)
         let textures = try streamer?.textures ?? MaterialTextures.load(newScene.textures, device: device, queue: queue)
-        let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, slots: Renderer.maxFramesInFlight,
-                                                            poolMB: settings.virtualGeometry.poolMB) : nil
+        let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
+                                                            slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil
         return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, streamer: streamer, customRT: rt)
     }
 
@@ -643,9 +673,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if let loading, loading.scene == wanted.scene, loading.rayTracer == wanted.rayTracer { return }
         loading = wanted
         let reuse = wanted.scene == scene.settings ? scene : nil   // only the tracer changes
+        let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let result = Result { try self.prepareScene(wanted.scene, rayTracer: wanted.rayTracer, reuse: reuse) }
+            let result = Result {
+                try self.prepareScene(wanted.scene, rayTracer: wanted.rayTracer, reuse: reuse, instances: instances, options: options)
+            }
             DispatchQueue.main.async {
                 guard let loading = self.loading, loading.scene == wanted.scene, loading.rayTracer == wanted.rayTracer else {
                     return   // superseded by a newer request
@@ -672,8 +705,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         instanceDescBuffers = []
         instanceDataBuffers = []
         lightBuffers = []
-        prevLightBuffers = []
-        lastFrameLights = []
+        frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
+        let identity = matrix_identity_float4x4
+        instanceStage = [GPUInstanceData](repeating: GPUInstanceData(transform: identity, prevTransform: identity, normalMatrix: identity,
+                                                                     meshIndex: 0, materialIndex: 0),
+                                          count: scene.instances.count)
+        lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
+                                count: scene.lights.count)
+        stageComplete = false
         restirWritten = false
         restirGIWritten = false
         instanceAS = []
@@ -706,7 +745,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func rebuildScene(resetCamera: Bool) {
         do {
             let reuse = settings.scene == scene.settings ? scene : nil
-            install(try prepareScene(settings.scene, rayTracer: settings.rayTracer, reuse: reuse), resetCamera: resetCamera)
+            install(try prepareScene(settings.scene, rayTracer: settings.rayTracer, reuse: reuse, options: loadOptions),
+                    resetCamera: resetCamera)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             settings.scene = scene.settings
@@ -752,10 +792,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         normalBuffer = try makeBuffer(scene.normals, "normals")
         indexBuffer = try makeBuffer(scene.indices, "indices")
         meshBuffer = try makeBuffer(scene.meshes, "meshes")
-        materialBuffer = try makeBuffer(scene.materials, "materials")
+        materialBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(scene.materials, "materials\($0)") }
+        materialsPending = [Range<Int>?](repeating: nil, count: Renderer.maxFramesInFlight)
         uvBuffer = try makeBuffer(scene.uvs, "uvs")
         emissiveBuffer = try makeBuffer(scene.emissiveTriangles, "emissiveTriangles")
-        scene.materialsChanged = false
+        _ = scene.takeMaterialsDirty()
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
         textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
         staticMinLod = try makeBuffer([Float](repeating: 0, count: max(materialTextures.count, 1)), "textureMinLod")
@@ -768,7 +809,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
             args.label = "shadingArgs\(slot)"
             let p = args.contents()
-            p.storeBytes(of: materialBuffer.gpuAddress, toByteOffset: 0, as: UInt64.self)
+            p.storeBytes(of: materialBuffers[slot].gpuAddress, toByteOffset: 0, as: UInt64.self)
             p.storeBytes(of: uvBuffer.gpuAddress, toByteOffset: 8, as: UInt64.self)
             p.storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.minLodBuffer(slot: slot) ?? staticMinLod).gpuAddress, toByteOffset: 24, as: UInt64.self)
@@ -777,7 +818,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
-        shadingResources = [materialBuffer, uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer]
+        shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer]
             + (textureStreamer == nil ? materialTextures : [])
     }
 
@@ -1002,7 +1043,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// This frame's sky: the sun (from the atmosphere, or the image's), which also sets the scene's sun light (its
     /// colour, and with an image its direction), and the clouds. False for a constant sky (or an image that failed).
-    private func updateSky(lights: inout [GPULight]) -> Bool {
+    private func updateSky(lights: UnsafeMutableBufferPointer<GPULight>) -> Bool {
         let sky = settings.sky
         guard sky.mode != .constant, ensureSkyTextures() else { return false }
         var image: SkyImage?
@@ -1010,7 +1051,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             guard let path = sky.imagePath, let loaded = skyImageFor(path, exposure: sky.imageExposure) else { return false }
             image = loaded.image
         }
-        let sunIndex = lights.firstIndex { Int($0.color.w) >> 2 == Int(GPULight.sun) }
+        let sunIndex = scene.firstSun
         var sunDir = normalize(SIMD3<Float>(0.4, 0.5, -0.6)), sunRadius: Float = 0.27 * .pi / 180
         if let d = image?.sunDirection {
             sunDir = d
@@ -1150,9 +1191,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             guard let desc = device.makeBuffer(length: instanceCount * Renderer.instanceDescriptorStride, options: .storageModeShared),
                   let data = device.makeBuffer(length: instanceCount * MemoryLayout<GPUInstanceData>.stride, options: .storageModeShared),
                   let lights = device.makeBuffer(length: max(scene.lights.count * MemoryLayout<GPULight>.stride + scene.lightTable.byteCount, 64),
-                                                 options: .storageModeShared),
-                  let prevLights = device.makeBuffer(length: max(scene.lights.count, 1) * MemoryLayout<GPULight>.stride,
-                                                     options: .storageModeShared) else {
+                                                 options: .storageModeShared) else {
                 throw RendererError.resourceCreation("per-frame buffers")
             }
             // The light table, after the lights: written once (it doesn't change while the scene lives).
@@ -1168,7 +1207,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             instanceDescBuffers.append(desc)
             instanceDataBuffers.append(data)
             lightBuffers.append(lights)
-            prevLightBuffers.append(prevLights)
 
             guard builtRayTracer == .metal else { continue }
             let sizes = device.accelerationStructureSizes(descriptor: instanceASDescriptor(slot: slot))
@@ -1185,31 +1223,41 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     private func writeFrameData(slot: Int) {
         if let customRT { customRT.update(slot: slot, scene: scene) } else { writeInstanceDescriptors(slot: slot) }
-        let data = scene.gpuInstanceData()
-        data.withUnsafeBytes { raw in
-            instanceDataBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+        // After a scene's first frame only what moves or flickers is rewritten in the stages.
+        let all = !stageComplete
+        stageComplete = true
+        frameDataWritten[slot] = true
+        instanceStage.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }   // an empty scene
+            scene.writeInstanceData(into: base.assumingMemoryBound(to: GPUInstanceData.self), all: all)
+            instanceDataBuffers[slot].contents().copyMemory(from: base, byteCount: raw.count)
         }
-        if scene.materialsChanged {
-            // Animated light proxies (flicker, the sun's colour): frames in flight may see the new values a frame early.
+        // Animated light proxies (flicker, chases, the sun's colour) change their materials: each slot catches up with
+        // the ranges changed since it was last written.
+        if let dirty = scene.takeMaterialsDirty() {
+            for s in materialsPending.indices {
+                materialsPending[s] = materialsPending[s].map { min($0.lowerBound, dirty.lowerBound)..<max($0.upperBound, dirty.upperBound) } ?? dirty
+            }
+        }
+        if let range = materialsPending[slot] {
+            let stride = MemoryLayout<GPUMaterial>.stride
             scene.materials.withUnsafeBytes { raw in
-                materialBuffer.contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+                guard let base = raw.baseAddress else { return }
+                materialBuffers[slot].contents().advanced(by: range.lowerBound * stride)
+                    .copyMemory(from: base.advanced(by: range.lowerBound * stride), byteCount: range.count * stride)
             }
-            scene.materialsChanged = false
+            materialsPending[slot] = nil
         }
-        var lights = scene.gpuLights()
-        skyActive = updateSky(lights: &lights)
+        var sky = false
+        lightStage.withUnsafeMutableBufferPointer { lights in
+            scene.writeLights(into: lights, all: all)
+            sky = updateSky(lights: lights)   // may recolour the first sun (rewritten every frame)
+            if let base = lights.baseAddress {
+                lightBuffers[slot].contents().copyMemory(from: base, byteCount: lights.count * MemoryLayout<GPULight>.stride)
+            }
+        }
+        skyActive = sky
         writeSkyArguments(slot: slot)
-        if !lights.isEmpty {
-            lights.withUnsafeBytes { raw in
-                lightBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
-            }
-            // Last frame's lights, for ReSTIR's temporal reuse (this frame's on the first frame).
-            let previous = lastFrameLights.count == lights.count ? lastFrameLights : lights
-            previous.withUnsafeBytes { raw in
-                prevLightBuffers[slot].contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
-            }
-            lastFrameLights = lights
-        }
     }
 
     /// Instance descriptors for Metal's top-level acceleration structure.
@@ -1408,7 +1456,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
         customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
                                       camPos: lod.0, pixelScale: lod.1,
-                                      tau: settings.virtualGeometry.pixelError, transforms: scene.instances.map(\.transform))
+                                      tau: settings.virtualGeometry.pixelError, sceneInstances: scene.instances)
         writeFrameData(slot: slot)
 
         guard let cmd = queue.makeCommandBuffer() else {
@@ -1702,13 +1750,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let candidates = RestirSettings.candidateRange.clamp(r.candidates)
             let params = GPURestirParams(config: SIMD4(UInt32(candidates), maxM, flags, samples),
                                          tuning: SIMD4(radius, 0, clamp, Float(rg.chains)))
+            // Last frame's lights, for the temporal reuse: what the frame before wrote into its slot (the GPU reads that
+            // buffer for two more frames before the CPU comes back to it). This frame's on a scene's first frame.
+            let previousSlot = (slot + Renderer.maxFramesInFlight - 1) % Renderer.maxFramesInFlight
+            let previousLights = lightBuffers[frameDataWritten[previousSlot] ? previousSlot : slot]
             restirStages.append(ComputeStage(pass: "restir") { [self] enc in
                 var u = frameUniforms, p = params
                 enc.setComputePipelineState(restirTemporalPSO)
                 enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
                 bindScene(enc, slot: slot)
                 enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
-                enc.setBuffer(prevLightBuffers[slot], offset: 0, index: 10)
+                enc.setBuffer(previousLights, offset: 0, index: 10)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.motion, t.normalDepth[prev],
                                   rg.reservoir[prev], rg.temporal])
                 dispatch(enc, "restir temporal", width: width, height: height)
@@ -2011,6 +2063,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
         let cpuInterval = frameIntervalMs
         let encodeNow = (CACurrentMediaTime() - encodeStart - drawableWait) * 1000
+        encodeSum += encodeNow
+        encodeCount += 1
         cmd.addCompletedHandler { [weak self] cb in
             if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame); streamer?.collect(slot: slot) }
             if let bench, recordFrame {
@@ -2347,6 +2401,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Threadgroup size per kernel name (8x8 if not listed). `METALRENDERER_TG="trace=16x8,atrous=32x4"` overrides it for sweeps.
     /// Measured on an M1 Max: trace 16x8 is ~2% faster than 8x8, atrous 16x16 ~5%; others don't care.
+    /// The shadow temporal kernel's 8x8 group is its tile (it declares max_total_threads_per_threadgroup(64)): leave it.
     private static let threadgroupSizes: [String: MTLSize] = {
         var sizes: [String: MTLSize] = ["trace": MTLSize(width: 16, height: 8, depth: 1),
                                         "atrous": MTLSize(width: 16, height: 16, depth: 1),
@@ -2408,6 +2463,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         cpuMs = frameIntervalCount > 0 ? frameIntervalSum / Double(frameIntervalCount) : 0
         frameIntervalSum = 0
         frameIntervalCount = 0
+        encodeMs = encodeCount > 0 ? encodeSum / Double(encodeCount) : 0
+        encodeSum = 0
+        encodeCount = 0
         if traversalFrames > 0 { traversal = (traversalSum, traversalFrames) }
         traversalSum = TraversalStats()
         traversalFrames = 0
@@ -2469,6 +2527,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var d = DebugInfo()
         d.stats = statsLine
         d.cpuMs = cpuMs
+        d.encodeMs = encodeMs
         d.sceneTitle = settings.scene.kind.title
         d.instances = scene.instances.count
         d.virtualInstances = scene.instances.filter { $0.virtualMesh >= 0 }.count

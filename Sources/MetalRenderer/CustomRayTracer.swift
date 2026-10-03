@@ -99,37 +99,63 @@ final class CustomRayTracer {
         dynamicIds.isEmpty ? BVHNode.none : dynamicIds.count == 1 ? BVHNode.leafBit | UInt32(dynamicIds[0]) : UInt32(staticNodes.count)
     }
 
-    static func isStatic(_ inst: Scene.Instance) -> Bool { inst.animation == nil && inst.mask == Scene.maskGeometry }
-
     /// The first node of this frame's cluster tree (after the static and dynamic trees).
     private var virtualNodeBase: Int { staticNodes.count + max(dynamicIds.count - 1, 1) }
 
-    init(device: MTLDevice, scene: Scene, slots: Int, poolMB: Int = 768) throws {
+    /// `instances`: a copy of `scene.instances` taken on the main thread when this runs in the background for a scene
+    /// that is still being drawn (`Scene.update` rewrites the transforms there every frame).
+    init(device: MTLDevice, scene: Scene, instances sceneInstances: [Scene.Instance]? = nil, slots: Int, poolMB: Int = 768) throws {
         self.device = device
+        let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
         let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes)
         blasRoots = blas.roots
         meshBounds = blas.bounds
         cpu = (blas, blas.triangles)
 
-        var staticBoxes: [AABB] = [], staticIds: [Int] = [], staticMasks: [UInt32] = [], dyn: [Int] = []
+        // Static instances in two groups: the geometry, and the proxies of lights that stay in place (thousands of bulbs
+        // in the market).
+        struct Group { var boxes: [AABB] = [], ids: [Int] = [], masks: [UInt32] = [] }
+        var geometry = Group(), proxies = Group(), dyn: [Int] = []
         var virtualInstances: [(instance: Int, mesh: Int)] = []
         func bounds(_ inst: Scene.Instance) -> AABB { inst.mesh >= 0 ? blas.bounds[inst.mesh] : scene.virtualMeshes[inst.virtualMesh].bounds }
-        for (i, inst) in scene.instances.enumerated() {
+        for (i, inst) in sceneInstances.enumerated() {
             if inst.virtualMesh >= 0 { virtualInstances.append((i, inst.virtualMesh)) }
             if inst.virtualMesh >= 0 && CustomRayTracer.clusterMode {
                 continue   // in the cluster tree, not the instance trees
-            } else if CustomRayTracer.isStatic(inst) {
-                staticBoxes.append(bounds(inst).transformed(inst.transform))
-                staticIds.append(i)
-                staticMasks.append(inst.mask)
+            } else if inst.isStatic {
+                let box = bounds(inst).transformed(inst.transform)
+                if inst.mask == Scene.maskGeometry {
+                    geometry.boxes.append(box); geometry.ids.append(i); geometry.masks.append(inst.mask)
+                } else {
+                    proxies.boxes.append(box); proxies.ids.append(i); proxies.masks.append(inst.mask)
+                }
             } else {
                 dyn.append(i)
             }
         }
+        // One tree per group, joined by a root node. Shadow and GI rays (MASK_GEOMETRY) skip the proxies' tree at the
+        // root by its mask and walk a tree of geometry only: one tree over both costs them ~0.5 ms a frame in the market,
+        // since the SAH then splits the geometry around the bulbs.
         var nodes: [BVHNode] = []
-        let (root, staticDepth) = BVHBuilder.buildTLAS(boxes: staticBoxes, ids: staticIds, masks: staticMasks,
-                                                       nodeBase: 0, into: &nodes)
+        let root: UInt32, staticDepth: Int
+        if geometry.ids.isEmpty || proxies.ids.isEmpty {
+            let group = geometry.ids.isEmpty ? proxies : geometry
+            (root, staticDepth) = BVHBuilder.buildTLAS(boxes: group.boxes, ids: group.ids, masks: group.masks, nodeBase: 0, into: &nodes)
+        } else {
+            nodes.append(BVHNode())   // the joining root, filled in below
+            var depth = 0
+            for (k, group) in [geometry, proxies].enumerated() {
+                let tree = BVHBuilder.buildTLAS(boxes: group.boxes, ids: group.ids, masks: group.masks, nodeBase: 0, into: &nodes)
+                var box = AABB()
+                for b in group.boxes { box.grow(b) }
+                nodes[0].setChild(k, lo: box.lo, hi: box.hi, ref: tree.root, mask: group.masks.reduce(0, |))
+                depth = max(depth, tree.depth)
+            }
+            root = 0
+            staticDepth = depth + 1
+        }
+        let staticCount = geometry.ids.count + proxies.ids.count
         staticNodes = nodes
         staticRoot = root
         dynamicIds = dyn
@@ -155,11 +181,11 @@ final class CustomRayTracer {
             let t = try buffer([BVHNode](repeating: BVHNode(), count: tlasCapacity), "tlasNodes\(slot)")
             staticNodes.withUnsafeBytes { if $0.count > 0 { t.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
             tlasNodes.append(t)
-            instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(scene.instances.count, 1)), "rtInstances\(slot)"))
+            instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(sceneInstances.count, 1)), "rtInstances\(slot)"))
             sceneArgs.append(try buffer([UInt8](repeating: 0, count: 112), "rtScene\(slot)"))
         }
 
-        instanceCount = scene.instances.count
+        instanceCount = sceneInstances.count
         paddedCount = max(2, 1 << Int(ceil(log2(Double(max(dyn.count, 2))))))
         var info: [SIMD4<Float>] = []
         for (m, b) in blas.bounds.enumerated() {
@@ -168,7 +194,7 @@ final class CustomRayTracer {
         for vm in scene.virtualMeshes {   // after the ordinary meshes (GPUInstanceData.meshIndex of virtual instances)
             info += [SIMD4(vm.bounds.lo, 0), SIMD4(vm.bounds.hi, 0)]
         }
-        var slotOf = [UInt32](repeating: BVHNode.none, count: max(scene.instances.count, 1))
+        var slotOf = [UInt32](repeating: BVHNode.none, count: max(sceneInstances.count, 1))
         for (k, i) in dyn.enumerated() { slotOf[i] = UInt32(k) }
         meshInfo = try buffer(info, "rtMeshInfo")
         dynSlot = try buffer(slotOf, "rtDynSlot")
@@ -180,12 +206,13 @@ final class CustomRayTracer {
         counters = try buffer([UInt32](repeating: 0, count: max(dyn.count, 1)), "rtCounters")
         for slot in 0..<slots { writeArgs(slot: slot) }
         print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms",
-                     blas.nodes.count, blas.triangles.count / 3, staticIds.count, staticNodes.count, staticDepth, dynamicIds.count,
+                     blas.nodes.count, blas.triangles.count / 3, staticCount, staticNodes.count, staticDepth, dynamicIds.count,
                      (CACurrentMediaTime() - start) * 1000))
         if ProcessInfo.processInfo.environment["METALRENDERER_RT_CHECK"] == "1" { selfTest(scene: scene) }
     }
 
-    /// RTScene: 8 GPU addresses, then the static and dynamic root refs and the cluster tree's first node.
+    /// RTScene (96 bytes, asserted in Shaders.metal): 10 GPU addresses, then the static and dynamic root refs and the
+    /// cluster tree's first node.
     private func writeArgs(slot: Int) {
         let p = sceneArgs[slot].contents()
         let vg = virtualGeometry

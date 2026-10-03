@@ -101,9 +101,9 @@ final class VirtualBLAS {
     }
 
     /// Main thread, before encoding `frame`: swap in finished BLASes, then start the next cut if the worker is free.
-    /// `transforms` = this frame's object -> world matrix of every scene instance.
+    /// `sceneInstances`: every scene instance, for this frame's object -> world matrices.
     func update(frame: UInt32, slot: Int, framesInFlight: Int, camPos: SIMD3<Float>, pixelScale: Float,
-                tau: Float, transforms: [float4x4]) {
+                tau: Float, sceneInstances: [Scene.Instance]) {
         // Buffers the GPU is done with go back to the pool (frames finish in order), which keeps about as many bytes as
         // the current BLASes, dropping the oldest beyond that.
         let done = retired.filter { $0.1 &+ UInt32(framesInFlight) < frame }.map(\.0)
@@ -116,7 +116,7 @@ final class VirtualBLAS {
             while bytes > keep, !freeBuffers.isEmpty { bytes -= freeBuffers.removeFirst().length }
             lock.unlock()
         }
-        let snapshot = instances.map { transforms[$0.instance] }
+        let snapshot = instances.map { sceneInstances[$0.instance].transform }
         let job = { [self] in self.cut(camPos: camPos, pixelScale: pixelScale, tau: tau, transforms: snapshot) }
         if VirtualBLAS.sync || !started {
             started = true
