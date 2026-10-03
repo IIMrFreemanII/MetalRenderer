@@ -592,9 +592,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let virtual = rayTracer == .custom && options.virtualGeometry
         let reused = current.flatMap { $0.usesVirtualGeometry == virtual ? $0 : nil }
         let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual)
-        let streamer = newScene.textures.isEmpty || !TextureStreamer.isSupported(device) ? nil
+        let streamer = newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
             : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
-                                  slots: Renderer.maxFramesInFlight)
+                                  slots: Renderer.maxFramesInFlight, placement: options.api == .metal4)
         let textures = try streamer?.textures ?? MaterialTextures.load(newScene.textures, device: device, queue: queue)
         let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
                                                             slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil

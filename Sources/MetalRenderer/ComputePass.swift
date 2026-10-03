@@ -191,7 +191,8 @@ final class Metal3Frame: FrameEncoder {
 
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {
         endCompute()
-        streamer.update(frame: frame, slot: slot, framesInFlight: framesInFlight, cmd: buffer("textures"))
+        let work = streamer.update(frame: frame, slot: slot, framesInFlight: framesInFlight)
+        if !work.mappings.isEmpty || !work.uploads.isEmpty { work.encode(into: buffer("textures")) }
     }
 
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, output: MTLTexture, pass: String) {

@@ -13,8 +13,9 @@ import QuartzCore
 ///
 /// Left on the Metal 3 queue, where they run once or have no Metal 4 form: texture uploads and mip chains
 /// (MaterialTextures), the per-mesh acceleration structures (built once per scene), and inside a frame (`interlude`)
-/// the streamed textures' sparse-heap mapping (TextureStreamer; Metal 4 maps placement-sparse textures only), mipmap
-/// generation and MetalFX's denoising scaler (see `generateMipmaps` and Upscaler for what Metal 4's do on macOS 26.5).
+/// mipmap generation and MetalFX's denoising scaler (see `generateMipmaps` and Upscaler for what Metal 4's do on macOS
+/// 26.5). Streamed textures (TextureStreamer) are placement-sparse here: residency sets take no sparse heap, and the
+/// queue maps their tiles between the frame's command buffers (`streamTextures`).
 @available(macOS 26.0, *)
 final class Metal4Frame: FrameEncoder, ComputePass {
     let queue: MTL4CommandQueue
@@ -27,6 +28,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private let constants: [MTLBuffer]                      // per frame slot: what Metal 3's setBytes copies
     private static let constantsLength = 1 << 20
     private static let stages: MTLStages = [.dispatch, .blit, .accelerationStructure]
+    /// What a new encoder waits for: the work committed before it, and the queue's mapping updates.
+    private static let queueStages: MTLStages = stages.union(.resourceState)
 
     // Residency: every resource a frame binds, added the first time and dropped once unused for a while.
     private let residency: MTLResidencySet
@@ -48,10 +51,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private var cursor = 0                                   // command buffers of the slot's pool in use
     private var constantsCursor = 0
     /// The frame's command buffers in the order they run: Metal 4's, and between them the Metal 3 interludes, which
-    /// wait for the event to reach `value` and leave it at `value + 1`.
+    /// wait for the event to reach `value` and leave it at `value + 1`, and the streamed textures' mapping updates.
     private enum Buffer {
         case metal4(name: String, cmd: MTL4CommandBuffer)
         case metal3(name: String, cmd: MTLCommandBuffer, value: UInt64)
+        case mappings(heap: MTLHeap, [(texture: MTLTexture, ops: [MTL4UpdateSparseTextureMappingOperation])])
     }
     private var buffers: [Buffer] = []
     private var cmd: MTL4CommandBuffer?
@@ -155,7 +159,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private func encoder(_ name: String, newBuffer: Bool = false) -> MTL4ComputeCommandEncoder? {
         if let enc, !(split && newBuffer) { return enc }
         guard let next = buffer(name).makeComputeCommandEncoder() else { return nil }
-        next.barrier(afterQueueStages: Metal4Frame.stages, beforeStages: Metal4Frame.stages, visibilityOptions: .device)
+        next.barrier(afterQueueStages: Metal4Frame.queueStages, beforeStages: Metal4Frame.stages, visibilityOptions: .device)
         next.setArgumentTable(table)
         encoded = []
         enc = next
@@ -218,8 +222,31 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
+    /// The mapping updates go to the queue, between the command buffers so far and the ones after them (whose encoders
+    /// wait for them, `queueStages`); the uploads into the new tiles follow in a command buffer of their own.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {
-        interlude("textures") { streamer.update(frame: frame, slot: slot, framesInFlight: framesInFlight, cmd: $0) }
+        let work = streamer.update(frame: frame, slot: slot, framesInFlight: framesInFlight)
+        if !work.mappings.isEmpty {
+            endCompute()
+            cmd?.endCommandBuffer()
+            cmd = nil
+            buffers.append(.mappings(heap: streamer.heap, work.mappings.map { m in
+                (m.texture, m.ops.map { op in
+                    MTL4UpdateSparseTextureMappingOperation(mode: op.mode, textureRegion: op.region, textureLevel: op.level,
+                                                            textureSlice: 0, heapOffset: op.heapOffset)
+                })
+            }))
+        }
+        guard !work.uploads.isEmpty, let enc = encoder("textures", newBuffer: true) else { return }
+        serial = true
+        order(.blit)
+        for u in work.uploads {
+            keep(u.source)
+            keep(u.texture)
+            enc.copy(sourceBuffer: u.source, sourceOffset: u.offset, sourceBytesPerRow: u.bytesPerRow, sourceBytesPerImage: u.bytesPerImage,
+                     sourceSize: u.size, destinationTexture: u.texture, destinationSlice: 0, destinationLevel: u.level,
+                     destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+        }
     }
 
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, output: MTLTexture, pass: String) {
@@ -261,7 +288,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
         let done = wait ? DispatchSemaphore(value: 0) : nil
         let split = split
-        let collector = FeedbackCollector(count: buffers.count) { times in
+        let commandBuffers = buffers.filter { if case .mappings = $0 { return false } else { return true } }.count
+        let collector = FeedbackCollector(count: commandBuffers) { times in
             completed(times)
             done?.signal()
         }
@@ -282,9 +310,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
                 }
                 cb.commit()
                 queue.waitForEvent(event, value: value + 1)    // what follows runs after it
+            case .mappings(let heap, let textures):
+                for (texture, ops) in textures { queue.updateMappings(texture: texture, heap: heap, operations: ops) }
             }
         }
-        if buffers.isEmpty { collector.finish() }
+        if commandBuffers == 0 { collector.finish() }
         if let drawable {
             queue.signalDrawable(drawable)
             drawable.present()
