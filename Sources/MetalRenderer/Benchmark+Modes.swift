@@ -6,7 +6,7 @@ import Foundation
 extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
-        "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
+        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
         "noise": noise, "denoise": denoise, "quality": quality,
@@ -68,6 +68,14 @@ extension Benchmark {
         Config("MetalFX 2x from 1.0x", scale: 1.0, upscale: 2) { $0.upscaler = .metalFX },
         Config("MetalFX 3x from 0.67x", scale: 2.0 / 3.0, upscale: 3) { $0.upscaler = .metalFX },
     ] }
+
+    /// One picture of the app's default look (cascades, TAAU 3x from 0.5x), paused at t = 5 s, to check what a change
+    /// does: the METALRENDERER_* lists pick anything else (scene, GI, view, ...). Its 60 warm-up frames, then
+    /// `METALRENDERER_SHOT_FRAMES` (default 30).
+    private static func shot() -> [Config] {
+        let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
+        return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
+    }
 
     /// Fast smoke tests: the default setting, MetalFX temporal and spatial, camera moves, path traced, 0.75x native.
     private static func quick() -> [Config] {

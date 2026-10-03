@@ -36,9 +36,11 @@ clustering, cluster-DAG pages, texture mips).
 4. **A/B, alternating.** `.claude/skills/performance/scripts/ab.sh -n 3 -- <env A> -- <env B>` runs A, B, A, B and so
    on, then prints medians and the delta. For code against code, build a baseline worktree (see measuring.md).
 5. **Check quality.** Run the matching quality mode with `METALRENDERER_BENCH_DIR`, then its `Tools/eval/*.py`
-   scorer. For changes that must not alter the image, use `python3 Tools/eval/pngdiff.py <runA> <runB>`.
+   scorer (the `offscreen` skill's `render.sh` does both the run and the PNG list). For changes that must not alter the image, use `python3 Tools/eval/pngdiff.py <runA> <runB>`.
 6. **Record.** Report whole-frame ms on the named GPU with the exact env line, the way the README does. Write down
    what didn't help too ("What didn't help" sections). Update the README when a default changes.
+
+Every run is offscreen (no window, no focus change); never launch the binary without `METALRENDERER_BENCH`.
 
 **Noise:**
 * Timings swing 0.1–0.4 ms between launches, and single-frame PSNR swings ±0.1–0.2 dB. Smaller deltas are noise

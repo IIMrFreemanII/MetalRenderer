@@ -247,7 +247,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     private let device: MTLDevice
     private let queue: MTLCommandQueue
-    private weak var view: MTKView?
+    private weak var surface: RenderSurface?
     private var scene = Scene()
     /// The shaders' entry file: next to this source file, or `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which
     /// lets one binary run another copy of the shaders (an A/B of a shader change without a second build).
@@ -426,30 +426,20 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var traversalLast: [UInt32]?
     private(set) var traversal: (stats: TraversalStats, frames: Int)?
 
-    init(view: RenderView) throws {
+    /// `surface`: the window's view (set up with `configureForRenderer`) or an `OffscreenSurface`; the caller keeps it.
+    init(device: MTLDevice, surface: RenderSurface) throws {
         validateGPULayouts()
-        guard let device = view.device, let queue = device.makeCommandQueue() else {
+        guard let queue = device.makeCommandQueue() else {
             throw RendererError.resourceCreation("command queue")
         }
         self.device = device
         self.queue = queue
-        self.view = view
+        self.surface = surface
         super.init()
 
-        view.colorPixelFormat = Renderer.drawableFormat
-        view.framebufferOnly = false        // the composite kernel or MetalFX writes to the drawable
-        view.autoResizeDrawable = false     // we pick the render resolution ourselves
-        view.preferredFramesPerSecond = 120
         if benchmark != nil {
-            // Benchmark: render back to back without vsync, so the GPU never idles between frames and its clock
-            // stays steady (idle gaps let it clock down and inflate the timings of short passes unevenly).
-            (view.layer as? CAMetalLayer)?.displaySyncEnabled = false
-            view.isPaused = true
-            view.enableSetNeedsDisplay = false
-            DispatchQueue.main.async { [weak self, weak view] in
-                guard let view else { return }
-                self?.runBenchmarkLoop(view)
-            }
+            // Benchmark: frames back to back from the main queue, not the view's display link.
+            DispatchQueue.main.async { [weak self] in self?.runBenchmarkLoop() }
         }
 
         try createDummyTextures()
@@ -1316,12 +1306,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    func draw(in view: MTKView) { drawFrame() }
+
     /// One frame: the scene's next state and its upload, the frame's plan, the stages the plan asks for, their
     /// encoding, the output, and what the frame leaves for the next one. Each step is a function below.
-    func draw(in view: MTKView) {
-        guard pipelines != nil else { return }   // launch: the shaders are still compiling (startCompilingShaders)
+    private func drawFrame() {
+        guard pipelines != nil, let surface else { return }   // launch: the shaders are still compiling (startCompilingShaders)
         noteFrameStart()
-        let size = frameSize(in: view)
+        let size = frameSize(on: surface)
         guard let t = renderTargets(for: size) else { return }
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged {
             if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
@@ -1371,8 +1363,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         stages.fog = fogStages(plan, targets: t, composite: &composite)
 
         encode(stages, plan: plan, passes: &passes)
-        let output = encodeOutput(plan, composite: composite, targets: t, view: view, passes: &passes)
-        commit(plan, passes: passes, drawable: output.drawable, encodeStart: encodeStart + output.wait)
+        let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: &passes)
+        commit(plan, passes: passes, output: output.output, encodeStart: encodeStart + output.wait)
 
         finishFrame(plan)
         updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
@@ -1408,22 +1400,21 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Render resolution = window size in points * renderScale. Without upscaling the layer stretches it to the window.
     /// With upscaling, MetalFX outputs renderScale * upscaleFactor, capped at the window's size in physical pixels.
-    private func frameSize(in view: MTKView) -> FrameSize {
-        let width = max(64, Int((view.bounds.width * settings.renderScale).rounded()))
-        let height = max(64, Int((view.bounds.height * settings.renderScale).rounded()))
+    private func frameSize(on surface: RenderSurface) -> FrameSize {
+        let points = surface.pointSize
+        let width = max(64, Int((points.width * settings.renderScale).rounded()))
+        let height = max(64, Int((points.height * settings.renderScale).rounded()))
         var outWidth = width, outHeight = height
         if settings.upscaleFactor > 1 && upscaleSupported {
-            // Not view.convertToBacking: MTKView scales its layer to match drawableSize, so that returns the render size.
-            let backing = view.window?.backingScaleFactor ?? 2
-            let maxWidth = view.bounds.width * backing, maxHeight = view.bounds.height * backing
+            let backing = surface.backingScale
+            let maxWidth = points.width * backing, maxHeight = points.height * backing
             let factor = min(settings.upscaleFactor, maxUpscale, maxWidth / CGFloat(width), maxHeight / CGFloat(height))
             if factor > 1.01 {
                 outWidth = Int((CGFloat(width) * factor).rounded())
                 outHeight = Int((CGFloat(height) * factor).rounded())
             }
         }
-        let desired = CGSize(width: outWidth, height: outHeight)
-        if view.drawableSize != desired { view.drawableSize = desired }
+        surface.outputSize = CGSize(width: outWidth, height: outHeight)
         return FrameSize(width: width, height: height, outWidth: outWidth, outHeight: outHeight)
     }
 
@@ -1840,10 +1831,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
     }
 
-    /// 3c-5. The geometry debug view, the composite and the upscale into the drawable. Returns the drawable (nil if the
-    /// view had none of the right size) and how long the view took to hand it out.
-    private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, view: MTKView,
-                              passes: inout FramePasses) -> (drawable: CAMetalDrawable?, wait: CFTimeInterval) {
+    /// 3c-5. The geometry debug view, the composite and the upscale into the drawable (or the offscreen texture standing
+    /// in for it). Returns it (nil if the surface had none of the right size) and how long the surface took to hand it out.
+    private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
+                              passes: inout FramePasses) -> (output: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
         // 3c. Geometry debug views: their own pass, only while one is shown.
         if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
@@ -1860,7 +1851,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // 4. Composite: albedo * illumination + emission, tonemap, write to the drawable
         //    (or, with upscaling, to MetalFX's input color texture).
         let drawableStart = CACurrentMediaTime()
-        var drawable = view.currentDrawable
+        var drawable = surface.nextOutput()
         let drawableWait = CACurrentMediaTime() - drawableStart
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
@@ -1910,7 +1901,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
     /// `encodeStart`: when the CPU started on this frame, not counting its waits.
-    private func commit(_ plan: FramePlan, passes: FramePasses, drawable: CAMetalDrawable?, encodeStart: CFTimeInterval) {
+    private func commit(_ plan: FramePlan, passes: FramePasses, output: FrameOutput?, encodeStart: CFTimeInterval) {
         let cmd = passes.cmd, slot = plan.slot, profile = passes.profile
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
@@ -1923,10 +1914,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
             if benchmark.shouldCapture { print("  " + customRT.takeStats().description) } else { _ = customRT.takeStats() }
         }
-        if let benchmark, let drawable, benchmark.shouldCapture {
-            writeCapture = benchmark.encodeCapture(of: drawable.texture, into: cmd, device: device)
+        if let benchmark, let output, benchmark.shouldCapture {
+            writeCapture = benchmark.encodeCapture(of: output.texture, into: cmd, device: device)
         }
-        if let drawable { cmd.present(drawable) }
+        if let drawable = output?.drawable { cmd.present(drawable) }
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
@@ -2493,13 +2484,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     // MARK: - Benchmark
 
-    private func runBenchmarkLoop(_ view: MTKView) {
+    private func runBenchmarkLoop() {
         guard let benchmark, !benchmark.isFinished else { return }
-        view.draw()
-        DispatchQueue.main.async { [weak self, weak view] in
-            guard let view else { return }
-            self?.runBenchmarkLoop(view)
-        }
+        // A view hands out its drawable only inside its own draw (which calls draw(in:)).
+        if let view = surface as? MTKView { view.draw() } else { drawFrame() }
+        DispatchQueue.main.async { [weak self] in self?.runBenchmarkLoop() }
     }
 
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
@@ -2530,7 +2519,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() }
         print(benchmark.report(gpuName: device.name))
         fflush(stdout)
-        view?.isPaused = true
         NSApp.terminate(nil)
     }
 
@@ -2659,10 +2647,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         if let ts = textureStreamer { sceneName += String(format: " — textures %.0f MB", ts.stats.residentMB) }
         if frozenLOD != nil && scene.usesVirtualGeometry { sceneName += " — LOD frozen" }
-        view?.window?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
-                                     sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
-                                     s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
-                                     RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
+        surface?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
+                                sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
+                                s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
+                                RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         statsLine = stats
         cpuMs = frameIntervalCount > 0 ? frameIntervalSum / Double(frameIntervalCount) : 0
         frameIntervalSum = 0
@@ -2724,7 +2712,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 case .failure(let error):
                     print(self.pipelines == nil ? "Shaders failed to compile (fix them and press R):\n\(error)"
                                                 : "Shader reload failed (keeping previous version):\n\(error)")
-                    if self.pipelines == nil { self.view?.window?.title = "MetalRenderer — the shaders failed to compile (see the console, then press R)" }
+                    if self.pipelines == nil { self.surface?.title = "MetalRenderer — the shaders failed to compile (see the console, then press R)" }
                     done?(false)
                 }
             }
@@ -2735,7 +2723,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// returns at once, and with it everything that needs pipelines: scene loads start there. A failure is printed
     /// and leaves the window empty; R compiles again.
     private func startCompilingShaders() {
-        view?.window?.title = "MetalRenderer — compiling shaders…"
+        surface?.title = "MetalRenderer — compiling shaders…"
         reloadShaders { ok in
             Launch.mark(ok ? "shaders" : "shaders (failed)")
         }

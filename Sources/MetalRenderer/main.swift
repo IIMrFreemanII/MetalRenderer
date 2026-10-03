@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var renderer: Renderer!
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
+    private var offscreen: OffscreenSurface?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -16,6 +17,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fatalError("This GPU does not support Metal ray tracing")
         }
         print("GPU: \(device.name)")
+
+        if Headless.isEnabled {
+            // No window, no menu, no panels: the benchmark draws into offscreen textures and quits when done.
+            let surface = OffscreenSurface(device: device)
+            offscreen = surface
+            do {
+                renderer = try Renderer(device: device, surface: surface)
+            } catch {
+                fatalError("Renderer failed to start:\n\(error)")
+            }
+            return
+        }
 
         buildMenu()
 
@@ -39,8 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func start(_ view: RenderView) {
+        view.configureForRenderer()
         do {
-            renderer = try Renderer(view: view)
+            renderer = try Renderer(device: view.device!, surface: view)
         } catch {
             fatalError("Renderer failed to start:\n\(error)")
         }
@@ -164,5 +178,6 @@ setlinebuf(stdout)   // whole lines also into a pipe or a file: a log is complet
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.regular)
+// Headless: no Dock icon, and the app never becomes active, so the focus stays where it was.
+app.setActivationPolicy(Headless.isEnabled ? .prohibited : .regular)
 app.run()

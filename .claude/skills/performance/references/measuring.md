@@ -9,7 +9,8 @@ METALRENDERER_BENCH=<mode> .build/release/MetalRenderer
 ```
 
 A benchmark renders 60 warm-up frames and then 240 measured frames per setting, back to back without vsync. It prints
-a table and quits. The lists of settings are in `Benchmark+Modes.swift`: one function per mode, registered in `Benchmark.modes`. A
+a table and quits. It runs offscreen: no window, no Dock icon, no focus change (the `offscreen` skill). Don't add
+`METALRENDERER_WINDOW=1` (a window) unless the user asks to watch. The lists of settings are in `Benchmark+Modes.swift`: one function per mode, registered in `Benchmark.modes`. A
 setting is a `Benchmark.Config`: real `RenderSettings` plus how the run goes, built with `.still()`,
 `.reference(frames:)`, `.cameraMove()`, `.with { … }`. Setting names are PNG names the scorers look up: keep them. Benchmarks never
 read or write the saved UI settings.
@@ -173,7 +174,8 @@ means for measuring:
 
 ## Launch time
 
-The app prints one line when its first frame is on screen, with the steps on the way, in ms since the process started
+Launch time is the interactive app's, with its window: ask the user before measuring it, since every launch takes the
+focus. The app prints one line when its first frame is on screen, with the steps on the way, in ms since the process started
 (`Launch` in CacheFile.swift):
 
 ```

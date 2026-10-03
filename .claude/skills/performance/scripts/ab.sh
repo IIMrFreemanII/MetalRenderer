@@ -6,14 +6,15 @@
 # Runs A, B, A, B, … (`rounds` times each, default 2) so thermal drift and launch noise hit both alike, saves every
 # log, then prints the chosen table columns (default "GPU total") per setting: each round's value, the medians and
 # the delta B − A. Each binary runs from its own repo root, so it loads its own shader files; build a baseline in a
-# git worktree to compare code against code (see references/measuring.md).
+# git worktree to compare code against code (see references/measuring.md). Benchmark runs are offscreen (no window,
+# no focus change); don't add METALRENDERER_WINDOW=1.
 #
 # Example:
 #   ab.sh -n 3 -- METALRENDERER_BENCH=quick METALRENDERER_BENCH_ONLY="camera move" METALRENDERER_TG=trace=8x8 \
 #              -- METALRENDERER_BENCH=quick METALRENDERER_BENCH_ONLY="camera move"
 set -euo pipefail
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 rounds=2
@@ -48,7 +49,7 @@ check_bin "$bin_a"; check_bin "$bin_b"
 for e in "${env_a[@]}" "${env_b[@]}"; do
   [[ $e == *=* ]] || { echo "ab.sh: '$e' is not a KEY=VALUE assignment" >&2; exit 1; }
 done
-[[ " ${env_a[*]} ${env_b[*]} " == *METALRENDERER_BENCH=* ]] || echo "ab.sh: warning: no METALRENDERER_BENCH=… set; the app will not quit by itself" >&2
+[[ " ${env_a[*]} ${env_b[*]} " == *METALRENDERER_BENCH=* ]] || { echo "ab.sh: no METALRENDERER_BENCH=… set: that would open the app's window and never quit" >&2; exit 1; }
 
 out="${TMPDIR:-/tmp}/metalrenderer-ab-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
