@@ -1,0 +1,512 @@
+// ---------------------------------------------------------------------------------------------
+// 3c. Geometry debug views (view modes 8-13), a pass of their own that runs only while one is shown: re-traces the
+//     primary rays and colours each pixel by what it hit. Virtual triangles carry their cluster, group, DAG level and
+//     index within the cluster (VirtualBLAS packs them into the free w components of e1 / e2; in cluster mode the
+//     cluster's pool header holds group and level, VirtualGeometry.upload).
+// ---------------------------------------------------------------------------------------------
+
+constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;
+
+inline float3 debugHashColor(uint h) {
+    h = pcgHash(h);
+    return 0.15f + 0.85f * float3(h & 0xFFu, (h >> 8) & 0xFFu, (h >> 16) & 0xFFu) / 255.0f;
+}
+
+// Turbo colour map (polynomial fit, Mikhailov 2019): 0 = dark blue, 0.5 = green, 1 = dark red.
+inline float3 debugHeat(float x) {
+    x = saturate(x);
+    const float4 r4 = float4(0.13572138f, 4.61539260f, -42.66032258f, 132.13108234f);
+    const float4 g4 = float4(0.09140261f, 2.19418839f, 4.84296658f, -14.18503333f);
+    const float4 b4 = float4(0.10667330f, 12.64194608f, -60.58204836f, 110.36276771f);
+    const float2 r2 = float2(-152.94239396f, 59.28637943f);
+    const float2 g2 = float2(4.27729857f, 2.82956604f);
+    const float2 b2 = float2(-89.90310912f, 27.34824973f);
+    float4 v4 = float4(1.0f, x, x * x, x * x * x);
+    float2 v2 = v4.zw * v4.z;
+    return saturate(float3(dot(v4, r4) + dot(v2, r2), dot(v4, g4) + dot(v2, g2), dot(v4, b4) + dot(v2, b2)));
+}
+
+kernel void geometryDebugKernel(constant Uniforms&               u          [[buffer(0)]],
+                                SCENE_ACCEL                      accel      [[buffer(1)]],
+                                device const float3*             positions  [[buffer(2)]],
+                                device const float3*             normals    [[buffer(3)]],
+                                device const uint*               indices    [[buffer(4)]],
+                                device const MeshData*           meshes     [[buffer(5)]],
+                                device const InstanceData*       instances  [[buffer(6)]],
+                                constant SceneShading&           shading    [[buffer(7)]],
+                                texture2d<float, access::write>  output     [[texture(0)]],
+                                uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    SceneData s;
+    s.positions = positions;
+    s.normals = normals;
+    s.indices = indices;
+    s.meshes = meshes;
+    s.instances = instances;
+    bindShading(s, shading);
+
+    float3 dir = primaryDirection(u, tid);
+    Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
+#if CUSTOM_RT
+    uint cost[7] = {0, 0, 0, 0, 0, 0, 0};
+    Hit res = intersectClosestCost(r, MASK_ALL, accel, cost);
+    // Work of the ray: node visits (both levels) plus triangle tests at half weight, log scale up to ~500.
+    float work = float(cost[1] + cost[2]) + 0.5f * float(cost[5]);
+    float3 costColor = debugHeat(log2(1.0f + work) / 9.0f);
+#else
+    Hit res = intersectClosest(r, MASK_ALL, accel);
+    float3 costColor = float3(1.0f, 0.0f, 1.0f);   // Metal's traversal can't be counted
+#endif
+    if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
+    if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
+
+    InstanceData inst = s.instances[res.instance];
+    HitVertices hv = fetchHitVertices(res, inst, accel, s);
+    float3 e1 = (inst.transform * float4(hv.p[1] - hv.p[0], 0.0f)).xyz, e2 = (inst.transform * float4(hv.p[2] - hv.p[0], 0.0f)).xyz;
+    float3 ng = cross(e1, e2);
+    float doubleArea = length(ng);
+    float shade = doubleArea > 0.0f ? 0.35f + 0.65f * abs(dot(ng / doubleArea, dir)) : 0.35f;
+
+    bool isVirtual = false;
+    uint cluster = 0, local = 0, group = 0, level = 0;
+#if CUSTOM_RT
+    if (res.cluster != HIT_NO_CLUSTER) {
+        uint2 rc = accel.clusters[res.cluster];
+        uint packed = ((device const uint*)(accel.pool + rc.y))[3];   // group | level << 24
+        isVirtual = true;
+        cluster = rc.y;                 // its place in the pool: stable while it stays resident
+        local = res.primitive;
+        group = packed & 0xFFFFFFu;
+        level = packed >> 24;
+    } else if (inst.pad1 != 0) {
+        VGBlas e = accel.vgBlas[inst.pad1 - 1];
+        uint a = as_type<uint>(e.tris[3 * res.primitive + 1].w), b = as_type<uint>(e.tris[3 * res.primitive + 2].w);
+        isVirtual = true;
+        cluster = a & 0xFFFFFFu;        // cluster | triangle within it << 24
+        local = a >> 24;
+        group = b & 0xFFFFFFu;          // group | level << 24
+        level = b >> 24;
+    }
+#endif
+    uint instanceSeed = pcgHash(res.instance + 0x51ED27u);
+    float3 c = float3(0.45f);           // geometry that isn't virtual, in the views that are about virtual geometry
+    switch (u.viewMode) {
+        case VIEW_TRIANGLES:
+            c = debugHashColor(isVirtual ? local + pcgHash(cluster + instanceSeed) : res.primitive + instanceSeed);
+            break;
+        case VIEW_CLUSTERS: if (isVirtual) c = debugHashColor(cluster + instanceSeed); break;
+        case VIEW_GROUPS:   if (isVirtual) c = debugHashColor(group * 0x9E3779B9u + instanceSeed); break;
+        case VIEW_LOD:      if (isVirtual) c = debugHeat(0.05f + float(level) / 10.0f); break;   // 0 = finest
+        case VIEW_TRIANGLE_SIZE: {
+            // Edge length (of a right triangle with the same area) in traced pixels: 1/8 px blue, 1 px green, 8 px red.
+            float footprint = res.distance * 2.0f * u.camUp.w / float(u.height);
+            float px = sqrt(doubleArea) / max(footprint, 1e-8f);
+            c = debugHeat((log2(max(px, 1e-4f)) + 3.0f) / 6.0f);
+            break;
+        }
+        default: break;
+    }
+    output.write(float4(c * shade, 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4. Composite: re-apply albedo, add emission, tonemap and write to the drawable.
+// ---------------------------------------------------------------------------------------------
+
+inline float3 acesFilm(float3 x) {
+    // Narkowicz 2015 ACES approximation
+    return saturate((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f));
+}
+
+// AgX (Troy Sobotka), with the polynomial fit of its default contrast curve by Benjamin Wrensch ("minimal AgX"):
+// into the AgX working space, log2 between its EV limits, the curve, back. The curve's output is display-encoded
+// (gamma 2.2), and the drawable wants linear, hence the pow at the end.
+inline float3 agxFilm(float3 c) {
+    const float3x3 toAgx = float3x3(0.842479062253094f, 0.0423282422610123f, 0.0423756549057051f,
+                                    0.0784335999999992f, 0.878468636469772f, 0.0784336f,
+                                    0.0792237451477643f, 0.0791661274605434f, 0.879142973793104f);
+    const float3x3 fromAgx = float3x3(1.19687900512017f, -0.0528968517574562f, -0.0529716355144438f,
+                                      -0.0980208811401368f, 1.15190312990417f, -0.0980434501171241f,
+                                      -0.0990297440797205f, -0.0989611768448433f, 1.15107367264116f);
+    const float minEV = -12.47393f, maxEV = 4.026069f;
+    float3 x = (clamp(log2(max(toAgx * c, 1e-10f)), minEV, maxEV) - minEV) / (maxEV - minEV);
+    float3 x2 = x * x, x4 = x2 * x2;
+    x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
+    return pow(saturate(fromAgx * x), float3(2.2f));
+}
+
+/// Exposure, then the selected curve (RenderSettings.toneMap).
+inline float3 toneMap(float3 c, float4 post) {
+    c *= post.x;
+    switch (uint(post.y)) {
+        case 1: return agxFilm(c);
+        case 2: return c / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f)));   // Reinhard on luminance: keeps hue
+        case 3: return c;
+        default: return acesFilm(c);
+    }
+}
+
+kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
+                            texture2d<float, access::read>  denoised   [[texture(0)]],
+                            texture2d<float, access::read>  direct     [[texture(1)]],
+                            texture2d<float, access::read>  indirect   [[texture(2)]],
+                            texture2d<float, access::read>  albedoTex  [[texture(3)]],
+                            texture2d<float, access::read>  emissionTex [[texture(4)]],
+                            texture2d<float, access::read>  nd         [[texture(5)]],
+                            texture2d<float, access::read>  moments    [[texture(6)]],
+                            texture2d<float, access::write> output     [[texture(7)]],
+                            texture2d<float, access::read>  denoisedIndirect [[texture(8)]],  // with FLAG_SEPARATE
+                            texture2d<float, access::read>  giDebug    [[texture(9)]],   // written by cascade GI
+                            texture2d<float, access::read>  surfacePos [[texture(10)]],  // with FLAG_SHADOW_DENOISER
+                            texture2d<float, access::read>  geoNormal  [[texture(11)]],  // with FLAG_SHADOW_DENOISER
+                            texture2d<float, access::read>  material   [[texture(12)]],  // with FLAG_SPECULAR: F0, roughness
+                            texture2d<float, access::read>  specularTex [[texture(13)]], // with FLAG_SPECULAR: specular light / specular albedo
+                            texture2d<float, access::read>  geometryDebug [[texture(14)]], // view modes 8-13 (geometryDebugKernel)
+                            texture2d<float, access::read>  meshDirect [[texture(15)]],   // with FLAG_MESH_LIGHTS: denoised mesh-light direct light
+                            texture3d<float>                fogGrid    [[texture(16)]],   // with FLAG_FOG: integrated froxels
+                            texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
+                            device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
+                            constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
+                            uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    if (tid.x >= u.width || tid.y >= u.height) {
+        output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid);
+        return;
+    }
+
+    float3 albedo = albedoTex.read(tid).rgb;
+    float3 emission = emissionTex.read(tid).rgb;
+    float3 d = direct.read(tid).rgb;
+    float3 i = indirect.read(tid).rgb;
+    float3 illumination = d + i;
+    float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
+    float3 directSpecular = float3(0.0f);
+    if (flagOn(u.flags, FLAG_SHADOW_DENOISER)) {
+        // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
+        float4 vis = denoised.read(tid);
+        float4 sp = surfacePos.read(tid);
+        float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+        float3 p = sp.xyz + ng * RAY_EPSILON;
+        illumination = float3(0.0f);
+        if (flagOn(u.flags, FLAG_RESTIR)) {
+            // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
+            illumination = meshDirect.read(tid).rgb * vis.r;
+        } else {
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * dot(vis, groupMask(lightGroup(lights[l])));
+        if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
+        }
+        if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {
+            // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
+            float4 m = material.read(tid);
+            if (any(m.rgb > 0.0f)) {
+                float3 v = normalize(u.camPos.xyz - sp.xyz);
+                for (uint l = 0; l < u.lightGroupEnd.w; ++l)
+                    directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * dot(vis, groupMask(lightGroup(lights[l])));
+            }
+        }
+        if (flagOn(u.flags, FLAG_SEPARATE)) {
+            finalIndirect = denoisedIndirect.read(tid).rgb;
+            illumination += finalIndirect;
+        }
+    } else if (flagOn(u.flags, FLAG_DENOISE)) {
+        illumination = denoised.read(tid).rgb;
+        if (flagOn(u.flags, FLAG_SEPARATE)) {
+            finalIndirect = denoisedIndirect.read(tid).rgb;
+            illumination += finalIndirect;
+        }
+    }
+
+    // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.
+    float3 specular = directSpecular;
+    if (flagOn(u.flags, FLAG_SPECULAR)) {
+        float4 m = material.read(tid);
+        float4 ndc = nd.read(tid);
+        if (any(m.rgb > 0.0f) && ndc.w > 0.0f) {
+            float3 v = normalize(u.camPos.xyz - surfacePos.read(tid).xyz);
+            float3 sa = specularAlbedo(m.rgb, 1.0f, m.a, max(dot(ndc.xyz, v), 1e-4f));
+            float3 traced = specularTex.read(tid).rgb;
+            bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE);
+            specular += sa * (tracedAll ? traced : traced + finalIndirect);
+        }
+    }
+
+    // Fog in front of the pixel: rgb = in-scattered light, a = transmittance.
+    float4 fogged = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    if (flagOn(u.flags, FLAG_FOG)) {
+        if (flagOn(u.flags, FLAG_FOG_REFERENCE)) fogged = fogReference.read(tid);
+        else {
+            // With temporal accumulation downstream (jittered frames: TAAU, MetalFX temporal, references), the lookup
+            // moves by the frame's jitter scaled up to a whole froxel, so the accumulation smooths the grid's steps.
+            float depth = nd.read(tid).w;
+            float2 uv = (float2(tid) + 0.5f + u.jitter.xy * 8.0f) / float2(u.width, u.height);
+            fogged = fogFromGrid(fog, fogGrid, uv, depth > 0.0f ? depth : fog.grid.y);
+        }
+    }
+
+    float3 c;
+    bool hdr = true;
+    switch (u.viewMode) {
+        case 1: c = albedo * d + emission; break;                 // raw direct
+        case 2: c = albedo * i; break;                            // raw indirect
+        case 3: { float4 n = nd.read(tid); c = n.w > 0.0f ? n.xyz * 0.5f + 0.5f : float3(0.0f); hdr = false; break; }
+        case 4: c = albedo; hdr = false; break;
+        case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); hdr = false; break; }
+        case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
+        case 7: c = giDebug.read(tid).rgb; hdr = false; break;    // GI technique's debug view
+        case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; hdr = false; break;
+        case 14: c = fogged.rgb; break;                           // fog scattering alone
+        default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
+    }
+    if (hdr) c = toneMap(c, u.post);
+    // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
+    output.write(float4(saturate(c), 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 5. Accumulate (benchmark reference only): running mean of the raw illumination over many frames
+//    of a paused scene, used in place of the denoiser to make a converged ground-truth image.
+// ---------------------------------------------------------------------------------------------
+
+kernel void accumulateKernel(constant Uniforms&                   u              [[buffer(0)]],
+                             constant uint&                       sampleCount    [[buffer(1)]],
+                             texture2d<float, access::read>       direct         [[texture(0)]],
+                             texture2d<float, access::read>       indirect       [[texture(1)]],
+                             texture2d<float, access::read_write> accumDirect    [[texture(2)]],
+                             texture2d<float, access::read_write> accumIndirect  [[texture(3)]],
+                             texture2d<float, access::read>       spec           [[texture(4)]],   // with FLAG_SPECULAR
+                             texture2d<float, access::read_write> accumSpec      [[texture(5)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    // Running means, kept apart so the "Indirect only" view has a converged reference too.
+    float w = 1.0f / float(sampleCount + 1);
+    float3 d = direct.read(tid).rgb, i = indirect.read(tid).rgb;
+    float3 meanD = sampleCount > 0 ? accumDirect.read(tid).rgb : float3(0.0f);
+    float3 meanI = sampleCount > 0 ? accumIndirect.read(tid).rgb : float3(0.0f);
+    accumDirect.write(float4(meanD + (d - meanD) * w, 1.0f), tid);
+    accumIndirect.write(float4(meanI + (i - meanI) * w, 1.0f), tid);
+    if (flagOn(u.flags, FLAG_SPECULAR)) {
+        float3 sp = spec.read(tid).rgb, meanS = sampleCount > 0 ? accumSpec.read(tid).rgb : float3(0.0f);
+        accumSpec.write(float4(meanS + (sp - meanS) * w, 1.0f), tid);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// 6. Custom temporal upscaler (TAAU, the alternative to MetalFX): one pass per output pixel.
+//    Each frame's input samples sit at jittered positions (pixel centre + jitter). An output pixel takes the
+//    samples within about one *output* pixel of its centre (Gaussian weights; most frames that's none or one),
+//    so over the jitter cycle it collects its own sharp samples, and blends them into its history weighted by how
+//    close they landed. The history is reprojected with the closest-depth motion vector of the 3x3 input
+//    neighbourhood (sharp moving edges), sampled with Catmull-Rom (little blur when it moves) and clipped to
+//    the neighbourhood's YCoCg colour box (no ghosting). With no usable history it starts from a smooth
+//    spatial upsample. Input and history are tonemapped, linear; output goes straight to the sRGB drawable.
+// ---------------------------------------------------------------------------------------------
+
+inline float3 rgbToYCoCg(float3 c) {
+    return float3(dot(c, float3(0.25f, 0.5f, 0.25f)), dot(c, float3(0.5f, 0.0f, -0.5f)), dot(c, float3(-0.25f, 0.5f, -0.25f)));
+}
+inline float3 yCoCgToRgb(float3 c) { return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+
+// Moves h toward the box centre until it's inside the box (rather than clamping each axis). `outside` returns
+// how far out it was: 1 = on the box's surface.
+inline float3 clipToBox(float3 h, float3 boxMin, float3 boxMax, thread float& outside) {
+    float3 center = 0.5f * (boxMax + boxMin), extent = 0.5f * (boxMax - boxMin) + 1e-4f;
+    float3 v = h - center;
+    float3 a = abs(v / extent);
+    outside = max(a.x, max(a.y, a.z));
+    return outside > 1.0f ? center + v / outside : h;
+}
+
+// Lanczos-2 without trigonometry (the polynomial approximation FSR 2 uses), for x^2 < 4.
+inline float lanczos2(float x) {
+    float x2 = min(x * x, 4.0f);
+    float a = 0.4f * x2 - 1.0f, b = 0.25f * x2 - 1.0f;
+    return (1.5625f * a * a - 0.5625f) * b * b;
+}
+
+inline float lanczos3(float x) {
+    x = abs(x);
+    if (x < 1e-4f) return 1.0f;
+    if (x >= 3.0f) return 0.0f;
+    return 3.0f * sinpi(x) * sinpi(x / 3.0f) / (M_PI_F * M_PI_F * x * x);
+}
+
+// Lanczos-3 filtered sample (6x6 texels). Resampling a moving history every frame blurs it a little each time;
+// Lanczos-3's flatter passband blurs it far less than Catmull-Rom (a 1D simulation of this upscaler: under half
+// the edge error at 1-4 pixels of motion per frame).
+inline float4 sampleLanczos3(texture2d<float, access::sample> tex, float2 uv, float2 size) {
+    float2 pos = uv * size - 0.5f;
+    int2 base = int2(floor(pos));
+    float2 f = pos - float2(base);
+    float wx[6], wy[6], sx = 0.0f, sy = 0.0f;
+    for (int i = 0; i < 6; ++i) {
+        wx[i] = lanczos3(f.x - float(i - 2)); sx += wx[i];
+        wy[i] = lanczos3(f.y - float(i - 2)); sy += wy[i];
+    }
+    int2 maxP = int2(size) - 1;
+    float4 sum = float4(0.0f);
+    for (int j = 0; j < 6; ++j) {
+        float4 row = float4(0.0f);
+        for (int i = 0; i < 6; ++i) row += tex.read(uint2(clamp(base + int2(i - 2, j - 2), int2(0), maxP))) * wx[i];
+        sum += row * wy[j];
+    }
+    return sum / (sx * sy);
+}
+
+// Catmull-Rom filtered sample from 5 bilinear taps (the 4 corner taps carry almost no weight).
+inline float4 sampleCatmullRom(texture2d<float, access::sample> tex, float2 uv, float2 size) {
+    constexpr sampler s(filter::linear, address::clamp_to_edge);
+    float2 pos = uv * size;
+    float2 p1 = floor(pos - 0.5f) + 0.5f;
+    float2 f = pos - p1;
+    float2 w0 = f * (-0.5f + f * (1.0f - 0.5f * f));
+    float2 w1 = 1.0f + f * f * (-2.5f + 1.5f * f);
+    float2 w2 = f * (0.5f + f * (2.0f - 1.5f * f));
+    float2 w3 = f * f * (-0.5f + 0.5f * f);
+    float2 w12 = w1 + w2;
+    float2 t0 = (p1 - 1.0f) / size, t3 = (p1 + 2.0f) / size, t12 = (p1 + w2 / w12) / size;
+    float4 r = tex.sample(s, float2(t12.x, t0.y)) * (w12.x * w0.y) + tex.sample(s, float2(t0.x, t12.y)) * (w0.x * w12.y)
+             + tex.sample(s, t12) * (w12.x * w12.y)
+             + tex.sample(s, float2(t3.x, t12.y)) * (w3.x * w12.y) + tex.sample(s, float2(t12.x, t3.y)) * (w12.x * w3.y);
+    return r / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+}
+
+// params[0].xy = this frame's jitter (input pixels), z = history cut per output pixel of motion,
+//   w = history cut where the clip moved it; [1] = input size xy, output size zw;
+// [2] = max history weight, clip box width (standard deviations), 1 = reset, Lanczos-3 detail threshold (0 = off);
+// [3] = sample kernel sharpness with a full history (Gaussian exp(-x d^2), d in output pixels), the same with none,
+//   history cut per output pixel of motion at depth edges, dilation radius (input pixels, 0 = the whole 3x3)
+kernel void taauKernel(constant float4*                   params     [[buffer(0)]],
+                       texture2d<float, access::read>     color      [[texture(0)]],   // tonemapped, linear
+                       texture2d<float, access::read>     depth      [[texture(1)]],   // reversed-Z: larger = closer
+                       texture2d<float, access::read>     motion     [[texture(2)]],   // previous - current, input pixels
+                       texture2d<float, access::sample>   history    [[texture(3)]],   // rgb, a = accumulated weight
+                       texture2d<float, access::write>    outHistory [[texture(4)]],
+                       texture2d<float, access::write>    output     [[texture(5)]],   // the drawable
+                       uint2 tid [[thread_position_in_grid]])
+{
+    float2 jitter = params[0].xy, inSize = params[1].xy, outSize = params[1].zw;
+    if (tid.x >= uint(outSize.x) || tid.y >= uint(outSize.y)) return;
+    float2 toOut = outSize / inSize;
+    float2 inPos = (float2(tid) + 0.5f) / toOut;   // this output pixel's centre, in input pixels
+    int2 nearest = int2(floor(inPos - jitter));    // input sample q sits at q + 0.5 + jitter
+    int2 maxQ = int2(inSize) - 1;
+
+    // The 3x3 input samples around the pixel: colour, offset from the pixel centre, depth.
+    float3 colors[9];
+    float2 offsets[9];   // input pixels
+    float depths[9];
+    float zLo = 1e9f, zHi = -1.0f;
+    for (int k = 0; k < 9; ++k) {
+        int2 q = clamp(nearest + int2(k % 3 - 1, k / 3 - 1), int2(0), maxQ);
+        colors[k] = color.read(uint2(q)).rgb;
+        offsets[k] = float2(q) + 0.5f + jitter - inPos;
+        depths[k] = depth.read(uint2(q)).x;
+        zLo = min(zLo, depths[k]); zHi = max(zHi, depths[k]);
+    }
+    bool depthEdge = zHi - zLo > 0.05f * zHi;
+
+    // Motion at this pixel: bilinear from the 4 surrounding samples (camera motion varies across the screen).
+    float2 g = inPos - 0.5f - jitter;
+    int2 b = int2(floor(g));   // nearest - 1 or nearest per axis: the 2x2 lies inside the 3x3 above
+    float2 f = g - float2(b);
+    float2 mv = float2(0.0f);
+    for (int k = 0; k < 4; ++k) {
+        uint2 q = uint2(clamp(b + int2(k & 1, k >> 1), int2(0), maxQ));
+        mv += motion.read(q).xy * ((k & 1 ? f.x : 1.0f - f.x) * (k >> 1 ? f.y : 1.0f - f.y));
+    }
+    // Across a depth edge, the closest surface's motion instead (dilation, so moving edges stay sharp), among the
+    // samples within params[3].w input pixels. Dilating further drags the foreground's motion into the background,
+    // which then fetches stale history from where the edge used to be: a trail behind edges in camera pans.
+    if (depthEdge) {
+        float radius2 = params[3].w > 0.0f ? params[3].w * params[3].w : 1e9f;
+        float best = -1.0f, nearestD2 = 1e9f;
+        uint2 q = uint2(nearest), nearestQ = q;
+        for (int k = 0; k < 9; ++k) {
+            float d2 = dot(offsets[k], offsets[k]);
+            uint2 qk = uint2(clamp(nearest + int2(k % 3 - 1, k / 3 - 1), int2(0), maxQ));
+            if (d2 < nearestD2) { nearestD2 = d2; nearestQ = qk; }
+            if (d2 <= radius2 && depths[k] > best) { best = depths[k]; q = qk; }
+        }
+        mv = motion.read(best < 0.0f ? nearestQ : q).xy;
+    }
+    float speed = length(mv * toOut);   // output pixels per frame
+
+    // Spatial estimate (Lanczos-2, de-ringed to the neighbourhood's range) where there's no usable history, and
+    // the YCoCg colour box the history is clipped to, weighted toward the nearest samples.
+    float3 sumSharp = float3(0.0f), sumWide = float3(0.0f), m1 = float3(0.0f), m2 = float3(0.0f);
+    float3 lo = float3(1e9f), hi = float3(-1e9f);
+    float weightSharp = 0.0f, weightWide = 0.0f;
+    for (int k = 0; k < 9; ++k) {
+        float2 d = offsets[k];
+        float3 c = colors[k];
+        float wWide = exp(-2.0f * dot(d, d));
+        float wSharp = lanczos2(d.x) * lanczos2(d.y);
+        sumSharp += c * wSharp; weightSharp += wSharp;
+        sumWide += c * wWide; weightWide += wWide;
+        lo = min(lo, c); hi = max(hi, c);
+        float3 y = rgbToYCoCg(c);
+        m1 += y * wWide; m2 += y * y * wWide;
+    }
+    float3 spatial = weightSharp > 1e-3f ? clamp(sumSharp / weightSharp, lo, hi) : sumWide / max(weightWide, 1e-6f);
+    float3 mean = m1 / max(weightWide, 1e-6f), sigma = sqrt(max(m2 / max(weightWide, 1e-6f) - mean * mean, 0.0f));
+
+    float2 prevUV = (inPos + mv) / inSize;
+    float maxWeight = params[2].x;
+    float4 result;
+    if (params[2].z > 0.0f || any(prevUV < 0.0f) || any(prevUV > 1.0f)) {
+        result = float4(spatial, 1.0f);
+    } else {
+        // History: a pixel that didn't move reads its own texel. A moving one is resampled, which blurs it a little
+        // every frame: Lanczos-3 (36 taps) blurs far less than Catmull-Rom (5 taps), so it's used wherever there's
+        // detail to lose (the input neighbourhood varies more than params[2].w); flat areas lose nothing.
+        bool detail = params[2].w > 0.0f && max(sigma.x, max(abs(sigma.y), abs(sigma.z))) > params[2].w;
+        float4 hist = all(abs(mv) < 1e-4f) ? history.read(tid)
+                    : detail ? sampleLanczos3(history, prevUV, outSize) : sampleCatmullRom(history, prevUV, outSize);
+        float outside;
+        float3 h = yCoCgToRgb(clipToBox(rgbToYCoCg(max(hist.rgb, 0.0f)), mean - params[2].y * sigma, mean + params[2].y * sigma, outside));
+        // Trust the history less where it moves and where the clip had to move it. Near a depth edge, camera
+        // translation uncovers and covers background (parallax) that the colour box can't tell from history: cut
+        // the history much harder there (params[3].z) than on open surfaces (params[0].z).
+        float cap = maxWeight / (1.0f + (depthEdge ? max(params[3].z, params[0].z) : params[0].z) * speed);
+        float histWeight = clamp(hist.a, 0.0f, cap) / (1.0f + params[0].w * max(outside - 1.0f, 0.0f));
+
+        // This frame's samples within about an output pixel. The kernel is sharpest where the history is long
+        // (static: many frames to collect sharp samples from) and widest where it was cut (fewer, wider samples).
+        float sharpness = mix(params[3].y, params[3].x, saturate(histWeight / maxWeight));
+        float3 sum = float3(0.0f);
+        float weight = 0.0f;
+        for (int k = 0; k < 9; ++k) {
+            float2 dOut = offsets[k] * toOut;
+            float w = exp(-sharpness * dot(dOut, dOut));
+            sum += colors[k] * w;
+            weight += w;
+        }
+        float3 current = weight > 1e-4f ? sum / weight : spatial;
+        result = histWeight + weight > 1e-3f
+            ? float4((h * histWeight + current * weight) / (histWeight + weight), min(histWeight + weight, maxWeight))
+            : float4(spatial, 1.0f);
+    }
+    outHistory.write(result, tid);
+    output.write(float4(saturate(result.rgb), 1.0f), tid);
+}
+
+// Benchmark references only: running mean of the composited (tonemapped) colour over jittered frames, i.e. a
+// supersampled, anti-aliased image. params.x = frames averaged so far, y = 0 while not averaging yet.
+kernel void accumulateColorKernel(constant uint2&                      params [[buffer(0)]],
+                                  texture2d<float, access::read>       color  [[texture(0)]],
+                                  texture2d<float, access::read_write> accum  [[texture(1)]],
+                                  texture2d<float, access::write>      output [[texture(2)]],
+                                  uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    float3 c = color.read(tid).rgb;
+    if (params.y != 0) {
+        float3 m = params.x > 0 ? accum.read(tid).rgb : float3(0.0f);
+        c = m + (c - m) / float(params.x + 1);
+        accum.write(float4(c, 1.0f), tid);
+    }
+    output.write(float4(c, 1.0f), tid);
+}

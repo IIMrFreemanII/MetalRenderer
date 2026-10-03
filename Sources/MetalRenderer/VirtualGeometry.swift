@@ -2,7 +2,7 @@ import Foundation
 import Metal
 import simd
 
-/// Kernels of virtual geometry's per-frame cut (Shaders.metal, "Virtual geometry").
+/// Kernels of virtual geometry's per-frame cut (Shaders/VirtualGeometry.metal).
 struct VGPipelines {
     let reset, cut, finish, pad, hierarchy, fit: MTLComputePipelineState
 }
@@ -233,7 +233,7 @@ final class VirtualGeometry {
 
     // MARK: Per frame
 
-    /// Shaders.metal VGParams (48 bytes).
+    /// VGParams in Shaders/VirtualGeometry.metal (48 bytes).
     struct Params {
         var camPos: SIMD4<Float>
         var tau: Float

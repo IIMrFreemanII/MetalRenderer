@@ -2,7 +2,7 @@ import Foundation
 import Metal
 import QuartzCore
 
-/// The compute kernels in Shaders.metal: case `trace` is the function `traceKernel`.
+/// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
     case trace, geometryDebug, lightMap
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
@@ -54,7 +54,7 @@ enum Kernel: Int, CaseIterable {
 }
 
 /// Variants of the big kernels with a configuration's flags compiled in (function constants 1 to 4, see flagOn and
-/// passOn in Shaders.metal): a path tracer without the light-map lookup, a ReSTIR pass that only merges, reflections
+/// passOn in Shaders/Types.metal): a path tracer without the light-map lookup, a ReSTIR pass that only merges, reflections
 /// that never follow a second bounce. What a variant doesn't do holds no registers, which is what these kernels are
 /// short of (what pays is a variant without one of the kernel's ray casts). One is made the first time a frame asks
 /// for it, in the background: until it is ready the frame runs the kernel's general pipeline, which reads the same
@@ -120,7 +120,7 @@ final class KernelVariants {
     }
 }
 
-/// Every compute pipeline, made from one compile of Shaders.metal for one ray tracer (the CUSTOM_RT macro) and
+/// Every compute pipeline, made from one compile of the shaders for one ray tracer (the CUSTOM_RT macro) and
 /// specialised for one set of light types (function constant 0, see Scene.lightTypeMask). A value, so a scene load or a
 /// hot reload builds the next set in the background while frames keep using this one, and the renderer swaps the whole
 /// set between two frames.
@@ -190,7 +190,7 @@ struct Pipelines {
     }
 
     private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool) throws -> MTLLibrary {
-        let source = try String(contentsOf: url, encoding: .utf8)
+        let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
         let options = MTLCompileOptions()
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
         // 3.0 and then need METALRENDERER_RT=metal.

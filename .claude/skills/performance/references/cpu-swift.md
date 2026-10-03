@@ -94,7 +94,7 @@ nothing.
 
 ## 4. CPU↔GPU data layout
 
-* Every struct shared with MSL lives in `GPUTypes.swift` and must match `Shaders.metal` byte for byte:
+* Every struct shared with MSL lives in `GPUTypes.swift` and must match `Shaders/Types.metal` byte for byte:
   * `SIMD3<Float>` ↔ `float3` is 16 bytes with 16-byte alignment;
   * `packed_float3` in MSL is 12 bytes, and Swift has no direct equivalent (use three `Float`s);
   * `Bool` sizes differ, so use `UInt32` flags (as `GPUFogParams` does).

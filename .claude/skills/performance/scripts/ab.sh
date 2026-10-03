@@ -5,7 +5,7 @@
 #
 # Runs A, B, A, B, … (`rounds` times each, default 2) so thermal drift and launch noise hit both alike, saves every
 # log, then prints the chosen table columns (default "GPU total") per setting: each round's value, the medians and
-# the delta B − A. Each binary runs from its own repo root, so it loads its own Shaders.metal; build a baseline in a
+# the delta B − A. Each binary runs from its own repo root, so it loads its own shader files; build a baseline in a
 # git worktree to compare code against code (see references/measuring.md).
 #
 # Example:

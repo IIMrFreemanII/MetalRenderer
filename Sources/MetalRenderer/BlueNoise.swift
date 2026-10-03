@@ -6,7 +6,7 @@ import Foundation
 /// as random numbers is high-frequency. The denoiser's spatial filter removes that kind of error much
 /// better than the blotchy, low-frequency error of white noise.
 enum BlueNoise {
-    static let size = 128   // must match BLUE_NOISE_SIZE in Shaders.metal
+    static let size = 128   // must match BLUE_NOISE_SIZE in Shaders/Sampling.metal
 
     /// Returns `size * size` values, row-major: (rank + 0.5) / count.
     static func generate(size n: Int = BlueNoise.size, sigma: Float = 1.9, seed: UInt64 = 1) -> [Float] {

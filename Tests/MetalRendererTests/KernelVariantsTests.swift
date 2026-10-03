@@ -3,14 +3,14 @@ import Metal
 @testable import MetalRenderer
 
 /// Kernel variants (Pipelines.swift): a kernel with a configuration's flags compiled in. The flag words are made
-/// twice, in Swift for the variant's constants and in Shaders.metal for the general pipeline, and must agree.
+/// twice, in Swift for the variant's constants and in the shaders for the general pipeline, and must agree.
 final class KernelVariantsTests: XCTestCase {
     private let shaders = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
 
     /// `constant uint NAME = value` (also in a comma-separated list) in the shader source.
     private func shaderConstants() throws -> [String: UInt32] {
-        let source = try String(contentsOf: shaders, encoding: .utf8)
+        let source = try ShaderSource.load(shaders, lineMarkers: false)
         var out: [String: UInt32] = [:]
         let regex = try NSRegularExpression(pattern: #"\b([A-Z][A-Z0-9_]+) *= *(\d+)u?\s*[,;]"#)
         for line in source.split(separator: "\n") where line.hasPrefix("constant uint ") || line.hasPrefix("              ") {

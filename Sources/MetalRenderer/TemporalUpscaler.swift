@@ -1,6 +1,6 @@
 import Metal
 
-/// Custom temporal upscaler (TAAU; see taauKernel in Shaders.metal), the alternative to MetalFX: one compute pass
+/// Custom temporal upscaler (TAAU; see taauKernel in Shaders/Output.metal), the alternative to MetalFX: one compute pass
 /// at output resolution that writes the drawable directly. Owns the output-resolution history.
 final class TemporalUpscaler {
     let inputWidth: Int

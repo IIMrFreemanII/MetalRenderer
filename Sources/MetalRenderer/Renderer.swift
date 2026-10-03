@@ -9,7 +9,7 @@ enum RendererError: Error, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .missingFunction(let name): return "Shader function '\(name)' not found in Shaders.metal"
+        case .missingFunction(let name): return "Shader function '\(name)' not found in the shaders"
         case .resourceCreation(let what): return "Failed to create \(what)"
         }
     }
@@ -169,7 +169,7 @@ final class FogTargets {
     }
 }
 
-/// ReSTIR DI's per-pixel state (Shaders.metal "ReSTIR DI").
+/// ReSTIR DI's per-pixel state (Shaders/RestirDI.metal).
 final class RestirTargets {
     let width: Int, height: Int, chains: Int
     let reservoir: [MTLTexture]   // [2] rgba32Uint arrays (element, uv, W, M | flags; a slice per chain), ping-ponged
@@ -197,7 +197,7 @@ final class RestirTargets {
     }
 }
 
-/// ReSTIR GI's per-pixel state (Shaders.metal "ReSTIR GI"). A reservoir is two textures: rgba32F (x_s, W) and rgba32Uint
+/// ReSTIR GI's per-pixel state (Shaders/RestirGI.metal). A reservoir is two textures: rgba32F (x_s, W) and rgba32Uint
 /// (normal, light, M | age | flags).
 final class RestirGITargets {
     let width: Int, height: Int
@@ -297,7 +297,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
     private var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
     private var blueNoiseFilled = false
-    // Volumetric fog (Shaders.metal "Volumetric fog"), allocated when first turned on.
+    // Volumetric fog (Shaders/Fog.metal), allocated when first turned on.
     private var fogNoiseTexture: MTLTexture?    // tiling 3D density noise (FogNoise)
     private var fogGrid: FogTargets?            // froxel grid at the current render resolution
     private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
@@ -306,7 +306,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
     private var dummy2D: MTLTexture!
     private var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
-    // Sky and clouds (Shaders.metal "Sky and clouds"), allocated when first used.
+    // Sky and clouds (Shaders/Sky.metal), allocated when first used.
     private var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
     private var cloudShadowMap: MTLTexture?     // clouds' transmittance toward the sun over the ground around the scene
     private var cloudShape: MTLTexture?         // 128^3 Perlin-Worley + Worley octaves (cloudNoiseKernel)
@@ -2594,7 +2594,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         passTimeFrames += 1
     }
 
-    /// Recompiles Shaders.metal and remakes every pipeline (R key, traversal counters), in the background: frames keep
+    /// Recompiles the shaders and remakes every pipeline (R key, traversal counters), in the background: frames keep
     /// the old pipelines until the new set is ready, and for good if the compile fails. `done` gets the outcome (main thread).
     func reloadShaders(then done: ((Bool) -> Void)? = nil) {
         let device = device, url = shaderURL, kind = pipelines.kind, lightTypes = pipelines.lightTypes

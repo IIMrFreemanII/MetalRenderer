@@ -1,7 +1,7 @@
 # Measuring MetalRenderer
 
-Everything runs from the repo root with a release build. The binary loads `Shaders.metal` from the source folder it
-was built from (`#filePath`, `Renderer.shaderURL`).
+Everything runs from the repo root with a release build. The binary loads the shaders (`Shaders.metal` and the
+pieces in `Shaders/`) from the source folder it was built from (`#filePath`, `Renderer.shaderURL`).
 
 ```bash
 swift build -c release
@@ -110,7 +110,7 @@ means for measuring:
 * Benchmarks wait for a variant the first time a setting needs it, so every measured frame runs the same code. The
   app compiles them in the background and runs the general pipeline until they are ready: time a change in a
   benchmark, not in the first second after a settings change in the app.
-* A variant is new code to Metal's shader cache. After an edit to `Shaders.metal`, a setting's first frame takes a few
+* A variant is new code to Metal's shader cache. After an edit to a shader file, a setting's first frame takes a few
   hundred ms longer per variant (inside the 60 warm-up frames; the table is not affected).
 * `METALRENDERER_VARIANTS=0` against the default, same binary, is the A/B for "what do the variants buy here".
 * **Checking that a variant computes what the general pipeline computes.** Under fast math the two differ by
@@ -132,7 +132,8 @@ means for measuring:
    ```bash
    .claude/skills/performance/scripts/ab.sh -n 3 -- METALRENDERER_BENCH=stress METALRENDERER_BENCH_ONLY="32 lights" METALRENDERER_TG=trace=8x8 -- METALRENDERER_BENCH=stress METALRENDERER_BENCH_ONLY="32 lights"
    ```
-2. **Code against code:** build the baseline in a worktree, so each binary uses its own `Shaders.metal`:
+2. **Code against code:** build the baseline in a worktree, so each binary uses its own shader files (commit new
+   ones first: `git archive` and a worktree only hold what is tracked):
    ```bash
    git worktree add ../MetalGI-base HEAD
    ```

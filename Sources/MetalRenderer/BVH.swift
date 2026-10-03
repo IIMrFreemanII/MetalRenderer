@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Bounding volume hierarchies for the custom ray tracer (Shaders.metal, "Custom BVH traversal").
+/// Bounding volume hierarchies for the custom ray tracer (Shaders/Intersect.metal, "Custom BVH traversal").
 ///
 /// Every tree uses the same 64-byte node, which holds the boxes of *both* children, so one fetch tests two:
 ///   child ref (`lo.w` bits): bit 31 clear = index of an internal node in the same buffer;

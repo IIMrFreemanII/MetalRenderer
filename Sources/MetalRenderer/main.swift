@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
           - / =        lower / raise render resolution   U   MetalFX upscaling: off, 1.5x, 2x, 3x
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
-          R            hot-reload Shaders.metal (edit it while the app runs)
+          R            hot-reload the shaders (edit Shaders/*.metal while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them

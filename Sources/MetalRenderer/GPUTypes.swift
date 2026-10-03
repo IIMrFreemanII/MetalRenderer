@@ -1,6 +1,6 @@
 import simd
 
-// Structs shared with Shaders.metal.
+// Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).
 // Their memory layout MUST match the MSL structs of the same name exactly,
 // so every struct is built from 16-byte vectors/matrices plus groups of four 32-bit scalars.
 

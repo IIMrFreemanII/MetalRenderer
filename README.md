@@ -77,7 +77,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
 * **Settings panel:** a floating **Render Settings** panel (Tab or ⌘,) has a control for every setting, including the GI method and its parameters and the denoiser parameters. It remembers your settings between launches and copies them as `METALRENDERER_*` variables (see [The settings panel](#the-settings-panel)).
 * **Debug window:** a floating **Debug** window (I or ⌘I) shows a frame-time graph, GPU time per pass, the scene's instance, triangle and light counts, virtual geometry's cut and streaming, texture streaming, GPU memory and the custom tracer's traversal counters (see [The debug window](#the-debug-window)).
 * **Exposure and tone curves:** exposure in stops and a choice of ACES (the default), AgX, Reinhard or none, applied in the composite pass before any upscaler.
-* **Everything runs in compute kernels.** `Shaders.metal` is compiled at runtime, so you can edit it while the app runs and press **R** to reload.
+* **Everything runs in compute kernels.** The shaders (`Shaders.metal` and the pieces in `Shaders/`) are compiled at runtime, so you can edit them while the app runs and press **R** to reload. A compile error names the file and the line.
 
 ## Build and run
 
@@ -90,7 +90,7 @@ swift run -c release
 
 You can also open `Package.swift` in Xcode, choose **My Mac**, and press Run. Use the Release scheme for real frame rates.
 
-> The app finds `Shaders.metal` through its source path, so run it from this folder rather than copying the binary somewhere else.
+> The app finds its shaders through its source path, so run it from this folder rather than copying the binary somewhere else.
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
@@ -194,7 +194,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (cascades: probe grid over interpolation confidence) |
 | 9, 0 | Cycle the geometry debug views (see below); back to the final image |
 | L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
-| R | Hot-reload `Shaders.metal`. It compiles in the background: the view keeps drawing with the old shaders until the new ones are ready, and keeps them if the compile fails |
+| R | Hot-reload the shaders. It compiles in the background: the view keeps drawing with the old shaders until the new ones are ready, and keeps them if the compile fails |
 | ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera, or an HDR sky (`.hdr` / `.exr`) |
 | Tab, ⌘, | Show or hide the Render Settings panel |
 | I, ⌘I | Show or hide the Debug window |
@@ -266,7 +266,7 @@ Each light demo is procedural, so it loads at once. Each demo scene shows one li
 * a floor lamp.
 
 How the types fit the existing pipeline:
-* **Shared helpers.** Every type answers the same five questions in `Shaders.metal`:
+* **Shared helpers.** Every type answers the same five questions in `Shaders/Lights.metal`:
   * `lightUnshadowed`: diffuse light, which is also each light's picking weight;
   * `lightShadowTarget`: a random point of the light, for the shadow ray;
   * `lightSpecular`;
@@ -649,8 +649,10 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `VirtualGeometryBuilder.swift` | The cluster LOD DAG, cluster pages and the cache file format |
 | `VirtualBLAS.swift` | Virtual geometry at run time (default): the cut per instance and a background BLAS over it (spliced from the clusters' BVHs, then SAH) |
 | `VirtualGeometry.swift` | The GPU-driven variant (`METALRENDERER_VG_MODE=clusters`): GPU cut, page pool and streaming, cluster tree |
-| `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders.metal` |
-| `Shaders.metal` | All GPU code |
+| `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
+| `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
+| `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry` |
 
 ## Notes for M1 / M2 Macs
 

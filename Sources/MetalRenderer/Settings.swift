@@ -20,7 +20,7 @@ struct DenoiserSettings: Equatable, Codable {
     var maxHistory: Float = 16      // frames of temporal accumulation (lower = less lag, noisier)
     var antiLag: Float = 0          // 0 = off; higher shortens the history faster where the lighting changes
     var separateSignals = true      // filter direct and indirect light separately (sharper shadows, 2x the cost)
-    // Shadow denoiser for direct light (up to 4 lights; see Shaders.metal 3b): filters each light's visibility
+    // Shadow denoiser for direct light (up to 4 lights; see Shaders/Denoise.metal, 3b): filters each light's visibility
     // instead of the lit color, and clamps its history so moving shadows don't lag.
     var shadowDenoiser = true
     var shadowPasses = 3            // 3x3 a-trous passes, steps 1, 2, 4, ...
@@ -64,7 +64,7 @@ enum DirectLightMode: Int, CaseIterable, Codable {
     }()
 }
 
-/// ReSTIR DI (Shaders.metal "ReSTIR DI"): reservoir resampling of light samples, so a pixel's cost doesn't depend on the
+/// ReSTIR DI (Shaders/RestirDI.metal): reservoir resampling of light samples, so a pixel's cost doesn't depend on the
 /// light count. Defaults from METALRENDERER_BENCH=restirq.
 struct RestirSettings: Equatable, Codable {
     var candidates = 8              // initial candidates per pixel from the light table (plus one per sun)
@@ -92,7 +92,7 @@ struct RestirSettings: Equatable, Codable {
     static let radiusRange: ClosedRange<Float> = 4...64
 }
 
-/// The light grid (Shaders.metal "Light grid"): a camera-centred world-space grid of light reservoirs, rebuilt every
+/// The light grid (Shaders/Regir.metal): a camera-centred world-space grid of light reservoirs, rebuilt every
 /// frame on the GPU, that ReSTIR DI draws most of its candidates from, so they are the lights near the pixel rather
 /// than the whole table by power. `levels` cascaded levels of `cells`^3 cells, the first `cellSize` m wide and each
 /// next `levelScale` times wider; `slots` reservoirs per cell, each the pick of `candidates` table draws; `share` of
@@ -191,7 +191,7 @@ enum GIMode: Int, CaseIterable, Codable {
     }
 }
 
-/// ReSTIR GI (Shaders.metal "ReSTIR GI"): one path per pixel (or per 2x2 block) whose first bounce is resampled over
+/// ReSTIR GI (Shaders/RestirGI.metal): one path per pixel (or per 2x2 block) whose first bounce is resampled over
 /// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
 struct RestirGISettings: Equatable, Codable {
     var quarterBudget = false       // one fresh path per 2x2 block per frame (a rotating pixel): 4x cheaper paths, but
@@ -331,7 +331,7 @@ struct VirtualGeometrySettings: Equatable, Codable {
     static let poolOptions = [256, 512, 768, 1024, 2048]
 }
 
-/// Volumetric fog (Shaders.metal "Volumetric fog"): exponential height fog with drifting noise, plus the scene's
+/// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
 /// local fog volumes. Each scene kind has a preset (`preset(for:)`); the volumes themselves come with the scene.
 struct FogSettings: Equatable, Codable {
     var enabled = false
@@ -402,7 +402,7 @@ struct FogSettings: Equatable, Codable {
     }
 }
 
-/// Where the sky comes from (Shaders.metal "Sky and clouds").
+/// Where the sky comes from (Shaders/Sky.metal).
 enum SkyMode: Int, CaseIterable, Codable {
     case constant           // one colour (the scene's), as indoor scenes use
     case atmosphere         // physically based atmosphere; the sun light's colour follows it

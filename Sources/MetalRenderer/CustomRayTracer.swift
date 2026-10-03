@@ -14,7 +14,7 @@ struct RTInstance {
     var pad1: UInt32 = 0
 }
 
-/// Kernels that build the dynamic TLAS (Shaders.metal, "per-frame build of the dynamic top-level tree").
+/// Kernels that build the dynamic TLAS (Shaders/BVHBuild.metal).
 struct RTPipelines {
     let prep, keys, sortLocal, sortGlobal, hierarchy, fit: MTLComputePipelineState
     let vg: VGPipelines
@@ -41,7 +41,7 @@ struct VGView {
 /// The dynamic TLAS is rebuilt from scratch every frame on the GPU as an LBVH (Karras 2012): moving instances are
 /// sorted along a Morton curve and the tree follows from the sorted keys, all in parallel. `METALRENDERER_RT_BUILD=cpu`
 /// builds it on the CPU with binned SAH instead (a better tree, for comparing trace speed).
-/// Totals of the custom tracer's traversal counters (Shaders.metal RT_COUNT): 0 rays, 1 top nodes, 2 bottom nodes,
+/// Totals of the custom tracer's traversal counters (RT_COUNT in Shaders/Intersect.metal): 0 rays, 1 top nodes, 2 bottom nodes,
 /// 3 instance entries, 4 cluster entries, 5 triangle tests, 6 top nodes inside virtual instances.
 struct TraversalStats {
     var counts = [UInt64](repeating: 0, count: 7)
@@ -211,7 +211,7 @@ final class CustomRayTracer {
         if ProcessInfo.processInfo.environment["METALRENDERER_RT_CHECK"] == "1" { selfTest(scene: scene) }
     }
 
-    /// RTScene (96 bytes, asserted in Shaders.metal): 10 GPU addresses, then the static and dynamic root refs and the
+    /// RTScene (96 bytes, asserted in Shaders/Intersect.metal): 10 GPU addresses, then the static and dynamic root refs and the
     /// cluster tree's first node.
     private func writeArgs(slot: Int) {
         let p = sceneArgs[slot].contents()
