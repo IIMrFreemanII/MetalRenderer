@@ -381,7 +381,16 @@ final class Benchmark {
         let all = Benchmark.configs(for: ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? "")
         guard let only = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_ONLY"] else { return all }
         let keys = only.split(separator: "|").map(String.init)
-        return all.filter { c in keys.contains { c.name.contains($0) } }
+        let kept = all.filter { c in keys.contains { c.name.contains($0) } }
+        if kept.isEmpty {   // nothing to render: say what the names are instead of running an empty list
+            let mode = ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? ""
+            let names = all.map { "  " + $0.name + "\n" }.joined()
+            let message = "METALRENDERER_BENCH_ONLY=\"\(only)\" matches no setting of METALRENDERER_BENCH=\(mode). "
+                + "It keeps the settings whose names contain one of its substrings (separated by |). The names:\n" + names
+            FileHandle.standardError.write(Data(message.utf8))
+            exit(1)
+        }
+        return kept
     }()
 
     /// GI modes compared by `METALRENDERER_BENCH=gi` (`METALRENDERER_GI_MODES="pt,cascades"` picks a subset).
