@@ -1047,6 +1047,10 @@ inline uint lightType(Light light) {
     return (LIGHT_TYPES & (LIGHT_TYPES - 1u)) == 0 ? ctz(LIGHT_TYPES) : uint(light.color.w) >> 2;   // one type: known
 }
 inline uint lightGroup(Light light) { return uint(light.color.w) & 3u; }
+// 1 in group g's channel: `v += groupMask(g) * x` and `dot(v, groupMask(g))` in place of v[g], which indexes a vector
+// by a run-time value.
+inline float4 groupMask(uint g) { return float4(uint4(g) == uint4(0u, 1u, 2u, 3u)); }
+inline uint groupElement(uint4 v, uint g) { uint4 m = select(uint4(0u), v, uint4(g) == uint4(0u, 1u, 2u, 3u)); return m.x | m.y | m.z | m.w; }
 
 // What multiplies a light's ray-traced visibility at p: the clouds' shadow for the sun, 1 for every other light.
 // Every sun visibility test goes through this (shadow rays, light maps, the fog), so all paths see the same clouds.
@@ -3079,38 +3083,41 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
     rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
     rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
 
+    // The two rays' picks ride in the lanes of float2 / uint2 (one ray leaves the second lane unused): arrays indexed by
+    // the ray would sit in memory, inside the loop over the lights.
     uint rays = clamp(raysPerGroup, 1u, MAX_RAYS_PER_GROUP);
-    float4 sel[MAX_RAYS_PER_GROUP];
-    for (uint k = 0; k < rays; ++k) sel[k] = float4(rng.next2(), rng.next2());
+    float4 sel0 = float4(rng.next2(), rng.next2()), sel1 = float4(0.0f);
+    if (rays > 1) sel1 = float4(rng.next2(), rng.next2());
     float3 direct = float3(0.0f);
     float4 visibility = float4(0.0f), blocker = float4(0.0f), blockerCount = float4(0.0f);
     uint start = 0;
     for (uint g = 0; g < SHADOW_GROUPS; ++g) {
         uint end = u.lightGroupEnd[g];
+        float4 channel = groupMask(g);
         float total = 0.0f;
-        float s[MAX_RAYS_PER_GROUP], pickedWeight[MAX_RAYS_PER_GROUP];
-        uint picked[MAX_RAYS_PER_GROUP];
-        for (uint k = 0; k < rays; ++k) { s[k] = min(sel[k][g], 0.99999f); picked[k] = end; pickedWeight[k] = 0.0f; }
+        float2 s = min(float2(dot(sel0, channel), dot(sel1, channel)), 0.99999f), pickedWeight = float2(0.0f);
+        uint2 picked = uint2(end);
         for (uint i = start; i < end; ++i) {
             float w = luminance(lightUnshadowed(lights[i], p, n, ng));
             if (w <= 0.0f) continue;
             total += w;
             float q = w / total;
-            for (uint k = 0; k < rays; ++k) {
-                if (s[k] < q) { picked[k] = i; pickedWeight[k] = w; s[k] /= q; }
-                else s[k] = (s[k] - q) / (1.0f - q);
-            }
+            bool2 take = s < q;
+            picked = select(picked, uint2(i), take);
+            pickedWeight = select(pickedWeight, float2(w), take);
+            s = select((s - q) / (1.0f - q), s / q, take);
         }
         for (uint k = 0; k < rays; ++k) {
             float2 r = rng.next2();   // drawn even for empty groups, so the sample dimensions stay fixed
-            if (picked[k] >= end) continue;
-            Light light = lights[picked[k]];
+            uint pick = k == 0 ? picked.x : picked.y;
+            if (pick >= end) continue;
+            Light light = lights[pick];
             float b;
             bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
             float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
-            visibility[g] += cloud / float(rays);
-            if (b > 0.0f) { blocker[g] += penumbraWidth(light, p, b); blockerCount[g] += 1.0f; }
-            if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * total / (pickedWeight[k] * float(rays)));
+            visibility += channel * (cloud / float(rays));
+            if (b > 0.0f) { blocker += channel * penumbraWidth(light, p, b); blockerCount += channel; }
+            if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * total / ((k == 0 ? pickedWeight.x : pickedWeight.y) * float(rays)));
         }
         start = end;
     }
@@ -3193,9 +3200,11 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
     uint start = 0;
     for (uint g = 0; g < SHADOW_GROUPS; ++g) {
         uint end = u.lightGroupEnd[g];
+        float4 channel = groupMask(g);
+        bool4 here = uint4(g) == uint4(0u, 1u, 2u, 3u);
         float2 r = rng.next2();
         // This frame's candidate: exact pick over the group's lights (pdf = weight / total, so W = total / weight).
-        float total = 0.0f, pickedWeight = 0.0f, s = min(sel[g], 0.99999f);
+        float total = 0.0f, pickedWeight = 0.0f, s = min(dot(sel, channel), 0.99999f);
         uint picked = end;
         for (uint i = start; i < end; ++i) {
             float w = luminance(lightUnshadowed(lights[i], p, n, ng));
@@ -3210,20 +3219,21 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         uint y = picked;
         float targetY = pickedWeight;
         // Last frame's pick, re-weighed at this pixel with the lights where they are now.
-        uint prevLight = prevPick[g] & 0xFFFFu;
+        uint prevG = groupElement(prevPick, g);
+        uint prevLight = prevG & 0xFFFFu;
         if (prevLight >= start && prevLight < end) {
-            float Mp = min(float(prevPick[g] >> 16), float(maxM));
+            float Mp = min(float(prevG >> 16), float(maxM));
             float targetP = luminance(lightUnshadowed(lights[prevLight], p, n, ng));
-            float wp = Mp * targetP * prevW[g];
+            float wp = Mp * targetP * dot(prevW, channel);
             M += Mp;
             if (wp > 0.0f) {
                 weightSum += wp;
-                if (reuseSel[g] * weightSum < wp) { y = prevLight; targetY = targetP; }
+                if (dot(reuseSel, channel) * weightSum < wp) { y = prevLight; targetY = targetP; }
             }
         }
         start = end;
         if (y >= end || targetY <= 0.0f || weightSum <= 0.0f) {
-            outPick[g] = y < end ? (y | (uint(min(M, 65535.0f)) << 16)) : 0xFFFFu;
+            outPick = select(outPick, uint4(y < end ? (y | (uint(min(M, 65535.0f)) << 16)) : 0xFFFFu), here);
             continue;
         }
         float W = weightSum / (M * targetY);
@@ -3232,11 +3242,11 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
         float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
-        visibility[g] = visible && total > 0.0f ? saturate(cloud * targetY * W / total) : 0.0f;
-        blocker[g] = penumbraWidth(light, p, b);
+        visibility = select(visibility, float4(visible && total > 0.0f ? saturate(cloud * targetY * W / total) : 0.0f), here);
+        blocker = select(blocker, float4(penumbraWidth(light, p, b)), here);
         if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * W);
-        outPick[g] = y | (uint(min(M, float(maxM))) << 16);
-        outW[g] = W;
+        outPick = select(outPick, uint4(y | (uint(min(M, float(maxM))) << 16)), here);
+        outW = select(outW, float4(W), here);
     }
     outReservoir.write(outPick, tid);
     outReservoirW.write(outW, tid);
@@ -4823,7 +4833,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
             illumination = meshDirect.read(tid).rgb * vis.r;
         } else {
-        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * vis[lightGroup(lights[l])];
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * dot(vis, groupMask(lightGroup(lights[l])));
         if ((u.flags & FLAG_MESH_LIGHTS) != 0) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         }
         if ((u.flags & FLAG_SPECULAR) != 0 && (u.flags & FLAG_RESTIR) == 0) {
@@ -4832,7 +4842,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             if (any(m.rgb > 0.0f)) {
                 float3 v = normalize(u.camPos.xyz - sp.xyz);
                 for (uint l = 0; l < u.lightGroupEnd.w; ++l)
-                    directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * vis[lightGroup(lights[l])];
+                    directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * dot(vis, groupMask(lightGroup(lights[l])));
             }
         }
         if ((u.flags & FLAG_SEPARATE) != 0) {
