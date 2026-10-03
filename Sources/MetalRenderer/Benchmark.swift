@@ -10,37 +10,96 @@ import UniformTypeIdentifiers
 /// pass (each pass goes into its own command buffer so `gpuStartTime`/`gpuEndTime` isolate it),
 /// prints a table and quits. Set `METALRENDERER_BENCH_DIR=<folder>` to also save a PNG per setting.
 final class Benchmark {
+    /// One setting of a benchmark run: what it renders with and how the run goes. The lists are in
+    /// Benchmark+Modes.swift, built with the modifiers below (`still`, `reference`, `cameraMove`, ...).
     struct Config {
         var name: String
-        var renderScale: CGFloat = 0.75
-        var giEnabled = true
-        var bounces = 2
-        var denoiseEnabled = true
-        var upscale: CGFloat = 0      // MetalFX factor, 0 = off
-        var upscaler = UpscalerKind.custom   // the app default
-        var viewMode = 0
-        var blueNoise = true          // the app default (the shadow denoiser's history clamp relies on it)
-        var paused = false            // freeze the animation at startTime
-        var startTime: Float = 0
-        var accumulate = false        // reference image: average raw frames instead of denoising
-        var frames: Int? = nil        // measured frames, if not the default
-        var capturePrevious = false   // also save the second-to-last frame (for frame-to-frame flicker)
-        var denoiser = DenoiserSettings()
-        var giMode = GIMode.pathTraced   // benchmark settings path trace unless they say otherwise (the app default is cascades)
-        var lightMaps = false
-        var cascades = CascadeSettings()
-        var cameraPath = false        // fly the camera along cameraPose(progress:), ending at the default pose
-        var supersample = false       // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
-        var scene = SceneSettings()
-        var rayTracer: RayTracerKind? = nil   // nil = METALRENDERER_RT / the default
-        var virtualGeometry: VirtualGeometrySettings? = nil   // nil = the default (METALRENDERER_VG...)
-        var camera: Camera? = nil                             // fixed camera instead of the scene's default
-        var fog: FogSettings? = nil                           // nil = the scene's preset (FogSettings.preset)
-        var sky: SkySettings? = nil                           // nil = the scene's preset (SkySettings.preset)
-        var directLight: DirectLightMode? = nil               // nil = METALRENDERER_DIRECT / Auto
-        var restir: RestirSettings? = nil                     // nil = the defaults (then METALRENDERER_RESTIR)
-        var restirGI: RestirGISettings? = nil                 // nil = the defaults (then METALRENDERER_RESTIR_GI)
-        var accumulateTechnique = false   // with accumulate: average giMode's frames instead of path tracing (restirgicheck)
+        /// What it renders with, before the METALRENDERER_* lists override it (`resolvedSettings`).
+        var settings: RenderSettings
+        /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / Auto.
+        var directLight: DirectLightMode? = nil
+        var startTime: Float = 0            // the animation clock at the first frame
+        var frames: Int? = nil              // measured frames, if not the default
+        var accumulate = false              // reference image: average raw frames instead of denoising
+        var accumulateTechnique = false     // with accumulate: average the GI method's frames instead of path tracing (restirgicheck)
+        var supersample = false             // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
+        var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
+        var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
+        var camera: Camera? = nil           // a fixed camera instead of the scene's default
+        // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
+        private var ownFog = false, ownSky = false
+
+        /// Benchmark settings differ from the app's defaults (radiance cascades, 3x from 0.5x): they path trace at 0.75x
+        /// without upscaling unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
+        /// `upscale`: the upscaling factor, 0 = off; `gi`: the GI method, nil = GI off. The scene brings its fog and sky
+        /// presets (`fog` and `sky` edit them); `change` edits anything else.
+        init(_ name: String, scale: CGFloat = 0.75, upscale: CGFloat = 0, gi: GIMode? = .pathTraced,
+             scene: SceneSettings = SceneSettings(), _ change: (inout RenderSettings) -> Void = { _ in }) {
+            var s = RenderSettings()
+            s.renderScale = scale
+            s.upscaleFactor = upscale
+            s.giEnabled = gi != nil
+            s.giMode = gi ?? .pathTraced
+            s.scene = scene
+            s.fog = FogSettings.preset(for: scene.kind)
+            s.sky = SkySettings.preset(for: scene.kind)
+            change(&s)
+            self.name = name
+            settings = s
+        }
+
+        // Modifiers: each returns a changed copy.
+        func named(_ name: String) -> Config { var c = self; c.name = name; return c }
+        func with(_ change: (inout RenderSettings) -> Void) -> Config { var c = self; change(&c.settings); return c }
+        func view(_ mode: Int) -> Config { with { $0.viewMode = mode } }
+        /// Edits the fog (the scene's preset until then). It then stays as set, whatever scene METALRENDERER_SCENE picks.
+        func fog(_ change: (inout FogSettings) -> Void) -> Config { var c = self; change(&c.settings.fog); c.ownFog = true; return c }
+        /// The same for the sky.
+        func sky(_ change: (inout SkySettings) -> Void) -> Config { var c = self; change(&c.settings.sky); c.ownSky = true; return c }
+        func frames(_ count: Int?) -> Config { var c = self; c.frames = count; return c }
+        func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
+        func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
+        func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
+        /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
+        /// before the last is saved too.
+        func still(at time: Float = 5, previous: Bool = false) -> Config {
+            var c = self
+            c.settings.paused = true
+            c.startTime = time
+            c.capturePrevious = previous
+            return c
+        }
+        /// A converged reference: paused at `time`, `frames` raw frames averaged instead of denoised.
+        func reference(frames: Int, at time: Float = 5, supersample: Bool = false) -> Config {
+            var c = still(at: time)
+            c.accumulate = true
+            c.frames = frames
+            c.supersample = supersample
+            return c
+        }
+        /// Animated again (after `still`), from the same start time and for the default number of frames.
+        func moving() -> Config {
+            var c = self
+            c.settings.paused = false
+            c.frames = nil
+            c.capturePrevious = false
+            return c
+        }
+
+        /// The settings the run uses: this config's, then the METALRENDERER_* lists, which override every setting of a
+        /// run (SettingsEnv; the keys are SettingsTable's). References keep their own GI settings.
+        func resolvedSettings(env: [String: String] = ProcessInfo.processInfo.environment) -> RenderSettings {
+            var s = settings
+            SettingsEnv.apply(.scene, to: &s, from: env)
+            // The fog and sky of the scene the run ends up with, unless this config set its own.
+            if !ownFog { s.fog = FogSettings.preset(for: s.scene.kind) }
+            if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }
+            for variable in [EnvVariable.fogSet, .skySet, .denoise] { SettingsEnv.apply(variable, to: &s, from: env) }
+            if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
+            for variable in [EnvVariable.restir, .restirGI, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            if let directLight { s.directLight = directLight }
+            return s
+        }
     }
 
     /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
@@ -105,10 +164,8 @@ final class Benchmark {
     static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_SPLIT"] != "0"
     static let passOrder = ["tlas", "lightmap", "trace", "temporal", "atrous", "composite", "upscale"]
 
-    /// `METALRENDERER_BENCH=quality` renders the same frames natively and upscaled (with PNGs) for image comparisons.
-    /// `METALRENDERER_BENCH=noise` renders white- and blue-noise sampling next to converged references, all at t = 5 s.
-    /// `METALRENDERER_BENCH=denoise` renders a few frames for scoring denoiser changes against saved `noise` references.
-    /// `METALRENDERER_BENCH_ONLY="32 lights, 400|camera"` keeps only the settings whose names contain one of these substrings.
+    /// This run's settings: the mode's list (Benchmark+Modes.swift). `METALRENDERER_BENCH_ONLY="32 lights, 400|camera"`
+    /// keeps only the settings whose names contain one of these substrings.
     let configs: [Config] = {
         let all = Benchmark.configs(for: ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? "")
         guard let only = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_ONLY"] else { return all }
@@ -124,577 +181,6 @@ final class Benchmark {
         }
         return kept
     }()
-
-    /// GI modes compared by `METALRENDERER_BENCH=gi` (`METALRENDERER_GI_MODES="pt,cascades"` picks a subset).
-    private static let giModesUnderTest: [(tag: String, base: Config)] = {
-        var pt = Config(name: "", renderScale: 0.5)
-        var ptLM = pt; ptLM.lightMaps = true
-        var cascades = pt; cascades.giMode = .radianceCascades
-        var cascadesHQ = cascades; cascadesHQ.cascades.probeSpacing = 4; cascadesHQ.cascades.firstInterval = 0.25
-        var restirGI = pt; restirGI.giMode = .restirGI
-        var restirGIQ = restirGI; restirGIQ.restirGI = RestirGISettings(); restirGIQ.restirGI!.quarterBudget = true
-        pt.name = "pt"; ptLM.name = "pt-lightmaps"; cascades.name = "cascades"; cascadesHQ.name = "cascades-hq"
-        restirGI.name = "restirgi"; restirGIQ.name = "restirgi-q"
-        let all = [pt, ptLM, cascades, cascadesHQ, restirGI, restirGIQ].map { (tag: $0.name, base: $0) }
-        guard let pick = ProcessInfo.processInfo.environment["METALRENDERER_GI_MODES"] else { return all }
-        let tags = Set(pick.split(separator: ",").map(String.init))
-        return all.filter { tags.contains($0.tag) }
-    }()
-
-    private static func giConfigs() -> [Config] {
-        // 8-bounce, unclamped path-traced references at t = 5 s with the default camera. Skip them with
-        // METALRENDERER_GI_REFS=0 once they exist.
-        var refs: [Config] = []
-        if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
-            let ref = Config(name: "ref8 0.5x", renderScale: 0.5, bounces: 8, paused: true, startTime: 5, accumulate: true, frames: 4096)
-            var refIndirect = ref; refIndirect.name = "ref8 indirect 0.5x"; refIndirect.viewMode = 6
-            var refHQ = ref; refHQ.name = "ref8 1.5x"; refHQ.renderScale = 1.5; refHQ.frames = 1024
-            refs = [ref, refIndirect, refHQ]
-        }
-        return refs + giModesUnderTest.flatMap { tag, base -> [Config] in
-            var st = base; st.name = "\(tag) static"; st.paused = true; st.startTime = 5; st.capturePrevious = true
-            var ind = st; ind.name = "\(tag) static indirect"; ind.viewMode = 6; ind.capturePrevious = false
-            var mv = base; mv.name = "\(tag) moving"
-            var cam = base; cam.name = "\(tag) camera"; cam.cameraPath = true
-            var dflt = base; dflt.name = "\(tag) default moving"; dflt.upscale = 3
-            var spatial = dflt; spatial.name = "\(tag) spatial moving"; spatial.upscaler = .metalFXSpatial
-            return [st, ind, mv, cam, dflt, spatial]
-        }
-    }
-
-    private static func configs(for mode: String) -> [Config] {
-        switch mode {
-        case "gi": return giConfigs()
-        case "upscale":
-            // Upscalers against supersampled native 1920x1200 references at t = 5 s (skip them with METALRENDERER_GI_REFS=0
-            // once they exist): the albedo view isolates edges and anti-aliasing, direct light adds shading.
-            // METALRENDERER_UPSCALERS="metalfx,custom,spatial" picks the upscalers.
-            var refs: [Config] = []
-            if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
-                refs = [Config(name: "ref albedo", renderScale: 1.5, viewMode: 4, paused: true, startTime: 5, accumulate: true,
-                               frames: 512, supersample: true),
-                        Config(name: "ref direct", renderScale: 1.5, giEnabled: false, paused: true, startTime: 5, accumulate: true,
-                               frames: 1024, supersample: true)]
-            }
-            let kinds: [(String, UpscalerKind)] = [("metalfx", .metalFX), ("custom", .custom), ("spatial", .metalFXSpatial)]
-            let pick = ProcessInfo.processInfo.environment["METALRENDERER_UPSCALERS"].map { Set($0.split(separator: ",").map(String.init)) }
-            return refs + kinds.filter { pick?.contains($0.0) ?? true }.flatMap { tag, kind -> [Config] in [
-                Config(name: "albedo static \(tag)", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4, paused: true,
-                       startTime: 5, capturePrevious: true),
-                Config(name: "albedo moving \(tag)", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4),
-                Config(name: "albedo camera \(tag)", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4, cameraPath: true),
-                // The same camera move over the frozen scene: camera motion alone, no moving objects.
-                Config(name: "albedo pan \(tag)", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4, paused: true,
-                       startTime: 5, cameraPath: true),
-                Config(name: "direct static \(tag)", renderScale: 0.5, giEnabled: false, upscale: 3, upscaler: kind, paused: true, startTime: 5),
-                Config(name: "direct moving \(tag)", renderScale: 0.5, giEnabled: false, upscale: 3, upscaler: kind),
-            ] }
-        case "shadow":
-            // Direct light only (GI off), for the shadow denoiser: a converged reference at t = 5 s (skip it with
-            // METALRENDERER_GI_REFS=0 once it exists), then static (+ previous frame), moving and camera-move frames that
-            // all end at t = 5 s with the default camera.
-            var refs: [Config] = []
-            if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
-                refs = [Config(name: "ref direct", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
-                               accumulate: true, frames: 4096)]
-            }
-            return refs + [
-                Config(name: "direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5, capturePrevious: true),
-                Config(name: "direct moving", renderScale: 0.5, giEnabled: false),
-                Config(name: "direct camera", renderScale: 0.5, giEnabled: false, cameraPath: true),
-                Config(name: "default moving", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
-            ]
-        case "stress":
-            // Stress scene at the default settings (cascades, TAAU 3x from 0.5x): frame time against light count,
-            // object count and GI method. METALRENDERER_BENCH_SPLIT=0 for whole-frame times.
-            func stress(_ name: String, objects: Int = 400, lights: Int = 32, giMode: GIMode = .radianceCascades) -> Config {
-                Config(name: name, renderScale: 0.5, upscale: 3, giMode: giMode,
-                       scene: SceneSettings(kind: .stress, objects: objects, lights: lights))
-            }
-            let lightSweep = [1, 4, 8, 16, 32, 64, 128, 256].map { stress("\($0) lights, 400 objects", lights: $0) }
-            let objectSweep = [0, 100, 1000, 2000].map { stress("32 lights, \($0) objects", objects: $0) }
-            return [Config(name: "cornell default", renderScale: 0.5, upscale: 3, giMode: .radianceCascades)] + lightSweep + objectSweep + [
-                stress("path traced, 32 lights", giMode: .pathTraced),
-                { var c = stress("camera move, 32 lights"); c.cameraPath = true; return c }(),
-            ]
-        case "stressq":
-            // Stress-scene quality, all at t = 5 s against converged references (every light traced each frame; skip
-            // them with METALRENDERER_GI_REFS=0 once they exist, see Tools/eval/stress.py):
-            // * direct light only (640x400) at 32 and 128 lights;
-            // * the GI methods (640x400, no upscaling) against an 8-bounce path-traced reference;
-            // * the upscalers (3x from 640x400) on albedo and direct light against supersampled 1920x1200 references.
-            // Run again with METALRENDERER_LIGHTS=all for the brute-force baseline, METALRENDERER_DENOISE=shadows=0 for SVGF.
-            let refs = ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0"
-            func stress(_ lights: Int = 32) -> SceneSettings { SceneSettings(kind: .stress, objects: 400, lights: lights) }
-            let direct = [32, 128].flatMap { lights -> [Config] in
-                let base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: stress(lights))
-                var ref = base; ref.name = "ref direct \(lights)"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
-                ref.frames = 1024
-                var st = base; st.name = "direct static \(lights)"; st.paused = true; st.startTime = 5; st.capturePrevious = true
-                var mv = base; mv.name = "direct moving \(lights)"
-                var cam = base; cam.name = "direct camera \(lights)"; cam.cameraPath = true
-                return (refs ? [ref] : []) + [st, mv, cam]
-            }
-            var gi: [Config] = refs ? [Config(name: "ref8 final 32", renderScale: 0.5, bounces: 8, paused: true, startTime: 5,
-                                              accumulate: true, frames: 1024, scene: stress()),
-                                       Config(name: "ref8 indirect 32", renderScale: 0.5, bounces: 8, viewMode: 6, paused: true,
-                                              startTime: 5, accumulate: true, frames: 1024, scene: stress())] : []
-            var cascadesHQ = CascadeSettings(); cascadesHQ.probeSpacing = 4; cascadesHQ.firstInterval = 0.25
-            var quarter = RestirGISettings(); quarter.quarterBudget = true
-            let methods: [(String, GIMode, CascadeSettings, RestirGISettings?)] = [
-                ("cascades", .radianceCascades, CascadeSettings(), nil), ("cascades-hq", .radianceCascades, cascadesHQ, nil),
-                ("pt", .pathTraced, CascadeSettings(), nil), ("restirgi", .restirGI, CascadeSettings(), nil),
-                ("restirgi-q", .restirGI, CascadeSettings(), quarter)]
-            for (tag, mode, cascades, restirGI) in methods {
-                var base = Config(name: "", renderScale: 0.5, giMode: mode, cascades: cascades, scene: stress())
-                base.restirGI = restirGI
-                var st = base; st.name = "\(tag) static 32"; st.paused = true; st.startTime = 5; st.capturePrevious = true
-                var ind = st; ind.name = "\(tag) indirect 32"; ind.viewMode = 6; ind.capturePrevious = false
-                var mv = base; mv.name = "\(tag) moving 32"
-                var cam = base; cam.name = "\(tag) camera 32"; cam.cameraPath = true
-                gi += [st, ind, mv, cam]
-            }
-            var up: [Config] = refs ? [
-                Config(name: "ref albedo 1.5x", renderScale: 1.5, viewMode: 4, paused: true, startTime: 5, accumulate: true,
-                       frames: 512, supersample: true, scene: stress()),
-                Config(name: "ref direct 1.5x", renderScale: 1.5, giEnabled: false, paused: true, startTime: 5, accumulate: true,
-                       frames: 512, supersample: true, scene: stress()),
-            ] : []
-            for (tag, kind) in [("custom", UpscalerKind.custom), ("metalfx", .metalFX)] {
-                let base = Config(name: "", renderScale: 0.5, upscale: 3, upscaler: kind, viewMode: 4, scene: stress())
-                var st = base; st.name = "albedo static \(tag)"; st.paused = true; st.startTime = 5; st.capturePrevious = true
-                var mv = base; mv.name = "albedo moving \(tag)"
-                var cam = base; cam.name = "albedo camera \(tag)"; cam.cameraPath = true
-                var ds = base; ds.name = "direct static \(tag)"; ds.viewMode = 0; ds.giEnabled = false; ds.paused = true; ds.startTime = 5
-                var dm = base; dm.name = "direct moving \(tag)"; dm.viewMode = 0; dm.giEnabled = false
-                up += [st, mv, cam, ds, dm]
-            }
-            return direct + gi + up
-        case "restirq":
-            // Direct light (GI off, 640x400) in the stress scene at t = 5 s against references, for each direct-light
-            // method: static (+ previous frame, for flicker) and moving frames, at 32 to 4096 lights. References trace
-            // every light up to Renderer.exactReferenceLights (1024), and accumulate ReSTIR's unbiased initial sampling
-            // above (skip them with METALRENDERER_GI_REFS=0 once they exist; see Tools/eval/restir.py).
-            let refs = ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0"
-            var out: [Config] = []
-            for lights in [32, 128, 1024, 4096] {
-                let scene = SceneSettings(kind: .stress, objects: 400, lights: lights)
-                let base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: scene)
-                if refs {
-                    var ref = base; ref.name = "ref direct \(lights)"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
-                    ref.frames = lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048
-                    ref.restir = RestirSettings(); ref.restir!.grid.enabled = false   // the table alone
-                    out.append(ref)
-                }
-                let modes: [DirectLightMode] = lights <= 128 ? [.exact, .grouped, .restir] : [.grouped, .restir]
-                for mode in modes {
-                    var st = base; st.name = "\(mode.title.lowercased()) static \(lights)"; st.paused = true; st.startTime = 5
-                    st.capturePrevious = true; st.directLight = mode
-                    var mv = base; mv.name = "\(mode.title.lowercased()) moving \(lights)"; mv.directLight = mode
-                    out += [st, mv]
-                }
-            }
-            return out
-        case "restir":
-            // Frame time against light count for each direct-light method, the stress scene at the default settings
-            // (cascades, TAAU 3x from 0.5x), 1 to 16384 lights (exact up to 256, grouped up to 4096); then the night
-            // market. METALRENDERER_BENCH_SPLIT=0 for whole-frame times.
-            func stress(_ lights: Int, _ mode: DirectLightMode) -> Config {
-                var c = Config(name: "\(mode.title.lowercased()), \(lights) lights", renderScale: 0.5, upscale: 3,
-                               giMode: .radianceCascades, scene: SceneSettings(kind: .stress, objects: 400, lights: lights))
-                c.directLight = mode
-                return c
-            }
-            var out: [Config] = []
-            for lights in [1, 4, 32, 256, 1024, 4096, 16384] {
-                if lights <= 256 { out.append(stress(lights, .exact)) }
-                if lights <= 4096 { out.append(stress(lights, .grouped)) }
-                out.append(stress(lights, .restir))
-            }
-            // The night market (its defaults: cascades, fog), paused so the PNGs compare.
-            for lights in [1024, 4096, 16384] {
-                for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir] : [.restir] {
-                    var c = Config(name: "market \(mode.title.lowercased()), \(lights) bulbs", renderScale: 0.5, upscale: 3,
-                                   paused: true, startTime: 5, giMode: .radianceCascades,
-                                   scene: SceneSettings(kind: .market, lights: lights))
-                    c.directLight = mode
-                    out.append(c)
-                }
-            }
-            return out
-        case "rt":
-            // Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALRENDERER_RT tracer (run once per
-            // tracer and compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run),
-            // then moving frames for timing on both scenes at several stress-scene sizes, alternating the two tracers.
-            func scene(_ kind: SceneKind, objects: Int = 400) -> SceneSettings { SceneSettings(kind: kind, objects: objects, lights: 32) }
-            var out: [Config] = []
-            for (tag, sc) in [("cornell", scene(.cornell)), ("stress", scene(.stress))] {
-                out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
-                                  frames: 30, scene: sc))
-                for (gtag, mode) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
-                    out.append(Config(name: "\(tag) \(gtag) static", renderScale: 0.5, paused: true, startTime: 5, frames: 30,
-                                      giMode: mode, scene: sc))
-                }
-            }
-            func moving(_ name: String, _ mode: GIMode, _ sc: SceneSettings) -> [Config] {
-                RayTracerKind.allCases.map { rt in
-                    Config(name: "\(name) moving, \(rt == .custom ? "custom" : "metal")", renderScale: 0.5, upscale: 3, giMode: mode,
-                           scene: sc, rayTracer: rt)
-                }
-            }
-            for objects in [0, 400, 1000, 2000] {
-                for (gtag, mode) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
-                    out += moving("stress \(objects) \(gtag)", mode, scene(.stress, objects: objects))
-                }
-            }
-            out += moving("cornell cascades", .radianceCascades, scene(.cornell))
-            return out
-        case "gallery":
-            // The glTF gallery: full-detail meshes against virtual geometry at several error thresholds, alternating
-            // so heat affects them alike. Paused frames at t = 5 s (PNGs for diffs), then the scripted camera move.
-            func vg(_ on: Bool, _ tau: Float = 1) -> VirtualGeometrySettings {
-                var v = VirtualGeometrySettings(); v.enabled = on; v.pixelError = tau; return v
-            }
-            let variants: [(String, VirtualGeometrySettings)] = [("full", vg(false)), ("vg1", vg(true, 1)), ("full", vg(false)),
-                                                                 ("vg0.5", vg(true, 0.5)), ("vg2", vg(true, 2))]
-            let gallery = SceneSettings(kind: .gallery)
-            var out: [Config] = []
-            // Path-traced references (full BRDF, full-detail meshes, 4 bounces) for Tools/eval/gallery.py; skip them
-            // with METALRENDERER_GI_REFS=0 once they exist.
-            if ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0" {
-                out.append(Config(name: "ref overview", renderScale: 0.5, bounces: 4, paused: true, startTime: 5, accumulate: true,
-                                  frames: 1024, scene: gallery, virtualGeometry: vg(false)))
-                var refClose = Config(name: "ref closeup", renderScale: 0.5, bounces: 4, paused: true, startTime: 5, accumulate: true,
-                                      frames: 1024, scene: gallery, virtualGeometry: vg(false))
-                refClose.camera = Benchmark.galleryCloseup
-                out.append(refClose)
-            }
-            for (tag, v) in variants {
-                out.append(Config(name: "\(tag) direct static", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5,
-                                  frames: 60, scene: gallery, virtualGeometry: v))
-                out.append(Config(name: "\(tag) cascades static", renderScale: 0.5, paused: true, startTime: 5, frames: 60,
-                                  giMode: .radianceCascades, scene: gallery, virtualGeometry: v))
-                out.append(Config(name: "\(tag) albedo static", renderScale: 0.5, viewMode: 4, paused: true, startTime: 5, frames: 30,
-                                  scene: gallery, virtualGeometry: v))
-            }
-            for (tag, v) in [("full", vg(false)), ("vg1", vg(true, 1))] {
-                out.append(Config(name: "\(tag) camera", renderScale: 0.5, upscale: 3, giMode: .radianceCascades, cameraPath: true,
-                                  scene: gallery, virtualGeometry: v))
-                for (gtag, mode) in [("cascades", GIMode.radianceCascades), ("pt", .pathTraced), ("restirgi", .restirGI)] {
-                    var close = Config(name: "\(tag) \(gtag) closeup", renderScale: 0.5, paused: true, startTime: 5, capturePrevious: true,
-                                       giMode: mode, scene: gallery, virtualGeometry: v)
-                    close.camera = Benchmark.galleryCloseup
-                    out.append(close)
-                }
-                var shown = Config(name: "\(tag) closeup 3x", renderScale: 0.5, upscale: 3, paused: true, startTime: 5,
-                                   giMode: .radianceCascades, scene: gallery, virtualGeometry: v)
-                shown.camera = Benchmark.galleryCloseup
-                out.append(shown)
-            }
-            return out
-        case "lights":
-            // The light demo scenes, paused at t = 5: direct light only, each GI technique, then moving (timing).
-            // METALRENDERER_LIGHTS_SCENES="sun|mixed" limits the scenes.
-            var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
-            for kind in [SceneKind.spots, .sun, .area, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
-                let scene = SceneSettings(kind: kind)
-                let tag = "\(kind)"
-                out.append(Config(name: "\(tag) direct", giEnabled: false, paused: true, startTime: 5, frames: 30, scene: scene))
-                for (name, mode) in [("cascades", GIMode.radianceCascades), ("path traced", .pathTraced)] {
-                    out.append(Config(name: "\(tag) \(name)", paused: true, startTime: 5, frames: 30, giMode: mode, scene: scene))
-                }
-                out.append(Config(name: "\(tag) moving", giMode: .radianceCascades, scene: scene))
-            }
-            return out
-        case "fog":
-            // The fog scenes, paused at t = 5 with cascade GI: fog off, the preset, without volumes, without fogged
-            // reflections, path-traced GI; then moving (timing). METALRENDERER_LIGHTS_SCENES="fog|sun" limits them.
-            var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
-            for kind in [SceneKind.fog, .spots, .sun, .tubes, .emissive, .mixed] where only?.contains("\(kind)") ?? true {
-                let tag = "\(kind)", preset = FogSettings.preset(for: kind)
-                let base = Config(name: "", paused: true, startTime: 5, frames: 60, giMode: .radianceCascades,
-                                  scene: SceneSettings(kind: kind))
-                var off = preset; off.enabled = false
-                var noVolumes = preset; noVolumes.volumes = false
-                var noReflections = preset; noReflections.reflections = false
-                for (name, fog) in [("fog off", off), ("fog", preset), ("fog no volumes", noVolumes), ("fog no reflections", noReflections)] {
-                    var c = base; c.name = "\(tag) \(name)"; c.fog = fog
-                    out.append(c)
-                }
-                var pathTraced = base; pathTraced.name = "\(tag) fog path traced"; pathTraced.giMode = .pathTraced
-                out.append(pathTraced)
-                var view = base; view.name = "\(tag) fog scattering"; view.viewMode = 14
-                var moving = base; moving.name = "\(tag) fog moving"; moving.paused = false; moving.frames = nil
-                var shown = moving; shown.name = "\(tag) fog moving 3x"; shown.renderScale = 0.5; shown.upscale = 3
-                out += [view, moving, shown]
-            }
-            return out
-        case "fogcheck":
-            // The froxel grid against the per-pixel reference march (fogReferenceKernel, 512 frames averaged), direct
-            // light only: the fog's scattering alone (view 14) and the final image. Compare with Tools/eval/pngdiff.py.
-            var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
-            for kind in [SceneKind.fog, .spots, .sun] where only?.contains("\(kind)") ?? true {
-                let scene = SceneSettings(kind: kind), tag = "\(kind)"
-                for (name, view) in [("scattering", 14), ("final", 0)] {
-                    out.append(Config(name: "\(tag) ref \(name)", giEnabled: false, viewMode: view, paused: true, startTime: 5,
-                                      accumulate: true, frames: 512, scene: scene))
-                    out.append(Config(name: "\(tag) grid \(name)", giEnabled: false, viewMode: view, paused: true, startTime: 5,
-                                      frames: 120, scene: scene))
-                }
-            }
-            return out
-        case "sky":
-            // The sky scenes paused at sunrise, mid-morning, noon and evening (the valley's day; the sun scene's and
-            // the mixed room's own times), with clouds on and off, cloud shadows off, then moving (timing).
-            // METALRENDERER_LIGHTS_SCENES="valley|sun" limits the scenes; METALRENDERER_SKY=<image> tests an image sky.
-            var out: [Config] = []
-            let only = ProcessInfo.processInfo.environment["METALRENDERER_LIGHTS_SCENES"]?.split(separator: "|").map(String.init)
-            for kind in [SceneKind.valley, .sun, .mixed] where only?.contains("\(kind)") ?? true {
-                let tag = "\(kind)", preset = SkySettings.preset(for: kind)
-                var base = Config(name: "", paused: true, startTime: 5, frames: 60, scene: SceneSettings(kind: kind))
-                base.giMode = .radianceCascades
-                let times: [(String, Float)] = kind == .valley ? [("morning", -31.5), ("forenoon", 5), ("noon", 13.5), ("afternoon", 40), ("evening", 58.5)]
-                                                             : [("t5", 5), ("t20", 20)]
-                for (name, t) in times {
-                    var c = base; c.name = "\(tag) \(name)"; c.startTime = t
-                    out.append(c)
-                }
-                var clear = preset; clear.clouds = false
-                var noShadows = preset; noShadows.shadows = false
-                var constant = preset; constant.mode = .constant
-                for (name, sky) in [("clear", clear), ("no cloud shadows", noShadows), ("constant sky", constant)] {
-                    var c = base; c.name = "\(tag) \(name)"; c.sky = sky
-                    out.append(c)
-                }
-                if kind == .valley {   // from above, to see the clouds' shadows on the fields
-                    var aerial = base; aerial.name = "\(tag) aerial"
-                    var cam = Camera(); cam.position = [0, 70, 110]; cam.pitch = -0.45
-                    aerial.camera = cam
-                    out.append(aerial)
-                }
-                var moving = base; moving.name = "\(tag) moving"; moving.paused = false; moving.frames = nil
-                var shown = moving; shown.name = "\(tag) moving 3x"; shown.renderScale = 0.5; shown.upscale = 3
-                out += [moving, shown]
-            }
-            return out
-        case "skycheck":
-            // Cloud shadows through every sun-visibility path (shadow rays, the shadow denoiser, light maps): the valley
-            // in the afternoon, a cloud shadow's edge in view, each GI method against a 4-bounce path-traced reference
-            // (512 frames), final image and indirect light, with cloud shadows on and off. Each method's error should
-            // not depend on the shadows.
-            var out: [Config] = []
-            let scene = SceneSettings(kind: .valley)
-            for shadows in [true, false] {
-                var sky = SkySettings.preset(for: .valley); sky.shadows = shadows
-                let tag = shadows ? "shadows" : "no shadows"
-                for (name, view) in [("final", 0), ("indirect", 6)] {
-                    var ref = Config(name: "\(tag) ref \(name)", bounces: 4, viewMode: view, paused: true, startTime: 40,
-                                     accumulate: true, frames: 512, scene: scene)
-                    ref.sky = sky
-                    out.append(ref)
-                    for (mode, giMode, lightMaps) in [("pt", GIMode.pathTraced, false), ("pt-lightmaps", .pathTraced, true),
-                                                       ("cascades", .radianceCascades, false), ("restirgi", .restirGI, false)] {
-                        var c = Config(name: "\(tag) \(mode) \(name)", viewMode: view, paused: true, startTime: 40, frames: 90,
-                                       giMode: giMode, lightMaps: lightMaps, scene: scene)
-                        c.sky = sky
-                        out.append(c)
-                    }
-                }
-            }
-            return out
-        case "lightcheck":
-            // Each analytic area light against its emissive-mesh twin (Scene.buildLightCheck), converged direct light.
-            var out: [Config] = []
-            for shape in ["rect", "tube", "sphere"] {
-                for variant in [shape, shape + "-mesh"] {
-                    var scene = SceneSettings()
-                    scene.lightCheck = variant
-                    out.append(Config(name: "check \(variant)", giEnabled: false, paused: true, startTime: 5, accumulate: true,
-                                      frames: 1024, scene: scene))
-                }
-            }
-            return out
-        case "restircheck":
-            // ReSTIR's sampling is unbiased for every light type: accumulated direct light (GI off), every light traced
-            // against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), from the table alone and from
-            // the light grid, in the light-check scenes (one rect / tube / sphere light, or its emissive-mesh twin) and
-            // in scenes with spots, tubes, rects, emissive meshes, a sun and every type together. Mean luminance and
-            // PSNR should agree (Tools/eval/restir.py).
-            var out: [Config] = []
-            var scenes: [(String, SceneSettings)] = ["rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh"].map {
-                var s = SceneSettings(); s.lightCheck = $0; return ($0, s)
-            }
-            scenes += [("spots", SceneSettings(kind: .spots)), ("tubes", SceneSettings(kind: .tubes)),
-                       ("area", SceneSettings(kind: .area)), ("emissive", SceneSettings(kind: .emissive)),
-                       ("mixed", SceneSettings(kind: .mixed)), ("stress32", SceneSettings(kind: .stress, objects: 400, lights: 32))]
-            for (tag, scene) in scenes {
-                for (mode, grid) in [(DirectLightMode.exact, false), (.restir, false), (.restir, true)] {
-                    var c = Config(name: "\(tag) \(mode.title.lowercased())" + (grid ? " grid" : ""), giEnabled: false,
-                                   paused: true, startTime: 5, accumulate: true, frames: 1024, scene: scene)
-                    c.directLight = mode
-                    c.restir = RestirSettings(); c.restir!.grid.enabled = grid; c.restir!.grid.share = 32   // every candidate
-                    c.sky = SkySettings()   // constant sky: the sky's own noise stays out of the comparison
-                    out.append(c)
-                }
-            }
-            return out
-        case "marketq":
-            // Direct light in the Night market (4096 bulbs, GI and fog off, 640x400) against an accumulated reference
-            // (ReSTIR's unbiased initial sampling, as restirq's above 1024 lights): ReSTIR's candidates from the table
-            // alone and from the light grid, static (+ previous frame, for flicker) and moving (Tools/eval/restir.py).
-            let refs = ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0"
-            var scene = SceneSettings(kind: .market); scene.lights = 4096
-            var base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: scene)
-            base.fog = FogSettings()   // off: direct light alone
-            base.directLight = .restir
-            var out: [Config] = []
-            if refs {
-                var ref = base; ref.name = "ref direct market"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
-                ref.frames = 2048
-                ref.restir = RestirSettings(); ref.restir!.grid.enabled = false   // the table alone
-                out.append(ref)
-            }
-            for (tag, grid) in [("table", false), ("grid", true)] {
-                var st = base; st.name = "restir \(tag) static market"; st.paused = true; st.startTime = 5; st.capturePrevious = true
-                st.restir = RestirSettings(); st.restir!.grid.enabled = grid
-                var mv = st; mv.name = "restir \(tag) moving market"; mv.paused = false; mv.capturePrevious = false
-                // The candidates alone (no reuse, no denoiser), 64 frames averaged: the sampler's own variance.
-                var ac = st; ac.name = "restir \(tag) accum market"; ac.capturePrevious = false; ac.accumulate = true; ac.frames = 64
-                ac.restir!.grid.share = 32
-                out += [st, mv, ac]
-            }
-            // The grid at the secondary hits and in the fog: indirect light alone (view 6, path traced and cascades)
-            // against an accumulated path-traced reference, and the fog's scattering alone (view 14) against the
-            // per-pixel reference march, with GI's and the fog's candidates from the table and from the grid.
-            var indirect = base; indirect.giEnabled = true; indirect.viewMode = 6; indirect.paused = true; indirect.startTime = 5
-            indirect.restir = RestirSettings()
-            var fog = indirect; fog.giEnabled = false; fog.viewMode = 14; fog.fog = FogSettings.preset(for: .market)
-            if refs {
-                var ref = indirect; ref.name = "ref indirect market"; ref.accumulate = true; ref.frames = 2048
-                ref.restir!.grid.enabled = false
-                var fogRef = fog; fogRef.name = "ref scattering market"; fogRef.accumulate = true; fogRef.frames = 512
-                fogRef.restir!.grid.enabled = false
-                out += [ref, fogRef]
-            }
-            for (tag, grid) in [("table", false), ("grid", true)] {
-                var pt = indirect; pt.name = "pt \(tag) indirect market"; pt.restir!.grid.enabled = grid
-                var rc = pt; rc.name = "cascades \(tag) indirect market"; rc.giMode = .radianceCascades
-                var fg = fog; fg.name = "fog \(tag) scattering market"; fg.restir!.grid.enabled = grid; fg.frames = 120
-                // Accumulated (unclamped, no denoiser): the candidates' own variance and bias.
-                var ptAc = pt; ptAc.name = "pt \(tag) accum indirect market"; ptAc.accumulate = true; ptAc.frames = 256
-                var fgAc = fg; fgAc.name = "fog \(tag) accum scattering market"; fgAc.accumulate = true; fgAc.frames = 128
-                out += [pt, rc, fg, ptAc, fgAc]
-            }
-            return out
-        case "restirgicheck":
-            // ReSTIR GI is unbiased: accumulated indirect light (the "Indirect only" view, 2 bounces, unclamped) of
-            // path tracing against ReSTIR GI without reuse (the same paths, as reservoirs), with temporal and (unbiased)
-            // spatial reuse, and with the quarter budget, in Cornell and the stress hall (Tools/eval/restirgi.py).
-            var out: [Config] = []
-            for (tag, scene) in [("cornell", SceneSettings()), ("stress", SceneSettings(kind: .stress, objects: 400, lights: 32))] {
-                let base = Config(name: "", renderScale: 0.5, viewMode: 6, paused: true, startTime: 5, accumulate: true,
-                                  frames: 1024, scene: scene, sky: SkySettings())
-                var pt = base; pt.name = "\(tag) pt"
-                var noReuse = base; noReuse.name = "\(tag) restirgi noreuse"; noReuse.giMode = .restirGI; noReuse.accumulateTechnique = true
-                // No multi-bounce feedback (it isn't in the paths), and spatial reuse on (unbiased, the default when on).
-                var r = RestirGISettings(); r.feedback = false; r.temporal = false; r.spatialPasses = 0
-                noReuse.restirGI = r
-                r.temporal = true; r.spatialPasses = 1
-                var reuse = noReuse; reuse.name = "\(tag) restirgi reuse"; reuse.restirGI = r
-                var quarter = reuse; quarter.name = "\(tag) restirgi quarter"; quarter.restirGI!.quarterBudget = true
-                out += [pt, noReuse, reuse, quarter]
-            }
-            return out
-        case "vgdebug":
-            // The geometry debug views at the gallery overview and close-up, native resolution (crisp PNGs), with
-            // virtual geometry, plus full-detail meshes for the views that show all geometry.
-            var out: [Config] = []
-            for (cam, camera) in [("overview", Scene.galleryCamera), ("closeup", Benchmark.galleryCloseup)] {
-                for (tag, on) in [("vg", true), ("full", false)] {
-                    var v = VirtualGeometrySettings(); v.enabled = on
-                    for mode in RenderSettings.geometryViews where on || [8, 12, 13].contains(mode) {
-                        let name = RenderSettings.viewModes[mode].lowercased()
-                        out.append(Config(name: "\(tag) \(name) \(cam)", renderScale: 1, giEnabled: false, viewMode: mode, paused: true,
-                                          startTime: 5, frames: 8, scene: SceneSettings(kind: .gallery), virtualGeometry: v, camera: camera))
-                    }
-                }
-            }
-            return out
-        case "quick": return [
-            Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
-            Config(name: "default, MetalFX temporal", renderScale: 0.5, upscale: 3, upscaler: .metalFX, giMode: .radianceCascades),
-            Config(name: "default, MetalFX spatial", renderScale: 0.5, upscale: 3, upscaler: .metalFXSpatial, giMode: .radianceCascades),
-            Config(name: "camera move", renderScale: 0.5, upscale: 3, giMode: .radianceCascades, cameraPath: true),
-            Config(name: "camera move, MetalFX temporal", renderScale: 0.5, upscale: 3, upscaler: .metalFX,
-                   giMode: .radianceCascades, cameraPath: true),
-            Config(name: "path traced, 3x from 0.5x", renderScale: 0.5, upscale: 3),
-            Config(name: "0.75x, no MetalFX"),
-        ]
-        case "denoise": return [
-            Config(name: "static 0.5x", renderScale: 0.5, paused: true, startTime: 5, capturePrevious: true),
-            Config(name: "moving 0.5x", renderScale: 0.5),
-            Config(name: "static direct 0.5x", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5),
-            Config(name: "static default", renderScale: 0.5, upscale: 3, paused: true, startTime: 5, capturePrevious: true),
-            Config(name: "moving default", renderScale: 0.5, upscale: 3),
-        ]
-        case "noise": return [
-            // 640x400, no upscaling. "moving" runs 300 frames from t = 0, so its last frame is also at t = 5 s.
-            Config(name: "ref 0.5x", renderScale: 0.5, paused: true, startTime: 5, accumulate: true, frames: 4096),
-            Config(name: "static white denoised 0.5x", renderScale: 0.5, blueNoise: false, paused: true, startTime: 5),
-            Config(name: "static blue denoised 0.5x", renderScale: 0.5, blueNoise: true, paused: true, startTime: 5),
-            Config(name: "static white raw 0.5x", renderScale: 0.5, denoiseEnabled: false, blueNoise: false, paused: true, startTime: 5),
-            Config(name: "static blue raw 0.5x", renderScale: 0.5, denoiseEnabled: false, blueNoise: true, paused: true, startTime: 5),
-            Config(name: "moving white denoised 0.5x", renderScale: 0.5, blueNoise: false),
-            Config(name: "moving blue denoised 0.5x", renderScale: 0.5, blueNoise: true),
-            // Direct light only (GI off): 6 random dimensions per pixel, the textbook case for blue noise.
-            Config(name: "ref direct 0.5x", renderScale: 0.5, giEnabled: false, paused: true, startTime: 5, accumulate: true, frames: 4096),
-            Config(name: "static white raw direct 0.5x", renderScale: 0.5, giEnabled: false, denoiseEnabled: false, blueNoise: false, paused: true, startTime: 5),
-            Config(name: "static blue raw direct 0.5x", renderScale: 0.5, giEnabled: false, denoiseEnabled: false, blueNoise: true, paused: true, startTime: 5),
-            Config(name: "static white denoised direct 0.5x", renderScale: 0.5, giEnabled: false, blueNoise: false, paused: true, startTime: 5),
-            Config(name: "static blue denoised direct 0.5x", renderScale: 0.5, giEnabled: false, blueNoise: true, paused: true, startTime: 5),
-            Config(name: "moving white denoised direct 0.5x", renderScale: 0.5, giEnabled: false, blueNoise: false),
-            Config(name: "moving blue denoised direct 0.5x", renderScale: 0.5, giEnabled: false, blueNoise: true),
-            // Default setting (MetalFX 3x to 1920x1200) against a native 1920x1200 reference.
-            Config(name: "ref 1.5x", renderScale: 1.5, paused: true, startTime: 5, accumulate: true, frames: 1024),
-            Config(name: "static white default", renderScale: 0.5, upscale: 3, blueNoise: false, paused: true, startTime: 5),
-            Config(name: "static blue default", renderScale: 0.5, upscale: 3, blueNoise: true, paused: true, startTime: 5),
-            Config(name: "moving white default", renderScale: 0.5, upscale: 3, blueNoise: false),
-            Config(name: "moving blue default", renderScale: 0.5, upscale: 3, blueNoise: true),
-        ]
-        case "quality": return [
-            Config(name: "albedo native 1.5x", renderScale: 1.5, viewMode: 4),
-            Config(name: "albedo native 0.75x", viewMode: 4),
-            Config(name: "albedo MetalFX 0.75x x2", upscale: 2, upscaler: .metalFX, viewMode: 4),
-            Config(name: "albedo MetalFX 0.5x x3", renderScale: 0.5, upscale: 3, upscaler: .metalFX, viewMode: 4),
-            Config(name: "final native 1.5x", renderScale: 1.5),
-            Config(name: "final native 0.75x"),
-            Config(name: "final MetalFX 0.75x x2", upscale: 2, upscaler: .metalFX),
-            Config(name: "final MetalFX 0.5x x3", renderScale: 0.5, upscale: 3, upscaler: .metalFX),
-        ]
-        default: return [
-            Config(name: "0.75x, GI 2, denoise, no MetalFX"),
-            Config(name: "GI off", giEnabled: false),
-            Config(name: "denoiser off", denoiseEnabled: false),
-            Config(name: "GI 1 bounce", bounces: 1),
-            Config(name: "GI 4 bounces", bounces: 4),
-            Config(name: "GI 8 bounces", bounces: 8),
-            Config(name: "scale 0.5x", renderScale: 0.5),
-            Config(name: "scale 1.0x", renderScale: 1.0),
-            Config(name: "scale 1.5x", renderScale: 1.5),
-            Config(name: "scale 2.0x (Retina native)", renderScale: 2.0),
-            Config(name: "MetalFX 2x from 0.75x", upscale: 2, upscaler: .metalFX),
-            Config(name: "default: 3x from 0.5x", renderScale: 0.5, upscale: 3, giMode: .radianceCascades),
-            Config(name: "path traced, 3x from 0.5x", renderScale: 0.5, upscale: 3),
-            Config(name: "path traced + white noise", renderScale: 0.5, upscale: 3, blueNoise: false),
-            Config(name: "0.75x no MetalFX + blue noise", blueNoise: true),
-            Config(name: "MetalFX 2x from 1.0x", renderScale: 1.0, upscale: 2, upscaler: .metalFX),
-            Config(name: "MetalFX 3x from 0.67x", renderScale: 2.0 / 3.0, upscale: 3, upscaler: .metalFX),
-        ]
-        }
-    }
 
     let warmupFrames = 60
     let measuredFrames = 240

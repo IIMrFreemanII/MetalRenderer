@@ -2401,34 +2401,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
 
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
-        var s = RenderSettings(renderScale: c.renderScale, upscaleFactor: c.upscale, upscaler: c.upscaler,
-                               giEnabled: c.giEnabled,
-                               bounces: c.bounces, blueNoise: c.blueNoise, paused: c.paused, viewMode: c.viewMode,
-                               denoiser: c.denoiser, giMode: c.giMode, lightMaps: c.lightMaps,
-                               cascades: c.cascades, scene: c.scene)
-        // The METALRENDERER_* lists override every setting of the run (SettingsEnv; the keys are SettingsTable's).
-        SettingsEnv.apply(.scene, to: &s)
-        s.fog = c.fog ?? FogSettings.preset(for: s.scene.kind)
-        SettingsEnv.apply(.fogSet, to: &s)
-        s.sky = c.sky ?? SkySettings.preset(for: s.scene.kind)
-        SettingsEnv.apply(.skySet, to: &s)
-        if let rt = c.rayTracer { s.rayTracer = rt }
-        if let v = c.virtualGeometry { s.virtualGeometry = v }
-        s.denoiser.enabled = c.denoiseEnabled
-        SettingsEnv.apply(.denoise, to: &s)
-        if !c.accumulate { SettingsEnv.apply(.gi, to: &s) }   // references keep their own GI settings
-        if let d = c.directLight { s.directLight = d }
-        s.restir = c.restir ?? RestirSettings()
-        SettingsEnv.apply(.restir, to: &s)
-        s.restirGI = c.restirGI ?? RestirGISettings()
-        SettingsEnv.apply(.restirGI, to: &s)
-        SettingsEnv.apply(.view, to: &s)
-        settings = s
+        settings = c.resolvedSettings()
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
-        referenceGIMode = c.accumulate && c.accumulateTechnique ? c.giMode : nil
+        referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil
         referenceDirectMode = c.accumulate && (c.directLight == .exact || c.directLight == .restir) ? c.directLight : nil
         accumCount = 0
         supersampling = c.accumulate && c.supersample

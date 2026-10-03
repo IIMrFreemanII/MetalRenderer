@@ -9,7 +9,9 @@ METALRENDERER_BENCH=<mode> .build/release/MetalRenderer
 ```
 
 A benchmark renders 60 warm-up frames and then 240 measured frames per setting, back to back without vsync. It prints
-a table and quits. The lists of settings are in `Benchmark.configs(for:)` (Benchmark.swift ~415). Benchmarks never
+a table and quits. The lists of settings are in `Benchmark+Modes.swift`: one function per mode, registered in `Benchmark.modes`. A
+setting is a `Benchmark.Config`: real `RenderSettings` plus how the run goes, built with `.still()`,
+`.reference(frames:)`, `.cameraMove()`, `.with { … }`. Setting names are PNG names the scorers look up: keep them. Benchmarks never
 read or write the saved UI settings.
 
 ## Reading the table
