@@ -13,10 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let device = MTLCreateSystemDefaultDevice() else {
             fatalError("Metal is not supported on this Mac")
         }
-        guard device.supportsRaytracing else {
-            fatalError("This GPU does not support Metal ray tracing")
-        }
-        print("GPU: \(device.name)")
+        Capabilities.current = Capabilities(device: device)
+        print("GPU: \(device.name). \(Capabilities.current.summary)")
 
         if Headless.isEnabled {
             // No window, no menu, no panels: the benchmark draws into offscreen textures and quits when done.

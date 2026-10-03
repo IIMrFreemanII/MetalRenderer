@@ -13,7 +13,7 @@ nothing.
 | CPU work | `simulate`, `detailView`, `writeFrameData` | the scene, the slot's buffers |
 | Plan | `planFrame` → `FramePlan` | reads settings, scene and last frame's flags once; allocates lazily made targets |
 | Stages | `headStages`, `giStages`, `restirStages`, `svgfStages`, `fogStages`, … | read the plan only; fill `CompositeInputs` |
-| Encoding | `encode`, `encodeOutput`, `commit` | `FramePasses` owns the command buffers and the open encoder |
+| Encoding | `encode`, `encodeOutput`, `commit` | a `FrameEncoder` (`Metal3Frame`, `Metal4Frame`) owns the command buffers and the open encoder |
 | History | `finishFrame` | the only place that sets what the next frame reuses |
 
 * **A new pass is a stage builder.** It takes the `FramePlan`, returns `[ComputeStage]` and joins a group in

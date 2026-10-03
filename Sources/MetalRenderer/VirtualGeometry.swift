@@ -253,7 +253,7 @@ final class VirtualGeometry {
     }
 
     /// Encodes the cut and the cluster tree build. `nodeBase`: the tree's first node in `tlasNodes`.
-    func encode(_ enc: MTLComputeCommandEncoder, slot: Int, rt: RTPipelines, vg: VGPipelines, instanceData: MTLBuffer,
+    func encode(_ enc: ComputePass, slot: Int, rt: RTPipelines, vg: VGPipelines, instanceData: MTLBuffer,
                 tlasNodes: MTLBuffer, nodeBase: Int, camPos: SIMD3<Float>, pixelScale: Float, tau: Float, frame: UInt32) {
         if slotPageGeneration.count <= slot { slotPageGeneration += [Int](repeating: -1, count: slot + 1 - slotPageGeneration.count) }
         if slotPageGeneration[slot] != pageGeneration {   // residency changed since this slot's copy was written

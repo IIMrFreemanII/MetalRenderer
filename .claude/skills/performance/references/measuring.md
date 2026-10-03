@@ -43,6 +43,9 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 * **`METALRENDERER_BENCH_SPLIT=0`** encodes frames exactly as the app does, with one command buffer. It reports only
   a `frame` column. Quote this number for whole-frame claims.
 * `METALRENDERER_OVERLAP=0` turns off the radiance cascades / denoiser overlap, for an A/B.
+* With `METALRENDERER_WINDOW=1` the window server can pace the drawables: `span` then sits near the display's period
+  whatever the setting (an M4 Max under macOS 26.5: 8 ms), the pass that writes the drawable reads as that wait, and
+  the idle GPU clocks down. Offscreen runs (the default) don't have this.
 * To pull out columns:
   ```bash
   … | python3 Tools/eval/columns.py trace atrous "GPU total"
@@ -58,6 +61,8 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `stress` | the stress hall against light count (1–256), object count (0–2000) and GI method |
 | `restir` | 1 to 16384 lights for each direct-light method, plus the Night market |
 | `rt` | custom BVH against Metal's intersector, alternating per setting |
+| `hwrt` | each tracer with each output (SVGF + custom upscaler, SVGF + MetalFX temporal, MetalFX denoiser) |
+| `api` | Metal 3 against Metal 4, each tracer (stills first, for a `pngdiff` between two runs) |
 | `gallery` | glTF gallery: full meshes against virtual geometry at 0.5/1/2 px, plus a fly-through (warm the caches first) |
 | `gi` | each GI method (plus the path-traced references, unless `GI_REFS=0`) |
 | `lights`, `fog`, `sky` | the light demo, fog and sky scenes, paused at t = 5 s and moving |
@@ -72,6 +77,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `gi` | `Tools/eval/gi.py` |
 | `shadow` | `Tools/eval/shadow.py` |
 | `upscale` | `Tools/eval/upscale.py` |
+| `hwrtq` | `Tools/eval/hwrt.py` |
 | `noise` (references) + `denoise` | `Tools/eval/noise.py` |
 | `gallery` | `Tools/eval/gallery.py` |
 | `quality`, `fogcheck`, `skycheck`, `lightcheck`, `vgdebug` | inspect the PNGs; `pngdiff.py` between runs |
@@ -90,14 +96,16 @@ pure speed change.
 * Override strings apply to every setting. Their keys are the env names in `SettingsTable.swift` (one line per
   setting: add a setting there and it gets its key, its Copy as Env entry and its panel row); `SettingsEnv.apply`
   reads them and reports unknown keys:
-  * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,upscaler=metalfx|custom|spatial,on=0,…"`;
+  * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,upscaler=metalfx|custom|spatial|denoiser,on=0,…"`;
   * `METALRENDERER_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
-* Plain defaults: `METALRENDERER_RT=metal|custom`, `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,
+* Plain defaults: `METALRENDERER_RT=metal|custom`, `METALRENDERER_API=metal3|metal4`, `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,
   `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
 * Performance knobs:
   * `METALRENDERER_TG="trace=16x8,atrous=16x16"` sets threadgroup sizes (a kernel by its `Kernel` case in
     Pipelines.swift, capitals and spaces aside);
-  * `METALRENDERER_TLAS=<frames>` sets Metal's TLAS rebuild interval;
+  * `METALRENDERER_TLAS=<frames>` sets Metal's TLAS rebuild interval, `METALRENDERER_TLAS_BUILD=fast|default` what it
+    is built for, and `METALRENDERER_BLAS=default|fast|compact` how the per-mesh structures are built;
+  * `METALRENDERER_CAPS=rt,metalfx` keeps only the capabilities it names (to try the fallbacks and the skips);
   * `METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving tree on the CPU with SAH;
   * `METALRENDERER_RT_STATS=1` turns on the traversal counters, printed per setting;
   * `METALRENDERER_VARIANTS=0` runs every kernel's general pipeline (no compiled-in flags), `=log` prints each variant

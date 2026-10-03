@@ -177,6 +177,10 @@ Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounc
 
 `Tools/eval/` scores the saved PNGs against reference images committed in `Tools/eval/refs/` (PSNR and flicker; see its README).
 
+Use `METALRENDERER_BENCH=hwrt` to time hardware ray tracing and MetalFX's denoising scaler against what they replace: each ray tracer with each output (`custom`: SVGF and the custom upscaler, `metalfx`: SVGF and MetalFX's temporal scaler, `denoiser`: MetalFX's denoising scaler in place of all of it), path traced and with radiance cascades, in the Cornell room and the stress hall. `METALRENDERER_BENCH=hwrtq` renders the same outputs for `Tools/eval/hwrt.py` to score against supersampled 1920×1200 references, and `METALRENDERER_BENCH=api` runs the same frames through Metal 3 and Metal 4 (`METALRENDERER_API=metal3|metal4` picks the API for every setting, as `METALRENDERER_RT` picks the tracer). `METALRENDERER_UPSCALERS=custom,denoiser` picks the outputs. Settings that need something the GPU or the system lacks are skipped, and the run says which (`skipped: … (needs the MetalFX denoiser)`); `METALRENDERER_CAPS=rt,metalfx` keeps only the capabilities it names (`rt`, `hwrt`, `metalfx`, `denoiser`, `metal4`, or `none`), to try that on a GPU that has them all. The results are under "Hardware ray tracing, MetalFX's denoiser and Metal 4".
+
+Benchmarks render into offscreen textures, so the window server never paces them. With `METALRENDERER_WINDOW=1` it can: on an M4 Max under macOS 26.5 it handed drawables out at the display's rate (8.0–8.3 ms a frame) even though display sync is off. The pass that writes the drawable then waits for it, and its time, or the whole frame's with `METALRENDERER_BENCH_SPLIT=0`, reads as the display's period (8.0 ms for a frame that takes 0.8 ms); the GPU also idles between frames and clocks down, which inflates every other pass. If `span` sits near your display's period whatever the setting, this is happening. The M4 Max numbers in this file were taken into a texture.
+
 The benchmark renders frames back to back without vsync, so the GPU's clock stays steady. Long runs can still throttle as the GPU heats up, so compare timings from short runs. The lists of settings are in `Benchmark+Modes.swift`, one function per mode.
 
 ## Controls
@@ -208,6 +212,7 @@ The window title and the Debug window show the resolution, frame rate and GPU ti
 * **Sections** fold with their triangles; the panel scrolls and can be resized, and keeps the size you drag it to. Rows that don't apply to the current mode are hidden (the stress scene's object count, each GI method's parameters, ReSTIR's, fog's while it's off).
 * **Show advanced** (at the bottom) adds every remaining setting: ReSTIR DI's chains, confidence cap, neighbours, radius, the light grid's shape, split visibility and its own denoiser; ReSTIR GI's light maps, multi-bounce sources, caps, radius, minimum distance and its own denoiser; the shadow denoiser's history, clamp and edge tolerance; the custom upscaler's history, colour clip, sharpness and motion cuts; fog's base height, noise tile, wind and albedo; the clouds' thickness, size, erosion, wind direction and shadow strength; an HDR sky's exposure; and a Memory section (geometry pool, texture budget).
 * **Camera and time:** exposure (EV) and the tone curve, the field of view, the move speed, the animation's speed, and, in the sun and valley scenes, the time of day (an offset into the day cycle that moves only the sun and the sky; it works while paused). At their defaults (0 EV, ACES, 60°, 1×) images are bit-identical to before.
+* **What the GPU can't run** stays listed and greyed out: Metal ray tracing, the MetalFX denoiser (Rendering > Upscaler, macOS 26) and Metal 4 (Scene > Graphics API, macOS 26). The launch log's first line says what was found (`Metal ray tracing: hardware, MetalFX upscaling: yes, MetalFX denoiser: yes, Metal 4: yes`), and "Ray tracing" names Metal's tracer "Metal (hardware)" on GPUs with ray-tracing hardware (M3, A17 Pro and later) and "Metal (software)" on the others. A saved setting or an environment variable that asks for something missing falls back to the default with a line in the log.
 * **Denoiser:** a caption says what the generic rows (passes, σ, history, anti-lag) filter in the current mode. ReSTIR DI and ReSTIR GI filter their own signal with their own settings, under Show advanced in their sections.
 * **Remembered:** settings are saved (UserDefaults) half a second after each change and restored at the next launch, except the pause, the view, Freeze LOD and added models. `METALRENDERER_SETTINGS=default` starts from the defaults instead. Benchmarks never read or write them.
 * **Copy as Env** puts the `METALRENDERER_*` variables that reproduce the current settings on the clipboard, listing only what differs from the defaults (fog and sky from the scene's preset). They work in a normal launch, where they override the saved settings, and in benchmarks, where they apply to every setting. A key the app doesn't know, or a value it can't read, is reported on the console and skipped. `METALRENDERER_DUMP_SETTINGS=1` prints the settings as JSON at startup, to compare two launches. The camera pose and where added models were placed aren't included.
@@ -659,7 +664,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 
 ## Notes for M1 / M2 Macs
 
-M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, and the ray budget is the main cost here. That is also why this project's own BVH traversal can beat it (see the stress test); on M3 and later, compare the two again with `METALRENDERER_BENCH=rt`:
+M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, and the ray budget is the main cost here. That is also why this project's own BVH traversal can beat it (see the stress test). On M3 and later it is the other way round: see "Hardware ray tracing, MetalFX's denoiser and Metal 4" below.
 
 * By default the frame is traced at 0.5× the window size in points and upscaled 3× (1280×800 points → 640×400 traced → 1920×1200). Press `-` or `=` to change the traced resolution, and **U** to change the upscale factor.
 * MetalFX temporal upscaling works on M1. With path-traced GI, the default resolution setting costs about 6.0 ms of GPU time on an M1 Max (custom upscaler), against 43 ms for a native 1920×1200 frame and 11.5 ms for a 960×600 frame stretched to the window. The stretched frame matches or loses to the upscaled one on image quality. If the GPU doesn't support MetalFX, the app renders at 0.75× without upscaling.
@@ -916,7 +921,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     * An SAH-built moving-object tree (`METALRENDERER_RT_BUILD=cpu`) traces only 4–7% faster than the GPU LBVH.
     * Writing the per-frame instance and light records straight into the shared buffers (to skip a copy) cost the GPU 0.35 ms a frame at 16384 moving lights: records written one by one stay in the CPU's caches. The renderer keeps them in arrays of its own, rewrites only what moved, and copies each array to the frame's buffer in one go.
     * Relaxed instead of fast shader math (`METALRENDERER_MATH=relaxed`) renders the same images and costs 0.2 ms a frame in the stress hall, so fast math stays; the shaders test for "no hit" with a comparison (`isFar`) that fast math can't fold away.
-* MetalFX's built-in denoiser (`MTLFXTemporalDenoisedScaler`) also runs on an M1 Max under macOS 27, but it costs 4.2 ms at 640×400 → 1920×1200. That's more than this project's SVGF denoiser plus the temporal scaler it would replace (about 1.5 ms together). On M3 and later, with ray tracing hardware, it may be worth swapping passes 3, 4 and 6 for it.
+* MetalFX's built-in denoiser (`MTLFXTemporalDenoisedScaler`) also runs on an M1 Max under macOS 27, but it costs 4.2 ms at 640×400 → 1920×1200. That's more than this project's SVGF denoiser plus the temporal scaler it would replace (about 1.5 ms together). It is now an upscaler option (`upscaler=denoiser`); the next section has its numbers on an M4 Max.
 
 * **glTF gallery** (11 Tripo models, 17.9M triangles, 67 textures of up to 4096², M1 Max, 640×400; `METALRENDERER_BENCH=gallery`, `Tools/eval/gallery.py`).
   * Virtual geometry against full-detail meshes, same scene and custom tracer (GPU ms per frame):
@@ -936,6 +941,66 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     * **Simplification that keeps going:** locking only group borders (not the mesh's own open edges), letting seam and border vertices slide along their seams, a relaxed pass across UV seams for fragmented Tripo atlases when the strict one gets stuck, passing stuck groups up a level, and filling clusters spatially. That took the DAG from 883 root groups per model (full-detail fragments, always drawn) to one 366-triangle root, and the cut from 62k clusters to 3.9k.
     * **Texture levels from the largest UV stretch** (as GPUs do) and a histogram instead of a minimum: UV slivers and close self-reflections had asked for 4K mips of models 100 px tall (600 MB resident instead of 14).
   * In close-ups, Metal's intersector on the full-detail meshes is about 12% faster than this tracer with virtual geometry (11.1 vs 13.7 ms); from the overview, and in the stress scene, the custom tracer is faster.
+
+## Hardware ray tracing, MetalFX's denoiser and Metal 4
+
+Three options for GPUs and systems that have them, each checked at launch (`Capabilities.swift`) and off by default:
+
+* **Ray tracing: Metal** (`METALRENDERER_RT=metal`). Metal's acceleration structures and intersector, which M3, A17 Pro and later traverse in hardware. On macOS 26 the per-mesh structures are built for fast intersection (`MTLAccelerationStructureUsage.preferFastIntersection`) and compacted.
+* **Upscaler: MetalFX denoiser** (`METALRENDERER_GI=upscaler=denoiser`, macOS 26). `MTLFXTemporalDenoisedScaler` takes the raw 1-sample light, linear and unbounded, with the albedo, the normals, a specular albedo and the roughness to guide it, and returns it denoised at the output resolution. It stands in for SVGF, the shadow denoiser and the upscaler; `tonemapKernel` then applies the exposure and the tone curve.
+* **Graphics API: Metal 4** (`METALRENDERER_API=metal4`, macOS 26). The same kernels through Metal 4's command model (`Metal4Backend.swift`): an `MTL4CommandQueue`, command buffers reused with an allocator per frame slot, one unified compute encoder for dispatches, blits and TLAS updates, bindings through an argument table, a residency set in place of `useResource`, explicit barriers, pipelines from `MTL4Compiler` and MetalFX's Metal 4 scalers.
+
+Measured on an M4 Max (macOS 26.5, 640×400 traced → 1920×1200, moving frames, rendered into a texture rather than the window's drawables).
+
+**Whole frames**, GPU ms (`METALRENDERER_BENCH=hwrt METALRENDERER_BENCH_SPLIT=0`, two runs within 0.05 ms of each other):
+
+| Scene, GI | Output | Custom BVH | Metal (hardware) |
+|---|---|---|---|
+| Cornell, path traced | SVGF + custom upscaler | 1.93 | **1.31** |
+| | SVGF + MetalFX temporal | 2.33 | 1.70 |
+| | MetalFX denoiser | 3.04 | 2.41 |
+| Cornell, radiance cascades | SVGF + custom upscaler | 1.00 | **0.78** |
+| | SVGF + MetalFX temporal | 1.39 | 1.10 |
+| | MetalFX denoiser | 2.46 | 2.26 |
+| Stress hall (400 objects, 32 lights), path traced | SVGF + custom upscaler | 4.52 | **1.90** |
+| | SVGF + MetalFX temporal | 4.94 | 2.29 |
+| | MetalFX denoiser | 5.47 | 2.90 |
+| Stress hall, radiance cascades | SVGF + custom upscaler | 2.78 | **1.35** |
+| | SVGF + MetalFX temporal | 3.19 | 1.69 |
+| | MetalFX denoiser | 4.08 | 2.68 |
+
+* **Hardware ray tracing wins everywhere here**: frames are 22–32% shorter in the Cornell room and 51–58% shorter in the stress hall (the trace pass alone: 2.24 → 0.63 ms). On the M1 Max the custom BVH was 19–24% ahead.
+* **MetalFX's denoiser costs 1.0–1.5 ms more** than what it replaces: 1.75 ms for its pass with the tone map, against 0.25 ms for the custom upscaler plus about 0.5 ms for SVGF and the shadow denoiser. It also takes 0.2 ms of CPU time per frame to encode (the others: 0.03–0.06 ms).
+
+**Image quality** (`METALRENDERER_BENCH=hwrtq METALRENDERER_RT=metal`, `Tools/eval/hwrt.py`; PSNR against supersampled references, flicker in 8-bit levels between two frames of a still scene):
+
+| Scene | Output | Static | Flicker | Moving | Camera move |
+|---|---|---|---|---|---|
+| Cornell | SVGF + custom upscaler | **38.2 dB** | 0.29 | **36.7 dB** | **36.6 dB** |
+| | SVGF + MetalFX temporal | 38.0 dB | **0.25** | **36.7 dB** | 36.6 dB |
+| | MetalFX denoiser | 34.6 dB | 1.16 | 32.1 dB | 32.8 dB |
+| Stress hall | SVGF + custom upscaler | 35.8 dB | 1.33 | **32.5 dB** | **32.2 dB** |
+| | SVGF + MetalFX temporal | **35.9 dB** | **0.31** | 32.4 dB | 32.1 dB |
+| | MetalFX denoiser | 30.0 dB | 1.46 | 28.1 dB | 28.3 dB |
+
+* MetalFX's denoiser is 3.4–5.9 dB behind and flickers more on a still frame. Its edges are sharp and well anti-aliased; what it loses is in the shading: soft shadows and smooth walls come out with low-frequency ripples, and fast-moving objects keep some speckle. SVGF's direct light has an advantage it can't have: the shadow denoiser filters visibility only and multiplies it onto exact, unshadowed light.
+* Tried for it and scoring the same (within 0.2 dB): a fixed exposure texture instead of auto exposure, and a denoise-strength mask over the sky and the emitters. Its view matrices make no difference at all on macOS 26.5. The jitter's sign, the motion vectors' sign and the reversed depth all matter (1–6 dB when wrong), and match the temporal scaler's.
+* Not tried: the specular hit distance and the transparency overlay (fog), which the scenes scored here don't exercise.
+
+**Metal 4 against Metal 3** (`METALRENDERER_BENCH=api`): the frames are bit-identical, for both tracers and all three outputs, in the Cornell room, the stress hall and the scenes with a sky. Whole-frame GPU time is the same within 0.01 ms (0.99 / 0.99, 0.78 / 0.78, 4.49 / 4.49 and 1.93 / 1.94 ms for the four rows of the mode); the CPU's encoding takes 0.01–0.02 ms more. Scenes with a sky cost 0.2 ms more (the valley: 1.53 → 1.77 ms, 1.20 → 1.42 ms with Metal's tracer), for the Metal 3 command buffer in the middle of the frame described below. So Metal 4 buys this renderer nothing yet: its frames were already one compute encoder with few bindings.
+
+What Metal 4 does differently on macOS 26.5, found while matching the images:
+
+* `MTL4ComputeCommandEncoder.generateMipmaps` keeps one texel of each 2×2 instead of their mean, for 2D, array and 3D textures alike (a 0…1 ramp ends in a 1×1 level of 0.98, not 0.49). The sky's mips are its means, so skies came out hazier. Mip generation goes through the Metal 3 queue instead.
+* MetalFX's Metal 4 denoising scaler fails an assertion in MPSGraph as it is created (`Incompatible shape for parameter at index 0`) for nearly every size: of 19 tried, only 960×540 and 960×544 to twice that worked. The denoiser stays the Metal 3 one under Metal 4. MetalFX's Metal 4 temporal and spatial scalers work and match.
+* Both of those, and texture streaming (Metal 4 maps placement-sparse textures only, the streamer uses a sparse heap), run in a Metal 3 command buffer between two of the frame's Metal 4 ones; each queue waits for the other through an `MTLSharedEvent`.
+* Argument-table bindings are captured at each dispatch, so one table serves the whole frame. `MTL4Compiler` takes the same MSL 3.2 source and function constants. Metal 4 requires indirect TLAS instance descriptors (72 bytes, the mesh's structure by resource ID).
+* Not there under Metal 4: the settings panel's per-pass GPU timings (they time encoders, and a Metal 4 frame is one), and texture streaming is untested (the models weren't on the test machine).
+
+What didn't help:
+
+* Building the TLAS for fast intersection instead of for a fast build (`METALRENDERER_TLAS_BUILD=fast`): the trace gets 0.04 ms slower in the stress hall with 2000 objects (0.76 → 0.80 ms, in each of three alternating rounds). A default-quality build (`default`) traces the same 0.76 ms. The refit most frames matters more than how the tree was built.
+* The per-mesh structures' fast-intersection build and compaction (`METALRENDERER_BLAS=default` turns them off) measure the same on the procedural scenes (0.76 ms either way), whose meshes are tiny (0.1 MB of structures). They change which of two coplanar triangles a few rays hit: stills differ by at most 3 levels. The glTF gallery is where they could show.
 
 ## Where to go next
 

@@ -778,7 +778,11 @@ final class Scene {
             let c = Float(i) / 255
             return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
         }
-        let rgb = (0..<w * h).map { SIMD3(linear[Int(pixels[4 * $0])], linear[Int(pixels[4 * $0 + 1])], linear[Int(pixels[4 * $0 + 2])]) }
+        let texels = w * h
+        let rgb: [SIMD3<Float>] = (0..<texels).map { (i: Int) -> SIMD3<Float> in
+            let r: Float = linear[Int(pixels[4 * i])], g: Float = linear[Int(pixels[4 * i + 1])], b: Float = linear[Int(pixels[4 * i + 2])]
+            return SIMD3<Float>(r, g, b)
+        }
         return { uv in
             let x = Int((uv.x - uv.x.rounded(.down)) * Float(w)) % w, y = Int((uv.y - uv.y.rounded(.down)) * Float(h)) % h
             return rgb[max(y, 0) * w + max(x, 0)]

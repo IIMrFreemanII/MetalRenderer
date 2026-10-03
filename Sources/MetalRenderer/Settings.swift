@@ -126,12 +126,15 @@ enum UpscalerKind: Int, CaseIterable, Codable {
     case metalFX            // MetalFX temporal scaler
     case metalFXSpatial     // MetalFX spatial scaler: cheaper, but no temporal anti-aliasing (jitter off)
     case custom             // this project's TAAU pass (taauKernel), the default
+    case metalFXDenoised    // MetalFX denoising scaler: denoises the raw 1-spp light as it upscales, in place of SVGF,
+                            // the shadow denoiser and the upscaler (macOS 26; Capabilities.metalFXDenoiser)
 
     var title: String {
         switch self {
         case .metalFX: return "MetalFX temporal"
         case .metalFXSpatial: return "MetalFX spatial"
         case .custom: return "Custom (TAAU)"
+        case .metalFXDenoised: return "MetalFX denoiser"
         }
     }
 }
@@ -286,7 +289,7 @@ enum RayTracerKind: Int, CaseIterable, Codable {
     var title: String {
         switch self {
         case .custom: return "Custom BVH"
-        case .metal: return "Metal"
+        case .metal: return Capabilities.current.hardwareRayTracing ? "Metal (hardware)" : "Metal (software)"
         }
     }
 
@@ -472,6 +475,17 @@ struct SkySettings: Equatable, Codable {
     }
 }
 
+/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures, like the tracer.
+enum RenderAPI: Int, CaseIterable, Codable {
+    case metal3             // MTLCommandQueue, one compute encoder per frame
+    case metal4             // Metal 4: MTL4CommandQueue, argument tables, residency sets (macOS 26; Capabilities.metal4)
+
+    var title: String { self == .metal3 ? "Metal 3" : "Metal 4" }
+
+    /// `METALRENDERER_API=metal4|metal3` picks the starting API (benchmarks: for every setting).
+    static let initial: RenderAPI = ProcessInfo.processInfo.environment["METALRENDERER_API"] == "metal4" ? .metal4 : .metal3
+}
+
 /// Everything the settings panel and the keyboard shortcuts can change.
 struct RenderSettings: Equatable, Codable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
@@ -495,6 +509,7 @@ struct RenderSettings: Equatable, Codable {
     var cascades = CascadeSettings()
     var scene = SceneSettings()
     var rayTracer = RayTracerKind.initial
+    var api = RenderAPI.initial
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures

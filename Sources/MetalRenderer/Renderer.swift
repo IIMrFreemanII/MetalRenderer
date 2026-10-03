@@ -42,9 +42,14 @@ final class RenderTargets {
     static let upscaleColorFormat = MTLPixelFormat.rgba16Float
     static let upscaleDepthFormat = MTLPixelFormat.r32Float
     static let upscaleMotionFormat = MTLPixelFormat.rg16Float
+    static let gBufferFormat = MTLPixelFormat.rgba16Float      // albedo, normalDepth, specularAlbedo
+    static let roughnessFormat = MTLPixelFormat.r16Float
     let upscaleColor: MTLTexture    // tonemapped linear color at render resolution
     let deviceDepth: MTLTexture     // reversed-Z depth (near / viewDepth)
     let pixelMotion: MTLTexture     // previous pixel position - this pixel position, unjittered
+    // More guides for MetalFX's denoising scaler (written by the composite while it is the upscaler)
+    let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
+    let roughness: MTLTexture
 
     init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
@@ -78,6 +83,8 @@ final class RenderTargets {
         upscaleColor = try make(RenderTargets.upscaleColorFormat, "upscaleColor")
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
+        specularAlbedo = try make(RenderTargets.gBufferFormat, "specularAlbedo")
+        roughness = try make(RenderTargets.roughnessFormat, "roughness")
     }
 }
 
@@ -234,16 +241,13 @@ final class RestirGITargets {
     }
 }
 
-/// Dispatches that depend only on earlier stages, never on each other. `pass` names the benchmark timing column.
-struct ComputeStage {
-    let pass: String
-    let encode: (MTLComputeCommandEncoder) -> Void
-}
 
 final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private static let maxFramesInFlight = 3
     /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
-    private static let instanceDescriptorStride = 64
+    /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
+    /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
+    private var instanceDescriptorStride: Int { builtAPI == .metal4 ? 72 : 64 }
 
     private let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -291,6 +295,22 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
     /// The tracer the scene's structures were built for (and the pipelines compiled for).
     private var builtRayTracer = RayTracerKind.initial
+    /// The API the frames go through, the pipelines were compiled for and the TLAS's instance descriptors are written for.
+    private var builtAPI = RenderAPI.metal3
+    private var metal4Storage: AnyObject?       // Metal4Frame, made the first time Metal 4 is asked for
+    @available(macOS 26.0, *)
+    private var metal4: Metal4Frame? {
+        if metal4Storage == nil {
+            metal4Storage = Metal4Frame(device: device, streamQueue: queue, framesInFlight: Renderer.maxFramesInFlight,
+                                        layer: (surface as? MTKView)?.layer as? CAMetalLayer)
+        }
+        return metal4Storage as? Metal4Frame
+    }
+    /// Metal 4's compiler for `api` `.metal4` (pipelines, MetalFX's scalers), nil for Metal 3. Main thread.
+    private func compiler(for api: RenderAPI) -> AnyObject? {
+        guard api == .metal4, #available(macOS 26.0, *) else { return nil }
+        return metal4?.compiler
+    }
     private var blueNoiseTexture: MTLTexture!   // the blue-noise tile (zeros until `blueNoiseReady`)
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
     static func lightMapSize(lightCount: Int) -> Int {
@@ -355,6 +375,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     var settings = RenderSettings() {
         didSet {
             guard settings != oldValue else { return }
+            // What this GPU can't run (from the environment, saved settings or a key) falls back to what it can.
+            let (supported, notes) = settings.clamped(to: Capabilities.current)
+            if supported != settings {
+                notes.forEach { print($0) }
+                settings = supported
+                return
+            }
             if settings.giMode != oldValue.giMode { resetGIState() }
             if persistSettings { SettingsStore.save(settings) }
             for observer in settingsObservers { observer(settings) }
@@ -397,11 +424,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
     private var accumCount: UInt32 = 0
     private var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
-    private(set) lazy var upscaleSupported = Upscaler.isSupported(on: device)
+    private(set) lazy var upscaleSupported = Capabilities.current.metalFXUpscaling
     private lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
     /// MetalFX factors this GPU supports, with 0 meaning off.
     var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
     private var historyValid = false
+    /// MetalFX's denoising scaler is this frame's upscaler: it denoises, so SVGF and the shadow denoiser stay off.
+    private var neuralDenoise: Bool { upscaler?.denoising ?? false }
+    /// This project's denoisers (SVGF, the shadow denoiser) are on.
+    private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
@@ -436,6 +467,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         self.queue = queue
         self.surface = surface
         super.init()
+        // The starting tracer, upscaler and API come from the environment: fall back where this GPU lacks them.
+        let (supported, notes) = settings.clamped(to: Capabilities.current)
+        notes.forEach { print($0) }
+        settings = supported
+        defaultSettings = defaultSettings.clamped(to: Capabilities.current).settings
 
         if benchmark != nil {
             // Benchmark: frames back to back from the main queue, not the view's display link.
@@ -447,7 +483,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         try createBlueNoiseTexture()
         if benchmark != nil {
             // Benchmarks start with everything in place: the same frames every run.
-            pipelines = try Pipelines(device: device, source: shaderURL, kind: builtRayTracer, lightTypes: scene.lightTypeMask,
+            pipelines = try Pipelines(device: device, source: shaderURL, kind: builtRayTracer, api: builtAPI,
+                                      compiler: compiler(for: builtAPI), lightTypes: scene.lightTypeMask,
                                       stats: CustomRayTracer.statsEnabled)
             customRT?.pipelines = pipelines.rt
         } else {
@@ -470,7 +507,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             var s = SettingsStore.load(over: defaultSettings) ?? settings
             if !upscaleSteps.contains(s.upscaleFactor) { s.upscaleFactor = defaultSettings.upscaleFactor }
             SettingsEnv.applyAll(to: &s, defaults: defaultSettings)
-            settings = s
+            let (supported, notes) = s.clamped(to: Capabilities.current)
+            notes.forEach { print($0) }
+            settings = supported
             persistSettings = true
             SettingsStore.dumpIfRequested(settings)
             if settings.fog.enabled { _ = fogNoise() }   // starts making it now, not at the first frame
@@ -498,13 +537,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private struct PreparedScene {
         let scene: Scene
         let rayTracer: RayTracerKind
+        let api: RenderAPI
         let textures: [MTLTexture]
         let streamer: TextureStreamer?
         let customRT: CustomRayTracer?
         let pipelines: Pipelines?   // for its tracer and light types, when the ones in use don't fit...
         let shaderGeneration: Int   // ...built from this generation of the shaders
     }
-    private var loading: (scene: SceneSettings, rayTracer: RayTracerKind)?   // being prepared in the background
+    private var loading: (scene: SceneSettings, rayTracer: RayTracerKind, api: RenderAPI)?   // being prepared in the background
 
     /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
     private var virtualGeometryChanged: Bool {
@@ -527,19 +567,22 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var pipelines: Pipelines
         var shaderGeneration: Int
         var traversalStats: Bool
+        var api: RenderAPI
+        var compiler: AnyObject?    // Metal 4's, for `api`
     }
     private var loadOptions: LoadOptions {
         LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
                     textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
-                    traversalStats: CustomRayTracer.statsEnabled)
+                    traversalStats: CustomRayTracer.statsEnabled, api: settings.api, compiler: compiler(for: settings.api))
     }
 
     /// The pipelines for `kind` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
     /// library is reused when only the light types differ.
-    private func makePipelines(kind: RayTracerKind, lightTypes: UInt32, stats: Bool, current: Pipelines) throws -> Pipelines? {
-        if current.kind == kind && current.lightTypes == lightTypes { return nil }
-        return try Pipelines(device: device, source: shaderURL, kind: kind, lightTypes: lightTypes, stats: stats,
-                             reusing: current.kind == kind ? current.library : nil)
+    private func makePipelines(kind: RayTracerKind, api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool,
+                               current: Pipelines) throws -> Pipelines? {
+        if current.kind == kind && current.api == api && current.lightTypes == lightTypes { return nil }
+        return try Pipelines(device: device, source: shaderURL, kind: kind, api: api, compiler: compiler, lightTypes: lightTypes,
+                             stats: stats, reusing: current.kind == kind && current.api == api ? current.library : nil)
     }
 
     /// `current`: the scene being drawn, reused when only the ray tracer changes; `instances` is then the main thread's
@@ -556,16 +599,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
                                                             slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil
         // The shaders too, when the tracer changes (a recompile) or the new scene has other light types.
-        let pipelines = try makePipelines(kind: rayTracer, lightTypes: newScene.lightTypeMask, stats: options.traversalStats,
-                                          current: options.pipelines)
-        return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, streamer: streamer, customRT: rt,
+        let pipelines = try makePipelines(kind: rayTracer, api: options.api, compiler: options.compiler,
+                                          lightTypes: newScene.lightTypeMask, stats: options.traversalStats, current: options.pipelines)
+        return PreparedScene(scene: newScene, rayTracer: rayTracer, api: options.api, textures: textures, streamer: streamer, customRT: rt,
                              pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
 
     /// Starts preparing `settings.scene` / `settings.rayTracer` in the background; `install` swaps it in when done.
     private func startLoadingScene() {
-        let wanted = (scene: settings.scene, rayTracer: settings.rayTracer)
-        if let loading, loading.scene == wanted.scene, loading.rayTracer == wanted.rayTracer { return }
+        let wanted = (scene: settings.scene, rayTracer: settings.rayTracer, api: settings.api)
+        if let loading, loading == wanted { return }
         loading = wanted
         let reuse = wanted.scene == scene.settings ? scene : nil   // only the tracer changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
@@ -575,7 +618,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 try self.prepareScene(wanted.scene, rayTracer: wanted.rayTracer, reuse: reuse, instances: instances, options: options)
             }
             DispatchQueue.main.async {
-                guard let loading = self.loading, loading.scene == wanted.scene, loading.rayTracer == wanted.rayTracer else {
+                guard let loading = self.loading, loading == wanted else {
                     return   // superseded by a newer request
                 }
                 self.loading = nil
@@ -586,6 +629,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     print("Scene load failed, keeping the previous scene: \(error)")
                     self.settings.scene = self.scene.settings
                     self.settings.rayTracer = self.builtRayTracer
+                    self.settings.api = self.builtAPI
                 }
             }
         }
@@ -594,6 +638,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Everything sized by the scene: geometry, acceleration structures, per-frame instance / light buffers, light maps.
     private func createSceneResources(_ prepared: PreparedScene? = nil) throws {
         builtRayTracer = prepared?.rayTracer ?? settings.rayTracer
+        builtAPI = prepared?.api ?? settings.api
         customRT = nil
         primitiveAS = []
         primitiveASResources = []
@@ -646,6 +691,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             settings.scene = scene.settings
             settings.rayTracer = builtRayTracer
+            settings.api = builtAPI
         }
     }
 
@@ -654,14 +700,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let old = scene
-        let oldRayTracer = builtRayTracer, oldPipelines = pipelines
+        let oldRayTracer = builtRayTracer, oldAPI = builtAPI, oldPipelines = pipelines
         let start = CACurrentMediaTime()
         scene = prepared.scene
         do {
             if let ready = prepared.pipelines, prepared.shaderGeneration == shaderGeneration {
                 pipelines = ready
-            } else if let made = try makePipelines(kind: prepared.rayTracer, lightTypes: scene.lightTypeMask,
-                                                   stats: CustomRayTracer.statsEnabled, current: pipelines) {
+            } else if let made = try makePipelines(kind: prepared.rayTracer, api: prepared.api, compiler: compiler(for: prepared.api),
+                                                   lightTypes: scene.lightTypeMask, stats: CustomRayTracer.statsEnabled,
+                                                   current: pipelines) {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
@@ -670,6 +717,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             scene = old
             settings.scene = old.settings
             settings.rayTracer = oldRayTracer
+            settings.api = oldAPI
             pipelines = oldPipelines
             try? createSceneResources()
         }
@@ -681,8 +729,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             camera = scene.defaultCamera
             prevCamera = camera
         }
-        print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing (installed in %.0f ms)", scene.settings.kind.title,
-                     scene.instances.count, scene.lights.count, builtRayTracer.title, (CACurrentMediaTime() - start) * 1000))
+        print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing, %@ (installed in %.0f ms)", scene.settings.kind.title,
+                     scene.instances.count, scene.lights.count, builtRayTracer.title, builtAPI.title, (CACurrentMediaTime() - start) * 1000))
     }
 
     private func createGeometryBuffers(textures: [MTLTexture]?) throws {
@@ -729,7 +777,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             throw RendererError.resourceCreation("acceleration structure command encoder")
         }
         var scratchBuffers: [MTLBuffer] = []
-        for mesh in scene.meshes {
+        var built: [MTLAccelerationStructure] = []
+        // Each structure's size once compacted (a UInt32 per mesh), written by the GPU after the builds.
+        guard let compactedSizes = device.makeBuffer(length: max(scene.meshes.count, 1) * MemoryLayout<UInt32>.stride,
+                                                     options: .storageModeShared) else {
+            throw RendererError.resourceCreation("buffer compacted sizes")
+        }
+        for (i, mesh) in scene.meshes.enumerated() {
             let geometry = MTLAccelerationStructureTriangleGeometryDescriptor()
             geometry.vertexBuffer = positionBuffer
             geometry.vertexBufferOffset = 0
@@ -742,6 +796,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
             let descriptor = MTLPrimitiveAccelerationStructureDescriptor()
             descriptor.geometryDescriptors = [geometry]
+            // The meshes never change, so their structures are built once, for the fastest traversal Metal offers.
+            if Renderer.fastIntersectionBLAS, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
 
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
             guard let accel = device.makeAccelerationStructure(size: sizes.accelerationStructureSize),
@@ -749,12 +805,39 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 throw RendererError.resourceCreation("primitive acceleration structure")
             }
             encoder.build(accelerationStructure: accel, descriptor: descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
-            primitiveAS.append(accel)
+            if Renderer.compactBLAS {
+                encoder.writeCompactedSize(accelerationStructure: accel, buffer: compactedSizes,
+                                           offset: i * MemoryLayout<UInt32>.stride, sizeDataType: .uint)
+            }
+            built.append(accel)
             scratchBuffers.append(scratch)
         }
         encoder.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
+
+        // Compaction: a build reserves the worst case; the copy keeps only what the structure uses (less memory to
+        // walk, so fewer cache misses per ray).
+        if Renderer.compactBLAS, !built.isEmpty,
+           let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() {
+            let sizes = compactedSizes.contents().bindMemory(to: UInt32.self, capacity: built.count)
+            var compacted: [MTLAccelerationStructure] = []
+            for (i, accel) in built.enumerated() {
+                guard let small = device.makeAccelerationStructure(size: Int(sizes[i])) else {
+                    throw RendererError.resourceCreation("compacted acceleration structure")
+                }
+                encoder.copyAndCompact(sourceAccelerationStructure: accel, destinationAccelerationStructure: small)
+                compacted.append(small)
+            }
+            encoder.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            let before = built.reduce(0) { $0 + $1.size }, after = compacted.reduce(0) { $0 + $1.size }
+            print(String(format: "Metal BLAS: %d meshes, %.1f MB compacted to %.1f MB", built.count,
+                         Double(before) / 1_048_576, Double(after) / 1_048_576))
+            built = compacted
+        }
+        primitiveAS.append(contentsOf: built)
         primitiveASResources = primitiveAS.map { $0 as MTLResource }
     }
 
@@ -1072,11 +1155,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// The sky's passes, ahead of the frame's main encoder: the cloud noise and the atmosphere's tables (once), then
     /// this frame's sky texels, the cloud-shadow map and the sky texture's mips (encodeSkyTexels).
-    private func encodeSky(_ cb: MTLCommandBuffer, profile: GPUProfiler.Frame?) {
-        func compute() -> MTLComputeCommandEncoder? { profile?.compute(cb, "sky") ?? cb.makeComputeCommandEncoder() }
+    private func encodeSky(_ passes: FrameEncoder) {
         guard let sky = skyMap, let shape = cloudShape, let detail = cloudDetail, let shadow = cloudShadowMap,
               let tLUT = transmittanceLUT, let msLUT = multiScatterLUT, let mean = skyMean,
-              let enc = compute() else { return }
+              var enc = passes.compute("sky", serial: true) else { return }
         if !cloudNoiseReady {   // once: the cloud noise and the atmosphere's tables (the second reads the first)
             enc.setComputePipelineState(pipelines[.cloudNoise])
             enc.setTexture(shape, index: 0)
@@ -1089,25 +1171,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setComputePipelineState(pipelines[.multiScatterLUT])
             setTextures(enc, [tLUT, msLUT])
             dispatch(enc, .multiScatterLUT, width: msLUT.width, height: msLUT.height)
-            profile.end(enc)
-            if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
-                blit.generateMipmaps(for: shape)
-                blit.generateMipmaps(for: detail)
-                profile.end(blit)
-            }
+            passes.generateMipmaps([shape, detail], pass: "sky")
             cloudNoiseReady = true
-            guard let next = compute() else { return }
-            encodeSkyTexels(next, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb,
-                            profile: profile)
-            return
+            guard let next = passes.compute("sky", serial: true) else { return }
+            enc = next
         }
-        encodeSkyTexels(enc, sky: sky, shape: shape, detail: detail, shadow: shadow, tLUT: tLUT, msLUT: msLUT, mean: mean, cb: cb,
-                        profile: profile)
-    }
-
-    private func encodeSkyTexels(_ enc: MTLComputeCommandEncoder, sky: MTLTexture, shape: MTLTexture, detail: MTLTexture,
-                                 shadow: MTLTexture, tLUT: MTLTexture, msLUT: MTLTexture, mean: MTLBuffer, cb: MTLCommandBuffer,
-                                 profile: GPUProfiler.Frame?) {
         var p = skyParams
         // The clear sky's mean radiance (lights the clouds and the ground), then this frame's sky texels.
         enc.setComputePipelineState(pipelines[.skyMean])
@@ -1128,30 +1196,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [shape, detail, shadow])
             dispatch(enc, .cloudShadow, width: shadow.width, height: shadow.height)
         }
-        profile.end(enc)
-        if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
-            blit.generateMipmaps(for: sky)
-            profile.end(blit)
-        }
-    }
-
-    private func instanceASDescriptor(slot: Int) -> MTLInstanceAccelerationStructureDescriptor {
-        let d = MTLInstanceAccelerationStructureDescriptor()
-        d.instancedAccelerationStructures = primitiveAS
-        d.instanceCount = scene.instances.count
-        d.instanceDescriptorBuffer = instanceDescBuffers[slot]
-        d.instanceDescriptorBufferOffset = 0
-        d.instanceDescriptorStride = Renderer.instanceDescriptorStride
-        d.instanceDescriptorType = .default
-        d.usage = [.preferFastBuild, .refit]   // refit most frames; see draw() (a quality build traces no faster here)
-        return d
+        passes.generateMipmaps([sky], pass: "sky")
     }
 
     private func createPerFrameResources() throws {
-        precondition(MemoryLayout<MTLAccelerationStructureInstanceDescriptor>.stride == Renderer.instanceDescriptorStride)
+        precondition(MemoryLayout<MTLAccelerationStructureInstanceDescriptor>.stride == 64)
+        if #available(macOS 14.0, *) { precondition(MemoryLayout<MTLIndirectAccelerationStructureInstanceDescriptor>.stride == 72) }
         let instanceCount = scene.instances.count
         for slot in 0..<Renderer.maxFramesInFlight {
-            guard let desc = device.makeBuffer(length: instanceCount * Renderer.instanceDescriptorStride, options: .storageModeShared),
+            guard let desc = device.makeBuffer(length: instanceCount * instanceDescriptorStride, options: .storageModeShared),
                   let data = device.makeBuffer(length: instanceCount * MemoryLayout<GPUInstanceData>.stride, options: .storageModeShared),
                   let lights = device.makeBuffer(length: max(scene.lights.count * MemoryLayout<GPULight>.stride + scene.lightTable.byteCount, 64),
                                                  options: .storageModeShared) else {
@@ -1171,8 +1224,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             instanceDataBuffers.append(data)
             lightBuffers.append(lights)
 
-            guard builtRayTracer == .metal else { continue }
-            let sizes = device.accelerationStructureSizes(descriptor: instanceASDescriptor(slot: slot))
+            guard builtRayTracer == .metal, let placeholder = primitiveAS.first else { continue }
+            // Sized from the descriptor a build uses; the structure and its scratch buffer don't exist yet, so the
+            // descriptor is made with placeholders for them.
+            let layout = TLASUpdate(structure: placeholder, scratch: desc, refit: false, instanceCount: instanceCount,
+                                    usage: Renderer.tlasUsage, instances: desc, instanceStride: instanceDescriptorStride,
+                                    primitives: primitiveAS)
+            let sizes: MTLAccelerationStructureSizes
+            if builtAPI == .metal4, #available(macOS 26.0, *) {
+                sizes = device.accelerationStructureSizes(descriptor: layout.descriptor4)
+            } else {
+                sizes = device.accelerationStructureSizes(descriptor: layout.descriptor)
+            }
             guard let accel = device.makeAccelerationStructure(size: sizes.accelerationStructureSize),
                   let scratch = device.makeBuffer(length: max(sizes.buildScratchBufferSize, sizes.refitScratchBufferSize, 16), options: .storageModePrivate) else {
                 throw RendererError.resourceCreation("instance acceleration structure")
@@ -1227,8 +1290,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func writeInstanceDescriptors(slot: Int) {
         let descBase = instanceDescBuffers[slot].contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
+        let indirect = builtAPI == .metal4, stride = instanceDescriptorStride
         for (i, instance) in scene.instances.enumerated() {
-            let p = descBase.advanced(by: i * Renderer.instanceDescriptorStride)
+            let p = descBase.advanced(by: i * stride)
             let m = instance.transform
             var offset = 0
             for column in 0..<4 {           // packed column-major 4x3 matrix
@@ -1240,7 +1304,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.storeBytes(of: options, toByteOffset: 48, as: UInt32.self)
             p.storeBytes(of: instance.mask, toByteOffset: 52, as: UInt32.self)
             p.storeBytes(of: UInt32(0), toByteOffset: 56, as: UInt32.self)              // intersection function table offset
-            p.storeBytes(of: UInt32(instance.mesh), toByteOffset: 60, as: UInt32.self)  // index into primitiveAS
+            if indirect {
+                p.storeBytes(of: UInt32(i), toByteOffset: 60, as: UInt32.self)          // user ID (unused)
+                p.storeBytes(of: primitiveAS[instance.mesh].gpuResourceID, toByteOffset: 64, as: MTLResourceID.self)
+            } else {
+                p.storeBytes(of: UInt32(instance.mesh), toByteOffset: 60, as: UInt32.self)  // index into primitiveAS
+            }
         }
     }
 
@@ -1278,7 +1347,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         u.frameIndex = frameIndex
         u.lightCount = UInt32(scene.lights.count)
         u.bounces = settings.giEnabled && giMode == .pathTraced ? UInt32(settings.bounces) : 0
-        u.flags = (historyValid ? UniformFlags.historyValid : 0) | (settings.denoiser.enabled ? UniformFlags.denoise : 0)
+        u.flags = (historyValid ? UniformFlags.historyValid : 0) | (denoiserOn ? UniformFlags.denoise : 0)
         if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
         if usesSpecular { u.flags |= UniformFlags.specular }
         // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). ReSTIR: restir kernels.
@@ -1315,7 +1384,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         noteFrameStart()
         let size = frameSize(on: surface)
         guard let t = renderTargets(for: size) else { return }
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged {
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
@@ -1333,18 +1402,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
                                       camPos: lod.camPos, pixelScale: lod.pixelScale, tau: lod.tau, sceneInstances: scene.instances)
         writeFrameData(slot: slot)
-        guard let cmd = queue.makeCommandBuffer() else {
+        // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
+        // (Metal 3: the profiler times encoders, and a Metal 4 frame is a single one.)
+        let profile = profilePasses && benchmark == nil && builtAPI == .metal3 ? profiler?.beginFrame(slot: slot) : nil
+        let plan = planFrame(size: size, slot: slot, profiling: profile != nil)
+        regirParams = plan.lightGrid?.params ?? GPURegirParams()   // bound with the scene (bindScene)
+        guard let passes = makeFrame(plan, profile: profile) else {
             frameSemaphore.signal()
             return
         }
-
-        // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
-        let profile = profilePasses && benchmark == nil ? profiler?.beginFrame(slot: slot) : nil
-        let plan = planFrame(size: size, slot: slot, profiling: profile != nil)
-        regirParams = plan.lightGrid?.params ?? GPURegirParams()   // bound with the scene (bindScene)
-        var passes = FramePasses(cmd: cmd, queue: queue, profile: profile, split: plan.splitPasses, overlap: plan.overlap)
-        encodeSceneUpdate(slot: slot, lod: lod, passes: &passes)
-        if skyActive { encodeSky(passes.buffer("sky"), profile: profile) }
+        encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
+        if skyActive { encodeSky(passes) }
 
         // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
         // before it set).
@@ -1362,9 +1430,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         stages.denoise += svgfStages(plan, targets: t, composite: &composite)
         stages.fog = fogStages(plan, targets: t, composite: &composite)
 
-        encode(stages, plan: plan, passes: &passes)
-        let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: &passes)
-        commit(plan, passes: passes, output: output.output, encodeStart: encodeStart + output.wait)
+        encode(stages, plan: plan, passes: passes)
+        let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: passes)
+        commit(plan, passes: passes, profile: profile, output: output.output, encodeStart: encodeStart + output.wait)
 
         finishFrame(plan)
         updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
@@ -1440,16 +1508,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
                     || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight
-                    || upscaler!.spatial != (settings.upscaler == .metalFXSpatial) {
+                    || upscaler!.kind != settings.upscaler || upscaler!.metal4 != (builtAPI == .metal4) {
             do {
                 upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height,
                                         outputWidth: outWidth, outputHeight: outHeight,
-                                        spatial: settings.upscaler == .metalFXSpatial, synchronous: benchmark != nil)
+                                        kind: settings.upscaler, synchronous: benchmark != nil, compiler: compiler(for: builtAPI))
                 upscalerReset = true
+                historyValid = false   // the denoising scaler comes or goes: SVGF's history is not this frame's
             } catch {
                 print(error)
                 upscaler = nil
-                settings.upscaleFactor = 0
+                // The denoising scaler couldn't be made: back to the default upscaler, with SVGF. Others: no upscaling.
+                if settings.upscaler == .metalFXDenoised { settings.upscaler = .custom } else { settings.upscaleFactor = 0 }
                 return false
             }
         }
@@ -1510,6 +1580,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var prev: Int { cur ^ 1 }               // ...and the last frame's
         var jitter = SIMD2<Float>()
         var uniforms = Uniforms()               // what every kernel gets (the composite adds flags: CompositeInputs)
+        var view = Upscaler.View()              // the camera as matrices (MetalFX's denoising scaler)
         var accumulating = false                // benchmark reference: raw frames are averaged instead of denoised
         var splitPasses = false                 // benchmark: a command buffer per pass, so its GPU time can be read back
         var overlap = false                     // one concurrent encoder: the cascades and the denoisers overlap on the GPU
@@ -1535,6 +1606,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // Denoisers
         var history = false                     // the last frame left denoiser history
         var svgf = false                        // the denoiser is on (never for references)
+        var neuralDenoise = false               // MetalFX's denoising scaler denoises instead, as it upscales
         var shadowDenoiser = false              // direct light's visibility goes through its own filter
         var restirSplit = false                 // ReSTIR's visibility too, and its unshadowed light through SVGF
         var separate = false                    // direct and indirect light are separate signals
@@ -1564,11 +1636,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
         // Temporal upscalers gather jittered samples; supersampled references average 1024 jittered frames.
+        if neuralDenoise {
+            p.view = Upscaler.View(worldToView: camera.worldToView, viewToClip: camera.viewToClip(aspect: Float(width) / Float(height)))
+        }
         p.jitter = size.upscaling && settings.upscaler != .metalFXSpatial
             ? Upscaler.jitter(frame: frameIndex, scale: Float(size.outWidth) / Float(width))
             : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
+        if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
         if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
         p.uniforms = u
 
@@ -1603,7 +1679,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         //   edge-stopping). Cascade output is already smooth: it skips the denoiser unless its
         //   "denoise indirect" option is on (then 1 a-trous pass). With GI off there's no indirect light to denoise.
         let techniqueGI = p.giMode != .pathTraced
-        p.svgf = settings.denoiser.enabled && !accumulating
+        p.neuralDenoise = neuralDenoise
+        p.svgf = denoiserOn && !accumulating
         p.denoiseIndirect = settings.giEnabled && (!techniqueGI || techniqueDenoisesIndirect)
         //   With the shadow denoiser (default), direct light goes through its own visibility filter instead,
         //   and SVGF handles only indirect light.
@@ -1683,64 +1760,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         prevCamera = camera
         prevJitter = plan.jitter
-        historyValid = settings.denoiser.enabled
+        historyValid = plan.svgf || plan.neuralDenoise || (plan.accumulating && settings.denoiser.enabled)
         frameIndex &+= 1
     }
 
     // MARK: - Frame encoding
 
-    /// The frame's command buffers and its open compute encoder. Normally every pass shares one encoder; benchmarks put
-    /// each pass in its own command buffer (so its GPU time can be read back) and the panel's pass timings in its own
-    /// encoder.
-    private struct FramePasses {
-        let cmd: MTLCommandBuffer
-        let profile: GPUProfiler.Frame?
-        private let queue: MTLCommandQueue
-        private let split: Bool, overlap: Bool
-        private(set) var buffers: [(name: String, cmd: MTLCommandBuffer)] = []   // split only, in the order they run
-        private var open: MTLComputeCommandEncoder?
-        private var openPass = ""
-
-        init(cmd: MTLCommandBuffer, queue: MTLCommandQueue, profile: GPUProfiler.Frame?, split: Bool, overlap: Bool) {
-            (self.cmd, self.queue, self.profile, self.split, self.overlap) = (cmd, queue, profile, split, overlap)
+    /// The frame's encoder (ComputePass.swift) for the API in use.
+    private func makeFrame(_ plan: FramePlan, profile: GPUProfiler.Frame?) -> FrameEncoder? {
+        if builtAPI == .metal4, #available(macOS 26.0, *) {
+            return metal4?.begin(slot: plan.slot, split: plan.splitPasses, overlap: plan.overlap)
         }
-
-        /// The command buffer for pass `name`: the frame's, or with `split` a new one.
-        mutating func buffer(_ name: String) -> MTLCommandBuffer {
-            guard split, let cb = queue.makeCommandBuffer() else { return cmd }
-            cb.label = name
-            buffers.append((name, cb))
-            return cb
-        }
-
-        /// The compute encoder for pass `name`: the open one, unless passes are timed apart.
-        mutating func compute(_ name: String) -> MTLComputeCommandEncoder? {
-            if open != nil && !split && (profile == nil || name == openPass) { return open }
-            endCompute()
-            openPass = name
-            if let profile {
-                open = profile.compute(cmd, name)
-            } else {
-                open = overlap ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent) : buffer(name).makeComputeCommandEncoder()
-            }
-            return open
-        }
-
-        /// Runs stages in order, each in its named pass (consecutive stages of one pass share it).
-        mutating func run(_ stages: [ComputeStage]) {
-            var pass: String?
-            var enc: MTLComputeCommandEncoder?
-            for stage in stages {
-                if stage.pass != pass { enc = compute(stage.pass); pass = stage.pass }
-                if let enc { stage.encode(enc) }
-            }
-        }
-
-        /// Closes the open encoder: at the end of the frame, or ahead of a pass that isn't a compute dispatch.
-        mutating func endCompute() {
-            if let open { profile.end(open) }
-            open = nil
-        }
+        return Metal3Frame(queue: queue, profile: profile, split: plan.splitPasses, overlap: plan.overlap)
     }
 
     /// The frame's compute stages by group, each group in the order it runs.
@@ -1765,40 +1796,34 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
 
     /// The scene's structures for this frame, ahead of everything that traces rays.
-    private func encodeSceneUpdate(slot: Int, lod: VGView, passes: inout FramePasses) {
-        let profile = passes.profile
+    private func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
         // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
-        if builtRayTracer == .metal,
-           let asEncoder = profile?.accelerationStructure(passes.cmd, "tlas") ?? passes.buffer("tlas").makeAccelerationStructureCommandEncoder() {
+        if builtRayTracer == .metal {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
-            if instanceASBuilt.contains(slot) {
-                asEncoder.refit(sourceAccelerationStructure: instanceAS[slot], descriptor: instanceASDescriptor(slot: slot),
-                                destinationAccelerationStructure: instanceAS[slot], scratchBuffer: instanceScratch[slot],
-                                scratchBufferOffset: 0)
-            } else {
-                asEncoder.build(accelerationStructure: instanceAS[slot],
-                                descriptor: instanceASDescriptor(slot: slot),
-                                scratchBuffer: instanceScratch[slot],
-                                scratchBufferOffset: 0)
-                instanceASBuilt.insert(slot)
-            }
-            profile.end(asEncoder)
+            let refit = instanceASBuilt.contains(slot)
+            passes.updateTLAS(TLASUpdate(structure: instanceAS[slot], scratch: instanceScratch[slot], refit: refit,
+                                         instanceCount: scene.instances.count, usage: Renderer.tlasUsage,
+                                         instances: instanceDescBuffers[slot], instanceStride: instanceDescriptorStride,
+                                         primitives: primitiveAS), pass: "tlas")
+            instanceASBuilt.insert(slot)
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
-        textureStreamer?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, cmd: passes.buffer("textures"))
+        if let textureStreamer {
+            passes.streamTextures(textureStreamer, frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight)
+        }
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
         // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
-        if let customRT, let enc = profile?.compute(passes.cmd, "tlas") ?? passes.buffer("tlas").makeComputeCommandEncoder() {
+        if let customRT, let enc = passes.compute("tlas", serial: true) {
             customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: lod)
-            profile.end(enc)
+            passes.endCompute()
         }
     }
 
     /// Encodes the stages: one after another, or with `plan.overlap` the cascades next to the denoisers.
-    private func encode(_ s: FrameStages, plan: FramePlan, passes: inout FramePasses) {
+    private func encode(_ s: FrameStages, plan: FramePlan, passes: FrameEncoder) {
         guard plan.overlap, let enc = passes.compute("trace") else {
             passes.run(s.lightGrid)
             passes.run(s.head)
@@ -1834,7 +1859,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// 3c-5. The geometry debug view, the composite and the upscale into the drawable (or the offscreen texture standing
     /// in for it). Returns it (nil if the surface had none of the right size) and how long the surface took to hand it out.
     private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
-                              passes: inout FramePasses) -> (output: FrameOutput?, wait: CFTimeInterval) {
+                              passes: FrameEncoder) -> (output: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
         // 3c. Geometry debug views: their own pass, only while one is shown.
         if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
@@ -1845,7 +1870,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
 
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
-        let compositeIndirect = plan.accumulating || (settings.denoiser.enabled && plan.separate && plan.denoiseIndirect)
+        let compositeIndirect = plan.accumulating || (plan.svgf && plan.separate && plan.denoiseIndirect)
             ? c.illumination.last! : t.indirect
 
         // 4. Composite: albedo * illumination + emission, tonemap, write to the drawable
@@ -1862,7 +1887,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
-                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D])
+                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -1893,16 +1918,25 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         passes.endCompute()
         if let drawable, let upscaler {
-            upscaler.encode(into: passes.buffer("upscale"), targets: t, drawable: drawable.texture, jitter: plan.jitter, reset: upscalerReset)
+            passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
+                                                   reset: upscalerReset), output: drawable.texture, pass: "upscale")
             upscalerReset = false
+            // The denoising scaler leaves linear, unbounded light: the exposure and the tone curve, into the drawable.
+            if let hdr = upscaler.hdrOutput, let enc = passes.compute("upscale") {
+                bind(enc, .tonemap, c.uniforms)
+                setTextures(enc, [hdr, drawable.texture])
+                dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
         }
         return (drawable, drawableWait)
     }
 
     /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
     /// `encodeStart`: when the CPU started on this frame, not counting its waits.
-    private func commit(_ plan: FramePlan, passes: FramePasses, output: FrameOutput?, encodeStart: CFTimeInterval) {
-        let cmd = passes.cmd, slot = plan.slot, profile = passes.profile
+    private func commit(_ plan: FramePlan, passes: FrameEncoder, profile: GPUProfiler.Frame?, output: FrameOutput?,
+                        encodeStart: CFTimeInterval) {
+        let slot = plan.slot
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
@@ -1914,41 +1948,41 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
             if benchmark.shouldCapture { print("  " + customRT.takeStats().description) } else { _ = customRT.takeStats() }
         }
-        if let benchmark, let output, benchmark.shouldCapture {
-            writeCapture = benchmark.encodeCapture(of: output.texture, into: cmd, device: device)
+        if let benchmark, let output, benchmark.shouldCapture, let capture = benchmark.capture(of: output.texture, device: device) {
+            passes.capture(output.texture, into: capture.buffer)
+            writeCapture = capture.write
         }
-        if let drawable = output?.drawable { cmd.present(drawable) }
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
-        let buffers = passes.buffers
         let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
         let cpuInterval = frameIntervalMs
         let encodeNow = (CACurrentMediaTime() - encodeStart) * 1000
         encodeSum += encodeNow
         encodeCount += 1
-        cmd.addCompletedHandler { [weak self] cb in
+        // Benchmark: finish this frame before encoding the next (`wait`), so passes from consecutive frames
+        // never overlap on the GPU and inflate each other's timings.
+        passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
             if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame); streamer?.collect(slot: slot) }
             if let bench, recordFrame {
                 var passMs: [String: Double] = [:]
                 var start = Double.infinity, end = 0.0
-                for p in buffers {
-                    p.cmd.waitUntilCompleted()
-                    passMs[p.name, default: 0] += (p.cmd.gpuEndTime - p.cmd.gpuStartTime) * 1000   // a name can recur
-                    start = min(start, p.cmd.gpuStartTime)
-                    end = max(end, p.cmd.gpuEndTime)
+                for p in frame.passes {
+                    passMs[p.name, default: 0] += (p.end - p.start) * 1000   // a name can recur
+                    start = min(start, p.start)
+                    end = max(end, p.end)
                 }
-                if buffers.isEmpty {   // METALRENDERER_BENCH_SPLIT=0: the whole frame is one command buffer, as in normal mode
-                    passMs["frame"] = (cb.gpuEndTime - cb.gpuStartTime) * 1000
-                    start = cb.gpuStartTime
-                    end = cb.gpuEndTime
+                if frame.passes.isEmpty {   // METALRENDERER_BENCH_SPLIT=0: the whole frame is one command buffer, as in normal mode
+                    passMs["frame"] = (frame.end - frame.start) * 1000
+                    start = frame.start
+                    end = frame.end
                 }
                 bench.record(.init(config: benchConfig, passMs: passMs, spanMs: (end - start) * 1000, cpuMs: encodeNow))
             }
             writeCapture?()
             let times = profile?.resolve()
             semaphore.signal()
-            let ms = (cb.gpuEndTime - cb.gpuStartTime) * 1000
+            let ms = (frame.end - frame.start) * 1000
             DispatchQueue.main.async {
                 Launch.firstFrame()
                 if let first = self?.onFirstFrame {
@@ -1961,12 +1995,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
         sceneDeclaredIn = nil
-        for p in buffers { p.cmd.commit() }
-        cmd.commit()
-        // Benchmark: finish this frame before encoding the next, so passes from consecutive frames
-        // never overlap on the GPU and inflate each other's timings.
         if benchmark != nil {
-            cmd.waitUntilCompleted()
             vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
             streamer?.collect(slot: slot)
         }
@@ -1976,7 +2005,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Starts a kernel's dispatch: its pipeline, the uniforms, and for kernels that trace rays the scene.
     /// `pass`: the kernel's own flags, for the kernels with variants (Kernel.fixedPassFlags).
-    private func bind(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, _ uniforms: Uniforms, pass: UInt32 = 0, sceneSlot: Int? = nil) {
+    private func bind(_ enc: ComputePass, _ kernel: Kernel, _ uniforms: Uniforms, pass: UInt32 = 0, sceneSlot: Int? = nil) {
         var u = uniforms
         // While the blue-noise tile is on its way (a first launch), the general pipelines: a variant for the flags
         // of those few frames would be compiled for nothing.
@@ -2320,11 +2349,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     // MARK: - GI techniques
 
     /// Scene buffers at the indices every ray-tracing kernel uses (1 = TLAS, 2...8 = geometry, instances, lights).
-    private func bindScene(_ enc: MTLComputeCommandEncoder, slot: Int) {
+    private func bindScene(_ enc: ComputePass, slot: Int) {
         // What the scene's argument buffers point at is declared once per encoder (it holds for every dispatch in
         // it, and the frame's stages mostly share one); the bindings are set every time, since the kernels in
         // between use the same indices for their own buffers.
-        let declare = sceneDeclaredIn !== enc
+        let declare = sceneDeclaredIn !== enc.declarationScope
         if let customRT {
             customRT.bind(enc, slot: slot, declare: declare)
         } else {
@@ -2342,7 +2371,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBytes(&gp, length: MemoryLayout<GPURegirParams>.stride, index: 12)
         enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
         guard declare else { return }
-        sceneDeclaredIn = enc
+        sceneDeclaredIn = enc.declarationScope
         enc.useResources(shadingResources, usage: .read)
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
         if let textureStreamer {
@@ -2351,9 +2380,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.useResource(textureStreamer.feedbackBuffer(slot: slot), usage: [.read, .write])
         }
     }
-    /// The encoder `bindScene` last declared the scene's resources in (kept so its address can't be another's;
-    /// dropped when the frame is committed).
-    private var sceneDeclaredIn: MTLComputeCommandEncoder?
+    /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
+    /// be another's; dropped when the frame is committed).
+    private var sceneDeclaredIn: AnyObject?
 
     /// Specular shading is on and the scene has materials with a specular lobe (glTF ones).
     private var usesSpecular: Bool { settings.specular && scene.hasSpecular }
@@ -2493,7 +2522,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
         settings = c.resolvedSettings()
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged { rebuildScene(resetCamera: false) }
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
+            rebuildScene(resetCamera: false)
+        }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
@@ -2544,7 +2575,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return accumTextures
     }
 
-    private func setTextures(_ enc: MTLComputeCommandEncoder, _ textures: [MTLTexture]) {
+    private func setTextures(_ enc: ComputePass, _ textures: [MTLTexture]) {
         for (i, texture) in textures.enumerated() { enc.setTexture(texture, index: i) }
     }
 
@@ -2583,6 +2614,21 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
     private static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
+    /// The Metal TLAS is refit most frames (see encodeSceneUpdate), so it is built for a fast build. A quality build
+    /// (`METALRENDERER_TLAS_BUILD=default`) traces no faster on an M4 Max, and one for fast intersection (`fast`,
+    /// macOS 26) 5% slower with 2000 moving objects.
+    private static let tlasUsage: MTLAccelerationStructureUsage = {
+        switch ProcessInfo.processInfo.environment["METALRENDERER_TLAS_BUILD"] {
+        case "default": return [.refit]
+        case "fast": if #available(macOS 26.0, *) { return [.preferFastIntersection, .refit] } else { return [.refit] }
+        default: return [.preferFastBuild, .refit]
+        }
+    }()
+    /// Metal's per-mesh structures: built for fast intersection (macOS 26) and compacted. `METALRENDERER_BLAS=default`
+    /// builds them as before, `fast` or `compact` turns on one of the two, for A/B timing.
+    private static let blasMode = ProcessInfo.processInfo.environment["METALRENDERER_BLAS"] ?? "fast+compact"
+    private static let fastIntersectionBLAS = blasMode.contains("fast")
+    private static let compactBLAS = blasMode.contains("compact")
 
     /// Threadgroup size per kernel (8x8 unless set here), indexed by `Kernel`. `METALRENDERER_TG="trace=16x8,atrous=32x4"`
     /// overrides it for sweeps: a kernel goes by its `Kernel` case, capitals and spaces aside ("restir gi initial").
@@ -2616,7 +2662,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return SIMD3(Float(h0 >> 8), Float(h1 >> 8), Float(h2 >> 8)) * (1.0 / 16777216.0)
     }
 
-    private func dispatch(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, width: Int, height: Int) {
+    private func dispatch(_ enc: ComputePass, _ kernel: Kernel, width: Int, height: Int) {
         enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
                             threadsPerThreadgroup: Renderer.threadgroupSizes[kernel.rawValue])
     }
@@ -2632,7 +2678,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         func withBounces(_ name: String, _ n: Int) -> String { "GI \(name), \(n) bounce\(n == 1 ? "" : "s")" }
         let gi = !s.giEnabled ? "GI off" : s.giMode == .pathTraced ? withBounces("path traced", s.bounces)
             : s.giMode == .restirGI ? withBounces("ReSTIR", s.restirGI.bounces) : "GI \(s.giMode.title.lowercased())"
-        let upscalerName = s.upscaler == .custom ? "TAAU" : s.upscaler == .metalFXSpatial ? "MetalFX spatial" : "MetalFX"
+        let upscalerName = ["MetalFX", "MetalFX spatial", "TAAU", "MetalFX denoiser"][s.upscaler.rawValue]
         let res = outWidth > width ? String(format: "%ld×%ld → %@ %ld×%ld", width, height, upscalerName, outWidth, outHeight)
                                    : String(format: "%ld×%ld", width, height)
         let stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
@@ -2692,15 +2738,19 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
         let device = device, url = shaderURL
         let kind = pipelines?.kind ?? builtRayTracer, lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
+        let api = pipelines?.api ?? builtAPI, compiler = compiler(for: api)
         let stats = CustomRayTracer.statsEnabled
         shaderQueue.async { [weak self] in
-            let result = Result { try Pipelines(device: device, source: url, kind: kind, lightTypes: lightTypes, stats: stats) }
+            let result = Result {
+                try Pipelines(device: device, source: url, kind: kind, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats)
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success(let made):
                     // A scene with another tracer or other light types came in meanwhile: compile again, for that one.
-                    if let current = self.pipelines, made.kind != current.kind || made.lightTypes != current.lightTypes {
+                    if let current = self.pipelines,
+                       made.kind != current.kind || made.api != current.api || made.lightTypes != current.lightTypes {
                         return self.reloadShaders(then: done)
                     }
                     self.pipelines = made

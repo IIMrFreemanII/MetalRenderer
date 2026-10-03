@@ -10,6 +10,7 @@ extension Benchmark {
         "lights": lights, "fog": fog, "sky": sky,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
         "noise": noise, "denoise": denoise, "quality": quality,
+        "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug,
     ]
@@ -368,6 +369,79 @@ extension Benchmark {
         return references([direct.named("ref direct").reference(frames: 4096)])
             + scored(direct) { "direct \($0)" }
             + [Config("default moving", scale: 0.5, upscale: 3, gi: .radianceCascades)]
+    }
+
+    /// What turns the traced frame into the output, for `hwrt` and `hwrtq`: this project's denoisers (SVGF and the shadow
+    /// denoiser) with the custom upscaler or MetalFX's temporal scaler, or MetalFX's denoising scaler in place of all
+    /// three. `METALRENDERER_UPSCALERS="custom,denoiser"` picks among them.
+    private static var outputs: [(tag: String, kind: UpscalerKind)] {
+        let all: [(String, UpscalerKind)] = [("custom", .custom), ("metalfx", .metalFX), ("denoiser", .metalFXDenoised)]
+        let pick = env["METALRENDERER_UPSCALERS"].map { Set($0.split(separator: ",").map(String.init)) }
+        return all.filter { pick?.contains($0.0) ?? true }
+    }
+    private static let tracers: [(tag: String, kind: RayTracerKind)] = [("custom", .custom), ("metal", .metal)]
+
+    /// Hardware ray tracing and MetalFX's denoising scaler against what they replace: each ray tracer (the custom BVH,
+    /// Metal's acceleration structures) with each output (`outputs`), moving frames at 3x from 640x400, path traced and
+    /// with radiance cascades, in the Cornell room and the stress hall. The tracers alternate, so heat affects them
+    /// alike. Settings this GPU can't run are skipped (Capabilities).
+    private static func hwrt() -> [Config] {
+        var out: [Config] = []
+        for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
+            for (giTag, gi) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
+                for output in outputs {
+                    for tracer in tracers {
+                        out.append(Config("\(sceneTag) \(giTag), \(output.tag), \(tracer.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
+                            $0.upscaler = output.kind
+                            $0.rayTracer = tracer.kind
+                        })
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /// The same outputs' images, path traced at 3x from 640x400, against supersampled native 1920x1200 references at
+    /// t = 5 s (2 bounces, as the outputs trace): a still with the frame before it (flicker), the animation running and
+    /// the camera move (Tools/eval/hwrt.py). The tracer is METALRENDERER_RT's.
+    private static func hwrtq() -> [Config] {
+        var out: [Config] = []
+        for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
+            out += references([Config("\(sceneTag) ref final", scale: 1.5, scene: scene).reference(frames: 1024, supersample: true)])
+            for output in outputs {
+                let shown = Config("", scale: 0.5, upscale: 3, scene: scene) { $0.upscaler = output.kind }
+                out += scored(shown) { "\(sceneTag) final \($0) \(output.tag)" }
+            }
+        }
+        return out
+    }
+
+    /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API and METALRENDERER_RT's
+    /// tracer, each output once (run once per API and compare the PNGs with Tools/eval/pngdiff.py; frame indices must
+    /// match, so not in one run), then the same frames through each command model with each ray tracer, moving at 3x
+    /// from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
+    /// the command model can change.
+    private static func api() -> [Config] {
+        let scenes = [("cornell cascades", SceneSettings(), GIMode.radianceCascades), ("stress pt", stressHall(), .pathTraced)]
+        var out: [Config] = []
+        for (sceneTag, scene, gi) in scenes {
+            out += outputs.map { output in
+                Config("\(sceneTag) static, \(output.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) { $0.upscaler = output.kind }
+                    .still().frames(30)
+            }
+        }
+        for (sceneTag, scene, gi) in scenes {
+            for tracer in tracers {
+                out += RenderAPI.allCases.map { api in
+                    Config("\(sceneTag), \(tracer.tag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
+                        $0.rayTracer = tracer.kind
+                        $0.api = api
+                    }
+                }
+            }
+        }
+        return out
     }
 
     /// Upscalers against supersampled native 1920x1200 references at t = 5 s: the albedo view isolates edges and

@@ -28,7 +28,7 @@ final class TemporalUpscaler {
     }
 
     /// `jitter` = this frame's sample offset in input pixels (the same value the primary rays used).
-    func encode(_ enc: MTLComputeCommandEncoder, pipeline: MTLComputePipelineState, targets t: RenderTargets,
+    func encode(_ enc: ComputePass, pipeline: MTLComputePipelineState, targets t: RenderTargets,
                 drawable: MTLTexture, jitter: SIMD2<Float>, reset: Bool, settings: UpscalerSettings) {
         let cur = frame & 1, prev = cur ^ 1
         frame += 1
