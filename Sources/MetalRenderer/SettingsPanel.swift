@@ -1,9 +1,9 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Floating panel with a control for every `RenderSettings` field, plus live resolution / fps / GPU time.
+/// Floating panel with a control for every `RenderSettings` field (live stats are in the Debug window, DebugPanel).
 /// It never becomes the key window, so WASD and the keyboard shortcuts keep working while it's open.
-/// Keyboard changes show up here too: the renderer reports every settings change through `onSettingsChanged`.
+/// Keyboard changes show up here too: the renderer reports every settings change to its settings observers.
 ///
 /// Rows sit in collapsible sections; each row may have a condition (shown only for some modes) and may be "advanced"
 /// (shown only with Show advanced). The older rows have a property and an action each; the advanced ones are built
@@ -13,9 +13,6 @@ final class SettingsPanel: NSObject {
     private let renderer: Renderer
     private let upscaleSteps: [CGFloat]
 
-    private let stats = NSTextField(labelWithString: "")
-    private let passTimes = NSTextField(labelWithString: "")   // GPU pass timings, when profiling
-    private let profile = NSButton(checkboxWithTitle: "GPU pass timings", target: nil, action: nil)
     private let showAdvancedBox = NSButton(checkboxWithTitle: "Show advanced", target: nil, action: nil)
     private let copyEnv = NSButton(title: "Copy as Env", target: nil, action: nil)
     private let denoiserCaption = NSTextField(wrappingLabelWithString: "")
@@ -216,19 +213,10 @@ final class SettingsPanel: NSObject {
                               (rgiTemporal, #selector(rgiTemporalChanged)), (rgiUnbiased, #selector(rgiUnbiasedChanged)),
                               (rgiFeedback, #selector(rgiFeedbackChanged)), (clearModels, #selector(clearModelsChanged)),
                               (fogAlbedo, #selector(fogAlbedoChanged)), (showAdvancedBox, #selector(showAdvancedChanged)),
-                              (profile, #selector(profileChanged)), (copyEnv, #selector(copyAsEnv))] as [(NSControl, Selector)] {
+                              (copyEnv, #selector(copyAsEnv))] as [(NSControl, Selector)] {
             box.target = self
             box.action = action
         }
-        for label in [stats, passTimes] {
-            label.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-            label.textColor = .secondaryLabelColor
-            label.lineBreakMode = .byTruncatingTail
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        }
-        passTimes.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        passTimes.usesSingleLineMode = false
-        passTimes.maximumNumberOfLines = 0
         denoiserCaption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         denoiserCaption.textColor = .secondaryLabelColor
         denoiserCaption.preferredMaxLayoutWidth = 330
@@ -262,17 +250,14 @@ final class SettingsPanel: NSObject {
         grid.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = makeContent(grid: grid)
 
-        profile.isHidden = !renderer.passProfilingSupported
         showAdvancedBox.state = showAdvanced ? .on : .off
         update(from: renderer.settings)
         resizeToFit()
-        renderer.onSettingsChanged = { [weak self] in self?.update(from: $0) }
-        renderer.onStats = { [weak self] in
+        renderer.observeSettings { [weak self] in self?.update(from: $0) }
+        renderer.observeTick { [weak self] in
             guard let self else { return }
-            self.stats.stringValue = $0
             self.updateDenoiserCaption(self.renderer.settings)   // Auto's method follows the loaded scene's light count
         }
-        renderer.onPassTimes = { [weak self] in self?.showPassTimes($0) }
     }
 
     // MARK: - Rows
@@ -321,6 +306,17 @@ final class SettingsPanel: NSObject {
             when: { isRestir($0) && $0.restir.spatialPasses > 0 })
         add(floatRow("Radius", \.restir.radius, RestirSettings.radiusRange, step: 1) { String(format: "%.0f px", $0) },
             advanced: true, when: { isRestir($0) && $0.restir.spatialPasses > 0 })
+        add(checkRow("Light grid (ReGIR candidates)", \.restir.grid.enabled), when: isRestir)
+        let isGrid: (RenderSettings) -> Bool = { isRestir($0) && $0.restir.grid.enabled }
+        add(intRow("Grid share", \.restir.grid.share, RegirSettings.shareRange) { "\($0) cand." }, advanced: true, when: isGrid)
+        add(intRow("Grid cells", \.restir.grid.cells, RegirSettings.cellRange) { "\($0)³" }, advanced: true, when: isGrid)
+        add(intRow("Grid levels", \.restir.grid.levels, RegirSettings.levelRange), advanced: true, when: isGrid)
+        add(floatRow("Cell size", \.restir.grid.cellSize, RegirSettings.cellSizeRange, step: 0.25, log: true) { String(format: "%.2f m", $0) },
+            advanced: true, when: isGrid)
+        add(floatRow("Level scale", \.restir.grid.levelScale, RegirSettings.scaleRange, step: 0.5) { String(format: "%.1f×", $0) },
+            advanced: true, when: isGrid)
+        add(intRow("Grid slots", \.restir.grid.slots, RegirSettings.slotRange), advanced: true, when: isGrid)
+        add(intRow("Grid candidates", \.restir.grid.candidates, RegirSettings.candidateRange), advanced: true, when: isGrid)
         add(checkRow("Split visibility (shadow denoiser)", \.restir.splitVisibility), advanced: true, when: isRestir)
         add(intRow("Filter passes", \.restir.denoisePasses, DenoiserSettings.passRange), advanced: true, when: isRestir)
         add(floatRow("Edge tolerance (σ)", \.restir.denoiseSigma, DenoiserSettings.luminanceSigmaRange, step: 0.05) { String(format: "%.2f", $0) },
@@ -505,7 +501,7 @@ final class SettingsPanel: NSObject {
         if changed { resizeToFit() }
     }
 
-    /// The scroll view with the grid, and under it a footer that stays visible: buttons, stats and pass timings.
+    /// The scroll view with the grid, and under it a footer that stays visible: buttons and toggles.
     private func makeContent(grid: NSGridView) -> NSView {
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -519,16 +515,13 @@ final class SettingsPanel: NSObject {
 
         let reset = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetToDefaults))
         let buttons = NSStackView(views: [reset, copyEnv])
-        let toggles = NSStackView(views: [showAdvancedBox, profile])
-        toggles.spacing = 16
-        footer = NSStackView(views: [buttons, toggles, stats, passTimes])
+        footer = NSStackView(views: [buttons, showAdvancedBox])
         footer.orientation = .vertical
         footer.alignment = .leading
         footer.spacing = 6
         footer.edgeInsets = NSEdgeInsets(top: 8, left: Self.inset.width, bottom: 10, right: Self.inset.width)
         footer.translatesAutoresizingMaskIntoConstraints = false
         footer.setHuggingPriority(.required, for: .vertical)
-        passTimes.isHidden = true
         let separator = NSBox()
         separator.boxType = .separator
         separator.translatesAutoresizingMaskIntoConstraints = false
@@ -743,16 +736,6 @@ final class SettingsPanel: NSObject {
         }
     }
 
-    private func showPassTimes(_ times: [(name: String, ms: Double)]) {
-        guard profile.state == .on else { return }
-        let total = times.reduce(0) { $0 + $1.ms }
-        let width = max(times.map(\.name.count).max() ?? 0, 5)
-        let lines = times.map { $0.name.padding(toLength: width, withPad: " ", startingAt: 0) + String(format: " %6.2f ms", $0.ms) }
-        passTimes.stringValue = (lines + ["total".padding(toLength: width, withPad: " ", startingAt: 0) + String(format: " %6.2f ms", total)])
-            .joined(separator: "\n")
-        if passTimes.isHidden { passTimes.isHidden = false; resizeToFit() }
-    }
-
     // MARK: - Controls -> settings
 
     @objc private func renderScaleChanged() {
@@ -877,10 +860,6 @@ final class SettingsPanel: NSObject {
         showAdvanced = showAdvancedBox.state == .on
         UserDefaults.standard.set(showAdvanced, forKey: "panel.advanced")
         applyVisibility(renderer.settings)
-    }
-    @objc private func profileChanged() {
-        renderer.profilePasses = profile.state == .on
-        if profile.state == .off && !passTimes.isHidden { passTimes.isHidden = true; resizeToFit() }
     }
     @objc private func copyAsEnv() {
         let env = EnvExport.string(for: renderer.settings, defaults: renderer.defaultSettings)

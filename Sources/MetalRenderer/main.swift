@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var renderer: Renderer!
     private var settingsPanel: SettingsPanel?
+    private var debugPanel: DebugPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -46,6 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.show(nextTo: window)
             settingsPanel = panel
             renderer.onTogglePanel = { [weak self] in self?.toggleSettings(nil) }
+            debugPanel = DebugPanel(renderer: renderer)
+            if DebugPanel.wasVisible { debugPanel?.show(nextTo: window, below: panel.panel) }
+            renderer.onToggleDebug = { [weak self] in self?.toggleDebug(nil) }
         }
 
         print("""
@@ -58,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
           R            hot-reload Shaders.metal (edit it while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
+          I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
     }
@@ -81,12 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsPanel?.toggle(nextTo: window)
     }
 
+    @objc private func toggleDebug(_ sender: Any?) {
+        debugPanel?.toggle(nextTo: window, below: settingsPanel?.panel)
+    }
+
     private func buildMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Render Settings…", action: #selector(toggleSettings(_:)), keyEquivalent: ",").target = self
+        appMenu.addItem(withTitle: "Debug Window", action: #selector(toggleDebug(_:)), keyEquivalent: "i").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit MetalRenderer",
                         action: #selector(NSApplication.terminate(_:)),

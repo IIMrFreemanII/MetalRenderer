@@ -215,6 +215,14 @@ final class Benchmark {
             case "passes": r.denoisePasses = Int(v)
             case "history": r.denoiseHistory = v
             case "boost": r.varianceBoost = v
+            case "grid": r.grid.enabled = v != 0
+            case "gcells": r.grid.cells = Int(v)
+            case "glevels": r.grid.levels = Int(v)
+            case "gsize": r.grid.cellSize = v
+            case "gscale": r.grid.levelScale = v
+            case "gslots": r.grid.slots = Int(v)
+            case "gk": r.grid.candidates = Int(v)
+            case "gshare": r.grid.share = Int(v)
             default: break
             }
         }
@@ -356,6 +364,7 @@ final class Benchmark {
         var config: Int
         var passMs: [String: Double]
         var spanMs: Double          // first pass start -> last pass end
+        var cpuMs: Double
     }
 
     static let isEnabled = ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] != nil
@@ -533,6 +542,7 @@ final class Benchmark {
                 if refs {
                     var ref = base; ref.name = "ref direct \(lights)"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
                     ref.frames = lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048
+                    ref.restir = RestirSettings(); ref.restir!.grid.enabled = false   // the table alone
                     out.append(ref)
                 }
                 let modes: [DirectLightMode] = lights <= 128 ? [.exact, .grouped, .restir] : [.grouped, .restir]
@@ -768,9 +778,10 @@ final class Benchmark {
             return out
         case "restircheck":
             // ReSTIR's sampling is unbiased for every light type: accumulated direct light (GI off), every light traced
-            // against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), in the light-check scenes (one
-            // rect / tube / sphere light, or its emissive-mesh twin) and in scenes with spots, tubes, rects, emissive
-            // meshes, a sun and every type together. Mean luminance and PSNR should agree (Tools/eval/restir.py).
+            // against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), from the table alone and from
+            // the light grid, in the light-check scenes (one rect / tube / sphere light, or its emissive-mesh twin) and
+            // in scenes with spots, tubes, rects, emissive meshes, a sun and every type together. Mean luminance and
+            // PSNR should agree (Tools/eval/restir.py).
             var out: [Config] = []
             var scenes: [(String, SceneSettings)] = ["rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh"].map {
                 var s = SceneSettings(); s.lightCheck = $0; return ($0, s)
@@ -779,13 +790,62 @@ final class Benchmark {
                        ("area", SceneSettings(kind: .area)), ("emissive", SceneSettings(kind: .emissive)),
                        ("mixed", SceneSettings(kind: .mixed)), ("stress32", SceneSettings(kind: .stress, objects: 400, lights: 32))]
             for (tag, scene) in scenes {
-                for mode in [DirectLightMode.exact, .restir] {
-                    var c = Config(name: "\(tag) \(mode.title.lowercased())", giEnabled: false, paused: true, startTime: 5,
-                                   accumulate: true, frames: 1024, scene: scene)
+                for (mode, grid) in [(DirectLightMode.exact, false), (.restir, false), (.restir, true)] {
+                    var c = Config(name: "\(tag) \(mode.title.lowercased())" + (grid ? " grid" : ""), giEnabled: false,
+                                   paused: true, startTime: 5, accumulate: true, frames: 1024, scene: scene)
                     c.directLight = mode
+                    c.restir = RestirSettings(); c.restir!.grid.enabled = grid; c.restir!.grid.share = 32   // every candidate
                     c.sky = SkySettings()   // constant sky: the sky's own noise stays out of the comparison
                     out.append(c)
                 }
+            }
+            return out
+        case "marketq":
+            // Direct light in the Night market (4096 bulbs, GI and fog off, 640x400) against an accumulated reference
+            // (ReSTIR's unbiased initial sampling, as restirq's above 1024 lights): ReSTIR's candidates from the table
+            // alone and from the light grid, static (+ previous frame, for flicker) and moving (Tools/eval/restir.py).
+            let refs = ProcessInfo.processInfo.environment["METALRENDERER_GI_REFS"] != "0"
+            var scene = SceneSettings(kind: .market); scene.lights = 4096
+            var base = Config(name: "", renderScale: 0.5, giEnabled: false, scene: scene)
+            base.fog = FogSettings()   // off: direct light alone
+            base.directLight = .restir
+            var out: [Config] = []
+            if refs {
+                var ref = base; ref.name = "ref direct market"; ref.paused = true; ref.startTime = 5; ref.accumulate = true
+                ref.frames = 2048
+                ref.restir = RestirSettings(); ref.restir!.grid.enabled = false   // the table alone
+                out.append(ref)
+            }
+            for (tag, grid) in [("table", false), ("grid", true)] {
+                var st = base; st.name = "restir \(tag) static market"; st.paused = true; st.startTime = 5; st.capturePrevious = true
+                st.restir = RestirSettings(); st.restir!.grid.enabled = grid
+                var mv = st; mv.name = "restir \(tag) moving market"; mv.paused = false; mv.capturePrevious = false
+                // The candidates alone (no reuse, no denoiser), 64 frames averaged: the sampler's own variance.
+                var ac = st; ac.name = "restir \(tag) accum market"; ac.capturePrevious = false; ac.accumulate = true; ac.frames = 64
+                ac.restir!.grid.share = 32
+                out += [st, mv, ac]
+            }
+            // The grid at the secondary hits and in the fog: indirect light alone (view 6, path traced and cascades)
+            // against an accumulated path-traced reference, and the fog's scattering alone (view 14) against the
+            // per-pixel reference march, with GI's and the fog's candidates from the table and from the grid.
+            var indirect = base; indirect.giEnabled = true; indirect.viewMode = 6; indirect.paused = true; indirect.startTime = 5
+            indirect.restir = RestirSettings()
+            var fog = indirect; fog.giEnabled = false; fog.viewMode = 14; fog.fog = FogSettings.preset(for: .market)
+            if refs {
+                var ref = indirect; ref.name = "ref indirect market"; ref.accumulate = true; ref.frames = 2048
+                ref.restir!.grid.enabled = false
+                var fogRef = fog; fogRef.name = "ref scattering market"; fogRef.accumulate = true; fogRef.frames = 512
+                fogRef.restir!.grid.enabled = false
+                out += [ref, fogRef]
+            }
+            for (tag, grid) in [("table", false), ("grid", true)] {
+                var pt = indirect; pt.name = "pt \(tag) indirect market"; pt.restir!.grid.enabled = grid
+                var rc = pt; rc.name = "cascades \(tag) indirect market"; rc.giMode = .radianceCascades
+                var fg = fog; fg.name = "fog \(tag) scattering market"; fg.restir!.grid.enabled = grid; fg.frames = 120
+                // Accumulated (unclamped, no denoiser): the candidates' own variance and bias.
+                var ptAc = pt; ptAc.name = "pt \(tag) accum indirect market"; ptAc.accumulate = true; ptAc.frames = 256
+                var fgAc = fg; fgAc.name = "fog \(tag) accum scattering market"; fgAc.accumulate = true; fgAc.frames = 128
+                out += [pt, rc, fg, ptAc, fgAc]
             }
             return out
         case "restirgicheck":
@@ -940,7 +1000,7 @@ final class Benchmark {
         // One column per pass that ran: passOrder first, then any others (e.g. GI technique passes) by name.
         let seen = Set(all.flatMap { $0.passMs.keys })
         let passes = Benchmark.passOrder.filter(seen.contains) + seen.subtracting(Benchmark.passOrder).sorted()
-        let header = ["setting", "res"] + passes.map { $0 == "upscale" ? "MetalFX" : $0 } + ["GPU total", "p95", "max fps", "span"]
+        let header = ["setting", "res"] + passes.map { $0 == "upscale" ? "MetalFX" : $0 } + ["GPU total", "p95", "max fps", "span", "cpu"]
         var rows: [[String]] = [header]
         for (i, c) in configs.enumerated() {
             let frames = all.filter { $0.config == i }
@@ -956,6 +1016,7 @@ final class Benchmark {
             row.append(String(format: "%.2f", percentile(totals, 0.95)))
             row.append(String(format: "%.0f", 1000 / med))
             row.append(String(format: "%.2f", percentile(frames.map { $0.spanMs }, 0.5)))
+            row.append(String(format: "%.2f", percentile(frames.map { $0.cpuMs }, 0.5)))
             rows.append(row)
         }
         let widths = (0..<header.count).map { col in rows.map { $0[col].count }.max() ?? 0 }

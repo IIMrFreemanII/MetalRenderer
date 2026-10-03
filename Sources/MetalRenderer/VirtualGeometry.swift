@@ -73,7 +73,7 @@ final class VirtualGeometry {
     private let clusterBuffer: MTLBuffer
     private let instanceTable: MTLBuffer
     private let workCount: Int
-    private let instanceCount: Int
+    let instanceCount: Int
     private let leafBoxes, keys, values, nodeParent, leafParent, fitCounters, counts: MTLBuffer
     private let requestStamp, lastUsed: MTLBuffer
     private var groupPageBuffers: [MTLBuffer] = []    // per slot: the CPU's residency table for that frame
@@ -202,6 +202,9 @@ final class VirtualGeometry {
     }
 
     var residentMB: Double { Double(allocator.usedBytes) / 1_048_576 }
+    var meshCount: Int { meshes.count }
+    var groupCount: Int { groups.count }
+    var clusterCount: Int { meshes.reduce(0) { $0 + $1.clusters.count } }
     var summary: String {
         String(format: "VG: %d clusters drawn%@, %d groups resident (%.0f MB of %d), %d requests waiting", stats.selected,
                stats.overflow ? " (capacity reached)" : "", stats.residentGroups, residentMB, poolBytes >> 20, stats.pending)

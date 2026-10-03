@@ -256,6 +256,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var lightMapPSO: MTLComputePipelineState!
     private var manyLightsPSO: MTLComputePipelineState!
     private var manyLightsReusePSO: MTLComputePipelineState!
+    private var regirBuildPSO: MTLComputePipelineState!
     private var restirTemporalPSO: MTLComputePipelineState!
     private var restirSpatialPSO: MTLComputePipelineState!
     private var restirGIInitialPSO: MTLComputePipelineState!
@@ -292,7 +293,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var feedbackDummy: MTLBuffer!
     private var primitiveAS: [MTLAccelerationStructure] = []           // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
-    private var customRT: CustomRayTracer?                             // custom ray tracer only
+    private var customRT: CustomRayTracer? {                           // custom ray tracer only
+        didSet { traversalLast = nil }   // a new tracer's counters start at 0
+    }
     private var rtPipelines: RTPipelines?
     /// The tracer the shaders were compiled for and the scene's structures were built for.
     private var builtRayTracer = RayTracerKind.initial
@@ -340,6 +343,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var prevLightBuffers: [MTLBuffer] = []  // per slot: the frame before's lights (ReSTIR's temporal reuse)
     private var lastFrameLights: [GPULight] = []
     private var restirGrid: RestirTargets?
+    private var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
+    private var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
     private var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
     private var restirGIGrid: RestirGITargets?
     private var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
@@ -362,7 +367,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             guard settings != oldValue else { return }
             if settings.giMode != oldValue.giMode { resetGIState() }
             if persistSettings { SettingsStore.save(settings) }
-            onSettingsChanged?(settings)
+            for observer in settingsObservers { observer(settings) }
         }
     }
     private var persistSettings = false         // the app (not benchmarks), once the saved settings are loaded
@@ -372,11 +377,21 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     var passProfilingSupported: Bool { GPUProfiler.isSupported(on: device) }
     /// This frame's direct-light method with Auto resolved, for the panel's denoiser caption.
     var directModeInUse: DirectLightMode { activeDirectMode }
-    var onSettingsChanged: ((RenderSettings) -> Void)?
+    private var settingsObservers: [(RenderSettings) -> Void] = []
+    private var tickObservers: [() -> Void] = []
+    /// Calls `observer` with the settings after every change (panel edits, keyboard shortcuts, scene loads).
+    func observeSettings(_ observer: @escaping (RenderSettings) -> Void) { settingsObservers.append(observer) }
+    /// Calls `observer` twice a second, when the stats (fps, GPU time, `statsLine`) are refreshed.
+    func observeTick(_ observer: @escaping () -> Void) { tickObservers.append(observer) }
     var onTogglePanel: (() -> Void)?            // Tab key
+    var onToggleDebug: (() -> Void)?            // I key
+    /// Every frame once its GPU work is done (main thread): the CPU time since the previous frame started and the GPU
+    /// time, both in ms. For the Debug window's graph; nil while it's hidden.
+    var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
     private(set) var defaultSettings = RenderSettings()
-    var onStats: ((String) -> Void)?            // twice a second: resolution, fps and GPU time
+    /// Resolution, fps and GPU time, refreshed twice a second.
+    private(set) var statsLine = ""
     private var upscaler: Upscaler?           // MetalFX (temporal or spatial)
     private var customUpscaler: TemporalUpscaler?
     private var upscalerReset = true          // drop the upscaler's history on the next frame
@@ -409,6 +424,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var fpsFrames = 0
     private var fpsTime = CACurrentMediaTime()
     private var fps: Double = 0
+    private var lastDrawTime: CFTimeInterval?
+    private var frameIntervalMs = 0.0           // CPU time between the starts of the last two frames
+    private var frameIntervalSum = 0.0, frameIntervalCount = 0
+    private var cpuMs = 0.0                     // frameIntervalMs averaged over the stats interval
+    // Traversal counters (Debug window, custom tracer): summed per frame, averaged per stats interval.
+    private var traversalSum = TraversalStats(), traversalFrames = 0
+    private var traversalLast: [UInt32]?
+    private(set) var traversal: (stats: TraversalStats, frames: Int)?
 
     init(view: RenderView) throws {
         validateGPULayouts()
@@ -501,6 +524,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let lightMap = try pipeline("lightMapKernel")
         let manyLights = try pipeline("manyLightsKernel")
         let manyLightsReuse = try pipeline("manyLightsReuseKernel")
+        let regirBuild = try pipeline("regirBuildKernel")
         let restirTemporal = try pipeline("restirTemporalKernel")
         let restirSpatial = try pipeline("restirSpatialKernel")
         let restirGIInitial = try pipeline("restirGIInitialKernel")
@@ -540,6 +564,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         lightMapPSO = lightMap
         manyLightsPSO = manyLights
         manyLightsReusePSO = manyLightsReuse
+        regirBuildPSO = regirBuild
         restirTemporalPSO = restirTemporal
         restirSpatialPSO = restirSpatial
         restirGIInitialPSO = restirGIInitial
@@ -1060,11 +1085,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             enc.setComputePipelineState(multiScatterLUTPSO)
             setTextures(enc, [tLUT, msLUT])
             dispatch(enc, "multiple scattering", width: msLUT.width, height: msLUT.height)
-            enc.endEncoding()
+            profile.end(enc)
             if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
                 blit.generateMipmaps(for: shape)
                 blit.generateMipmaps(for: detail)
-                blit.endEncoding()
+                profile.end(blit)
             }
             cloudNoiseReady = true
             guard let next = compute() else { return }
@@ -1099,10 +1124,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             setTextures(enc, [shape, detail, shadow])
             dispatch(enc, "cloud shadow", width: shadow.width, height: shadow.height)
         }
-        enc.endEncoding()
+        profile.end(enc)
         if let blit = profile?.blit(cb, "sky") ?? cb.makeBlitCommandEncoder() {
             blit.generateMipmaps(for: sky)
-            blit.endEncoding()
+            profile.end(blit)
         }
     }
 
@@ -1271,6 +1296,21 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
+        let drawStart = CACurrentMediaTime()
+        if let last = lastDrawTime {
+            frameIntervalMs = (drawStart - last) * 1000
+            frameIntervalSum += frameIntervalMs
+            frameIntervalCount += 1
+        }
+        lastDrawTime = drawStart
+        if benchmark == nil, CustomRayTracer.statsEnabled, let customRT {
+            let counts = customRT.readCounters()   // what the frames finished since the last read added (in-flight ones in part)
+            if let last = traversalLast {
+                traversalSum = traversalSum + TraversalStats(counts: zip(counts, last).map { UInt64($0 &- $1) })
+                traversalFrames += 1
+            }
+            traversalLast = counts
+        }
         // Render resolution = window size in points * renderScale. Without upscaling the layer stretches
         // it to the window. With upscaling, MetalFX outputs renderScale * upscaleFactor, capped at the
         // window's size in physical pixels.
@@ -1306,6 +1346,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
+        let encodeStart = CACurrentMediaTime()
 
         let custom = upscaling && settings.upscaler == .custom
         if !upscaling || custom {
@@ -1397,7 +1438,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         func beginComputePass(_ name: String) -> MTLComputeCommandEncoder? {
             // Normal mode: one shared encoder (profiling: one per pass name).
             if openEncoder != nil && !splitPasses && (frameProfile == nil || name == openPass) { return openEncoder }
-            openEncoder?.endEncoding()
+            if let openEncoder { frameProfile.end(openEncoder) }
             openPass = name
             if let frameProfile { openEncoder = frameProfile.compute(cmd, name); return openEncoder }
             openEncoder = overlap ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent)
@@ -1432,7 +1473,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                 scratchBufferOffset: 0)
                 instanceASBuilt.insert(slot)
             }
-            asEncoder.endEncoding()
+            frameProfile.end(asEncoder)
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
         textureStreamer?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, cmd: passBuffer("textures"))
@@ -1441,7 +1482,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if let customRT, let enc = frameProfile?.compute(cmd, "tlas") ?? passBuffer("tlas").makeComputeCommandEncoder() {
             let view = VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
             customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: view)
-            enc.endEncoding()
+            frameProfile.end(enc)
         }
 
         var uniforms = makeUniforms(width: width, height: height)
@@ -1458,8 +1499,46 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let cur = Int(frameIndex & 1), prev = cur ^ 1
         if skyActive { encodeSky(passBuffer("sky"), profile: frameProfile) }
 
-        // 1b. Light-visibility maps, for GI techniques and the path tracer's light-map variant.
         let frameUniforms = uniforms
+
+        // 1a. The light grid (ReGIR): rebuilt from this frame's lights before everything that samples them (ReSTIR
+        //     DI's candidates, GI's next-event estimation, the reflections, the fog). It reads only the light and
+        //     instance buffers, which the CPU wrote. Off in scenes without a light table; references set
+        //     grid.enabled themselves (off for restirq's, on with every candidate for restircheck's "grid").
+        var regirStages: [ComputeStage] = []
+        regirParams = GPURegirParams()
+        do {
+            let g = settings.restir.grid
+            let restirCandidates = accumulating ? 32 : RestirSettings.candidateRange.clamp(settings.restir.candidates)
+            let regirOn = g.enabled && scene.lightTable.entries.count > 0 && (scene.usesLightTable || activeDirectMode == .restir)
+            if regirOn, let grid = regirGrid(count: g.reservoirCount) {
+                let cells = RegirSettings.cellRange.clamp(g.cells), levels = RegirSettings.levelRange.clamp(g.levels)
+                let cellSize = RegirSettings.cellSizeRange.clamp(g.cellSize), scale = RegirSettings.scaleRange.clamp(g.levelScale)
+                let jitter = Renderer.regirJitter(frame: frameIndex)
+                var origins = [SIMD4<Float>](repeating: SIMD4<Float>(), count: 4)
+                for level in 0..<levels {
+                    let size = cellSize * pow(scale, Float(level))
+                    let cam = frameUniforms.camPos
+                    let origin = SIMD3(cam.x, cam.y, cam.z) - size * (Float(cells) * 0.5 + jitter)
+                    origins[level] = SIMD4(origin, size)
+                }
+                var gp = GPURegirParams()
+                (gp.origin0, gp.origin1, gp.origin2, gp.origin3) = (origins[0], origins[1], origins[2], origins[3])
+                gp.config = SIMD4(UInt32(cells), UInt32(levels), UInt32(RegirSettings.slotRange.clamp(g.slots)),
+                                  UInt32(RegirSettings.candidateRange.clamp(g.candidates)))
+                gp.consume = SIMD4(UInt32(max(min(RegirSettings.shareRange.clamp(g.share), restirCandidates), 1)), frameIndex, 0, 0)
+                regirParams = gp
+                regirStages.append(ComputeStage(pass: "regir") { [self] enc in
+                    var u = frameUniforms
+                    enc.setComputePipelineState(regirBuildPSO)
+                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                    bindScene(enc, slot: slot)
+                    dispatch(enc, "regir build", width: grid.length / MemoryLayout<GPURegirReservoir>.stride, height: 1)
+                })
+            }
+        }
+
+        // 1b. Light-visibility maps, for GI techniques and the path tracer's light-map variant.
         // Volumetric fog: this frame's parameters (the reflections read them too). The froxel history is reprojected
         // only from the frame just before, with the same far distance.
         let fogGridTargets = settings.fog.enabled ? fogTargets(width: width, height: height) : nil
@@ -1620,7 +1699,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let samples = UInt32(RestirSettings.spatialSampleRange.clamp(r.spatialSamples))
             let radius = RestirSettings.radiusRange.clamp(r.radius) * Float(width) / 960
             let clamp: Float = accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as the mesh-light pass
-            let params = GPURestirParams(config: SIMD4(UInt32(RestirSettings.candidateRange.clamp(r.candidates)), maxM, flags, samples),
+            let candidates = RestirSettings.candidateRange.clamp(r.candidates)
+            let params = GPURestirParams(config: SIMD4(UInt32(candidates), maxM, flags, samples),
                                          tuning: SIMD4(radius, 0, clamp, Float(rg.chains)))
             restirStages.append(ComputeStage(pass: "restir") { [self] enc in
                 var u = frameUniforms, p = params
@@ -1816,8 +1896,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if overlap { denoiseStages.insert(contentsOf: restirStages, at: fogOn ? (accumulating ? 1 : 2) : 0) }
 
         if overlap, let enc = beginComputePass("trace") {
-            // Light map, trace and cascade probes need only the TLAS; then the cascade chain and the denoiser chain
-            // advance in lock-step, one barrier per step. Reflections read the cascades' result: after both.
+            // The light grid first (the trace's bounces read it); light map, trace and cascade probes need only the
+            // TLAS; then the cascade chain and the denoiser chain advance in lock-step, one barrier per step.
+            // Reflections read the cascades' result: after both.
+            if !regirStages.isEmpty {
+                for stage in regirStages { stage.encode(enc) }
+                enc.memoryBarrier(scope: .buffers)
+            }
             for stage in headStages + giStages.prefix(1) { stage.encode(enc) }
             enc.memoryBarrier(scope: [.buffers, .textures])
             let gi = Array(giStages.dropFirst())
@@ -1831,6 +1916,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 enc.memoryBarrier(scope: [.buffers, .textures])
             }
         } else {
+            runSerial(regirStages)
             runSerial(headStages)
             runSerial(giStages)
             runSerial(restirStages)
@@ -1854,7 +1940,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
         // 4. Composite: albedo * illumination + emission, tonemap, write to the drawable
         //    (or, with upscaling, to MetalFX's input color texture).
+        let drawableStart = CACurrentMediaTime()
         var drawable = view.currentDrawable
+        let drawableWait = CACurrentMediaTime() - drawableStart
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != outWidth || d.texture.height != outHeight { drawable = nil }
         if let drawable, let enc = beginComputePass("composite") {
@@ -1894,12 +1982,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             upscalerReset = false
         }
         if let drawable, let upscaler {
-            openEncoder?.endEncoding()
+            if let openEncoder { frameProfile.end(openEncoder) }
             openEncoder = nil
             upscaler.encode(into: passBuffer("upscale"), targets: t, drawable: drawable.texture, jitter: jitter, reset: upscalerReset)
             upscalerReset = false
         }
-        openEncoder?.endEncoding()
+        if let openEncoder { frameProfile.end(openEncoder) }
 
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
@@ -1910,7 +1998,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         if let benchmark, benchmark.isMeasuring, CustomRayTracer.statsEnabled, let customRT {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
-            if benchmark.shouldCapture { print("  " + customRT.takeStats()) } else { _ = customRT.takeStats() }
+            if benchmark.shouldCapture { print("  " + customRT.takeStats().description) } else { _ = customRT.takeStats() }
         }
         if let benchmark, let drawable, benchmark.shouldCapture {
             writeCapture = benchmark.encodeCapture(of: drawable.texture, into: cmd, device: device)
@@ -1921,6 +2009,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let recordFrame = benchmark?.isMeasuring ?? false
         let passes = passBuffers
         let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
+        let cpuInterval = frameIntervalMs
+        let encodeNow = (CACurrentMediaTime() - encodeStart - drawableWait) * 1000
         cmd.addCompletedHandler { [weak self] cb in
             if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame); streamer?.collect(slot: slot) }
             if let bench, recordFrame {
@@ -1937,7 +2027,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     start = cb.gpuStartTime
                     end = cb.gpuEndTime
                 }
-                bench.record(.init(config: benchConfig, passMs: passMs, spanMs: (end - start) * 1000))
+                bench.record(.init(config: benchConfig, passMs: passMs, spanMs: (end - start) * 1000, cpuMs: encodeNow))
             }
             writeCapture?()
             let times = frameProfile?.resolve()
@@ -1945,6 +2035,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let ms = (cb.gpuEndTime - cb.gpuStartTime) * 1000
             DispatchQueue.main.async {
                 self?.gpuMs = ms
+                if let self, let onFrameTime = self.onFrameTime { onFrameTime(cpuInterval, ms) }
                 if let times { self?.addPassTimes(times, frameMs: ms) }
             }
         }
@@ -1982,6 +2073,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.setBuffer(meshBuffer, offset: 0, index: 5)
         enc.setBuffer(instanceDataBuffers[slot], offset: 0, index: 6)
         enc.setBuffer(shadingArgs[slot], offset: 0, index: 7)
+        var gp = regirParams   // the light grid (ReGIR): ReSTIR DI's, GI's, the reflections' and the fog's candidates
+        enc.setBuffer(regirBuffer ?? regirGrid(count: 1), offset: 0, index: 11)
+        enc.setBytes(&gp, length: MemoryLayout<GPURegirParams>.stride, index: 12)
         enc.useResources(shadingResources, usage: .read)
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
         if let textureStreamer {
@@ -2233,6 +2327,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
     }
 
+    /// The light grid's buffer for `count` reservoirs (reallocated only when the count changes: a settings change).
+    private func regirGrid(count: Int) -> MTLBuffer? {
+        let length = max(count, 1) * MemoryLayout<GPURegirReservoir>.stride
+        if let b = regirBuffer, b.length == length { return b }
+        regirBuffer = device.makeBuffer(length: length, options: .storageModePrivate)
+        regirBuffer?.label = "regirGrid"
+        return regirBuffer
+    }
     private func restirTargets(width: Int, height: Int, chains: Int) -> RestirTargets? {
         if let r = restirGrid, r.width == width, r.height == height, r.chains == chains { return r }
         restirGrid = try? RestirTargets(device: device, width: width, height: height, chains: chains)
@@ -2247,13 +2349,25 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Measured on an M1 Max: trace 16x8 is ~2% faster than 8x8, atrous 16x16 ~5%; others don't care.
     private static let threadgroupSizes: [String: MTLSize] = {
         var sizes: [String: MTLSize] = ["trace": MTLSize(width: 16, height: 8, depth: 1),
-                                        "atrous": MTLSize(width: 16, height: 16, depth: 1)]
+                                        "atrous": MTLSize(width: 16, height: 16, depth: 1),
+                                        "regir build": MTLSize(width: 64, height: 1, depth: 1)]
         for item in (ProcessInfo.processInfo.environment["METALRENDERER_TG"] ?? "").split(separator: ",") {
             let kv = item.split(separator: "="), wh = kv.count == 2 ? kv[1].split(separator: "x").compactMap { Int($0) } : []
             if wh.count == 2 { sizes[String(kv[0])] = MTLSize(width: wh[0], height: wh[1], depth: 1) }
         }
         return sizes
     }()
+
+    /// The light grid's per-frame origin jitter, in cells ([0, 1)^3), from a hash of the frame index.
+    private static func regirJitter(frame: UInt32) -> SIMD3<Float> {
+        func hash(_ v: UInt32) -> UInt32 {
+            let s = v &* 747796405 &+ 2891336453
+            let w = ((s >> ((s >> 28) &+ 4)) ^ s) &* 277803737
+            return (w >> 22) ^ w
+        }
+        let h0 = hash(frame), h1 = hash(h0), h2 = hash(h1)
+        return SIMD3(Float(h0 >> 8), Float(h1 >> 8), Float(h2 >> 8)) * (1.0 / 16777216.0)
+    }
 
     private func dispatch(_ enc: MTLComputeCommandEncoder, _ kernel: String, width: Int, height: Int) {
         enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
@@ -2290,7 +2404,14 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                      sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                      s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
                                      RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
-        onStats?(stats)
+        statsLine = stats
+        cpuMs = frameIntervalCount > 0 ? frameIntervalSum / Double(frameIntervalCount) : 0
+        frameIntervalSum = 0
+        frameIntervalCount = 0
+        if traversalFrames > 0 { traversal = (traversalSum, traversalFrames) }
+        traversalSum = TraversalStats()
+        traversalFrames = 0
+        for observer in tickObservers { observer() }
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
@@ -2313,6 +2434,75 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         passTimeFrameMs += frameMs
         passTimeFrames += 1
+    }
+
+    /// Recompiles Shaders.metal and remakes every pipeline (R key, traversal counters). On failure the old pipelines stay.
+    @discardableResult
+    func reloadShaders() -> Bool {
+        do {
+            try loadShaders(for: builtRayTracer, lightTypes: builtLightTypes, recompile: true)
+            resetGIState()
+            upscalerReset = true
+            return true
+        } catch {
+            print("Shader reload failed (keeping previous version):\n\(error)")
+            return false
+        }
+    }
+
+    /// The custom tracer's traversal counters (RT_STATS): turning them on or off recompiles the shaders.
+    var traversalCounters: Bool {
+        get { CustomRayTracer.statsEnabled }
+        set {
+            guard newValue != CustomRayTracer.statsEnabled else { return }
+            CustomRayTracer.statsEnabled = newValue
+            if !reloadShaders() { CustomRayTracer.statsEnabled = !newValue }
+            traversalLast = nil
+            traversal = nil
+            traversalSum = TraversalStats()
+            traversalFrames = 0
+        }
+    }
+
+    /// What the Debug window shows (built when it asks, on the stats tick).
+    func debugInfo() -> DebugInfo {
+        var d = DebugInfo()
+        d.stats = statsLine
+        d.cpuMs = cpuMs
+        d.sceneTitle = settings.scene.kind.title
+        d.instances = scene.instances.count
+        d.virtualInstances = scene.instances.filter { $0.virtualMesh >= 0 }.count
+        d.triangles = scene.instances.reduce(0) { $0 + ($1.mesh >= 0 ? Int(scene.meshes[$1.mesh].indexCount) / 3 : 0) }
+        d.suns = scene.lights.filter { $0.kind.isSun }.count
+        d.analyticLights = Int(scene.lightGroupEnd.w) - d.suns   // spheres, spots, rects, tubes
+        d.meshLights = scene.meshLights.count
+        d.lightTable = scene.usesLightTable
+        d.lightTableEntries = scene.lightTable.entries.count
+        d.directMode = activeDirectMode == .grouped && scene.lightGroupEnd.w <= 4 ? "Exact (4 lights or fewer)" : activeDirectMode.title
+        d.giMode = !settings.giEnabled ? "Off" : activeGIMode.title
+        d.rayTracer = builtRayTracer.title
+        d.customTracer = customRT != nil
+        if let vg = customRT?.virtualBLAS {
+            d.vg = .blas(meshes: vg.meshCount, instances: vg.instanceCount, sourceTriangles: vg.sourceTriangles,
+                         triangles: vg.stats.triangles, clusters: vg.stats.clusters, megabytes: vg.stats.megabytes,
+                         rebuilds: vg.stats.rebuilds, lastBuildMs: vg.stats.lastBuildMs, lastRefineMs: vg.stats.lastRefineMs,
+                         lastCutMs: vg.stats.lastCutMs, skipped: vg.stats.skippedInstances,
+                         builder: VirtualBLAS.builder.rawValue, busy: vg.isBusy)
+        } else if let vg = customRT?.virtualGeometry {
+            d.vg = .clusters(meshes: vg.meshCount, instances: vg.instanceCount, clusters: vg.clusterCount, groups: vg.groupCount,
+                             selected: vg.stats.selected, capacity: VirtualGeometry.capacity, overflow: vg.stats.overflow,
+                             residentGroups: vg.stats.residentGroups, residentMB: vg.residentMB, poolMB: vg.poolBytes >> 20,
+                             pending: vg.stats.pending, loadedThisFrame: vg.stats.loadedThisFrame)
+        }
+        d.vgPixelError = settings.virtualGeometry.pixelError
+        d.vgFrozen = frozenLOD != nil && scene.usesVirtualGeometry
+        if let ts = textureStreamer {
+            d.textures = (ts.stats.residentMB, ts.budgetBytes >> 20, ts.stats.levelsMapped, ts.stats.uploadedMB)
+        }
+        d.allocatedMB = Double(device.currentAllocatedSize) / 1_048_576
+        d.workingSetMB = Double(device.recommendedMaxWorkingSetSize) / 1_048_576
+        d.traversal = traversal
+        return d
     }
 
     /// Adds glTF models to the scene, side by side 2.5 m in front of the camera on the floor, facing it
@@ -2348,6 +2538,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if event.isARepeat { return }
         switch key {
         case "\t": onTogglePanel?()
+        case "i": onToggleDebug?()
         case " ": settings.paused.toggle()
         case "g": settings.giEnabled.toggle()
         case "m": settings.giMode = GIMode(rawValue: (settings.giMode.rawValue + 1) % GIMode.allCases.count) ?? .pathTraced
@@ -2370,15 +2561,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             guard upscaleSupported else { print("MetalFX temporal upscaling is not supported on this GPU"); break }
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
-        case "r":
-            do {
-                try loadShaders(for: builtRayTracer, lightTypes: builtLightTypes, recompile: true)
-                resetGIState()
-                upscalerReset = true
-                print("Shaders reloaded")
-            } catch {
-                print("Shader reload failed (keeping previous version):\n\(error)")
-            }
+        case "r": if reloadShaders() { print("Shaders reloaded") }
         default: break
         }
     }

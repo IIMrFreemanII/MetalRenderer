@@ -4,6 +4,10 @@ import Metal
 /// counter at its start and end (Apple GPUs sample only at encoder boundaries), so each named pass gets its own
 /// encoder while profiling. Benchmarks time passes with separate command buffers instead (Benchmark.splitPasses).
 ///
+/// Encoders without a dependency between them may run at the same time, which would make their times overlap (the
+/// sum exceeded the frame's GPU time by half in the night market), so timed encoders run one after another: each waits
+/// for a fence the previous one updates (`end`).
+///
 /// Untimed: MetalFX (it encodes itself), its copy into the drawable, and texture streaming; the panel shows them as
 /// "other", the frame's GPU time minus the timed passes.
 final class GPUProfiler {
@@ -20,6 +24,7 @@ final class GPUProfiler {
     private let device: MTLDevice
     private let samples: MTLCounterSampleBuffer
     private let framesInFlight: Int
+    private let fence: MTLFence
     // Converts timestamp ticks to nanoseconds, measured against the CPU's timestamps (device.sampleTimestamps, which
     // are in nanoseconds; on Apple GPUs so are the counters, so this stays 1).
     private var calibration: (cpu: MTLTimestamp, gpu: MTLTimestamp)
@@ -31,7 +36,8 @@ final class GPUProfiler {
         desc.counterSet = set
         desc.storageMode = .shared
         desc.sampleCount = framesInFlight * GPUProfiler.maxEncoders * 2
-        guard let samples = try? device.makeCounterSampleBuffer(descriptor: desc) else { return nil }
+        guard let samples = try? device.makeCounterSampleBuffer(descriptor: desc), let fence = device.makeFence() else { return nil }
+        self.fence = fence
         self.device = device
         self.samples = samples
         self.framesInFlight = framesInFlight
@@ -66,7 +72,9 @@ final class GPUProfiler {
                 a.startOfEncoderSampleIndex = i.start
                 a.endOfEncoderSampleIndex = i.end
             }
-            return cb.makeComputeCommandEncoder(descriptor: desc)
+            let enc = cb.makeComputeCommandEncoder(descriptor: desc)
+            enc?.waitForFence(profiler.fence)
+            return enc
         }
 
         func blit(_ cb: MTLCommandBuffer, _ name: String) -> MTLBlitCommandEncoder? {
@@ -76,7 +84,9 @@ final class GPUProfiler {
                 a.startOfEncoderSampleIndex = i.start
                 a.endOfEncoderSampleIndex = i.end
             }
-            return cb.makeBlitCommandEncoder(descriptor: desc)
+            let enc = cb.makeBlitCommandEncoder(descriptor: desc)
+            enc?.waitForFence(profiler.fence)
+            return enc
         }
 
         func accelerationStructure(_ cb: MTLCommandBuffer, _ name: String) -> MTLAccelerationStructureCommandEncoder? {
@@ -86,7 +96,20 @@ final class GPUProfiler {
                 a.startOfEncoderSampleIndex = i.start
                 a.endOfEncoderSampleIndex = i.end
             }
-            return cb.makeAccelerationStructureCommandEncoder(descriptor: desc)
+            let enc = cb.makeAccelerationStructureCommandEncoder(descriptor: desc)
+            enc.waitForFence(profiler.fence)
+            return enc
+        }
+
+        /// Ends an encoder made by `compute`, `blit` or `accelerationStructure`, letting the next one start after it.
+        func end(_ enc: MTLCommandEncoder) {
+            switch enc {
+            case let e as MTLComputeCommandEncoder: e.updateFence(profiler.fence)
+            case let e as MTLBlitCommandEncoder: e.updateFence(profiler.fence)
+            case let e as MTLAccelerationStructureCommandEncoder: e.updateFence(profiler.fence)
+            default: break
+            }
+            enc.endEncoding()
         }
 
         /// Milliseconds per pass name (encoders of one name summed), in order of first use. Call once the frame's
@@ -118,5 +141,12 @@ final class GPUProfiler {
             calibration = (cpu, gpu)
         }
         return nsPerTick
+    }
+}
+
+extension Optional where Wrapped == GPUProfiler.Frame {
+    /// Ends `enc`: through the frame's profile when there is one (see `GPUProfiler.Frame.end`).
+    func end(_ enc: MTLCommandEncoder) {
+        if let frame = self { frame.end(enc) } else { enc.endEncoding() }
     }
 }

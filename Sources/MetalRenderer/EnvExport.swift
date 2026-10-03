@@ -105,6 +105,14 @@ enum EnvExport {
             k.add("passes", r.denoisePasses, dr.denoisePasses)
             k.add("history", r.denoiseHistory, dr.denoiseHistory)
             k.add("boost", r.varianceBoost, dr.varianceBoost)
+            k.add("grid", r.grid.enabled, dr.grid.enabled)
+            k.add("gcells", r.grid.cells, dr.grid.cells)
+            k.add("glevels", r.grid.levels, dr.grid.levels)
+            k.add("gsize", r.grid.cellSize, dr.grid.cellSize)
+            k.add("gscale", r.grid.levelScale, dr.grid.levelScale)
+            k.add("gslots", r.grid.slots, dr.grid.slots)
+            k.add("gk", r.grid.candidates, dr.grid.candidates)
+            k.add("gshare", r.grid.share, dr.grid.share)
         }
         group("METALRENDERER_RESTIR_GI") { k in
             let r = s.restirGI, dr = d.restirGI

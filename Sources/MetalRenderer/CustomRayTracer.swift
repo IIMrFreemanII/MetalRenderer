@@ -41,6 +41,24 @@ struct VGView {
 /// The dynamic TLAS is rebuilt from scratch every frame on the GPU as an LBVH (Karras 2012): moving instances are
 /// sorted along a Morton curve and the tree follows from the sorted keys, all in parallel. `METALRENDERER_RT_BUILD=cpu`
 /// builds it on the CPU with binned SAH instead (a better tree, for comparing trace speed).
+/// Totals of the custom tracer's traversal counters (Shaders.metal RT_COUNT): 0 rays, 1 top nodes, 2 bottom nodes,
+/// 3 instance entries, 4 cluster entries, 5 triangle tests, 6 top nodes inside virtual instances.
+struct TraversalStats {
+    var counts = [UInt64](repeating: 0, count: 7)
+
+    static func + (a: TraversalStats, b: TraversalStats) -> TraversalStats {
+        TraversalStats(counts: zip(a.counts, b.counts).map { $0 + $1 })
+    }
+    var rays: Double { Double(counts[0]) }
+    /// Counter `i` per ray.
+    func perRay(_ i: Int) -> Double { Double(counts[i]) / max(rays, 1) }
+
+    var description: String {
+        String(format: "rays %.0fk: per ray %.1f top nodes (%.1f inside virtual instances), %.1f bottom nodes, %.2f instance entries, %.2f cluster entries, %.1f triangle tests",
+               max(rays, 1) / 1000, perRay(1), perRay(6), perRay(2), perRay(3), perRay(4), perRay(5))
+    }
+}
+
 final class CustomRayTracer {
     private let device: MTLDevice
     var pipelines: RTPipelines!   // set by the renderer once the custom-RT shaders are compiled
@@ -71,10 +89,10 @@ final class CustomRayTracer {
     let virtualBLAS: VirtualBLAS?
     static let clusterMode = ProcessInfo.processInfo.environment["METALRENDERER_VG_MODE"] == "clusters"
     private let dummy: MTLBuffer                  // stands in for the virtual-geometry buffers without any
-    /// Traversal counters (METALRENDERER_RT_STATS=1 compiles them in): rays, top-level nodes, bottom-level nodes,
-    /// instance entries, cluster entries, triangle tests.
+    /// Traversal counters (compiled in with RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which
+    /// recompiles the shaders): rays, top-level nodes, bottom-level nodes, instance entries, cluster entries, triangle tests.
     let stats: MTLBuffer
-    static let statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
+    static var statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
 
     /// Root ref of the dynamic TLAS: its first node when it has 2+ instances, the instance itself when it has one.
     private var dynamicRoot: UInt32 {
@@ -317,12 +335,18 @@ final class CustomRayTracer {
         }
     }
 
-    /// Per-ray averages of the traversal counters since the last call (then resets them).
-    func takeStats() -> String {
+    /// The raw traversal counters (they only grow, wrapping at 2^32). While frames are in flight, read these and take
+    /// differences: a reset from the CPU doesn't stick then (the GPU's atomics write their cached values back over it).
+    func readCounters() -> [UInt32] {
         let c = stats.contents().bindMemory(to: UInt32.self, capacity: 8)
-        let rays = max(Double(c[0]), 1)
-        let out = String(format: "rays %.0fk: per ray %.1f top nodes (%.1f inside virtual instances), %.1f bottom nodes, %.2f instance entries, %.2f cluster entries, %.1f triangle tests",
-                         rays / 1000, Double(c[1]) / rays, Double(c[6]) / rays, Double(c[2]) / rays, Double(c[3]) / rays, Double(c[4]) / rays, Double(c[5]) / rays)
+        return (0..<7).map { c[$0] }
+    }
+
+    /// Traversal counter totals since the last call (then resets them). Only with the GPU idle (benchmarks wait for
+    /// each frame), see `readCounters`.
+    func takeStats() -> TraversalStats {
+        let c = stats.contents().bindMemory(to: UInt32.self, capacity: 8)
+        let out = TraversalStats(counts: (0..<7).map { UInt64(c[$0]) })
         memset(stats.contents(), 0, 32)
         return out
     }

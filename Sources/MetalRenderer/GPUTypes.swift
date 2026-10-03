@@ -59,6 +59,19 @@ struct GPURestirParams {
     static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
 }
 
+/// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
+struct GPURegirParams {
+    var origin0 = SIMD4<Float>(), origin1 = SIMD4<Float>(), origin2 = SIMD4<Float>(), origin3 = SIMD4<Float>()
+    var config = SIMD4<UInt32>()   // x = cells per axis, y = levels, z = slots per cell, w = candidates per slot
+    var consume = SIMD4<UInt32>()  // x = grid candidates per pixel (0 = off), y = frame seed
+}
+
+/// One reservoir of the light grid (MSL RegirReservoir), for its byte count.
+struct GPURegirReservoir {
+    var element: UInt32 = 0, uv: UInt32 = 0
+    var W: Float = 0, target: Float = 0
+}
+
 /// ReSTIR GI pass parameters (MSL RestirGIParams).
 struct GPURestirGIParams {
     var config = SIMD4<UInt32>()   // x = GPURestirGIParams flags, y = max M, z = spatial samples, w = spatial pass index

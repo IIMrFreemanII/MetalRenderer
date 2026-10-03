@@ -82,6 +82,7 @@ struct RestirSettings: Equatable, Codable {
     var denoisePasses = 4
     var denoiseHistory: Float = 8   // SVGF history (frames) for ReSTIR's direct light (with splitVisibility: its unshadowed light)
     var varianceBoost: Float = 2    // reused samples are correlated, so their temporal variance is low: scale it up
+    var grid = RegirSettings()      // the light grid the candidates come from (ReGIR)
 
     static let candidateRange = 1...32
     static let chainRange = 1...4
@@ -89,6 +90,35 @@ struct RestirSettings: Equatable, Codable {
     static let spatialPassRange = 0...2
     static let spatialSampleRange = 1...8
     static let radiusRange: ClosedRange<Float> = 4...64
+}
+
+/// The light grid (Shaders.metal "Light grid"): a camera-centred world-space grid of light reservoirs, rebuilt every
+/// frame on the GPU, that ReSTIR DI draws most of its candidates from, so they are the lights near the pixel rather
+/// than the whole table by power. `levels` cascaded levels of `cells`^3 cells, the first `cellSize` m wide and each
+/// next `levelScale` times wider; `slots` reservoirs per cell, each the pick of `candidates` table draws; `share` of
+/// RestirSettings.candidates come from the grid, the rest from the table.
+struct RegirSettings: Equatable, Codable {
+    var enabled = true
+    var cells = 16
+    var levels = 2
+    var cellSize: Float = 1
+    var levelScale: Float = 3
+    var slots = 32
+    var candidates = 8
+    var share = 6
+
+    static let cellRange = 8...32
+    static let levelRange = 1...4
+    static let cellSizeRange: ClosedRange<Float> = 0.25...8
+    static let scaleRange: ClosedRange<Float> = 2...4
+    static let slotRange = 8...64
+    static let candidateRange = 2...16
+    static let shareRange = 0...32
+
+    /// Reservoirs in the grid (its buffer holds 16 bytes each), with the settings clamped to their ranges.
+    var reservoirCount: Int {
+        RegirSettings.levelRange.clamp(levels) * Int(pow(Double(RegirSettings.cellRange.clamp(cells)), 3)) * RegirSettings.slotRange.clamp(slots)
+    }
 }
 
 /// Which temporal upscaler turns the traced resolution into the output resolution (when upscaling is on).

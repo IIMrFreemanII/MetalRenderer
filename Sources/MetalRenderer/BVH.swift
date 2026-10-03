@@ -262,6 +262,17 @@ enum BVHBuilder {
         return (nodes, order)
     }
 
+    /// An SAH tree over subtrees that already sit in the same node buffer, one per box: each leaf becomes the child ref
+    /// `subtreeRef(i)` (an internal node's index), with box `boxes[i]`. The root is node 0, and there are
+    /// max(count - 1, 1) nodes, so the subtrees can be placed right after them.
+    static func buildOverSubtrees(boxes: [AABB], subtreeRef: (Int) -> UInt32) -> [BVHNode] {
+        let (tree, order) = build(boxes: boxes, masks: nil, maxLeaf: 1)
+        var nodes: [BVHNode] = []
+        nodes.reserveCapacity(max(boxes.count - 1, 1))
+        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in subtreeRef(order[n.start]) }
+        return nodes
+    }
+
     private static func depth(_ tree: [Node]) -> Int {
         guard !tree.isEmpty else { return 0 }
         var best = 0

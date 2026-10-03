@@ -23,13 +23,49 @@ for d in runs:
             print(f"{os.path.basename(d):16s}{n:7d}  {mode:9s}" + fmt([psnr(st, r), flicker(st, stp) if stp is not None else None,
                   psnr(mv, r) if mv is not None else None, mean_luminance(st) / mean_luminance(r)]))
 
+pick_up_refs("restir", runs, ["ref-direct-market", "ref-indirect-market", "ref-scattering-market"])
+header = False
+for d in runs:
+    for source in ("table", "grid"):   # METALRENDERER_BENCH=marketq: ReSTIR's candidates from the table alone / the light grid
+        st = capture(d, f"restir-{source}-static-market")
+        if st is None: continue
+        if not header:
+            print(f"\n{'run':16s}{'source':9s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'mean':>9s}{'accum64':>9s}    (Night market direct light, 4096 bulbs)")
+            header = True
+        r = ref("restir", "ref-direct-market")
+        stp, mv = capture(d, f"restir-{source}-static-market-prev"), capture(d, f"restir-{source}-moving-market")
+        ac = capture(d, f"restir-{source}-accum-market")
+        print(f"{os.path.basename(d):16s}{source:9s}" + fmt([psnr(st, r), flicker(st, stp) if stp is not None else None,
+              psnr(mv, r) if mv is not None else None, mean_luminance(st) / mean_luminance(r),
+              psnr(ac, r) if ac is not None else None]))
+
+header = False
+for d in runs:   # METALRENDERER_BENCH=marketq: the grid at the secondary hits (indirect light alone) and in the fog
+    for (name, refname) in (("pt indirect", "ref-indirect-market"), ("cascades indirect", "ref-indirect-market"),
+                            ("fog scattering", "ref-scattering-market"), ("pt accum indirect", "ref-indirect-market"),
+                            ("fog accum scattering", "ref-scattering-market")):
+        kind, what = name.split(" ", 1)
+        row = []
+        for source in ("table", "grid"):
+            c = capture(d, f"{kind}-{source}-{what.replace(' ', '-')}-market")
+            r = ref("restir", refname)
+            row += [psnr(c, r), mean_luminance(c) / mean_luminance(r)] if c is not None else [None, None]
+        if all(v is None for v in row): continue
+        if not header:
+            print(f"\n{'run':16s}{'signal':22s}{'table':>9s}{'mean':>9s}{'grid':>9s}{'mean':>9s}    (Night market: GI's and the fog's candidates)")
+            header = True
+        print(f"{os.path.basename(d):16s}{name:22s}" + fmt(row))
+
 header = False
 for d in runs:
     for tag in ("rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh", "spots", "tubes", "area", "emissive", "mixed",
                 "stress32"):
-        exact, restir = capture(d, f"{tag}-exact"), capture(d, f"{tag}-restir")
-        if exact is None or restir is None: continue
-        if not header:
-            print(f"\n{'run':16s}{'scene':14s}{'PSNR':>9s}{'mean':>9s}    (accumulated ReSTIR sampling vs every light traced)")
-            header = True
-        print(f"{os.path.basename(d):16s}{tag:14s}" + fmt([psnr(restir, exact), mean_luminance(restir) / mean_luminance(exact)]))
+        exact = capture(d, f"{tag}-exact")
+        if exact is None: continue
+        for source in ("restir", "restir-grid"):   # the table alone; the light grid (ReGIR) + the table
+            restir = capture(d, f"{tag}-{source}")
+            if restir is None: continue
+            if not header:
+                print(f"\n{'run':16s}{'scene':14s}{'source':12s}{'PSNR':>9s}{'mean':>9s}    (accumulated ReSTIR sampling vs every light traced)")
+                header = True
+            print(f"{os.path.basename(d):16s}{tag:14s}{source:12s}" + fmt([psnr(restir, exact), mean_luminance(restir) / mean_luminance(exact)]))

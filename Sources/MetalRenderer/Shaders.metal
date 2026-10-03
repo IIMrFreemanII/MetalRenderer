@@ -74,6 +74,8 @@ struct MaterialTexture {
 };
 
 struct EmissiveTriangle;
+struct RegirParams;
+struct RegirReservoir;
 
 // The sky (GPUTypes.swift GPUSkyParams); see "Sky and clouds" below.
 struct SkyParams {
@@ -694,6 +696,9 @@ struct SceneData {
     device const EmissiveTriangle* emissive;
     device const Light*        lights;
     uint                       lightCount;
+    uint4                      lightTable;      // Uniforms.lightTable, for the samplers that draw from the table
+    device const RegirReservoir* regirGrid;     // the light grid (ReGIR), in kernels that bind it (regir != nullptr)
+    constant RegirParams*      regir = nullptr;
     texture2d_array<float>     sky;
     texture2d<float>           cloudShadow;
     constant SkyParams*        skyParams;
@@ -1469,6 +1474,137 @@ inline uint sampleLightTable(device const LightTableEntry* table, uint count, ui
     return e.element;
 }
 
+// The stored precision of a sample's uv (ReSTIR's reservoirs, the light grid), so a sample is evaluated at the same
+// point wherever it is reused.
+inline float2 quantizeUV(float2 uv) { return unpack_unorm2x16_to_float(pack_float_to_unorm2x16(uv)); }
+
+// ---------------------------------------------------------------------------------------------
+// Light grid (ReGIR, Boksansky et al. 2021): a camera-centred world-space grid of light reservoirs, rebuilt every frame
+// from the current lights (regirBuildKernel), so ReSTIR DI's candidates come from the lights near the pixel instead of
+// the whole table by power. Each cell keeps `slots` reservoirs; each is the RIS pick of `candidates` table draws by an
+// orientation-free target (intensity toward the cell centre over the clamped squared distance: positive for every
+// element with power, so a cell covers the whole light domain and a draw from it stays unbiased), with W = 1 / its
+// effective pdf. Cascaded levels (cell size x levelScale per level) give fine cells near the camera; a point outside
+// every level falls back to the table. The levels' origins move with the camera and are jittered per frame.
+// ---------------------------------------------------------------------------------------------
+
+constant uint REGIR_MAX_LEVELS = 4;
+
+struct RegirParams {
+    float4 origin[REGIR_MAX_LEVELS];   // xyz = the level's (jittered) origin, w = its cell size
+    uint4  config;                     // x = cells per axis, y = levels, z = slots per cell, w = candidates per slot
+    uint4  consume;                    // x = grid candidates per pixel (0 = grid off), y = frame seed
+};
+
+struct RegirReservoir { uint element; uint uv; float W; float target; };   // uv packed unorm2x16; target = the cell's
+
+struct RegirCell { uint base; bool valid; };   // base = the first slot of the point's cell
+
+// The cell of p in the finest level that contains it, moved by `jitter` cells (in [-0.5, 0.5)^3, clamped to the
+// level): drawing each candidate from a jittered cell blends the neighbouring cells' reservoirs in, so a pixel's
+// candidates come from up to 8 cells and the cell boundaries don't show.
+inline RegirCell regirLookup(constant RegirParams& gp, float3 p, float3 jitter = float3(0.0f)) {
+    uint cells = gp.config.x, perLevel = cells * cells * cells * gp.config.z;
+    for (uint level = 0; level < gp.config.y; ++level) {
+        float3 q = (p - gp.origin[level].xyz) / gp.origin[level].w;
+        if (all(q >= 0.0f) && all(q < float(cells))) {
+            uint3 c = uint3(clamp(q + jitter, 0.0f, float(cells) - 0.001f));
+            return { level * perLevel + ((c.z * cells + c.y) * cells + c.x) * gp.config.z, true };
+        }
+    }
+    return { 0u, false };
+}
+
+// How many of a sampler's M candidates come from the grid at p (the rest from the table): all but one, when the
+// kernel bound the grid and p is inside it. The secondary hits, the reflections and the fog have no reuse, so this
+// is where better candidates show most.
+inline uint regirShare(thread const SceneData& s, float3 p, uint M, thread RegirCell& cell) {
+    if (s.regir == nullptr || s.regir->consume.x == 0 || M < 2) return 0u;
+    cell = regirLookup(*s.regir, p);
+    return cell.valid ? M - 1 : 0u;
+}
+
+// One grid candidate at p: a reservoir of p's cell, the cell jittered by up to half a cell so the neighbouring cells
+// blend in. W is its 1 / effective pdf. False for an empty reservoir.
+inline bool regirDraw(thread const SceneData& s, float3 p, thread Rng& rng, thread uint& element, thread float2& uv,
+                      thread float& W) {
+    float3 jitter = float3(rng.next(), rng.next(), rng.next()) - 0.5f;
+    RegirReservoir g = s.regirGrid[regirLookup(*s.regir, p, jitter).base + mulhi(rng.nextUint(), s.regir->config.z)];
+    element = g.element; uv = unpack_unorm2x16_to_float(g.uv); W = g.W;
+    return element != ELEMENT_NONE && W > 0.0f;
+}
+
+// The cell's target for a light sample: its luminance toward the cell centre as E / pi, like lightUnshadowed, with
+// every cosine, cone and facing test dropped (their maximum over orientations), so it is positive wherever the
+// sample could light anything in the cell. dmin2 clamps the distance to the cell's half diagonal.
+inline float regirCellTarget(uint element, float2 uv, float3 centre, float dmin2, device const Light* lights,
+                             device const TriangleInfo* tris, thread const SceneData& s) {
+    uint index = element & ELEMENT_INDEX;
+    if ((element & ELEMENT_TYPE) == ELEMENT_TRIANGLE) {
+        EmissiveTriangle tri = s.emissive[index];
+        InstanceData inst = s.instances[as_type<uint>(lights[tris[index].light].params.w)];
+        float4x4 m = inst.transform;
+        float su = sqrt(uv.x), b1 = su * (1.0f - uv.y), b2 = su * uv.y;
+        float3 x = (m * float4(tri.v0.xyz + tri.e1.xyz * b1 + tri.e2.xyz * b2, 1.0f)).xyz;
+        float area2 = length(cross((m * float4(tri.e1.xyz, 0.0f)).xyz, (m * float4(tri.e2.xyz, 0.0f)).xyz));
+        float d2 = max(length_squared(x - centre), dmin2);
+        return tris[index].radianceLum * (0.5f * area2) / (M_PI_F * d2);
+    }
+    // Field by field: the first 32 bytes serve every type but the rect (its area is in params).
+    float4 positionRadius = lights[index].positionRadius, color = lights[index].color;
+    uint type = uint(color.w) >> 2;
+    float lum = luminance(color.rgb);
+    if (type == LIGHT_SUN) return lum / M_PI_F;   // a third sun or more: in the table as irradiance
+    float d2 = max(max(length_squared(positionRadius.xyz - centre), dmin2), positionRadius.w * positionRadius.w);
+    if (type == LIGHT_RECT) { float4 params = lights[index].params; lum *= 4.0f * length(params.xyz) * params.w; }   // radiance x area
+    else if (type == LIGHT_MESH) lum *= 0.25f;                                          // its proxy's mean intensity
+    return lum / (M_PI_F * d2);
+}
+
+// One thread per reservoir slot: `candidates` table draws, resampled by the cell's target.
+kernel void regirBuildKernel(constant Uniforms&         u         [[buffer(0)]],
+                             device const InstanceData* instances [[buffer(6)]],
+                             constant SceneShading&     shading   [[buffer(7)]],
+                             device const Light*        lights    [[buffer(8)]],   // + the light table
+                             device RegirReservoir*     grid      [[buffer(11)]],
+                             constant RegirParams&      gp        [[buffer(12)]],
+                             uint tid [[thread_position_in_grid]])
+{
+    uint cells = gp.config.x, slots = gp.config.z, perLevel = cells * cells * cells;
+    uint cellIndex = tid / slots, level = cellIndex / perLevel, c = cellIndex % perLevel;
+    if (level >= gp.config.y) return;
+    uint3 cc = uint3(c % cells, (c / cells) % cells, c / (cells * cells));
+    float cellSize = gp.origin[level].w;
+    float3 centre = gp.origin[level].xyz + (float3(cc) + 0.5f) * cellSize;
+    float dmin2 = 0.75f * cellSize * cellSize;
+    SceneData s;
+    s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    device const LightTableEntry* entries = lightTableEntries(lights, u.lightCount);
+    device const TriangleInfo* tris = lightTableTriangles(lights, u.lightCount, u.lightTable.x);
+    Rng rng;
+    rng.state = pcgHash(tid + pcgHash(gp.consume.y ^ 0x7F4A7C15u));
+    uint K = gp.config.w, picked = ELEMENT_NONE;
+    float2 pickedUV = float2(0.0f);
+    float wSum = 0.0f, pickedTarget = 0.0f;
+    for (uint k = 0; k < K; ++k) {
+        float pdf = 1.0f;
+        uint h0 = rng.nextUint(), h1 = rng.nextUint();
+        uint element = sampleLightTable(entries, u.lightTable.x, h0, h1, pdf);
+        float2 uv = quantizeUV(rng.next2());
+        float t = regirCellTarget(element, uv, centre, dmin2, lights, tris, s);
+        float w = t / (float(K) * pdf);
+        if (w <= 0.0f) continue;
+        wSum += w;
+        if (rng.next() * wSum < w) { picked = element; pickedUV = uv; pickedTarget = t; }
+    }
+    RegirReservoir r;
+    r.element = picked;
+    r.uv = pack_float_to_unorm2x16(pickedUV);
+    r.W = pickedTarget > 0.0f ? wSum / pickedTarget : 0.0f;
+    r.target = pickedTarget;
+    grid[tid] = r;
+}
+
 // The surface a light sample lights.
 struct ShadingPoint {
     float3 p, n, ng, v;   // p already offset along ng
@@ -1542,16 +1678,26 @@ float3 sampleLightsRIS(device const Light* lights, uint lightCount, uint4 table,
     device const LightTableEntry* entries = lightTableEntries(lights, lightCount);
     device const TriangleInfo* tris = lightTableTriangles(lights, lightCount, table.x);
     uint M = table.x > 0 ? candidates : 0u;
+    RegirCell cell;
+    uint Mg = regirShare(s, p, M, cell);   // from the light grid, then the table, then the suns
     uint picked = ELEMENT_NONE;
     float2 pickedUV = float2(0.0f);
     float wSum = 0.0f, pickedTarget = 0.0f;
     for (uint k = 0; k < M + table.y; ++k) {
-        float pdf = 1.0f;
-        uint h0 = rng.nextUint(), h1 = rng.nextUint();
-        uint element = k < M ? sampleLightTable(entries, table.x, h0, h1, pdf) : ELEMENT_SUN | (k == M ? table.z : table.w);
-        float2 uv = rng.next2();
+        float Wsrc = 1.0f;
+        uint element;
+        float2 uv;
+        if (k < Mg) {
+            if (!regirDraw(s, p, rng, element, uv, Wsrc)) continue;
+        } else {
+            float pdf = 1.0f;
+            uint h0 = rng.nextUint(), h1 = rng.nextUint();
+            element = k < M ? sampleLightTable(entries, table.x, h0, h1, pdf) : ELEMENT_SUN | (k == M ? table.z : table.w);
+            uv = rng.next2();
+            Wsrc = 1.0f / pdf;
+        }
         float t = lightSampleTarget(evalLightSample(element, uv, sp, s, lights, tris, false, false), sp);
-        float w = k < M ? t / (float(M) * pdf) : t;   // the suns: one candidate each, from their own strategy
+        float w = k < M ? t * Wsrc / float(M) : t;   // the suns: one candidate each, from their own strategy
         if (w <= 0.0f) continue;
         wSum += w;
         if (rng.next() * wSum < w) { picked = element; pickedUV = uv; pickedTarget = t; }
@@ -1935,6 +2081,33 @@ float3 lightVolumeSample(Light light, float3 p, float2 u, thread const SceneData
     return lightVolumeWeight(light, p, l);
 }
 
+// A light-table element's light at a fog point p (as lightVolumeSample: irradiance from one direction, no receiver
+// cosine): an analytic light's one-sample estimate, or an emissive triangle's point at uv (its mean luminance for the
+// weight, `exact` = its textured emission for the shade).
+float3 fogSampleElement(uint element, float2 uv, float3 p, thread const SceneData& s, device const TriangleInfo* tris,
+                        bool exact, thread float3& target, thread float3& l) {
+    uint index = element & ELEMENT_INDEX;
+    if ((element & ELEMENT_TYPE) != ELEMENT_TRIANGLE) return lightVolumeSample(s.lights[index], p, uv, s, target, l);
+    MeshLightPoint mp;
+    mp.tri = s.emissive[index];
+    InstanceData inst = s.instances[as_type<uint>(s.lights[tris[index].light].params.w)];
+    float4x4 m = inst.transform;
+    float su = sqrt(uv.x);
+    mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
+    float3 x = (m * float4(mp.tri.v0.xyz + mp.tri.e1.xyz * mp.b1 + mp.tri.e2.xyz * mp.b2, 1.0f)).xyz;
+    float3 cr = cross((m * float4(mp.tri.e1.xyz, 0.0f)).xyz, (m * float4(mp.tri.e2.xyz, 0.0f)).xyz);
+    float3 w = x - p;
+    float d2 = dot(w, w);
+    l = w * rsqrt(max(d2, 1e-12f));
+    target = p + w * 0.99f;
+    float area2 = length(cr);
+    if (area2 <= 0.0f) return float3(0.0f);
+    float g = abs(dot(cr, l)) / area2 / max(d2, 1e-4f) * (0.5f * area2);   // two-sided; uniform point: pdf = 1 / area
+    if (!exact) return float3(tris[index].radianceLum * g);
+    mp.material = inst.materialIndex;
+    return meshLightPointEmission(mp, s) * g;
+}
+
 // Picks one light for a fog point: mostly in proportion to its weight x the phase function toward the viewer (v), as
 // pickLight does for surfaces, and FOG_UNIFORM_PICKS of the time uniformly among the lights that reach p. The uniform
 // share keeps a light from being picked too rarely where the weights mislead (an unshadowed sun outweighs a lamp
@@ -1978,9 +2151,53 @@ inline float sunFogDistance(Light light, float3 p) {
 // Light scattered toward v (unit, toward the viewer) at p, per unit scattering coefficient: the ambient term plus
 // one light picked by importance, its sample shadowed by one ray and dimmed by the fog on the way.
 // u = (pick, subset, sample xy), uMix = pickFogLight's mix.
+constant uint FOG_GRID_CANDIDATES = 4;   // with the light grid: 3 from the grid + 1 from the table (+ the suns)
+
 float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel, thread const SceneData& s,
-                    constant FogParams& f, float3 ambient) {
+                    constant FogParams& f, float3 ambient, thread Rng& rng) {
     float g = f.medium.w, pdf;
+    // With the light grid (ReGIR, scenes with many lights): RIS over a few grid and table candidates by their
+    // unshadowed in-scatter, then one shadow ray to the pick, in place of the weighted loop over a light subset.
+    RegirCell cell;
+    uint M = s.lightTable.x > 0 ? FOG_GRID_CANDIDATES : 0u, Mg = regirShare(s, p, M, cell);
+    if (Mg > 0) {
+        device const LightTableEntry* entries = lightTableEntries(s.lights, s.lightCount);
+        device const TriangleInfo* tris = lightTableTriangles(s.lights, s.lightCount, s.lightTable.x);
+        uint picked = ELEMENT_NONE;
+        float2 pickedUV = float2(0.0f);
+        float wSum = 0.0f, pickedTarget = 0.0f;
+        for (uint k = 0; k < M + s.lightTable.y; ++k) {
+            float Wsrc = 1.0f;
+            uint element;
+            float2 uv;
+            if (k < Mg) {
+                if (!regirDraw(s, p, rng, element, uv, Wsrc)) continue;
+            } else {
+                float tablePdf = 1.0f;
+                uint h0 = rng.nextUint(), h1 = rng.nextUint();
+                element = k < M ? sampleLightTable(entries, s.lightTable.x, h0, h1, tablePdf)
+                                : ELEMENT_SUN | (k == M ? s.lightTable.z : s.lightTable.w);
+                uv = rng.next2();
+                Wsrc = 1.0f / tablePdf;
+            }
+            float3 target, l;
+            float t = luminance(fogSampleElement(element, uv, p, s, tris, false, target, l)) * phaseHG(-dot(l, v), g);
+            float w = k < M ? t * Wsrc / float(M) : t;
+            if (w <= 0.0f) continue;
+            wSum += w;
+            if (rng.next() * wSum < w) { picked = element; pickedUV = uv; pickedTarget = t; }
+        }
+        if (picked == ELEMENT_NONE || pickedTarget <= 0.0f) return ambient;
+        float3 target, l;
+        float3 E = fogSampleElement(picked, pickedUV, p, s, tris, true, target, l);
+        if (all(E <= 0.0f)) return ambient;
+        bool sun = (picked & ELEMENT_TYPE) == ELEMENT_SUN;
+        Light light = s.lights[picked & ELEMENT_INDEX];
+        float T = exp(-fogOpticalDepth(p, l, sun ? sunFogDistance(light, p) : length(target - p), f))
+                * (sun ? sunVisibilityScale(light, p, s) : 1.0f);
+        if (T < 1e-4f || !isVisible(p, target, accel)) return ambient;
+        return ambient + E * (T * phaseHG(-dot(l, v), g) * (wSum / pickedTarget));
+    }
     uint li = pickFogLight(s.lights, s.lightCount, p, v, g, float3(u.xy, uMix), pdf);
     if (li >= s.lightCount || pdf <= 0.0f) return ambient;
     Light light = s.lights[li];
@@ -1996,14 +2213,14 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
 // Fog along a traced ray o + d s (reflections): the radiance L arriving from distance t is dimmed by the analytic
 // transmittance, and in-scatter is added from one point at a uniform distance up to min(t, far), with the noise.
 float3 fogAlongRay(float3 o, float3 d, float t, float3 L, float2 uDistMix, float4 u, SCENE_ACCEL accel,
-                   thread const SceneData& s, constant FogParams& f, float3 ambient, texture3d<float> noise) {
+                   thread const SceneData& s, constant FogParams& f, float3 ambient, texture3d<float> noise, thread Rng& rng) {
     float3 result = L * exp(-fogOpticalDepth(o, d, t, f));
     float tm = min(t, f.grid.y);
     float ts = uDistMix.x * tm;
     float3 p = o + d * ts;
     float4 m = fogMedium(p, f, fogNoise(noise, p, f));
     if (m.w > 0.0f)
-        result += m.rgb * fogInscatter(p, -d, u, uDistMix.y, accel, s, f, ambient) * (exp(-fogOpticalDepth(o, d, ts, f)) * tm);
+        result += m.rgb * fogInscatter(p, -d, u, uDistMix.y, accel, s, f, ambient, rng) * (exp(-fogOpticalDepth(o, d, ts, f)) * tm);
     return result;
 }
 
@@ -2032,6 +2249,8 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
                             device const InstanceData*        instances  [[buffer(6)]],
                             constant SceneShading&            shading    [[buffer(7)]],
                             device const Light*               lights     [[buffer(8)]],
+                            device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
+                            constant RegirParams&       regir     [[buffer(12)]],
                             constant FogParams&               f          [[buffer(9)]],
                             texture2d<float, access::read>    blueNoise  [[texture(0)]],
                             texture3d<float>                  noise      [[texture(1)]],
@@ -2052,6 +2271,7 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     bindShading(s, shading);
     s.lights = lights;
     s.lightCount = u.lightCount;
+    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
 
     Sampler rng;
     rng.blueNoise = blueNoise;
@@ -2078,7 +2298,7 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     float4 sample = float4(0.0f, 0.0f, 0.0f, m.w);
     if (m.w > 0.0f) {
         float4 r = float4(rng.next2(), rng.next2());
-        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, skyAmbient(u, s) * f.albedo.w);
+        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, skyAmbient(u, s) * f.albedo.w, rng.rng);
     }
     // Blend into last frame's grid, sampled where this froxel's centre was.
     if (historyValid) sample = mix(fogHistory(u, f, history, tid, dims, sample), sample, f.noise.w);
@@ -2129,6 +2349,8 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
                                device const InstanceData*        instances  [[buffer(6)]],
                                constant SceneShading&            shading    [[buffer(7)]],
                                device const Light*               lights     [[buffer(8)]],
+                               device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
+                               constant RegirParams&       regir     [[buffer(12)]],
                                constant FogParams&               f          [[buffer(9)]],
                                constant uint&                    sampleCount [[buffer(10)]],  // frames averaged so far
                                texture3d<float>                  noise      [[texture(0)]],
@@ -2146,6 +2368,7 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
     bindShading(s, shading);
     s.lights = lights;
     s.lightCount = u.lightCount;
+    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
     Rng rng;
     rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x5bd1e995u)));
 
@@ -2163,7 +2386,7 @@ kernel void fogReferenceKernel(constant Uniforms&                u          [[bu
         if (m.w <= 0.0f) continue;
         float tr = exp(-m.w * dt);
         float4 r = float4(rng.next2(), rng.next2());
-        S += T * m.rgb * fogInscatter(p, -dir, r, rng.next(), accel, s, f, ambient) * ((1.0f - tr) / m.w);
+        S += T * m.rgb * fogInscatter(p, -dir, r, rng.next(), accel, s, f, ambient, rng) * ((1.0f - tr) / m.w);
         T *= tr;
     }
     float4 mean = sampleCount == 0 ? float4(S, T) : mix(accumFog.read(tid), float4(S, T), 1.0f / float(sampleCount + 1));
@@ -2582,6 +2805,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         device const InstanceData*       instances  [[buffer(6)]],
                         constant SceneShading&           shading    [[buffer(7)]],
                         device const Light*              lights     [[buffer(8)]],
+                        device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
+                        constant RegirParams&       regir     [[buffer(12)]],
                         texture2d<float, access::write>  outNormalDepth [[texture(0)]],
                         texture2d<float, access::write>  outAlbedo      [[texture(1)]],
                         texture2d<float, access::write>  outEmission    [[texture(2)]],
@@ -2610,6 +2835,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     bindShading(s, shading);
     s.lights = lights;
     s.lightCount = u.lightCount;
+    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
     bool specular = (u.flags & FLAG_SPECULAR) != 0;
 
     Sampler rng;
@@ -3108,9 +3334,6 @@ inline Reservoir unpackReservoir(uint4 v) {
     r.visible = (v.w & 0x10000u) != 0;
     return r;
 }
-// The stored precision, so a sample is evaluated at the same point wherever it is reused.
-inline float2 quantizeUV(float2 uv) { return unpack_unorm2x16_to_float(pack_float_to_unorm2x16(uv)); }
-
 // The surface at pixel q (false: sky or an emitter, nothing to light).
 inline bool restirSurface(uint2 q, constant Uniforms& u, texture2d<float, access::read> surfacePos,
                           texture2d<float, access::read> normalDepth, texture2d<float, access::read> geoNormal,
@@ -3148,6 +3371,8 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
                                  device const Light*              lights     [[buffer(8)]],   // + the light table
                                  constant RestirParams&           rp         [[buffer(9)]],
                                  device const Light*              prevLights [[buffer(10)]],  // last frame's lights
+                                 device const RegirReservoir*     regirGrid  [[buffer(11)]],  // the light grid (ReGIR)
+                                 constant RegirParams&            regir      [[buffer(12)]],
                                  texture2d<float, access::read>   surfacePos [[texture(0)]],
                                  texture2d<float, access::read>   normalDepth [[texture(1)]],
                                  texture2d<float, access::read>   geoNormal  [[texture(2)]],
@@ -3186,21 +3411,37 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
     }
 
     uint M = u.lightTable.x > 0 ? rp.config.x : 0u;
+    // The light grid's cell (ReGIR): Mg of the M candidates come from it, each with its reservoir's W in place of
+    // 1 / pdf. The same constant 1 / M weight for both sources keeps the mix unbiased; the table draws cover what the
+    // cell's slots missed. Outside the grid (or with it off) every candidate is a table draw, as before.
+    s.regirGrid = regirGrid; s.regir = &regir;
+    RegirCell cell = regirLookup(regir, sp.p);
+    uint Mg = cell.valid ? min(regir.consume.x, M) : 0u;
     for (uint chain = 0; chain < chains; ++chain) {
-        // Initial candidates (each chain its own: shared ones made the chains alike, -1.5 dB at 1024 lights): table
-        // draws by power (each weighed target / (M pdf)), and each sun once (target / 1).
+        // Initial candidates (each chain its own: shared ones made the chains alike, -1.5 dB at 1024 lights): grid
+        // slots and table draws by power (each weighed target x W / M), and each sun once (target / 1).
         Reservoir r = emptyReservoir();
         float wSum = 0.0f, target = 0.0f;
         float3 point = float3(0.0f);
         for (uint k = 0; k < M + u.lightTable.y; ++k) {
-            float pdf = 1.0f;
-            uint h0 = rng.nextUint(), h1 = rng.nextUint();
-            uint element = k < M ? sampleLightTable(entries, u.lightTable.x, h0, h1, pdf)
-                                 : ELEMENT_SUN | (k == M ? u.lightTable.z : u.lightTable.w);
-            float2 uv = quantizeUV(rng.next2());
+            float Wsrc = 1.0f;
+            uint element;
+            float2 uv;
+            if (k < Mg) {
+                if (!regirDraw(s, sp.p, rng, element, uv, Wsrc)) continue;
+            } else if (k < M) {
+                float pdf = 1.0f;
+                uint h0 = rng.nextUint(), h1 = rng.nextUint();
+                element = sampleLightTable(entries, u.lightTable.x, h0, h1, pdf);
+                Wsrc = 1.0f / pdf;
+                uv = quantizeUV(rng.next2());
+            } else {
+                element = ELEMENT_SUN | (k == M ? u.lightTable.z : u.lightTable.w);
+                uv = quantizeUV(rng.next2());
+            }
             LightSampleEval e = evalLightSample(element, uv, sp, s, lights, tris, false, false);
             float t = lightSampleTarget(e, sp);
-            float w = k < M ? t / (float(M) * pdf) : t;
+            float w = k < M ? t * Wsrc / float(M) : t;
             if (w <= 0.0f) continue;
             wSum += w;
             if (rng.next() * wSum < w) { r.element = element; r.uv = uv; target = t; point = e.target; }
@@ -3501,6 +3742,8 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                                   device const InstanceData*       instances  [[buffer(6)]],
                                   constant SceneShading&           shading    [[buffer(7)]],
                                   device const Light*              lights     [[buffer(8)]],
+                                  device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
+                                  constant RegirParams&       regir     [[buffer(12)]],
                                   constant RestirGIParams&         gp         [[buffer(9)]],
                                   texture2d<float, access::read>   surfacePos [[texture(0)]],
                                   texture2d<float, access::read>   normalDepth [[texture(1)]],
@@ -3536,6 +3779,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
     SceneData s;
     s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
     s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
 
     Sampler rng;
     rng.blueNoise = blueNoise;
@@ -3877,6 +4121,8 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                              device const InstanceData*       instances  [[buffer(6)]],
                              constant SceneShading&           shading    [[buffer(7)]],
                              device const Light*              lights     [[buffer(8)]],
+                             device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
+                             constant RegirParams&       regir     [[buffer(12)]],
                              texture2d<float, access::read>   surfacePos [[texture(0)]],
                              texture2d<float, access::read>   normalDepth [[texture(1)]],
                              texture2d<float, access::read>   geoNormal  [[texture(2)]],
@@ -3896,6 +4142,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     SceneData s;
     s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
     s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
     Sampler rng;
     rng.blueNoise = blueNoise;
     rng.pixel = tid;
@@ -3971,7 +4218,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                 float2 uDistMix = rng.next2();
                 float4 r = float4(rng.next2(), rng.next2());
                 radiance = fogAlongRay(p, l, hit.hit ? length(hit.position - p) : INFINITY, radiance, uDistMix, r, accel, s, fog,
-                                       skyAmbient(u, s) * fog.albedo.w, fogNoiseTex);
+                                       skyAmbient(u, s) * fog.albedo.w, fogNoiseTex, rng.rng);
             }
             result += weight * radiance;
         }
@@ -4963,6 +5210,8 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
                                device const InstanceData*       instances  [[buffer(6)]],
                                constant SceneShading&           shading    [[buffer(7)]],
                                device const Light*              lights     [[buffer(8)]],
+                               device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
+                               constant RegirParams&       regir     [[buffer(12)]],
                                constant RCParams&               p          [[buffer(9)]],
                                texture2d<float, access::read>   probePos   [[texture(0)]],
                                texture2d<float, access::read>   probeNs    [[texture(1)]],
@@ -4994,6 +5243,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     SceneData s;
     s.positions = positions; s.normals = normals; s.indices = indices; s.meshes = meshes;
     s.instances = instances; bindShading(s, shading); s.lights = lights; s.lightCount = u.lightCount;
+    s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
     bool last = p.layout.w != 0;
     Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
