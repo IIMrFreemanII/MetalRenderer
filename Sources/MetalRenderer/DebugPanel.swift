@@ -293,12 +293,9 @@ final class DebugPanel: NSObject {
         renderer.settings.viewMode = debugViewModes[debugView.indexOfSelectedItem]
     }
     @objc private func countersChanged() {
-        let on = counters.state == .on
         counters.isEnabled = false
-        counters.title = "Compiling shaders…"
-        // Next run loop pass, so the title shows before the (blocking) compile.
-        DispatchQueue.main.async { [self] in
-            renderer.traversalCounters = on
+        counters.title = "Compiling shaders…"   // in the background: the view keeps drawing
+        renderer.setTraversalCounters(counters.state == .on) { [self] in
             counters.title = "Traversal counters (recompiles shaders)"
             counters.isEnabled = true
             refresh()

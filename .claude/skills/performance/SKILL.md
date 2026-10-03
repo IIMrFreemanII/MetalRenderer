@@ -58,14 +58,14 @@ clustering, cluster-DAG pages, texture mips).
   * traceKernel and the ReSTIR kernels are register-bound. Keep live state small.
   * Avoid dynamically indexed local arrays: they spill to memory.
   * Compile features out instead of branching on them at runtime. Copy the patterns: the `LIGHT_SPEC` function
-    constant (Shaders.metal:137) and the `RT_STATS` / `CUSTOM_RT` macros (Renderer.swift:499).
+    constant (Shaders.metal:137) and the `RT_STATS` / `CUSTOM_RT` macros (`Pipelines.compile`).
 * **Branch on uniforms, not on pixels.** Keep loop trip counts uniform across a simdgroup. Make one memory fetch serve
   one decision: the 64-byte two-child BVH node (BVH.swift:6) tests both children with one load.
 * **Reduce before atomics.** Go simdgroup (`simd_sum`) → threadgroup → one `atomic_fetch_add_explicit(…,
   memory_order_relaxed)` per group. Don't use a global atomic per thread on dense grids.
 * **Threadgroup tiles** with an apron for neighbourhood filters (shadowTemporalKernel, Shaders.metal:4191). Use as
   few barriers as possible, and stay well under 32 KB so several groups fit per core.
-* **Tune 2D dispatch sizes** in `Renderer.threadgroupSizes` (Renderer.swift:2283). Sweep with `METALRENDERER_TG`.
+* **Tune 2D dispatch sizes** in `Renderer.threadgroupSizes`. Sweep with `METALRENDERER_TG`.
   The defaults are 8×8, trace 16×8 and atrous 16×16.
 * **Do expensive signals at lower rates:** a lower resolution (render scale, quarter budget), less often
   (`METALRENDERER_TLAS` rebuild cadence, refit in between), or amortized over frames with temporal reuse.

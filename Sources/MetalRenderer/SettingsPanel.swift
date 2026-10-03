@@ -706,7 +706,7 @@ final class SettingsPanel: NSObject {
     }
 
     /// Which signals the Denoiser section's generic rows (passes, σ, history, anti-lag) filter, and which have their own
-    /// filter (mirrors the signal setup in Renderer.encodeFrame).
+    /// filter (mirrors Renderer.planFrame and denoiseSignals).
     private func updateDenoiserCaption(_ s: RenderSettings) {
         let text: String
         if !s.denoiser.enabled {

@@ -97,6 +97,16 @@ final class DenoiseTargets {
         pingB = try make(.rgba16Float, "\(name) pingB")
         moments = [try make(.rgba32Float, "\(name) moments0"), try make(.rgba32Float, "\(name) moments1")]
     }
+
+    /// The a-trous filter's ping-pong: pass `i` reads `src` and writes `dst`. Pass 0 writes into `history`, which
+    /// feeds the next frame's temporal pass.
+    func atrousPass(_ i: Int) -> (src: MTLTexture, dst: MTLTexture) {
+        switch i {
+        case 0: return (pingA, history)
+        case 1: return (history, pingB)
+        default: return i % 2 == 0 ? (pingB, pingA) : (pingA, pingB)
+        }
+    }
 }
 
 /// Textures the shadow denoiser keeps (visibility per light in rgba).
@@ -243,37 +253,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         .deletingLastPathComponent()
         .appendingPathComponent("Shaders.metal")
 
-    // Pipelines
-    private var tracePSO: MTLComputePipelineState!
-    private var geometryDebugPSO: MTLComputePipelineState!
+    /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
+    /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
+    private var pipelines: Pipelines!
+    private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
-    private var temporalPSO: MTLComputePipelineState!
-    private var atrousPSO: MTLComputePipelineState!
-    private var shadowTemporalPSO: MTLComputePipelineState!
-    private var shadowFilterPSO: MTLComputePipelineState!
-    private var compositePSO: MTLComputePipelineState!
-    private var accumulatePSO: MTLComputePipelineState!
-    private var lightMapPSO: MTLComputePipelineState!
-    private var manyLightsPSO: MTLComputePipelineState!
-    private var manyLightsReusePSO: MTLComputePipelineState!
-    private var regirBuildPSO: MTLComputePipelineState!
-    private var restirTemporalPSO: MTLComputePipelineState!
-    private var restirSpatialPSO: MTLComputePipelineState!
-    private var restirGIInitialPSO: MTLComputePipelineState!
-    private var restirGITemporalPSO: MTLComputePipelineState!
-    private var restirGISpatialPSO: MTLComputePipelineState!
-    private var meshLightsPSO: MTLComputePipelineState!
-    private var reflectionPSO: MTLComputePipelineState!
-    private var fogInjectPSO: MTLComputePipelineState!
-    private var fogIntegratePSO: MTLComputePipelineState!
-    private var fogReferencePSO: MTLComputePipelineState!
-    private var skyPSO: MTLComputePipelineState!
-    private var cloudShadowPSO: MTLComputePipelineState!
-    private var cloudNoisePSO: MTLComputePipelineState!
-    private var skyMeanPSO: MTLComputePipelineState!
-    private var transmittanceLUTPSO: MTLComputePipelineState!
-    private var multiScatterLUTPSO: MTLComputePipelineState!
-    private var rcPipelines: RCPipelines!
     private var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
 
     // Static geometry
@@ -304,11 +288,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var customRT: CustomRayTracer? {                           // custom ray tracer only
         didSet { traversalLast = nil }   // a new tracer's counters start at 0
     }
-    private var rtPipelines: RTPipelines?
-    /// The tracer the shaders were compiled for and the scene's structures were built for.
+    /// The tracer the scene's structures were built for (and the pipelines compiled for).
     private var builtRayTracer = RayTracerKind.initial
-    private var shaderLibrary: (kind: RayTracerKind, library: MTLLibrary)?
-    private var builtLightTypes: UInt32 = 0   // the light types the pipelines are specialised for
     private var blueNoiseTexture: MTLTexture!   // filled the first time blue noise is turned on
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
     static func lightMapSize(lightCount: Int) -> Int {
@@ -401,8 +382,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var upscaler: Upscaler?           // MetalFX (temporal or spatial)
     private var customUpscaler: TemporalUpscaler?
     private var upscalerReset = true          // drop the upscaler's history on the next frame
-    private var taauPSO: MTLComputePipelineState!
-    private var accumulateColorPSO: MTLComputePipelineState!
     private var supersampling = false         // benchmark reference: jitter + average the final colour
     private var colorAccum: MTLTexture?
     private var colorAccumCount: UInt32 = 0
@@ -468,7 +447,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
 
-        try loadShaders(for: settings.rayTracer, lightTypes: scene.lightTypeMask)
+        pipelines = try Pipelines(device: device, source: shaderURL, kind: settings.rayTracer, lightTypes: scene.lightTypeMask,
+                                  stats: CustomRayTracer.statsEnabled)
         try createDummyTextures()
         try createSceneResources()
         try createBlueNoiseTexture()
@@ -495,114 +475,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     // MARK: - Setup
 
-    /// Compiles Shaders.metal for `kind` (CUSTOM_RT macro). The custom tracer's build kernels exist only in its variant.
-    /// Compiles Shaders.metal for `kind` (kept until the tracer changes or `recompile`, the hot reload) and makes
-    /// every pipeline, specialised for the scene's light types (function constant 0, see Scene.lightTypeMask).
-    private func loadShaders(for kind: RayTracerKind, lightTypes: UInt32, recompile: Bool = false) throws {
-        let library: MTLLibrary
-        if let cached = shaderLibrary, cached.kind == kind, !recompile {
-            library = cached.library
-        } else {
-            let source = try String(contentsOf: shaderURL, encoding: .utf8)
-            let options = MTLCompileOptions()
-            // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
-            // 3.0 and then need METALRENDERER_RT=metal.
-            if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
-            options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
-                                          "RT_STATS": NSNumber(value: CustomRayTracer.statsEnabled ? 1 : 0)]
-            // Fast math is the default (relaxed costs ~0.2 ms a frame in the stress scene and renders the same image);
-            // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
-            if #available(macOS 15.0, *), ProcessInfo.processInfo.environment["METALRENDERER_MATH"] == "relaxed" {
-                options.mathMode = .relaxed
-            }
-            library = try device.makeLibrary(source: source, options: options)
-        }
-        let constants = MTLFunctionConstantValues()
-        var types = lightTypes
-        constants.setConstantValue(&types, type: .uint, index: 0)
-
-        func pipeline(_ name: String) throws -> MTLComputePipelineState {
-            let function = try library.makeFunction(name: name, constantValues: constants)
-            return try device.makeComputePipelineState(function: function)
-        }
-        // Build everything first so a failed hot-reload keeps the old pipelines.
-        let trace = try pipeline("traceKernel")
-        let temporal = try pipeline("temporalKernel")
-        let atrous = try pipeline("atrousKernel")
-        let shadowTemporal = try pipeline("shadowTemporalKernel")
-        let taau = try pipeline("taauKernel")
-        let accumulateColor = try pipeline("accumulateColorKernel")
-        let shadowFilter = try pipeline("shadowFilterKernel")
-        let composite = try pipeline("compositeKernel")
-        let accumulate = try pipeline("accumulateKernel")
-        let lightMap = try pipeline("lightMapKernel")
-        let manyLights = try pipeline("manyLightsKernel")
-        let manyLightsReuse = try pipeline("manyLightsReuseKernel")
-        let regirBuild = try pipeline("regirBuildKernel")
-        let restirTemporal = try pipeline("restirTemporalKernel")
-        let restirSpatial = try pipeline("restirSpatialKernel")
-        let restirGIInitial = try pipeline("restirGIInitialKernel")
-        let restirGITemporal = try pipeline("restirGITemporalKernel")
-        let restirGISpatial = try pipeline("restirGISpatialKernel")
-        let meshLights = try pipeline("meshLightsKernel")
-        let reflection = try pipeline("reflectionKernel")
-        let fogInject = try pipeline("fogInjectKernel")
-        let fogIntegrate = try pipeline("fogIntegrateKernel")
-        let fogReference = try pipeline("fogReferenceKernel")
-        let sky = try pipeline("skyKernel")
-        let cloudShadow = try pipeline("cloudShadowKernel")
-        let cloudNoise = try pipeline("cloudNoiseKernel")
-        let skyMeanP = try pipeline("skyMeanKernel")
-        let transmittanceLUTP = try pipeline("transmittanceLUTKernel")
-        let multiScatterLUTP = try pipeline("multiScatterLUTKernel")
-        let geometryDebug = try pipeline("geometryDebugKernel")
-        let rt = kind != .custom ? nil :
-            RTPipelines(prep: try pipeline("rtPrepKernel"), keys: try pipeline("rtKeysKernel"),
-                        sortLocal: try pipeline("rtSortLocalKernel"), sortGlobal: try pipeline("rtSortGlobalKernel"),
-                        hierarchy: try pipeline("rtHierarchyKernel"), fit: try pipeline("rtFitKernel"),
-                        vg: VGPipelines(reset: try pipeline("vgResetKernel"), cut: try pipeline("vgCutKernel"),
-                                        finish: try pipeline("vgFinishKernel"), pad: try pipeline("vgPadKernel"),
-                                        hierarchy: try pipeline("vgHierarchyKernel"), fit: try pipeline("vgFitKernel")))
-        let rc = RCPipelines(probe: try pipeline("rcProbeKernel"), traceMerge: try pipeline("rcTraceMergeKernel"),
-                             sh: try pipeline("rcSHKernel"), clearAmbient: try pipeline("rcClearAmbientKernel"),
-                             resolve: try pipeline("rcResolveKernel"))
-        tracePSO = trace
-        temporalPSO = temporal
-        atrousPSO = atrous
-        shadowTemporalPSO = shadowTemporal
-        taauPSO = taau
-        accumulateColorPSO = accumulateColor
-        shadowFilterPSO = shadowFilter
-        compositePSO = composite
-        accumulatePSO = accumulate
-        lightMapPSO = lightMap
-        manyLightsPSO = manyLights
-        manyLightsReusePSO = manyLightsReuse
-        regirBuildPSO = regirBuild
-        restirTemporalPSO = restirTemporal
-        restirSpatialPSO = restirSpatial
-        restirGIInitialPSO = restirGIInitial
-        restirGITemporalPSO = restirGITemporal
-        restirGISpatialPSO = restirGISpatial
-        meshLightsPSO = meshLights
-        reflectionPSO = reflection
-        fogInjectPSO = fogInject
-        fogIntegratePSO = fogIntegrate
-        fogReferencePSO = fogReference
-        skyPSO = sky
-        cloudShadowPSO = cloudShadow
-        cloudNoisePSO = cloudNoise
-        skyMeanPSO = skyMeanP
-        transmittanceLUTPSO = transmittanceLUTP
-        multiScatterLUTPSO = multiScatterLUTP
-        geometryDebugPSO = geometryDebug
-        rcPipelines = rc
-        rtPipelines = rt
-        if let rt { customRT?.pipelines = rt }
-        shaderLibrary = (kind, library)
-        builtLightTypes = lightTypes
-    }
-
     private func makeBuffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
         let length = max(MemoryLayout<T>.stride * array.count, 16)
         let buffer: MTLBuffer? = array.withUnsafeBytes { raw in
@@ -624,6 +496,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let textures: [MTLTexture]
         let streamer: TextureStreamer?
         let customRT: CustomRayTracer?
+        let pipelines: Pipelines?   // for its tracer and light types, when the ones in use don't fit...
+        let shaderGeneration: Int   // ...built from this generation of the shaders
     }
     private var loading: (scene: SceneSettings, rayTracer: RayTracerKind)?   // being prepared in the background
 
@@ -639,16 +513,28 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         rayTracer == .custom && settings.virtualGeometry.enabled
     }
 
-    /// What a scene load reads from `settings`, copied on the main thread: `prepareScene` runs in the background while
-    /// the panel and the keyboard keep changing `settings`.
+    /// What a scene load reads from the renderer, copied on the main thread: `prepareScene` runs in the background while
+    /// the panel and the keyboard keep changing `settings` and a shader reload may replace the pipelines.
     private struct LoadOptions {
         var virtualGeometry: Bool
         var poolMB: Int
         var textureBudgetMB: Int
+        var pipelines: Pipelines
+        var shaderGeneration: Int
+        var traversalStats: Bool
     }
     private var loadOptions: LoadOptions {
         LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
-                    textureBudgetMB: settings.textureBudgetMB)
+                    textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
+                    traversalStats: CustomRayTracer.statsEnabled)
+    }
+
+    /// The pipelines for `kind` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
+    /// library is reused when only the light types differ.
+    private func makePipelines(kind: RayTracerKind, lightTypes: UInt32, stats: Bool, current: Pipelines) throws -> Pipelines? {
+        if current.kind == kind && current.lightTypes == lightTypes { return nil }
+        return try Pipelines(device: device, source: shaderURL, kind: kind, lightTypes: lightTypes, stats: stats,
+                             reusing: current.kind == kind ? current.library : nil)
     }
 
     /// `current`: the scene being drawn, reused when only the ray tracer changes; `instances` is then the main thread's
@@ -664,7 +550,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let textures = try streamer?.textures ?? MaterialTextures.load(newScene.textures, device: device, queue: queue)
         let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
                                                             slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil
-        return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, streamer: streamer, customRT: rt)
+        // The shaders too, when the tracer changes (a recompile) or the new scene has other light types.
+        let pipelines = try makePipelines(kind: rayTracer, lightTypes: newScene.lightTypeMask, stats: options.traversalStats,
+                                          current: options.pipelines)
+        return PreparedScene(scene: newScene, rayTracer: rayTracer, textures: textures, streamer: streamer, customRT: rt,
+                             pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
 
     /// Starts preparing `settings.scene` / `settings.rayTracer` in the background; `install` swaps it in when done.
@@ -725,7 +615,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if builtRayTracer == .custom {
             customRT = try prepared?.customRT ?? CustomRayTracer(device: device, scene: scene, slots: Renderer.maxFramesInFlight,
                                                                  poolMB: settings.virtualGeometry.poolMB)
-            customRT?.pipelines = rtPipelines
+            customRT?.pipelines = pipelines.rt
         }
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
@@ -759,12 +649,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let old = scene
-        let oldRayTracer = builtRayTracer
+        let oldRayTracer = builtRayTracer, oldPipelines = pipelines
         let start = CACurrentMediaTime()
         scene = prepared.scene
         do {
-            if prepared.rayTracer != builtRayTracer || scene.lightTypeMask != builtLightTypes {
-                try loadShaders(for: prepared.rayTracer, lightTypes: scene.lightTypeMask)
+            if let ready = prepared.pipelines, prepared.shaderGeneration == shaderGeneration {
+                pipelines = ready
+            } else if let made = try makePipelines(kind: prepared.rayTracer, lightTypes: scene.lightTypeMask,
+                                                   stats: CustomRayTracer.statsEnabled, current: pipelines) {
+                pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
         } catch {
@@ -772,7 +665,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             scene = old
             settings.scene = old.settings
             settings.rayTracer = oldRayTracer
-            try? loadShaders(for: oldRayTracer, lightTypes: old.lightTypeMask)
+            pipelines = oldPipelines
             try? createSceneResources()
         }
         resetGIState()
@@ -1115,15 +1008,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
               let tLUT = transmittanceLUT, let msLUT = multiScatterLUT, let mean = skyMean,
               let enc = compute() else { return }
         if !cloudNoiseReady {   // once: the cloud noise and the atmosphere's tables (the second reads the first)
-            enc.setComputePipelineState(cloudNoisePSO)
+            enc.setComputePipelineState(pipelines[.cloudNoise])
             enc.setTexture(shape, index: 0)
             enc.setTexture(detail, index: 1)
             enc.dispatchThreads(MTLSize(width: shape.width, height: shape.height, depth: shape.depth),
                                 threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 4))
-            enc.setComputePipelineState(transmittanceLUTPSO)
+            enc.setComputePipelineState(pipelines[.transmittanceLUT])
             enc.setTexture(tLUT, index: 0)
             dispatch(enc, "transmittance", width: tLUT.width, height: tLUT.height)
-            enc.setComputePipelineState(multiScatterLUTPSO)
+            enc.setComputePipelineState(pipelines[.multiScatterLUT])
             setTextures(enc, [tLUT, msLUT])
             dispatch(enc, "multiple scattering", width: msLUT.width, height: msLUT.height)
             profile.end(enc)
@@ -1147,12 +1040,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                  profile: GPUProfiler.Frame?) {
         var p = skyParams
         // The clear sky's mean radiance (lights the clouds and the ground), then this frame's sky texels.
-        enc.setComputePipelineState(skyMeanPSO)
+        enc.setComputePipelineState(pipelines[.skyMean])
         enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
         enc.setBuffer(mean, offset: 0, index: 1)
         setTextures(enc, [skyImage?.texture ?? dummy2D, tLUT, msLUT])
         enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
-        enc.setComputePipelineState(skyPSO)
+        enc.setComputePipelineState(pipelines[.sky])
         enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
         enc.setBuffer(mean, offset: 0, index: 1)
         setTextures(enc, [shape, detail, blueNoiseTexture, skyImage?.texture ?? dummy2D, sky, tLUT, msLUT])
@@ -1160,7 +1053,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         enc.dispatchThreads(MTLSize(width: sky.width / part, height: sky.height / part, depth: 2),
                             threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
         if p.flags.y & GPUSkyParams.shadows != 0 {
-            enc.setComputePipelineState(cloudShadowPSO)
+            enc.setComputePipelineState(pipelines[.cloudShadow])
             enc.setBytes(&p, length: MemoryLayout<GPUSkyParams>.stride, index: 0)
             setTextures(enc, [shape, detail, shadow])
             dispatch(enc, "cloud shadow", width: shadow.width, height: shadow.height)
@@ -1296,7 +1189,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
     }
 
-    private func makeUniforms(width: Int, height: Int) -> Uniforms {
+    private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
         func pack(_ c: Camera) -> (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) {
             let tanY = tan(c.fovY / 2)
@@ -1314,17 +1207,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         u.height = UInt32(height)
         u.frameIndex = frameIndex
         u.lightCount = UInt32(scene.lights.count)
-        u.bounces = settings.giEnabled && activeGIMode == .pathTraced ? UInt32(settings.bounces) : 0
+        u.bounces = settings.giEnabled && giMode == .pathTraced ? UInt32(settings.bounces) : 0
         u.flags = (historyValid ? UniformFlags.historyValid : 0) | (settings.denoiser.enabled ? UniformFlags.denoise : 0)
         if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
         if usesSpecular { u.flags |= UniformFlags.specular }
         // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). ReSTIR: restir kernels.
-        switch activeDirectMode {
+        switch directMode {
         case .exact: u.flags |= UniformFlags.allLights
         case .restir: u.flags |= UniformFlags.restir
         default: break
         }
-        if settings.lightMaps && activeGIMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
+        if settings.lightMaps && giMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
         u.viewMode = UInt32(settings.viewMode)
         let d = settings.denoiser
         u.denoise = SIMD4<Float>(DenoiserSettings.luminanceSigmaRange.clamp(d.luminanceSigma),
@@ -1343,7 +1236,78 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    /// One frame: the scene's next state and its upload, the frame's plan, the stages the plan asks for, their
+    /// encoding, the output, and what the frame leaves for the next one. Each step is a function below.
     func draw(in view: MTKView) {
+        noteFrameStart()
+        let size = frameSize(in: view)
+        guard let t = renderTargets(for: size) else { return }
+        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged {
+            if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
+        }
+        frameSemaphore.wait()
+        let encodeStart = CACurrentMediaTime()
+        guard prepareUpscalers(for: size) else {
+            frameSemaphore.signal()
+            return
+        }
+
+        // The CPU's part: move the camera and the scene, pick virtual geometry's detail, write the slot's buffers.
+        simulate(size)
+        let slot = Int(frameIndex) % Renderer.maxFramesInFlight
+        let lod = detailView(height: size.height)
+        customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
+        customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
+                                      camPos: lod.camPos, pixelScale: lod.pixelScale, tau: lod.tau, sceneInstances: scene.instances)
+        writeFrameData(slot: slot)
+        guard let cmd = queue.makeCommandBuffer() else {
+            frameSemaphore.signal()
+            return
+        }
+
+        // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
+        let profile = profilePasses && benchmark == nil ? profiler?.beginFrame(slot: slot) : nil
+        let plan = planFrame(size: size, slot: slot, profiling: profile != nil)
+        regirParams = plan.lightGrid?.params ?? GPURegirParams()   // bound with the scene (bindScene)
+        var passes = FramePasses(cmd: cmd, queue: queue, profile: profile, split: plan.splitPasses, overlap: plan.overlap)
+        encodeSceneUpdate(slot: slot, lod: lod, passes: &passes)
+        if skyActive { encodeSky(passes.buffer("sky"), profile: profile) }
+
+        // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
+        // before it set).
+        var composite = CompositeInputs(uniforms: plan.uniforms, illumination: [t.denoise[0].pingA], specular: t.specular,
+                                        meshDirect: t.meshDirect)
+        var stages = FrameStages()
+        stages.lightGrid = lightGridStages(plan)
+        stages.head = headStages(plan, targets: t)
+        stages.gi = giStages(plan, targets: t)
+        (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
+        stages.restir = restirStages(plan, targets: t)
+        stages.denoise = sampledLightStages(plan, targets: t)
+        stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
+        stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
+        stages.denoise += svgfStages(plan, targets: t, composite: &composite)
+        stages.fog = fogStages(plan, targets: t, composite: &composite)
+
+        encode(stages, plan: plan, passes: &passes)
+        let output = encodeOutput(plan, composite: composite, targets: t, view: view, passes: &passes)
+        commit(plan, passes: passes, drawable: output.drawable, encodeStart: encodeStart + output.wait)
+
+        finishFrame(plan)
+        updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
+        if let benchmark { advanceBenchmark(benchmark) }
+    }
+
+    // MARK: - Frame setup
+
+    /// The traced size and the size the drawable shows.
+    private struct FrameSize {
+        let width: Int, height: Int, outWidth: Int, outHeight: Int
+        var upscaling: Bool { outWidth > width }
+    }
+
+    /// The time since the last frame started (the Debug window's CPU graph) and the traversal counters.
+    private func noteFrameStart() {
         let drawStart = CACurrentMediaTime()
         if let last = lastDrawTime {
             frameIntervalMs = (drawStart - last) * 1000
@@ -1359,9 +1323,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
             traversalLast = counts
         }
-        // Render resolution = window size in points * renderScale. Without upscaling the layer stretches
-        // it to the window. With upscaling, MetalFX outputs renderScale * upscaleFactor, capped at the
-        // window's size in physical pixels.
+    }
+
+    /// Render resolution = window size in points * renderScale. Without upscaling the layer stretches it to the window.
+    /// With upscaling, MetalFX outputs renderScale * upscaleFactor, capped at the window's size in physical pixels.
+    private func frameSize(in view: MTKView) -> FrameSize {
         let width = max(64, Int((view.bounds.width * settings.renderScale).rounded()))
         let height = max(64, Int((view.bounds.height * settings.renderScale).rounded()))
         var outWidth = width, outHeight = height
@@ -1375,29 +1341,30 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 outHeight = Int((CGFloat(height) * factor).rounded())
             }
         }
-        let upscaling = outWidth > width
         let desired = CGSize(width: outWidth, height: outHeight)
         if view.drawableSize != desired { view.drawableSize = desired }
+        return FrameSize(width: width, height: height, outWidth: outWidth, outHeight: outHeight)
+    }
 
-        if targets == nil || targets!.width != width || targets!.height != height {
-            do {
-                targets = try RenderTargets(device: device, width: width, height: height)
-                historyValid = false
-            } catch {
-                print(error)
-                return
-            }
+    /// The screen-sized textures, recreated (without history) when the render resolution changed.
+    private func renderTargets(for size: FrameSize) -> RenderTargets? {
+        if let t = targets, t.width == size.width, t.height == size.height { return t }
+        do {
+            targets = try RenderTargets(device: device, width: size.width, height: size.height)
+            historyValid = false
+        } catch {
+            print(error)
+            return nil
         }
-        guard let t = targets else { return }
+        return targets
+    }
 
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || virtualGeometryChanged {
-            if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
-        }
-        frameSemaphore.wait()
-        let encodeStart = CACurrentMediaTime()
-
-        let custom = upscaling && settings.upscaler == .custom
-        if !upscaling || custom {
+    /// Makes the upscaler this frame needs (MetalFX or the custom one), if it isn't there at this size. False when it
+    /// couldn't be made: upscaling is then turned off and the frame skipped.
+    private func prepareUpscalers(for size: FrameSize) -> Bool {
+        let width = size.width, height = size.height, outWidth = size.outWidth, outHeight = size.outHeight
+        let custom = size.upscaling && settings.upscaler == .custom
+        if !size.upscaling || custom {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
                     || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight
@@ -1411,8 +1378,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 print(error)
                 upscaler = nil
                 settings.upscaleFactor = 0
-                frameSemaphore.signal()
-                return
+                return false
             }
         }
         if !custom {
@@ -1427,16 +1393,20 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 print(error)
                 customUpscaler = nil
                 settings.upscaleFactor = 0
-                frameSemaphore.signal()
-                return
+                return false
             }
         }
+        return true
+    }
 
+    /// Advances the clock, the camera and the scene's animation by one frame.
+    private func simulate(_ size: FrameSize) {
         let now = CACurrentMediaTime()
         var dt = Float(min(now - lastTime, 0.1))
         lastTime = now
         if let benchmark {
-            benchmark.noteDraw(resolution: upscaling ? "\(width)×\(height) → \(outWidth)×\(outHeight)" : "\(width)×\(height)")
+            let (width, height) = (size.width, size.height)
+            benchmark.noteDraw(resolution: size.upscaling ? "\(width)×\(height) → \(size.outWidth)×\(size.outHeight)" : "\(width)×\(height)")
             dt = benchmark.fixedDt   // deterministic animation so every setting renders the same frames
             if benchmark.current.cameraPath {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind)
@@ -1447,68 +1417,290 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if !settings.paused { animTime += dt * settings.timeScale }
         // The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
         scene.update(time: animTime, dayTime: animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0))
+    }
 
-        let slot = Int(frameIndex) % Renderer.maxFramesInFlight
-        // Viewpoint virtual geometry picks its detail for: the camera, or where it was when "Freeze LOD" was turned on.
-        let liveLOD = (camera.position, Float(height) / (2 * tan(camera.fovY / 2)))
-        if !settings.virtualGeometry.freeze { frozenLOD = nil } else if frozenLOD == nil { frozenLOD = liveLOD }
-        let lod = frozenLOD ?? liveLOD
-        customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
-        customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
-                                      camPos: lod.0, pixelScale: lod.1,
-                                      tau: settings.virtualGeometry.pixelError, sceneInstances: scene.instances)
-        writeFrameData(slot: slot)
+    /// The viewpoint virtual geometry picks its detail for: the camera, or where it was when "Freeze LOD" was turned on.
+    private func detailView(height: Int) -> VGView {
+        let live = (camera.position, Float(height) / (2 * tan(camera.fovY / 2)))
+        if !settings.virtualGeometry.freeze { frozenLOD = nil } else if frozenLOD == nil { frozenLOD = live }
+        let lod = frozenLOD ?? live
+        return VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
+    }
 
-        guard let cmd = queue.makeCommandBuffer() else {
-            frameSemaphore.signal()
-            return
+    // MARK: - Frame plan
+
+    /// Everything one frame does, decided once from the settings, the scene and what the last frame left, before
+    /// anything is encoded. The stage builders read this, and none of the renderer's state that changes with a frame.
+    private struct FramePlan {
+        let size: FrameSize
+        let slot: Int                           // the frame-in-flight slot its buffers come from
+        let cur: Int                            // this frame's side of the ping-pong textures...
+        var prev: Int { cur ^ 1 }               // ...and the last frame's
+        var jitter = SIMD2<Float>()
+        var uniforms = Uniforms()               // what every kernel gets (the composite adds flags: CompositeInputs)
+        var accumulating = false                // benchmark reference: raw frames are averaged instead of denoised
+        var splitPasses = false                 // benchmark: a command buffer per pass, so its GPU time can be read back
+        var overlap = false                     // one concurrent encoder: the cascades and the denoisers overlap on the GPU
+
+        // Lighting
+        var giMode = GIMode.pathTraced
+        var cascades = false                    // radiance-cascade GI runs
+        var restirGI = false                    // ReSTIR GI runs...
+        var restirGIGrid: RestirGITargets?      // ...on these reservoirs (nil if they couldn't be allocated: no stages)...
+        var restirGIHistory = false             // ...which the last frame filled
+        var restir = false                      // ReSTIR DI lights the scene, as above
+        var restirGrid: RestirTargets?
+        var restirHistory = false
+        var restirSettings = RestirSettings()   // references: unbiased initial sampling alone
+        var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
+        var lightMaps = false
+        var specular = false                    // reflections (glTF specular materials)
+        var manyLights = false                  // more than 4 lights: one sampled light per group...
+        var lightReuse = false                  // ...whose picks are kept for the next frame...
+        var lightPicksValid = false             // ...and the last frame's are there to reuse
+        var meshLights = false                  // emissive-mesh lights, sampled per pixel
+
+        // Denoisers
+        var history = false                     // the last frame left denoiser history
+        var svgf = false                        // the denoiser is on (never for references)
+        var shadowDenoiser = false              // direct light's visibility goes through its own filter
+        var restirSplit = false                 // ReSTIR's visibility too, and its unshadowed light through SVGF
+        var separate = false                    // direct and indirect light are separate signals
+        var denoiseIndirect = false
+        var denoiseMeshLights = false           // mesh lights' direct light is an SVGF signal of its own
+        var directPasses = 0, indirectPasses = 0
+        var accumulation: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?   // references
+        var accumCount: UInt32 = 0              // frames averaged so far
+
+        // Volumetric fog
+        var fog: (grid: FogTargets, noise: MTLTexture)?
+        var fogParams = GPUFogParams()
+        var fogReference: MTLTexture?           // references: every camera ray is marched instead
+        var fogSamples: UInt32 = 0              // ...and this many frames are averaged so far
+    }
+
+    /// Resolves this frame's modes and allocates what they need that isn't there yet.
+    private func planFrame(size: FrameSize, slot: Int, profiling: Bool) -> FramePlan {
+        let width = size.width, height = size.height
+        var p = FramePlan(size: size, slot: slot, cur: Int(frameIndex & 1))
+        p.accumulating = accumulating
+        p.giMode = activeGIMode
+        let directMode = activeDirectMode
+        p.restir = directMode == .restir
+        p.specular = usesSpecular
+        p.history = historyValid
+
+        var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
+        // Temporal upscalers gather jittered samples; supersampled references average 1024 jittered frames.
+        p.jitter = size.upscaling && settings.upscaler != .metalFXSpatial
+            ? Upscaler.jitter(frame: frameIndex, scale: Float(size.outWidth) / Float(width))
+            : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
+        u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
+        if size.upscaling { u.flags |= UniformFlags.upscale }
+        if settings.blueNoise {
+            fillBlueNoiseTextureIfNeeded()
+            u.flags |= UniformFlags.blueNoise
         }
+        p.uniforms = u
 
-        // Benchmark mode puts each pass in its own command buffer so its GPU time can be read back.
-        var passBuffers: [(name: String, cmd: MTLCommandBuffer)] = []
-        func passBuffer(_ name: String) -> MTLCommandBuffer {
-            guard benchmark != nil, Benchmark.splitPasses, let cb = queue.makeCommandBuffer() else { return cmd }
-            cb.label = name
-            passBuffers.append((name, cb))
-            return cb
-        }
-        // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
-        let frameProfile = profilePasses && benchmark == nil ? profiler?.beginFrame(slot: slot) : nil
         // Radiance cascades and the direct-light denoiser don't touch each other's textures (unless the denoiser also
         // filters the cascades' output), so their dispatches can overlap on the GPU: the shared encoder is then
         // concurrent, with explicit barriers between dependent stages. Per-pass timing (benchmark or panel) keeps
         // everything serial, and METALRENDERER_OVERLAP=0 turns overlapping off for A/B timing.
-        let splitPasses = benchmark != nil && Benchmark.splitPasses
-        let overlap = !splitPasses && frameProfile == nil && Renderer.overlapEnabled && settings.giEnabled
-            && activeGIMode == .radianceCascades && !settings.cascades.denoiseIndirect
-        var openEncoder: MTLComputeCommandEncoder?
-        var openPass = ""
-        func beginComputePass(_ name: String) -> MTLComputeCommandEncoder? {
-            // Normal mode: one shared encoder (profiling: one per pass name).
-            if openEncoder != nil && !splitPasses && (frameProfile == nil || name == openPass) { return openEncoder }
-            if let openEncoder { frameProfile.end(openEncoder) }
-            openPass = name
-            if let frameProfile { openEncoder = frameProfile.compute(cmd, name); return openEncoder }
-            openEncoder = overlap ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent)
-                                  : passBuffer(name).makeComputeCommandEncoder()
-            return openEncoder
+        p.splitPasses = benchmark != nil && Benchmark.splitPasses
+        p.overlap = !p.splitPasses && !profiling && Renderer.overlapEnabled && settings.giEnabled
+            && p.giMode == .radianceCascades && !settings.cascades.denoiseIndirect
+
+        p.lightGrid = lightGrid(directMode: directMode, camera: u.camPos)
+
+        // Volumetric fog: this frame's parameters (the reflections read them too). The froxel history is reprojected
+        // only from the frame just before, with the same far distance.
+        if settings.fog.enabled, let grid = fogTargets(width: width, height: height), let noise = fogNoise() { p.fog = (grid, noise) }
+        let fogHistory = p.fog != nil && fogLastFrame == frameIndex &- 1 && fogLastFar == settings.fog.maxDistance
+        p.fogParams = makeFogParams(grid: p.fog?.grid, historyValid: fogHistory)
+        p.fogSamples = accumCount
+        if accumulating, p.fog != nil { p.fogReference = fogReferenceTexture(width: width, height: height) }
+
+        // GI. Light-visibility maps serve the GI techniques and the path tracer's light-map variant.
+        p.lightMaps = usesLightMaps
+        p.cascades = settings.giEnabled && p.giMode == .radianceCascades
+        p.restirGI = settings.giEnabled && p.giMode == .restirGI
+        if p.restirGI { p.restirGIGrid = restirGITargets(width: width, height: height) }
+        p.restirGIHistory = restirGIWritten   // read after restirGITargets: new reservoirs hold nothing
+
+        // Denoising (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
+        //   Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
+        //   direct shadows, since indirect noise no longer inflates the variance that guides the luminance
+        //   edge-stopping). Cascade output is already smooth: it skips the denoiser unless its
+        //   "denoise indirect" option is on (then 1 a-trous pass). With GI off there's no indirect light to denoise.
+        let techniqueGI = p.giMode != .pathTraced
+        p.svgf = settings.denoiser.enabled && !accumulating
+        p.denoiseIndirect = settings.giEnabled && (!techniqueGI || techniqueDenoisesIndirect)
+        //   With the shadow denoiser (default), direct light goes through its own visibility filter instead,
+        //   and SVGF handles only indirect light.
+        //   ReSTIR's direct light is radiance, not per-group visibility: SVGF filters it (no loop over the lights).
+        let shadowDenoiserOn = p.svgf && settings.denoiser.shadowDenoiser && Renderer.shadowDenoiserAllowed
+        //   ReSTIR with the shadow denoiser (split): its visibility goes through the visibility filter, its unshadowed
+        //   light through SVGF, and the composite multiplies them.
+        p.restirSplit = p.restir && shadowDenoiserOn && settings.restir.splitVisibility
+        p.shadowDenoiser = shadowDenoiserOn && (!p.restir || p.restirSplit)
+        p.separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled || p.shadowDenoiser
+        let passCount = settings.denoiser.passes(for: p.giMode)
+        p.directPasses = p.restir ? DenoiserSettings.passRange.clamp(settings.restir.denoisePasses) : passCount
+        p.indirectPasses = p.restirGI ? DenoiserSettings.passRange.clamp(settings.restirGI.denoisePasses) : techniqueGI ? 1 : passCount
+        // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
+        // of its own; otherwise it joins the direct light. (ReSTIR samples their triangles from the light table.)
+        p.meshLights = !scene.meshLights.isEmpty && !p.restir
+        p.denoiseMeshLights = p.meshLights && p.shadowDenoiser
+
+        // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
+        p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir
+        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
+        p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
+
+        // ReSTIR DI. References with many lights accumulate its unbiased initial sampling alone (32 candidates).
+        p.restirSettings = settings.restir
+        if accumulating {
+            p.restirSettings.candidates = 32; p.restirSettings.temporal = false; p.restirSettings.spatialPasses = 0
+            p.restirSettings.visibilityReuse = false; p.restirSettings.chains = 4
         }
-        /// Runs stages in order, each in its named benchmark pass (consecutive stages of one pass share it).
-        func runSerial(_ stages: [ComputeStage]) {
+        if p.restir {
+            p.restirGrid = restirTargets(width: width, height: height, chains: RestirSettings.chainRange.clamp(p.restirSettings.chains))
+        }
+        p.restirHistory = restirWritten       // read after restirTargets, as above
+
+        if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
+        p.accumCount = accumCount             // read after accumulationTextures: new textures start a new average
+        return p
+    }
+
+    /// The light grid (ReGIR) for this frame: where its cells are and how they are filled and read. It is rebuilt from
+    /// this frame's lights before everything that samples them (ReSTIR DI's candidates, GI's next-event estimation, the
+    /// reflections, the fog). Off in scenes without a light table; references set grid.enabled themselves (off for
+    /// restirq's, on with every candidate for restircheck's "grid").
+    private func lightGrid(directMode: DirectLightMode, camera: SIMD4<Float>) -> (params: GPURegirParams, buffer: MTLBuffer)? {
+        let g = settings.restir.grid
+        guard g.enabled && scene.lightTable.entries.count > 0 && (scene.usesLightTable || directMode == .restir),
+              let buffer = regirGrid(count: g.reservoirCount) else { return nil }
+        let restirCandidates = accumulating ? 32 : RestirSettings.candidateRange.clamp(settings.restir.candidates)
+        let cells = RegirSettings.cellRange.clamp(g.cells), levels = RegirSettings.levelRange.clamp(g.levels)
+        let cellSize = RegirSettings.cellSizeRange.clamp(g.cellSize), scale = RegirSettings.scaleRange.clamp(g.levelScale)
+        let jitter = Renderer.regirJitter(frame: frameIndex)
+        func origin(_ level: Int) -> SIMD4<Float> {   // a level's corner and its cell size, centred on the camera
+            guard level < levels else { return SIMD4() }
+            let size = cellSize * pow(scale, Float(level))
+            return SIMD4(SIMD3(camera.x, camera.y, camera.z) - size * (Float(cells) * 0.5 + jitter), size)
+        }
+        var gp = GPURegirParams()
+        (gp.origin0, gp.origin1, gp.origin2, gp.origin3) = (origin(0), origin(1), origin(2), origin(3))
+        gp.config = SIMD4(UInt32(cells), UInt32(levels), UInt32(RegirSettings.slotRange.clamp(g.slots)),
+                          UInt32(RegirSettings.candidateRange.clamp(g.candidates)))
+        gp.consume = SIMD4(UInt32(max(min(RegirSettings.shareRange.clamp(g.share), restirCandidates), 1)), frameIndex, 0, 0)
+        return (gp, buffer)
+    }
+
+    /// What the frame leaves for the next one's temporal reuse. Set here, in one place, once the frame is committed.
+    private func finishFrame(_ plan: FramePlan) {
+        restirGIWritten = plan.restirGIGrid != nil
+        restirWritten = plan.restirGrid != nil
+        reservoirsWritten = plan.lightReuse
+        if plan.accumulation != nil { accumCount += 1 }
+        if plan.fog != nil && plan.fogReference == nil {   // the froxel grid was written
+            fogLastFrame = frameIndex
+            fogLastFar = settings.fog.maxDistance
+        }
+        prevCamera = camera
+        prevJitter = plan.jitter
+        historyValid = settings.denoiser.enabled
+        frameIndex &+= 1
+    }
+
+    // MARK: - Frame encoding
+
+    /// The frame's command buffers and its open compute encoder. Normally every pass shares one encoder; benchmarks put
+    /// each pass in its own command buffer (so its GPU time can be read back) and the panel's pass timings in its own
+    /// encoder.
+    private struct FramePasses {
+        let cmd: MTLCommandBuffer
+        let profile: GPUProfiler.Frame?
+        private let queue: MTLCommandQueue
+        private let split: Bool, overlap: Bool
+        private(set) var buffers: [(name: String, cmd: MTLCommandBuffer)] = []   // split only, in the order they run
+        private var open: MTLComputeCommandEncoder?
+        private var openPass = ""
+
+        init(cmd: MTLCommandBuffer, queue: MTLCommandQueue, profile: GPUProfiler.Frame?, split: Bool, overlap: Bool) {
+            (self.cmd, self.queue, self.profile, self.split, self.overlap) = (cmd, queue, profile, split, overlap)
+        }
+
+        /// The command buffer for pass `name`: the frame's, or with `split` a new one.
+        mutating func buffer(_ name: String) -> MTLCommandBuffer {
+            guard split, let cb = queue.makeCommandBuffer() else { return cmd }
+            cb.label = name
+            buffers.append((name, cb))
+            return cb
+        }
+
+        /// The compute encoder for pass `name`: the open one, unless passes are timed apart.
+        mutating func compute(_ name: String) -> MTLComputeCommandEncoder? {
+            if open != nil && !split && (profile == nil || name == openPass) { return open }
+            endCompute()
+            openPass = name
+            if let profile {
+                open = profile.compute(cmd, name)
+            } else {
+                open = overlap ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent) : buffer(name).makeComputeCommandEncoder()
+            }
+            return open
+        }
+
+        /// Runs stages in order, each in its named pass (consecutive stages of one pass share it).
+        mutating func run(_ stages: [ComputeStage]) {
             var pass: String?
             var enc: MTLComputeCommandEncoder?
             for stage in stages {
-                if stage.pass != pass { enc = beginComputePass(stage.pass); pass = stage.pass }
+                if stage.pass != pass { enc = compute(stage.pass); pass = stage.pass }
                 if let enc { stage.encode(enc) }
             }
         }
 
+        /// Closes the open encoder: at the end of the frame, or ahead of a pass that isn't a compute dispatch.
+        mutating func endCompute() {
+            if let open { profile.end(open) }
+            open = nil
+        }
+    }
+
+    /// The frame's compute stages by group, each group in the order it runs.
+    private struct FrameStages {
+        var lightGrid: [ComputeStage] = []           // 1a. the light grid, before everything that samples lights
+        var head: [ComputeStage] = []                // 1b, 2. light maps, the trace
+        var gi: [ComputeStage] = []                  // 2b. radiance cascades or ReSTIR GI (they write t.indirect)
+        var restir: [ComputeStage] = []              // 2e. ReSTIR DI
+        var reflections: [ComputeStage] = []         // 2d. after the GI (they read its result)
+        var fog: [ComputeStage] = []                 // 3d. first of the stages below
+        var denoise: [ComputeStage] = []             // 2c, 3. sampled direct light, the denoisers
+        var reflectionDenoise: [ComputeStage] = []
+    }
+
+    /// What the composite reads. The stage builders fill it in as they decide where each signal ends up.
+    private struct CompositeInputs {
+        var uniforms: Uniforms            // the frame's, plus the flags that tell the composite how to read the rest
+        var illumination: [MTLTexture]    // denoised light: one signal, or direct then indirect (the indirect is last)
+        var specular: MTLTexture
+        var meshDirect: MTLTexture
+        var fogReference: MTLTexture?
+    }
+
+    /// The scene's structures for this frame, ahead of everything that traces rays.
+    private func encodeSceneUpdate(slot: Int, lod: VGView, passes: inout FramePasses) {
+        let profile = passes.profile
         // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
         if builtRayTracer == .metal,
-           let asEncoder = frameProfile?.accelerationStructure(cmd, "tlas") ?? passBuffer("tlas").makeAccelerationStructureCommandEncoder() {
+           let asEncoder = profile?.accelerationStructure(passes.cmd, "tlas") ?? passes.buffer("tlas").makeAccelerationStructureCommandEncoder() {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
             if instanceASBuilt.contains(slot) {
                 asEncoder.refit(sourceAccelerationStructure: instanceAS[slot], descriptor: instanceASDescriptor(slot: slot),
@@ -1521,474 +1713,68 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                                 scratchBufferOffset: 0)
                 instanceASBuilt.insert(slot)
             }
-            frameProfile.end(asEncoder)
+            profile.end(asEncoder)
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
-        textureStreamer?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, cmd: passBuffer("textures"))
+        textureStreamer?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, cmd: passes.buffer("textures"))
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
         // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
-        if let customRT, let enc = frameProfile?.compute(cmd, "tlas") ?? passBuffer("tlas").makeComputeCommandEncoder() {
-            let view = VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
-            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: view)
-            frameProfile.end(enc)
+        if let customRT, let enc = profile?.compute(passes.cmd, "tlas") ?? passes.buffer("tlas").makeComputeCommandEncoder() {
+            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: lod)
+            profile.end(enc)
         }
+    }
 
-        var uniforms = makeUniforms(width: width, height: height)
-        // Temporal upscalers gather jittered samples; supersampled references average 1024 jittered frames.
-        let jitter = upscaling && settings.upscaler != .metalFXSpatial
-            ? Upscaler.jitter(frame: frameIndex, scale: Float(outWidth) / Float(width))
-            : supersampling && !upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
-        uniforms.jitter = SIMD4<Float>(lowHalf: jitter, highHalf: prevJitter)
-        if upscaling { uniforms.flags |= UniformFlags.upscale }
-        if settings.blueNoise {
-            fillBlueNoiseTextureIfNeeded()
-            uniforms.flags |= UniformFlags.blueNoise
+    /// Encodes the stages: one after another, or with `plan.overlap` the cascades next to the denoisers.
+    private func encode(_ s: FrameStages, plan: FramePlan, passes: inout FramePasses) {
+        guard plan.overlap, let enc = passes.compute("trace") else {
+            passes.run(s.lightGrid)
+            passes.run(s.head)
+            passes.run(s.gi)
+            passes.run(s.restir)
+            passes.run(s.reflections)
+            passes.run(s.fog)
+            passes.run(s.denoise)
+            passes.run(s.reflectionDenoise)
+            return
         }
-        let cur = Int(frameIndex & 1), prev = cur ^ 1
-        if skyActive { encodeSky(passBuffer("sky"), profile: frameProfile) }
-
-        let frameUniforms = uniforms
-
-        // 1a. The light grid (ReGIR): rebuilt from this frame's lights before everything that samples them (ReSTIR
-        //     DI's candidates, GI's next-event estimation, the reflections, the fog). It reads only the light and
-        //     instance buffers, which the CPU wrote. Off in scenes without a light table; references set
-        //     grid.enabled themselves (off for restirq's, on with every candidate for restircheck's "grid").
-        var regirStages: [ComputeStage] = []
-        regirParams = GPURegirParams()
-        do {
-            let g = settings.restir.grid
-            let restirCandidates = accumulating ? 32 : RestirSettings.candidateRange.clamp(settings.restir.candidates)
-            let regirOn = g.enabled && scene.lightTable.entries.count > 0 && (scene.usesLightTable || activeDirectMode == .restir)
-            if regirOn, let grid = regirGrid(count: g.reservoirCount) {
-                let cells = RegirSettings.cellRange.clamp(g.cells), levels = RegirSettings.levelRange.clamp(g.levels)
-                let cellSize = RegirSettings.cellSizeRange.clamp(g.cellSize), scale = RegirSettings.scaleRange.clamp(g.levelScale)
-                let jitter = Renderer.regirJitter(frame: frameIndex)
-                var origins = [SIMD4<Float>](repeating: SIMD4<Float>(), count: 4)
-                for level in 0..<levels {
-                    let size = cellSize * pow(scale, Float(level))
-                    let cam = frameUniforms.camPos
-                    let origin = SIMD3(cam.x, cam.y, cam.z) - size * (Float(cells) * 0.5 + jitter)
-                    origins[level] = SIMD4(origin, size)
-                }
-                var gp = GPURegirParams()
-                (gp.origin0, gp.origin1, gp.origin2, gp.origin3) = (origins[0], origins[1], origins[2], origins[3])
-                gp.config = SIMD4(UInt32(cells), UInt32(levels), UInt32(RegirSettings.slotRange.clamp(g.slots)),
-                                  UInt32(RegirSettings.candidateRange.clamp(g.candidates)))
-                gp.consume = SIMD4(UInt32(max(min(RegirSettings.shareRange.clamp(g.share), restirCandidates), 1)), frameIndex, 0, 0)
-                regirParams = gp
-                regirStages.append(ComputeStage(pass: "regir") { [self] enc in
-                    var u = frameUniforms
-                    enc.setComputePipelineState(regirBuildPSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    bindScene(enc, slot: slot)
-                    dispatch(enc, "regir build", width: grid.length / MemoryLayout<GPURegirReservoir>.stride, height: 1)
-                })
-            }
+        // The light grid first (the trace's bounces read it); light map, trace and cascade probes need only the
+        // TLAS; then the cascade chain and the denoiser chain advance in lock-step, one barrier per step.
+        // Reflections read the cascades' result: after both. ReSTIR leads the denoiser chain (after the fog).
+        if !s.lightGrid.isEmpty {
+            for stage in s.lightGrid { stage.encode(enc) }
+            enc.memoryBarrier(scope: .buffers)
         }
-
-        // 1b. Light-visibility maps, for GI techniques and the path tracer's light-map variant.
-        // Volumetric fog: this frame's parameters (the reflections read them too). The froxel history is reprojected
-        // only from the frame just before, with the same far distance.
-        let fogGridTargets = settings.fog.enabled ? fogTargets(width: width, height: height) : nil
-        let fogNoiseTex = fogGridTargets != nil ? fogNoise() : nil
-        let fogOn = fogGridTargets != nil && fogNoiseTex != nil
-        let fogHistory = fogOn && fogLastFrame == frameIndex &- 1 && fogLastFar == settings.fog.maxDistance
-        let fogParams = makeFogParams(grid: fogOn ? fogGridTargets : nil, historyValid: fogHistory)
-        let fogSampleCount = accumCount   // references: frames the fog march has averaged
-        var headStages: [ComputeStage] = []
-        if usesLightMaps {
-            headStages.append(ComputeStage(pass: "lightmap") { [self] enc in
-                var u = frameUniforms
-                enc.setComputePipelineState(lightMapPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                bindScene(enc, slot: slot)
-                enc.setTexture(lightMap, index: 0)
-                enc.dispatchThreads(MTLSize(width: lightMap.width, height: lightMap.height, depth: scene.lights.count),
-                                    threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
-            })
-        }
-
-        // 2. Ray trace: primary visibility (G-buffer), direct light with shadow rays, path-traced indirect light.
-        headStages.append(ComputeStage(pass: "trace") { [self] enc in
-            var u = frameUniforms
-            enc.setComputePipelineState(tracePSO)
-            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-            bindScene(enc, slot: slot)
-            setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
-                              t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
-                              t.visibility, t.blocker, t.material])
-            dispatch(enc, "trace", width: width, height: height)
-        })
-
-        // 2b. Radiance-cascade GI writes t.indirect (the path tracer already did, inside traceKernel).
-        let giMode = activeGIMode
-        var giStages: [ComputeStage] = []
-        if settings.giEnabled && giMode == .radianceCascades {
-            giStages = radianceCascadeStages(uniforms: uniforms, targets: t, slot: slot)
-        }
-        // ReSTIR GI writes t.indirect too: after the trace (its G-buffer), before the reflections (they read it).
-        let restirGIOn = settings.giEnabled && giMode == .restirGI
-        if restirGIOn, let gg = restirGITargets(width: width, height: height) {
-            giStages = restirGIStages(grid: gg, uniforms: frameUniforms, targets: t, slot: slot)
-        }
-        restirGIWritten = restirGIOn && restirGIGrid != nil
-
-        // 3. Denoise (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
-        //    Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
-        //    direct shadows, since indirect noise no longer inflates the variance that guides the luminance
-        //    edge-stopping). Cascade output is already smooth: it skips the denoiser unless its
-        //    "denoise indirect" option is on (then 1 a-trous pass). With GI off there's no indirect light to denoise.
-        let techniqueGI = giMode != .pathTraced
-        let denoiseIndirect = settings.giEnabled && (!techniqueGI || techniqueDenoisesIndirect)
-        //    With the shadow denoiser (default), direct light goes through its own visibility filter instead (3b),
-        //    and SVGF handles only indirect light.
-        //    ReSTIR's direct light is radiance, not per-group visibility: SVGF filters it (no loop over the lights).
-        let directMode = activeDirectMode
-        let restirOn = directMode == .restir
-        let shadowDenoiserOn = settings.denoiser.enabled && settings.denoiser.shadowDenoiser && !accumulating
-            && Renderer.shadowDenoiserAllowed
-        //    ReSTIR with the shadow denoiser (split): its visibility goes through the visibility filter, its unshadowed
-        //    light through SVGF, and the composite multiplies them.
-        let restirSplit = restirOn && shadowDenoiserOn && settings.restir.splitVisibility
-        let shadowDenoiser = shadowDenoiserOn && (!restirOn || restirSplit)
-        let separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled || shadowDenoiser
-        let passCount = settings.denoiser.passes(for: giMode)
-        let directPasses = restirOn ? DenoiserSettings.passRange.clamp(settings.restir.denoisePasses) : passCount
-        var signals: [(noisy: [MTLTexture], targets: DenoiseTargets, passes: Int)] =
-            shadowDenoiser ? [] : separate ? [([t.direct], t.denoise[0], directPasses)] : [([t.direct, t.indirect], t.denoise[0], directPasses)]
-        // ReSTIR's direct light: its own edge-stopping, and its variance scaled up (reused samples are correlated).
-        var restirDenoiseUniforms = frameUniforms
-        restirDenoiseUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(settings.restir.denoiseSigma)
-        restirDenoiseUniforms.denoise.w = max(settings.restir.varianceBoost, 1)
-        restirDenoiseUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(settings.restir.denoiseHistory)
-        // ReSTIR GI's indirect light: the same, with its own settings.
-        let rgi = settings.restirGI
-        var restirGIDenoiseUniforms = frameUniforms
-        restirGIDenoiseUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(rgi.denoiseSigma)
-        restirGIDenoiseUniforms.denoise.w = max(rgi.varianceBoost, 1)
-        restirGIDenoiseUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(rgi.denoiseHistory)
-        restirGIDenoiseUniforms.denoise.z = DenoiserSettings.antiLagRange.clamp(rgi.antiLag)
-        func denoiseUniforms(_ d: DenoiseTargets) -> Uniforms {
-            if restirGIOn && d === t.denoise[1] { return restirGIDenoiseUniforms }
-            return restirOn && d === (restirSplit ? t.denoise[3] : t.denoise[0]) ? restirDenoiseUniforms : frameUniforms
-        }
-        let indirectPasses = restirGIOn ? DenoiserSettings.passRange.clamp(rgi.denoisePasses) : techniqueGI ? 1 : passCount
-        if separate && denoiseIndirect { signals.append(([t.indirect], t.denoise[1], indirectPasses)) }
-        // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
-        // of its own (first, so finalIllumination keeps the indirect light last); otherwise it joins the direct light.
-        let meshLights = !scene.meshLights.isEmpty && !restirOn   // ReSTIR samples their triangles from the light table
-        let denoiseMeshLights = meshLights && shadowDenoiser
-        if denoiseMeshLights { signals.insert(([t.meshDirect], t.denoise[3], settings.denoiser.passes(for: .pathTraced)), at: 0) }
-        if restirSplit { signals.insert(([t.direct], t.denoise[3], directPasses), at: 0) }   // unshadowed: no edges to keep
-        var finalMeshDirect = t.meshDirect
-        var finalIllumination = [t.denoise[0].pingA]
-        var denoiseStages: [ComputeStage] = []
-        // 2d. Reflections (glTF specular materials): after the GI (they read its result), before the denoisers.
-        var finalSpecular = t.specular
-        var specularStages: [ComputeStage] = [], specularDenoise: [ComputeStage] = []
-        if usesSpecular {
-            specularStages.append(ComputeStage(pass: "reflections") { [self] enc in
-                var u = frameUniforms
-                enc.setComputePipelineState(reflectionPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                bindScene(enc, slot: slot)
-                var fp = fogParams
-                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
-                                  fogNoiseTex ?? dummy3D, restirOn ? restirGrid?.specular ?? dummy2D : dummy2D])
-                dispatch(enc, "reflections", width: width, height: height)
-            })
-            if settings.denoiser.enabled && !accumulating {
-                let d = t.denoise[2]
-                specularDenoise.append(ComputeStage(pass: "reflections") { [self] enc in
-                    var u = frameUniforms, inputCount: UInt32 = 1
-                    enc.setComputePipelineState(temporalPSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
-                    setTextures(enc, [t.specular, t.specular, t.motion, t.normalDepth[cur], t.normalDepth[prev],
-                                      d.history, d.moments[prev], d.pingA, d.moments[cur]])
-                    dispatch(enc, "temporal", width: width, height: height)
-                })
-                for (i, pass) in [(d.pingA, d.history), (d.history, d.pingB)].enumerated() {
-                    specularDenoise.append(ComputeStage(pass: "reflections") { [self] enc in
-                        var u = frameUniforms, step = Int32(1 << i)
-                        enc.setComputePipelineState(atrousPSO)
-                        enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                        enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
-                        setTextures(enc, [pass.0, t.normalDepth[cur], pass.1])
-                        dispatch(enc, "atrous", width: width, height: height)
-                    })
-                }
-                finalSpecular = d.pingB
-            }
-        }
-        // 2c. More than 4 lights: direct light from one sampled light per group (manyLightsKernel), after the trace
-        //     and before anything that reads direct light or visibility.
-        let manyLights = scene.lightGroupEnd[3] > 4 && frameUniforms.flags & UniformFlags.allLights == 0 && !restirOn
-        let reuse = manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
-        let reservoirsValid = reuse && reservoirsWritten && historyValid
-        reservoirsWritten = reuse
-        // 2e. ReSTIR DI: after the trace (its G-buffer), before the reflections (they add its direct specular) and the
-        //     denoiser. References with many lights accumulate its unbiased initial sampling alone (32 candidates).
-        var restirStages: [ComputeStage] = []
-        var restirSettings = settings.restir
-        if accumulating {   // references: unbiased initial sampling alone
-            restirSettings.candidates = 32; restirSettings.temporal = false; restirSettings.spatialPasses = 0
-            restirSettings.visibilityReuse = false; restirSettings.chains = 4
-        }
-        let restirGridNow = restirOn ? restirTargets(width: width, height: height,
-                                                     chains: RestirSettings.chainRange.clamp(restirSettings.chains)) : nil
-        if let rg = restirGridNow {
-            let r = restirSettings
-            let temporalValid = r.temporal && restirWritten   // (not historyValid: that follows the denoiser)
-            var flags: UInt32 = (temporalValid ? GPURestirParams.temporalValid : 0) | (r.visibilityReuse ? GPURestirParams.visibilityReuse : 0)
-                | (restirSplit ? GPURestirParams.split : 0)
-            let maxM = UInt32(RestirSettings.maxMRange.clamp(r.maxM))
-            let samples = UInt32(RestirSettings.spatialSampleRange.clamp(r.spatialSamples))
-            let radius = RestirSettings.radiusRange.clamp(r.radius) * Float(width) / 960
-            let clamp: Float = accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as the mesh-light pass
-            let candidates = RestirSettings.candidateRange.clamp(r.candidates)
-            let params = GPURestirParams(config: SIMD4(UInt32(candidates), maxM, flags, samples),
-                                         tuning: SIMD4(radius, 0, clamp, Float(rg.chains)))
-            // Last frame's lights, for the temporal reuse: what the frame before wrote into its slot (the GPU reads that
-            // buffer for two more frames before the CPU comes back to it). This frame's on a scene's first frame.
-            let previousSlot = (slot + Renderer.maxFramesInFlight - 1) % Renderer.maxFramesInFlight
-            let previousLights = lightBuffers[frameDataWritten[previousSlot] ? previousSlot : slot]
-            restirStages.append(ComputeStage(pass: "restir") { [self] enc in
-                var u = frameUniforms, p = params
-                enc.setComputePipelineState(restirTemporalPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                bindScene(enc, slot: slot)
-                enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
-                enc.setBuffer(previousLights, offset: 0, index: 10)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.motion, t.normalDepth[prev],
-                                  rg.reservoir[prev], rg.temporal])
-                dispatch(enc, "restir temporal", width: width, height: height)
-            })
-            let passes = RestirSettings.spatialPassRange.clamp(r.spatialPasses)
-            flags &= ~GPURestirParams.temporalValid
-            for i in 0..<max(passes, 1) {
-                let last = i == max(passes, 1) - 1
-                let src = i == 0 ? rg.temporal : rg.spatial, dst = last ? rg.reservoir[cur] : rg.spatial
-                var p = params
-                p.config.z = flags | (last ? GPURestirParams.shade : 0)
-                p.config.w = passes == 0 ? 0 : samples
-                p.tuning.y = Float(i)
-                restirStages.append(ComputeStage(pass: "restir") { [self] enc in
-                    var u = frameUniforms, p = p
-                    enc.setComputePipelineState(restirSpatialPSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    bindScene(enc, slot: slot)
-                    enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
-                    setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, src, dst, t.direct, rg.specular,
-                                      t.visibility, t.blocker])
-                    dispatch(enc, "restir spatial", width: width, height: height)
-                })
-            }
-        }
-        restirWritten = restirGridNow != nil
-        if manyLights {
-            denoiseStages.append(ComputeStage(pass: "many lights") { [self] enc in
-                var u = frameUniforms
-                enc.setComputePipelineState(reuse ? manyLightsReusePSO : manyLightsPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                bindScene(enc, slot: slot)
-                var config = SIMD4<UInt32>(UInt32(settings.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
-                                           reservoirsValid ? 1 : 0, 0)
-                enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
-                                  t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
-                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
-                dispatch(enc, "many lights", width: width, height: height)
-            })
-        }
-        if meshLights {
-            denoiseStages.append(ComputeStage(pass: "mesh lights") { [self] enc in
-                var u = frameUniforms, addToDirect: UInt32 = shadowDenoiser ? 0 : 1
-                enc.setComputePipelineState(meshLightsPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                bindScene(enc, slot: slot)
-                enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
-                dispatch(enc, "mesh lights", width: width, height: height)
-            })
-        }
-        if shadowDenoiser {
-            let d = settings.denoiser, s = t.shadow
-            let maxHistory = DenoiserSettings.maxHistoryRange.clamp(d.shadowHistory)
-            denoiseStages.append(ComputeStage(pass: "shadow temporal") { [self] enc in
-                var u = frameUniforms, params = SIMD4<Float>(maxHistory, d.shadowClamp, d.shadowSigma, 0)
-                enc.setComputePipelineState(shadowTemporalPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
-                setTextures(enc, [t.visibility, t.blocker, t.motion, t.normalDepth[cur], t.normalDepth[prev], s.history,
-                                  s.meta[prev], s.pingA, s.meta[cur], s.penumbra, s.tiles])
-                // Whole 8x8 threadgroups: each one classifies its tile.
-                enc.dispatchThreadgroups(MTLSize(width: (width + 7) / 8, height: (height + 7) / 8, depth: 1),
-                                         threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
-            })
-            // Pass 0 writes `history`, which feeds next frame's temporal pass (as in SVGF).
-            let chain: [(src: MTLTexture, dst: MTLTexture)] = [(s.pingA, s.history), (s.history, s.pingB), (s.pingB, s.pingA),
-                                                               (s.pingA, s.pingB), (s.pingB, s.pingA)]
-            let passes = DenoiserSettings.passRange.clamp(d.shadowPasses)
-            for (i, pass) in chain.prefix(passes).enumerated() {
-                denoiseStages.append(ComputeStage(pass: "shadow filter") { [self] enc in
-                    var u = frameUniforms, params = SIMD4<Float>(maxHistory, d.shadowClamp, d.shadowSigma, Float(1 << i))
-                    enc.setComputePipelineState(shadowFilterPSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
-                    setTextures(enc, [pass.src, t.normalDepth[cur], s.penumbra, s.meta[cur], s.tiles, pass.dst])
-                    dispatch(enc, "shadow filter", width: width, height: height)
-                })
-            }
-            finalIllumination = [chain[passes - 1].dst]
-            uniforms.flags |= UniformFlags.shadowDenoiser | UniformFlags.separateSignals
-        }
-        if accumulating, let accum = accumulationTextures(width: width, height: height) {
-            let count = accumCount
-            denoiseStages.append(ComputeStage(pass: "accumulate") { [self] enc in
-                var u = frameUniforms, count = count
-                enc.setComputePipelineState(accumulatePSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 1)
-                setTextures(enc, [t.direct, t.indirect, accum.direct, accum.indirect, t.specular, accum.specular])
-                dispatch(enc, "accumulate", width: width, height: height)
-            })
-            accumCount += 1
-            finalIllumination = [accum.direct, accum.indirect]
-            finalSpecular = accum.specular
-            // Tells the composite pass to read finalIllumination as separate direct + indirect light.
-            uniforms.flags |= UniformFlags.denoise | UniformFlags.separateSignals
-        }
-        if settings.denoiser.enabled && !accumulating && !signals.isEmpty {
-            denoiseStages.append(ComputeStage(pass: "temporal") { [self] enc in
-                enc.setComputePipelineState(temporalPSO)
-                for (noisy, d, _) in signals {
-                    var u = denoiseUniforms(d)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    var inputCount = UInt32(noisy.count)
-                    enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
-                    setTextures(enc, [noisy[0], noisy.last!, t.motion, t.normalDepth[cur], t.normalDepth[prev],
-                                      d.history, d.moments[prev], d.pingA, d.moments[cur]])
-                    dispatch(enc, "temporal", width: width, height: height)
-                }
-            })
-            // Iteration 0 writes into `history`, which feeds next frame's temporal pass.
-            func atrousPasses(_ d: DenoiseTargets) -> [(src: MTLTexture, dst: MTLTexture)] {
-                [(d.pingA, d.history), (d.history, d.pingB), (d.pingB, d.pingA), (d.pingA, d.pingB), (d.pingB, d.pingA)]
-            }
-            for i in 0..<(signals.map(\.passes).max() ?? 0) {
-                denoiseStages.append(ComputeStage(pass: "atrous") { [self] enc in
-                    var step = Int32(1 << i)
-                    enc.setComputePipelineState(atrousPSO)
-                    enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
-                    for (_, d, passes) in signals where i < passes {
-                        var u = denoiseUniforms(d)
-                        enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                        let pass = atrousPasses(d)[i]
-                        setTextures(enc, [pass.src, t.normalDepth[cur], pass.dst])
-                        dispatch(enc, "atrous", width: width, height: height)
-                    }
-                })
-            }
-            finalIllumination = (shadowDenoiser ? finalIllumination : [])
-                + signals.map { _, d, passes in atrousPasses(d)[passes - 1].dst }
-            if denoiseMeshLights {
-                finalMeshDirect = finalIllumination[1]
-                uniforms.flags |= UniformFlags.meshLights
-            }
-            if restirSplit { finalMeshDirect = finalIllumination[1] }
-            if separate { uniforms.flags |= UniformFlags.separateSignals }
-        }
-
-        // 3d. Volumetric fog: light the froxel grid in front of the surfaces and integrate it (or, for references,
-        //     march every camera ray). It needs the TLAS, the lights and the G-buffer's depth: first among these stages.
-        var fogReferenceTex: MTLTexture?
-        if fogOn, let g = fogGridTargets, let noise = fogNoiseTex {
-            var fogStages: [ComputeStage] = []
-            if accumulating, let ref = fogReferenceTexture(width: width, height: height) {
-                fogReferenceTex = ref
-                fogStages.append(ComputeStage(pass: "fog") { [self] enc in
-                    var u = frameUniforms, fp = fogParams, count = fogSampleCount
-                    enc.setComputePipelineState(fogReferencePSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    bindScene(enc, slot: slot)
-                    enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
-                    enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 10)
-                    setTextures(enc, [noise, t.normalDepth[cur], ref])
-                    dispatch(enc, "fog reference", width: width, height: height)
-                })
-                uniforms.flags |= UniformFlags.fog | UniformFlags.fogReference
-            } else {
-                fogStages.append(ComputeStage(pass: "fog") { [self] enc in
-                    var u = frameUniforms, fp = fogParams
-                    enc.setComputePipelineState(fogInjectPSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    bindScene(enc, slot: slot)
-                    enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
-                    setTextures(enc, [blueNoiseTexture, noise, g.scatter[prev], g.scatter[cur], t.normalDepth[cur]])
-                    enc.dispatchThreads(MTLSize(width: g.columns, height: g.rows, depth: g.slices),
-                                        threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
-                })
-                fogStages.append(ComputeStage(pass: "fog") { [self] enc in
-                    var u = frameUniforms, fp = fogParams
-                    enc.setComputePipelineState(fogIntegratePSO)
-                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                    enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
-                    setTextures(enc, [g.scatter[cur], g.integrated])
-                    dispatch(enc, "fog integrate", width: g.columns, height: g.rows)
-                })
-                fogLastFrame = frameIndex
-                fogLastFar = settings.fog.maxDistance
-                uniforms.flags |= UniformFlags.fog
-            }
-            denoiseStages.insert(contentsOf: fogStages, at: 0)
-        }
-        // Overlapped encoding runs the reflections after the denoise chain: ReSTIR leads it (after the fog).
-        if overlap { denoiseStages.insert(contentsOf: restirStages, at: fogOn ? (accumulating ? 1 : 2) : 0) }
-
-        if overlap, let enc = beginComputePass("trace") {
-            // The light grid first (the trace's bounces read it); light map, trace and cascade probes need only the
-            // TLAS; then the cascade chain and the denoiser chain advance in lock-step, one barrier per step.
-            // Reflections read the cascades' result: after both.
-            if !regirStages.isEmpty {
-                for stage in regirStages { stage.encode(enc) }
-                enc.memoryBarrier(scope: .buffers)
-            }
-            for stage in headStages + giStages.prefix(1) { stage.encode(enc) }
+        for stage in s.head + s.gi.prefix(1) { stage.encode(enc) }
+        enc.memoryBarrier(scope: [.buffers, .textures])
+        let gi = Array(s.gi.dropFirst()), chain = s.fog + s.restir + s.denoise
+        for i in 0..<max(gi.count, chain.count) {
+            if i < chain.count { chain[i].encode(enc) }
+            if i < gi.count { gi[i].encode(enc) }
             enc.memoryBarrier(scope: [.buffers, .textures])
-            let gi = Array(giStages.dropFirst())
-            for i in 0..<max(gi.count, denoiseStages.count) {
-                if i < denoiseStages.count { denoiseStages[i].encode(enc) }
-                if i < gi.count { gi[i].encode(enc) }
-                enc.memoryBarrier(scope: [.buffers, .textures])
-            }
-            for stage in specularStages + specularDenoise {
-                stage.encode(enc)
-                enc.memoryBarrier(scope: [.buffers, .textures])
-            }
-        } else {
-            runSerial(regirStages)
-            runSerial(headStages)
-            runSerial(giStages)
-            runSerial(restirStages)
-            runSerial(specularStages)
-            runSerial(denoiseStages)
-            runSerial(specularDenoise)
         }
+        for stage in s.reflections + s.reflectionDenoise {
+            stage.encode(enc)
+            enc.memoryBarrier(scope: [.buffers, .textures])
+        }
+    }
+
+    /// 3c-5. The geometry debug view, the composite and the upscale into the drawable. Returns the drawable (nil if the
+    /// view had none of the right size) and how long the view took to hand it out.
+    private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, view: MTKView,
+                              passes: inout FramePasses) -> (drawable: CAMetalDrawable?, wait: CFTimeInterval) {
+        let size = plan.size, cur = plan.cur, overlap = plan.overlap
         // 3c. Geometry debug views: their own pass, only while one is shown.
-        if RenderSettings.geometryViews.contains(settings.viewMode), let enc = beginComputePass("geometry debug") {
-            enc.setComputePipelineState(geometryDebugPSO)
-            enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
-            bindScene(enc, slot: slot)
+        if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
+            bind(enc, .geometryDebug, c.uniforms, sceneSlot: plan.slot)
             enc.setTexture(t.geometryDebug, index: 0)
-            dispatch(enc, "geometry debug", width: width, height: height)
+            dispatch(enc, "geometry debug", width: size.width, height: size.height)
             if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
         }
 
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
-        let compositeIndirect = accumulating || (settings.denoiser.enabled && separate && denoiseIndirect)
-            ? finalIllumination.last! : t.indirect
+        let compositeIndirect = plan.accumulating || (settings.denoiser.enabled && plan.separate && plan.denoiseIndirect)
+            ? c.illumination.last! : t.indirect
 
         // 4. Composite: albedo * illumination + emission, tonemap, write to the drawable
         //    (or, with upscaling, to MetalFX's input color texture).
@@ -1996,51 +1782,55 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var drawable = view.currentDrawable
         let drawableWait = CACurrentMediaTime() - drawableStart
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
-        if let d = drawable, d.texture.width != outWidth || d.texture.height != outHeight { drawable = nil }
-        if let drawable, let enc = beginComputePass("composite") {
-            let output = upscaling ? upscaler?.spatialInput ?? t.upscaleColor
+        if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
+        if let drawable, let enc = passes.compute("composite") {
+            let output = size.upscaling ? upscaler?.spatialInput ?? t.upscaleColor
                 : supersampling ? t.upscaleColor : drawable.texture
-            enc.setComputePipelineState(compositePSO)
-            enc.setBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
-            setTextures(enc, [finalIllumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
-                              shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
-                              t.giDebug, t.surfacePos, t.geoNormal, t.material, finalSpecular, t.geometryDebug, finalMeshDirect,
-                              fogOn ? fogGridTargets!.integrated : dummy3D, fogReferenceTex ?? dummy2D])
-            enc.setBuffer(lightBuffers[slot], offset: 0, index: 1)
-            var fp = fogParams
+            bind(enc, .composite, c.uniforms)
+            setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
+                              plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
+                              t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
+                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D])
+            enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
+            var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
             dispatch(enc, "composite", width: output.width, height: output.height)
         }
 
         // 4b. Supersampled reference: average the composited frames (from halfway through, once lighting has converged).
-        if let drawable, supersampling, !upscaling, let accum = colorAccumTexture(width: width, height: height),
-           let enc = beginComputePass("composite") {
+        if let drawable, supersampling, !size.upscaling, let accum = colorAccumTexture(width: size.width, height: size.height),
+           let enc = passes.compute("composite") {
             if overlap { enc.memoryBarrier(scope: .textures) }
             let half = UInt32((benchmark?.current.frames ?? 0) / 2)
-            var params = SIMD2<UInt32>(colorAccumCount, accumCount > half ? 1 : 0)
+            let averaged = plan.accumCount + (plan.accumulation != nil ? 1 : 0)   // with this frame
+            var params = SIMD2<UInt32>(colorAccumCount, averaged > half ? 1 : 0)
             if params.y != 0 { colorAccumCount += 1 }
-            enc.setComputePipelineState(accumulateColorPSO)
+            enc.setComputePipelineState(pipelines[.accumulateColor])
             enc.setBytes(&params, length: MemoryLayout<SIMD2<UInt32>>.stride, index: 0)
             setTextures(enc, [t.upscaleColor, accum, drawable.texture])
-            dispatch(enc, "accumulate color", width: width, height: height)
+            dispatch(enc, "accumulate color", width: size.width, height: size.height)
         }
 
         // 5. Upscale into the drawable: the custom TAAU pass, or MetalFX (copied in; both sRGB formats, so the GPU
         //    encodes on write).
-        if let drawable, let customUpscaler, let enc = beginComputePass("upscale") {
+        if let drawable, let customUpscaler, let enc = passes.compute("upscale") {
             if overlap { enc.memoryBarrier(scope: .textures) }   // the composite pass wrote its input
-            customUpscaler.encode(enc, pipeline: taauPSO, targets: t, drawable: drawable.texture, jitter: jitter,
+            customUpscaler.encode(enc, pipeline: pipelines[.taau], targets: t, drawable: drawable.texture, jitter: plan.jitter,
                                   reset: upscalerReset, settings: settings.taau)
             upscalerReset = false
         }
+        passes.endCompute()
         if let drawable, let upscaler {
-            if let openEncoder { frameProfile.end(openEncoder) }
-            openEncoder = nil
-            upscaler.encode(into: passBuffer("upscale"), targets: t, drawable: drawable.texture, jitter: jitter, reset: upscalerReset)
+            upscaler.encode(into: passes.buffer("upscale"), targets: t, drawable: drawable.texture, jitter: plan.jitter, reset: upscalerReset)
             upscalerReset = false
         }
-        if let openEncoder { frameProfile.end(openEncoder) }
+        return (drawable, drawableWait)
+    }
 
+    /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
+    /// `encodeStart`: when the CPU started on this frame, not counting its waits.
+    private func commit(_ plan: FramePlan, passes: FramePasses, drawable: CAMetalDrawable?, encodeStart: CFTimeInterval) {
+        let cmd = passes.cmd, slot = plan.slot, profile = passes.profile
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
@@ -2059,10 +1849,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
-        let passes = passBuffers
+        let buffers = passes.buffers
         let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
         let cpuInterval = frameIntervalMs
-        let encodeNow = (CACurrentMediaTime() - encodeStart - drawableWait) * 1000
+        let encodeNow = (CACurrentMediaTime() - encodeStart) * 1000
         encodeSum += encodeNow
         encodeCount += 1
         cmd.addCompletedHandler { [weak self] cb in
@@ -2070,13 +1860,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             if let bench, recordFrame {
                 var passMs: [String: Double] = [:]
                 var start = Double.infinity, end = 0.0
-                for p in passes {
+                for p in buffers {
                     p.cmd.waitUntilCompleted()
                     passMs[p.name, default: 0] += (p.cmd.gpuEndTime - p.cmd.gpuStartTime) * 1000   // a name can recur
                     start = min(start, p.cmd.gpuStartTime)
                     end = max(end, p.cmd.gpuEndTime)
                 }
-                if passes.isEmpty {   // METALRENDERER_BENCH_SPLIT=0: the whole frame is one command buffer, as in normal mode
+                if buffers.isEmpty {   // METALRENDERER_BENCH_SPLIT=0: the whole frame is one command buffer, as in normal mode
                     passMs["frame"] = (cb.gpuEndTime - cb.gpuStartTime) * 1000
                     start = cb.gpuStartTime
                     end = cb.gpuEndTime
@@ -2084,7 +1874,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 bench.record(.init(config: benchConfig, passMs: passMs, spanMs: (end - start) * 1000, cpuMs: encodeNow))
             }
             writeCapture?()
-            let times = frameProfile?.resolve()
+            let times = profile?.resolve()
             semaphore.signal()
             let ms = (cb.gpuEndTime - cb.gpuStartTime) * 1000
             DispatchQueue.main.async {
@@ -2093,7 +1883,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 if let times { self?.addPassTimes(times, frameMs: ms) }
             }
         }
-        for p in passBuffers { p.cmd.commit() }
+        for p in buffers { p.cmd.commit() }
         cmd.commit()
         // Benchmark: finish this frame before encoding the next, so passes from consecutive frames
         // never overlap on the GPU and inflate each other's timings.
@@ -2102,13 +1892,346 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
             streamer?.collect(slot: slot)
         }
+    }
 
-        prevCamera = camera
-        prevJitter = jitter
-        historyValid = settings.denoiser.enabled
-        frameIndex &+= 1
-        updateTitle(width: width, height: height, outWidth: outWidth, outHeight: outHeight)
-        if let benchmark { advanceBenchmark(benchmark) }
+    // MARK: - Frame stages
+
+    /// Starts a kernel's dispatch: its pipeline, the uniforms, and for kernels that trace rays the scene.
+    private func bind(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, _ uniforms: Uniforms, sceneSlot: Int? = nil) {
+        var u = uniforms
+        enc.setComputePipelineState(pipelines[kernel])
+        enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+        if let sceneSlot { bindScene(enc, slot: sceneSlot) }
+    }
+
+    /// 1a. The light grid's build. It reads only the light and instance buffers, which the CPU wrote.
+    private func lightGridStages(_ plan: FramePlan) -> [ComputeStage] {
+        guard let grid = plan.lightGrid else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot
+        return [ComputeStage(pass: "regir") { [self] enc in
+            bind(enc, .regirBuild, uniforms, sceneSlot: slot)
+            dispatch(enc, "regir build", width: grid.buffer.length / MemoryLayout<GPURegirReservoir>.stride, height: 1)
+        }]
+    }
+
+    /// 1b. Light-visibility maps. 2. Ray trace: primary visibility (G-buffer), direct light with shadow rays,
+    /// path-traced indirect light.
+    private func headStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        var stages: [ComputeStage] = []
+        if plan.lightMaps {
+            stages.append(ComputeStage(pass: "lightmap") { [self] enc in
+                bind(enc, .lightMap, uniforms, sceneSlot: slot)
+                enc.setTexture(lightMap, index: 0)
+                enc.dispatchThreads(MTLSize(width: lightMap.width, height: lightMap.height, depth: scene.lights.count),
+                                    threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+            })
+        }
+        stages.append(ComputeStage(pass: "trace") { [self] enc in
+            bind(enc, .trace, uniforms, sceneSlot: slot)
+            setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
+                              t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
+                              t.visibility, t.blocker, t.material])
+            dispatch(enc, "trace", width: size.width, height: size.height)
+        })
+        return stages
+    }
+
+    /// 2b. The GI technique, if one runs: it writes t.indirect (the path tracer already did, inside traceKernel), after
+    /// the trace (its G-buffer) and before the reflections (they read it).
+    private func giStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        if plan.cascades { return radianceCascadeStages(plan, targets: t) }
+        if let grid = plan.restirGIGrid { return restirGIStages(plan, grid: grid, targets: t) }
+        return []
+    }
+
+    /// 2d. Reflections (glTF specular materials): after the GI (they read its result), before the denoisers. The second
+    /// group is their own denoiser.
+    private func reflectionStages(_ plan: FramePlan, targets t: RenderTargets,
+                                  composite: inout CompositeInputs) -> (trace: [ComputeStage], denoise: [ComputeStage]) {
+        guard plan.specular else { return ([], []) }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
+        let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular
+        let trace = [ComputeStage(pass: "reflections") { [self] enc in
+            bind(enc, .reflection, uniforms, sceneSlot: slot)
+            var fp = fogParams
+            enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
+                              fogNoise ?? dummy3D, restirSpecular ?? dummy2D])
+            dispatch(enc, "reflections", width: size.width, height: size.height)
+        }]
+        guard plan.svgf else { return (trace, []) }
+        let d = t.denoise[2]
+        var denoise = [ComputeStage(pass: "reflections") { [self] enc in
+            var inputCount: UInt32 = 1
+            bind(enc, .temporal, uniforms)
+            enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
+            setTextures(enc, [t.specular, t.specular, t.motion, t.normalDepth[cur], t.normalDepth[prev],
+                              d.history, d.moments[prev], d.pingA, d.moments[cur]])
+            dispatch(enc, "temporal", width: size.width, height: size.height)
+        }]
+        for i in 0..<2 {
+            let pass = d.atrousPass(i)
+            denoise.append(ComputeStage(pass: "reflections") { [self] enc in
+                var step = Int32(1 << i)
+                bind(enc, .atrous, uniforms)
+                enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
+                setTextures(enc, [pass.src, t.normalDepth[cur], pass.dst])
+                dispatch(enc, "atrous", width: size.width, height: size.height)
+            })
+        }
+        composite.specular = d.pingB
+        return (trace, denoise)
+    }
+
+    /// 2e. ReSTIR DI: after the trace (its G-buffer), before the reflections (they add its direct specular) and the
+    /// denoiser.
+    private func restirStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        guard let rg = plan.restirGrid else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
+        let r = plan.restirSettings
+        let temporalValid = r.temporal && plan.restirHistory   // (not the denoiser's history: that follows the denoiser)
+        var flags: UInt32 = (temporalValid ? GPURestirParams.temporalValid : 0) | (r.visibilityReuse ? GPURestirParams.visibilityReuse : 0)
+            | (plan.restirSplit ? GPURestirParams.split : 0)
+        let maxM = UInt32(RestirSettings.maxMRange.clamp(r.maxM))
+        let samples = UInt32(RestirSettings.spatialSampleRange.clamp(r.spatialSamples))
+        let radius = RestirSettings.radiusRange.clamp(r.radius) * Float(size.width) / 960
+        let clamp: Float = plan.accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as the mesh-light pass
+        let candidates = RestirSettings.candidateRange.clamp(r.candidates)
+        let params = GPURestirParams(config: SIMD4(UInt32(candidates), maxM, flags, samples),
+                                     tuning: SIMD4(radius, 0, clamp, Float(rg.chains)))
+        // Last frame's lights, for the temporal reuse: what the frame before wrote into its slot (the GPU reads that
+        // buffer for two more frames before the CPU comes back to it). This frame's on a scene's first frame.
+        let previousSlot = (slot + Renderer.maxFramesInFlight - 1) % Renderer.maxFramesInFlight
+        let previousLights = lightBuffers[frameDataWritten[previousSlot] ? previousSlot : slot]
+        var stages = [ComputeStage(pass: "restir") { [self] enc in
+            var p = params
+            bind(enc, .restirTemporal, uniforms, sceneSlot: slot)
+            enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
+            enc.setBuffer(previousLights, offset: 0, index: 10)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.motion, t.normalDepth[prev],
+                              rg.reservoir[prev], rg.temporal])
+            dispatch(enc, "restir temporal", width: size.width, height: size.height)
+        }]
+        let passes = RestirSettings.spatialPassRange.clamp(r.spatialPasses)
+        flags &= ~GPURestirParams.temporalValid
+        for i in 0..<max(passes, 1) {
+            let last = i == max(passes, 1) - 1
+            let src = i == 0 ? rg.temporal : rg.spatial, dst = last ? rg.reservoir[cur] : rg.spatial
+            var p = params
+            p.config.z = flags | (last ? GPURestirParams.shade : 0)
+            p.config.w = passes == 0 ? 0 : samples
+            p.tuning.y = Float(i)
+            stages.append(ComputeStage(pass: "restir") { [self] enc in
+                var p = p
+                bind(enc, .restirSpatial, uniforms, sceneSlot: slot)
+                enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, src, dst, t.direct, rg.specular,
+                                  t.visibility, t.blocker])
+                dispatch(enc, "restir spatial", width: size.width, height: size.height)
+            })
+        }
+        return stages
+    }
+
+    /// 2c. Direct light that is sampled per pixel: one light per group with more than 4 lights (manyLightsKernel), and
+    /// the emissive-mesh lights. After the trace and before anything that reads direct light or visibility.
+    private func sampledLightStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
+        var stages: [ComputeStage] = []
+        if plan.manyLights {
+            let reuse = plan.lightReuse
+            let config = SIMD4<UInt32>(UInt32(settings.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
+                                       plan.lightPicksValid ? 1 : 0, 0)
+            stages.append(ComputeStage(pass: "many lights") { [self] enc in
+                var config = config
+                bind(enc, reuse ? .manyLightsReuse : .manyLights, uniforms, sceneSlot: slot)
+                enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
+                                  t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
+                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
+                dispatch(enc, "many lights", width: size.width, height: size.height)
+            })
+        }
+        if plan.meshLights {
+            let shadowDenoiser = plan.shadowDenoiser
+            stages.append(ComputeStage(pass: "mesh lights") { [self] enc in
+                var addToDirect: UInt32 = shadowDenoiser ? 0 : 1
+                bind(enc, .meshLights, uniforms, sceneSlot: slot)
+                enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
+                dispatch(enc, "mesh lights", width: size.width, height: size.height)
+            })
+        }
+        return stages
+    }
+
+    /// 3b. The shadow denoiser: direct light's per-group visibility through its own temporal and spatial filter.
+    private func shadowDenoiseStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+        guard plan.shadowDenoiser else { return [] }
+        let uniforms = plan.uniforms, cur = plan.cur, prev = plan.prev, size = plan.size
+        let d = settings.denoiser, s = t.shadow
+        let maxHistory = DenoiserSettings.maxHistoryRange.clamp(d.shadowHistory)
+        var stages = [ComputeStage(pass: "shadow temporal") { [self] enc in
+            var params = SIMD4<Float>(maxHistory, d.shadowClamp, d.shadowSigma, 0)
+            bind(enc, .shadowTemporal, uniforms)
+            enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
+            setTextures(enc, [t.visibility, t.blocker, t.motion, t.normalDepth[cur], t.normalDepth[prev], s.history,
+                              s.meta[prev], s.pingA, s.meta[cur], s.penumbra, s.tiles])
+            // Whole 8x8 threadgroups: each one classifies its tile.
+            enc.dispatchThreadgroups(MTLSize(width: (size.width + 7) / 8, height: (size.height + 7) / 8, depth: 1),
+                                     threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+        }]
+        // Pass 0 writes `history`, which feeds next frame's temporal pass (as in SVGF).
+        let chain: [(src: MTLTexture, dst: MTLTexture)] = [(s.pingA, s.history), (s.history, s.pingB), (s.pingB, s.pingA),
+                                                           (s.pingA, s.pingB), (s.pingB, s.pingA)]
+        let passes = DenoiserSettings.passRange.clamp(d.shadowPasses)
+        for (i, pass) in chain.prefix(passes).enumerated() {
+            stages.append(ComputeStage(pass: "shadow filter") { [self] enc in
+                var params = SIMD4<Float>(maxHistory, d.shadowClamp, d.shadowSigma, Float(1 << i))
+                bind(enc, .shadowFilter, uniforms)
+                enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
+                setTextures(enc, [pass.src, t.normalDepth[cur], s.penumbra, s.meta[cur], s.tiles, pass.dst])
+                dispatch(enc, "shadow filter", width: size.width, height: size.height)
+            })
+        }
+        composite.illumination = [chain[passes - 1].dst]
+        composite.uniforms.flags |= UniformFlags.shadowDenoiser | UniformFlags.separateSignals
+        return stages
+    }
+
+    /// Benchmark references: this frame's raw light joins the average, which the composite shows.
+    private func accumulateStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+        guard let accum = plan.accumulation else { return [] }
+        let uniforms = plan.uniforms, size = plan.size, averaged = plan.accumCount
+        composite.illumination = [accum.direct, accum.indirect]
+        composite.specular = accum.specular
+        // Tells the composite pass to read the illumination as separate direct + indirect light.
+        composite.uniforms.flags |= UniformFlags.denoise | UniformFlags.separateSignals
+        return [ComputeStage(pass: "accumulate") { [self] enc in
+            var count = averaged
+            bind(enc, .accumulate, uniforms)
+            enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 1)
+            setTextures(enc, [t.direct, t.indirect, accum.direct, accum.indirect, t.specular, accum.specular])
+            dispatch(enc, "accumulate", width: size.width, height: size.height)
+        }]
+    }
+
+    /// A signal SVGF filters: its noisy input (two are summed), its history and ping-pong textures, how many a-trous
+    /// passes it gets and the uniforms that carry its filter settings.
+    private struct DenoiseSignal {
+        let noisy: [MTLTexture]
+        let targets: DenoiseTargets
+        let passes: Int
+        let uniforms: Uniforms
+    }
+
+    /// The signals SVGF filters this frame, in the order the composite's illumination lists them.
+    private func denoiseSignals(_ plan: FramePlan, targets t: RenderTargets) -> [DenoiseSignal] {
+        // ReSTIR's direct light: its own edge-stopping, and its variance scaled up (reused samples are correlated).
+        var restirUniforms = plan.uniforms
+        restirUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(settings.restir.denoiseSigma)
+        restirUniforms.denoise.w = max(settings.restir.varianceBoost, 1)
+        restirUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(settings.restir.denoiseHistory)
+        // ReSTIR GI's indirect light: the same, with its own settings.
+        let rgi = settings.restirGI
+        var restirGIUniforms = plan.uniforms
+        restirGIUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(rgi.denoiseSigma)
+        restirGIUniforms.denoise.w = max(rgi.varianceBoost, 1)
+        restirGIUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(rgi.denoiseHistory)
+        restirGIUniforms.denoise.z = DenoiserSettings.antiLagRange.clamp(rgi.antiLag)
+        func signal(_ noisy: [MTLTexture], _ d: DenoiseTargets, _ passes: Int) -> DenoiseSignal {
+            let restirs = plan.restir && d === (plan.restirSplit ? t.denoise[3] : t.denoise[0])
+            let uniforms = plan.restirGI && d === t.denoise[1] ? restirGIUniforms : restirs ? restirUniforms : plan.uniforms
+            return DenoiseSignal(noisy: noisy, targets: d, passes: passes, uniforms: uniforms)
+        }
+        var signals: [DenoiseSignal] = []
+        // First, so the indirect light stays last: ReSTIR's unshadowed light (no edges to keep), or the mesh lights'.
+        if plan.restirSplit { signals.append(signal([t.direct], t.denoise[3], plan.directPasses)) }
+        if plan.denoiseMeshLights { signals.append(signal([t.meshDirect], t.denoise[3], settings.denoiser.passes(for: .pathTraced))) }
+        if !plan.shadowDenoiser {
+            signals.append(signal(plan.separate ? [t.direct] : [t.direct, t.indirect], t.denoise[0], plan.directPasses))
+        }
+        if plan.separate && plan.denoiseIndirect { signals.append(signal([t.indirect], t.denoise[1], plan.indirectPasses)) }
+        return signals
+    }
+
+    /// 3. SVGF: one temporal pass and up to five a-trous passes over every signal.
+    private func svgfStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+        guard plan.svgf else { return [] }
+        let signals = denoiseSignals(plan, targets: t)
+        guard !signals.isEmpty else { return [] }
+        let cur = plan.cur, prev = plan.prev, size = plan.size
+        var stages = [ComputeStage(pass: "temporal") { [self] enc in
+            for s in signals {
+                let d = s.targets
+                var inputCount = UInt32(s.noisy.count)
+                bind(enc, .temporal, s.uniforms)
+                enc.setBytes(&inputCount, length: MemoryLayout<UInt32>.stride, index: 1)
+                setTextures(enc, [s.noisy[0], s.noisy.last!, t.motion, t.normalDepth[cur], t.normalDepth[prev],
+                                  d.history, d.moments[prev], d.pingA, d.moments[cur]])
+                dispatch(enc, "temporal", width: size.width, height: size.height)
+            }
+        }]
+        for i in 0..<(signals.map(\.passes).max() ?? 0) {
+            stages.append(ComputeStage(pass: "atrous") { [self] enc in
+                var step = Int32(1 << i)
+                for s in signals where i < s.passes {
+                    let pass = s.targets.atrousPass(i)
+                    bind(enc, .atrous, s.uniforms)
+                    enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 1)
+                    setTextures(enc, [pass.src, t.normalDepth[cur], pass.dst])
+                    dispatch(enc, "atrous", width: size.width, height: size.height)
+                }
+            })
+        }
+        composite.illumination = (plan.shadowDenoiser ? composite.illumination : [])
+            + signals.map { $0.targets.atrousPass($0.passes - 1).dst }
+        if plan.denoiseMeshLights {
+            composite.meshDirect = composite.illumination[1]
+            composite.uniforms.flags |= UniformFlags.meshLights
+        }
+        if plan.restirSplit { composite.meshDirect = composite.illumination[1] }
+        if plan.separate { composite.uniforms.flags |= UniformFlags.separateSignals }
+        return stages
+    }
+
+    /// 3d. Volumetric fog: light the froxel grid in front of the surfaces and integrate it (or, for references, march
+    /// every camera ray). It needs the TLAS, the lights and the G-buffer's depth.
+    private func fogStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+        guard let (g, noise) = plan.fog else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
+        let fogParams = plan.fogParams, samples = plan.fogSamples
+        if let ref = plan.fogReference {
+            composite.fogReference = ref
+            composite.uniforms.flags |= UniformFlags.fog | UniformFlags.fogReference
+            return [ComputeStage(pass: "fog") { [self] enc in
+                var fp = fogParams, count = samples
+                bind(enc, .fogReference, uniforms, sceneSlot: slot)
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                enc.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 10)
+                setTextures(enc, [noise, t.normalDepth[cur], ref])
+                dispatch(enc, "fog reference", width: size.width, height: size.height)
+            }]
+        }
+        composite.uniforms.flags |= UniformFlags.fog
+        return [
+            ComputeStage(pass: "fog") { [self] enc in
+                var fp = fogParams
+                bind(enc, .fogInject, uniforms, sceneSlot: slot)
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                setTextures(enc, [blueNoiseTexture, noise, g.scatter[prev], g.scatter[cur], t.normalDepth[cur]])
+                enc.dispatchThreads(MTLSize(width: g.columns, height: g.rows, depth: g.slices),
+                                    threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+            },
+            ComputeStage(pass: "fog") { [self] enc in
+                var fp = fogParams
+                bind(enc, .fogIntegrate, uniforms)
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                setTextures(enc, [g.scatter[cur], g.integrated])
+                dispatch(enc, "fog integrate", width: g.columns, height: g.rows)
+            },
+        ]
     }
 
     // MARK: - GI techniques
@@ -2173,37 +2296,33 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
 
     /// ReSTIR GI's stages for this frame: initial paths, temporal reuse, spatial reuse (the last pass writes t.indirect).
-    private func restirGIStages(grid g: RestirGITargets, uniforms: Uniforms, targets t: RenderTargets, slot: Int) -> [ComputeStage] {
-        let cur = Int(frameIndex & 1), prev = cur ^ 1
+    private func restirGIStages(_ plan: FramePlan, grid g: RestirGITargets, targets t: RenderTargets) -> [ComputeStage] {
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev
         let r = settings.restirGI
         let width = t.width, height = t.height
-        let lightMaps = usesLightMaps && r.lightMaps
+        let lightMaps = plan.lightMaps && r.lightMaps
         // Multi-bounce feedback: last frame's indirect light, denoised (still in the denoiser's ping-pong textures until
         // this frame's denoiser runs) or raw (kept by the last spatial pass).
-        let denoised = t.denoise[1]
-        let denoisedFeedback = [denoised.history, denoised.pingB, denoised.pingA, denoised.pingB, denoised.pingA][
-            DenoiserSettings.passRange.clamp(r.denoisePasses) - 1]
-        let useDenoised = r.denoisedFeedback && r.denoise && settings.denoiser.enabled && !accumulating
+        let denoisedFeedback = t.denoise[1].atrousPass(DenoiserSettings.passRange.clamp(r.denoisePasses) - 1).dst
+        let useDenoised = r.denoisedFeedback && r.denoise && plan.svgf
         let feedbackSource = useDenoised ? denoisedFeedback : g.feedback[prev]
-        let feedback = r.feedback && restirGIWritten && (historyValid || !useDenoised)
-        var flags: UInt32 = (r.temporal && restirGIWritten ? GPURestirGIParams.temporalValid : 0)
+        let feedback = r.feedback && plan.restirGIHistory && (plan.history || !useDenoised)
+        var flags: UInt32 = (r.temporal && plan.restirGIHistory ? GPURestirGIParams.temporalValid : 0)
             | (lightMaps ? GPURestirGIParams.lightMaps : 0) | (feedback ? GPURestirGIParams.feedback : 0)
             | (r.unbiased ? GPURestirGIParams.unbiased : 0) | (r.feedback && !useDenoised ? GPURestirGIParams.keepFeedback : 0)
             | (r.feedback && r.feedbackFallback ? GPURestirGIParams.fallback : 0)
         let maxM = UInt32(RestirGISettings.maxMRange.clamp(r.maxM))
         let samples = UInt32(RestirGISettings.spatialSampleRange.clamp(r.spatialSamples))
         let radius = RestirGISettings.radiusRange.clamp(r.radius) * Float(width) / 960
-        let clamp: Float = accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as ReSTIR DI
+        let clamp: Float = plan.accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as ReSTIR DI
         let params = GPURestirGIParams(config: SIMD4(flags, maxM, samples, 0),
                                        tuning: SIMD4(radius, max(r.minDistance, 0), clamp, 0),
                                        extra: SIMD4(r.quarterBudget ? 1 : 0, UInt32(RenderSettings.bounceRange.clamp(r.bounces)),
                                                     UInt32(RestirGISettings.maxAgeRange.clamp(r.maxAge)), 0))
         var stages: [ComputeStage] = []
         stages.append(ComputeStage(pass: "restir gi initial") { [self] enc in
-            var u = uniforms, p = params
-            enc.setComputePipelineState(restirGIInitialPSO)
-            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-            bindScene(enc, slot: slot)
+            var p = params
+            bind(enc, .restirGIInitial, uniforms, sceneSlot: slot)
             enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, lightMap, t.normalDepth[prev],
                               feedbackSource, g.spatial.a, g.spatial.b])
@@ -2212,9 +2331,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             else { dispatch(enc, "restir gi initial", width: width, height: height) }
         })
         stages.append(ComputeStage(pass: "restir gi temporal") { [self] enc in
-            var u = uniforms, p = params
-            enc.setComputePipelineState(restirGITemporalPSO)
-            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            var p = params
+            bind(enc, .restirGITemporal, uniforms)
             enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.motion, t.normalDepth[prev], g.spatial.a, g.spatial.b,
                               g.reservoir[prev].a, g.reservoir[prev].b, g.temporal.a, g.temporal.b])
@@ -2231,10 +2349,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.config.z = passes == 0 ? 0 : samples
             p.config.w = UInt32(i)
             stages.append(ComputeStage(pass: "restir gi spatial") { [self] enc in
-                var u = uniforms, p = p
-                enc.setComputePipelineState(restirGISpatialPSO)
-                enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-                bindScene(enc, slot: slot)
+                var p = p
+                bind(enc, .restirGISpatial, uniforms, sceneSlot: slot)
                 enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, src.a, src.b, dst.a, dst.b, t.indirect, t.giDebug,
                                   g.feedback[cur]])
@@ -2246,8 +2362,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
 
     /// Radiance-cascade stages for this frame (they write t.indirect and t.giDebug); empty if allocation failed.
-    private func radianceCascadeStages(uniforms: Uniforms, targets t: RenderTargets, slot: Int) -> [ComputeStage] {
-        let cur = Int(frameIndex & 1), prev = cur ^ 1
+    private func radianceCascadeStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        let slot = plan.slot
         if radianceCascades == nil || radianceCascades!.width != t.width || radianceCascades!.height != t.height
             || radianceCascades!.settings != settings.cascades {
             do {
@@ -2258,9 +2374,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 return []
             }
         }
-        return radianceCascades!.stages(pipelines: rcPipelines, uniforms: uniforms,
+        return radianceCascades!.stages(pipelines: pipelines.rc, uniforms: plan.uniforms,
                                         bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
-                                        normalDepth: t.normalDepth[cur], prevNormalDepth: t.normalDepth[prev], targets: t)
+                                        normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)
     }
 
     /// Drops all temporal GI state (cascade feedback, denoiser history).
@@ -2494,31 +2610,50 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         passTimeFrames += 1
     }
 
-    /// Recompiles Shaders.metal and remakes every pipeline (R key, traversal counters). On failure the old pipelines stay.
-    @discardableResult
-    func reloadShaders() -> Bool {
-        do {
-            try loadShaders(for: builtRayTracer, lightTypes: builtLightTypes, recompile: true)
-            resetGIState()
-            upscalerReset = true
-            return true
-        } catch {
-            print("Shader reload failed (keeping previous version):\n\(error)")
-            return false
+    /// Recompiles Shaders.metal and remakes every pipeline (R key, traversal counters), in the background: frames keep
+    /// the old pipelines until the new set is ready, and for good if the compile fails. `done` gets the outcome (main thread).
+    func reloadShaders(then done: ((Bool) -> Void)? = nil) {
+        let device = device, url = shaderURL, kind = pipelines.kind, lightTypes = pipelines.lightTypes
+        let stats = CustomRayTracer.statsEnabled
+        shaderQueue.async { [weak self] in
+            let result = Result { try Pipelines(device: device, source: url, kind: kind, lightTypes: lightTypes, stats: stats) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let made):
+                    // A scene with another tracer or other light types came in meanwhile: compile again, for that one.
+                    guard made.kind == self.pipelines.kind, made.lightTypes == self.pipelines.lightTypes else {
+                        return self.reloadShaders(then: done)
+                    }
+                    self.pipelines = made
+                    self.shaderGeneration += 1
+                    self.customRT?.pipelines = made.rt
+                    self.resetGIState()
+                    self.upscalerReset = true
+                    done?(true)
+                case .failure(let error):
+                    print("Shader reload failed (keeping previous version):\n\(error)")
+                    done?(false)
+                }
+            }
         }
     }
+    private let shaderQueue = DispatchQueue(label: "MetalRenderer.shaders", qos: .userInitiated)   // reloads, one at a time
 
-    /// The custom tracer's traversal counters (RT_STATS): turning them on or off recompiles the shaders.
-    var traversalCounters: Bool {
-        get { CustomRayTracer.statsEnabled }
-        set {
-            guard newValue != CustomRayTracer.statsEnabled else { return }
-            CustomRayTracer.statsEnabled = newValue
-            if !reloadShaders() { CustomRayTracer.statsEnabled = !newValue }
-            traversalLast = nil
-            traversal = nil
-            traversalSum = TraversalStats()
-            traversalFrames = 0
+    /// The custom tracer's traversal counters (RT_STATS).
+    var traversalCounters: Bool { CustomRayTracer.statsEnabled }
+
+    /// Turns the traversal counters on or off: that recompiles the shaders (in the background, `done` when ready).
+    func setTraversalCounters(_ on: Bool, then done: (() -> Void)? = nil) {
+        guard on != CustomRayTracer.statsEnabled else { done?(); return }
+        CustomRayTracer.statsEnabled = on
+        reloadShaders { [weak self] ok in
+            if !ok { CustomRayTracer.statsEnabled = !on }
+            self?.traversalLast = nil
+            self?.traversal = nil
+            self?.traversalSum = TraversalStats()
+            self?.traversalFrames = 0
+            done?()
         }
     }
 
@@ -2620,7 +2755,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             guard upscaleSupported else { print("MetalFX temporal upscaling is not supported on this GPU"); break }
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
-        case "r": if reloadShaders() { print("Shaders reloaded") }
+        case "r": reloadShaders { if $0 { print("Shaders reloaded") } }
         default: break
         }
     }

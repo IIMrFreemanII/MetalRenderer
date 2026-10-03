@@ -1,7 +1,7 @@
 # Measuring MetalRenderer
 
 Everything runs from the repo root with a release build. The binary loads `Shaders.metal` from the source folder it
-was built from (`#filePath`, Renderer.swift:242).
+was built from (`#filePath`, `Renderer.shaderURL`).
 
 ```bash
 swift build -c release
@@ -29,6 +29,8 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 * `cpu` (the last column) is the CPU's own work per frame in `draw` (animation, uploads, encoding), without its waits
   for a frame slot and the drawable. Judge per-frame CPU changes by it: the frame interval is GPU-bound and hides them.
   The Debug window shows the same number as "encode".
+  Read it in split mode. With `METALRENDERER_BENCH_SPLIT=0` a whole run lands at either 1× or 2× the value, for the
+  same binary, so an A/B of `cpu` there needs five rounds or more to mean anything.
 * **Split mode** (the default) runs each pass in its own command buffer, so the frame is serialized and there's no
   overlap.
 * **`METALRENDERER_BENCH_SPLIT=0`** encodes frames exactly as the app does, with one command buffer. It reports only

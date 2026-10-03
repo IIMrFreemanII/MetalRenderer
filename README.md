@@ -191,7 +191,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (cascades: probe grid over interpolation confidence) |
 | 9, 0 | Cycle the geometry debug views (see below); back to the final image |
 | L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
-| R | Hot-reload `Shaders.metal` |
+| R | Hot-reload `Shaders.metal`. It compiles in the background: the view keeps drawing with the old shaders until the new ones are ready, and keeps them if the compile fails |
 | ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera, or an HDR sky (`.hdr` / `.exr`) |
 | Tab, ⌘, | Show or hide the Render Settings panel |
 | I, ⌘I | Show or hide the Debug window |
@@ -219,7 +219,7 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 * **Virtual geometry** (scenes with glTF models, custom tracer). With per-instance BLAS (the default): the meshes, the triangles traced this frame against the finest level's count (the cut's share), the clusters in the cut, the BLAS memory, the rebuilds (total and per second: each happens when an instance's cut changes, on a background thread) the last one's time, the last background SAH refinement, the last cut's time and how many instances it skipped as unchanged, the pixel error, and whether the LOD is frozen. With `METALRENDERER_VG_MODE=clusters`: clusters drawn against the 65,536 capacity (red when reached), groups resident in the streaming pool, the pool's use, requests waiting and groups loaded this frame. A popup switches between the final image and the geometry debug views, next to Freeze LOD.
 * **Texture streaming:** resident megabytes against the budget, mip levels mapped, and megabytes uploaded since launch.
 * **Memory:** what the GPU has allocated, and the working-set limit.
-* **Ray traversal** (custom tracer): turning the counters on recompiles the shaders with `RT_STATS` (a few seconds, as with R); tracing is slower while they're on. Then: rays per frame, and per ray the top-level and bottom-level nodes visited, instance and cluster entries, and triangle tests. They match what a benchmark with `METALRENDERER_RT_STATS=1` prints for the same view. The window reads the GPU's counters every frame and shows the increase, since a reset from the CPU doesn't stick while frames are in flight.
+* **Ray traversal** (custom tracer): turning the counters on recompiles the shaders with `RT_STATS` (a few seconds in the background, as with R); tracing is slower while they're on. Then: rays per frame, and per ray the top-level and bottom-level nodes visited, instance and cluster entries, and triangle tests. They match what a benchmark with `METALRENDERER_RT_STATS=1` prints for the same view. The window reads the GPU's counters every frame and shows the increase, since a reset from the CPU doesn't stick while frames are in flight.
 
 ### Scene settings
 
@@ -228,7 +228,7 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's fog and sky defaults (and resets the GI method to radiance cascades). Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 the bulbs also shrink. Night market: festoon bulbs, 4096 by default. |
-| Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees (about a second the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
+| Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees in the background, while the view keeps drawing with the old tracer (2 to 4 seconds the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
 | Virtual geometry | On | Custom ray tracer only: big glTF meshes as streamed level-of-detail cuts. Off: full-detail meshes. |
 | Geometry error | 1 px | The cut's allowed geometric error in traced pixels. 0.5 px: about 2× the triangles, closer to full detail; 2 px: half. Changes apply within a few frames. |
 | Freeze LOD | Off | Keeps the cut chosen for the camera position at the moment it was turned on (title: "LOD frozen"). Fly up to a model to see the coarse geometry it gets from far away; turn it off and it refines within a few frames. |
@@ -616,7 +616,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 
 | File | What it holds |
 |---|---|
-| `Renderer.swift` | Metal setup, per-frame encoding, input; Metal's acceleration structures when that tracer is selected |
+| `Renderer.swift` | Metal setup, scene loading, the frame (its plan, its stages, their encoding), input; Metal's acceleration structures when that tracer is selected |
+| `Pipelines.swift` | The shader compile and every compute pipeline as one set, built in parallel off the main thread |
 | `BVH.swift` | The custom ray tracer's node format and CPU builder (binned SAH) for bottom-level and static top-level trees |
 | `CustomRayTracer.swift` | The custom ray tracer's buffers, the per-frame GPU build of the moving objects' tree, its argument buffer |
 | `Settings.swift` | Every user-adjustable setting, with defaults and ranges |

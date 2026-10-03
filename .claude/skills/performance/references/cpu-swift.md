@@ -3,12 +3,29 @@
 Always measure release builds (`swift build -c release`). Debug Swift is 10–100× slower in hot loops and tells you
 nothing.
 
-## 1. The frame loop (`Renderer.draw` → `encodeFrame`)
+## 1. The frame loop (`Renderer.draw`)
+
+`draw` is an outline; each step is its own function, in this order:
+
+| Step | Function | What it may touch |
+|---|---|---|
+| Size, targets, upscalers | `frameSize`, `renderTargets`, `prepareUpscalers` | allocates on a size change only |
+| CPU work | `simulate`, `detailView`, `writeFrameData` | the scene, the slot's buffers |
+| Plan | `planFrame` → `FramePlan` | reads settings, scene and last frame's flags once; allocates lazily made targets |
+| Stages | `headStages`, `giStages`, `restirStages`, `svgfStages`, `fogStages`, … | read the plan only; fill `CompositeInputs` |
+| Encoding | `encode`, `encodeOutput`, `commit` | `FramePasses` owns the command buffers and the open encoder |
+| History | `finishFrame` | the only place that sets what the next frame reuses |
+
+* **A new pass is a stage builder.** It takes the `FramePlan`, returns `[ComputeStage]` and joins a group in
+  `FrameStages`. Add what it needs to know to the plan (`planFrame`); don't read `settings`-derived modes
+  (`activeGIMode`, `activeDirectMode`) or "written last frame" flags inside it.
+* **State for the next frame is set in `finishFrame`,** from the plan. A flag set while stages are being built is
+  read by a later stage of the same frame as if it were last frame's.
 
 * **Never wait on the GPU.**
   * `frameSemaphore` (3 slots, `Renderer.maxFramesInFlight`) is the only throttle.
   * `waitUntilCompleted` belongs to setup, acceleration-structure builds, scene swaps (which drain all slots first,
-    Renderer.swift ~714) and benchmarks.
+    `Renderer.install`) and benchmarks.
 * **No allocations per frame.**
   * Don't create `MTLBuffer`/`MTLTexture` objects in `draw`. Size them once and recreate only when the size or scene
     changes.

@@ -5,9 +5,9 @@ memory, and counters that can be sampled only at encoder boundaries. M1/M2 have 
 intersector is software and the project's own BVH (`CUSTOM_RT`) can beat it. On M3 and later, re-check with
 `METALRENDERER_BENCH=rt`.
 
-The shaders are compiled at runtime from `Sources/MetalRenderer/Shaders.metal` (MSL 3.2, Renderer.swift:495), so
-press **R** in the app to hot-reload them. All pipelines are built before the swap, so a failed reload keeps the old
-ones. Keep it that way.
+The shaders are compiled at runtime from `Sources/MetalRenderer/Shaders.metal` (MSL 3.2, `Pipelines.compile`), so
+press **R** in the app to hot-reload them. The whole set of pipelines is built in the background before the swap, so
+frames keep flowing during a compile and a failed reload keeps the old ones. Keep it that way.
 
 ## 1. Frame structure and submission
 
@@ -22,7 +22,7 @@ ones. Keep it that way.
   a race, not just a slowdown.
 * **Small constants go through `setBytes`** (`Uniforms`, denoise uniforms): under 4 KB and no buffer to manage.
 * **Bind resources the GPU reaches indirectly** (argument tables, TLAS → BLAS) with one batched `useResources(_:usage:)`
-  or `useHeap` per encoder (Renderer.swift ~2014–2027), not one call per resource.
+  or `useHeap` per encoder (`Renderer.bindScene`), not one call per resource.
 
 ## 2. Memory bandwidth: the default suspect for screen-space passes
 
@@ -67,10 +67,10 @@ fewer threads run at once and memory latency stops being hidden.
   Trust only alternating A/B rounds of the pass's own column (`ab.sh -c "<pass>"`).
 * **Compile out what's off.** Copy these patterns:
   * function constants: `lightTypesConstant` / `LIGHT_SPEC` (Shaders.metal:137) strips unused light types per scene;
-  * preprocessor macros: `CUSTOM_RT`, `RT_STATS` (Renderer.swift:499).
+  * preprocessor macros: `CUSTOM_RT`, `RT_STATS` (`Pipelines.compile`).
 
   A runtime `if (feature)` on a uniform is cheap for divergence, but it still reserves registers for both paths.
-* **Threadgroup size.** `Renderer.threadgroupSizes` (Renderer.swift:2283). The defaults are 8×8, `trace` 16×8 (+2%)
+* **Threadgroup size.** `Renderer.threadgroupSizes`. The defaults are 8×8, `trace` 16×8 (+2%)
   and `atrous` 16×16 (+5%). Sweep with `METALRENDERER_TG="trace=32x4,atrous=8x8"` and keep winners only if they hold
   across alternating runs.
 * Use `half` where the range allows: denoiser weights, colours in filters, G-buffer normals. It halves register and
@@ -132,8 +132,16 @@ fewer threads run at once and memory latency stops being hidden.
 
 ## 8. Pipelines and resources
 
-* Compile pipelines off the frame path, and build all of them before swapping (Renderer.swift ~490–520). Cache the
-  library by key (`shaderLibrary`, `kind`).
+* Compile off the frame path and off the main thread. `Pipelines` (Pipelines.swift) is the whole set as one value:
+  a scene load (`prepareScene`) or a hot reload (`reloadShaders`) builds the next set on a background queue, all
+  kernels in parallel, and the renderer swaps it in between two frames. A new kernel is one `Kernel` case named
+  after its function (`trace` ↔ `traceKernel`).
+* The set is keyed by tracer and light types (`Pipelines.kind`, `.lightTypes`). Its library is reused when only the
+  light types change.
+* Metal caches compiled pipelines on disk, shared by every build of the app: a warm build of all 47 takes 2–6 ms.
+  Cold, the source compile takes 1.9 s and the pipelines 0.5–0.7 s in parallel (0.9–1.2 s one by one: the compiler
+  service gives less than 2× for 47 at once). To measure a compile change, edit a constant in a scratch copy of the
+  shader so it misses the cache, with a different edit for each side of the A/B.
 * Use private storage for GPU-only buffers and textures (scratch, intermediate targets), and shared storage for
   CPU-written data. There is no managed storage on Apple silicon.
 * Untracked hazard tracking with explicit fences can remove driver overhead, but it's unused here and easy to get
