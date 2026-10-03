@@ -137,6 +137,7 @@ For the lights:
 * `emissivelights=0`, added to `METALRENDERER_SCENE` or set as `METALRENDERER_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
 * `METALRENDERER_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
 * `METALRENDERER_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALRENDERER_LIGHTS_SCENES="sun|mixed"` picks scenes.
+* `METALRENDERER_BENCH=speccheck` checks that direct specular light is counted once. It renders the studio, the stage and the garage with direct light only through each direct-light path (shadow denoiser, SVGF, ReSTIR) and against an accumulated reference; `Tools/eval/specular.py` prints each image's brightness over the reference's, which should be 1.00.
 * `METALRENDERER_BENCH=lightcheck` cross-checks the closed-form area lights. A rect, a tube and a sphere light are each rendered over a floor next to an emissive-mesh twin of the same shape and radiance, converged over 1024 frames. The mesh estimator is unbiased, so the pairs should match:
   * the sphere matches its twin within 0.1%;
   * the rect within 1%;
@@ -394,7 +395,7 @@ Quality (640×400, against the 8-bounce path-traced references; `METALRENDERER_B
 | **ReSTIR GI** | 21.5 | **36.4 dB** | **38.2 dB** | **34.5 dB** | 1.02 | **35.8 dB** | **35.6 dB** | 0.71 |
 | ReSTIR GI, quarter budget | 12.4 | 35.6 dB | 37.3 dB | 33.3 dB | 1.02 | 28.6 dB | 27.1 dB | **0.60** |
 
-* **Gallery close-up** (PBR, full detail): 32.4 dB, against 31.1 dB path traced and 30.7 dB with cascades.
+* **Gallery close-up** (PBR, full detail): 33.5 dB, against 31.6 dB path traced and 30.8 dB with cascades.
 * **Night market** (4096 bulbs, fog off, against an 8-bounce reference rendered for this test): 30.4 dB, against 30.0 dB path traced and 29.5 dB with cascades. Whole frame: 27.6 ms, against 26.8 and 18.7 ms (with the scene's fog).
 * **Why it isn't the default:** it costs 2–3× as much as radiance cascades (8.4 vs 2.9 ms in the Cornell room). The paths cost what the path tracer's do: 5.2 ms at 640×400 in the Cornell room and 12 ms in the stress hall.
 * **The quarter budget** is 1.7× cheaper and nearly as good on still frames (−0.4 to −0.8 dB), but a pixel that loses its history (disocclusion, camera moves) waits up to 4 frames for a fresh path: −5 to −15 dB in motion. So it's off by default.
@@ -784,6 +785,15 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
 
   * What didn't help: variants for flags that only guard a texture read or a clamp. ReSTIR GI's spatial pass, the cascades' trace and the mesh-light pass measured 0–1%, so they have none. A compiled-in bounce count for the path tracer measured the same as the uniform's.
   * The variants render what the general pipelines render: with `METALRENDERER_MATH=safe` (no reordering of arithmetic) all 225 images of ten benchmark suites match bit for bit with variants on and off (`stressq`, `restirq`, `restircheck`, `restirgicheck`, `marketq`, `gi`, `quality`, `lightcheck`, `fogcheck`, `skycheck`), and the general pipelines render exactly what the code before this change rendered (87 images of `stressq` and `gi`). Under the default fast math the two differ by rounding: at most 1 of 255 levels on most images, RMS about 0.005, plus a few pixels where a stochastic pick flipped.
+* **Direct specular was counted twice with the shadow denoiser** (fixed October 2026). With the shadow denoiser, the composite adds the analytic lights' direct specular (exact GGX × the denoised visibility), and the reflection pass is meant to leave it out. But only the composite's uniforms carried the shadow-denoiser flag, so the reflection pass kept adding its own sample of the same light: highlights of lights on glossy surfaces came out too bright, and the pass cast a shadow ray per pixel for it. The flag now reaches every kernel of the frame. `METALRENDERER_BENCH=speccheck` (direct light only, against an accumulated reference, `Tools/eval/specular.py`):
+
+  | Shadow denoiser path | Brightness / reference | PSNR |
+  |---|---|---|
+  | Studio (area lights) | 1.04 → **1.00** | 39.2 → **50.8 dB** |
+  | Stage (spot lights) | 1.02 → **1.00** | 43.9 → **46.8 dB** |
+  | Garage (tube lights) | 1.05 → **1.00** | 38.9 → **49.9 dB** |
+
+  The gallery close-up gains 0.1 dB with cascades, 0.5 dB path traced and 1.1 dB with ReSTIR GI. Without the extra ray the reflection pass is 11–33% faster where lights are analytic: whole frames 10.08 → 9.28 ms in the Misty hall (fog off, 960×600), 6.83 → 6.01 ms in the garage and 3.93 → 3.75 ms on the stage (3× upscaled, fog), measured after the variants table above. ReSTIR and SVGF direct light were not affected, and scenes without specular materials render bit for bit as before. The check also shows the SVGF path 2–6% dark; that is not fixed here.
 * **Custom ray tracing vs Metal's** (M1 Max, stress scene, 32 lights, moving, custom upscaler 3× from 640×400).
   * Whole frames (`METALRENDERER_BENCH_SPLIT=0`, two alternating runs each):
 
@@ -829,7 +839,7 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     | Camera fly-through (3× upscaled) | 16.63 | 17.54 | — |
 
     About the same speed, at 3–4% of the memory. The cut updates in the background in 30–150 ms when it changes (the fly-through rebuilt 900 instance BLASes). Quality: the cut is crack-free and looks the same. Against path-traced references it scores 29.7 dB at 1 px, 31.5 dB at 0.5 px and 35.0 dB at full detail on the overview; the single sample per pixel makes texture detail alias, so sub-pixel geometry changes cost dB there (blurred 4×4, VG 1 px and full detail agree to 41 dB).
-  * PBR against the path-traced references (close-up, full detail): 30.7 dB with cascades, 31.1 dB path traced. Average colour per region matches within 0.5% on the glossy floor, 1–3% on the steel plinths, about 5% on the bronze owl. The reflection pass costs 0.4 ms on a still frame and 0.6–1.0 ms in motion.
+  * PBR against the path-traced references (close-up, full detail): 30.8 dB with cascades, 31.6 dB path traced. Average colour per region matches within 0.5% on the glossy floor, 1–3% on the steel plinths, about 5% on the bronze owl. The reflection pass costs 0.4 ms on a still frame and 0.6–1.0 ms in motion.
   * Texture streaming: 14 MB resident from the overview and 46–65 MB close up, against 2.6 GB for all levels (or 711 MB capped at 2048). Images match fully resident 4K textures at 56–77 dB. Uploads are capped at 48 MB per frame.
   * What mattered:
     * **One SAH tree per model over the cut, not a tree of clusters.** The first runtime selected the cut on the GPU, streamed cluster groups into a 768 MB pool (buddy allocator, LRU, Nanite's residency rules) and built a per-frame LBVH over the selected clusters, each with its own little BVH. It works (`METALRENDERER_VG_MODE=clusters`) but traces 2× slower than full detail. Rays visit 8.6 nodes per ray inside models instead of 3.8, because cluster boxes overlap. Splitting the tree per instance to drop the per-cluster transform changed nothing, and an offline SAH over the same clusters would only save 15%.

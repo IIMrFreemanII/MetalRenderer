@@ -63,6 +63,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `stressq` | `Tools/eval/stress.py` |
 | `restirq`, `restircheck` | `Tools/eval/restir.py` |
 | `restirgicheck` | `Tools/eval/restirgi.py` (mean brightness ratios should be 1.00) |
+| `speccheck` | `Tools/eval/specular.py` (direct light with specular materials; mean should be 1.00) |
 | `gi` | `Tools/eval/gi.py` |
 | `shadow` | `Tools/eval/shadow.py` |
 | `upscale` | `Tools/eval/upscale.py` |

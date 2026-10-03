@@ -10,7 +10,7 @@ extension Benchmark {
         "lights": lights, "fog": fog, "sky": sky,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
         "noise": noise, "denoise": denoise, "quality": quality,
-        "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "fogcheck": fogcheck,
+        "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug,
     ]
 
@@ -480,6 +480,23 @@ extension Benchmark {
             var scene = SceneSettings()
             scene.lightCheck = variant
             return Config("check \(variant)", gi: nil, scene: scene).reference(frames: 1024)
+        }
+    }
+
+    /// Direct specular light is counted once: the glossy light scenes with direct light only (so the reflections see lit
+    /// surfaces and nothing else), each direct-light path against the accumulated reference (Tools/eval/specular.py).
+    /// The shadow denoiser adds direct specular in the composite, SVGF and references in the reflection pass, ReSTIR
+    /// from its reservoirs. No tone curve and 2 stops down, so highlights compare linearly instead of clipping.
+    private static func speccheck() -> [Config] {
+        picked([.area, .spots, .tubes]).flatMap { kind -> [Config] in
+            let base = Config("", gi: nil, scene: SceneSettings(kind: kind)) { $0.toneMap = .none; $0.exposure = -2 }
+                .sky { $0 = SkySettings() }
+            let still = base.still().frames(60)
+            return references([base.named("\(kind) ref").reference(frames: 1024)]) + [
+                still.named("\(kind) shadow denoiser"),
+                still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },
+                still.named("\(kind) restir").direct(.restir),
+            ]
         }
     }
 

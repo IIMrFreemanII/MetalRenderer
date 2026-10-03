@@ -1544,6 +1544,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         //   light through SVGF, and the composite multiplies them.
         p.restirSplit = p.restir && shadowDenoiserOn && settings.restir.splitVisibility
         p.shadowDenoiser = shadowDenoiserOn && (!p.restir || p.restirSplit)
+        //   Every kernel of the frame is told, not only the composite: with the shadow denoiser the composite adds the
+        //   analytic lights' direct specular (exact GGX x visibility), so the reflection pass must not add its own sample.
+        if p.shadowDenoiser { p.uniforms.flags |= UniformFlags.shadowDenoiser }
         p.separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled || p.shadowDenoiser
         let passCount = settings.denoiser.passes(for: p.giMode)
         p.directPasses = p.restir ? DenoiserSettings.passRange.clamp(settings.restir.denoisePasses) : passCount
