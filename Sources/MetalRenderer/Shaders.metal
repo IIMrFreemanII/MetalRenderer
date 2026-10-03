@@ -192,6 +192,22 @@ constant uint FLAG_FOG           = 4096; // the composite applies the volumetric
 constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference march instead of the froxel grid
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
 constant uint FLAG_RESTIR        = 32768; // direct light from ReSTIR DI (restirTemporalKernel, restirSpatialKernel)
+// Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
+// big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
+// its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
+// 3 and 4 the same for the kernel's own flags (RESTIR_*, RGI_*, TRACE_*, REFLECT_FOG). A bit outside the mask, and
+// every bit of a pipeline made without the constants, is read from the uniform as before.
+constant uint fixedFlagsConstant    [[function_constant(1)]];
+constant uint fixedFlagMaskConstant [[function_constant(2)]];
+constant uint fixedPassConstant     [[function_constant(3)]];
+constant uint fixedPassMaskConstant [[function_constant(4)]];
+constant uint FIXED_FLAG_MASK = is_function_constant_defined(fixedFlagMaskConstant) ? fixedFlagMaskConstant : 0u;
+constant uint FIXED_FLAGS     = is_function_constant_defined(fixedFlagsConstant) ? fixedFlagsConstant : 0u;
+constant uint FIXED_PASS_MASK = is_function_constant_defined(fixedPassMaskConstant) ? fixedPassMaskConstant : 0u;
+constant uint FIXED_PASS      = is_function_constant_defined(fixedPassConstant) ? fixedPassConstant : 0u;
+// `bit` of Uniforms.flags (flagOn) or of the kernel's own flags (passOn): the compiled-in value where there is one.
+inline bool flagOn(uint flags, uint bit) { return (((FIXED_FLAG_MASK & bit) != 0 ? FIXED_FLAGS : flags) & bit) != 0; }
+inline bool passOn(uint flags, uint bit) { return (((FIXED_PASS_MASK & bit) != 0 ? FIXED_PASS : flags) & bit) != 0; }
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
@@ -773,7 +789,7 @@ inline float2 hemiEncode(float3 d) {
 // Sky radiance (and cloud transmittance in .a) toward unit dir: the sky texture with FLAG_SKY_MAP, otherwise the
 // constant sky colour (exactly the old value). lod 0 for camera and mirror rays, higher for diffuse rays.
 inline float4 skySample(uint flags, float3 skyColor, thread const SceneData& s, float3 dir, float lod) {
-    if ((flags & FLAG_SKY_MAP) == 0) return float4(skyColor, 1.0f);
+    if (!flagOn(flags, FLAG_SKY_MAP)) return float4(skyColor, 1.0f);
     uint slice = dir.y >= 0.0f ? 0u : 1u;
     return s.sky.sample(skySampler, hemiEncode(float3(dir.x, abs(dir.y), dir.z)), slice, level(lod));
 }
@@ -781,7 +797,7 @@ inline float4 skySample(uint flags, float3 skyColor, thread const SceneData& s, 
 
 // The sky's mean radiance over the whole sphere (the fog's ambient light): the textures' smallest mips.
 inline float3 skyAmbient(constant Uniforms& u, thread const SceneData& s) {
-    if ((u.flags & FLAG_SKY_MAP) == 0) return u.skyColor.rgb;
+    if (!flagOn(u.flags, FLAG_SKY_MAP)) return u.skyColor.rgb;
     float top = float(s.sky.get_num_mip_levels() - 1);
     return 0.5f * (s.sky.sample(skySampler, float2(0.5f), 0, level(top)).rgb + s.sky.sample(skySampler, float2(0.5f), 1, level(top)).rgb);
 }
@@ -1873,7 +1889,7 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
 float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_array<float, access::read> lightMap,
                         float3 p, float3 n, float3 ng, uint seed, uint flags, thread const SceneData& s) {
     float3 sum = float3(0.0f);
-    if (lightCount <= 8 || (flags & FLAG_ALL_LIGHTS) != 0) {
+    if (lightCount <= 8 || flagOn(flags, FLAG_ALL_LIGHTS)) {
         for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng, s);
         return sum;
     }
@@ -2304,7 +2320,7 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     rng.pixel = tid.xy + uint2(37u, 71u) * tid.z;   // a different blue-noise window per slice
     rng.frame = u.frameIndex;
     rng.dimension = 0;
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(tid.z + pcgHash(u.frameIndex))));
 
     // A random point of the froxel that the camera sees: in front of the surface of the pixel it projects to. Points
@@ -2823,6 +2839,13 @@ kernel void cloudNoiseKernel(texture3d<float, access::write> outShape  [[texture
 // 1. Trace kernel: G-buffer + direct light + path traced indirect light (1 sample per pixel)
 // ---------------------------------------------------------------------------------------------
 
+// traceKernel's own flags, made from the uniforms (Uniforms.tracePassFlags in GPUTypes.swift makes the same word to compile in).
+constant uint TRACE_BOUNCES = 1;       // the path tracer's indirect light (Uniforms.bounces > 0)
+constant uint TRACE_MANY_LIGHTS = 2;   // more analytic lights than SHADOW_GROUPS
+inline uint tracePassFlags(constant Uniforms& u) {
+    return (u.bounces > 0 ? TRACE_BOUNCES : 0u) | (u.lightGroupEnd.w > SHADOW_GROUPS ? TRACE_MANY_LIGHTS : 0u);
+}
+
 kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]],
                         SCENE_ACCEL                      accel      [[buffer(1)]],
                         device const float3*             positions  [[buffer(2)]],
@@ -2863,14 +2886,14 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     s.lights = lights;
     s.lightCount = u.lightCount;
     s.lightTable = u.lightTable; s.regirGrid = regirGrid; s.regir = &regir;
-    bool specular = (u.flags & FLAG_SPECULAR) != 0;
+    bool specular = flagOn(u.flags, FLAG_SPECULAR);
 
     Sampler rng;
     rng.blueNoise = blueNoise;
     rng.pixel = tid;
     rng.frame = u.frameIndex;
     rng.dimension = 0;
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_TRACE);
 
     // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
@@ -2881,7 +2904,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
     Surface sf = traceSurface(primary, MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height), recordTextures);   // pixel angle
 
-    bool upscale = (u.flags & FLAG_UPSCALE) != 0;
+    bool upscale = flagOn(u.flags, FLAG_UPSCALE);
     if (!sf.hit) {
         if (upscale) {
             // Sky: a point at infinity only moves with camera rotation.
@@ -2903,7 +2926,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float c = dot(dir, light.axis.xyz);
             if (lightType(light) != LIGHT_SUN || c < cos(theta)) continue;
             float3 disc = light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
-            if ((u.flags & FLAG_SKY_MAP) != 0) {
+            if (flagOn(u.flags, FLAG_SKY_MAP)) {
                 float x = sqrt(max(1.0f - c * c, 0.0f)) / sin(theta), mu = sqrt(max(1.0f - x * x, 0.0f));
                 disc *= skyHere.a * (1.0f - 0.6f * (1.0f - mu)) / 0.8f;   // limb darkening (u = 0.6), mean 1
             }
@@ -2963,7 +2986,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     float4 visibility = float4(0.0f), blocker = float4(0.0f);
     // Analytic lights only (the first lightGroupEnd.w): meshLightsKernel samples the emissive-mesh lights.
     uint analyticLights = u.lightGroupEnd.w;
-    bool manyLights = (analyticLights > SHADOW_GROUPS || (u.flags & FLAG_RESTIR) != 0) && (u.flags & FLAG_ALL_LIGHTS) == 0;
+    uint own = tracePassFlags(u);
+    bool manyLights = (passOn(own, TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_RESTIR)) && !flagOn(u.flags, FLAG_ALL_LIGHTS);
     if (!manyLights) {
         // One shadow ray per light. A channel shared by several lights gets their luminance-weighted visibility.
         float4 unshadowedSum = float4(0.0f), blockerWeight = float4(0.0f);
@@ -2992,7 +3016,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 
     // Indirect light: a short diffuse path with next-event estimation at every bounce.
     float3 indirect = float3(0.0f);
-    if (u.bounces > 0) {
+    if (passOn(own, TRACE_BOUNCES)) {
         float3 throughput = float3(1.0f);
         float3 origin = p;
         float3 normal = n, geomNormal = ng;
@@ -3010,7 +3034,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             indirect += throughput * giEmission(h);
             throughput *= hitAlbedo(h);   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
             float3 hp = h.position + hng * RAY_EPSILON;
-            if ((u.flags & FLAG_LIGHT_MAPS) != 0) {
+            if (flagOn(u.flags, FLAG_LIGHT_MAPS)) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b)));
                 indirect += throughput * giLightIllum(lights, u, lightMap, hp, hn, hng, seed, accel, s);   // no rays (but LIGHT_TABLE)
             } else if (LIGHT_TABLE) {
@@ -3033,7 +3057,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             geomNormal = hng;
         }
         float l = luminance(indirect);
-        if (l > FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) indirect *= FIREFLY_CLAMP / l;
+        if (l > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) indirect *= FIREFLY_CLAMP / l;
     }
 
     outDirect.write(float4(direct, 1.0f), tid);
@@ -3080,7 +3104,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
     rng.pixel = tid;
     rng.frame = u.frameIndex;
     rng.dimension = 64;   // other blue-noise windows than traceKernel's
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
 
     // The two rays' picks ride in the lanes of float2 / uint2 (one ray leaves the second lane unused): arrays indexed by
@@ -3174,7 +3198,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
     rng.pixel = tid;
     rng.frame = u.frameIndex;
     rng.dimension = 64;   // other blue-noise windows than traceKernel's
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS);
 
     float3 direct = float3(0.0f);
@@ -3292,7 +3316,7 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
     rng.pixel = tid;
     rng.frame = u.frameIndex;
     rng.dimension = 96;   // other blue-noise windows than the trace and many-lights kernels'
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pcgHash(tid.x * 31u + pcgHash(tid.y + pcgHash(u.frameIndex ^ 0x5bd1e995u)));
 
     // One light by its proxy's luminance (weighted reservoir over all of them: there are few).
@@ -3314,7 +3338,7 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
         if (any(result > 0.0f) && !isVisible(p, target, accel)) result = float3(0.0f);
     }
     float l = luminance(result);
-    if (l > 4.0f * FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) result *= 4.0f * FIREFLY_CLAMP / l;
+    if (l > 4.0f * FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) result *= 4.0f * FIREFLY_CLAMP / l;
     outMeshDirect.write(roundToHalf(float4(result, 1.0f)), tid);
     if (addToDirect != 0) direct.write(direct.read(tid) + float4(result, 0.0f), tid);
 }
@@ -3384,7 +3408,7 @@ inline bool restirSurface(uint2 q, constant Uniforms& u, texture2d<float, access
     sp.f0 = float3(0.0f);
     sp.roughness = 1.0f;
     sp.specular = false;
-    if ((u.flags & FLAG_SPECULAR) != 0) {
+    if (flagOn(u.flags, FLAG_SPECULAR)) {
         float4 m = material.read(q);
         sp.f0 = m.rgb; sp.roughness = m.a; sp.specular = any(m.rgb > 0.0f);
     }
@@ -3435,7 +3459,7 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
     // Last frame's pixel (nearest, same surface), shared by the chains.
     int2 q = int2(-1);
     float4 mv = motion.read(tid);
-    if ((rp.config.z & RESTIR_TEMPORAL_VALID) != 0 && mv.w > 0.0f) {
+    if (passOn(rp.config.z, RESTIR_TEMPORAL_VALID) && mv.w > 0.0f) {
         int2 c = int2(floor(mv.xy + 0.5f));
         if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)) {
             float4 pnd = prevND.read(uint2(c));
@@ -3481,7 +3505,7 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
         }
         r.M = 1.0f;
         r.W = target > 0.0f ? wSum / target : 0.0f;
-        if (r.element != ELEMENT_NONE && (rp.config.z & RESTIR_VISIBILITY) != 0) {
+        if (r.element != ELEMENT_NONE && passOn(rp.config.z, RESTIR_VISIBILITY)) {
             if (isVisible(sp.p, point, accel)) r.visible = true; else r.W = 0.0f;
         }
         if (q.x >= 0) {
@@ -3527,8 +3551,8 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
-    bool shade = (rp.config.z & RESTIR_SHADE) != 0, specular = (u.flags & FLAG_SPECULAR) != 0;
-    bool split = (rp.config.z & RESTIR_SPLIT) != 0;
+    bool shade = passOn(rp.config.z, RESTIR_SHADE), specular = flagOn(u.flags, FLAG_SPECULAR);
+    bool split = passOn(rp.config.z, RESTIR_SPLIT);
     uint chains = uint(rp.tuning.w);
     ShadingPoint sp;
     float depth;
@@ -3675,6 +3699,10 @@ struct RestirGIParams {
 
 constant uint RGI_TEMPORAL_VALID = 1, RGI_SHADE = 2, RGI_LIGHT_MAPS = 4, RGI_FEEDBACK = 8, RGI_UNBIASED = 16,
               RGI_KEEP_FEEDBACK = 32, RGI_FALLBACK = 64;
+// FEEDBACK is off on a history's first frame; FEEDBACK_SET is the setting, the same every frame (so it can be compiled in).
+constant uint RGI_FEEDBACK_SET = 128;
+// Made from `extra`, for restirGIInitialKernel's compiled-in flags (GPURestirGIParams.initialPassFlags makes the same word).
+constant uint RGI_QUARTER = 256, RGI_ONE_BOUNCE = 512;
 constant uint RGI_AMBIENT_SCALE = 256;   // fixed point of the mean-indirect-light sums (rgb), RGI_AMBIENT_STRIDE^2 apart
 constant uint RGI_AMBIENT_STRIDE = 8;
 constant uint RGI_MAX_SPATIAL = 8;
@@ -3791,7 +3819,8 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                                   uint2 gid [[thread_position_in_grid]])
 {
     uint2 tid = gid;
-    bool quarter = gp.extra.x != 0;
+    uint own = gp.config.x | (gp.extra.x != 0 ? RGI_QUARTER : 0u) | (gp.extra.y <= 1 ? RGI_ONE_BOUNCE : 0u);
+    bool quarter = passOn(own, RGI_QUARTER);
     if (quarter) {
         // One pixel of each 2x2 block per frame, in the order (0,0), (1,1), (1,0), (0,1).
         uint2 base = gid * 2u;
@@ -3819,7 +3848,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
     rng.pixel = gid;           // quarter budget: per block, so the traced pixels' samples stay well spread
     rng.frame = u.frameIndex;
     rng.dimension = 128;       // past traceKernel's, the reflections' and the direct-light kernels' dimensions
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pixelSeed(tid, u.frameIndex, SEED_RESTIR_GI);
 
     // The path, as traceKernel's: its first hit is the sample, the rest is the light leaving it.
@@ -3840,7 +3869,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
         r.pos = h.position;
         r.n = hng;
         float3 throughput = float3(1.0f);
-        uint bounces = max(gp.extra.y, 1u);
+        uint bounces = passOn(own, RGI_ONE_BOUNCE) ? 1u : gp.extra.y;
         for (uint b = 0; ; ++b) {
             Lo += throughput * giEmission(h);
             throughput *= hitAlbedo(h);   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
@@ -3849,7 +3878,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                 Rng lr;
                 lr.state = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b + 0x3C6EF372u)));
                 Lo += throughput * sampleLightsRIS(lights, u.lightCount, u.lightTable, hp, hn, hng, 4, lr, accel, s);
-            } else if ((gp.config.x & RGI_LIGHT_MAPS) != 0) {
+            } else if (passOn(own, RGI_LIGHT_MAPS)) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b + 0x2545F491u)));
                 Lo += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags, s);   // no rays
             } else if (u.lightCount > 0) {
@@ -3864,7 +3893,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
             if (b + 1 >= bounces) {
                 // Multi-bounce: the path's last hit adds last frame's indirect light where it was on screen (elsewhere,
                 // with RGI_FALLBACK, last frame's mean indirect light, as the radiance cascades do).
-                if ((gp.config.x & RGI_FEEDBACK) != 0) {
+                if (passOn(own, RGI_FEEDBACK_SET) && (own & RGI_FEEDBACK) != 0) {
                     float prevDepth;
                     float2 pp = projectToPixel(h.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward,
                                                float2(u.width, u.height), prevDepth);
@@ -3877,7 +3906,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                             found = true;
                         }
                     }
-                    if (!found && (gp.config.x & RGI_FALLBACK) != 0 && ambient[3] > 0)
+                    if (!found && passOn(own, RGI_FALLBACK) && ambient[3] > 0)
                         Lo += throughput * float3(ambient[0], ambient[1], ambient[2]) / float(RGI_AMBIENT_SCALE * ambient[3]);
                 }
                 break;
@@ -3893,7 +3922,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
         }
     }
     float l = luminance(Lo);
-    if (l > FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) Lo *= FIREFLY_CLAMP / l;
+    if (l > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) Lo *= FIREFLY_CLAMP / l;
     r.Lo = Lo;
     r = quantizeGIReservoir(r);
     // One candidate: W = 1 / pdf, the pdf in area measure (k(w) cos_s / d^2) or solid angle (sky).
@@ -3927,7 +3956,7 @@ kernel void restirGITemporalKernel(constant Uniforms&                 u         
     }
     GIReservoir r = readGIReservoir(initialA, initialB, tid);
     float4 mv = motion.read(tid);
-    if ((gp.config.x & RGI_TEMPORAL_VALID) != 0 && mv.w > 0.0f) {
+    if (passOn(gp.config.x, RGI_TEMPORAL_VALID) && mv.w > 0.0f) {
         // Last frame's pixel (nearest, same surface).
         int2 c = int2(floor(mv.xy + 0.5f));
         if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)) {
@@ -3983,8 +4012,8 @@ kernel void restirGISpatialKernel(constant Uniforms&                 u          
                                   uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
-    bool shade = (gp.config.x & RGI_SHADE) != 0, debug = shade && u.viewMode == 7;
-    bool keepFeedback = shade && (gp.config.x & RGI_KEEP_FEEDBACK) != 0, unbiased = (gp.config.x & RGI_UNBIASED) != 0;
+    bool shade = passOn(gp.config.x, RGI_SHADE), debug = shade && u.viewMode == 7;
+    bool keepFeedback = shade && passOn(gp.config.x, RGI_KEEP_FEEDBACK), unbiased = passOn(gp.config.x, RGI_UNBIASED);
     GIReceiver rc;
     if (!giReceiver(tid, surfacePos, normalDepth, geoNormal, rc)) {
         writeGIReservoir(outA, outB, tid, emptyGIReservoir());
@@ -4079,7 +4108,7 @@ kernel void restirGISpatialKernel(constant Uniforms&                 u          
     if (gp.tuning.z > 0.0f && l > gp.tuning.z) L *= gp.tuning.z / l;
     outIndirect.write(roundToHalf(float4(L, 1.0f)), tid);
     if (keepFeedback) outFeedback.write(roundToHalf(float4(L, 1.0f)), tid);
-    if ((gp.config.x & RGI_FALLBACK) != 0 && all(tid % RGI_AMBIENT_STRIDE == 0u)) {
+    if (passOn(gp.config.x, RGI_FALLBACK) && all(tid % RGI_AMBIENT_STRIDE == 0u)) {
         // The mean indirect light over the GI pixels (a sparse grid of them), for next frame's off-screen path ends.
         uint3 v = uint3(L * float(RGI_AMBIENT_SCALE) + 0.5f);
         for (uint i = 0; i < 3; ++i) atomic_fetch_add_explicit(&ambient[i], v[i], memory_order_relaxed);
@@ -4103,7 +4132,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
                              texture2d<float, access::read> indirect) {
     if (!h.hit) return skyRadiance(u, s, dir, 0.0f);
     float3 L = float3(0.0f), throughput = float3(1.0f);
-    bool reference = (u.flags & FLAG_REFERENCE) != 0;
+    bool reference = flagOn(u.flags, FLAG_REFERENCE);
     uint bounces = reference ? u.bounces : 0;
     for (uint b = 0; ; ++b) {
         float3 hng, hn;
@@ -4145,6 +4174,8 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
     }
 }
 
+constant uint REFLECT_FOG = 1;   // reflectionKernel's own flag: the reflection rays are fogged (FOG_ENABLED and FOG_REFLECTIONS)
+
 kernel void reflectionKernel(constant Uniforms&               u          [[buffer(0)]],
                              SCENE_ACCEL                      accel      [[buffer(1)]],
                              device const float3*             positions  [[buffer(2)]],
@@ -4181,7 +4212,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     rng.pixel = tid;
     rng.frame = u.frameIndex;
     rng.dimension = 40;   // past the trace kernel's dimensions
-    rng.useBlueNoise = (u.flags & FLAG_BLUE_NOISE) != 0;
+    rng.useBlueNoise = flagOn(u.flags, FLAG_BLUE_NOISE);
     rng.rng.state = pcgHash(tid.x * 7919u + pcgHash(tid.y + pcgHash(u.frameIndex * 31u + 17u)));
 
     float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
@@ -4194,9 +4225,9 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float3 result = float3(0.0f);
 
     uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
-    if ((u.flags & FLAG_RESTIR) != 0) {
+    if (flagOn(u.flags, FLAG_RESTIR)) {
         result += restirSpecular.read(tid).rgb;   // ReSTIR's direct specular (restirSpatialKernel)
-    } else if ((u.flags & FLAG_SHADOW_DENOISER) == 0 && analyticLights > 0) {
+    } else if (!flagOn(u.flags, FLAG_SHADOW_DENOISER) && analyticLights > 0) {
         // Direct specular from one light (picked by its diffuse light here): spheres and spots exactly, a uniform
         // point on the sphere; other lights their analytic specular x the visibility of a random point of them.
         float pdf;
@@ -4229,7 +4260,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
         }
     }
 
-    if (roughness < REFLECTION_MAX_ROUGHNESS || (u.flags & FLAG_REFERENCE) != 0) {
+    if (roughness < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE)) {
         float3 t, b;
         tangentFrame(n, t, b);
         float3 hl = sampleGGXVNDF(float3(dot(v, t), dot(v, b), NoV), a, rng.next2());
@@ -4247,7 +4278,8 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, spread);
             float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect);
-            if ((fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS)) {
+            bool fogged = (fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS);
+            if (passOn(fogged ? REFLECT_FOG : 0u, REFLECT_FOG)) {
                 float2 uDistMix = rng.next2();
                 float4 r = float4(rng.next2(), rng.next2());
                 radiance = fogAlongRay(p, l, hit.hit ? length(hit.position - p) : INFINITY, radiance, uDistMix, r, accel, s, fog,
@@ -4258,7 +4290,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     }
     result /= max(albedo, float3(1e-3f));
     float lum = luminance(result);
-    if (lum > FIREFLY_CLAMP && (u.flags & FLAG_NO_CLAMP) == 0) result *= FIREFLY_CLAMP / lum;
+    if (lum > FIREFLY_CLAMP && !flagOn(u.flags, FLAG_NO_CLAMP)) result *= FIREFLY_CLAMP / lum;
     outSpecular.write(roundToHalf(float4(result, 1.0f)), tid);
 }
 
@@ -4303,7 +4335,7 @@ kernel void temporalKernel(constant Uniforms&              u           [[buffer(
     float histLen = 0.0f;
     float weightSum = 0.0f;
     float4 mv = motion.read(tid);
-    if ((u.flags & FLAG_HISTORY_VALID) != 0 && mv.w > 0.0f) {
+    if (flagOn(u.flags, FLAG_HISTORY_VALID) && mv.w > 0.0f) {
         float2 pp = mv.xy;
         int2 base = int2(floor(pp));
         float2 f = pp - float2(base);
@@ -4533,7 +4565,7 @@ kernel void shadowTemporalKernel(constant Uniforms&              u          [[bu
             float4 hist = float4(0.0f);
             float histLen = 0.0f, weightSum = 0.0f;
             float4 mv = motion.read(tid);
-            if ((u.flags & FLAG_HISTORY_VALID) != 0 && mv.w > 0.0f) {
+            if (flagOn(u.flags, FLAG_HISTORY_VALID) && mv.w > 0.0f) {
                 int2 base = int2(floor(mv.xy));
                 float2 f = mv.xy - float2(base);
                 float bilinear[4] = { (1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y };
@@ -4822,21 +4854,21 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
     float3 illumination = d + i;
     float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
     float3 directSpecular = float3(0.0f);
-    if ((u.flags & FLAG_SHADOW_DENOISER) != 0) {
+    if (flagOn(u.flags, FLAG_SHADOW_DENOISER)) {
         // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
         float4 vis = denoised.read(tid);
         float4 sp = surfacePos.read(tid);
         float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
         float3 p = sp.xyz + ng * RAY_EPSILON;
         illumination = float3(0.0f);
-        if ((u.flags & FLAG_RESTIR) != 0) {
+        if (flagOn(u.flags, FLAG_RESTIR)) {
             // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
             illumination = meshDirect.read(tid).rgb * vis.r;
         } else {
         for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * dot(vis, groupMask(lightGroup(lights[l])));
-        if ((u.flags & FLAG_MESH_LIGHTS) != 0) illumination += meshDirect.read(tid).rgb;   // denoised on its own
+        if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         }
-        if ((u.flags & FLAG_SPECULAR) != 0 && (u.flags & FLAG_RESTIR) == 0) {
+        if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {
             // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
             float4 m = material.read(tid);
             if (any(m.rgb > 0.0f)) {
@@ -4845,13 +4877,13 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                     directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * dot(vis, groupMask(lightGroup(lights[l])));
             }
         }
-        if ((u.flags & FLAG_SEPARATE) != 0) {
+        if (flagOn(u.flags, FLAG_SEPARATE)) {
             finalIndirect = denoisedIndirect.read(tid).rgb;
             illumination += finalIndirect;
         }
-    } else if ((u.flags & FLAG_DENOISE) != 0) {
+    } else if (flagOn(u.flags, FLAG_DENOISE)) {
         illumination = denoised.read(tid).rgb;
-        if ((u.flags & FLAG_SEPARATE) != 0) {
+        if (flagOn(u.flags, FLAG_SEPARATE)) {
             finalIndirect = denoisedIndirect.read(tid).rgb;
             illumination += finalIndirect;
         }
@@ -4859,22 +4891,22 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
 
     // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.
     float3 specular = directSpecular;
-    if ((u.flags & FLAG_SPECULAR) != 0) {
+    if (flagOn(u.flags, FLAG_SPECULAR)) {
         float4 m = material.read(tid);
         float4 ndc = nd.read(tid);
         if (any(m.rgb > 0.0f) && ndc.w > 0.0f) {
             float3 v = normalize(u.camPos.xyz - surfacePos.read(tid).xyz);
             float3 sa = specularAlbedo(m.rgb, 1.0f, m.a, max(dot(ndc.xyz, v), 1e-4f));
             float3 traced = specularTex.read(tid).rgb;
-            bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || (u.flags & FLAG_REFERENCE) != 0;
+            bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE);
             specular += sa * (tracedAll ? traced : traced + finalIndirect);
         }
     }
 
     // Fog in front of the pixel: rgb = in-scattered light, a = transmittance.
     float4 fogged = float4(0.0f, 0.0f, 0.0f, 1.0f);
-    if ((u.flags & FLAG_FOG) != 0) {
-        if ((u.flags & FLAG_FOG_REFERENCE) != 0) fogged = fogReference.read(tid);
+    if (flagOn(u.flags, FLAG_FOG)) {
+        if (flagOn(u.flags, FLAG_FOG_REFERENCE)) fogged = fogReference.read(tid);
         else {
             // With temporal accumulation downstream (jittered frames: TAAU, MetalFX temporal, references), the lookup
             // moves by the frame's jitter scaled up to a whole froxel, so the accumulation smooths the grid's steps.
@@ -4926,7 +4958,7 @@ kernel void accumulateKernel(constant Uniforms&                   u             
     float3 meanI = sampleCount > 0 ? accumIndirect.read(tid).rgb : float3(0.0f);
     accumDirect.write(float4(meanD + (d - meanD) * w, 1.0f), tid);
     accumIndirect.write(float4(meanI + (i - meanI) * w, 1.0f), tid);
-    if ((u.flags & FLAG_SPECULAR) != 0) {
+    if (flagOn(u.flags, FLAG_SPECULAR)) {
         float3 sp = spec.read(tid).rgb, meanS = sampleCount > 0 ? accumSpec.read(tid).rgb : float3(0.0f);
         accumSpec.write(float4(meanS + (sp - meanS) * w, 1.0f), tid);
     }

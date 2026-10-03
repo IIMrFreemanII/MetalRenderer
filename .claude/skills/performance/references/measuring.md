@@ -91,10 +91,37 @@ pure speed change.
   * `METALRENDERER_TLAS=<frames>` sets Metal's TLAS rebuild interval;
   * `METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving tree on the CPU with SAH;
   * `METALRENDERER_RT_STATS=1` turns on the traversal counters, printed per setting;
+  * `METALRENDERER_VARIANTS=0` runs every kernel's general pipeline (no compiled-in flags), `=log` prints each variant
+    as it is made;
+  * `METALRENDERER_MATH=relaxed|safe` compiles the shaders without fast math (see "Kernel variants" below);
   * `METALRENDERER_VG_SYNC=0|1` forces background or synchronous cut updates.
 * To reproduce an interactive state, use **Copy as Env** in the Settings panel. It puts the `METALRENDERER_*` lines
   that differ from the defaults on the clipboard.
 * To compare two launches' settings, use `METALRENDERER_DUMP_SETTINGS=1`.
+
+## Kernel variants
+
+The big kernels run as variants with the configuration's flags compiled in (gpu-metal.md, section 3). What that
+means for measuring:
+
+* Benchmarks wait for a variant the first time a setting needs it, so every measured frame runs the same code. The
+  app compiles them in the background and runs the general pipeline until they are ready: time a change in a
+  benchmark, not in the first second after a settings change in the app.
+* A variant is new code to Metal's shader cache. After an edit to `Shaders.metal`, a setting's first frame takes a few
+  hundred ms longer per variant (inside the 60 warm-up frames; the table is not affected).
+* `METALRENDERER_VARIANTS=0` against the default, same binary, is the A/B for "what do the variants buy here".
+* **Checking that a variant computes what the general pipeline computes.** Under fast math the two differ by
+  rounding (the compiler orders the arithmetic of different code differently): `pngdiff.py` shows max 1 level and RMS
+  around 0.005 on most images, and a few pixels of up to 60 levels where a stochastic pick flipped. With
+  `METALRENDERER_MATH=safe` on both sides they must match bit for bit:
+  ```bash
+  METALRENDERER_MATH=safe METALRENDERER_VARIANTS=0 METALRENDERER_BENCH=stressq METALRENDERER_GI_REFS=0 METALRENDERER_BENCH_DIR=/tmp/off .build/release/MetalRenderer
+  METALRENDERER_MATH=safe METALRENDERER_BENCH=stressq METALRENDERER_GI_REFS=0 METALRENDERER_BENCH_DIR=/tmp/on .build/release/MetalRenderer
+  python3 Tools/eval/pngdiff.py /tmp/off /tmp/on      # every line: max 0.0
+  ```
+  Run it after changing a flag, a mask in `Kernel.fixedFlags` / `fixedPassFlags`, or the Swift side of a kernel's own
+  flag word (`Uniforms.tracePassFlags`, `GPURestirGIParams.initialPassFlags`, `GPUFogParams.reflectionPassFlags`).
+  Safe math is slower: narrow the mode with `METALRENDERER_BENCH_ONLY` when the full one takes too long.
 
 ## A/B protocol
 

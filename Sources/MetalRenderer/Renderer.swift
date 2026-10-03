@@ -1897,9 +1897,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     // MARK: - Frame stages
 
     /// Starts a kernel's dispatch: its pipeline, the uniforms, and for kernels that trace rays the scene.
-    private func bind(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, _ uniforms: Uniforms, sceneSlot: Int? = nil) {
+    /// `pass`: the kernel's own flags, for the kernels with variants (Kernel.fixedPassFlags).
+    private func bind(_ enc: MTLComputeCommandEncoder, _ kernel: Kernel, _ uniforms: Uniforms, pass: UInt32 = 0, sceneSlot: Int? = nil) {
         var u = uniforms
-        enc.setComputePipelineState(pipelines[kernel])
+        enc.setComputePipelineState(pipelines.state(kernel, flags: u.flags, pass: pass, wait: benchmark != nil))
         enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
         if let sceneSlot { bindScene(enc, slot: sceneSlot) }
     }
@@ -1928,7 +1929,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             })
         }
         stages.append(ComputeStage(pass: "trace") { [self] enc in
-            bind(enc, .trace, uniforms, sceneSlot: slot)
+            bind(enc, .trace, uniforms, pass: uniforms.tracePassFlags, sceneSlot: slot)
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
                               t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
                               t.visibility, t.blocker, t.material])
@@ -1953,7 +1954,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
         let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular
         let trace = [ComputeStage(pass: "reflections") { [self] enc in
-            bind(enc, .reflection, uniforms, sceneSlot: slot)
+            bind(enc, .reflection, uniforms, pass: fogParams.reflectionPassFlags, sceneSlot: slot)
             var fp = fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
@@ -2006,7 +2007,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let previousLights = lightBuffers[frameDataWritten[previousSlot] ? previousSlot : slot]
         var stages = [ComputeStage(pass: "restir") { [self] enc in
             var p = params
-            bind(enc, .restirTemporal, uniforms, sceneSlot: slot)
+            bind(enc, .restirTemporal, uniforms, pass: p.config.z, sceneSlot: slot)
             enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
             enc.setBuffer(previousLights, offset: 0, index: 10)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.motion, t.normalDepth[prev],
@@ -2024,7 +2025,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.tuning.y = Float(i)
             stages.append(ComputeStage(pass: "restir") { [self] enc in
                 var p = p
-                bind(enc, .restirSpatial, uniforms, sceneSlot: slot)
+                bind(enc, .restirSpatial, uniforms, pass: p.config.z, sceneSlot: slot)
                 enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, src, dst, t.direct, rg.specular,
                                   t.visibility, t.blocker])
@@ -2309,6 +2310,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let feedback = r.feedback && plan.restirGIHistory && (plan.history || !useDenoised)
         var flags: UInt32 = (r.temporal && plan.restirGIHistory ? GPURestirGIParams.temporalValid : 0)
             | (lightMaps ? GPURestirGIParams.lightMaps : 0) | (feedback ? GPURestirGIParams.feedback : 0)
+            | (r.feedback ? GPURestirGIParams.feedbackSet : 0)
             | (r.unbiased ? GPURestirGIParams.unbiased : 0) | (r.feedback && !useDenoised ? GPURestirGIParams.keepFeedback : 0)
             | (r.feedback && r.feedbackFallback ? GPURestirGIParams.fallback : 0)
         let maxM = UInt32(RestirGISettings.maxMRange.clamp(r.maxM))
@@ -2322,7 +2324,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var stages: [ComputeStage] = []
         stages.append(ComputeStage(pass: "restir gi initial") { [self] enc in
             var p = params
-            bind(enc, .restirGIInitial, uniforms, sceneSlot: slot)
+            bind(enc, .restirGIInitial, uniforms, pass: p.initialPassFlags, sceneSlot: slot)
             enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, lightMap, t.normalDepth[prev],
                               feedbackSource, g.spatial.a, g.spatial.b])

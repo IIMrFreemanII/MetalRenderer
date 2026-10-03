@@ -66,10 +66,25 @@ fewer threads run at once and memory latency stops being hidden.
 * Kernel timings shift by ±0.3 ms with unrelated edits to the same kernel (the compiler lays it out differently).
   Trust only alternating A/B rounds of the pass's own column (`ab.sh -c "<pass>"`).
 * **Compile out what's off.** Copy these patterns:
-  * function constants: `lightTypesConstant` / `LIGHT_SPEC` (Shaders.metal:137) strips unused light types per scene;
+  * kernel variants, for anything a configuration fixes for every frame. Test a bit of `Uniforms.flags` with
+    `flagOn(u.flags, FLAG_X)` and a bit of the kernel's own flag word with `passOn(word, X)` (Shaders.metal), and name
+    the bit in `Kernel.fixedFlags` / `fixedPassFlags` (Pipelines.swift). `bind(enc, kernel, uniforms, pass:)` then
+    picks the variant with those bits as function constants; it is compiled in the background on first use and the
+    general pipeline (run-time tests) runs until it is ready. A bit left out of the masks is still correct, only
+    not compiled in. A fact that is not a flag becomes one in a word made twice, in MSL and in Swift
+    (`tracePassFlags`, `initialPassFlags`): keep the two identical, `swift test` checks the constants and
+    measuring.md's safe-math diff checks the result.
+  * function constants: `lightTypesConstant` / `LIGHT_SPEC` strips unused light types per scene;
   * preprocessor macros: `CUSTOM_RT`, `RT_STATS` (`Pipelines.compile`).
 
-  A runtime `if (feature)` on a uniform is cheap for divergence, but it still reserves registers for both paths.
+  A runtime `if (feature)` on a uniform is cheap for divergence, but both paths stay in the kernel. Measured
+  (variants against general pipelines): what pays is a path with a **ray cast** in it. traceKernel with the bounce
+  loop and the per-light shadow rays compiled out −24%; restirTemporalKernel without its visibility ray and
+  restirSpatialKernel's merge-only passes −8% together; reflectionKernel without the references' second bounce −7%;
+  restirGIInitialKernel with one bounce −13%. A flag that guards a texture read, a clamp or the blue-noise sampler
+  is worth 0–2%: restirGISpatialKernel, rcTraceMergeKernel and meshLightsKernel got no variants for that reason, and
+  a compiled-in bounce count measured the same as the uniform's. Don't give a bit that flips on a history's first
+  frame (`*_VALID`) to the masks: its variant would be compiled for one frame.
 * **Threadgroup size.** `Renderer.threadgroupSizes`. The defaults are 8×8, `trace` 16×8 (+2%)
   and `atrous` 16×16 (+5%). Sweep with `METALRENDERER_TG="trace=32x4,atrous=8x8"` and keep winners only if they hold
   across alternating runs.

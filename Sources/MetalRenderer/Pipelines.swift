@@ -20,6 +20,104 @@ enum Kernel: Int, CaseIterable {
     var function: String { "\(self)Kernel" }
     /// Exists only in the custom tracer's variant of the shaders (CUSTOM_RT).
     var customOnly: Bool { rawValue >= Kernel.rtPrep.rawValue }
+
+    /// The bits of Uniforms.flags that this kernel's variants have compiled in (KernelVariants): the ones it reads
+    /// that stay the same from frame to frame. A bit that is missing here is only read at run time, as before; a bit
+    /// the kernel doesn't read would only make variants that are the same code.
+    var fixedFlags: UInt32 {
+        typealias F = UniformFlags
+        switch self {
+        case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights
+        case .manyLights, .manyLightsReuse: return F.blueNoise
+        case .restirSpatial: return F.specular
+        case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights
+        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap
+        case .fogInject: return F.blueNoise | F.skyMap
+        default: return 0
+        }
+    }
+    /// The same for the kernel's own flags: the word its `bind` passes (Uniforms.tracePassFlags, GPURestirParams'
+    /// and GPURestirGIParams' flags, GPUFogParams.reflectionPassFlags). The "last frame is valid" bits change on the
+    /// first frame after a reset, so they stay run-time tests: a variant for that one frame would be compiled for nothing.
+    var fixedPassFlags: UInt32 {
+        switch self {
+        case .trace: return Uniforms.traceBounces | Uniforms.traceManyLights
+        case .restirTemporal: return GPURestirParams.visibilityReuse
+        case .restirSpatial: return GPURestirParams.shade | GPURestirParams.split
+        case .restirGIInitial:
+            return GPURestirGIParams.lightMaps | GPURestirGIParams.feedbackSet | GPURestirGIParams.fallback
+                | GPURestirGIParams.quarter | GPURestirGIParams.oneBounce
+        case .reflection: return GPUFogParams.reflectionsFogged
+        default: return 0
+        }
+    }
+}
+
+/// Variants of the big kernels with a configuration's flags compiled in (function constants 1 to 4, see flagOn and
+/// passOn in Shaders.metal): a path tracer without the light-map lookup, a ReSTIR pass that only merges, reflections
+/// that never follow a second bounce. What a variant doesn't do holds no registers, which is what these kernels are
+/// short of (what pays is a variant without one of the kernel's ray casts). One is made the first time a frame asks
+/// for it, in the background: until it is ready the frame runs the kernel's general pipeline, which reads the same
+/// flags from its uniforms and renders the same image (to fast math's rounding; bit for bit with
+/// `METALRENDERER_MATH=safe`). Benchmarks wait for it instead, so every measured frame runs the same code.
+/// `METALRENDERER_VARIANTS=0` turns them off.
+final class KernelVariants {
+    static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_VARIANTS"] != "0"
+    /// `METALRENDERER_VARIANTS=log` prints each variant as it is made: the kernel, its compiled-in bits and their masks.
+    private static let logged = ProcessInfo.processInfo.environment["METALRENDERER_VARIANTS"] == "log"
+    private struct Key: Hashable { let kernel: Kernel; let flags: UInt32; let pass: UInt32 }
+
+    private let device: MTLDevice
+    private let library: MTLLibrary
+    private let lightTypes: UInt32
+    private let lock = NSLock()
+    private var states: [Key: MTLComputePipelineState] = [:]
+    private var started: Set<Key> = []   // being built, or failed: not asked for again
+    // Below the frame loop's priority: several variants compile at once after a settings change, and the frame has a
+    // pipeline to run in the meantime.
+    private static let queue = DispatchQueue(label: "MetalRenderer.variants", qos: .utility, attributes: .concurrent)
+
+    init(device: MTLDevice, library: MTLLibrary, lightTypes: UInt32) {
+        self.device = device
+        self.library = library
+        self.lightTypes = lightTypes
+    }
+
+    /// How many variants are ready.
+    var count: Int { lock.lock(); defer { lock.unlock() }; return states.count }
+
+    /// The variant of `kernel` for these flags, or nil while it is being made (`wait`: make it now). Called every frame
+    /// for every dispatch of a kernel that has variants: a dictionary lookup under a lock that is never held for long.
+    func state(_ kernel: Kernel, flags: UInt32, pass: UInt32, wait: Bool) -> MTLComputePipelineState? {
+        let key = Key(kernel: kernel, flags: flags & kernel.fixedFlags, pass: pass & kernel.fixedPassFlags)
+        lock.lock()
+        if let state = states[key] { lock.unlock(); return state }
+        let start = started.insert(key).inserted
+        lock.unlock()
+        guard start else { return nil }
+        if wait { return make(key) }
+        KernelVariants.queue.async { _ = self.make(key) }
+        return nil
+    }
+
+    private func make(_ key: Key) -> MTLComputePipelineState? {
+        do {
+            let constants = MTLFunctionConstantValues()
+            var values = [lightTypes, key.flags, key.kernel.fixedFlags, key.pass, key.kernel.fixedPassFlags]
+            constants.setConstantValues(&values, type: .uint, range: 0..<values.count)
+            let function = try library.makeFunction(name: key.kernel.function, constantValues: constants)
+            let state = try device.makeComputePipelineState(function: function)
+            lock.lock(); states[key] = state; lock.unlock()
+            if KernelVariants.logged {
+                print(String(format: "Shaders: variant of %@, flags %x of %x, own %x of %x", key.kernel.function, key.flags,
+                             key.kernel.fixedFlags, key.pass, key.kernel.fixedPassFlags))
+            }
+            return state
+        } catch {
+            print("Shaders: no variant of \(key.kernel.function) for flags \(key.flags), \(key.pass): \(error)")
+            return nil
+        }
+    }
 }
 
 /// Every compute pipeline, made from one compile of Shaders.metal for one ray tracer (the CUSTOM_RT macro) and
@@ -31,8 +129,16 @@ struct Pipelines {
     let lightTypes: UInt32
     let library: MTLLibrary        // kept: another set of light types specialises it again without recompiling
     private let states: [MTLComputePipelineState?]
+    let variants: KernelVariants
 
     subscript(_ kernel: Kernel) -> MTLComputePipelineState { states[kernel.rawValue]! }
+
+    /// The pipeline for a dispatch of `kernel` whose uniforms carry `flags` and whose own flags are `pass`: the
+    /// variant with them compiled in once it is ready (`wait`: now), else the general one.
+    func state(_ kernel: Kernel, flags: UInt32, pass: UInt32 = 0, wait: Bool = false) -> MTLComputePipelineState {
+        guard KernelVariants.enabled, kernel.fixedFlags | kernel.fixedPassFlags != 0 else { return self[kernel] }
+        return variants.state(kernel, flags: flags, pass: pass, wait: wait) ?? self[kernel]
+    }
 
     var rc: RCPipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
@@ -75,6 +181,7 @@ struct Pipelines {
         self.lightTypes = lightTypes
         self.library = library
         self.states = states
+        self.variants = KernelVariants(device: device, library: library, lightTypes: lightTypes)
         // Worth a line when something was really compiled (Metal keeps what it compiled before in its on-disk cache).
         let ms = (compiled - start) * 1000, pipelineMs = (CACurrentMediaTime() - compiled) * 1000
         if ms + pipelineMs > 100 {
@@ -92,8 +199,11 @@ struct Pipelines {
                                       "RT_STATS": NSNumber(value: stats ? 1 : 0)]
         // Fast math is the default (relaxed costs ~0.2 ms a frame in the stress scene and renders the same image);
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
-        if #available(macOS 15.0, *), ProcessInfo.processInfo.environment["METALRENDERER_MATH"] == "relaxed" {
-            options.mathMode = .relaxed
+        // `safe` also keeps the order of every operation: a kernel's variants then compute bit for bit what its
+        // general pipeline computes, which is how to check a variant's flags against the uniforms' (pngdiff.py).
+        if #available(macOS 15.0, *), let mode = ProcessInfo.processInfo.environment["METALRENDERER_MATH"] {
+            if mode == "relaxed" { options.mathMode = .relaxed }
+            if mode == "safe" { options.mathMode = .safe }
         }
         return try device.makeLibrary(source: source, options: options)
     }

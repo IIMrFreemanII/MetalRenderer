@@ -112,7 +112,7 @@ Use `METALRENDERER_BENCH=stress` to time the stress scene against light count (1
 * It first renders paused frames in every GI mode on both scenes with the `METALRENDERER_RT` tracer. Run it once per tracer and diff the PNGs with `Tools/eval/pngdiff.py`.
 * Then it times moving frames at 0–2000 objects, alternating the two tracers.
 
-`METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALRENDERER_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup. `METALRENDERER_MATH=relaxed` compiles the shaders with relaxed instead of fast math (infinities and NaNs behave exactly), to rule fast math out when an image looks off. `METALRENDERER_RT_STATS=1` compiles traversal counters in (the Debug window can also turn them on), and benchmarks print them per setting: nodes, instance and cluster entries, and triangle tests per ray.
+`METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving-object tree on the CPU with binned SAH instead of on the GPU (a better tree, for comparison). `METALRENDERER_RT_CHECK=1` checks every mesh's tree against brute-force ray/triangle tests at startup. `METALRENDERER_MATH=relaxed` compiles the shaders with relaxed instead of fast math (infinities and NaNs behave exactly), to rule fast math out when an image looks off; `safe` also keeps the order of every operation. `METALRENDERER_VARIANTS=0` runs every kernel's general pipeline instead of its variant with the configuration's flags compiled in (see "Kernel variants" in the notes below), and `=log` prints each variant as it is made. `METALRENDERER_RT_STATS=1` compiles traversal counters in (the Debug window can also turn them on), and benchmarks print them per setting: nodes, instance and cluster entries, and triangle tests per ray.
 
 Use `METALRENDERER_BENCH=gallery` for the glTF gallery. It renders path-traced references (full BRDF, full-detail meshes, 4 bounces; skip them with `METALRENDERER_GI_REFS=0`), then the overview and a close-up with full-detail meshes and with virtual geometry at 0.5, 1 and 2 px, alternating so heat affects them alike, and the camera fly-through. Score it with `Tools/eval/gallery.py`.
 
@@ -619,7 +619,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | File | What it holds |
 |---|---|
 | `Renderer.swift` | Metal setup, scene loading, the frame (its plan, its stages, their encoding), input; Metal's acceleration structures when that tracer is selected |
-| `Pipelines.swift` | The shader compile and every compute pipeline as one set, built in parallel off the main thread |
+| `Pipelines.swift` | The shader compile and every compute pipeline as one set, built in parallel off the main thread; the big kernels' variants with a configuration's flags compiled in |
 | `BVH.swift` | The custom ray tracer's node format and CPU builder (binned SAH) for bottom-level and static top-level trees |
 | `CustomRayTracer.swift` | The custom ray tracer's buffers, the per-frame GPU build of the moving objects' tree, its argument buffer |
 | `Settings.swift` | Every user-adjustable setting, with defaults and ranges |
@@ -752,6 +752,38 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
     | MetalFX temporal | 41.8 dB | **0.33** | 34.9 dB | 34.7 dB | **35.6 dB** | **31.8 dB** |
 
     The custom upscaler stays sharper and better in motion, but on a still frame full of small objects it flickers three times as much as MetalFX (on the Cornell room it was 0.05). Objects narrower than an input pixel show up only in some jitter phases, so the colour clip, which trusts the current frame, removes them and they pop back later. Turning off the clip's history cut removes the flicker (0.21) but costs 1.2 dB static and 0.9 dB moving; dead zones and a min/max hull test traded the two without winning. MetalFX and FSR 2 protect such pixels with thin-feature "locks", which this upscaler doesn't have yet.
+* **Kernel variants: a configuration's flags compiled in.** The big kernels ask the same questions every frame: are there specular materials, is this the path tracer or does a GI technique follow, is the sky a texture, is this ReSTIR pass the one that shades, do reflections follow whole paths. As tests of a uniform, both answers stay in the kernel. The renderer now makes a variant of the kernel for the answers in use, with them as Metal function constants (`flagOn` / `passOn` in `Shaders.metal`; `Kernel.fixedFlags` and `KernelVariants` in `Pipelines.swift`).
+  * A variant is compiled in the background the first time a frame asks for it (about 0.3 s each, then Metal's shader cache has it). Until it is ready the frame runs the kernel's general pipeline, which reads the same flags from its uniforms, so changing a setting never stalls. Benchmarks wait for the variant instead.
+  * Whole frames (`METALRENDERER_BENCH_SPLIT=0`, M1 Max, medians of 3 alternating rounds, `METALRENDERER_VARIANTS=0` against the default):
+
+    | | General | Variants | |
+    |---|---|---|---|
+    | Cornell room, default | 2.87 ms | 2.84 ms | −1% |
+    | Cornell room, path traced | 8.55 | 8.38 | −2% |
+    | Cornell room, ReSTIR GI | 7.82 | 7.64 | −2% |
+    | Stress hall, 32 lights, 400 objects | 8.85 | 8.58 | −3% |
+    | Stress hall, 2000 objects | 13.12 | 12.65 | −4% |
+    | Stress hall, path traced | 19.12 | 18.22 | −5% |
+    | Misty hall, fog off (960×600) | 10.41 | 10.13 | −3% |
+    | Emissive panels, fog (960×600) | 13.44 | 12.91 | −4% |
+    | Spot lights, fog, 3× upscaled | 4.21 | 3.92 | −7% |
+    | Night market, ReSTIR, 4096 bulbs | 19.19 | **17.77** | **−7%** |
+
+  * What mattered is taking a ray cast out of a kernel, not the test itself:
+
+    | Pass (per-pass timing) | What its variant leaves out | General | Variant |
+    |---|---|---|---|
+    | Trace, a technique does the GI and more than 4 lights (market, stress hall) | the bounce loop and the per-light shadow rays: only the primary ray is left | 0.94 ms | **0.71 ms** (−24%) |
+    | Trace, path traced, more than 4 lights (stress hall) | the per-light shadow rays (the many-lights pass casts its own) | 12.09 | 11.36 (−6%) |
+    | Trace, path traced, up to 4 lights (Cornell room) | nothing but a few tests | 6.95 | 6.80 (−2%) |
+    | ReSTIR DI, 4096 bulbs | the temporal pass's visibility ray (off by default), the shading in passes that only merge | 10.44 | 9.58 (−8%) |
+    | Reflections (emissive panels, fog) | the second bounce that only references follow | 6.21 | 5.77 (−7%) |
+    | ReSTIR GI initial, 1 bounce | the second ray and the feedback lookup | 2.00 | 1.74 (−13%) |
+    | ReSTIR GI initial, 2 bounces (default) | nothing but a few tests | 5.10 | 5.00 (−2%) |
+    | Fog injection, many lights | the sky and blue-noise tests | 0.99 / 4.70 | 0.94 / 4.67 |
+
+  * What didn't help: variants for flags that only guard a texture read or a clamp. ReSTIR GI's spatial pass, the cascades' trace and the mesh-light pass measured 0–1%, so they have none. A compiled-in bounce count for the path tracer measured the same as the uniform's.
+  * The variants render what the general pipelines render: with `METALRENDERER_MATH=safe` (no reordering of arithmetic) all 225 images of ten benchmark suites match bit for bit with variants on and off (`stressq`, `restirq`, `restircheck`, `restirgicheck`, `marketq`, `gi`, `quality`, `lightcheck`, `fogcheck`, `skycheck`), and the general pipelines render exactly what the code before this change rendered (87 images of `stressq` and `gi`). Under the default fast math the two differ by rounding: at most 1 of 255 levels on most images, RMS about 0.005, plus a few pixels where a stochastic pick flipped.
 * **Custom ray tracing vs Metal's** (M1 Max, stress scene, 32 lights, moving, custom upscaler 3× from 640×400).
   * Whole frames (`METALRENDERER_BENCH_SPLIT=0`, two alternating runs each):
 
