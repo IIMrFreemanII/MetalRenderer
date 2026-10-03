@@ -115,15 +115,13 @@ fewer threads run at once and memory latency stops being hidden.
 
 * Atomics are relaxed throughout (`memory_order_relaxed`). Keep it that way unless ordering is needed: MSL 3.2
   device-scope fences are used in `rtFitKernel` for the bottom-up LBVH fit.
-* **Simdgroup intrinsics aren't used yet.** `simd_sum`, `simd_prefix_exclusive_sum`, `simd_ballot`, `simd_shuffle`
-  and `quad_*` replace threadgroup-memory round-trips and barriers in:
-  * `skyMeanKernel` (threadgroup reduction of `sums[64]`);
-  * `rtKeysKernel` (centroid bounds);
-  * the LBVH sort (`rtSortLocalKernel`);
-  * the ambient accumulations in `restirGISpatialKernel` (sparse grid) and `rcSHKernel` (per probe).
-    These use one global atomic per thread: reduce per simdgroup, then let lane 0 add.
-
-  Only worth it when the pass shows up in timings.
+* **Simdgroup intrinsics** (`simd_sum`, `simd_min` / `simd_max`, `simd_all`, `simd_is_first`,
+  `simd_prefix_exclusive_sum`, `simd_ballot`) replace threadgroup-memory round-trips and barriers. In use:
+  `shadowTemporalKernel` (`simd_all` to mark settled tiles) and `rtKeysKernel` (`simd_min` / `simd_max` for the
+  centroid bounds). Every thread of a group must reach the call: no early `return` above it.
+  * Don't expect a gain from them on a small pass. `rcSHKernel` adds four atomics per probe to one 16-byte buffer;
+    with `simd_sum` and one add per SIMD group the frame measured the same (0.00 ± 0.02 ms, October 2026), so it
+    kept its simple form. `restirGISpatialKernel`'s ambient sums are already 1 pixel in 64.
 * **Threadgroup tiles:** `shadowTemporalKernel` (Shaders/Denoise.metal) loads a tile with an apron into `threadgroup
   half4` arrays, then filters from them. Use `half` in tiles, as few barriers as possible
   (`threadgroup_barrier(mem_flags::mem_threadgroup)`), and stay well below 32 KB per group so several groups stay

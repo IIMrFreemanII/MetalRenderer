@@ -224,7 +224,7 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 * **Virtual geometry** (scenes with glTF models, custom tracer). With per-instance BLAS (the default): the meshes, the triangles traced this frame against the finest level's count (the cut's share), the clusters in the cut, the BLAS memory, the rebuilds (total and per second: each happens when an instance's cut changes, on a background thread) the last one's time, the last background SAH refinement, the last cut's time and how many instances it skipped as unchanged, the pixel error, and whether the LOD is frozen. With `METALRENDERER_VG_MODE=clusters`: clusters drawn against the 65,536 capacity (red when reached), groups resident in the streaming pool, the pool's use, requests waiting and groups loaded this frame. A popup switches between the final image and the geometry debug views, next to Freeze LOD.
 * **Texture streaming:** resident megabytes against the budget, mip levels mapped, and megabytes uploaded since launch.
 * **Memory:** what the GPU has allocated, and the working-set limit.
-* **Ray traversal** (custom tracer): turning the counters on recompiles the shaders with `RT_STATS` (a few seconds in the background, as with R); tracing is slower while they're on. Then: rays per frame, and per ray the top-level and bottom-level nodes visited, instance and cluster entries, and triangle tests. They match what a benchmark with `METALRENDERER_RT_STATS=1` prints for the same view. The window reads the GPU's counters every frame and shows the increase, since a reset from the CPU doesn't stick while frames are in flight.
+* **Ray traversal** (custom tracer): turning the counters on recompiles the shaders with `RT_STATS` (a few seconds in the background, as with R); tracing is slower while they're on. Then: rays per frame, and per ray the top-level and bottom-level nodes visited, instance and cluster entries, triangle tests, and stack overflows (pushes the traversal's 64-entry stack had no room for: each is a subtree a ray skipped, so anything but "none" means `RT_STACK` is too small for the scene's trees). They match what a benchmark with `METALRENDERER_RT_STATS=1` prints for the same view. The window reads the GPU's counters every frame and shows the increase, since a reset from the CPU doesn't stick while frames are in flight.
 
 ### Scene settings
 
@@ -806,6 +806,24 @@ M1 and M2 have no ray tracing hardware, so Metal's intersector is software too, 
 
   * In `gi`, the full-budget ReSTIR GI settings are 0.10–0.15 ms (1.2–1.9%) slower and the high-quality cascades 0.03 ms (1%), in every round. No helper accounts for it: putting any one back by hand, or all of a kernel's, leaves the frame within ±0.1 ms of where it was, forcing the helpers inline makes it slower (+0.21 ms), and the previous commit's shaders with one never-taken extra call in a kernel the benchmark doesn't even run are slower by the same 0.1 ms (1.2%). The helper files alone, with the old kernels, cost nothing (0.00 ms). So this is how the compiler's module-wide decisions fall for a given source, not a cost of a helper: expect any shader edit to move unrelated kernels by about 1%, and judge a change of that size against a control edit (`measuring.md`).
   * Left different on purpose, because making them alike changes images: next-event estimation at a path's hit (the path tracer, ReSTIR GI and the reflections take their branches in different orders; the cascades' and the path tracer's light-map branch draw 8 candidates and clamp, the others 4 and don't), the ambient fixed point (1024 in the cascades, 256 in ReSTIR GI), and a light sample's distance floor (1e-6 at surfaces, 1e-4 in fog). The two bottom-up fit kernels keep their own walk-up loops (device-scope fences around a coherent pointer).
+* **Small GPU items that measured nothing** (October 2026). Seven ideas from the code audit, each tried as a copy of the shaders against the current ones with the same binary (`METALRENDERER_SHADERS`), whole frames, five alternating rounds (the same shaders against themselves: 0.00–0.02 ms). None is in the code:
+
+  | Idea | Tried | Whole frame |
+  |---|---|---|
+  | A smaller traversal stack | 48 and 128 entries instead of 64 | ±0.03 ms (stress hall, 8.6–18.3 ms frames) |
+  | | 32 entries | +1.8 to +3.5 ms: 20% slower |
+  | Trace's writes that a later pass overwrites | no indirect write with the cascades or ReSTIR GI, no direct write with ReSTIR | −0.01 ms (cascades), ±0.05 ms (ReSTIR) |
+  | The sky's ambient light, computed once | a constant in place of the two sky samples (the most it could save) | 0.00 ± 0.01 ms (fog scenes) |
+  | One atomic add per SIMD group | `simd_sum` in the cascades' SH pass, instead of four adds per probe | 0.00 ± 0.02 ms |
+  | The filters' normal weight | 6 or 7 squarings in place of `pow(x, 64)` and `pow(x, 128)` | −0.10 to +0.27 ms, no pattern |
+  | The filters' colour sums in `half` | à-trous and the shadow filter | −0.06 to +0.02 ms |
+  | The temporal pass's fallback for new pixels | removed (the most a cheaper one could save) | 0.00 to +0.06 ms |
+
+  * The stack's result is the one worth remembering: 64 entries cost nothing over 48, and below some size the compiler handles the array differently and every ray pays. What the audit was right about is that a full stack skips a subtree silently, so the traversal counters now count those pushes (`RT_STATS`, the Debug window's Ray traversal section, and a benchmark's line with `METALRENDERER_RT_STATS=1`). No scene has any: the stress hall, the market at 16384 bulbs, and the gallery in each of its three geometry modes.
+  * The per-pass columns suggested gains the frame didn't have (the SH pass read 0.06–0.11 ms faster with `simd_sum`): when passes are timed apart, a pass's time includes how it sits between its neighbours.
+  * ReSTIR GI frames came out 0.10–0.12 ms faster without trace's indirect write, and the path-traced ones 0.27 ms slower with the squarings: both are the frame's two states (see the shader helpers' note), which an edit flips, not the edit's own cost.
+  * Not tried: one atomic per SIMD group in virtual geometry's cut. The cut and its tree build together are 0.3 ms of a 20–37 ms frame, in the non-default clusters mode.
+
 * **Launch: the first frame after a quarter of a second** (October 2026; M1 Max, time from the process's start, the line `Launch: …` the app prints):
 
   | | Window | First frame |

@@ -259,6 +259,7 @@ final class DebugPanel: NSObject {
                 ("Instance entries", String(format: "%.2f per ray", s.perRay(3)), nil),
                 ("Cluster entries", String(format: "%.2f per ray", s.perRay(4)), nil),
                 ("Triangle tests", String(format: "%.1f per ray", s.perRay(5)), nil),
+                ("Stack overflows", s.stackOverflows == 0 ? "none" : "\(s.stackOverflows): rays skip subtrees (RT_STACK)", nil),
             ])
         } else {
             traversal.set(renderer.traversalCounters ? [("", "waiting for frames…", nil)] : [])

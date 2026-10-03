@@ -118,6 +118,7 @@ static_assert(sizeof(RTScene) == 96, "RTScene: CustomRayTracer.writeArgs writes 
 #endif
 // Counters (RT_STATS: global; COST traversals: per ray, for the "Traversal cost" view): 0 rays, 1 top nodes,
 // 2 bottom nodes, 3 instance entries, 4 cluster entries, 5 triangle tests, 6 nodes inside virtual instances.
+// Global only: 7 = pushes the full stack turned away (RT_ROOM).
 #define RT_COUNT(i, n) { if (COST) cost[i] += (n); RT_STAT(i, n); }
 
 // A virtual instance's BLAS over its current cut (VirtualBLAS.swift): nodes, triangles (v0 e1 e2, w = index), and per
@@ -160,7 +161,16 @@ inline float3 octDecode(uint bits) {
 
 constant uint RT_LEAF  = 0x80000000u;
 constant uint RT_NONE  = 0xFFFFFFFFu;
-constant uint RT_STACK = 64;   // top-level depth + bottom-level depth must fit
+// The traversal's stack: the top level's depth + the bottom level's must fit. A push without room is skipped, and
+// with it a subtree: the ray may then miss what it should hit, silently, so RT_STATS counts those (counter 7; none
+// in any of the scenes). 48 and 128 entries trace as fast as 64; 32 is 20% slower in the stress hall (measured
+// October 2026), so there is nothing to gain from a smaller one.
+constant uint RT_STACK = 64;
+#if RT_STATS
+#define RT_ROOM(sp) ((sp) < RT_STACK || (RT_STAT(7, 1u), false))
+#else
+#define RT_ROOM(sp) ((sp) < RT_STACK)
+#endif
 
 // Slab test of a box against [tmin, tmax]; tnear = entry distance.
 inline bool rtSlab(float3 lo, float3 hi, float3 inv, float3 oi, float tmin, float tmax, thread float& tnear) {
@@ -236,7 +246,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                 ref &= ~RT_ENTER;
                 uint id = sc.nodeInstance[ref - sc.virtualBase];
                 RTInstance inst = sc.instances[id];
-                if ((inst.mask & mask) != 0 && sp < RT_STACK) {
+                if ((inst.mask & mask) != 0 && RT_ROOM(sp)) {
                     float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
                     o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
                     d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));
@@ -258,7 +268,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                 uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
                 if (b0 && b1) {
                     bool swap = t1 < t0;
-                    if (sp < RT_STACK) stack[sp++] = swap ? c0 : c1;
+                    if (RT_ROOM(sp)) stack[sp++] = swap ? c0 : c1;
                     ref = swap ? c1 : c0;
                     continue;
                 }
@@ -272,7 +282,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                 bool enter = level == 0;    // a lone cluster in the world-space part of the tree
                 RTInstance inst;
                 if (enter) inst = sc.instances[rc.x];
-                if ((!enter || (inst.mask & mask) != 0) && sp < RT_STACK) {
+                if ((!enter || (inst.mask & mask) != 0) && RT_ROOM(sp)) {
                     if (enter) {
                         float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
                         o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
@@ -300,7 +310,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     nodes = e.nodes; tris = e.tris; root = 0;
                     present = e.triangles != 0;
                 }
-                if (present && (inst.mask & mask) != 0 && sp < RT_STACK) {
+                if (present && (inst.mask & mask) != 0 && RT_ROOM(sp)) {
                     float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
                     o = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
                     d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared

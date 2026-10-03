@@ -62,8 +62,9 @@ clustering, cluster-DAG pages, texture mips).
     function constant and the `RT_STATS` / `CUSTOM_RT` macros (`Pipelines.compile`).
 * **Branch on uniforms, not on pixels.** Keep loop trip counts uniform across a simdgroup. Make one memory fetch serve
   one decision: the 64-byte two-child BVH node (BVH.swift:6) tests both children with one load.
-* **Reduce before atomics.** Go simdgroup (`simd_sum`) → threadgroup → one `atomic_fetch_add_explicit(…,
-  memory_order_relaxed)` per group. Don't use a global atomic per thread on dense grids.
+* **Reduce before atomics** where a pass is dominated by them: simdgroup (`simd_sum`) → threadgroup → one
+  `atomic_fetch_add_explicit(…, memory_order_relaxed)` per group. (Measure: four atomics per probe in `rcSHKernel`
+  turned out not to matter.)
 * **Threadgroup tiles** with an apron for neighbourhood filters (shadowTemporalKernel, Shaders/Denoise.metal). Use as
   few barriers as possible, and stay well under 32 KB so several groups fit per core.
 * **Tune 2D dispatch sizes** in `Renderer.threadgroupSizes`. Sweep with `METALRENDERER_TG`.
