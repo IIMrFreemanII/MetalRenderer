@@ -4,7 +4,7 @@ import QuartzCore
 
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
-    case trace, geometryDebug, lightMap
+    case trace, glass, geometryDebug, lightMap
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve

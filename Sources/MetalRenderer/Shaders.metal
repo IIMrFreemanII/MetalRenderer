@@ -26,6 +26,7 @@ using namespace metal::raytracing;
 #include "Shaders/Fog.metal"               // volumetric fog: fogInject / fogIntegrate / fogReference
 #include "Shaders/Sky.metal"               // atmosphere, clouds, the sky map and its noise
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
+#include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)

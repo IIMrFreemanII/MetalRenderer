@@ -100,6 +100,22 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
 * **Signs it was bypassed.** A new shared struct with neither; fields appended on one side; a
   `// xyz = …, w = …` comment that no longer matches the packing.
 
+## Scene kinds: `SceneKind` in `Settings.swift`
+
+* **What it is.** A scene is a case of `SceneKind` and a `build…` function in an extension of `Scene`
+  (`Scene+Lights.swift`, `Scene+Crowd.swift`, `Scene+City.swift`), called from the switch in `Scene.init`. Geometry
+  goes in through `addMesh` / `addMaterial` / `addInstance` / `addLight` only, all of it before init returns.
+* **Plugging in.** The case (appended last: the raw value is saved and is the panel's popup index) with its `title`;
+  its fog and sky in `FogSettings.preset` and `SkySettings.preset`; its camera in `Scene.demoCamera`, or
+  `cameraFromScene` if the camera depends on how it was built; its own settings as a struct in `SceneSettings` with
+  one table line each, `.when` the kind is chosen and `live: false`; a benchmark mode. A kind's env name is its case
+  name in lower case.
+* **Signs it was bypassed.** `kind == .x` in the renderer or a stage builder (what the frame needs to know is a
+  property of the built `Scene`: `hasGlass`, `usesLightTable`, `crowd`); geometry added after init; a preset keyed
+  by something other than the kind.
+* **Guard.** The switches are exhaustive, so a missing case doesn't compile; `SettingsTableTests` round-trips every
+  kind through the env.
+
 ## Things that are not structures yet
 
 When three features have each added the same kind of thing by hand, that is the next structure. The pass that

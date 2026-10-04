@@ -68,7 +68,10 @@ extension ToneMap: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
-extension SceneKind: EnvNamed {}
+extension SceneKind: EnvNamed {
+    var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
+}
+extension CityStyle: EnvNamed {}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
@@ -172,14 +175,14 @@ struct SettingSpec {
     /// it logarithmically; `ticks` makes it snap to the steps.
     static func slider<F: BinaryFloatingPoint & EnvValue>(_ title: String, _ path: WritableKeyPath<RenderSettings, F>,
                                                           _ range: ClosedRange<F>, step: Double = 0, digits: Int = 0,
-                                                          log: Bool = false, ticks: Bool = false,
+                                                          log: Bool = false, ticks: Bool = false, live: Bool = true,
                                                           _ format: @escaping (F) -> String) -> SettingSpec {
         let lo = Double(range.lowerBound), hi = Double(range.upperBound)
         let position = { (v: Double) in log ? log2(v) : v }
         let slider = Slider(
             range: position(lo)...position(hi),
             ticks: ticks ? Int(((hi - lo) / step).rounded()) + 1 : 0,
-            live: true,
+            live: live,
             position: { position(Swift.min(Swift.max(Double($0[keyPath: path]), lo), hi)) },
             move: { s, x in
                 var v = log ? pow(2, x) : x
@@ -282,6 +285,8 @@ enum SettingsTable {
     private static let scene: Section = {
         let customTracer: When = { $0.rayTracer == .custom }   // Metal would need its acceleration structures rebuilt per cut
         let virtual: When = { $0.rayTracer == .custom && $0.virtualGeometry.enabled }
+        let city: When = { $0.scene.kind.isCity }
+        let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
             // Scene sizes rebuild the scene, so they apply when the slider is released.
@@ -295,6 +300,16 @@ enum SettingsTable {
                 .env(.scene, "poses").when { $0.scene.kind == .crowd },
             S.slider("Detail level", \.scene.detail, SceneSettings.detailRange, live: false)
                 .env(.scene, "detail").when { $0.scene.kind == .crowd },
+            S.slider("City seed", \.scene.city.seed, CitySettings.seedRange, live: false)
+                .env(.scene, "seed").when(city),
+            S.slider("City blocks", \.scene.city.blocks, CitySettings.blockRange, live: false) { "\($0) x \($0)" }
+                .env(.scene, "blocks").when(city),
+            S.popup("Building style", \.scene.city.style, titled(\.title)).env(.scene, "style").when(city),
+            S.slider("Lit windows", \.scene.city.lit, CitySettings.litRange, step: 0.05, live: false, percent)
+                .env(.scene, "lit").when { $0.scene.kind == .cityNight },
+            S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
+                .env(.scene, "rooms").when(city),
+            S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
             S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)

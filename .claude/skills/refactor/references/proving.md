@@ -28,6 +28,7 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
 | Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery`, with `-- METALRENDERER_ASSETS=<repo>/Assets` (see below) |
 | Skinned characters, the crowd, deforming meshes | `crowd` with `-- METALRENDERER_CROWD_CHECK=1` (its log lines compare the GPU's vertices and refitted trees with the CPU's) |
+| The city, the building generator, glass, meshes of several materials | `city` (its first 17 settings are stills: narrow with `"overview\|street\|facade\|night"`), also with `-- METALRENDERER_RT=metal` |
 | Capability fallbacks | any mode with `-- METALRENDERER_CAPS=rt` and the like |
 
 What a mode costs, per run, on an M4 Max under macOS 27.0 without the references (`same.sh` runs it twice):

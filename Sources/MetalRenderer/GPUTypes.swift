@@ -186,7 +186,8 @@ struct GPUInstanceData {
 struct GPUMaterial {
     var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
-    var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale
+    var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
+                                            // z = 1: an emissive-mesh light's (buildMeshLights), w = 1: window glass
     var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
 }

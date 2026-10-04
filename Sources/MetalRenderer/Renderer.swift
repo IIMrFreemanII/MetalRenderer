@@ -280,6 +280,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var lightStage: [GPULight] = []
     private var stageComplete = false                  // the stage holds every record
     private var uvBuffer: MTLBuffer!
+    private var triangleMaterialBuffer: MTLBuffer!    // Scene.triangleMaterials (meshes of several materials)
     private var emissiveBuffer: MTLBuffer!            // emissive-mesh lights' triangles (MSL EmissiveTriangle)
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
     private var textureTable: MTLBuffer!              // their MTLResourceIDs (MSL MaterialTexture array)
@@ -347,9 +348,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var skyActive = false               // this frame uses the sky texture
     private var skyRefreshed: (sky: SkySettings, scene: ObjectIdentifier)?   // what the sky texture was fully drawn for
     private var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
-    /// Shading-argument layout (MSL SceneShading): six buffer addresses, the sky and cloud-shadow textures, SkyParams.
-    private static let shadingSkyOffset = 48, shadingParamsOffset = 64
-    private static let shadingArgsLength = 64 + MemoryLayout<GPUSkyParams>.stride
+    /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
+    /// (16-byte aligned).
+    private static let shadingSkyOffset = 56, shadingParamsOffset = 80
+    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 224: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] = []
@@ -746,6 +748,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         materialsPending = [Range<Int>?](repeating: nil, count: Renderer.maxFramesInFlight)
         uvBuffer = try makeBuffer(scene.uvs, "uvs")
         emissiveBuffer = try makeBuffer(scene.emissiveTriangles, "emissiveTriangles")
+        triangleMaterialBuffer = try makeBuffer(scene.triangleMaterials, "triangleMaterials")
         _ = scene.takeMaterialsDirty()
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
         textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
@@ -765,10 +768,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             p.storeBytes(of: (textureStreamer?.minLodBuffer(slot: slot) ?? staticMinLod).gpuAddress, toByteOffset: 24, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.feedbackBuffer(slot: slot) ?? feedbackDummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
             p.storeBytes(of: emissiveBuffer.gpuAddress, toByteOffset: 40, as: UInt64.self)
+            p.storeBytes(of: triangleMaterialBuffer.gpuAddress, toByteOffset: 48, as: UInt64.self)
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
-        shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer]
+        shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer == nil ? materialTextures : [])
     }
 
@@ -1628,6 +1632,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
         var lightMaps = false
         var specular = false                    // reflections (glTF specular materials)
+        var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
@@ -1662,6 +1667,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let directMode = activeDirectMode
         p.restir = directMode == .restir
         p.specular = usesSpecular
+        p.glass = scene.hasGlass
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
@@ -2102,6 +2108,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                               t.visibility, t.blocker, t.material])
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
+        if plan.glass {
+            stages.append(ComputeStage(pass: "glass") { [self] enc in
+                bind(enc, .glass, uniforms, sceneSlot: slot)
+                setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.material, blueNoiseTexture])
+                dispatch(enc, .glass, width: size.width, height: size.height)
+            })
+        }
         return stages
     }
 

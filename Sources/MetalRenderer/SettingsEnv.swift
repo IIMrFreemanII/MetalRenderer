@@ -32,7 +32,7 @@ enum SettingsEnv {
             let changed = SettingsTable.named.filter { $0.variable == variable && $0.exported && $0.differs(s, d) }
             switch variable {
             case .scene:
-                let items = ["\(s.scene.kind)"] + changed.map { "\($0.key!)=\($0.text(s))" } + s.scene.extraModels.map { "model=\($0.path)" }
+                let items = [s.scene.kind.envName] + changed.map { "\($0.key!)=\($0.text(s))" } + s.scene.extraModels.map { "model=\($0.path)" }
                 vars.append("\(variable.rawValue)=\"\(items.joined(separator: ","))\"")
             case .sky:
                 if s.sky.mode != d.sky.mode || SkySettings.override != nil {
@@ -83,9 +83,9 @@ enum SettingsEnv {
     }
 
     /// `METALRENDERER_SCENE`'s items that aren't settings of the table: the scene's kind as a bare word (cornell,
-    /// stress, gallery, spots, sun, area, tubes, emissive, mixed, fog, valley, market, crowd), `check=<light>` for the
-    /// light-check scene (Scene.buildLightCheck; "empty" = just the floor) and `model=<path>`, which adds a glTF model
-    /// as File > Open does, in front of the default camera.
+    /// stress, gallery, spots, sun, area, tubes, emissive, mixed, fog, valley, market, crowd, city, citynight),
+    /// `check=<light>` for the light-check scene (Scene.buildLightCheck; "empty" = just the floor) and `model=<path>`,
+    /// which adds a glTF model as File > Open does, in front of the default camera.
     private static func applySceneItem(_ kv: [String], to s: inout SceneSettings) -> Bool {
         if kv.count == 1, let kind = SceneKind(envText: kv[0]) {
             s.kind = kind

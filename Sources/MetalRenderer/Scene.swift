@@ -126,6 +126,9 @@ final class Scene {
     /// light spheres never block their own light.
     static let maskGeometry: UInt32 = 1
     static let maskLights: UInt32 = 2
+    /// Window glass: only camera rays meet it (they pass through it and take its reflection, traceKernel); to shadow
+    /// and GI rays it isn't there, so light goes through windows.
+    static let maskGlass: UInt32 = 4
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
@@ -138,6 +141,9 @@ final class Scene {
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
     private(set) var hasSpecular = false
     private(set) var indices: [UInt32] = []
+    /// For meshes of several materials (the city's buildings): per triangle of `indices`, what to add to its
+    /// instance's material index. Empty if no mesh has more than one; otherwise one entry per triangle.
+    private(set) var triangleMaterials: [UInt8] = []
     private(set) var meshes: [GPUMesh] = []
     private(set) var materials: [GPUMaterial] = []
     private(set) var instances: [Instance] = []
@@ -160,6 +166,8 @@ final class Scene {
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     var defaultCamera = Camera()
     let settings: SceneSettings
+    /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
+    private(set) var hasGlass = false
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
 
@@ -192,6 +200,8 @@ final class Scene {
         case .valley: buildValley()
         case .market: buildMarket()
         case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
+        case .city: buildCity(settings.city, night: false)
+        case .cityNight: buildCity(settings.city, night: true)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -205,11 +215,14 @@ final class Scene {
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
 
         // Nothing is added from here on: what the frame loop asks for every frame is fixed.
+        if !triangleMaterials.isEmpty {
+            triangleMaterials += [UInt8](repeating: 0, count: indices.count / 3 - triangleMaterials.count)
+        }
         hasSpecular = materials.contains { $0.params.x > 0 }
         switch ProcessInfo.processInfo.environment["METALRENDERER_LIGHT_TABLE"] {
         case "1": usesLightTable = true
         case "0": usesLightTable = false
-        default: usesLightTable = lights.count > Scene.lightTableThreshold
+        default: usesLightTable = forcesLightTable || lights.count > Scene.lightTableThreshold
         }
         firstSun = lights.firstIndex { $0.kind.isSun }
         var rank: UInt32 = 0
@@ -375,12 +388,17 @@ final class Scene {
     /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off. Set once, by init.
     static let lightTableThreshold = 256
     private(set) var usesLightTable = false
+    /// Set by a scene's builder: the light table whatever the count. (The city at night: a building's lit windows are
+    /// one mesh light wrapped around it, which the per-light loops of a scene with few lights sample badly.)
+    var forcesLightTable = false
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
     /// Bit 30: the scene has meshes that deform (a crowd's pose slots; DEFORMING_MESHES in Shaders/Types.metal).
+    /// Bit 29: it has glass (GLASS). Bit 28: some mesh has several materials (MULTI_MATERIAL).
     var lightTypeMask: UInt32 {
         let deforming: UInt32 = crowd?.slots.isEmpty == false ? 0x4000_0000 : 0
-        return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | deforming) { mask, l in   // spheres always: an empty scene needs some type
+        let glass: UInt32 = hasGlass ? 0x2000_0000 : 0, multi: UInt32 = triangleMaterials.isEmpty ? 0 : 0x1000_0000
+        return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | deforming | glass | multi) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
             case .sphere: type = GPULight.sphere
@@ -629,9 +647,16 @@ final class Scene {
         }
     }
 
-    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil) -> Int {
+    /// `materials`: for a mesh of several materials, each triangle's material as an offset from the material its
+    /// instance names (which is then the first of a run of materials added one after the other).
+    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil) -> Int {
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
+        if let offsets {
+            precondition(offsets.count == mesh.indices.count / 3, "one material per triangle")
+            triangleMaterials += [UInt8](repeating: 0, count: indices.count / 3 - triangleMaterials.count)   // the meshes before it
+            triangleMaterials += offsets
+        }
         positions += mesh.positions
         normals += mesh.normals
         uvs += meshUVs ?? [SIMD2<Float>](repeating: .zero, count: mesh.positions.count)
@@ -714,6 +739,32 @@ final class Scene {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))
         return materials.count - 1
+    }
+
+    /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
+    func addGlassMaterial(tint: SIMD3<Float>) -> Int {
+        hasGlass = true
+        return addMaterial(GPUMaterial(albedo: SIMD4(tint, 0), emission: SIMD4(.zero, 0), params: SIMD4(0, 1, 0, 1)))
+    }
+
+    /// Any material, as it is.
+    func addMaterial(_ material: GPUMaterial) -> Int {
+        materials.append(material)
+        return materials.count - 1
+    }
+
+    /// An image for materials to sample: its index for `GPUMaterial.textures`.
+    func addTexture(_ source: TextureSource) -> UInt32 {
+        textures.append(source)
+        return UInt32(textures.count - 1)
+    }
+
+    /// Room for this much more geometry (a builder that knows how much it is about to add).
+    func reserveGeometry(vertices: Int, indices count: Int) {
+        positions.reserveCapacity(positions.count + vertices)
+        normals.reserveCapacity(normals.count + vertices)
+        uvs.reserveCapacity(uvs.count + vertices)
+        indices.reserveCapacity(indices.count + count)
     }
 
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).

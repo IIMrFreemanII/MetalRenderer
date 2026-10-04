@@ -10,6 +10,7 @@ struct SceneData {
     device const float*        minLod;
     device atomic_uint*        feedback;
     device const EmissiveTriangle* emissive;
+    device const uchar*        triangleMaterials;
     device const Light*        lights;
     uint                       lightCount;
     uint4                      lightTable;      // Uniforms.lightTable, for the samplers that draw from the table
@@ -27,6 +28,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.minLod = shading.minLod;
     s.feedback = shading.feedback;
     s.emissive = shading.emissive;
+    s.triangleMaterials = shading.triangleMaterials;
     s.sky = shading.sky;
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
@@ -128,6 +130,7 @@ struct Surface {
     float  metallic;
     float  roughness;
     float  specular;      // specular weight: 0 = diffuse-only material
+    float  transmission;  // 1 = window glass (albedo = its tint): traceKernel carries camera rays through it
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
@@ -228,12 +231,14 @@ struct HitVertices {
     float3 n[3];
     float2 t[3];
     uint3 i;          // with prevOffset: the vertices' places in the position buffer
+    uint triangle;    // its place in the index buffer / 3 (~0: virtual geometry, which has no index buffer)
     uint prevOffset;  // MeshData.prevOffset (0 = the previous frame's object-space positions are these ones)
 };
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
     v.i = uint3(0u);
     v.prevOffset = 0;
+    v.triangle = ~0u;
 #if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         // Virtual geometry: the hit cluster's vertices, in the streaming pool.
@@ -263,6 +268,7 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
 #endif
     MeshData mesh = s.meshes[inst.meshIndex];
     uint base = mesh.firstIndex + res.primitive * 3;
+    v.triangle = base / 3;
     for (uint k = 0; k < 3; ++k) {
         uint i = s.indices[base + k];
         uint own = DEFORMING_MESHES ? i + mesh.vertexOffset : i;   // a pose slot's own vertex
@@ -281,7 +287,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     Surface sf;
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
-    sf.metallic = sf.specular = 0.0f;
+    sf.metallic = sf.specular = sf.transmission = 0.0f;
     sf.roughness = 1.0f;
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;
@@ -298,7 +304,9 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     float3 objN   = n0 * w0 + n1 * bc.x + n2 * bc.y;
     float3 objNg  = cross(p1 - p0, p2 - p0);
 
-    Material mat = s.materials[inst.materialIndex];
+    uint materialIndex = inst.materialIndex;
+    if (MULTI_MATERIAL && hv.triangle != ~0u) materialIndex += s.triangleMaterials[hv.triangle];
+    Material mat = s.materials[materialIndex];
     sf.hit = true;
     sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
     // A deforming mesh (a crowd's pose slot): where the point was in the previous frame's pose.
@@ -315,6 +323,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.metallic = mat.albedo.a;
     sf.roughness = mat.emission.a;
     sf.specular = mat.params.x;
+    if (GLASS) sf.transmission = mat.params.w;
     sf.instanceId = res.instance;
     sf.lightEmitter = mat.params.z > 0.0f;
 
