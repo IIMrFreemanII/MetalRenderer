@@ -92,6 +92,8 @@ struct TraversalStats {
 final class CustomRayTracer {
     private let device: MTLDevice
     var pipelines: RTPipelines!   // set by the renderer once the custom-RT shaders are compiled
+    /// `METALRENDERER_RT_CHECK=1`: a new tracer checks its trees against a CPU traversal of them (`selfTest`).
+    static let checked = ProcessInfo.processInfo.environment["METALRENDERER_RT_CHECK"] == "1"
     static let cpuBuild = ProcessInfo.processInfo.environment["METALRENDERER_RT_BUILD"] == "cpu"
     let blasNodes: MTLBuffer
     let triangles: MTLBuffer
@@ -125,7 +127,7 @@ final class CustomRayTracer {
     private let cutouts: MTLBuffer
     /// The RTScene record: its fields end at 168 bytes (176 with its alignment) (Shaders/Intersect.metal asserts it); the rest is spare.
     private static let argsSize = 256
-    private let cpu: (blas: BVHBuilder.BLASResult, tris: [SIMD4<Float>])   // kept for the self-test
+    private let cpu: (blas: BVHBuilder.BLASResult, tris: [SIMD4<Float>])?  // kept for the self-test, where there is one
     // GPU build inputs and scratch (shared by the frame slots: Metal orders the passes that use them).
     private let meshInfo: MTLBuffer               // per mesh: (box min, BLAS root bits), (box max, RTInstance.pad1 bits)
     private let dynSlot: MTLBuffer                // per instance: index among the moving ones, or ~0
@@ -161,13 +163,30 @@ final class CustomRayTracer {
     /// The first node of this frame's cluster tree (after the static and dynamic trees).
     private var virtualNodeBase: Int { staticNodes.count + max(dynamicIds.count - 1, 1) }
 
+    /// The meshes' trees: from the scene's arrays, or for a scene with borrowed meshes from the buffers its vertices
+    /// were put together in.
+    private static func trees(of scene: Scene, geometry: SceneBuffers?) throws -> (blas: BVHBuilder.BLASResult, geometry: String?, cached: Bool) {
+        guard !scene.borrowed.isEmpty else {
+            return BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
+        }
+        guard let geometry else { throw RendererError.resourceCreation("the trees of a scene with borrowed meshes, without its buffers") }
+        func all<T>(_ buffer: MTLBuffer, _ count: Int) -> UnsafeBufferPointer<T> {
+            UnsafeBufferPointer(start: buffer.contents().bindMemory(to: T.self, capacity: count), count: count)
+        }
+        return BVHBuilder.cachedBLAS(positions: all(geometry.positions, scene.vertexCount), indices: all(geometry.indices, scene.indexCount),
+                                     meshes: scene.meshes, uvs: all(geometry.uvs, scene.vertexCount))
+    }
+
     /// `instances`: a copy of `scene.instances` taken on the main thread when this runs in the background for a scene
     /// that is still being drawn (`Scene.update` rewrites the transforms there every frame).
-    init(device: MTLDevice, scene: Scene, instances sceneInstances: [Scene.Instance]? = nil, slots: Int, poolMB: Int = 768) throws {
+    /// `geometry`: the scene's buffers, where the vertices of a scene with borrowed meshes are (its arrays hold only
+    /// the others).
+    init(device: MTLDevice, scene: Scene, instances sceneInstances: [Scene.Instance]? = nil, geometry: SceneBuffers? = nil, slots: Int,
+         poolMB: Int = 768) throws {
         self.device = device
         let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
-        let (blas, geometryHash, cached) = BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
+        let (blas, geometryHash, cached) = try CustomRayTracer.trees(of: scene, geometry: geometry)
         blasRoots = blas.roots
         // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it, and
         // a pose slot's (its mesh deforms) that of every pose: on the CPU, the GPU keeps the exact ones.
@@ -180,7 +199,7 @@ final class CustomRayTracer {
         for s in scene.crowd?.slots ?? [] { instanceBounds[s.mesh] = scene.localBounds(mesh: s.mesh) }
         meshBounds = instanceBounds
         swayingMeshes = scene.meshes.map { $0.sways != 0 }
-        cpu = (blas, blas.triangles)
+        cpu = CustomRayTracer.checked ? (blas, blas.triangles) : nil
 
         // Static instances in two groups: the geometry, and the proxies of lights that stay in place (thousands of bulbs
         // in the market).
@@ -291,7 +310,10 @@ final class CustomRayTracer {
         let tlasCapacity = staticNodes.count + max(dynamicIds.count - 1, 1) + (virtualGeometry == nil ? 0 : VirtualGeometry.capacity)
         for slot in 0..<slots {
             let t = try buffer([BVHNode](repeating: BVHNode(), count: tlasCapacity), "tlasNodes\(slot)")
-            staticNodes.withUnsafeBytes { if $0.count > 0 { t.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
+            // (Not `staticNodes.withUnsafeBytes { ... copyMemory ... }`: Swift 6.4 compiles that closure to end in a tail
+            // call to memmove with the buffer's address still in the error register, and the optimised init then takes
+            // its return for a throw.)
+            if !staticNodes.isEmpty { memcpy(t.contents(), staticNodes, staticNodes.count * MemoryLayout<BVHNode>.stride) }
             tlasNodes.append(t)
             instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(sceneInstances.count, 1)), "rtInstances\(slot)"))
             sceneArgs.append(try buffer([UInt8](repeating: 0, count: CustomRayTracer.argsSize), "rtScene\(slot)"))
@@ -354,7 +376,7 @@ final class CustomRayTracer {
             print("Assemblies: \(roots.count) plants of \(partRecords.count) parts, trees \(partDepth) deep over BLASes \(blas.maxDepth) deep"
                   + (deepest > 64 ? " — \(deepest) LEVELS IN ALL: the traversal's stack (RT_STACK) may overflow" : ""))
         }
-        if ProcessInfo.processInfo.environment["METALRENDERER_RT_CHECK"] == "1" { selfTest(scene: scene) }
+        if CustomRayTracer.checked, scene.borrowed.isEmpty { selfTest(scene: scene) }   // (it reads the scene's arrays)
     }
 
     /// RTScene (160 bytes, asserted in Shaders/Intersect.metal): 10 GPU addresses, then the static and dynamic root refs and the
@@ -639,6 +661,9 @@ final class CustomRayTracer {
     }
 
     /// Binds the scene's argument buffer; with `declare` (the first bind in an encoder) also declares what it points at.
+    /// The buffers a frame of a scene without virtual geometry reads (SceneBuffers.touch).
+    var buffers: [MTLBuffer] { tlasNodes + instances + [blasNodes, triangles, parts, voxelGrids, voxels, cutouts] }
+
     func bind(_ enc: ComputePass, slot: Int, declare: Bool = true) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
         guard declare else { return }
@@ -651,6 +676,7 @@ final class CustomRayTracer {
 
     /// CPU traversal of one BLAS (the same algorithm as the shader): closest hit t along an object-space ray.
     private func intersectBLAS(root: UInt32, o: SIMD3<Float>, d: SIMD3<Float>, tmax: Float) -> Float {
+        guard let cpu else { return tmax }
         var best = tmax
         var stack = [root]
         var dd = d

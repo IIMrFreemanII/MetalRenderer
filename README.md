@@ -65,7 +65,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * Direct specular is exact per light (representative-point sphere lights), multiplied by the shadow denoiser's visibility in the composite.
   * Indirect specular comes from a reflection pass: one GGX visible-normal ray per pixel, divided by an analytic specular albedo and denoised.
   * References follow full paths.
-* **Texture streaming:** textures are cached at full resolution with full mip chains and live in a sparse heap (budget 1 GB).
+* **Texture streaming:** textures are cached at full resolution with full mip chains and live in a sparse heap (budget 1 GB, or as much as all the scene's textures could map, if that is less: the heap counts in full against the app's memory whatever is mapped of it).
   * Primary hits count, per texture, the mip levels they need.
   * The streamer maps and uploads the finest level 1.5% of the samples need and unmaps levels nobody needed lately.
   * The gallery's 2.6 GB of 4K textures need 14 MB from the overview and 46–65 MB close up.
@@ -766,7 +766,33 @@ The **Open world** scene has no edge: hills, woods, open country and cities, all
 
 A tile is a file once made (`~/Library/Caches/MetalRenderer/generated/world-<seed>-v<version>/<level>/<x>_<z>.tile`, a section file: its meshes' arrays, its materials, its trees), keyed by the world's settings and versions.
 
-**The scene** (`Scene+World.swift`) is one moment of the world: the 289 tiles around the camera's. When the camera is a quarter of a tile into another one, the renderer makes the scene around that one in the background (the tiles the two share are kept in memory, the new ones come from their files or are made) and swaps it in; what the frames have gathered (the upscaler's and the denoisers' histories) holds, since the world is in the same place.
+**The scene** (`Scene+World.swift`) is one moment of the world: the 289 tiles around the camera's. When the camera is a quarter of a tile into another one, the renderer makes the scene around that one in the background (the tiles the two share are kept, the new ones come from their files or are made) and swaps it in; what the frames have gathered (the upscaler's and the denoisers' histories) holds, since the world is in the same place.
+
+**A tile crossing costs no frame.** Everything of the next scene is made off the main thread, and the swap between two frames takes 0.1 ms:
+* **The scene's buffers and structures are made where the scene is** (`SceneBuffers.swift`): geometry, instance records, and for Metal's tracer the acceleration structures, built on a command queue of their own (the frames' queue runs its command buffers in order, and a frame would wait behind a build).
+* **A mesh keeps its structure from scene to scene.** A tile's chunk or a plant of the library is the same triangles in every scene that has it, and says so by a name (`Scene.meshNames`); Metal's per-mesh structure of a named mesh is handed to the next scene. A crossing builds the 43 meshes that are new (100 MB as built, 50 compacted) instead of all 370 (760 MB).
+* **Nothing in the world moves**, so its instances are written once and Metal's structure over them is built once, in the background, for tracing rather than for a fast build and refits. That goes for every scene in which nothing moves (`Scene.isStill`): the Forest, the City and the Valley trace 9 to 13% faster on Metal's tracer for it (3.02 → 2.68, 2.03 → 1.85 and 1.77 → 1.54 ms), the world 30 to 35% (5.4 → 3.7 ms from the start). Their pictures on that tracer differ from before in the pixels where two surfaces coincide (another tree picks the other one: at most 0.15 levels RMS, fewer than one pixel in ten thousand more than 8 levels off).
+* **The textures stay as they are streamed**: every scene of a world has the same textures in the same order, and takes the streamer and what it has mapped from the scene before. (A new streamer's first frame spent 25 ms in the kernel mapping its tiles.)
+* **The buffers are used once before the swap** (a copy of a few bytes from each, on the build queue): the first command buffer to name a buffer pays for bringing it into the GPU's memory map, 5 to 12 ms for these, and that would be a frame.
+* **The replaced scene is let go of on another thread**: freeing its buffers and arrays took 13 ms.
+
+**Memory.** A scene borrows its tiles' meshes instead of copying them (`Scene.BorrowedMesh`): a tile's arrays are its file's pages, mapped, and the renderer copies them from there straight into its buffers, where the custom tracer's builder reads them too. The plants' baked meshes are lent the same way by the library, which is kept from scene to scene. Under Metal 4 the residency set lets go of a replaced scene's buffers eight frames after the swap, not 600: it held every scene of the flight below, 14.9 GB at the peak against Metal 3's 8.1.
+
+Measured on an M4 Max, a flight of 60 m/s across two tile crossings (`METALRENDERER_BENCH=world METALRENDERER_BENCH_ONLY="flight 3x"`, medians of three runs; the benchmark loads the world's next scene as the app does):
+
+| | The swap, on the main thread | The longest frame | Made in the background | Memory at the end | Peak |
+|---|---|---|---|---|---|
+| Metal's tracer, Metal 3, before | 184 ms | 201 ms | 200 ms | 7.7 GB | 8.1 GB |
+| ...now | 0.1 ms | 17 ms | 163 ms | 3.2 GB | 4.4 GB |
+| Metal's tracer, Metal 4, before | 202 ms | 222 ms | 214 ms | | 14.9 GB |
+| ...now | 0.1 ms | 18 ms | 164 ms | 3.2 GB | 4.5 GB |
+| Custom tracer, before | 34 ms | 54 ms | 509 ms | | 8.2 GB |
+| ...now | 0.1 ms | 20 ms | 382 ms | 3.6 GB | 5.0 GB |
+
+* Memory is the process's footprint (`footprint`, and `/usr/bin/time -l` for the peak). On Metal's tracer at the end: the scene's geometry 0.64 GB, its instances 0.19 GB, its structures 0.56 GB, the renderer's own targets 1 GB, and 0.6 GB of the process's arrays, of which 0.2 GB are the scene's instances.
+* **The rest of those arrays is memory the system's allocator holds on to.** A large array that is freed stays in the footprint until the system wants it back (a gigabyte allocated and freed in a test program was still counted six seconds later). So every array a scene makes and drops counts as if it were kept, and arrays of a new size every time pile up: before the tiles and plants were borrowed and the instances' array rounded to a step, 12 km of flight held 2.7 GB of them; now 0.95 GB, flat.
+* The longest frame is one of those drawn while the next scene is being made: its builds share the GPU with the frames.
+* An unoptimised build (Xcode's Run) makes a scene in 1.4 s and swaps it in in 0.2 ms; before, 4 s and a stall of 0.2 s.
 
 Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`):
 
@@ -774,9 +800,8 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 |---|---|
 | A scene around the first city | 289 tiles, 6.4 million triangles, 366,000 trees, 14,000 to 31,000 bushes, ferns and grass patches |
 | Making all 289 tiles (first visit) | 0.4 s on every core; a city tile at level 0 takes 0.2 s and has 0.4 to 0.8 million triangles |
-| A scene around the next tile, custom tracer | 0.15 s for the scene and 0.3 s for the tracer's trees over it, in the background; 35 ms to swap it in |
-| ...Metal's tracer | 0.15 s in the background; 0.2 s to swap it in (every mesh's structure is built again) |
-| A frame in flight, 640×400 → 1920×1200, cascades | 8.8 ms on the custom tracer, 5.9 ms on Metal's |
+| A scene around the next tile | see "A tile crossing costs no frame" below |
+| A frame in flight, 640×400 → 1920×1200, cascades | 8.1 ms on the custom tracer, 3.8 ms on Metal's |
 | A frame from the start, 960×600 native, cascades | 10.2 ms on the custom tracer |
 | A flight of 2.75 km at 150 m/s | twelve scenes, one move of the origin, no failed frame on either tracer or API |
 
@@ -789,7 +814,8 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 * The camera's speed goes to 100 m/s (320 with Shift).
 
 **Limits** (the open world is not finished):
-* On Metal's tracer every tile crossing stalls 0.2 s. On both, a scene copies its tiles' geometry: memory was not measured.
+* A scene is still made whole for every crossing: its buffers are filled again (0.64 GB) and the two scenes' are held at once for a moment, which is the peak above. Tiles in buffers of their own, reached through a table of addresses, would make a crossing cost what its new tiles do.
+* The custom tracer builds every mesh's tree again for each scene (0.3 s in the background), into arrays first: 1.5 GB of its 3.6 are those arrays, freed and still counted.
 * Day only: a streamed city's lamps and lit windows would need the light table made again with the tiles.
 * The ground changes material in 1 m cells, and a city's ground is an asphalt disc.
 * GI sees no sun shadows beyond 384 m of the camera.
@@ -842,7 +868,8 @@ CPU    animate what moves or flickers (objects, lights)  ->  write those instanc
 GPU 0  textures: map + upload the mip levels last frame's hits asked for (sparse textures), unmap unused ones
 GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton keys -> sort -> hierarchy -> boxes);
        static geometry and the shapes of lights that stay in place are in trees built once
-       (Metal RT instead: refit the instance acceleration structure, rebuild it every 16 frames)
+       (Metal RT instead: refit the instance acceleration structure, rebuild it every 16 frames; a scene in
+       which nothing moves has one, built with the scene)
     1a regirBuildKernel  many lights: the light grid, per cell (2 levels x 16^3) 32 reservoirs of 8 table draws by
                        luminance toward the cell, from this frame's lights (ReSTIR DI's, GI's, the reflections' and
                        the fog's light samples draw from it)
@@ -911,6 +938,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `World.swift` | The open world as a function of a seed and a place: ground, cities and their blocks, where trees and ground cover stand |
 | `WorldTile.swift` | A tile of the world at a level of detail: its meshes, its trees, its file |
 | `Scene+World.swift` | The Open world scene: the tiles around the camera's, and which tile that is |
+| `SceneBuffers.swift` | A scene on the GPU: its geometry's buffers, its instances' records, Metal's acceleration structures; made off the main thread |
 | `Foliage.swift` | The plant generator: recipes, the grower, leaf, card and bough distributors, the plant library |
 | `FoliageSpecies.swift` | Each species' recipes, by age, and its boughs' |
 | `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
@@ -1232,7 +1260,7 @@ Three options for GPUs and systems that have them, each checked at launch (`Capa
 
 * **Ray tracing: Metal** (`METALRENDERER_RT=metal`). Metal's acceleration structures and intersector, which M3, A17 Pro and later traverse in hardware. On macOS 26 the per-mesh structures are built for fast intersection (`MTLAccelerationStructureUsage.preferFastIntersection`) and compacted.
 * **Upscaler: MetalFX denoiser** (`METALRENDERER_GI=upscaler=denoiser`, macOS 26). `MTLFXTemporalDenoisedScaler` takes the raw 1-sample light, linear and unbounded, with the albedo, the normals, a specular albedo and the roughness to guide it, and returns it denoised at the output resolution. It stands in for SVGF, the shadow denoiser and the upscaler; `tonemapKernel` then applies the exposure and the tone curve.
-* **Graphics API: Metal 4** (`METALRENDERER_API=metal4`, macOS 26). The same kernels through Metal 4's command model (`Metal4Backend.swift`): an `MTL4CommandQueue`, command buffers reused with an allocator per frame slot, one unified compute encoder for dispatches, blits and TLAS updates, bindings through an argument table, a residency set in place of `useResource`, explicit barriers, pipelines from `MTL4Compiler` and MetalFX's Metal 4 scalers. The residency set drops what no frame has declared for 600 frames, so everything a kernel reaches through an argument buffer is declared every frame, the streamed textures included (they are placement-sparse textures, each its own allocation next to the heap). `METALRENDERER_RESIDENCY_LIFE=<frames>` shortens the 600, so that a resource nobody declares shows in a run of a thousand frames (`METALRENDERER_RESIDENCY_LIFE=16 METALRENDERER_SHOT_FRAMES=1000`): the frame that reaches it after it was dropped faults, and the log says which command buffer failed.
+* **Graphics API: Metal 4** (`METALRENDERER_API=metal4`, macOS 26). The same kernels through Metal 4's command model (`Metal4Backend.swift`): an `MTL4CommandQueue`, command buffers reused with an allocator per frame slot, one unified compute encoder for dispatches, blits and TLAS updates, bindings through an argument table, a residency set in place of `useResource`, explicit barriers, pipelines from `MTL4Compiler` and MetalFX's Metal 4 scalers. The residency set drops what no frame has declared for 600 frames (and, eight frames after a scene is replaced, what no frame has declared since), so everything a kernel reaches through an argument buffer is declared every frame, the streamed textures included (they are placement-sparse textures, each its own allocation next to the heap). `METALRENDERER_RESIDENCY_LIFE=<frames>` shortens the 600, so that a resource nobody declares shows in a run of a thousand frames (`METALRENDERER_RESIDENCY_LIFE=16 METALRENDERER_SHOT_FRAMES=1000`): the frame that reaches it after it was dropped faults, and the log says which command buffer failed.
 
 Measured on an M4 Max (macOS 26.5, 640×400 traced → 1920×1200, moving frames, rendered into a texture rather than the window's drawables).
 
@@ -1283,7 +1311,7 @@ What Metal 4 does differently on macOS 26.5, found while matching the images:
 
 What didn't help:
 
-* Building the TLAS for fast intersection instead of for a fast build (`METALRENDERER_TLAS_BUILD=fast`): the trace gets 0.04 ms slower in the stress hall with 2000 objects (0.76 → 0.80 ms, in each of three alternating rounds). A default-quality build (`default`) traces the same 0.76 ms. The refit most frames matters more than how the tree was built.
+* Building the TLAS for fast intersection instead of for a fast build (`METALRENDERER_TLAS_BUILD=fast`): the trace gets 0.04 ms slower in the stress hall with 2000 objects (0.76 → 0.80 ms, in each of three alternating rounds). A default-quality build (`default`) traces the same 0.76 ms. The refit most frames matters more than how the tree was built. (A scene in which nothing moves is another matter: its tree is built once, at default quality, and never refitted, and the open world's 727,000 instances trace 6% faster for it than with a tree built fast.)
 * The per-mesh structures' fast-intersection build and compaction (`METALRENDERER_BLAS=default` turns them off) measure the same on the procedural scenes (0.76 ms either way), whose meshes are tiny (0.1 MB of structures). They change which of two coplanar triangles a few rays hit: stills differ by at most 3 levels. The glTF gallery is where they could show.
 
 ## Where to go next

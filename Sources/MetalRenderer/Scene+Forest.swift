@@ -26,9 +26,40 @@ extension Scene {
         private var shades: [[Int]]                             // by species: wood materials, each followed by a leaf material
         private var textures = [UInt32?](repeating: nil, count: FoliageTextures.Kind.allCases.count)   // made on first use
         private var sheets: [(texture: UInt32, layer: Int)?]    // by species: its leaf cards' colours and alpha layer
+        private let library: String                             // what the plants' meshes are named by (Scene.meshNames)
+        private let borrows: Bool                               // the baked plants' meshes stay here (Scene.BorrowedMesh)
 
-        init(_ scene: Scene, seed: UInt64, species: [Foliage.Species] = Foliage.Species.allCases) {
+        /// The last library made and what `add` needs of its plants (200 MB of meshes where they are baked): a scene
+        /// made again with the same plants, as the open world's is around every tile the camera comes to, takes them
+        /// as they are.
+        private static var last: (key: String, sets: [Foliage.SpeciesSet?], prepared: [[Prepared]])?
+        private static let lastLock = NSLock()
+
+        /// Lets go of the kept library (a scene without plants has been made).
+        static func forget() {
+            lastLock.lock()
+            last = nil
+            lastLock.unlock()
+        }
+
+        /// `borrowing`: the scene borrows the baked plants' meshes instead of copying them into its arrays.
+        init(_ scene: Scene, seed: UInt64, species: [Foliage.Species] = Foliage.Species.allCases, borrowing: Bool = false) {
             self.scene = scene
+            borrows = borrowing
+            library = "plants v\(Foliage.version) seed \(seed) of \(species.map(\.rawValue)) cards \(scene.usesCards)"
+            palettes = [[Int]](repeating: [], count: Foliage.Species.allCases.count)
+            shades = [[Int]](repeating: [], count: Foliage.Species.allCases.count)
+            sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: Foliage.Species.allCases.count)
+            let key = "\(library) assemblies \(scene.usesAssemblies)"
+            Flora.lastLock.lock()
+            let known = Flora.last
+            Flora.lastLock.unlock()
+            if let known, known.key == key {
+                (sets, prepared) = (known.sets, known.prepared)
+                placed = sets.map { [Placed?](repeating: nil, count: $0?.plants.count ?? 0) }
+                scene.notePlants()
+                return
+            }
             var bySpecies = [Foliage.SpeciesSet?](repeating: nil, count: Foliage.Species.allCases.count)
             for set in Foliage.library(seed: seed, species: species, cards: scene.usesCards) { bySpecies[set.species.rawValue] = set }
             sets = bySpecies
@@ -62,9 +93,9 @@ extension Scene {
                 defer { next += set?.plants.count ?? 0 }
                 return Array(made[next..<(next + (set?.plants.count ?? 0))])
             }
-            palettes = [[Int]](repeating: [], count: bySpecies.count)
-            shades = [[Int]](repeating: [], count: bySpecies.count)
-            sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: bySpecies.count)
+            Flora.lastLock.lock()
+            Flora.last = (key, sets, prepared)
+            Flora.lastLock.unlock()
             scene.notePlants()
         }
 
@@ -144,6 +175,25 @@ extension Scene {
 
         func height(_ species: Foliage.Species, _ plant: Int) -> Float { sets[species.rawValue]?.plants[plant].height ?? 0 }
 
+        /// The vertices and indices of every plant here that go into the scene's arrays (for `reserveGeometry`): each
+        /// baked plant, unless they are lent, and for the others a species' boughs once and each plant's own meshes.
+        var geometry: (vertices: Int, indices: Int) {
+            var vertices = 0, indices = 0
+            func count(_ mesh: Foliage.Mesh) { vertices += mesh.positions.count; indices += mesh.indices.count }
+            for (s, set) in sets.enumerated() {
+                guard let set else { continue }
+                var boughs = false
+                for (p, plant) in set.plants.enumerated() {
+                    switch prepared[s][p] {
+                    case .flat(let wood, let leaves): if !borrows { count(wood); count(leaves) }
+                    case .boxes: boughs = true; plant.meshes.forEach(count)
+                    }
+                }
+                if boughs { set.palette.forEach(count) }
+            }
+            return (vertices, indices)
+        }
+
         /// The library's plants by species and age, for the open world's placing (World.swift).
         var index: World.Flora { World.Flora(sets.compactMap { $0 }) }
 
@@ -154,9 +204,21 @@ extension Scene {
             switch prepared[s][index] {
             case .flat(let wood, let leaves):
                 let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
-                return .flat(wood: wood.indices.isEmpty ? -1 : scene.addMesh(wood, sways: sways),
-                             leaves: leaves.indices.isEmpty ? -1
-                                 : scene.addMesh(leaves, sways: sways, cutout: leaves.cutout ? sheet(set.species)?.layer : nil))
+                let name = "\(library): \(set.species) \(index)"
+                let layer = leaves.cutout ? sheet(set.species)?.layer : nil
+                guard borrows else {
+                    return .flat(wood: wood.indices.isEmpty ? -1 : scene.addMesh(wood, sways: sways, name: name + " wood"),
+                                 leaves: leaves.indices.isEmpty ? -1 : scene.addMesh(leaves, sways: sways, cutout: layer, name: name + " leaves"))
+                }
+                // The meshes stay the library's (arrays share their storage): the renderer copies them from here.
+                func lend(_ mesh: Foliage.Mesh, _ name: String, cutout: Int? = nil) -> Int {
+                    guard !mesh.indices.isEmpty else { return -1 }
+                    return scene.addMesh(borrowing: BorrowedMesh(positions: .made(mesh.positions), normals: .made(mesh.normals), uvs: .made(mesh.uvs),
+                                                                 indices: .made(mesh.indices)),
+                                         bounds: mesh.bounds, name: name, sways: sways,
+                                         cutout: cutout.map { UInt32($0 + 1) << 24 | UInt32(mesh.leafIndex / 3) } ?? 0)
+                }
+                return .flat(wood: lend(wood, name + " wood"), leaves: lend(leaves, name + " leaves", cutout: layer))
             case .boxes(let placed):
                 boxes = placed
             }
@@ -201,15 +263,15 @@ extension Scene {
             return .assembly(scene.addAssembly(Assembly(parts: parts, bounds: bounds, evergreen: set.species == .conifer)))
         }
 
-        /// Adds one plant to the scene. `shade` picks among the species' leaf colours.
-        func place(_ species: Foliage.Species, _ plant: Int, _ transform: float4x4, shade: Int) {
-            let s = species.rawValue
-            guard let set = sets[s] else { return }
-            if shades[s].isEmpty {
+        /// The species' materials and their textures. `place` adds a species' with its first plant; a scene whose
+        /// plants come in an order of its own (the open world's: tile by tile) adds them all first, so that every
+        /// scene of it has the same textures in the same order.
+        func addMaterials(of species: [Foliage.Species] = Foliage.Species.allCases) {
+            for species in species where sets[species.rawValue] != nil && shades[species.rawValue].isEmpty {
                 // A material's colour is the plant's over its texture's mean: the texture is detail on top of it.
                 let gain = 1 / FoliageTextures.mean
                 let bark = texture(Flora.bark(species)), blade = sheet(species)?.texture ?? texture(Flora.leaf(species))
-                shades[s] = Flora.leafColors(species).enumerated().map { i, leaf in
+                shades[species.rawValue] = Flora.leafColors(species).enumerated().map { i, leaf in
                     let wood = scene.addMaterial(albedo: Flora.barkColor(species) * gain, texture: bark)
                     let leaves = scene.addMaterial(albedo: leaf * gain, translucency: Flora.translucency(species), texture: blade)
                     // Each shade turns at its own time, and to its own shade of autumn.
@@ -218,6 +280,13 @@ extension Scene {
                     return wood
                 }
             }
+        }
+
+        /// Adds one plant to the scene. `shade` picks among the species' leaf colours.
+        func place(_ species: Foliage.Species, _ plant: Int, _ transform: float4x4, shade: Int) {
+            let s = species.rawValue
+            guard let set = sets[s] else { return }
+            if shades[s].isEmpty { addMaterials(of: [species]) }
             let known = placed[s][plant] ?? add(set, plant)
             placed[s][plant] = known
             let wood = shades[s][shade % shades[s].count]

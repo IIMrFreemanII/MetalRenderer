@@ -102,6 +102,10 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         buffers.removeAll(keepingCapacity: true)
         frameCount &+= 1
         if frameCount % 256 == 0 { releaseUnused() }
+        if let changed = sceneChanged, frameCount &- changed > Metal4Frame.sceneLife {
+            releaseUnused(since: changed)
+            sceneChanged = nil
+        }
         cmd = nil
         enc = nil
         return self
@@ -117,9 +121,17 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
-    /// Lets go of what no frame has bound for `residencyLife` frames (render targets of another size, an old scene).
-    private func releaseUnused() {
-        for (id, entry) in resident where frameCount &- entry.used > Metal4Frame.residencyLife {
+    /// The scene has been replaced: what the frames from here on don't bind is let go of `sceneLife` frames from now,
+    /// not `residencyLife` later. The set holds on to what is in it, and an open world's scenes follow each other every
+    /// few seconds with a gigabyte and a half each (a flight across two tiles peaked at 15 GB, Metal 3's at 8).
+    func noteSceneChange() { sceneChanged = frameCount }
+    private var sceneChanged: UInt32?
+    private static let sceneLife: UInt32 = 8
+
+    /// Lets go of what no frame has bound for `residencyLife` frames (render targets of another size), or since
+    /// frame `since`.
+    private func releaseUnused(since: UInt32? = nil) {
+        for (id, entry) in resident where since.map({ entry.used <= $0 }) ?? (frameCount &- entry.used > Metal4Frame.residencyLife) {
             residency.removeAllocation(entry.allocation)
             resident[id] = nil
             residencyChanged = true

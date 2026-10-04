@@ -6,7 +6,8 @@ import Metal
 ///
 /// * On first load, every image of a model is decoded at full size, mipmapped on the GPU and written with its whole mip
 ///   chain to a cache file next to the model (`.metalrenderer-cache/<model>-<size>-<mtime>-t1.mgt`), read back memory-mapped.
-/// * Textures are sparse, backed by a heap the size of the budget: on Metal 3 a sparse heap, which places the tiles
+/// * Textures are sparse, backed by a heap the size of the budget (or of all their levels, if that is less): on Metal 3
+///   a sparse heap, which places the tiles
 ///   itself; on Metal 4 (whose residency sets take no sparse heap) placement-sparse textures on a placement heap, whose
 ///   tiles the streamer hands out (`TileAllocator`). At first only their small mips (up to `residentBaseSize` pixels,
 ///   and the packed mip tail) are mapped and uploaded, by the first `update`.
@@ -85,7 +86,21 @@ final class TextureStreamer {
         let pageSize = MTLSparsePageSize.size64
         let tileBytes = placement ? device.sparseTileSizeInBytes(sparsePageSize: pageSize) : device.sparseTileSizeInBytes
         self.tileBytes = tileBytes
-        budgetBytes = max(budgetMB << 20, tileBytes * 1024) / tileBytes * tileBytes
+        // Cache files: one per model file, holding all of its images' mip chains.
+        let cached = try TextureStreamer.loadCaches(sources, device: device, queue: queue)
+        // The heap: as large as the budget, or as everything these textures could ever map, if that is less. (It
+        // counts in full against the process whatever is mapped of it, and a generated scene's textures are a tenth
+        // of the budget.) A level is a tile at least: more than the mip tail takes.
+        var whole = 0
+        for (i, source) in sources.enumerated() {
+            let format: MTLPixelFormat = source.srgb ? .rgba8Unorm_srgb : .rgba8Unorm
+            let tile = placement ? device.sparseTileSize(textureType: .type2D, pixelFormat: format, sampleCount: 1, sparsePageSize: pageSize)
+                : device.sparseTileSize(with: .type2D, pixelFormat: format, sampleCount: 1)
+            for level in cached[i].1 {
+                whole += max(((level.width + tile.width - 1) / tile.width) * ((level.height + tile.height - 1) / tile.height), 1) * tileBytes
+            }
+        }
+        budgetBytes = max(min(budgetMB << 20, whole), tileBytes * 1024) / tileBytes * tileBytes
         let hd = MTLHeapDescriptor()
         hd.storageMode = .private
         hd.size = budgetBytes
@@ -100,8 +115,6 @@ final class TextureStreamer {
         self.heap = heap
         staging = Array(repeating: [], count: slots)
 
-        // Cache files: one per model file, holding all of its images' mip chains.
-        let cached = try TextureStreamer.loadCaches(sources, device: device, queue: queue)
         var baseBytes = 0
         for (i, source) in sources.enumerated() {
             let (data, levels) = cached[i]

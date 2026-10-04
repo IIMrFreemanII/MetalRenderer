@@ -67,7 +67,8 @@ extension Scene {
         var world = World(seed: UInt64(max(settings.seed, 0)))
         world.treeDensity = Float(max(settings.trees, 0)) / 10.24      // the Forest's square is 10.24 hectares
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
-        let flora = Flora(self, seed: world.seed)
+        let flora = Flora(self, seed: world.seed, borrowing: true)
+        flora.addMaterials()   // every scene of the world then has the same textures: the renderer keeps them
         let index = flora.index
         let begin = world.start, side = Double(World.tileSize)
         let anchorTile = settings.worldAnchor ?? world.anchorTile, anchor = WorldTile.origin(anchorTile.x, anchorTile.y)
@@ -96,16 +97,15 @@ extension Scene {
         Scene.keptTiles = Dictionary(uniqueKeysWithValues: zip(jobs.map(\.key), tiles.map { $0! }))
         Scene.keptLock.unlock()
 
-        // The city's generated textures, each kind's added the first time a material asks for it (as the City's).
+        // The city's generated textures: every kind's, whether a tile in sight has it or not (the same textures in
+        // every scene of the world).
         let maps = settings.city.textures ? ProceduralTextures.sources(SurfaceKind.allCases) : [:]
         var mapIndex: [SurfaceKind: SIMD4<UInt32>] = [:]
-        func textures(_ kind: SurfaceKind) -> SIMD4<UInt32> {
-            if let known = mapIndex[kind] { return known }
-            guard let m = maps[kind] else { return SIMD4(repeating: .max) }
-            let made = SIMD4(addTexture(m.base), m.roughness.map { addTexture($0) } ?? .max, addTexture(m.normal), .max)
-            mapIndex[kind] = made
-            return made
+        for kind in SurfaceKind.allCases {
+            guard let m = maps[kind] else { continue }
+            mapIndex[kind] = SIMD4(addTexture(m.base), m.roughness.map { addTexture($0) } ?? .max, addTexture(m.normal), .max)
         }
+        func textures(_ kind: SurfaceKind) -> SIMD4<UInt32> { mapIndex[kind] ?? SIMD4(repeating: .max) }
 
         // The ground's detail: clumps and specks, the same every 5 m (the ground's UVs are the asphalt's).
         let detail = addGeneratedTexture(name: "ground-detail", width: 512, height: 512, key: "v\(FoliageTextures.version)") {
@@ -114,34 +114,6 @@ extension Scene {
                 let specks = FoliageTextures.noise(u * 60, v * 60, 60, 60, 23)
                 return SIMD3(repeating: max(0.75 + 0.3 * clumps + 0.22 * specks, 0.1))
             }
-        }
-
-        var triangles = 0, trees = 0
-        reserveGeometry(vertices: tiles.reduce(0) { $0 + $1!.chunks.reduce(0) { $0 + $1.positions.count } },
-                        indices: tiles.reduce(0) { $0 + 3 * $1!.triangles })
-        for (k, tile) in tiles.enumerated() {
-            guard let tile else { continue }
-            let origin = WorldTile.origin(jobs[k].x, jobs[k].z)
-            let corner = SIMD3(Float(origin.x - anchor.x), 0, Float(origin.y - anchor.y))
-            for chunk in tile.chunks {
-                // The chunk's materials, one after the other: its triangles name them from the first.
-                var first = -1
-                for m in chunk.materials {
-                    var material = m
-                    if let kind = World.kind(ofTexture: m.textures.x) { material.textures = textures(kind) }
-                    if m.textures.x == World.groundDetail { material.textures.x = detail }
-                    let added = chunk.glass ? addGlassMaterial(tint: SIMD3(m.albedo.x, m.albedo.y, m.albedo.z)) : addMaterial(material)
-                    if first < 0 { first = added }
-                }
-                let mesh = addMesh((chunk.positions, chunk.normals, chunk.indices), uvs: chunk.uvs, materials: chunk.triangleMaterials)
-                addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry)
-                triangles += chunk.triangles
-            }
-            for t in tile.trees {
-                flora.place(Foliage.Species(rawValue: Int(t.species))!, Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw,
-                            size: t.size, shade: Int(t.shade))
-            }
-            trees += tile.trees.count
         }
 
         // Bushes, ferns and grass: the 32 m cells of the middle tile and 96 m around it.
@@ -154,6 +126,42 @@ extension Scene {
                 out[c] = world.groundCover(x0: lo.x + Double(c % cells) * cell, z0: lo.y + Double(c / cells) * cell, side: cell, flora: index)
             }
         }
+
+        var triangles = 0, trees = 0
+        // (A plant is an instance, or where plants are baked two: its wood and its leaves.)
+        let placements = tiles.reduce(0) { $0 + $1!.trees.count } + cover.reduce(0) { $0 + $1.count }
+        // The tiles' meshes stay in their files and the baked plants' in the library (`addMesh(borrowing:)`): the
+        // scene's arrays hold what plants are assemblies.
+        let plantGeometry = flora.geometry
+        reserveGeometry(vertices: plantGeometry.vertices, indices: plantGeometry.indices,
+                        instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2))
+        for (k, tile) in tiles.enumerated() {
+            guard let tile else { continue }
+            let origin = WorldTile.origin(jobs[k].x, jobs[k].z)
+            let corner = SIMD3(Float(origin.x - anchor.x), 0, Float(origin.y - anchor.y))
+            for (c, chunk) in tile.chunks.enumerated() {
+                // The chunk's materials, one after the other: its triangles name them from the first.
+                var first = -1
+                for m in chunk.materials {
+                    var material = m
+                    if let kind = World.kind(ofTexture: m.textures.x) { material.textures = textures(kind) }
+                    if m.textures.x == World.groundDetail { material.textures.x = detail }
+                    let added = chunk.glass ? addGlassMaterial(tint: SIMD3(m.albedo.x, m.albedo.y, m.albedo.z)) : addMaterial(material)
+                    if first < 0 { first = added }
+                }
+                let mesh = addMesh(borrowing: BorrowedMesh(positions: chunk.positions, normals: chunk.normals, uvs: chunk.uvs,
+                                                           indices: chunk.indices, materials: chunk.triangleMaterials),
+                                   bounds: chunk.bounds, name: "\(jobs[k].key) chunk \(c)")
+                addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry)
+                triangles += chunk.triangles
+            }
+            for t in tile.trees {
+                flora.place(Foliage.Species(rawValue: Int(t.species))!, Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw,
+                            size: t.size, shade: Int(t.shade))
+            }
+            trees += tile.trees.count
+        }
+
         var plants = 0
         for (c, placements) in cover.enumerated() {
             let corner = SIMD3(Float(lo.x + Double(c % cells) * cell - anchor.x), 0, Float(lo.y + Double(c / cells) * cell - anchor.y))
