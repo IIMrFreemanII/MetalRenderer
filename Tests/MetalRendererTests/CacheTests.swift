@@ -27,6 +27,9 @@ final class CacheTests: XCTestCase {
         writer.add(SectionFile.id("base"), bases)
         writer.add(SectionFile.id("grid"), grids)
         writer.add(SectionFile.id("none"), empty)
+        // A section of several arrays' bytes, one after the other (a tile's chunks): no array of them all is made.
+        let parts = [words, [], [7, 8], Array(0..<20_000)].map { part in part.withUnsafeBytes { Data($0) } }
+        writer.add(SectionFile.id("part"), stride: MemoryLayout<UInt32>.stride, parts: parts)
         let url = temporary("round.sect")
         defer { try? FileManager.default.removeItem(at: url) }
         try writer.write(to: url, key: "key 1")
@@ -41,6 +44,8 @@ final class CacheTests: XCTestCase {
         XCTAssertEqual(file.array(SectionFile.id("base")), bases)
         XCTAssertEqual(file.array(SectionFile.id("grid"), of: FoliageVoxels.Grid.self)?.first?.dims, grids[0].dims)
         XCTAssertEqual(file.array(SectionFile.id("none")), empty)
+        XCTAssertEqual(file.array(SectionFile.id("part")), words + [7, 8] + Array(0..<20_000))
+        XCTAssertEqual(file.mapped(SectionFile.id("part"), of: UInt32.self)?.count, 4 * (words.count + 2 + 20_000))
         XCTAssertNil(file.array(SectionFile.id("gone"), of: UInt32.self))
         XCTAssertNil(file.array(SectionFile.id("word"), of: UInt64.self), "a section of another type's size")
         // Every section starts on a page, so a buffer can be made over it where it is mapped.
@@ -50,6 +55,13 @@ final class CacheTests: XCTestCase {
         } == nil, false)
         XCTAssertEqual(whole.count % SectionFile.pageSize == 0 || whole.count > SectionFile.pageSize, true)
 
+        // Written under another name and moved into place: nothing is left beside it, and a second write replaces it.
+        try writer.write(to: url, key: "key 3")
+        XCTAssertNotNil(SectionFile(url: url, key: "key 3"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)
+            .filter { $0.hasPrefix(url.lastPathComponent) && $0 != url.lastPathComponent }, [])
+        XCTAssertNil(SectionFile(url: url, key: "key 1"), "another key")
+        try writer.write(to: url, key: "key 1")
         XCTAssertNil(SectionFile(url: url, key: "key 2"), "another key")
         XCTAssertNil(SectionFile(url: temporary("missing.sect"), key: "key 1"), "no file")
         let cut = temporary("cut.sect")

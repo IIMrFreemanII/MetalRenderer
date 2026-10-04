@@ -43,6 +43,53 @@ final class WorldTests: XCTestCase {
         XCTAssertNotEqual(WorldTile.build(World(seed: 8), x: 3, z: -2, level: 1, flora: flora).chunks[0].positions.array, first.chunks[0].positions.array)
     }
 
+    /// A tile's file has the trees over its chunks once they were asked for (the custom tracer's scenes ask): each
+    /// the tree the tracer builds of the chunk's arrays, in the bytes its buffer has. A file without them is a tile
+    /// all the same, and gets them.
+    func testATilesFileHasItsTrees() throws {
+        // (Where the cache's files go for this test only: `make` reads and writes there.)
+        let world = World(seed: 7_000_000 + UInt64.random(in: 0..<1_000_000))
+        let folder = WorldTile.url(world, x: 0, z: 0, level: 0).deletingLastPathComponent().deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try XCTSkipUnless(GeneratedCache.enabled, "the cache is off")
+
+        let bare = WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora)
+        XCTAssertFalse(bare.hasTrees)
+        XCTAssertTrue(bare.chunks.allSatisfy { if case .mapped = $0.positions { return true } else { return false } }, "from its file")
+        var built = WorldTile.build(world, x: 3, z: -2, level: 1, flora: flora)
+        XCTAssertFalse(built.hasTrees)
+        built.addTrees()
+        XCTAssertTrue(built.hasTrees)
+
+        // The file had none: they are built from its arrays, and it is written again with them.
+        let stored = WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora, trees: true)
+        assertSame(built, stored, "with its trees")
+        let url = WorldTile.url(world, x: 3, z: -2, level: 1), key = WorldTile.key(world, x: 3, z: -2, level: 1)
+        let again = try XCTUnwrap(WorldTile(url: url, key: key, x: 3, z: -2, level: 1))
+        XCTAssertTrue(stored.hasTrees && again.hasTrees)
+        XCTAssertTrue(WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora).hasTrees, "and has them for whoever asks for none")
+        for (c, chunk) in again.chunks.enumerated() {
+            let tree = try XCTUnwrap(chunk.tree), made = try XCTUnwrap(built.chunks[c].tree)
+            XCTAssertTrue(tree.fits(indexCount: chunk.indices.count))
+            XCTAssertEqual([tree.nodeCount, tree.depth], [made.nodeCount, made.depth])
+            XCTAssertEqual(tree.bounds.lo, made.bounds.lo)
+            XCTAssertEqual(tree.bounds.hi, made.bounds.hi)
+            XCTAssertEqual(tree.memory.data, made.memory.data, "chunk \(c)")
+            if case .made = tree.memory { XCTFail("the tree is the file's, mapped") }
+            // What the builder makes of the chunk's triangles: their box, and each triangle once after the nodes.
+            XCTAssertEqual(tree.bounds.lo, chunk.bounds.lo)
+            XCTAssertEqual(tree.bounds.hi, chunk.bounds.hi)
+            let triangles = tree.memory.array[(tree.nodeCount * Scene.BorrowedTree.vectorsPerNode)...]
+            XCTAssertEqual(triangles.count, chunk.indices.count)
+            XCTAssertEqual(Set(stride(from: triangles.startIndex, to: triangles.endIndex, by: 3).map { triangles[$0].w.bitPattern }).count,
+                           chunk.triangles)
+        }
+        // A tile made where there is no file comes with them at once.
+        let fresh = WorldTile.make(world, x: 4, z: -2, level: 2, flora: flora, trees: true)
+        XCTAssertTrue(fresh.hasTrees)
+        XCTAssertEqual(fresh.chunks[0].tree?.fits(indexCount: fresh.chunks[0].indices.count), true)
+    }
+
     /// Neighbouring tiles' grounds meet: the same heights and normals along the side they share, near the origin
     /// and 50 km from it; and every level's vertices lie on the world's ground.
     func testNeighboursShareTheirSides() {

@@ -125,6 +125,69 @@ final class SceneBuffersTests: XCTestCase {
         XCTAssertEqual(scene.meshes.count, 3)
     }
 
+    /// A borrowed mesh that comes with its tree (an open world's tile has it in its file): the block's tree is a copy
+    /// of it, and nothing is built. One of the wrong length is left alone.
+    func testABorrowedMeshComesWithItsTree() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let options = SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3)
+        // The tree as the tracer builds it, from a scene whose mesh has none.
+        let plain = try SceneBuffers(device: device, queue: queue, scene: scene(), options: options)
+        let plainBlock = try XCTUnwrap(plain.blocks[1])
+        XCTAssertFalse(plainBlock.hasBorrowedTree)
+        let built = try plainBlock.tree(device: device, cutout: 0)
+        let vectors = built.nodeCount * Scene.BorrowedTree.vectorsPerNode + plainBlock.indexCount
+        var memory: [SIMD4<Float>] = contents(built.buffer, vectors)
+        // ...handed to the next scene's mesh with a mark in it, which says where the block's tree came from.
+        memory[1].w = 123
+        let tree = Scene.BorrowedTree(memory: .made(memory), nodeCount: built.nodeCount, depth: built.depth, bounds: built.bounds)
+        XCTAssertTrue(tree.fits(indexCount: 9))
+        XCTAssertFalse(tree.fits(indexCount: 12))
+
+        func lending(_ tree: Scene.BorrowedTree) -> Scene {
+            Scene(SceneSettings(kind: .cornell)) { scene in
+                let material = scene.addMaterial(albedo: [0.5, 0.5, 0.5])
+                scene.addInstance(scene.addMesh(self.quad(0)), material, matrix_identity_float4x4)
+                let borrowed = Scene.BorrowedMesh(positions: .made([[0, 5, 0], [2, 5, 0], [2, 5, 2], [0, 5, 2], [1, 6, 1]]),
+                                                  normals: .made([SIMD3<Float>](repeating: [0, 1, 0], count: 5)),
+                                                  uvs: .made((0..<5).map { SIMD2(Float($0), 0.5) }),
+                                                  indices: .made([0, 1, 2, 0, 2, 3, 0, 1, 4]), materials: .made([0, 1, 1]), tree: tree)
+                scene.addInstance(scene.addMesh(borrowing: borrowed, bounds: AABB(lo: [0, 5, 0], hi: [2, 6, 2]), name: "a tile's chunk"),
+                                  material, translate([10, 0, 0]))
+                _ = scene.addMaterial(albedo: [1, 0, 0])
+            }
+        }
+        let withTree = lending(tree)
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: withTree, options: options)
+        let block = try XCTUnwrap(buffers.blocks[1])
+        XCTAssertTrue(block.hasBorrowedTree)
+        XCTAssertFalse(block.hasTree)
+        let tracer = try CustomRayTracer(device: device, scene: withTree, geometry: buffers, slots: 3)
+        XCTAssertTrue(block.hasTree)
+        XCTAssertFalse(block.hasBorrowedTree, "let go of once it is in the block's buffer")
+        let copied = try block.tree(device: device, cutout: 0)
+        XCTAssertTrue(tracer.buffers.contains { $0 === copied.buffer })
+        XCTAssertFalse(copied.buffer === built.buffer)
+        XCTAssertEqual([copied.nodeCount, copied.triangles, copied.depth], [built.nodeCount, built.triangles, built.depth])
+        XCTAssertEqual(copied.bounds.lo, built.bounds.lo)
+        XCTAssertEqual(copied.bounds.hi, built.bounds.hi)
+        let copy: [SIMD4<Float>] = contents(copied.buffer, vectors)
+        XCTAssertEqual(copy.withUnsafeBytes { Data($0) }, memory.withUnsafeBytes { Data($0) })
+        XCTAssertEqual(copy[1].w, 123, "the mesh's tree, not one built here")
+
+        // A tree of another mesh's length isn't taken: the block builds its own.
+        let short = Scene.BorrowedTree(memory: .made(Array(memory.dropLast(3))), nodeCount: built.nodeCount, depth: built.depth,
+                                       bounds: built.bounds)
+        let other = try SceneBuffers(device: device, queue: queue, scene: lending(short), options: options)
+        let otherBlock = try XCTUnwrap(other.blocks[1])
+        XCTAssertFalse(otherBlock.hasBorrowedTree)
+        let ownTree = try otherBlock.tree(device: device, cutout: 0)
+        let own: [SIMD4<Float>] = contents(ownTree.buffer, vectors)
+        let first: [SIMD4<Float>] = contents(built.buffer, vectors)
+        XCTAssertEqual(own.withUnsafeBytes { Data($0) }, first.withUnsafeBytes { Data($0) })
+        XCTAssertNotEqual(own[1].w, 123)
+    }
+
     /// Metal's tracer: a named mesh's structure is the last scene's; a still scene has one structure over its
     /// instances, built with the buffers, and one that moves a structure per frame slot.
     func testNamedMeshesKeepTheirStructures() throws {
