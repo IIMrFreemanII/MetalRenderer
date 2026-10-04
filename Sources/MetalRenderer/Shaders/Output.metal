@@ -65,7 +65,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
     }
 #endif
 
-    InstanceData inst = s.instances[res.instance];
+    InstanceData inst = instanceRecord(s.instances, res.instance);
     HitVertices hv = fetchHitVertices(res, inst, accel, s);
     float3 e1 = (inst.transform * float4(hv.p[1] - hv.p[0], 0.0f)).xyz, e2 = (inst.transform * float4(hv.p[2] - hv.p[0], 0.0f)).xyz;
     float3 ng = cross(e1, e2);

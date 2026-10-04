@@ -46,7 +46,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
     h.hit = res.type == intersection_type::triangle;
     h.distance = res.distance;
     h.barycentrics = res.triangle_barycentric_coord;
-    h.instance = res.instance_id;
+    h.instance = TILED ? res.user_instance_id : res.instance_id;   // TILED: its id (SceneBuffers' descriptors)
     h.primitive = res.primitive_id;
     h.cluster = HIT_NO_CLUSTER;
     h.part = HIT_NO_PART;

@@ -15,7 +15,12 @@ inline void boxToWorld(thread float3& lo, thread float3& hi, float4x4 m) {
 
 // Every instance's RTInstance (world -> object rows = the first three columns of the inverse-transpose), and each
 // moving instance's world box: leafBoxes[2k] = (min, instance id bits), leafBoxes[2k + 1] = (max, mask bits).
-kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
+// GROUPED: the record of an assembly's instance in a block (InstanceBlock in SceneBuffers.swift) has
+// INSTANCE_ASSEMBLY and the assembly's number where the scene's own have their place in the mesh table: a block's
+// records go from scene to scene, and the assemblies come after the meshes in the table (at `counts.y`), which the
+// scenes have more or fewer of.
+constant uint INSTANCE_ASSEMBLY = 0x80000000u;
+kernel void rtPrepKernel(constant uint2&            counts     [[buffer(0)]],   // x = instances, y = the first assembly in meshInfo
                          device const InstanceData* instances  [[buffer(1)]],
                          device const float4*       meshInfo   [[buffer(2)]],   // per mesh: (box min, BLAS root bits), (box max, 0)
                          device const uint*         dynSlot    [[buffer(3)]],   // per instance: index among the moving ones, or ~0
@@ -27,8 +32,9 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
                          device const ulong*        blockTrees [[buffer(8)]],   // STREAMED: the trees in buffers of their own
                          uint i [[thread_position_in_grid]])
 {
-    if (i >= instanceCount) return;
+    if (i >= counts.x) return;
     InstanceData inst = instances[i];
+    if (GROUPED && (inst.meshIndex & INSTANCE_ASSEMBLY) != 0) inst.meshIndex = counts.y + (inst.meshIndex & ~INSTANCE_ASSEMBLY);
     float4 lo = meshInfo[2 * inst.meshIndex], hi = meshInfo[2 * inst.meshIndex + 1];   // virtual meshes too (bounds)
     RTInstance r;
     r.row0 = inst.normalMatrix[0];

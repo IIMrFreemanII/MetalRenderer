@@ -56,8 +56,13 @@ extension World {
 /// The Open world scene: the world's tiles around one of them, each at the level its distance asks for, the trees
 /// and the ground cover they hold as instances of the world's plants. The scene is one moment of the world: when the
 /// camera moves into another tile, the renderer makes the scene around that one (`SceneSettings.worldTile`), in the
-/// background, from the tiles this one already has and the few that are new.
+/// background, from the tiles this one already has and the few that are new. A tile's trees are a group of instances
+/// (`Scene.InstanceGroup`), which the renderer keeps from one scene to the next as it keeps the tile's meshes.
 extension Scene {
+    /// `METALRENDERER_WORLD_GROUPS=0`: a tile's trees are the scene's own instances, made again with every scene (as
+    /// they were before the tiles had groups: for comparing).
+    static let groupsTrees = ProcessInfo.processInfo.environment["METALRENDERER_WORLD_GROUPS"] != "0"
+
     /// The tiles of the last scene, by what they were made for: the next scene shares most of them.
     private static var keptTiles: [String: WorldTile] = [:]
     private static let keptLock = NSLock()
@@ -68,7 +73,13 @@ extension Scene {
         world.treeDensity = Float(max(settings.trees, 0)) / 10.24      // the Forest's square is 10.24 hectares
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
         let flora = Flora(self, seed: world.seed, borrowing: true)
-        flora.addMaterials()   // every scene of the world then has the same textures: the renderer keeps them
+        // Every plant and its materials, first and in the library's order: every scene of the world then has the same
+        // textures (the renderer keeps them) and the same numbers for its plants (so it keeps the tiles' trees too).
+        // (The tiles' meshes stay in their files and the baked plants' in the library, `addMesh(borrowing:)`: the
+        // scene's arrays hold what plants are assemblies.)
+        let plantGeometry = flora.geometry
+        reserveGeometry(vertices: plantGeometry.vertices, indices: plantGeometry.indices)
+        flora.addAll()
         let index = flora.index
         let begin = world.start, side = Double(World.tileSize)
         let anchorTile = settings.worldAnchor ?? world.anchorTile, anchor = WorldTile.origin(anchorTile.x, anchorTile.y)
@@ -128,13 +139,10 @@ extension Scene {
         }
 
         var triangles = 0, trees = 0
-        // (A plant is an instance, or where plants are baked two: its wood and its leaves.)
-        let placements = tiles.reduce(0) { $0 + $1!.trees.count } + cover.reduce(0) { $0 + $1.count }
-        // The tiles' meshes stay in their files and the baked plants' in the library (`addMesh(borrowing:)`): the
-        // scene's arrays hold what plants are assemblies.
-        let plantGeometry = flora.geometry
-        reserveGeometry(vertices: plantGeometry.vertices, indices: plantGeometry.indices,
-                        instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2))
+        // (A plant is an instance, or where plants are baked two: its wood and its leaves.) A tile's trees are a group
+        // of their own, not among the scene's instances; the ground cover changes with the middle tile and is.
+        let placements = cover.reduce(0) { $0 + $1.count }
+        reserveGeometry(vertices: 0, indices: 0, instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2))
         for (k, tile) in tiles.enumerated() {
             guard let tile else { continue }
             let origin = WorldTile.origin(jobs[k].x, jobs[k].z)
@@ -155,11 +163,29 @@ extension Scene {
                 addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry)
                 triangles += chunk.triangles
             }
-            for t in tile.trees {
-                flora.place(Foliage.Species(rawValue: Int(t.species))!, Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw,
-                            size: t.size, shade: Int(t.shade))
+            // Its trees, the same at every level: a group, which the renderer keeps from scene to scene. (Where they
+            // are from this scene's origin is in the group's name.)
+            let placed = tile.trees
+            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species))! }
+            trees += placed.count
+            guard Scene.groupsTrees else {
+                for t in placed {
+                    flora.place(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw, size: t.size, shade: Int(t.shade))
+                }
+                continue
             }
-            trees += tile.trees.count
+            let count = placed.reduce(0) { $0 + flora.instanceCount(species($1), Int($1.plant)) }
+            guard count > 0 else { continue }
+            addGroup(name: "trees of \(WorldTile.place(world, x: jobs[k].x, z: jobs[k].z)) from \(anchorTile.x) \(anchorTile.y), \(flora.name)",
+                     count: count) {
+                var out: [Instance] = []
+                out.reserveCapacity(count)
+                for t in placed {
+                    flora.instances(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw, size: t.size,
+                                    shade: Int(t.shade), into: &out)
+                }
+                return out
+            }
         }
 
         var plants = 0

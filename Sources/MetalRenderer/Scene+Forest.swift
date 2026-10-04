@@ -302,6 +302,50 @@ extension Scene {
         func place(_ species: Foliage.Species, _ plant: Int, at position: SIMD3<Float>, yaw: Float, size: Float, shade: Int) {
             place(species, plant, translate(position) * rotate(yaw, [0, 1, 0]) * scale(size), shade: shade)
         }
+
+        /// Every plant of the library, in its order, whether one is placed or not: the scenes of an open world then
+        /// have the same meshes, assemblies and materials under the same numbers, which the instances a group keeps
+        /// from scene to scene count on (`Scene.InstanceGroup`).
+        func addAll() {
+            addMaterials()
+            for (s, set) in sets.enumerated() {
+                guard let set else { continue }
+                for plant in set.plants.indices where placed[s][plant] == nil { placed[s][plant] = add(set, plant) }
+            }
+        }
+
+        /// The library and how the scene holds its plants: what a group of these instances is named by.
+        var name: String { "\(library) assemblies \(scene.usesAssemblies)" }
+
+        /// How many instances a plant is (after `addAll`): one, or where plants are baked its wood and its leaves.
+        func instanceCount(_ species: Foliage.Species, _ plant: Int) -> Int {
+            switch placed[species.rawValue][plant] {
+            case .assembly: return 1
+            case .flat(let wood, let leaves): return (wood >= 0 ? 1 : 0) + (leaves >= 0 ? 1 : 0)
+            case nil: return 0
+            }
+        }
+
+        /// A plant's instances (one, or its wood and its leaves) for a group, after `addAll`: what `place` adds to the
+        /// scene. Reads only: any thread.
+        func instances(_ species: Foliage.Species, _ plant: Int, at position: SIMD3<Float>, yaw: Float, size: Float, shade: Int,
+                       into out: inout [Instance]) {
+            let s = species.rawValue
+            guard let known = placed[s][plant], !shades[s].isEmpty else { return }
+            let transform = translate(position) * rotate(yaw, [0, 1, 0]) * scale(size), normal = transform.inverse.transpose
+            let wood = shades[s][shade % shades[s].count]
+            func instance(mesh: Int, assembly: Int, _ material: Int) -> Instance {
+                Instance(mesh: mesh, material: material, mask: Scene.maskGeometry, transform: transform, prevTransform: transform,
+                         animation: nil, assembly: assembly, normalMatrix: normal)
+            }
+            switch known {
+            case .assembly(let assembly):
+                out.append(instance(mesh: -1, assembly: assembly, wood))
+            case .flat(let woodMesh, let leafMesh):
+                if woodMesh >= 0 { out.append(instance(mesh: woodMesh, assembly: -1, wood)) }
+                if leafMesh >= 0 { out.append(instance(mesh: leafMesh, assembly: -1, wood + 1)) }
+            }
+        }
     }
 
     // MARK: - Forest

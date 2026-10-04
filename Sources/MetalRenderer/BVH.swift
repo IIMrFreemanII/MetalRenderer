@@ -485,6 +485,16 @@ enum BVHBuilder {
         return (root, depth(tree))
     }
 
+    /// A tree of its own over a group of instances with world-space `boxes` (InstanceBlock.Tree): the root is its
+    /// first node, a leaf an instance's place in the group.
+    static func buildGroup(boxes: [AABB], masks: [UInt32]) -> (nodes: [BVHNode], depth: Int) {
+        let (tree, order) = build(boxes: boxes, masks: masks, maxLeaf: 1)
+        var nodes: [BVHNode] = []
+        nodes.reserveCapacity(max(boxes.count - 1, 1))
+        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in BVHNode.leafBit | UInt32(order[n.start]) }
+        return (nodes, depth(tree))
+    }
+
     /// A small BVH over one virtual-geometry cluster's triangles (≤ 128): node indices and leaf refs are local
     /// (BLAS leaf refs with the first triangle in `order`'s numbering). The root is always an internal node.
     static func buildCluster(boxes: [AABB]) -> (nodes: [BVHNode], order: [Int]) {

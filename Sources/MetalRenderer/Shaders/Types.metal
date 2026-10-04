@@ -137,7 +137,7 @@ constant uint LIGHT_MESH   = 5;
 // tracer sample the light table instead of per-light light maps, and the sky draws only the suns' discs.
 // The bits above the types compile whole features in (below): a scene without them traces the code it always did.
 constant uint lightTypesConstant [[function_constant(0)]];
-constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7E00003Fu;
+constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7F00003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 // Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
@@ -156,6 +156,28 @@ constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
 // Bit 25 = STREAMED: some meshes are in buffers of their own (MeshData.block; an open world's tiles), which a hit
 // reaches through the mesh table and the custom traversal through its instances' records (RT_OWN_TREE).
 constant bool STREAMED = (LIGHT_SPEC & 0x02000000u) != 0;
+// Bit 24 = GROUPED: some instances are in blocks of their own (InstanceBlock in SceneBuffers.swift; the plants of an
+// open world's tiles), which the scenes that have them share.
+// TILED: on Metal's tracer each block's records are in a buffer of the block's. An instance's id is then its block's
+// number and its place in the block (the scene's own instances are block 0), the same in every scene; a hit names
+// its instance by it, and what is bound as the instances' records is a table of the blocks' addresses.
+// (The custom tracer's scene has all its records in one buffer, the blocks' copied into it, and a hit names an
+// instance by its place there, as in any scene: one more read to a hit showed in its frame; it doesn't in Metal's.)
+constant bool GROUPED = (LIGHT_SPEC & 0x01000000u) != 0;
+#if CUSTOM_RT
+constant bool TILED = false;
+#else
+constant bool TILED = GROUPED;
+#endif
+constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
+struct InstanceBlockRef { device const InstanceData* records; };
+inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {
+    if (TILED) {
+        instances = ((device const InstanceBlockRef*)instances)[id >> INSTANCE_BLOCK_SHIFT].records;
+        id &= INSTANCE_IN_BLOCK;
+    }
+    return instances[id];
+}
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
