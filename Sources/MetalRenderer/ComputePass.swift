@@ -78,6 +78,22 @@ struct TLASUpdate {
     }
 }
 
+/// This frame's refit of the Metal tracer's per-mesh structures that deform (the crowd's pose slots): each keeps its
+/// tree and takes its boxes from the vertices its descriptor points at, which the skinning has just rewritten.
+struct PrimitiveRefit {
+    let structures: [MTLAccelerationStructure]
+    let descriptors: [MTLPrimitiveAccelerationStructureDescriptor]
+    let scratch: MTLBuffer
+    let scratchOffsets: [Int]
+
+    func encode(into enc: MTLAccelerationStructureCommandEncoder) {
+        for (i, structure) in structures.enumerated() {
+            enc.refit(sourceAccelerationStructure: structure, descriptor: descriptors[i], destinationAccelerationStructure: structure,
+                      scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
+        }
+    }
+}
+
 /// What MetalFX reads besides the frame's targets.
 struct UpscaleInputs {
     let targets: RenderTargets
@@ -105,6 +121,8 @@ protocol FrameEncoder: AnyObject {
     func endCompute()
     func generateMipmaps(_ textures: [MTLTexture], pass: String)
     func updateTLAS(_ update: TLASUpdate, pass: String)
+    /// Refits the deforming per-mesh structures, after the skinning and ahead of the TLAS update.
+    func refitPrimitives(_ refit: PrimitiveRefit, pass: String)
     /// Maps and uploads the texture levels last frame's hits asked for, ahead of this frame's work.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
     /// MetalFX, into `output` (for the denoising scaler: into its own texture, which tonemapKernel then reads).
@@ -186,6 +204,13 @@ final class Metal3Frame: FrameEncoder {
         } else {
             enc.build(accelerationStructure: u.structure, descriptor: d, scratchBuffer: u.scratch, scratchBufferOffset: 0)
         }
+        profile.end(enc)
+    }
+
+    func refitPrimitives(_ refit: PrimitiveRefit, pass: String) {
+        endCompute()
+        guard let enc = profile?.accelerationStructure(cmd, pass) ?? buffer(pass).makeAccelerationStructureCommandEncoder() else { return }
+        refit.encode(into: enc)
         profile.end(enc)
     }
 

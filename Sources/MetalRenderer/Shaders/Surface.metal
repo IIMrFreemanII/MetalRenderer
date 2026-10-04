@@ -227,9 +227,13 @@ struct HitVertices {
     float3 p[3];
     float3 n[3];
     float2 t[3];
+    uint3 i;          // with prevOffset: the vertices' places in the position buffer
+    uint prevOffset;  // MeshData.prevOffset (0 = the previous frame's object-space positions are these ones)
 };
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
+    v.i = uint3(0u);
+    v.prevOffset = 0;
 #if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         // Virtual geometry: the hit cluster's vertices, in the streaming pool.
@@ -261,10 +265,13 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     uint base = mesh.firstIndex + res.primitive * 3;
     for (uint k = 0; k < 3; ++k) {
         uint i = s.indices[base + k];
-        v.p[k] = s.positions[i];
-        v.n[k] = s.normals[i];
+        uint own = DEFORMING_MESHES ? i + mesh.vertexOffset : i;   // a pose slot's own vertex
+        v.i[k] = own;
+        v.p[k] = s.positions[own];
+        v.n[k] = s.normals[own];
         v.t[k] = s.uvs[i];
     }
+    if (DEFORMING_MESHES) v.prevOffset = mesh.prevOffset;
     return v;
 }
 
@@ -294,7 +301,13 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     Material mat = s.materials[inst.materialIndex];
     sf.hit = true;
     sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
-    sf.prevPosition = (inst.prevTransform * float4(objPos, 1.0f)).xyz;
+    // A deforming mesh (a crowd's pose slot): where the point was in the previous frame's pose.
+    float3 prevObjPos = objPos;
+    if (DEFORMING_MESHES && hv.prevOffset != 0) {
+        prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
+                   + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
+    }
+    sf.prevPosition = (inst.prevTransform * float4(prevObjPos, 1.0f)).xyz;
     sf.normal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
     sf.albedo = mat.albedo.rgb;

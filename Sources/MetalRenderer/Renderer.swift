@@ -277,8 +277,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// This frame's instance and light records, kept from frame to frame: only what moves or flickers is rewritten, then
     /// each goes to the slot's buffer in one copy. (Writing the records straight into the shared buffers costs the GPU
     /// 0.35 ms a frame with 16384 moving lights: they stay in the CPU's caches. A large memcpy doesn't leave them there.)
-    private var instanceStage: [GPUInstanceData] = [], lightStage: [GPULight] = []
-    private var stageComplete = false                  // the stages hold every record
+    private var lightStage: [GPULight] = []
+    private var stageComplete = false                  // the stage holds every record
     private var uvBuffer: MTLBuffer!
     private var emissiveBuffer: MTLBuffer!            // emissive-mesh lights' triangles (MSL EmissiveTriangle)
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
@@ -290,6 +290,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var feedbackDummy: MTLBuffer!
     private var primitiveAS: [MTLAccelerationStructure] = []           // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
+    /// The crowd's pose slots, if the scene has a crowd: the skinning, and for the Metal tracer their structures' refit.
+    private var crowdSkinner: CrowdSkinner?
+    private var primitiveRefit: PrimitiveRefit?
     private var customRT: CustomRayTracer? {                           // custom ray tracer only
         didSet { traversalLast = nil }   // a new tracer's counters start at 0
     }
@@ -642,14 +645,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         customRT = nil
         primitiveAS = []
         primitiveASResources = []
+        primitiveRefit = nil
+        crowdSkinner = nil
         instanceDescBuffers = []
         instanceDataBuffers = []
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
-        let identity = matrix_identity_float4x4
-        instanceStage = [GPUInstanceData](repeating: GPUInstanceData(transform: identity, prevTransform: identity, normalMatrix: identity,
-                                                                     meshIndex: 0, materialIndex: 0),
-                                          count: scene.instances.count)
         lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
                                 count: scene.lights.count)
         stageComplete = false
@@ -660,6 +661,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         instanceASBuilt = []
         textureStreamer = prepared?.streamer
         try createGeometryBuffers(textures: prepared?.textures)
+        if let crowd = scene.crowd, !crowd.slots.isEmpty {
+            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+        }
         if builtRayTracer == .metal { try buildPrimitiveAccelerationStructures() }
         try createPerFrameResources()
         if builtRayTracer == .custom {
@@ -768,9 +772,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             + (textureStreamer == nil ? materialTextures : [])
     }
 
-    /// One bottom-level (primitive) acceleration structure per mesh, built once.
-    /// For skinned/deforming meshes you would update the vertex buffer and call
-    /// `refit(sourceAccelerationStructure:descriptor:destinationAccelerationStructure:scratchBuffer:scratchBufferOffset:)` each frame.
+    /// One bottom-level (primitive) acceleration structure per mesh, built once. The meshes that deform (the crowd's
+    /// pose slots) are built to be refitted: `primitiveRefit` holds what `encodeSceneUpdate` refits every frame.
     private func buildPrimitiveAccelerationStructures() throws {
         guard let cmd = queue.makeCommandBuffer(),
               let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
@@ -778,6 +781,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         var scratchBuffers: [MTLBuffer] = []
         var built: [MTLAccelerationStructure] = []
+        // The crowd's pose slots deform: their structures are built to be refitted every frame, and stay as built.
+        var refitted: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
         // Each structure's size once compacted (a UInt32 per mesh), written by the GPU after the builds.
         guard let compactedSizes = device.makeBuffer(length: max(scene.meshes.count, 1) * MemoryLayout<UInt32>.stride,
                                                      options: .storageModeShared) else {
@@ -786,7 +791,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         for (i, mesh) in scene.meshes.enumerated() {
             let geometry = MTLAccelerationStructureTriangleGeometryDescriptor()
             geometry.vertexBuffer = positionBuffer
-            geometry.vertexBufferOffset = 0
+            geometry.vertexBufferOffset = Int(mesh.vertexOffset) * MemoryLayout<SIMD3<Float>>.stride
             geometry.vertexStride = MemoryLayout<SIMD3<Float>>.stride
             geometry.indexBuffer = indexBuffer
             geometry.indexBufferOffset = Int(mesh.firstIndex) * MemoryLayout<UInt32>.stride
@@ -797,15 +802,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let descriptor = MTLPrimitiveAccelerationStructureDescriptor()
             descriptor.geometryDescriptors = [geometry]
             // The meshes never change, so their structures are built once, for the fastest traversal Metal offers.
-            if Renderer.fastIntersectionBLAS, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
+            let deforms = mesh.prevOffset != 0
+            if deforms { descriptor.usage = .refit }
+            else if Renderer.fastIntersectionBLAS, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
 
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+            if deforms { refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16))) }
             guard let accel = device.makeAccelerationStructure(size: sizes.accelerationStructureSize),
                   let scratch = device.makeBuffer(length: max(sizes.buildScratchBufferSize, 16), options: .storageModePrivate) else {
                 throw RendererError.resourceCreation("primitive acceleration structure")
             }
             encoder.build(accelerationStructure: accel, descriptor: descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
-            if Renderer.compactBLAS {
+            if Renderer.compactBLAS && !deforms {
                 encoder.writeCompactedSize(accelerationStructure: accel, buffer: compactedSizes,
                                            offset: i * MemoryLayout<UInt32>.stride, sizeDataType: .uint)
             }
@@ -822,7 +830,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
            let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() {
             let sizes = compactedSizes.contents().bindMemory(to: UInt32.self, capacity: built.count)
             var compacted: [MTLAccelerationStructure] = []
+            let kept = Set(refitted.map(\.index))
             for (i, accel) in built.enumerated() {
+                if kept.contains(i) { compacted.append(accel); continue }
                 guard let small = device.makeAccelerationStructure(size: Int(sizes[i])) else {
                     throw RendererError.resourceCreation("compacted acceleration structure")
                 }
@@ -839,6 +849,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         primitiveAS.append(contentsOf: built)
         primitiveASResources = primitiveAS.map { $0 as MTLResource }
+        if !refitted.isEmpty {
+            // One scratch buffer, a range per structure: the refits of a frame may run side by side.
+            var offsets: [Int] = [], length = 0
+            for r in refitted { offsets.append(length); length += (r.scratch + 255) & ~255 }
+            guard let scratch = device.makeBuffer(length: length, options: .storageModePrivate) else {
+                throw RendererError.resourceCreation("refit scratch buffer")
+            }
+            scratch.label = "blasRefitScratch"
+            primitiveRefit = PrimitiveRefit(structures: refitted.map { built[$0.index] }, descriptors: refitted.map(\.descriptor),
+                                            scratch: scratch, scratchOffsets: offsets)
+        }
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
@@ -1248,16 +1269,19 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     // MARK: - Per-frame CPU work
 
     private func writeFrameData(slot: Int) {
-        if let customRT { customRT.update(slot: slot, scene: scene) } else { writeInstanceDescriptors(slot: slot) }
-        // After a scene's first frame only what moves or flickers is rewritten in the stages.
+        // Instances: a slot's first frame of a scene writes every record, straight into its buffers; after that only
+        // the ones that move, the rest being as they were (a crowd is tens of thousands of records).
+        let first = !frameDataWritten[slot]
+        if let customRT { customRT.update(slot: slot, scene: scene) } else { writeInstanceDescriptors(slot: slot, all: first) }
+        crowdSkinner?.write(slot: slot)
+        if !scene.instances.isEmpty {
+            scene.writeInstanceData(into: instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count),
+                                    all: first)
+        }
+        // Lights: after a scene's first frame only what moves or flickers is rewritten in the stage.
         let all = !stageComplete
         stageComplete = true
         frameDataWritten[slot] = true
-        instanceStage.withUnsafeMutableBytes { raw in
-            guard let base = raw.baseAddress else { return }   // an empty scene
-            scene.writeInstanceData(into: base.assumingMemoryBound(to: GPUInstanceData.self), all: all)
-            instanceDataBuffers[slot].contents().copyMemory(from: base, byteCount: raw.count)
-        }
         // Animated light proxies (flicker, chases, the sun's colour) change their materials: each slot catches up with
         // the ranges changed since it was last written.
         if let dirty = scene.takeMaterialsDirty() {
@@ -1286,12 +1310,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         writeSkyArguments(slot: slot)
     }
 
-    /// Instance descriptors for Metal's top-level acceleration structure.
-    private func writeInstanceDescriptors(slot: Int) {
+    /// Instance descriptors for Metal's top-level acceleration structure: every instance's (`all`), or the moving ones'.
+    private func writeInstanceDescriptors(slot: Int, all: Bool) {
         let descBase = instanceDescBuffers[slot].contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
         let indirect = builtAPI == .metal4, stride = instanceDescriptorStride
-        for (i, instance) in scene.instances.enumerated() {
+        func write(_ i: Int) {
+            let instance = scene.instances[i]
             let p = descBase.advanced(by: i * stride)
             let m = instance.transform
             var offset = 0
@@ -1310,6 +1335,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             } else {
                 p.storeBytes(of: UInt32(instance.mesh), toByteOffset: 60, as: UInt32.self)  // index into primitiveAS
             }
+        }
+        if all {
+            for i in scene.instances.indices { write(i) }
+        } else {
+            for i in scene.movingInstances { write(i) }
         }
     }
 
@@ -1551,7 +1581,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             benchmark.noteDraw(resolution: size.upscaling ? "\(width)×\(height) → \(size.outWidth)×\(size.outHeight)" : "\(width)×\(height)")
             dt = benchmark.fixedDt   // deterministic animation so every setting renders the same frames
             if benchmark.current.cameraPath {
-                camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind)
+                camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
         }
         updateCamera(dt: dt)
@@ -1797,6 +1827,21 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// The scene's structures for this frame, ahead of everything that traces rays.
     private func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
+        // 0. The crowd: this frame's poses and skinned vertices, then the pose slots' bottom-level structures around
+        //    them (a refit: a pose keeps its triangles, so its tree keeps its shape). Ahead of the top level, which
+        //    takes the new bounds.
+        if let crowdSkinner, !CrowdSkinner.frozen {
+            if let enc = passes.compute("skin", serial: true) {
+                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
+                                    positions: positionBuffer, normals: normalBuffer)
+                passes.endCompute()
+            }
+            if let primitiveRefit { passes.refitPrimitives(primitiveRefit, pass: "blas") }
+            if let customRT, let enc = passes.compute("blas", serial: true) {
+                customRT.encodeCrowdRefit(enc, positions: positionBuffer, indices: indexBuffer, meshes: meshBuffer)
+                passes.endCompute()
+            }
+        }
         // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
@@ -1952,6 +1997,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             passes.capture(output.texture, into: capture.buffer)
             writeCapture = capture.write
         }
+        let checkCrowd = benchmark?.shouldCapture == true && CrowdSkinner.checked && !CrowdSkinner.frozen
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
@@ -1998,6 +2044,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if benchmark != nil {
             vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
             streamer?.collect(slot: slot)
+        }
+        if checkCrowd, let crowdSkinner {   // the frame is done (benchmarks wait for it)
+            let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)
+            var line = String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
+                              crowdSkinner.crowd.slots.count, skin.position, skin.normal)
+            if let customRT {
+                let wrong = customRT.checkCrowdRefit(scene: scene, positions: positionBuffer)
+                line += ", refitted trees: \(wrong.triangles) wrong triangles, \(wrong.boxes) wrong boxes, \(wrong.bounds) wrong bounds"
+            }
+            print(line)
         }
     }
 
@@ -2525,7 +2581,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             rebuildScene(resetCamera: false)
         }
-        camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind) : c.camera ?? scene.defaultCamera
+        camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera
         prevCamera = camera
         accumulating = c.accumulate
         referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil

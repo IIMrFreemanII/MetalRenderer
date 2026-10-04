@@ -10,7 +10,8 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * the glTF **Gallery**;
   * six light demos (see "Light types" below);
   * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
-  * an **Open valley** for the sky and clouds (see "Sky and clouds" below).
+  * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
+  * a **Crowd**: a square with thousands of animated characters, skinned on the GPU (see "Animated characters" below).
 * **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
   * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
@@ -163,6 +164,12 @@ For the fog:
 * `METALRENDERER_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
 * Both fog modes take `METALRENDERER_LIGHTS_SCENES`.
 
+For the crowd:
+* `METALRENDERER_SCENE=crowd` starts in the Crowd scene; add `characters=32768`, `poses=128` and `detail=0`...`4` for its size, the number of poses the GPU animates and their level of detail (`METALRENDERER_SCENE="crowd,characters=8192,poses=64"`).
+* `METALRENDERER_BENCH=crowd` times it against the number of poses, of characters and the level of detail, then renders a still and a camera move. With `METALRENDERER_CROWD_CHECK=1` every captured frame compares the vertices the GPU skinned with the CPU's, and (custom tracer) checks the refitted trees box by box.
+* `METALRENDERER_CROWD=frozen` skips the per-frame skinning and refits: the crowd keeps the pose the CPU gave it at load.
+
+
 For the sky:
 * `METALRENDERER_SCENE=valley` starts in the Open valley.
 * `METALRENDERER_SKY=constant`, `atmosphere` or an image path overrides every scene's sky.
@@ -238,6 +245,9 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's fog and sky defaults (and resets the GI method to radiance cascades). Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 the bulbs also shrink. Night market: festoon bulbs, 4096 by default. |
+| Characters | 2048 | Crowd: how many characters stand, walk and run in the square, 1 to 131072. Applied when you release the slider. |
+| Poses | 64 | Crowd: how many poses the GPU animates each frame; every character shows one of them. More poses, fewer characters in step with each other. |
+| Detail level | 3 | Crowd: the mesh the poses are skinned at. 0 is the full mesh (about 50k triangles), each level has half the triangles of the one before (level 3: about 6.5k). |
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees in the background, while the view keeps drawing with the old tracer (2 to 4 seconds the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
 | Virtual geometry | On | Custom ray tracer only: big glTF meshes as streamed level-of-detail cuts. Off: full-detail meshes. |
 | Geometry error | 1 px | The cut's allowed geometric error in traced pixels. 0.5 px: about 2× the triangles, closer to full detail; 2 px: half. Changes apply within a few frames. |
@@ -549,6 +559,46 @@ The first frame of a sky also draws the noise and the atmosphere's tables, and r
 * Cloud shadows cover a square around the scene's bounding sphere.
 * An image's sun needs a sun light in the scene to land on; without one, the image still lights GI.
 
+### Animated characters
+
+The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk and a run. Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
+
+* **Poses are animated, not characters.** Everything here is ray traced, so a deformed mesh is not something a vertex shader does to an instance: it needs vertices of its own and an acceleration structure around them. The crowd keeps a pool of *pose slots* (`Crowd.swift`). A slot is one character playing one clip, or a cross-fade of two, from some point of its loop. Each frame the GPU animates every slot once, and every character in the square is an ordinary instance of one slot's mesh. A frame's cost follows the number of slots, not of characters: 131072 characters on 64 slots cost what 64 poses cost, plus a larger top-level tree. Characters on the same slot move in step, which a few dozen slots per clip hide well; a character that must move on its own takes a slot to itself.
+* **A frame's work, all in compute** (`Shaders/Crowd.metal`, `CrowdSkinner.swift`):
+  * `crowdPoseKernel`, one thread per joint and slot: the joint's skinning matrix. The thread walks up from its joint to the root (a skeleton is about a dozen joints deep), blending each rotation between two keys of the clip and, in a cross-fade, between the two clips.
+  * `crowdSkinKernel`, one thread per vertex and slot: linear blend skinning of up to four joints, into the slot's range of the scene's position and normal buffers. Hits then read a pose's vertices like any mesh's (`MeshData.vertexOffset`).
+  * The slots' bottom-level structures are refitted: a pose keeps its triangles, so its tree keeps its shape and only the boxes move. The custom tracer does it in `crowdRefitKernel`, one thread per node, bottom-up through the same arrival counters as the top-level build. Metal's tracer refits its per-slot structures.
+  * Then the top-level tree, as for any moving instance.
+* **Motion vectors.** The skinning keeps each slot's previous positions, and a hit on a deforming mesh interpolates them for the point's previous position (`MeshData.prevOffset`). The denoisers, the upscalers and the reuse passes then reproject limbs the way they reproject moving objects. Without it they throw a moving limb's history away, and limbs come out at traced resolution. Both offsets are compiled in only for a scene that has a crowd (`DEFORMING_MESHES`, with the scene's light types): read at every hit of every scene, they cost the trace 7% in the stress hall; now the other scenes trace the code they always did and render the same images, bit for bit.
+* **Import** (`FBXReader.swift`, `SkinnedCharacter.swift`): a reader of binary FBX written for this, with no dependencies.
+  * The file is memory-mapped and never copied. A node is a 24-byte record of offsets, names are compared as bytes, and what isn't wanted is stepped over by its end offset: a clip file carries a whole copy of its character's mesh that is never touched.
+  * Arrays are inflated once, when asked for, straight into the Swift array they become, on all cores. The six files are read at the same time.
+  * The skeleton is matched by joint name (the files list the joints in different orders). Clips are retargeted to each character by its joints' rotations away from the bind pose, so X Bot, whose joint axes and bone lengths differ from Y Bot's, plays Y Bot's clips. A clip's travel is taken out and kept as its speed.
+  * Coarser levels of the mesh come from `MeshSimplifier`, whose collapses keep a subset of the vertices, so skin weights carry over.
+  * On this M1 Max the six files (12.6 MB) are read in 26 ms and retargeted in 2 ms; the levels of detail take 320 ms. All of it is then kept in one cache file, which loads in 3 ms.
+* **What it costs** (`METALRENDERER_BENCH=crowd`: M1 Max, 640×400 upscaled 3×, cascades GI, 2048 characters, 64 poses and detail level 3 unless the row says otherwise, the animation running; ms):
+
+  | Custom tracer | skin | blas | tlas | trace | frame (Metal 3) | frame (Metal 4) |
+  |---|---|---|---|---|---|---|
+  | 8 poses | 0.04 | 0.26 | 0.35 | 3.24 | 8.5 | 7.4 |
+  | 64 poses | 0.43 | 1.23 | 0.14 | 3.46 | 10.8 | 8.4 |
+  | 256 poses | 1.02 | 4.57 | 0.14 | 3.55 | 15.5 | 10.8 |
+  | 256 characters | 0.45 | 1.21 | 0.07 | 2.39 | 9.1 | 6.9 |
+  | 32768 characters | 0.42 | 1.25 | 0.47 | 5.05 | 13.6 | 11.1 |
+  | 131072 characters | 0.29 | 0.96 | 1.07 | 5.26 | 13.9 | 12.8 |
+  | 32 poses, full detail | 0.86 | 4.90 | 0.13 | 3.59 | 15.6 | 10.7 |
+
+  * The pass columns are Metal 3's. A benchmark times each pass in its own command buffer, which costs the small passes a few tenths of a millisecond there: under Metal 4 the same 64 poses take 0.14 ms to skin and 0.68 ms to refit, and both grow in step with the pose count.
+  * A pose's cost is its triangles: the refit is what a level of detail buys back (4.9 ms for 32 poses at full detail, 0.9 ms at level 3).
+  * The CPU's share is 0.3 ms up to a few thousand characters, 1.1 ms at 32768 and 3.5 ms at 131072: a walker's transform is still written by the CPU every frame.
+  * **Metal's tracer** pays about 0.09 ms per refitted structure on this GPU, whatever its size: 6.3 ms for 64 poses and 23 ms for 256, against 1.2 and 4.6 ms above. Use fewer poses with it.
+* **Checked** by `METALRENDERER_CROWD_CHECK=1` in every setting of the mode, on the custom tracer under both APIs and on Metal's under Metal 3: the GPU's vertices are within 3 µm of the CPU's, and no refitted triangle, box or bound is off. Metal 3 and Metal 4 render the same images.
+* **Limits:**
+  * Metal's tracer under Metal 4 needs a GPU with Metal 4 ray tracing (M3 and later): that combination's refit is written the same way, through the Metal 3 queue, but has not been run.
+  * A character has one material, so the bots' two colours (body and joints) are one tint each.
+  * A walking row shares one motion and one size, so its members keep their distances; nothing steers around anything.
+  * Cross-fades keep two clips at the same point of their loops, which is right for clips that start on the same foot.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -649,6 +699,11 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
+| `FBXReader.swift` | Binary FBX: a memory-mapped reader that skips what isn't asked for and inflates arrays in place |
+| `SkinnedCharacter.swift` | Characters and clips from FBX (skeleton, skin, retargeting, levels of detail), posing and skinning on the CPU, the cache file |
+| `Crowd.swift` | The crowd's pose slots: what each plays at a time, and where its walkers are |
+| `CrowdSkinner.swift` | The crowd's GPU buffers and per-frame dispatches, and the check against the CPU |
+| `Scene+Crowd.swift` | The Crowd scene |
 | `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |
@@ -660,7 +715,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Crowd` |
 
 ## Notes for M1 / M2 Macs
 
@@ -1012,7 +1067,11 @@ What didn't help:
    * With 2000 objects the frame still costs 1.4 ms more than with 400; sorting secondary rays by direction for coherence is the other thing to try.
 4. **Better GI caching:** radiance cascades and ReSTIR GI's multi-bounce feedback fall back to the scene's average indirect light at points no screen pixel covers, and cascades lose 7 dB to the path tracer in cluttered scenes like the stress hall. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
 5. **Cheaper ReSTIR GI:** its paths cost what the path tracer's do, so it runs at 2–3× the cascades' cost. Half-resolution reservoirs (with full-resolution reuse), or paths that end in a world-space radiance cache after one bounce, would cut that. The multi-bounce feedback alone, which made most of its gain, could also be given to the plain path tracer. And a denoiser that uses the reservoirs' confidence (ReBLUR or ReLAX-style) might turn reuse's lower raw noise into a lower error, which SVGF doesn't.
-6. **Deforming meshes:** update vertices in a compute pass, then refit that mesh's bottom-level tree with a bottom-up box pass like `rtFitKernel` (or call `refit` on its BLAS with the Metal tracer).
+6. **The crowd, further:**
+   * Write the walkers' transforms on the GPU (instance data and Metal's instance descriptors), which is what the CPU still does per character and frame.
+   * Metal's tracer pays per refitted structure: refit half the slots a frame, or build the poses' structures with Metal 4's own acceleration-structure encoder where it exists.
+   * Pick a pose's level of detail by its nearest character's distance, with full-detail slots for the characters next to the camera.
+   * Keep the bots' two materials (a material index per triangle), and read skins and animations from glTF too.
 7. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
 8. **Virtual geometry:** a GPU-built (or treelet-optimized) BLAS over the cut would let the cut update every frame; LOD cross-fades would hide the rare pop; the Metal tracer could build BLASes over the cut too.
 9. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.

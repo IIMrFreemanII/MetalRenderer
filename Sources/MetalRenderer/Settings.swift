@@ -257,6 +257,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case fog                // a misty hall: sun shafts through tall windows, a searchlight, ground mist
     case valley             // an open valley under the sky: a day cycle, drifting clouds and their shadows
     case market             // a night market: thousands of festoon bulbs (`lights`), lanterns, lit windows, neon signs
+    case crowd              // a square under the sun with `characters` animated characters on `poses` pose slots
 
     var title: String {
         switch self {
@@ -272,6 +273,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .fog: return "Misty hall"
         case .valley: return "Open valley"
         case .market: return "Night market"
+        case .crowd: return "Crowd"
         }
     }
 
@@ -309,6 +311,11 @@ struct SceneSettings: Equatable, Codable {
     var kind = SceneKind.cornell
     var objects = 400
     var lights = 32
+    /// The crowd scene: how many characters, and how many poses the GPU animates for them each frame (Crowd).
+    var characters = 2048
+    var poses = 64
+    /// ...and at which level of detail they are skinned and traced: 0 = the full mesh, each level half the one before.
+    var detail = 3
     var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
     /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
     /// Off: they only light what GI rays happen to hit, as before.
@@ -318,6 +325,9 @@ struct SceneSettings: Equatable, Codable {
 
     static let objectRange = 0...2000
     static let lightRange = 1...16384
+    static let characterRange = 1...131_072
+    static let poseRange = 1...512
+    static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 }
 
@@ -378,7 +388,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area:
+        case .cornell, .stress, .gallery, .area, .crowd:
             break
         case .market:
             f.enabled = true; f.density = 0.012; f.heightFalloff = 0.08; f.anisotropy = 0.4; f.ambient = 0.5; f.maxDistance = 60
@@ -459,6 +469,8 @@ struct SkySettings: Equatable, Codable {
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
         case .mixed:
             s.mode = .atmosphere; s.coverage = 0.25; s.shadows = false   // the sun is low: clouds near the horizon
+        case .crowd:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1200; s.cloudThickness = 1000; s.cloudScale = 2500
         case .valley:
             // Small, low clouds (a stylised scale), so their shadows visibly cross the 400 m valley.
             s.mode = .atmosphere; s.coverage = 0.4; s.cloudBase = 700; s.cloudThickness = 800; s.cloudScale = 800

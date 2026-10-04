@@ -64,7 +64,7 @@ extension Scene {
         case .fog: return camera([1.2, 1.7, 2.6], yaw: -0.04, pitch: 0.1)
         case .valley: return camera([4, 2.2, 38], yaw: -0.15, pitch: 0.12)
         case .market: return camera([0.6, 1.7, 30], yaw: 0.02, pitch: 0.12)
-        case .cornell, .stress, .gallery: return nil
+        case .cornell, .stress, .gallery, .crowd: return nil   // .crowd: its camera depends on its size (Scene+Crowd)
         }
     }
 

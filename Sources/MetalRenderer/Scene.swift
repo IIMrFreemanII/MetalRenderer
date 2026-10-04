@@ -22,9 +22,15 @@ final class Scene {
         var normalMatrix = matrix_identity_float4x4
         /// A light's proxy whose light moves (`LightMotion.animated`): `Scene.update` re-poses it every frame.
         var poseAnimated = false
+        /// A member of the crowd: its mesh is a pose slot's, which deforms every frame (Crowd).
+        var skinned = false
+        /// ...that walks: `Scene.update` moves it along its lane.
+        var travels = false
 
-        /// Never moves: its transform is the one it was added with (the ray tracers' static trees).
-        var isStatic: Bool { animation == nil && !poseAnimated }
+        /// Never moves or deforms: its transform is the one it was added with (the ray tracers' static trees).
+        var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
+        /// Its transform changes from frame to frame.
+        var moves: Bool { animation != nil || poseAnimated || travels }
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -154,6 +160,8 @@ final class Scene {
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     var defaultCamera = Camera()
     let settings: SceneSettings
+    /// The scene's animated characters, if it has any (Scene+Crowd.swift).
+    private(set) var crowd: Crowd?
 
     var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
     var skyAnimation: ((Float) -> SIMD3<Float>)?
@@ -183,9 +191,11 @@ final class Scene {
         case .fog: buildFogHall()
         case .valley: buildValley()
         case .market: buildMarket()
+        case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
+        finishCrowd()
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
         let (lo, hi) = bounds()
@@ -209,7 +219,7 @@ final class Scene {
             return rank
         }
         func moves(_ l: Light) -> Bool { l.kind.isSun || l.motion == .animated }
-        animated = (instances: instances.indices.filter { !instances[$0].isStatic },
+        animated = (instances: instances.indices.filter { instances[$0].moves },
                     lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
                     scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
         changingLights = lights.indices.filter {
@@ -256,12 +266,28 @@ final class Scene {
         }
         if let skyAnimation { skyColor = skyAnimation(day) }
         for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
+        if let crowd {
+            // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
+            // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
+            crowd.pose(at: t)
+            for w in crowd.walkers {
+                let (p, previous) = w.positions(crowd.slots[w.slot])
+                instances[w.instance].transform.columns.3 = SIMD4(p, 1)
+                instances[w.instance].prevTransform.columns.3 = SIMD4(previous, 1)
+                instances[w.instance].normalMatrix.columns.0.w = -dot(w.inverse0, p)
+                instances[w.instance].normalMatrix.columns.1.w = -dot(w.inverse1, p)
+                instances[w.instance].normalMatrix.columns.2.w = -dot(w.inverse2, p)
+            }
+        }
     }
 
     private func setTransform(_ i: Int, _ transform: float4x4) {
         instances[i].transform = transform
         instances[i].normalMatrix = transform.inverse.transpose
     }
+
+    /// The instances whose transform changes from frame to frame.
+    var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
 
     /// The range of materials changed since the last call (nil: none), which is then forgotten.
     func takeMaterialsDirty() -> Range<Int>? {
@@ -351,8 +377,10 @@ final class Scene {
     private(set) var usesLightTable = false
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
+    /// Bit 30: the scene has meshes that deform (a crowd's pose slots; DEFORMING_MESHES in Shaders/Types.metal).
     var lightTypeMask: UInt32 {
-        lights.reduce(usesLightTable ? 0x8000_0001 : UInt32(1)) { mask, l in   // spheres always: an empty scene needs some type
+        let deforming: UInt32 = crowd?.slots.isEmpty == false ? 0x4000_0000 : 0
+        return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | deforming) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
             case .sphere: type = GPULight.sphere
@@ -614,6 +642,73 @@ final class Scene {
         return meshes.count - 1
     }
 
+    // MARK: - Crowd
+
+    /// Takes `crowd` as this scene's: its characters' bind-pose meshes and a mesh per pose slot.
+    func adopt(_ crowd: Crowd) {
+        self.crowd = crowd
+        for p in crowd.parts.indices {
+            let geometry = crowd.geometry(part: p)
+            crowd.parts[p].bindVertex = positions.count
+            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs)
+        }
+        for i in crowd.slots.indices {
+            // A pose: its character's triangles over vertices of its own, which `finishCrowd` places. Its bounds are
+            // those of every pose the character takes.
+            let part = crowd.parts[crowd.slots[i].part], character = crowd.characters[part.character]
+            meshes.append(GPUMesh(firstIndex: meshes[part.mesh].firstIndex, indexCount: meshes[part.mesh].indexCount))
+            meshBounds.append((character.boundsMin, character.boundsMax))
+            crowd.slots[i].mesh = meshes.count - 1
+        }
+    }
+
+    /// Mesh `m`'s bounds in its own space: for a pose slot, of every pose it may take.
+    func localBounds(mesh m: Int) -> AABB { AABB(lo: meshBounds[m].0, hi: meshBounds[m].1) }
+
+    /// Marks instance `i` as a member of the crowd (its mesh is a pose slot's).
+    func setSkinned(_ i: Int, travels: Bool) {
+        instances[i].skinned = true
+        instances[i].travels = travels
+    }
+
+    /// Once every mesh is in: the pose slots' vertices go after them (each slot's current positions and normals,
+    /// then every slot's previous positions), skinned on the CPU to the pose at time 0. The GPU rewrites them every
+    /// frame from then on; these are what the acceleration structures are first built from.
+    private func finishCrowd() {
+        guard let crowd, !crowd.slots.isEmpty else { return }
+        var next = positions.count
+        for p in crowd.parts.indices {
+            crowd.parts[p].currentBase = next
+            next += crowd.parts[p].slotCount * crowd.parts[p].vertexCount
+        }
+        let currentEnd = next
+        for p in crowd.parts.indices {
+            crowd.parts[p].previousBase = next
+            next += crowd.parts[p].slotCount * crowd.parts[p].vertexCount
+        }
+        positions += [SIMD3<Float>](repeating: .zero, count: next - positions.count)
+        normals += [SIMD3<Float>](repeating: .zero, count: currentEnd - normals.count)
+        crowd.pose(at: 0)
+        let geometry = crowd.parts.indices.map { crowd.geometry(part: $0) }
+        positions.withUnsafeMutableBufferPointer { p in
+            normals.withUnsafeMutableBufferPointer { n in
+                DispatchQueue.concurrentPerform(iterations: crowd.slots.count) { i in
+                    let character = geometry[crowd.slots[i].part]
+                    let range = crowd.vertexRange(slot: i)
+                    SkinnedCharacter.skin(positions: character.positions, normals: character.normals, skin: character.skin,
+                                          palette: crowd.palette(slot: i), into: p.baseAddress! + range.current,
+                                          n.baseAddress! + range.current)
+                    (p.baseAddress! + range.previous).update(from: p.baseAddress! + range.current, count: range.count)
+                }
+            }
+        }
+        for i in crowd.slots.indices {
+            let range = crowd.vertexRange(slot: i), part = crowd.parts[crowd.slots[i].part]
+            meshes[crowd.slots[i].mesh].vertexOffset = UInt32(range.current - part.bindVertex)
+            meshes[crowd.slots[i].mesh].prevOffset = UInt32(range.previous - range.current)
+        }
+    }
+
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
     func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
@@ -698,7 +793,7 @@ final class Scene {
         }
         let lumWeights = SIMD3<Float>(0.2126, 0.7152, 0.0722)
         var flagged = Set<Int>()
-        for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry {
+        for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry && !inst.skinned {
             let material = materials[inst.material]
             let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
             guard factor.max() > 0 else { continue }

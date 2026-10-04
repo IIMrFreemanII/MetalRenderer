@@ -12,7 +12,7 @@ extension Benchmark {
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
-        "skycheck": skycheck, "vgdebug": vgdebug,
+        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -614,6 +614,22 @@ extension Benchmark {
             }
         }
         return out
+    }
+
+    /// The crowd scene (animated characters, Crowd.swift) at the default settings, the animation running: frame time
+    /// against the number of poses the GPU animates ("skin": their matrices and vertices, "blas": their acceleration
+    /// structures), against the number of characters on them ("tlas", "trace", and the CPU's share in "cpu") and
+    /// against the poses' level of detail. Then the frames to look at: a still with the frame before it, and the
+    /// camera moving through the crowd. `METALRENDERER_CROWD_CHECK=1` compares what the GPU skinned with the CPU's.
+    private static func crowd() -> [Config] {
+        func square(_ name: String, characters: Int = 2048, poses: Int = 64, detail: Int = 3) -> Config {
+            Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades,
+                   scene: SceneSettings(kind: .crowd, characters: characters, poses: poses, detail: detail))
+        }
+        return [8, 32, 64, 128, 256].map { square("\($0) poses", poses: $0) }
+            + [256, 8192, 32768, 131_072].map { square("\($0) characters", characters: $0) }
+            + [1, 0].map { square("32 poses, detail \($0)", poses: 32, detail: $0) }
+            + [square("still").still(previous: true), square("camera move").cameraMove()]
     }
 
     /// The geometry debug views at the gallery overview and close-up, native resolution (crisp PNGs), with virtual

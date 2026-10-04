@@ -289,6 +289,12 @@ enum SettingsTable {
                 .env(.scene, "objects").when { $0.scene.kind == .stress },
             S.slider("Lights", \.scene.lights, SceneSettings.lightRange, log: true, live: false)
                 .env(.scene, "lights").when { $0.scene.kind.hasLightCount },
+            S.slider("Characters", \.scene.characters, SceneSettings.characterRange, log: true, live: false)
+                .env(.scene, "characters").when { $0.scene.kind == .crowd },
+            S.slider("Poses", \.scene.poses, SceneSettings.poseRange, log: true, live: false)
+                .env(.scene, "poses").when { $0.scene.kind == .crowd },
+            S.slider("Detail level", \.scene.detail, SceneSettings.detailRange, live: false)
+                .env(.scene, "detail").when { $0.scene.kind == .crowd },
             S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)

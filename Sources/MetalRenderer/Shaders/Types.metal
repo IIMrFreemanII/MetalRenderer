@@ -30,8 +30,8 @@ struct Uniforms {
 struct MeshData {
     uint firstIndex;
     uint indexCount;
-    uint pad0;
-    uint pad1;
+    uint vertexOffset;  // a skinned character's pose slot: its vertices are this far after the ones its indices name
+    uint prevOffset;    // ...and its previous frame's positions this far after those (0 = the mesh doesn't deform)
 };
 
 struct InstanceData {
@@ -120,10 +120,14 @@ constant uint LIGHT_MESH   = 5;
 // (e.g. a pipeline made without it) every type is handled. Bit 31 = LIGHT_TABLE: a scene with many lights (more than
 // Scene.lightTableThreshold), where nothing may loop over the lights or keep something per light: GI and the path
 // tracer sample the light table instead of per-light light maps, and the sky draws only the suns' discs.
+// Bit 30 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
+// Only then does a hit read MeshData's offsets and a previous position: a scene without them traces the code it
+// always did (the offsets cost the trace 7% in the stress hall when every scene paid for them).
 constant uint lightTypesConstant [[function_constant(0)]];
-constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x3Fu;
+constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x4000003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
+constant bool DEFORMING_MESHES = (LIGHT_SPEC & 0x40000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
