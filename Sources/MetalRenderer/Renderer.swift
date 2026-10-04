@@ -242,8 +242,10 @@ final class RestirGITargets {
 }
 
 
-final class Renderer: NSObject, MTKViewDelegate, InputHandler {
-    private static let maxFramesInFlight = 3
+/// Makes the frames, on its own thread (`RenderThread`): once that runs, everything here belongs to it. The main thread
+/// talks to it through `RendererController`, which posts work with `perform` and gets values back.
+final class Renderer: NSObject {
+    static let maxFramesInFlight = 3
     /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
     /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
     /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
@@ -318,11 +320,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var metal4: Metal4Frame? {
         if metal4Storage == nil {
             metal4Storage = Metal4Frame(device: device, streamQueue: queue, framesInFlight: Renderer.maxFramesInFlight,
-                                        layer: (surface as? MTKView)?.layer as? CAMetalLayer)
+                                        layer: (surface as? LayerSurface)?.layer)
         }
         return metal4Storage as? Metal4Frame
     }
-    /// Metal 4's compiler for `api` `.metal4` (pipelines, MetalFX's scalers), nil for Metal 3. Main thread.
+    /// Metal 4's compiler for `api` `.metal4` (pipelines, MetalFX's scalers), nil for Metal 3. Render thread.
     private func compiler(for api: RenderAPI) -> AnyObject? {
         guard api == .metal4, #available(macOS 26.0, *) else { return nil }
         return metal4?.compiler
@@ -401,30 +403,31 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 return
             }
             if settings.giMode != oldValue.giMode { resetGIState() }
-            if persistSettings { SettingsStore.save(settings) }
-            for observer in settingsObservers { observer(settings) }
+            publishSettings()
         }
     }
     private var persistSettings = false         // the app (not benchmarks), once the saved settings are loaded
+    /// The last of the controller's settings edits applied (`applySettings`), sent back with the settings.
+    private var settingsUpdate = 0
     /// GPU pass timings for the settings panel (GPUProfiler): per frame, then averaged over the stats interval.
     var profilePasses = false
-    var onPassTimes: (([(name: String, ms: Double)]) -> Void)?
     var passProfilingSupported: Bool { GPUProfiler.isSupported(on: device) }
-    /// This frame's direct-light method with Auto resolved, for the panel's denoiser caption.
-    var directModeInUse: DirectLightMode { activeDirectMode }
-    private var settingsObservers: [(RenderSettings) -> Void] = []
-    private var tickObservers: [() -> Void] = []
-    /// Calls `observer` with the settings after every change (panel edits, keyboard shortcuts, scene loads).
-    func observeSettings(_ observer: @escaping (RenderSettings) -> Void) { settingsObservers.append(observer) }
-    /// Calls `observer` twice a second, when the stats (fps, GPU time, `statsLine`) are refreshed.
-    func observeTick(_ observer: @escaping () -> Void) { tickObservers.append(observer) }
-    var onTogglePanel: (() -> Void)?            // Tab key
-    var onToggleDebug: (() -> Void)?            // I key
-    /// Every frame once its GPU work is done (main thread): the CPU time since the previous frame started and the GPU
-    /// time, both in ms. For the Debug window's graph; nil while it's hidden.
+    /// The Debug window is open: the stats tick brings its `DebugInfo`, and every frame its times (`onFrameTime`).
+    var debugActive = false
+    // What the renderer tells the main thread (RendererController), all called on the render thread. Set before the
+    // render thread starts.
+    /// After every settings change (edits, keyboard shortcuts, scene loads, fallbacks): the settings, the last edit
+    /// applied, and whether to save them.
+    var onSettings: ((_ settings: RenderSettings, _ update: Int, _ persist: Bool) -> Void)?
+    /// Twice a second, when the stats (fps, GPU time, `statsLine`) are refreshed.
+    var onTick: ((RendererStatus) -> Void)?
+    /// Every frame once its GPU work is done, while `debugActive`: the CPU time since the previous frame started and
+    /// the GPU time, both in ms. For the Debug window's graph.
     var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
-    /// Called once, on the main thread, when the first frame has been drawn.
+    /// Called once, when the first frame has been drawn.
     var onFirstFrame: (() -> Void)?
+    /// Where frames are made, and what runs `perform`'s work (RenderThread.swift).
+    private let renderThread = RenderThread()
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
     private(set) var defaultSettings = RenderSettings()
     /// Resolution, fps and GPU time, refreshed twice a second.
@@ -453,10 +456,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
+    private var shiftHeld = false
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
     private var gpuMs: Double = 0
+    private var firstFrameDrawn = false
     private lazy var profiler = GPUProfiler(device: device, framesInFlight: Renderer.maxFramesInFlight)
     private var passTimeOrder: [String] = [], passTimeSums: [String: Double] = [:]
     private var passTimeFrameMs = 0.0, passTimeFrames = 0
@@ -490,11 +495,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         notes.forEach { print($0) }
         settings = supported
         defaultSettings = defaultSettings.clamped(to: Capabilities.current).settings
-
-        if benchmark != nil {
-            // Benchmark: frames back to back from the main queue, not the view's display link.
-            DispatchQueue.main.async { [weak self] in self?.runBenchmarkLoop() }
-        }
 
         try createDummyTextures()
         try createSceneResources()
@@ -600,7 +600,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         rayTracer == .custom && settings.virtualGeometry.enabled
     }
 
-    /// What a scene load reads from the renderer, copied on the main thread: `prepareScene` runs in the background while
+    /// What a scene load reads from the renderer, copied on the render thread: `prepareScene` runs in the background while
     /// the panel and the keyboard keep changing `settings` and a shader reload may replace the pipelines.
     private struct LoadOptions {
         var virtualGeometry: Bool
@@ -644,7 +644,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                              stats: stats, reusing: current.kind == kind && current.api == api ? current.library : nil)
     }
 
-    /// `current`: the scene being drawn, reused when only the ray tracer changes; `instances` is then the main thread's
+    /// `current`: the scene being drawn, reused when only the ray tracer changes; `instances` is then the render thread's
     /// copy of its instances (the frame loop keeps animating the scene while this runs).
     private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?,
                               instances: [Scene.Instance]? = nil, options: LoadOptions) throws -> PreparedScene {
@@ -697,7 +697,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 try self.prepareScene(wanted.scene, rayTracer: wanted.rayTracer, reuse: reuse, instances: instances, options: options)
             }
             let preparedMs = (CACurrentMediaTime() - start) * 1000
-            DispatchQueue.main.async {
+            self.renderThread.perform {
                 guard let loading = self.loading, loading == wanted else {
                     return   // superseded by a newer request
                 }
@@ -910,7 +910,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let device = device
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let texture = try? Renderer.blueNoiseTexture(device, values: BlueNoise.tile())
-            DispatchQueue.main.async {
+            self?.renderThread.perform {
                 guard let self, let texture else { return }
                 self.blueNoiseTexture = texture   // frames in flight keep the old one
                 self.blueNoiseReady = true
@@ -975,7 +975,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let device = device
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let texture = Renderer.fogNoiseTexture(device)
-                DispatchQueue.main.async {
+                self?.renderThread.perform {
                     self?.fogNoiseTexture = texture
                     self?.fogNoisePending = false
                 }
@@ -1092,7 +1092,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let device = device
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let result = Result { try Renderer.loadSkyImage(device, path: path, exposure: exposure) }
-                DispatchQueue.main.async {
+                self?.renderThread.perform {
                     guard let self else { return }
                     self.skyImageLoading = false
                     switch result {
@@ -1363,7 +1363,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if heldKeys.contains("e") { move.y += 1 }
         if heldKeys.contains("q") { move.y -= 1 }
         if length(move) > 0 {
-            let speed = settings.moveSpeed * (NSEvent.modifierFlags.contains(.shift) ? 3.2 : 1)
+            let speed = settings.moveSpeed * (shiftHeld ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
         }
     }
@@ -1412,19 +1412,41 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return u
     }
 
-    // MARK: - MTKViewDelegate
+    // MARK: - Render thread
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    /// Starts making frames on the render thread (main thread, once, after `init` and the `on…` callbacks are set).
+    func startRenderThread() {
+        renderThread.start { [weak self] in self?.drawFrame() ?? false }
+    }
 
-    func draw(in view: MTKView) { drawFrame() }
+    /// Stops the frames, once the one being encoded is committed (main thread, at quit).
+    func stopRenderThread() { renderThread.stop() }
+
+    /// Runs `work` on the render thread before its next frame. Any thread.
+    func perform(_ work: @escaping (Renderer) -> Void) {
+        renderThread.perform { [weak self] in if let self { work(self) } }
+    }
+
+    /// Applies the controller's settings edit number `update` (render thread). The settings go back with that number
+    /// even if the edit changes nothing, so the panel knows its edits are all in.
+    func applySettings(update: Int, _ change: (inout RenderSettings) -> Void) {
+        settingsUpdate = update
+        let before = settings
+        change(&settings)
+        if settings == before { publishSettings() }
+    }
+
+    private func publishSettings() { onSettings?(settings, settingsUpdate, persistSettings) }
 
     /// One frame: the scene's next state and its upload, the frame's plan, the stages the plan asks for, their
-    /// encoding, the output, and what the frame leaves for the next one. Each step is a function below.
-    private func drawFrame() {
-        guard pipelines != nil, let surface else { return }   // launch: the shaders are still compiling (startCompilingShaders)
+    /// encoding, the output, and what the frame leaves for the next one. Each step is a function below. Returns false
+    /// if it drew nothing.
+    private func drawFrame() -> Bool {
+        // Launch: the shaders are still compiling (startCompilingShaders). And nothing while the window is hidden.
+        guard pipelines != nil, let surface, surface.isVisible, benchmark?.isFinished != true else { return false }
         noteFrameStart()
         let size = frameSize(on: surface)
-        guard let t = renderTargets(for: size) else { return }
+        guard let t = renderTargets(for: size) else { return false }
         // The open world: the scene is made around the tile the camera is in (Scene+World.swift).
         if let place = scene.worldPlace, settings.scene.kind.isWorld, loading == nil {
             let wanted = place.wanted(for: camera.position)
@@ -1446,7 +1468,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let encodeStart = CACurrentMediaTime()
         guard prepareUpscalers(for: size) else {
             frameSemaphore.signal()
-            return
+            return false
         }
 
         // The CPU's part: move the camera and the scene, pick virtual geometry's detail, write the slot's buffers.
@@ -1464,7 +1486,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         regirParams = plan.lightGrid?.params ?? GPURegirParams()   // bound with the scene (bindScene)
         guard let passes = makeFrame(plan, profile: profile) else {
             frameSemaphore.signal()
-            return
+            return false
         }
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
         if skyActive { encodeSky(passes) }
@@ -1492,6 +1514,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         finishFrame(plan)
         updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
         if let benchmark { advanceBenchmark(benchmark) }
+        return true
     }
 
     // MARK: - Frame setup
@@ -2088,15 +2111,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let times = profile?.resolve()
             semaphore.signal()
             let ms = (frame.end - frame.start) * 1000
-            DispatchQueue.main.async {
-                Launch.firstFrame()
-                if let first = self?.onFirstFrame {
-                    self?.onFirstFrame = nil
-                    first()
+            self?.perform { r in
+                if !r.firstFrameDrawn {
+                    r.firstFrameDrawn = true
+                    DispatchQueue.main.async { Launch.firstFrame() }
+                    r.onFirstFrame?()
                 }
-                self?.gpuMs = ms
-                if let self, let onFrameTime = self.onFrameTime { onFrameTime(cpuInterval, ms) }
-                if let times { self?.addPassTimes(times, frameMs: ms) }
+                r.gpuMs = ms
+                if r.debugActive { r.onFrameTime?(cpuInterval, ms) }
+                if let times { r.addPassTimes(times, frameMs: ms) }
             }
         }
         sceneDeclaredIn = nil
@@ -2637,13 +2660,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     // MARK: - Benchmark
 
-    private func runBenchmarkLoop() {
-        guard let benchmark, !benchmark.isFinished else { return }
-        // A view hands out its drawable only inside its own draw (which calls draw(in:)).
-        if let view = surface as? MTKView { view.draw() } else { drawFrame() }
-        DispatchQueue.main.async { [weak self] in self?.runBenchmarkLoop() }
-    }
-
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
         settings = c.resolvedSettings()
         animTime = c.startTime
@@ -2677,7 +2693,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() }
         print(benchmark.report(gpuName: device.name))
         fflush(stdout)
-        NSApp.terminate(nil)
+        DispatchQueue.main.async { NSApp.terminate(nil) }   // drawFrame draws no more frames
     }
 
     private func colorAccumTexture(width: Int, height: Int) -> MTLTexture? {
@@ -2834,18 +2850,20 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if traversalFrames > 0 { traversal = (traversalSum, traversalFrames) }
         traversalSum = TraversalStats()
         traversalFrames = 0
-        for observer in tickObservers { observer() }
+        var status = RendererStatus(directMode: activeDirectMode, traversalCounters: traversalCounters,
+                                    debugInfo: debugActive ? debugInfo() : nil)
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
             let other = passTimeFrameMs / n - times.reduce(0) { $0 + $1.ms }
             if other > 0.005 { times.append((name: "other", ms: other)) }   // MetalFX, its copy, texture streaming
-            onPassTimes?(times)
+            status.passTimes = times
             passTimeOrder = []
             passTimeSums = [:]
             passTimeFrameMs = 0
             passTimeFrames = 0
         }
+        onTick?(status)
     }
 
     /// One frame's pass timings, summed until the stats line shows their average.
@@ -2860,7 +2878,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     }
 
     /// Recompiles the shaders and remakes every pipeline (R key, traversal counters), in the background: frames keep
-    /// the old pipelines until the new set is ready, and for good if the compile fails. `done` gets the outcome (main thread).
+    /// the old pipelines until the new set is ready, and for good if the compile fails. `done` gets the outcome (render
+    /// thread).
     func reloadShaders(then done: ((Bool) -> Void)? = nil) {
         // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
         let device = device, url = shaderURL
@@ -2871,7 +2890,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             let result = Result {
                 try Pipelines(device: device, source: url, kind: kind, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats)
             }
-            DispatchQueue.main.async {
+            self?.renderThread.perform {
                 guard let self else { return }
                 switch result {
                 case .success(let made):
@@ -2902,7 +2921,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func startCompilingShaders() {
         surface?.title = "MetalRenderer — compiling shaders…"
         reloadShaders { ok in
-            Launch.mark(ok ? "shaders" : "shaders (failed)")
+            DispatchQueue.main.async { Launch.mark(ok ? "shaders" : "shaders (failed)") }
         }
     }
     private let shaderQueue = DispatchQueue(label: "MetalRenderer.shaders", qos: .userInitiated)   // reloads, one at a time
@@ -3028,18 +3047,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
     }
 
-    // MARK: - InputHandler
+    // MARK: - Input (from RendererController)
 
-    func keyDown(_ event: NSEvent) {
-        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+    /// A key went down: `key` is its character without modifiers, lowercased.
+    func keyDown(_ key: String, isRepeat: Bool) {
         if ["w", "a", "s", "d", "q", "e"].contains(key) {
             heldKeys.insert(key)
             return
         }
-        if event.isARepeat { return }
+        if isRepeat { return }
         switch key {
-        case "\t": onTogglePanel?()
-        case "i": onToggleDebug?()
         case " ": settings.paused.toggle()
         case "g": settings.giEnabled.toggle()
         case "m": settings.giMode = GIMode(rawValue: (settings.giMode.rawValue + 1) % GIMode.allCases.count) ?? .pathTraced
@@ -3067,10 +3084,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
     }
 
-    func keyUp(_ event: NSEvent) {
-        guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
-        heldKeys.remove(key)
-    }
+    func keyUp(_ key: String) { heldKeys.remove(key) }
+
+    /// Shift: faster movement.
+    func setShift(_ held: Bool) { shiftHeld = held }
 
     func mouseDragged(dx: Float, dy: Float) {
         camera.yaw += dx * 0.004

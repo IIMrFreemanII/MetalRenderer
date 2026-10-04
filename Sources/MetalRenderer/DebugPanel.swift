@@ -36,7 +36,7 @@ struct DebugInfo {
 /// the keyboard keeps driving the renderer. I or Cmd-I shows or hides it.
 final class DebugPanel: NSObject {
     let panel: NSPanel
-    private let renderer: Renderer
+    private let renderer: RendererController
 
     private let stats = NSTextField(wrappingLabelWithString: "")
     private let graph = FrameGraphView()
@@ -61,7 +61,7 @@ final class DebugPanel: NSObject {
     /// Shown at the last launch (the window comes back where it was).
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(renderer: Renderer) {
+    init(renderer: RendererController) {
         self.renderer = renderer
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 820),
                         styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
@@ -169,6 +169,7 @@ final class DebugPanel: NSObject {
     private func setActive(_ active: Bool) {
         UserDefaults.standard.set(active, forKey: DebugPanel.visibleKey)
         renderer.onFrameTime = active ? { [weak self] cpu, gpu in self?.graph.add(cpu: cpu, gpu: gpu) } : nil
+        renderer.debugActive = active
         renderer.profilePasses = active && profile.state == .on
         if active { refresh() }
     }
@@ -182,7 +183,7 @@ final class DebugPanel: NSObject {
 
     private func refresh() {
         guard panel.isVisible else { return }
-        let d = renderer.debugInfo()
+        let d = renderer.debugInfo
         stats.stringValue = d.stats + String(format: " — CPU %.1f ms (encode %.2f)", d.cpuMs, d.encodeMs)
         freezeLOD.isEnabled = d.lodFreezes
         viewNote.stringValue = d.viewNote ?? ""
@@ -296,10 +297,14 @@ final class DebugPanel: NSObject {
         renderer.profilePasses = profile.state == .on && panel.isVisible
         if profile.state == .off { passTimes.isHidden = true; passTimes.stringValue = "" }
     }
-    @objc private func freezeLODChanged() { renderer.settings.virtualGeometry.freeze = freezeLOD.state == .on }
+    @objc private func freezeLODChanged() {
+        let freeze = freezeLOD.state == .on
+        renderer.update { $0.virtualGeometry.freeze = freeze }
+    }
     @objc private func debugViewChanged() {
         guard debugView.indexOfSelectedItem >= 0 else { return }
-        renderer.settings.viewMode = debugView.indexOfSelectedItem
+        let mode = debugView.indexOfSelectedItem
+        renderer.update { $0.viewMode = mode }
     }
     @objc private func countersChanged() {
         counters.isEnabled = false

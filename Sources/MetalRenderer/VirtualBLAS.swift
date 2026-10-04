@@ -100,7 +100,7 @@ final class VirtualBLAS {
                stats.lastCutMs, stats.skippedInstances, instances.count)
     }
 
-    /// Main thread, before encoding `frame`: swap in finished BLASes, then start the next cut if the worker is free.
+    /// Render thread, before encoding `frame`: swap in finished BLASes, then start the next cut if the worker is free.
     /// `sceneInstances`: every scene instance, for this frame's object -> world matrices.
     func update(frame: UInt32, slot: Int, framesInFlight: Int, camPos: SIMD3<Float>, pixelScale: Float,
                 tau: Float, sceneInstances: [Scene.Instance]) {

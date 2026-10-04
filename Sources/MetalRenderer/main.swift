@@ -1,10 +1,11 @@
 import AppKit
-import MetalKit
+import Metal
 import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var renderer: Renderer!
+    private var controller: RendererController!
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
     private var offscreen: OffscreenSurface?
@@ -25,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 fatalError("Renderer failed to start:\n\(error)")
             }
+            renderer.startRenderThread()
             return
         }
 
@@ -50,23 +52,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func start(_ view: RenderView) {
-        view.configureForRenderer()
         do {
-            renderer = try Renderer(device: view.device!, surface: view)
+            renderer = try Renderer(device: view.device, surface: view.surface)
         } catch {
             fatalError("Renderer failed to start:\n\(error)")
         }
-        view.delegate = renderer
-        view.inputHandler = renderer
-        view.onDropModels = { [weak self] urls in self?.renderer.addModels(urls) }
+        // From here on the renderer belongs to the render thread: the main thread goes through the controller.
+        controller = RendererController(renderer: renderer)
+        view.inputHandler = controller
+        view.onDropModels = { [weak self] urls in self?.controller.addModels(urls) }
 
         if !Benchmark.isEnabled {
             // The panels after the first frame: laying out the settings panel takes about 0.35 s of the main thread,
             // which would otherwise come before it. (And after three seconds without one, so they are there when the
             // shaders failed to compile.)
-            renderer.onFirstFrame = { [weak self] in self?.showPanels() }
+            controller.onFirstFrame = { [weak self] in self?.showPanels() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.showPanels() }
         }
+        renderer.startRenderThread()
 
         print("""
         MetalRenderer controls
@@ -85,18 +88,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPanels() {
         guard settingsPanel == nil else { return }
-        let panel = SettingsPanel(renderer: renderer)
+        let panel = SettingsPanel(renderer: controller)
         panel.show(nextTo: window)
         settingsPanel = panel
-        renderer.onTogglePanel = { [weak self] in self?.toggleSettings(nil) }
-        debugPanel = DebugPanel(renderer: renderer)
+        controller.onTogglePanel = { [weak self] in self?.toggleSettings(nil) }
+        debugPanel = DebugPanel(renderer: controller)
         if DebugPanel.wasVisible { debugPanel?.show(nextTo: window, below: panel.panel) }
-        renderer.onToggleDebug = { [weak self] in self?.toggleDebug(nil) }
+        controller.onToggleDebug = { [weak self] in self?.toggleDebug(nil) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationWillTerminate(_ notification: Notification) { SettingsStore.flush() }
+    func applicationWillTerminate(_ notification: Notification) {
+        renderer?.stopRenderThread()   // no frame half encoded while the app exits
+        SettingsStore.flush()
+    }
 
     /// File > Open…: glTF models, placed in front of the camera, or an HDR environment image for the sky.
     @objc private func openModels(_ sender: Any?) {
@@ -106,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.directoryURL = Scene.assetsDirectory
         panel.message = "Choose glTF models (.glb or .gltf) to add to the scene, or an HDR image (.hdr or .exr) for the sky"
         guard panel.runModal() == .OK else { return }
-        renderer.addModels(panel.urls)
+        controller.addModels(panel.urls)
     }
 
     @objc private func toggleSettings(_ sender: Any?) {

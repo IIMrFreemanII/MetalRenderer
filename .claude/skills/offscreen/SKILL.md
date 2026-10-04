@@ -86,6 +86,7 @@ The mode-to-scorer table is in measuring.md. Narrow long modes with `METALRENDER
   frame comes about 110 ms sooner.
 * The GPU is still shared with the user's apps. Prefer narrowed runs (`BENCH_ONLY`, `shot`) to whole sweeps.
 
-The mechanism: `RenderSurface` (RenderSurface.swift) is either the window's `MTKView` or an `OffscreenSurface` (a ring of
-textures in the drawable's format). `Headless.isEnabled` picks the surface in main.swift, and the app runs with the
+The mechanism: `RenderSurface` (RenderSurface.swift) is either the window's `LayerSurface` (its view's CAMetalLayer) or
+an `OffscreenSurface` (a ring of textures in the drawable's format). Either way the frames are drawn on the render
+thread (RenderThread.swift). `Headless.isEnabled` picks the surface in main.swift, and the app runs with the
 `.prohibited` activation policy.

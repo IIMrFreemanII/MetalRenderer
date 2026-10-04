@@ -1,7 +1,8 @@
 import AppKit
-import MetalKit
+import Metal
+import QuartzCore
 
-/// Where a frame ends up: the window's MTKView, or offscreen textures (benchmarks, which run without a window unless
+/// Where a frame ends up: the window's layer, or offscreen textures (benchmarks, which run without a window unless
 /// `METALRENDERER_WINDOW=1`).
 protocol RenderSurface: AnyObject {
     /// The size in points; the render resolution is this times the render scale.
@@ -14,6 +15,8 @@ protocol RenderSurface: AnyObject {
     func nextOutput() -> FrameOutput?
     /// The window title; ignored offscreen.
     var title: String? { get set }
+    /// False while nothing would show the frames (the window hidden or minimized): the renderer then draws none.
+    var isVisible: Bool { get }
 }
 
 struct FrameOutput {
@@ -21,33 +24,62 @@ struct FrameOutput {
     let drawable: CAMetalDrawable?
 }
 
-extension MTKView: RenderSurface {
-    var pointSize: CGSize { bounds.size }
-    // Not convertToBacking: MTKView scales its layer to match drawableSize, so that returns the render size.
-    var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
-    var outputSize: CGSize {
-        get { drawableSize }
-        set { if drawableSize != newValue { drawableSize = newValue } }
-    }
-    func nextOutput() -> FrameOutput? { currentDrawable.map { FrameOutput(texture: $0.texture, drawable: $0) } }
-    var title: String? {
-        get { window?.title }
-        set { if let newValue { window?.title = newValue } }
-    }
+/// The window's surface: its view's CAMetalLayer, drawn into from the render thread. The view (main thread) tells it
+/// its size; the render thread reads that and sets the drawable's size, which the layer stretches to the view.
+final class LayerSurface: RenderSurface {
+    let layer = CAMetalLayer()
+    private let lock = NSLock()
+    private var points = CGSize(width: 1280, height: 800)
+    private var scale: CGFloat = 2
+    private var visible = true
+    private var titleText: String?
+    /// The window whose title `title` sets. Main thread.
+    weak var window: NSWindow?
 
-    /// What the renderer needs of the view it draws into.
-    func configureForRenderer() {
-        colorPixelFormat = Renderer.drawableFormat
-        framebufferOnly = false        // the composite kernel or MetalFX writes to the drawable
-        autoResizeDrawable = false     // the renderer picks the render resolution itself
-        preferredFramesPerSecond = 120
+    init(device: MTLDevice) {
+        layer.device = device
+        layer.pixelFormat = Renderer.drawableFormat
+        layer.framebufferOnly = false   // the composite kernel or MetalFX writes to the drawable
+        layer.maximumDrawableCount = Renderer.maxFramesInFlight
+        layer.isOpaque = true
         if Benchmark.isEnabled {
             // Benchmark (METALRENDERER_WINDOW=1): the renderer draws back to back without vsync, so the GPU never idles
             // between frames and its clock stays steady (idle gaps let it clock down and inflate the timings of short
             // passes unevenly).
-            (layer as? CAMetalLayer)?.displaySyncEnabled = false
-            isPaused = true
-            enableSetNeedsDisplay = false
+            layer.displaySyncEnabled = false
+        }
+    }
+
+    /// The view's size and its screen's scale (main thread, on every change).
+    func setSize(_ points: CGSize, backingScale: CGFloat) {
+        lock.lock(); self.points = points; scale = backingScale; lock.unlock()
+    }
+    var pointSize: CGSize { lock.lock(); defer { lock.unlock() }; return points }
+    // Not the layer's contentsScale: the drawable has the render size, and the layer stretches it.
+    var backingScale: CGFloat { lock.lock(); defer { lock.unlock() }; return scale }
+    /// Whether the window is on screen (main thread sets it): frames stop while it is hidden or minimized.
+    var isVisible: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return visible }
+        set { lock.lock(); visible = newValue; lock.unlock() }
+    }
+    var outputSize: CGSize {
+        get { layer.drawableSize }
+        set {
+            guard layer.drawableSize != newValue else { return }
+            // Off the main thread a layer change needs a transaction of its own.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.drawableSize = newValue
+            CATransaction.commit()
+        }
+    }
+    func nextOutput() -> FrameOutput? { layer.nextDrawable().map { FrameOutput(texture: $0.texture, drawable: $0) } }
+    var title: String? {
+        get { lock.lock(); defer { lock.unlock() }; return titleText }
+        set {
+            guard let newValue else { return }
+            lock.lock(); titleText = newValue; lock.unlock()
+            DispatchQueue.main.async { [weak self] in self?.window?.title = newValue }
         }
     }
 }
@@ -65,6 +97,7 @@ final class OffscreenSurface: RenderSurface {
     let backingScale: CGFloat
     var outputSize: CGSize = .zero
     var title: String?
+    let isVisible = true
     private let device: MTLDevice
     private var ring: [MTLTexture] = []
     private var next = 0
