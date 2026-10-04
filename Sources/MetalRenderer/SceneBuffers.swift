@@ -248,7 +248,8 @@ struct SceneBuffers {
 
     /// One bottom-level (primitive) acceleration structure per mesh, built once: the named ones the last scene had
     /// are taken from it. The meshes that deform (the crowd's pose slots) are built to be refitted: `primitiveRefit`
-    /// holds what the frames refit.
+    /// holds what the frames refit. Of the poses of one character only the first is built: the others take its tree,
+    /// refitted around their own vertices.
     private mutating func buildPrimitives(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, options: Options) throws {
         var structures = [MTLAccelerationStructure?](repeating: nil, count: scene.meshes.count)
         var new: [Int] = []
@@ -258,6 +259,9 @@ struct SceneBuffers {
         // The crowd's pose slots deform: their structures are built to be refitted every frame, and stay as built.
         var refitted: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
         var jobs: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, sizes: MTLAccelerationStructureSizes, deforms: Bool)] = []
+        // The poses that take another's tree: (its place in `refitted`, the mesh whose tree it takes).
+        var copies: [(refit: Int, of: Int)] = []
+        var firstPose: [SIMD2<UInt32>: Int] = [:]   // by the triangles a pose has: its character's
         for i in new {
             let mesh = scene.meshes[i]
             let geometry = MTLAccelerationStructureTriangleGeometryDescriptor()
@@ -278,6 +282,11 @@ struct SceneBuffers {
             else if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
             if deforms { refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16))) }
+            if deforms, let first = firstPose[SIMD2(mesh.firstIndex, mesh.indexCount)] {
+                copies.append((refitted.count - 1, first))
+                continue
+            }
+            if deforms { firstPose[SIMD2(mesh.firstIndex, mesh.indexCount)] = i }
             jobs.append((i, descriptor, sizes, deforms))
         }
 
@@ -339,8 +348,6 @@ struct SceneBuffers {
             print(String(format: "Metal BLAS: %d meshes (%d the last scene's), %.1f MB compacted to %.1f MB", structures.count,
                          structures.count - new.count, Double(before) / 1_048_576, Double(after) / 1_048_576))
         }
-        primitives = structures.map { $0! }
-        for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }
         if !refitted.isEmpty {
             // One scratch buffer, a range per structure: the refits of a frame may run side by side.
             var offsets: [Int] = [], length = 0
@@ -349,8 +356,34 @@ struct SceneBuffers {
                 throw RendererError.resourceCreation("refit scratch buffer")
             }
             scratch.label = "blasRefitScratch"
-            primitiveRefit = PrimitiveRefit(structures: refitted.map { primitives[$0.index] }, descriptors: refitted.map(\.descriptor),
+            // A character's other poses: its first pose's tree, refitted into a structure of their own. A pose keeps
+            // its triangles, so the tree fits every one of them as it fits the first through its loop; a refit costs
+            // a fraction of a build; and every pose then has the triangles in the same order. That last part matters
+            // to the picture: a shadow ray stops at the first occluder its tree has (isVisibleBlocker in
+            // Shaders/Lights.metal) and the shadow filter takes that one's distance, while Metal builds these meshes
+            // a little differently from run to run (more so the more of them it builds, or with the GPU busy): with
+            // a tree built per pose, the same crowd came out as one of several pictures.
+            if !copies.isEmpty {
+                guard let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
+                    throw RendererError.resourceCreation("acceleration structure command encoder")
+                }
+                for copy in copies {
+                    let pose = refitted[copy.refit]
+                    guard let first = structures[copy.of], let accel = device.makeAccelerationStructure(size: first.size) else {
+                        throw RendererError.resourceCreation("primitive acceleration structure")
+                    }
+                    encoder.refit(sourceAccelerationStructure: first, descriptor: pose.descriptor, destinationAccelerationStructure: accel,
+                                  scratchBuffer: scratch, scratchBufferOffset: offsets[copy.refit])
+                    structures[pose.index] = accel
+                }
+                encoder.endEncoding()
+                cmd.commit()
+                cmd.waitUntilCompleted()
+            }
+            primitiveRefit = PrimitiveRefit(structures: refitted.map { structures[$0.index]! }, descriptors: refitted.map(\.descriptor),
                                             scratch: scratch, scratchOffsets: offsets)
         }
+        primitives = structures.map { $0! }
+        for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }
     }
 }

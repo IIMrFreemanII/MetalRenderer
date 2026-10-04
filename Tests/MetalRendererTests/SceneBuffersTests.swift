@@ -117,6 +117,26 @@ final class SceneBuffersTests: XCTestCase {
         XCTAssertFalse(moving.instanceDescriptors[0] === moving.instanceDescriptors[1])
     }
 
+    /// The crowd's pose slots: a structure each for the frames to refit, the size of its character's first pose's
+    /// (whose tree it is: only that one is built). Skipped where Assets/Characters isn't there.
+    func testEveryPoseHasAStructureOfItsOwn() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        try XCTSkipUnless(device.supportsRaytracing, "no ray tracing on this GPU")
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let scene = Scene(SceneSettings(kind: .crowd, characters: 40, poses: 24))
+        guard let crowd = scene.crowd else { throw XCTSkip("no characters in \(CharacterLibrary.directory.path)") }
+        XCTAssertEqual(crowd.slots.count, 24)
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: .init(rayTracer: .metal, api: .metal3, slots: 3))
+        let refit = try XCTUnwrap(buffers.primitiveRefit)
+        XCTAssertEqual(refit.structures.count, 24)
+        XCTAssertEqual(Set(refit.structures.map { ObjectIdentifier($0) }).count, 24)
+        for (i, slot) in crowd.slots.enumerated() {
+            XCTAssertTrue(refit.structures[i] === buffers.primitives[slot.mesh])
+            XCTAssertEqual(refit.structures[i].size, refit.structures[crowd.parts[slot.part].firstSlot].size)
+            XCTAssertFalse(buffers.primitives[slot.mesh] === buffers.primitives[crowd.parts[slot.part].mesh], "not the bind pose's")
+        }
+    }
+
     func testTheSameWorld() {
         var a = SceneSettings(kind: .world), b = SceneSettings(kind: .world)
         a.worldTile = SIMD2(3, 4)
