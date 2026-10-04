@@ -82,7 +82,7 @@ enum EnvVariable: String, CaseIterable {
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
     // Lists of key=value.
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
-    case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI"
+    case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI", megaLights = "METALRENDERER_MEGALIGHTS"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
     case foliage = "METALRENDERER_FOLIAGE"
 
@@ -367,6 +367,7 @@ enum SettingsTable {
         let restir: When = { $0.directLight == .restir || $0.directLight == .auto }
         let spatial: When = { restir($0) && $0.restir.spatialPasses > 0 }
         let grid: When = { restir($0) && $0.restir.grid.enabled }
+        let megaLights: When = { $0.directLight == .megalights }
         let passes = [("Off", 0), ("1 pass", 1), ("2 passes", 2)]
         return Section(title: "Direct light", rows: [
             S.popup("Method", \.directLight, titled { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }).env(.direct),
@@ -399,6 +400,25 @@ enum SettingsTable {
                 .env(.restir, "history").advanced().when(restir),
             S.slider("Variance boost", \.restir.varianceBoost, DenoiserSettings.varianceBoostRange, step: 0.25, fmt("%.2f×"))
                 .env(.restir, "boost").advanced().when(restir),
+            S.slider("Samples", \.megaLights.samples, MegaLightsSettings.sampleRange) { "\($0) per pixel" }
+                .env(.megaLights, "samples").when(megaLights),
+            S.slider("Tree samples", \.megaLights.treeSamples, MegaLightsSettings.treeSampleRange) { "\($0) (far field)" }
+                .env(.megaLights, "tree").advanced().when(megaLights),
+            S.check("Split lights (list near, tree far)", \.megaLights.partition).env(.megaLights, "partition").advanced().when(megaLights),
+            S.check("Guiding (last frame's visible lights)", \.megaLights.guiding).env(.megaLights, "guide").when(megaLights),
+            S.slider("Guide weight", \.megaLights.guideWeight, MegaLightsSettings.guideWeightRange, step: 0.05, fmt("%.2f"))
+                .env(.megaLights, "gweight").advanced().when { megaLights($0) && $0.megaLights.guiding },
+            S.slider("Light cutoff", \.megaLights.cutoff, MegaLightsSettings.cutoffRange, digits: 2, log: true, fmt("%.2g"))
+                .env(.megaLights, "cutoff").advanced().when(megaLights),
+            S.popup("Tile list", \.megaLights.capacity, counts: MegaLightsSettings.capacityOptions) { "\($0) lights" }
+                .env(.megaLights, "capacity").advanced().when(megaLights),
+            S.slider("Filter passes", \.megaLights.denoisePasses, DenoiserSettings.passRange).env(.megaLights, "passes").advanced().when(megaLights),
+            S.slider("Edge tolerance (σ)", \.megaLights.denoiseSigma, DenoiserSettings.luminanceSigmaRange, step: 0.05, fmt("%.2f"))
+                .env(.megaLights, "sigma").advanced().when(megaLights),
+            S.slider("History length", \.megaLights.denoiseHistory, DenoiserSettings.maxHistoryRange, step: 1, fmt("%.0f fr"))
+                .env(.megaLights, "history").advanced().when(megaLights),
+            S.slider("Variance boost", \.megaLights.varianceBoost, DenoiserSettings.varianceBoostRange, step: 0.25, fmt("%.2f×"))
+                .env(.megaLights, "boost").advanced().when(megaLights),
         ])
     }()
 

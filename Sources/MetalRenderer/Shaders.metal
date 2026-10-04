@@ -29,6 +29,7 @@ using namespace metal::raytracing;
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
 #include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
+#include "Shaders/MegaLights.metal"        // MegaLights-style direct light: tile light lists, MIS-combined samples
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
 #include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser

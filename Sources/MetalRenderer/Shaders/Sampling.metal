@@ -32,6 +32,7 @@ constant uint SEED_TRACE             = 0u;
 constant uint SEED_FOG_REFERENCE     = 0x5bd1e995u;
 constant uint SEED_MANY_LIGHTS       = 0x9E3779B9u;   // manyLightsKernel / manyLightsReuseKernel: one of them runs
 constant uint SEED_RESTIR_DI         = 0x2545F491u;
+constant uint SEED_MEGALIGHTS        = 0x3C6EF372u;
 constant uint SEED_RESTIR_GI         = 0x85EBCA6Bu;
 constant uint SEED_RESTIR_GI_HISTORY = 0x7F4A7C15u;
 inline uint pixelSeed(uint2 pixel, uint frame, uint salt) {

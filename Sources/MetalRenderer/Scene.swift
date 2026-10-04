@@ -319,6 +319,9 @@ final class Scene {
     /// The lights whose GPU record changes from frame to frame (moving, flickering, the mesh lights of moving
     /// instances), and each instance's rank + 1 among the virtual ones (0 = not virtual).
     private var changingLights: [Int] = []
+    /// Of those, what a light tree refits (LightTree.refit): the ones that move or change shape (not the suns), and
+    /// the ones only their brightness changes.
+    private(set) var lightTreeChanges: (moved: [Int], scaled: [Int]) = ([], [])
     private var virtualRank: [UInt32] = []
     /// The first sun among the lights (the sky follows it), if any.
     private(set) var firstSun: Int?
@@ -447,6 +450,8 @@ final class Scene {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
         }
+        lightTreeChanges = (moved: changingLights.filter { !lights[$0].kind.isSun && (lights[$0].isMesh || moves(lights[$0])) },
+                            scaled: changingLights.filter { !lights[$0].isMesh && !moves(lights[$0]) })
         materialsDirty = nil
     }
 

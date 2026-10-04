@@ -5,7 +5,7 @@ import QuartzCore
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
     case trace, glass, geometryDebug, lightMap
-    case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
+    case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
     case reflection
@@ -32,7 +32,7 @@ enum Kernel: Int, CaseIterable {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
         case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
         case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
-        case .restirSpatial: return F.specular
+        case .restirSpatial, .megaLightsSample: return F.specular
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
         case .rcProbe, .rcTraceMerge, .lightMap: return F.wind
@@ -47,6 +47,7 @@ enum Kernel: Int, CaseIterable {
         switch self {
         case .trace: return Uniforms.traceBounces | Uniforms.traceManyLights
         case .restirTemporal: return GPURestirParams.visibilityReuse
+        case .megaLightsSample: return GPUMegaLightsParams.partition
         case .restirSpatial: return GPURestirParams.shade | GPURestirParams.split
         case .restirGIInitial:
             return GPURestirGIParams.lightMaps | GPURestirGIParams.feedbackSet | GPURestirGIParams.fallback

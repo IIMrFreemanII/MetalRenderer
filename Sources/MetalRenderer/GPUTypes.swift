@@ -50,7 +50,7 @@ enum UniformFlags {
     static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
     static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
     static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
-    static let restir: UInt32 = 32768        // direct light from ReSTIR DI (restirTemporalKernel / restirSpatialKernel)
+    static let restir: UInt32 = 32768        // direct light from a pass of its own: ReSTIR DI or MegaLights
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
     static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
@@ -65,6 +65,17 @@ struct GPURestirParams {
     static let visibilityReuse: UInt32 = 2  // test the initial pick's visibility
     static let shade: UInt32 = 4            // this spatial pass is the last: shade and write the outputs
     static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
+}
+
+/// MegaLights pass parameters (MSL MegaLightsParams).
+struct GPUMegaLightsParams {
+    var config = SIMD4<UInt32>()   // x = list samples per pixel, y = tile list capacity, z = flags, w = tiles across
+    var tree = SIMD4<UInt32>()     // x = tree samples per pixel, y = light tree nodes (the lights' paths follow them)
+    var tuning = SIMD4<Float>()    // x = cutoff, y = guide weight, z = firefly clamp (0 = off)
+
+    static let guideValid: UInt32 = 1   // last frame's visible-light hashes can steer the picks
+    static let partition: UInt32 = 2    // the list owns its lights in reach, the tree the others (else MIS)
+    static let tile = 16                // pixels across a tile (ML_TILE)
 }
 
 /// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
@@ -285,6 +296,8 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")
     precondition(MemoryLayout<GPURestirParams>.stride == 32, "GPURestirParams layout mismatch")
+    precondition(MemoryLayout<GPUMegaLightsParams>.stride == 48, "GPUMegaLightsParams layout mismatch")
+    precondition(MemoryLayout<GPULightTreeNode>.stride == 64, "GPULightTreeNode layout mismatch")
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
