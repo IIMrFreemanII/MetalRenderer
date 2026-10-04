@@ -13,7 +13,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk,
+        "worlddusk": worldDusk, "worldground": worldGround,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -395,6 +395,34 @@ extension Benchmark {
             worldView("above, dusk going by", w, cx - 60, cz + r + 120, up: 150, yaw: 0.5, pitch: -0.18, phase: 0.77).moving().frames(1200),
         ]
         return configs
+    }
+
+    /// The ground of the open world's first city, in the morning: a crossing of two streets from above and from its
+    /// corner, a block with a courtyard from above, the city's edge where its last road meets the country, the roads
+    /// from over the city and from 2 km out (the coarser tiles'), and the crossing at night.
+    private static func worldGround() -> [Config] {
+        let w = worldOfRun(), city = w.city(cell: SIMD2(0, 0))!
+        let cx = city.center.x, cz = city.center.y, r = Double(city.radius), pitch = World.blockPitch
+        // The last built block toward +x in the middle row: the edge is the road beyond it.
+        var last = 0
+        while w.built(city, last + 1, 0) { last += 1 }
+        let edge = cx + Double(Float(last + 1) * pitch.x)
+        func view(_ name: String, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float, phase: Float = Heavens.start) -> Config {
+            worldView(name, w, x, z, up: up, yaw: yaw, pitch: pitch, phase: phase)
+        }
+        // The block with a courtyard nearest the city's middle.
+        let around = w.blocks(x0: cx - 400, z0: cz - 400, side: 800)?.blocks ?? []
+        let court = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }.min { ($0 * $0).sum() < ($1 * $1).sum() } ?? .zero
+        return [
+            view("ground crossing", cx, cz + 22, up: 30, pitch: -0.95),
+            view("ground corner", cx + 4.5, cz + 14, up: 1.7, yaw: -0.5, pitch: -0.12),
+            view("ground block", cx + Double(court.x), cz + Double(court.y) + 50, up: 120, pitch: -1.15),
+            view("ground edge", edge + 3, cz + 100, up: 12, yaw: 0.25, pitch: -0.12),
+            view("ground over", cx, cz + r * 0.5, up: 320, pitch: -0.7),
+            view("ground far", cx, cz + r + 1500, up: 250, pitch: -0.12),
+            view("ground fields", cx + r + 250, cz + r + 250, up: 90, yaw: -.pi / 4, pitch: -0.25),
+            view("ground at night", cx + 4.5, cz + 14, up: 1.7, yaw: -0.5, pitch: -0.12, phase: 0),
+        ]
     }
 
     private static func forestCamera(_ position: SIMD3<Float>, yaw: Float = 0, pitch: Float) -> Camera {

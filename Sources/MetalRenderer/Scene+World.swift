@@ -38,10 +38,11 @@ struct WorldPlace {
 }
 
 extension World {
-    /// Where the world is first seen from: on the open ground south of the origin's city, looking at it.
+    /// Where the world is first seen from: in the fields south of the origin's city, looking at it. (So near its
+    /// level ground the belt is always open: `belt`.)
     var start: (place: SIMD3<Double>, yaw: Float) {
         let city = city(cell: SIMD2(0, 0))!
-        let x = city.center.x + 30, z = city.center.y + Double(city.radius) + 110
+        let x = city.center.x + 30, z = city.center.y + Double(city.radius + World.cityApron) + 24
         return (SIMD3(x, Double(height(x, z)) + 1.7, z), 0)
     }
 
@@ -129,12 +130,22 @@ extension Scene {
         }
         func textures(_ kind: SurfaceKind) -> SIMD4<UInt32> { mapIndex[kind] ?? SIMD4(repeating: .max) }
 
-        // The ground's detail: clumps and specks, the same every 5 m (the ground's UVs are the asphalt's).
+        // The ground's detail: clumps and specks, the same every 5 m (World.groundTile).
         let detail = addGeneratedTexture(name: "ground-detail", width: 512, height: 512, key: "v\(FoliageTextures.version)") {
             FoliageTextures.image(512, 512, normalized: true) { u, v in
                 let clumps = FoliageTextures.noise(u * 6, v * 6, 6, 6, 21) + 0.6 * FoliageTextures.noise(u * 17, v * 17, 17, 17, 22)
                 let specks = FoliageTextures.noise(u * 60, v * 60, 60, 60, 23)
                 return SIMD3(repeating: max(0.75 + 0.3 * clumps + 0.22 * specks, 0.1))
+            }
+        }
+
+        // A field's rows: eight to the 5 m, running along z, none of them quite straight.
+        let rows = addGeneratedTexture(name: "field-rows", width: 512, height: 512, key: "v\(FoliageTextures.version)") {
+            FoliageTextures.image(512, 512, normalized: true) { u, v in
+                let wander = 0.012 * FoliageTextures.noise(u * 3, v * 3, 3, 3, 31) + 0.004 * FoliageTextures.noise(u * 9, v * 9, 9, 9, 32)
+                let row = 0.5 + 0.5 * cos(2 * Float.pi * 8 * (u + wander))
+                let specks = FoliageTextures.noise(u * 60, v * 60, 60, 60, 33), clumps = FoliageTextures.noise(u * 7, v * 7, 7, 7, 34)
+                return SIMD3(repeating: max(0.55 + 0.5 * row + 0.2 * specks + 0.12 * clumps, 0.1))
             }
         }
 
@@ -166,6 +177,7 @@ extension Scene {
                     var material = m
                     if let kind = World.kind(ofTexture: m.textures.x) { material.textures = textures(kind) }
                     if m.textures.x == World.groundDetail { material.textures.x = detail }
+                    if m.textures.x == World.fieldRows { material.textures.x = rows }
                     // What is a light at night is off until the time of day says otherwise (`setCityLights`).
                     let emission = SIMD3(m.emission.x, m.emission.y, m.emission.z), light = !chunk.glass && emission != .zero
                     if light { material.emission = SIMD4(.zero, m.emission.w) }

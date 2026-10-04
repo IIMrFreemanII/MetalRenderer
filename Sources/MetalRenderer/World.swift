@@ -10,7 +10,8 @@ import simd
 ///
 ///   Ground   broad hills (2 km across, tens of metres high) with the forest scene's rolling ground on top.
 ///   Cities   at most one to a 4 km cell, a disc of 300...900 m on ground levelled to its middle's height, its
-///            streets a grid in the world's axes. A block is made from the seed and its place in the grid alone.
+///            streets a grid in the world's axes. A block is made from the seed and its place in the grid alone, and
+///            a road lies along every side of a block that is built: the country's ground begins at the last road.
 ///   Forest   one candidate tree to a cell of a grid over the whole world, each from its cell's own random numbers;
 ///            wooded and open country alternate over half a kilometre; none in a city.
 struct World {
@@ -25,20 +26,21 @@ struct World {
     var lit: Float = 0.35
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
-    static let version = 3
+    static let version = 4
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.
     static let levels = 3
     /// The side of a ground cell at a level, metres.
     static func cellSize(_ level: Int) -> Float { level == 0 ? 1 : level == 1 ? 4 : 16 }
-    /// Kerb to kerb, and from one block's corner to the next's: multiples of 4 m, so the roads lie on the ground's
-    /// cells at levels 0 and 1.
+    /// Kerb to kerb, and from one block's corner to the next's: the roads between are 12 m.
     static let blockSize = SIMD2<Float>(72, 56), blockPitch = SIMD2<Float>(84, 68)
+    static let roadWidth: Float = 12
     /// What the underside of a street lamp's head emits at night.
     static let lampEmission = SIMD3<Float>(1.0, 0.78, 0.5) * 140
-    /// How far beyond a city's last block its level ground rises back into the hills.
-    static let cityBlend: Float = 300
+    /// How far beyond a city's radius its ground is level (its last roads are out there, and the coarsest ground's
+    /// cells under them have to be level too), and how far beyond that it rises back into the hills.
+    static let cityApron: Float = 40, cityBlend: Float = 300
 
     private let broadSeed: UInt32, rollingSeed: UInt32, coverSeed: UInt32, standSeed: UInt32
 
@@ -69,7 +71,7 @@ struct World {
         var seed: UInt64
     }
 
-    /// The city of a 4 km cell, if it has one. It and the ground it levels stay 128 m inside the cell.
+    /// The city of a 4 km cell, if it has one. It and the ground it levels stay 88 m inside the cell.
     func city(cell: SIMD2<Int>) -> City? {
         let own = World.hash(seed, cell.x, cell.y, 0xC17)
         var rng = SplitMix64(seed: own)
@@ -89,7 +91,29 @@ struct World {
     func cityMask(_ city: City?, _ x: Double, _ z: Double) -> Float {
         guard let city else { return 0 }
         let d = Float(((x - city.center.x) * (x - city.center.x) + (z - city.center.y) * (z - city.center.y)).squareRoot())
-        return 1 - World.smoothstep(city.radius, city.radius + World.cityBlend, d)
+        let level = city.radius + World.cityApron
+        return 1 - World.smoothstep(level, level + World.cityBlend, d)
+    }
+
+    /// Whether a place is in the open ground around a city, where no tree stands: a belt from its level ground out,
+    /// 30 m wide here and 250 m there.
+    func belt(_ city: City?, _ x: Double, _ z: Double) -> Bool {
+        let mask = cityMask(city, x, z)
+        guard mask > 0.1 else { return false }
+        return mask > min(max(0.55 + 0.8 * Terrain.noise(x / 170, z / 170, seed: standSeed &+ 61), 0.1), 0.97)
+    }
+
+    /// What grows on a place in a city's belt: the belt is fields, two to a cell of 128 by 96 m of a grid in the
+    /// city's axes (or one), each a meadow, a crop or ploughed earth. Their sides are multiples of 16 m from the
+    /// city's middle: on the ground's cells at every level. Nil outside the belt.
+    func field(_ city: City?, _ x: Double, _ z: Double) -> Int? {
+        guard let city, belt(city, x, z) else { return nil }
+        let p = SIMD2(x - city.center.x, z - city.center.y)
+        let a = (p.x / 128).rounded(.down), b = (p.y / 96).rounded(.down)
+        var rng = SplitMix64(seed: World.hash(city.seed, Int(a), Int(b), 0xF1E1D))
+        let split = 32 + 16 * Double(rng.int(5)), two = rng.next() < 0.6, first = rng.next(), second = rng.next()
+        let crop = two && p.x - a * 128 >= split ? second : first
+        return crop < 0.35 ? Ground.meadow : crop < 0.6 ? Ground.wheat : crop < 0.85 ? Ground.crop : Ground.ploughed
     }
 
     // MARK: - The ground
@@ -101,7 +125,7 @@ struct World {
         let natural = broad(x, z) + 15.3 * Terrain.fbm(x / 120, z / 120, octaves: 5, seed: rollingSeed)
         guard let city else { return natural }
         let mask = cityMask(city, x, z)
-        return mask <= 0 ? natural : natural + (city.level - natural) * mask
+        return mask <= 0 ? natural : mask >= 1 ? city.level : natural + (city.level - natural) * mask
     }
 
     func height(_ x: Double, _ z: Double) -> Float { height(x, z, city: city(near: x, z)) }
@@ -109,33 +133,33 @@ struct World {
     /// 1 in the woods, 0 in open country.
     func woods(_ x: Double, _ z: Double) -> Float { World.smoothstep(-0.12, 0.1, Terrain.fbm(x / 420, z / 420, octaves: 3, seed: coverSeed)) }
 
-    /// What the ground is made of at a place: an index into `groundMaterials`. `up`: its normal's y.
+    /// What the ground is made of at a place: an index into `groundMaterials`. `up`: its normal's y. (A city's roads
+    /// and blocks lie on it: on the fields that are all around the city.)
     func ground(_ x: Double, _ z: Double, up: Float, city: City?) -> Int {
-        let mask = cityMask(city, x, z)
-        if mask >= 1 { return Ground.asphalt }
         if up < 0.8 { return Ground.rock }
-        if woods(x, z) + 0.2 * Terrain.noise(x / 14, z / 14, seed: standSeed &+ 32) < 0.5 || mask > 0.3 { return Ground.meadow }
+        if let field = field(city, x, z) { return field }
+        if woods(x, z) + 0.2 * Terrain.noise(x / 14, z / 14, seed: standSeed &+ 32) < 0.5 { return Ground.meadow }
         return Terrain.noise(x / 9, z / 9, seed: standSeed &+ 31) > 0.18 ? Ground.moss : Ground.litter
     }
 
     enum Ground {
-        static let litter = 0, moss = 1, meadow = 2, rock = 3, asphalt = 4
+        static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6
     }
 
-    /// The ground's materials (`ground`'s indices). They name their textures by kind (`texture(_:)`): the asphalt its
-    /// surface's, the others the ground's detail, which their colours are divided by the mean of (FoliageTextures.mean).
+    /// The ground's materials (`ground`'s indices). They name the ground's detail texture, or a sown field's rows,
+    /// which their colours are divided by the mean of (FoliageTextures.mean).
     static let groundMaterials: [GPUMaterial] = {
-        func natural(_ c: SIMD3<Float>) -> GPUMaterial {
+        func natural(_ c: SIMD3<Float>, _ texture: UInt32 = groundDetail) -> GPUMaterial {
             var m = GPUMaterial(albedo: SIMD4(c / FoliageTextures.mean, 0), emission: SIMD4(.zero, 1))
-            m.textures.x = groundDetail
+            m.textures.x = texture
             return m
         }
-        var asphalt = GPUMaterial(albedo: SIMD4(0.1, 0.1, 0.11, 0), emission: SIMD4(.zero, 1))
-        asphalt.textures.x = texture(.asphalt)
-        return [natural([0.15, 0.13, 0.075]), natural([0.09, 0.135, 0.05]), natural([0.2, 0.3, 0.1]), natural([0.24, 0.23, 0.21]), asphalt]
+        return [natural([0.15, 0.13, 0.075]), natural([0.09, 0.135, 0.05]), natural([0.2, 0.3, 0.1]), natural([0.24, 0.23, 0.21]),
+                natural([0.42, 0.36, 0.15], fieldRows), natural([0.13, 0.24, 0.07], fieldRows), natural([0.19, 0.14, 0.095], fieldRows)]
     }()
-    /// `GPUMaterial.textures.x` of a material with the ground's detail texture (Scene+World.swift makes it).
-    static let groundDetail: UInt32 = 0x4100_0000
+    /// `GPUMaterial.textures.x` of a material with the ground's detail texture, or with a field's rows
+    /// (Scene+World.swift makes them), and the side of one repeat of either, metres.
+    static let groundDetail: UInt32 = 0x4100_0000, fieldRows: UInt32 = 0x4100_0001, groundTile: Float = 5
 
     /// A tile's materials name a generated surface's textures by its kind, in `GPUMaterial.textures.x`: whoever puts
     /// the tile into a scene puts that scene's texture indices there.
@@ -208,7 +232,7 @@ struct World {
             let chance = rng.next(), pick = rng.next(), u = rng.next()
             let yaw = rng.range(0, 2 * .pi), size = rng.range(0.85, 1.2), shade = rng.int(16), which = rng.next()
             let cover = woods(x, z)
-            guard cover > 0, cityMask(city, x, z) < 0.5 else { return }   // a belt of open ground around a city
+            guard cover > 0, !belt(city, x, z) else { return }
             let slope = 1 - up(x, z, city: city)
             let density = cover * World.smoothstep(0.72, 0.86, 1 - slope) * (0.6 + 0.6 * Terrain.noise(x / 23, z / 23, seed: standSeed &+ 7))
             guard chance < density else { return }
@@ -241,7 +265,9 @@ struct World {
             candidates(x0: x0, z0: z0, side: side, cell: cell, what: what) { x, z, rng in
                 let chance = rng.next(), yaw = rng.range(0, 2 * .pi), size = rng.range(sizes.lowerBound, sizes.upperBound)
                 let old = rng.next() < 0.5, which = rng.next(), shade = rng.int(16)
-                guard cityMask(city, x, z) < 0.9, chance < likely(x, z) * min(undergrowth, 1) else { return }
+                // (None on a road, and none in a field that is not a meadow.)
+                guard chance < likely(x, z) * min(undergrowth, 1), !paved(city, x, z, margin: 1.5),
+                      (field(city, x, z) ?? Ground.meadow) == Ground.meadow else { return }
                 let plants = flora.plants(species, old ? .mature : .young)
                 guard !plants.isEmpty else { return }
                 out.append(Placement(x: Float(x - x0), y: height(x, z, city: city) - sink, z: Float(z - z0), yaw: yaw, size: size,
@@ -272,7 +298,40 @@ struct World {
         var origin: SIMD2<Float>
     }
 
-    /// Whether `city` can have blocks in the square from (x0, z0), `side` across.
+    /// A piece of road: a street from one crossing of the grid to the next, or the square where two cross.
+    struct Road {
+        var rect: CityPlan.Rect         // metres from the city's middle
+        /// 0 = it runs along x, 1 = along z, 2 = a crossing.
+        var along: Int
+        /// A street's ends (the low one, the high one) where it meets a crossing three or four streets come to:
+        /// there people cross it, and cars stop.
+        var junction = [false, false]
+    }
+
+    /// Whether block (i, j) of the city's grid is built: only where all of it is inside the city's radius.
+    func built(_ city: City, _ i: Int, _ j: Int) -> Bool {
+        let corner = SIMD2(Float(i), Float(j)) * World.blockPitch + (World.blockPitch - World.blockSize) / 2
+        return length(simd_max(abs(corner), abs(corner + World.blockSize))) < city.radius
+    }
+
+    /// Whether a place is on one of the city's blocks or roads, or within `margin` of one. (A built block's roads
+    /// are the four along its sides and the crossings at its corners: its cell of the grid and half a road around it.)
+    func paved(_ city: City?, _ x: Double, _ z: Double, margin: Float = 0) -> Bool {
+        guard let city else { return false }
+        let p = SIMD2(Float(x - city.center.x), Float(z - city.center.y)), pitch = World.blockPitch
+        guard length(p) < city.radius + World.cityApron else { return false }
+        let i = Int((p.x / pitch.x).rounded(.down)), j = Int((p.y / pitch.y).rounded(.down)), reach = World.roadWidth / 2 + margin
+        for dj in -1...1 {
+            for di in -1...1 {
+                let lo = SIMD2(Float(i + di), Float(j + dj)) * pitch
+                if p.x > lo.x - reach && p.x < lo.x + pitch.x + reach && p.y > lo.y - reach && p.y < lo.y + pitch.y + reach
+                    && built(city, i + di, j + dj) { return true }
+            }
+        }
+        return false
+    }
+
+    /// Whether `city` can have blocks or roads in the square from (x0, z0), `side` across.
     private func reaches(_ city: City, x0: Double, z0: Double, side: Double) -> Bool {
         let lo = SIMD2(x0 - city.center.x, z0 - city.center.y), reach = Double(city.radius) + 64
         return lo.x < reach && lo.y < reach && lo.x + side > -reach && lo.y + side > -reach
@@ -301,9 +360,7 @@ struct World {
                 let rect = CityPlan.Rect(lo: corner, hi: corner + size), middle = rect.center
                 guard Double(middle.x) >= lo.x, Double(middle.x) < lo.x + side, Double(middle.y) >= lo.y, Double(middle.y) < lo.y + side
                 else { continue }
-                // Built only where all of it is on the level ground.
-                let far = simd_max(abs(rect.lo), abs(rect.hi))
-                guard length(far) < city.radius else { continue }
+                guard built(city, i, j) else { continue }
                 var rng = SplitMix64(seed: World.hash(city.seed, i, j, 0xB10C))
                 let park = rng.next() < 0.06 && length(middle) < 0.5 * city.radius
                 out.append(Block(index: SIMD2(i, j),
@@ -312,6 +369,43 @@ struct World {
             }
         }
         return (city, out)
+    }
+
+    /// The roads of the grid's cells whose middle is in the square from (x0, z0), `side` across, in the order of
+    /// their rows: a cell's are the street along its -x side, the one along its -z side and the crossing at the
+    /// corner between them, each there if a block next to it is built. `origin`: from the square's corner to the
+    /// city's middle.
+    func roads(x0: Double, z0: Double, side: Double) -> (city: City, origin: SIMD2<Float>, roads: [Road])? {
+        guard let city = city(near: x0 + side / 2, z0 + side / 2), reaches(city, x0: x0, z0: z0, side: side) else { return nil }
+        let pitch = World.blockPitch, half = World.roadWidth / 2
+        let lo = SIMD2(x0 - city.center.x, z0 - city.center.y)
+        var out: [Road] = []
+        let i0 = Int((lo.x / Double(pitch.x)).rounded(.down)) - 1, i1 = Int(((lo.x + side) / Double(pitch.x)).rounded(.down)) + 1
+        let j0 = Int((lo.y / Double(pitch.y)).rounded(.down)) - 1, j1 = Int(((lo.y + side) / Double(pitch.y)).rounded(.down)) + 1
+        // The streets that come to the grid's corner (i, j): toward -z and +z, toward -x and +x.
+        func streets(_ i: Int, _ j: Int) -> [Bool] {
+            let a = built(city, i - 1, j - 1), b = built(city, i, j - 1), c = built(city, i - 1, j), d = built(city, i, j)
+            return [a || b, c || d, a || c, b || d]
+        }
+        func junction(_ i: Int, _ j: Int) -> Bool { streets(i, j).reduce(0) { $0 + ($1 ? 1 : 0) } >= 3 }
+        for j in j0...j1 {
+            for i in i0...i1 {
+                let middle = (SIMD2(Float(i), Float(j)) + 0.5) * pitch
+                guard Double(middle.x) >= lo.x, Double(middle.x) < lo.x + side, Double(middle.y) >= lo.y, Double(middle.y) < lo.y + side
+                else { continue }
+                let c = SIMD2(Float(i), Float(j)) * pitch, here = streets(i, j)
+                if here[1] {
+                    out.append(Road(rect: CityPlan.Rect(lo: c + SIMD2(-half, half), hi: c + SIMD2(half, pitch.y - half)), along: 1,
+                                    junction: [junction(i, j), junction(i, j + 1)]))
+                }
+                if here[3] {
+                    out.append(Road(rect: CityPlan.Rect(lo: c + SIMD2(half, -half), hi: c + SIMD2(pitch.x - half, half)), along: 0,
+                                    junction: [junction(i, j), junction(i + 1, j)]))
+                }
+                if here.contains(true) { out.append(Road(rect: CityPlan.Rect(lo: c - half, hi: c + half), along: 2)) }
+            }
+        }
+        return (city, SIMD2(Float(city.center.x - x0), Float(city.center.y - z0)), out)
     }
 }
 
