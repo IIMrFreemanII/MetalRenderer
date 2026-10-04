@@ -1685,9 +1685,10 @@ final class Renderer: NSObject {
         return VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
     }
 
-    /// Metal's tracer: where the far baked plants' voxel levels are (VoxelLOD). A rebuild runs on `voxelQueue`, the
-    /// structure it built is swapped in at a frame's start, and the next may start once no frame in flight traces the
-    /// structure it builds into: `maxFramesInFlight - 1` frames after a swap.
+    /// Metal's tracer: where the far baked plants' voxel levels are (VoxelLOD). A rebuild runs on `voxelQueue` and
+    /// tells the render thread when it is done; the structure it built is swapped in at a frame's start, and the next
+    /// may start once no frame in flight traces the structure it builds into: `maxFramesInFlight - 1` frames after a
+    /// swap.
     private struct VoxelLevels {
         weak var owner: VoxelLOD?
         var running = false
@@ -1730,7 +1731,7 @@ final class Renderer: NSObject {
         voxelLevels.started = now
         voxelQueue.async { [weak self] in
             let built = voxels.rebuild(for: view, queue: queue)
-            DispatchQueue.main.async {
+            self?.renderThread.perform {   // the frames' thread: the one `voxelLevels` belongs to
                 guard let self, self.voxelLevels.owner === voxels else { return }
                 self.voxelLevels.running = false
                 self.voxelLevels.ready = built
