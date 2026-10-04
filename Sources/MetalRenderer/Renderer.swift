@@ -351,7 +351,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
     /// (16-byte aligned).
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
-    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 224: the shader asserts it
+    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 240: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] = []
@@ -738,8 +738,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // The open world made around another tile is the same world in the same place: what the frames have gathered
         // of it holds.
         var before = old.settings, after = scene.settings
-        (before.worldTile, after.worldTile) = (nil, nil)
-        if !(after.kind == .world && before == after && oldRayTracer == builtRayTracer) {
+        (before.worldTile, after.worldTile, before.worldAnchor, after.worldAnchor) = (nil, nil, nil, nil)
+        let sameWorld = after.kind == .world && before == after
+        var moved = SIMD2<Float>()
+        if sameWorld, let was = old.worldPlace, let now = scene.worldPlace {
+            // The scene's origin has moved: the camera is where it was in the world.
+            moved = SIMD2(Float(was.anchor.x - now.anchor.x), Float(was.anchor.y - now.anchor.y))
+            for c in [\Renderer.camera, \Renderer.prevCamera] {
+                self[keyPath: c].position.x += moved.x
+                self[keyPath: c].position.z += moved.y
+            }
+        }
+        if !(sameWorld && moved == .zero && oldRayTracer == builtRayTracer) {
             resetGIState()
             upscalerReset = true
             accumCount = 0
@@ -1012,7 +1022,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                          f.baseHeight, FogSettings.anisotropyRange.clamp(f.anisotropy))
         p.albedo = SIMD4(f.albedo, max(f.ambient, 0))
         p.noise = SIMD4(f.noise, max(f.noiseScale, 0.1), animTime, 0.1)
-        p.wind = SIMD4(f.wind, 0)
+        p.wind = SIMD4(f.wind, FogSettings.hazeRange.clamp(f.haze))
         p.grid = SIMD4(near, far, log(far / near), Float(grid.slices))
         let volumes = f.volumes ? Array(scene.fogVolumes.prefix(GPUFogParams.maxVolumes)) : []
         for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
@@ -1175,6 +1185,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         p.cloudShape = SIMD4(max(sky.cloudScale, 100), sky.erosion, animTime, sky.shadowStrength)
         p.wind = SIMD4(SIMD3(cos(windAngle), 0, sin(windAngle)) * sky.windSpeed, full ? 1 : 0.5)
         p.shadowMap = SIMD4(sphere.x, sphere.z, max(1.2 * sphere.w, 150), 0)
+        if let place = scene.worldPlace {
+            // The open world: cloud shadows over everything in sight, the clouds where the world has them.
+            p.shadowMap.z = 9 * World.tileSize
+            p.place = SIMD4(Float(place.anchor.x), Float(place.anchor.y), camera.position.x, camera.position.z)
+        }
         p.ground = SIMD4(SIMD3(repeating: 0.25), Atmosphere.observerAltitude)
         let clouds = sky.clouds && (image == nil || sky.cloudsOverImage)
         p.flags = SIMD4(image == nil ? GPUSkyParams.atmosphere : GPUSkyParams.image,
@@ -1439,8 +1454,13 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // The open world: the scene is made around the tile the camera is in (Scene+World.swift).
         if let place = scene.worldPlace, settings.scene.kind == .world, loading == nil {
             let wanted = place.wanted(for: camera.position)
-            if wanted != place.tile { settings.scene.worldTile = wanted }
+            if wanted != place.tile {
+                settings.scene.worldTile = wanted
+                let anchor = place.anchorTile(around: wanted)
+                if anchor != place.anchorTile { settings.scene.worldAnchor = anchor }
+            }
         }
+        if scene.worldPlace != nil { scene.follow(camera.position) }
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }

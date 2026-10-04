@@ -113,11 +113,12 @@ final class WorldTests: XCTestCase {
 
     /// The scene follows the camera a quarter of a tile late, so pacing across a tile's side changes nothing.
     func testTheSceneFollowsTheCamera() {
-        let anchor = world.anchor, begin = world.start
-        XCTAssertEqual(anchor.x.truncatingRemainder(dividingBy: Double(World.tileSize)), 0)
+        let begin = world.start
+        var place = WorldPlace(world: world, anchorTile: world.anchorTile, tile: SIMD2(10, -3), middle: .zero)
+        let anchor = place.anchor
+        XCTAssertEqual(anchor, WorldTile.origin(world.anchorTile.x, world.anchorTile.y))
         XCTAssertLessThan(abs(begin.place.x - anchor.x), 2000, "the world starts near its origin")
         XCTAssertEqual(Float(begin.place.y), world.height(begin.place.x, begin.place.z) + 1.7, accuracy: 0.01)
-        let place = WorldPlace(world: world, anchor: anchor, tile: SIMD2(10, -3), middle: .zero)
         func at(_ tx: Double, _ tz: Double) -> SIMD3<Float> {   // in tiles, from the world's origin
             SIMD3(Float(tx * 256 - anchor.x), 5, Float(tz * 256 - anchor.y))
         }
@@ -126,6 +127,12 @@ final class WorldTests: XCTestCase {
         XCTAssertEqual(place.wanted(for: at(11.3, -2.5)), SIMD2(11, -3))
         XCTAssertEqual(place.wanted(for: at(9.9, -3.3)), SIMD2(10, -4))
         XCTAssertEqual(place.wanted(for: at(13.6, -6.1)), SIMD2(13, -7), "far off: straight to the camera's tile")
+        // The origin stays until the scene's middle is 8 tiles from it, then moves to a corner near the middle.
+        place.anchorTile = SIMD2(16, 0)
+        XCTAssertEqual(place.anchorTile(around: SIMD2(24, -8)), SIMD2(16, 0))
+        XCTAssertEqual(place.anchorTile(around: SIMD2(25, -3)), SIMD2(24, 0))
+        XCTAssertEqual(place.anchorTile(around: SIMD2(160, -121)), SIMD2(160, -120))
+        XCTAssertEqual(place.wanted(for: SIMD3(Float(10.5 * 256 - place.anchor.x), 5, Float(-2.5 * 256))), SIMD2(10, -3))
         XCTAssertEqual(SceneKind.world.envName, "world")
         XCTAssertTrue(SceneKind.world.hasPlants && SceneKind.world.cameraFromScene)
     }

@@ -387,6 +387,9 @@ struct SceneSettings: Equatable, Codable {
     /// The open world: the tile the scene is made around (nil: the one the world starts in). The renderer's to set, as
     /// the camera moves; not a preference.
     var worldTile: SIMD2<Int>? = nil
+    /// ...and the tile whose corner is the scene's origin (nil: the first city's). It follows the camera from afar, so
+    /// that the scene's coordinates stay small however far the camera has gone.
+    var worldAnchor: SIMD2<Int>? = nil
     /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
     /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
     var bakedPlants = false
@@ -431,7 +434,8 @@ struct FogSettings: Equatable, Codable {
     var noise: Float = 0.4              // how much the drifting noise modulates the height fog (volumes have their own)
     var noiseScale: Float = 6           // noise tile size (m)
     var wind = SIMD3<Float>(0.35, 0.05, 0.15)   // m/s
-    var maxDistance: Float = 40         // the froxel grid's far end (view depth); beyond, no more fog accumulates
+    var maxDistance: Float = 40         // the froxel grid's far end (view depth); beyond, no more fog accumulates...
+    var haze: Float = 0                 // ...but the height fog at this share of its density, as far as the eye sees (0 = none)
     var volumes = true                  // the scene's local fog volumes
     var reflections = true              // fog along reflection rays (one more shadow ray per reflection)
 
@@ -441,6 +445,7 @@ struct FogSettings: Equatable, Codable {
     static let ambientRange: ClosedRange<Float> = 0...4
     static let noiseRange: ClosedRange<Float> = 0...1
     static let distanceRange: ClosedRange<Float> = 10...150
+    static let hazeRange: ClosedRange<Float> = 0...1
     static let baseHeightRange: ClosedRange<Float> = -10...20
     static let noiseScaleRange: ClosedRange<Float> = 1...30
     static let windSpeedRange: ClosedRange<Float> = 0...3
@@ -477,8 +482,9 @@ struct FogSettings: Equatable, Codable {
             f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
         case .world:
-            f.enabled = true; f.density = 0.002; f.heightFalloff = 0.015; f.anisotropy = 0.6; f.noise = 0.2
-            f.maxDistance = 150
+            // The noise's tile divides the tiles' 256 m, so the fog stays as it is when the scene's origin moves.
+            f.enabled = true; f.density = 0.002; f.heightFalloff = 0.012; f.anisotropy = 0.6; f.noise = 0.2; f.noiseScale = 8
+            f.maxDistance = 150; f.haze = 0.4
         case .spots:
             f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
         case .sun:
@@ -672,7 +678,7 @@ struct RenderSettings: Equatable, Codable {
 
     static let exposureRange: ClosedRange<Float> = -4...4
     static let fovRange: ClosedRange<Float> = 30...110
-    static let moveSpeedRange: ClosedRange<Float> = 0.5...20
+    static let moveSpeedRange: ClosedRange<Float> = 0.5...100
     static let timeScaleRange: ClosedRange<Float> = 0...4
     static let manyLightReuseRange = 0...8
     static let textureBudgetOptions = [256, 512, 1024, 2048, 4096]

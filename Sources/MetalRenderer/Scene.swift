@@ -231,6 +231,12 @@ final class Scene {
     let settings: SceneSettings
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
     private(set) var hasGlass = false
+    /// The open world: what counts as the scene for the sun's light map, the fog and the clouds' shadows is what is
+    /// around the camera (to 16 m, so the map's texels stay where they are from frame to frame).
+    func follow(_ camera: SIMD3<Float>) {
+        sceneSphere = SIMD4((camera / 16).rounded(.toNearestOrAwayFromZero) * 16, 1.5 * World.tileSize)
+    }
+
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).

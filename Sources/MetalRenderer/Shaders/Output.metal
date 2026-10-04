@@ -262,6 +262,12 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             float depth = nd.read(tid).w;
             float2 uv = (float2(tid) + 0.5f + u.jitter.xy * 8.0f) / float2(u.width, u.height);
             fogged = fogFromGrid(fog, fogGrid, uv, depth > 0.0f ? depth : fog.grid.y);
+            if (fog.wind.w > 0.0f) {
+                float3 dir = primaryDirection(u, tid);
+                float along = dot(dir, u.camForward.xyz);
+                float tFar = fog.grid.y / along, tEnd = depth > 0.0f ? depth / along : INFINITY;
+                if (tEnd > tFar) fogged = fogHaze(fog, fogGrid, uv, fogged, u.camPos.xyz, dir, tFar, tEnd);
+            }
         }
     }
 

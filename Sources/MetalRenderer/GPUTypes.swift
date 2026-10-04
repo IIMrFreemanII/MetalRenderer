@@ -115,6 +115,8 @@ struct GPUSkyParams {
     var ground = SIMD4<Float>()       // rgb = ground albedo below the horizon, w = the sky's observer altitude (m)
     var flags = SIMD4<UInt32>()       // x = mode (GPUSkyParams.atmosphere / .image), y = feature bits, z = update phase 0...15,
                                       // w = frame (jitters the cloud march)
+    var place = SIMD4<Float>()        // xy = where the scene's origin is in the world (x, z), zw = the sky's observer in
+                                      // the scene (x, z): the clouds are the world's
 
     static let atmosphere: UInt32 = 1, image: UInt32 = 2
     static let clouds: UInt32 = 1, shadows: UInt32 = 2, updateAll: UInt32 = 4, cloudsOverImage: UInt32 = 8
@@ -232,7 +234,7 @@ struct GPUFogParams {
                                          // z = base height (constant below), w = anisotropy g (Henyey-Greenstein)
     var albedo = SIMD4<Float>()          // rgb = height fog's albedo, w = ambient: sky colour x w lights the fog evenly
     var noise = SIMD4<Float>()           // x = height fog's noise amount, y = noise tile size (m), z = time (s), w = this frame's weight in the froxel history
-    var wind = SIMD4<Float>()            // xyz = wind (m/s): the noise drifts with it
+    var wind = SIMD4<Float>()            // xyz = wind (m/s): the noise drifts with it; w = haze (FogSettings.haze)
     var grid = SIMD4<Float>()            // x = near, y = far (view depth), z = log(far / near), w = depth slices
     var counts = SIMD4<UInt32>()         // x, y = froxel columns and rows, z = volume count, w = FogParams flags
     var volumes = (GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume(),
@@ -274,7 +276,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
-    precondition(MemoryLayout<GPUSkyParams>.stride == 144, "GPUSkyParams layout mismatch")
+    precondition(MemoryLayout<GPUSkyParams>.stride == 160, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")
