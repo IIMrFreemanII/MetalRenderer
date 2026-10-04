@@ -233,6 +233,8 @@ final class Scene {
     private(set) var hasGlass = false
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
+    /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
+    var worldPlace: WorldPlace?
 
     var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
     var skyAnimation: ((Float) -> SIMD3<Float>)?
@@ -268,6 +270,7 @@ final class Scene {
         case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
         case .city: buildCity(settings.city, seed: settings.seed, night: false)
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
+        case .world: buildWorld()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -276,6 +279,8 @@ final class Scene {
         if settings.emissiveLights { buildMeshLights() }
         let (lo, hi) = bounds()
         if lo.x <= hi.x { sceneSphere = SIMD4((lo + hi) / 2, max(length(hi - lo) / 2, 1)) }
+        // The open world has no bounds worth a light map: what counts is what is near its middle tile.
+        if let place = worldPlace { sceneSphere = SIMD4(place.middle, 1.5 * World.tileSize) }
         lightTable = LightTable(scene: self)
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }

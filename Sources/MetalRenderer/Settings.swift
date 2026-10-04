@@ -261,6 +261,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case crowd              // a square under the sun with `characters` animated characters on `poses` pose slots
     case city               // a generated city (`CitySettings`) under the sun: blocks of procedural buildings, a day cycle
     case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
+    case world              // the open world (World.swift): hills, forest and cities without end, made around the camera
 
     var title: String {
         switch self {
@@ -280,19 +281,22 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .crowd: return "Crowd"
         case .city: return "City"
         case .cityNight: return "City at night"
+        case .world: return "Open world"
         }
     }
 
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s), or nil.
-    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : nil }
+    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .forest || self == .city || self == .world ? 180 : nil }
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
     /// The scene's default camera depends on how it was built (its size), so it is asked of the scene itself.
-    var cameraFromScene: Bool { self == .crowd || isCity }
+    var cameraFromScene: Bool { self == .crowd || isCity || self == .world }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
-    var hasPlants: Bool { self == .forest || self == .valley }
+    var hasPlants: Bool { self == .forest || self == .valley || self == .world }
+    /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
+    var hasForest: Bool { self == .forest || self == .world }
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -380,6 +384,9 @@ struct SceneSettings: Equatable, Codable {
     var trees = 2500
     var undergrowth = 100
     var seed = 1
+    /// The open world: the tile the scene is made around (nil: the one the world starts in). The renderer's to set, as
+    /// the camera moves; not a preference.
+    var worldTile: SIMD2<Int>? = nil
     /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
     /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
     var bakedPlants = false
@@ -469,6 +476,9 @@ struct FogSettings: Equatable, Codable {
         case .forest:
             f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
+        case .world:
+            f.enabled = true; f.density = 0.002; f.heightFalloff = 0.015; f.anisotropy = 0.6; f.noise = 0.2
+            f.maxDistance = 150
         case .spots:
             f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
         case .sun:
@@ -555,6 +565,9 @@ struct SkySettings: Equatable, Codable {
         case .forest:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 900; s.cloudThickness = 900; s.cloudScale = 1400
             s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
+        case .world:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
+            s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
         }
         if let o = override {
             switch o {

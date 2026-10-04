@@ -327,9 +327,9 @@ enum SettingsTable {
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
-                .env(.scene, "trees").when { $0.scene.kind == .forest },
+                .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
-                .env(.scene, "undergrowth").when { $0.scene.kind == .forest },
+                .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),

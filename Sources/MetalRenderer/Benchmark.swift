@@ -26,6 +26,7 @@ final class Benchmark {
         var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
         var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
         var camera: Camera? = nil           // a fixed camera instead of the scene's default
+        var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
@@ -61,6 +62,7 @@ final class Benchmark {
         func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
         func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
         func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
+        func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
         func still(at time: Float = 5, previous: Bool = false) -> Config {

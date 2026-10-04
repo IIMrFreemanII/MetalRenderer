@@ -144,6 +144,9 @@ extension Scene {
 
         func height(_ species: Foliage.Species, _ plant: Int) -> Float { sets[species.rawValue]?.plants[plant].height ?? 0 }
 
+        /// The library's plants by species and age, for the open world's placing (World.swift).
+        var index: World.Flora { World.Flora(sets.compactMap { $0 }) }
+
         /// The plant as the scene holds it, added on first use.
         private func add(_ set: Foliage.SpeciesSet, _ index: Int) -> Placed {
             let plant = set.plants[index], s = set.species.rawValue

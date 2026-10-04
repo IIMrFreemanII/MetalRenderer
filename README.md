@@ -13,7 +13,8 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
   * a **Forest** of generated trees, bushes, ferns and grass on rolling ground (see "Generated plants" below);
   * a **Crowd**: a square with thousands of animated characters, skinned on the GPU (see "Animated characters" below);
-  * a generated **City**, by day and at night: blocks of procedural buildings with glass windows and rooms behind them (see "Procedural city" below).
+  * a generated **City**, by day and at night: blocks of procedural buildings with glass windows and rooms behind them (see "Procedural city" below);
+  * an **Open world**: hills, forest and cities without end, made around the camera as it moves (see "Open world" below).
 * **Glass:** window panes the camera sees through and sees reflections in, and that light passes (see "Glass" below).
 * **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
   * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
@@ -196,6 +197,8 @@ For the plants:
 * `METALRENDERER_BENCH=forest` renders the forest paused (from the clearing, from above, close to a trunk, with 10,000 trees), then moving, natively and at 3×.
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
+* `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest. `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits.
+* `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, its meshes' trees, the plants' voxels) instead of taking it from `~/Library/Caches/MetalRenderer/generated`; `=1` caches the trees and voxels in an optimised build too. `METALRENDERER_CACHE_MB=4096` caps that folder.
 
 The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com): install it before cloning (`brew install git-lfs && git lfs install`), or run `git lfs pull` afterwards. `.gitattributes` sends 3D models (`.glb`, `.fbx`, `.obj`, `.usd(z)`, `.blend`), HDR skies (`.hdr`, `.exr`) and the buffers and textures under `Assets/` to LFS. Put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
@@ -747,7 +750,40 @@ The **City** and **City at night** scenes are generated: a seeded street grid of
   * At night it is 192 mesh lights of 8,900 triangles (1,706 and 58,000 at 10 × 10), and ReSTIR DI is most of the frame, as in the Night market.
   * Metal's tracer runs it too (10 × 10: 1,737 structures, 485 MB after compaction, 6.6 ms a frame), and Metal 4 draws the same images as Metal 3 (but see the limits).
 * **Checked** by `CityTests`, `BuildingTests` and `ProceduralTextureTests`: the plan's lots stand inside their blocks and apart; every style's meshes are valid over many seeds and lots (finite, unit normals, no triangle without area or, where textured, without UV area, inside the lot, under the limit); outlines close around their plans; a seed always builds the same city; the textures tile.
-* **Limits:** under Metal 4 the texture streamer faults on the GPU when it maps a texture's level again after unmapping it, and the frames after that are black: flying far from the city and back does it, as the Gallery does (`METALRENDERER_TEXTURE_STREAMING=0` or `textures=0` avoids it; Metal 3 is not affected). Every building is unique, so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
+* **Limits:** every building is unique, so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
+
+### Open world
+
+The **Open world** scene has no edge: hills, woods, open country and cities, all of it a function of the seed and the place (`World.swift`). Nothing is stored that can't be made again, so the world is made a tile at a time around the camera and forgotten behind it.
+
+**The world.**
+* **Ground:** broad hills (2 km across, up to 90 m) with the Forest's rolling ground on top. Places are doubles, and the noise finds its lattice cell exactly however far out it is, so 50 km from the origin is as exact as the origin.
+* **Cities:** at most one to a 4 km cell (the cell at the origin always has one), a disc of 300 to 900 m on ground levelled to its middle's height, with 300 m more for the hills to come back. Its streets are a grid in the world's axes, 84 by 68 m from block to block. A block is made from the seed and its place in the grid alone: its district by how far out it is, its lots, lamps and trees (`CityPlan(block:)`), its buildings by the City's generator.
+* **Woods:** one candidate tree to each cell of a 4 m grid over the whole world, from random numbers of that cell's own, so asking for another piece of the world moves no tree. Woods and open country alternate over half a kilometre; conifers stand higher and on slopes, oaks low, birches at the woods' edge. Bushes and ferns grow in patches under the trees, grass in the open, and a belt of open ground surrounds a city.
+
+**Tiles** (`WorldTile.swift`) are 256 m squares at three levels of detail: the camera's tile and its eight neighbours whole (ground cells of 1 m, buildings with their glass and their rooms), the tiles to about 1 km with 4 m cells and buildings without glass, the rest to 2.2 km with 16 m cells and a box for each building. Trees are placements at every level (which plant of the library, where, how turned): the far ones are the voxels the plants already have. A tile's ground has a skirt down its sides, which hides the step to a neighbour of another level; neighbours of the same level share their edge's heights and normals exactly, because both ask the same function at the same places.
+
+A tile is a file once made (`~/Library/Caches/MetalRenderer/generated/world-<seed>-v<version>/<level>/<x>_<z>.tile`, a section file: its meshes' arrays, its materials, its trees), keyed by the world's settings and versions.
+
+**The scene** (`Scene+World.swift`) is one moment of the world: the 289 tiles around the camera's. When the camera is a quarter of a tile into another one, the renderer makes the scene around that one in the background (the tiles the two share are kept in memory, the new ones come from their files or are made) and swaps it in; what the frames have gathered (the upscaler's and the denoisers' histories) holds, since the world is in the same place.
+
+Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`):
+
+| | |
+|---|---|
+| A scene around the first city | 289 tiles, 6.4 million triangles, 366,000 trees, 14,000 to 31,000 bushes, ferns and grass patches |
+| Making all 289 tiles (first visit) | 0.4 s on every core; a city tile at level 0 takes 0.2 s and has 0.4 to 0.8 million triangles |
+| A scene around the next tile, custom tracer | 0.15 s for the scene and 0.3 s for the tracer's trees over it, in the background; 35 ms to swap it in |
+| ...Metal's tracer | 0.15 s in the background; 0.2 s to swap it in (every mesh's structure is built again) |
+| A frame in flight, 640×400 → 1920×1200, cascades | 8.8 ms on the custom tracer, 5.9 ms on Metal's |
+| A frame from the start, 960×600 native, cascades | 10.2 ms on the custom tracer |
+
+**Limits** (the open world is not finished):
+* The scene's coordinates are metres from the first city's tile, in floats: fine for the first kilometres, not for a world walked 20 km out (the origin has to follow the camera).
+* The sun's light map and the clouds' shadows cover 384 m around the middle tile, and the fog reaches 150 m, so the world's edge at 2.2 km shows.
+* On Metal's tracer every tile crossing stalls 0.2 s. On both, a scene copies its tiles' geometry: memory was not measured.
+* Day only: a streamed city's lamps and lit windows would need the light table made again with the tiles.
+* The ground changes material in 1 m cells, and a city's ground is an asphalt disc.
 
 ### Glass
 
@@ -863,6 +899,9 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
 | `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, the Night market, and the light-check scene the `lightcheck` benchmark renders |
 | `Scene+Forest.swift` | Generated plants in a scene (`Flora`: materials, textures, assemblies and their wind bones) and the Forest |
+| `World.swift` | The open world as a function of a seed and a place: ground, cities and their blocks, where trees and ground cover stand |
+| `WorldTile.swift` | A tile of the world at a level of detail: its meshes, its trees, its file |
+| `Scene+World.swift` | The Open world scene: the tiles around the camera's, and which tile that is |
 | `Foliage.swift` | The plant generator: recipes, the grower, leaf, card and bough distributors, the plant library |
 | `FoliageSpecies.swift` | Each species' recipes, by age, and its boughs' |
 | `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
