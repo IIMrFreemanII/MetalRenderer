@@ -123,8 +123,9 @@ struct GPUSkyParams {
 struct GPUMesh {
     var firstIndex: UInt32
     var indexCount: UInt32
-    var pad0: UInt32 = 0
-    var pad1: UInt32 = 0
+    var sways: UInt32 = 0              // 1 = ground cover that leans in the wind (Scene.coverLean)
+    var cutout: UInt32 = 0             // leaf cards: its triangles from (the low 24 bits) on are cut out by the alpha
+                                       // layer (the top byte) - 1 of Scene.cutouts; 0 = none
 }
 
 struct GPUInstanceData {

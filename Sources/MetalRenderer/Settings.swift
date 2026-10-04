@@ -325,6 +325,12 @@ struct SceneSettings: Equatable, Codable {
     var trees = 2500
     var undergrowth = 100
     var seed = 1
+    /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
+    /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
+    var bakedPlants = false
+    /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
+    /// by an alpha mask the custom tracer tests. Off: every leaf is a mesh of its own.
+    var leafCards = false
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -517,12 +523,15 @@ struct FoliageSettings: Equatable, Codable {
     var lod: Float = 2
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
     var season: Float = 0.3
+    /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
+    var translucency: Float = 1
 
     static let windRange: ClosedRange<Float> = 0...1
     static let directionRange: ClosedRange<Float> = -180...180
     static let gustRange: ClosedRange<Float> = 0...1
     static let lodRange: ClosedRange<Float> = 0...4
     static let seasonRange: ClosedRange<Float> = 0...1
+    static let translucencyRange: ClosedRange<Float> = 0...1
 
     /// A breeze where there are plants.
     static func preset(for kind: SceneKind) -> FoliageSettings {

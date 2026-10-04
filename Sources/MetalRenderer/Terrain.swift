@@ -100,7 +100,7 @@ struct Terrain {
         return normalize(SIMD3(-slope.x, cell, -slope.y))
     }
 
-    /// The mesh: smooth normals from the neighbouring heights, UVs in metres.
+    /// The mesh: smooth normals from the neighbouring heights, UVs 0...1 across it (x, z).
     func mesh() -> Foliage.Mesh {
         let n = cells + 1, step = cell, half = size / 2
         let size = Foliage.MeshSize(vertices: n * n, indices: cells * cells * 6)
@@ -112,7 +112,7 @@ struct Terrain {
                         let dz = h[min(j + 1, cells) * n + i] - h[max(j - 1, 0) * n + i]
                         let spanX = Float(min(i + 1, cells) - max(i - 1, 0)) * step, spanZ = Float(min(j + 1, cells) - max(j - 1, 0)) * step
                         let p = SIMD3(Float(i) * step - half, h[j * n + i], Float(j) * step - half)
-                        w.vertex(p, normalize(SIMD3(-dx / spanX, 1, -dz / spanZ)), SIMD2(p.x, p.z))
+                        w.vertex(p, normalize(SIMD3(-dx / spanX, 1, -dz / spanZ)), SIMD2(Float(i), Float(j)) / Float(cells))
                     }
                 }
                 for j in 0..<cells {

@@ -136,6 +136,9 @@ struct Surface {
 
 // Light through a leaf comes out yellower than what it reflects.
 constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
+// The mean of a plant's detail texture (FoliageTextures.mean): its material's colour is the plant's over this, and
+// what shades a plant without its texture (its far voxels) multiplies by it instead.
+constant float GENERATED_TEXTURE_MEAN = 0.7f;
 
 // Emission a GI or bounce ray picks up at a hit: none from emissive-mesh lights, whose light next-event estimation
 // and the light maps already deliver (as the light spheres, which GI rays don't even see).
@@ -235,6 +238,7 @@ struct HitVertices {
     float3 n[3];
     float2 t[3];
     bool   leaf;   // a leaf of an assembly's part: shaded with the material after the instance's
+    bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
 
 #if CUSTOM_RT
@@ -250,7 +254,7 @@ inline float3 partDirection(RTPart part, float3 v) {   // not unit length
 #endif
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
-    v.leaf = false;
+    v.leaf = v.sways = false;
     uint meshIndex = inst.meshIndex;
 #if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
@@ -288,6 +292,7 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     }
 #endif
     MeshData mesh = s.meshes[meshIndex];
+    v.sways = mesh.sways != 0;
     uint base = mesh.firstIndex + res.primitive * 3;
     for (uint k = 0; k < 3; ++k) {
         uint i = s.indices[base + k];
@@ -337,7 +342,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         sf.prevPosition = sf.position;
         sf.normal = sf.geomNormal = normalize((inst.normalMatrix * float4(normalize(n), 0.0f)).xyz);
         Material leaves = s.materials[inst.materialIndex + 1u];
-        sf.albedo = VOXEL_SHADE * mix(s.materials[inst.materialIndex].albedo.rgb, leaves.albedo.rgb, leaf);
+        sf.albedo = VOXEL_SHADE * GENERATED_TEXTURE_MEAN * mix(s.materials[inst.materialIndex].albedo.rgb, leaves.albedo.rgb, leaf);
         if (leaves.params.w > 0.0f) {   // its leaves' share of light from behind, as for a leaf below
             sf.backlit = float(pcgHash(res.primitive ^ as_type<uint>(res.distance)) & 0xFFFFu) * (1.0f / 65536.0f) < leaves.params.w * leaf;
             if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
@@ -367,6 +372,15 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         objPos = partWind(part, w, accel.wind.z, objPos, true);
         objN = partWind(part, w, accel.wind.z, objN, false);
         objNg = partWind(part, w, accel.wind.z, objNg, false);
+    } else if (FOLIAGE && hv.sways && windOn(accel.wind.z > 0.0f)) {
+        // Ground cover: sheared downwind by its height (coverLean), now and a frame ago. A shear by k along y takes a
+        // normal n to n - y (k . n).
+        float4 r0 = inst.normalMatrix[0], r1 = inst.normalMatrix[1], r2 = inst.normalMatrix[2];
+        float3 lean = coverLean(accel.wind, accel.windTime.x, r0, r1, r2);
+        prevObjPos = objPos + coverLean(accel.wind, accel.windTime.y, r0, r1, r2) * objPos.y;
+        objPos += lean * objPos.y;
+        objN.y -= dot(lean, objN);
+        objNg.y -= dot(lean, objNg);
     }
 #endif
     Material mat = s.materials[inst.materialIndex + (hv.leaf ? 1u : 0u)];

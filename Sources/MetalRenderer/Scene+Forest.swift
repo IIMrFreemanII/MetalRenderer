@@ -17,15 +17,18 @@ extension Scene {
         private var placed: [[Placed?]]                         // by species, then plant
         private var palettes: [[Int]]                           // by species: its bough meshes in the scene
         private var shades: [[Int]]                             // by species: wood materials, each followed by a leaf material
+        private var textures = [UInt32?](repeating: nil, count: FoliageTextures.Kind.allCases.count)   // made on first use
+        private var sheets: [(texture: UInt32, layer: Int)?]    // by species: its leaf cards' colours and alpha layer
 
         init(_ scene: Scene, seed: UInt64, species: [Foliage.Species] = Foliage.Species.allCases) {
             self.scene = scene
             var bySpecies = [Foliage.SpeciesSet?](repeating: nil, count: Foliage.Species.allCases.count)
-            for set in Foliage.library(seed: seed, species: species) { bySpecies[set.species.rawValue] = set }
+            for set in Foliage.library(seed: seed, species: species, cards: scene.usesCards) { bySpecies[set.species.rawValue] = set }
             sets = bySpecies
             placed = bySpecies.map { [Placed?](repeating: nil, count: $0?.plants.count ?? 0) }
             palettes = [[Int]](repeating: [], count: bySpecies.count)
             shades = [[Int]](repeating: [], count: bySpecies.count)
+            sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: bySpecies.count)
             scene.notePlants()
         }
 
@@ -72,6 +75,27 @@ extension Scene {
             }
         }
 
+        private static func bark(_ species: Foliage.Species) -> FoliageTextures.Kind { species == .birch ? .birchBark : .roughBark }
+        private static func leaf(_ species: Foliage.Species) -> FoliageTextures.Kind {
+            species == .conifer ? .needle : species == .grass ? .grass : .leaf
+        }
+        private func texture(_ kind: FoliageTextures.Kind) -> UInt32 {
+            if let made = textures[kind.rawValue] { return made }
+            let made = scene.addGeneratedTexture(FoliageTextures.make(kind), name: kind.name)
+            textures[kind.rawValue] = made
+            return made
+        }
+
+        /// The species' card sheet, if its leaves are cards here: made on first use.
+        private func sheet(_ species: Foliage.Species) -> (texture: UInt32, layer: Int)? {
+            guard scene.usesCards, species.hasBoughs, let leaf = Foliage.boughRecipe(species, variant: 0).leaf else { return nil }
+            if let made = sheets[species.rawValue] { return made }
+            let sheet = FoliageTextures.cardSheet(leaf, twig: Foliage.cardTwig, seed: 0xCA2D &+ UInt64(species.rawValue))
+            let made = (scene.addGeneratedTexture(sheet.image, name: "cards-\(species)"), scene.addCutout(alpha: sheet.alpha, coverage: sheet.coverage))
+            sheets[species.rawValue] = made
+            return made
+        }
+
         /// The species' plants of an age (indices for `place`); the mature ones if it has none that young.
         func plants(_ species: Foliage.Species, _ age: Foliage.Age) -> [Int] {
             guard let set = sets[species.rawValue] else { return [] }
@@ -84,12 +108,16 @@ extension Scene {
         /// The plant as the scene holds it, added on first use.
         private func add(_ set: Foliage.SpeciesSet, _ index: Int) -> Placed {
             let plant = set.plants[index], s = set.species.rawValue
-            guard scene.usesAssemblies, plant.parts.count > 1 else {
+            // A plant of one part is an assembly only for the wind to lean it: a dead tree. Ferns and grass are meshes
+            // that lean by themselves (`sways`).
+            guard scene.usesAssemblies, plant.parts.count > 1 || set.species == .dead else {
                 let baked = Foliage.flatten(plant, palette: set.palette)
-                return .flat(wood: baked.wood.indices.isEmpty ? -1 : scene.addMesh(baked.wood),
-                             leaves: baked.leaves.indices.isEmpty ? -1 : scene.addMesh(baked.leaves))
+                let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
+                return .flat(wood: baked.wood.indices.isEmpty ? -1 : scene.addMesh(baked.wood, sways: sways),
+                             leaves: baked.leaves.indices.isEmpty ? -1
+                                 : scene.addMesh(baked.leaves, sways: sways, cutout: baked.leaves.cutout ? sheet(set.species)?.layer : nil))
             }
-            if palettes[s].isEmpty { palettes[s] = set.palette.map { scene.addMesh($0) } }
+            if palettes[s].isEmpty { palettes[s] = set.palette.map { scene.addMesh($0, cutout: $0.cutout ? sheet(set.species)?.layer : nil) } }
             let own = plant.meshes.map { scene.addMesh($0) }
             /// The wind's bone for a limb or a bough: it bobs about a level axis across it, and a little sideways.
             /// A long thin limb swings further than a short thick one.
@@ -139,13 +167,15 @@ extension Scene {
             let s = species.rawValue
             guard let set = sets[s] else { return }
             if shades[s].isEmpty {
+                // A material's colour is the plant's over its texture's mean: the texture is detail on top of it.
+                let gain = 1 / FoliageTextures.mean
+                let bark = texture(Flora.bark(species)), blade = sheet(species)?.texture ?? texture(Flora.leaf(species))
                 shades[s] = Flora.leafColors(species).enumerated().map { i, leaf in
-                    let wood = scene.addMaterial(albedo: Flora.barkColor(species))
-                    let leaves = scene.addMaterial(albedo: leaf, translucency: Flora.translucency(species))
-                    if let autumn = Flora.autumn(species) {   // each shade turns at its own time, and to its own shade of it
-                        scene.addSeasonal(SeasonalMaterial(material: leaves, summer: leaf, autumn: autumn * (0.8 + 0.2 * Float(i)),
-                                                           turn: 0.52 + 0.07 * Float(i)))
-                    }
+                    let wood = scene.addMaterial(albedo: Flora.barkColor(species) * gain, texture: bark)
+                    let leaves = scene.addMaterial(albedo: leaf * gain, translucency: Flora.translucency(species), texture: blade)
+                    // Each shade turns at its own time, and to its own shade of autumn.
+                    scene.addLeafMaterial(LeafMaterial(material: leaves, summer: leaf, autumn: Flora.autumn(species).map { $0 * (0.8 + 0.2 * Float(i)) },
+                                                       turn: 0.52 + 0.07 * Float(i), translucency: Flora.translucency(species), gain: gain))
                     return wood
                 }
             }
@@ -177,11 +207,6 @@ extension Scene {
     func buildForest() {
         let seed = UInt64(max(settings.seed, 0))
         let terrain = Terrain(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
-        let ground = addMaterial(albedo: [0.15, 0.13, 0.075])   // leaf litter and soil
-        addInstance(addMesh(terrain.mesh()), ground, matrix_identity_float4x4)
-
-        let flora = Flora(self, seed: seed)
-        var rng = SplitMix64(seed: seed &* 0x2545_F491_4F6C_DD1D &+ 0xF07E57)
         let half = terrain.size / 2, undergrowth = Float(settings.undergrowth) / 100
         let noiseSeed = UInt32(truncatingIfNeeded: seed) &+ 101
         func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
@@ -191,6 +216,23 @@ extension Scene {
         /// 0 on the trail, 1 away from it.
         func offTrail(_ x: Float, _ z: Float) -> Float { z < 4 ? smoothstep(1.5, 4.5, abs(x - Scene.trail(z))) : 1 }
         func stand(_ x: Float, _ z: Float) -> Float { Terrain.noise(SIMD2(x, z) / 55, seed: noiseSeed) }   // which species grows where
+
+        // The ground's colours, a texel every 31 cm: leaf litter and soil under the trees, moss in patches, greener in
+        // the clearing, the trail's bare earth, rock where it is steep.
+        let colors = FoliageTextures.image(1024, 1024) { u, v in
+            let x = (u - 0.5) * terrain.size, z = (v - 0.5) * terrain.size, p = SIMD2(x, z)
+            var color = SIMD3<Float>(0.15, 0.13, 0.075)
+            color += (SIMD3(0.085, 0.13, 0.05) - color) * smoothstep(0.05, 0.3, Terrain.noise(p / 9, seed: noiseSeed &+ 31)) * 0.7
+            color += (SIMD3(0.12, 0.16, 0.06) - color) * (1 - smoothstep(34, 70, length(p))) * 0.8
+            color += (SIMD3(0.24, 0.23, 0.21) - color) * (1 - smoothstep(0.7, 0.85, terrain.normal(x, z).y))
+            color += (SIMD3(0.27, 0.215, 0.145) - color) * (1 - offTrail(x, z))
+            return color * (1 + 0.45 * Terrain.noise(p / 2.5, seed: noiseSeed &+ 32) + 0.35 * Terrain.noise(p / 0.7, seed: noiseSeed &+ 33))
+        }
+        let ground = addMaterial(albedo: [1, 1, 1], texture: addGeneratedTexture(colors, name: "ground"))
+        addInstance(addMesh(terrain.mesh()), ground, matrix_identity_float4x4)
+
+        let flora = Flora(self, seed: seed)
+        var rng = SplitMix64(seed: seed &* 0x2545_F491_4F6C_DD1D &+ 0xF07E57)
 
         // Trees: one candidate per cell of a grid (jittered inside it, so no two stand too close), kept by the
         // ground's density there; of those, `trees` by a random rank.

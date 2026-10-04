@@ -93,9 +93,11 @@ struct RTInstance {
     float4 row2;
     uint blasRoot;
     uint mask;
-    uint pad0;
-    uint pad1;
+    uint pad0;    // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
+    uint pad1;    // FOLIAGE: RT_ASSEMBLY bits = assembly + 1 (blasRoot is then its tree of parts), the top byte = the
+                  // voxel level it is traced at this frame + 1, or 0 for its triangles; RT_SWAYS = ground cover
 };
+constant uint RT_ASSEMBLY = 0x7FFFFFu, RT_SWAYS = 0x800000u;
 
 struct RTPart {
     float4 row0;  // plant -> part rows
@@ -159,8 +161,9 @@ struct RTScene {
                                           // leaves that have fallen (the season)
     device const RTVoxels*   voxelGrids;  // per assembly
     device const uint*       voxels;      // their cells
+    device const uchar*      cutouts;     // leaf cards' alpha layers, CUTOUT_SIZE squared each (ALPHA_TEST)
 };
-static_assert(sizeof(RTScene) == 160, "RTScene: CustomRayTracer.writeArgs writes these offsets");
+static_assert(sizeof(RTScene) == 176 && __builtin_offsetof(RTScene, cutouts) == 160, "RTScene: CustomRayTracer.writeArgs writes these offsets");
 
 #ifndef RT_STATS
 #define RT_STATS 0
@@ -239,9 +242,26 @@ inline float3 rtSafeInverse(float3 d) {
     return 1.0f / select(d, copysign(float3(1e-12f), d), abs(d) < 1e-12f);
 }
 
+constant uint CUTOUT_SIZE = 512;   // a leaf-card alpha layer's side (FoliageTextures.cardSheetSize)
+
+// A leaf card is there only where its picture is. Its triangles carry their corners' UVs (10 bits a coordinate) and
+// their alpha layer + 1 in the spare floats of their edges (BVHBuilder.cutoutBits); two zero words: not a card.
+inline bool rtCutout(device const uchar* cutouts, uint a, uint b, float u, float v) {
+    uint layer = (a >> 30) | ((b >> 30) << 2);
+    if (layer == 0) return true;
+    float2 t0 = float2(float(a & 1023u), float((a >> 10) & 1023u));
+    float2 t1 = float2(float((a >> 20) & 1023u), float(b & 1023u));
+    float2 t2 = float2(float((b >> 10) & 1023u), float((b >> 20) & 1023u));
+    float2 uv = (t0 + (t1 - t0) * u + (t2 - t0) * v) * (float(CUTOUT_SIZE) / 1024.0f);
+    uint2 texel = min(uint2(uv), uint2(CUTOUT_SIZE - 1u));
+    return cutouts[((layer - 1u) * CUTOUT_SIZE + texel.y) * CUTOUT_SIZE + texel.x] != 0;
+}
+
 // Möller-Trumbore, both faces. Updates h (closest so far) and returns true on a nearer hit.
-// `limit`: triangles of the mesh from this one on aren't there (a plant's fallen leaves).
-inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, float tmin, thread Hit& h, uint limit = 0xFFFFFFFFu) {
+// `limit`: triangles of the mesh from this one on aren't there (a plant's fallen leaves). `cutouts`: the alpha
+// layers its leaf cards are tested against.
+inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, float tmin, thread Hit& h, uint limit = 0xFFFFFFFFu,
+                       device const uchar* cutouts = nullptr) {
     float3 pv = cross(d, e2.xyz);
     float det = dot(e1.xyz, pv);
     if (det == 0.0f) return false;
@@ -254,6 +274,7 @@ inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, floa
     if (v < 0.0f || u + v > 1.0f) return false;
     float t = dot(e2.xyz, qv) * inv;
     if (t < tmin || t > h.distance || as_type<uint>(v0.w) >= limit) return false;
+    if (ALPHA_TEST && cutouts != nullptr && !rtCutout(cutouts, as_type<uint>(e1.w), as_type<uint>(e2.w), u, v)) return false;
     h.hit = true;
     h.distance = t;
     h.barycentrics = float2(u, v);
@@ -471,7 +492,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     oi = -o * inv;
                     instance = id;
                     RT_COUNT(3, 1u);
-                    uint assembly = inst.pad1 & 0xFFFFFFu, voxelLevel = inst.pad1 >> 24;
+                    uint assembly = inst.pad1 & RT_ASSEMBLY, voxelLevel = inst.pad1 >> 24;
                     if (FOLIAGE && assembly != 0) {   // an assembly: the tree over its parts, in the plant's space
                         if (windy) {   // ... as it stands before the wind leans it: the root's turn, undone
                             PlantWind plant = plantWind(sc.wind, sc.windTime.x, inst.row0, inst.row1, inst.row2, id);
@@ -499,6 +520,13 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                             continue;
                         }
                     } else {
+                        if (windy && (inst.pad1 & RT_SWAYS) != 0) {   // ground cover: the ray, sheared back to where it stands at rest
+                            float3 lean = coverLean(sc.wind, sc.windTime.x, inst.row0, inst.row1, inst.row2);
+                            o -= lean * o.y;
+                            d -= lean * d.y;
+                            inv = rtSafeInverse(d);
+                            oi = -o * inv;
+                        }
                         stack[sp++] = RT_INSTANCE_EXIT;
                         ref = root;
                         level = 2;
@@ -534,7 +562,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     if (p.leafCount != 0) limit = p.firstLeaf + uint(float(p.leafCount) * plantKeep(sc.windTime.w, instance));
                 }
                 for (uint t = first; t < end; ++t) {
-                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h, limit)) {
+                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h, limit, bottomTris == sc.tris ? sc.cutouts : nullptr)) {   // a virtual BLAS keeps other things there
                         h.instance = instance;
                         h.cluster = HIT_NO_CLUSTER;
                         h.part = part;

@@ -33,13 +33,13 @@ enum FoliageVoxels {
 
     /// Every assembly's grid (offsets from 0: `build` places them) and cells. The plants are voxelised in parallel.
     static func build(scene: Scene) -> (grids: [Grid], cells: [UInt32]) {
-        let assemblies = scene.assemblies
+        let assemblies = scene.assemblies, coverage = scene.cutouts.map(\.coverage)
         var built = [(grid: Grid, cells: [UInt32])](repeating: (Grid(), []), count: assemblies.count)
         scene.positions.withUnsafeBufferPointer { positions in
             scene.indices.withUnsafeBufferPointer { indices in
                 built.withUnsafeMutableBufferPointer { slots in
                     DispatchQueue.concurrentPerform(iterations: assemblies.count) { a in
-                        slots[a] = voxelise(assemblies[a], meshes: scene.meshes, positions: positions, indices: indices)
+                        slots[a] = voxelise(assemblies[a], meshes: scene.meshes, coverage: coverage, positions: positions, indices: indices)
                     }
                 }
             }
@@ -63,7 +63,7 @@ enum FoliageVoxels {
         return UInt32(q.x) | UInt32(q.y) << 8
     }
 
-    private static func voxelise(_ assembly: Scene.Assembly, meshes: [GPUMesh], positions: UnsafeBufferPointer<SIMD3<Float>>,
+    private static func voxelise(_ assembly: Scene.Assembly, meshes: [GPUMesh], coverage: [Float], positions: UnsafeBufferPointer<SIMD3<Float>>,
                                  indices: UnsafeBufferPointer<UInt32>) -> (grid: Grid, cells: [UInt32]) {
         var box = AABB()
         for part in assembly.parts { box.grow(part.bounds) }
@@ -92,7 +92,10 @@ enum FoliageVoxels {
                 if dot(n, p0 + (e1 + e2) / 3 - heart) < 0 { n = -n }
                 // A triangle bigger than a voxel (the trunk's) is spread over k x k points of it.
                 let k = min(max(Int((max(length(e1), length(e2)) / (0.7 * size)).rounded(.up)), 1), 16)
-                let share = twice / 2 / Float(k * k), isLeaf = UInt32(t) >= part.firstLeaf
+                // A card is only there where its picture is: its area counts by that share.
+                let isLeaf = UInt32(t) >= part.firstLeaf
+                let there = isLeaf && mesh.cutout != 0 ? coverage[Int(mesh.cutout >> 24) - 1] : 1
+                let share = twice / 2 / Float(k * k) * there
                 for i in 0..<k {
                     for j in 0..<(2 * (k - i) - 1) {
                         // The centroids of the k x k small triangles: row i has k - i upright ones and k - i - 1 flipped.

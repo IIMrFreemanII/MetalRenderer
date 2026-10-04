@@ -101,7 +101,9 @@ final class CustomRayTracer {
     private let staticRoot: UInt32
     private let dynamicIds: [Int]                 // scene instances that can move (animated objects, light spheres)
     private let blasRoots: [UInt32]
-    private let meshBounds: [AABB]
+    private let meshBounds: [AABB]                // as their instances' boxes are made from: ground cover's with room to lean
+    private let swayingMeshes: [Bool]
+    static let sways: UInt32 = 0x80_0000          // RT_SWAYS in RTInstance.pad1
     /// Assemblies (generated plants): a tree over each one's parts, kept after the static trees in the top-level node
     /// buffer (in the plant's space, shared by all its instances), and every part's record.
     private let assemblyRoots: [UInt32]
@@ -118,11 +120,13 @@ final class CustomRayTracer {
     /// The assemblies as voxel grids, for the ones far from the camera (FoliageVoxels).
     private let voxelGrids: MTLBuffer
     private let voxels: MTLBuffer
-    /// The RTScene record: its fields end at 160 bytes (Shaders/Intersect.metal asserts it); the rest is spare.
+    /// The leaf cards' alpha layers, one after another (Scene.cutouts): a byte a texel.
+    private let cutouts: MTLBuffer
+    /// The RTScene record: its fields end at 168 bytes (176 with its alignment) (Shaders/Intersect.metal asserts it); the rest is spare.
     private static let argsSize = 256
     private let cpu: (blas: BVHBuilder.BLASResult, tris: [SIMD4<Float>])   // kept for the self-test
     // GPU build inputs and scratch (shared by the frame slots: Metal orders the passes that use them).
-    private let meshInfo: MTLBuffer               // per mesh: (box min, BLAS root bits), (box max, 0)
+    private let meshInfo: MTLBuffer               // per mesh: (box min, BLAS root bits), (box max, RTInstance.pad1 bits)
     private let dynSlot: MTLBuffer                // per instance: index among the moving ones, or ~0
     private let leafBoxes: MTLBuffer              // per moving instance: (min, instance id bits), (max, mask bits)
     private let keys: MTLBuffer, values: MTLBuffer
@@ -155,9 +159,17 @@ final class CustomRayTracer {
         self.device = device
         let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
-        let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes)
+        let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
         blasRoots = blas.roots
-        meshBounds = blas.bounds
+        // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it.
+        var instanceBounds = blas.bounds
+        for (m, mesh) in scene.meshes.enumerated() where mesh.sways != 0 {
+            let reach = Scene.coverLean * max(abs(instanceBounds[m].lo.y), abs(instanceBounds[m].hi.y))
+            instanceBounds[m].lo -= SIMD3(reach, 0, reach)
+            instanceBounds[m].hi += SIMD3(reach, 0, reach)
+        }
+        meshBounds = instanceBounds
+        swayingMeshes = scene.meshes.map { $0.sways != 0 }
         cpu = (blas, blas.triangles)
 
         // Static instances in two groups: the geometry, and the proxies of lights that stay in place (thousands of bulbs
@@ -191,7 +203,7 @@ final class CustomRayTracer {
         precondition(MemoryLayout<RTPart>.stride == 128, "RTPart: Shaders/Intersect.metal")
         assemblyBounds = plantBounds
         func bounds(_ inst: Scene.Instance) -> AABB {
-            inst.mesh >= 0 ? blas.bounds[inst.mesh] : inst.assembly >= 0 ? plantBounds[inst.assembly] : scene.virtualMeshes[inst.virtualMesh].bounds
+            inst.mesh >= 0 ? instanceBounds[inst.mesh] : inst.assembly >= 0 ? plantBounds[inst.assembly] : scene.virtualMeshes[inst.virtualMesh].bounds
         }
         for (i, inst) in sceneInstances.enumerated() {
             if inst.virtualMesh >= 0 { virtualInstances.append((i, inst.virtualMesh)) }
@@ -278,8 +290,8 @@ final class CustomRayTracer {
         instanceCount = sceneInstances.count
         paddedCount = max(2, 1 << Int(ceil(log2(Double(max(dyn.count, 2))))))
         var info: [SIMD4<Float>] = []
-        for (m, b) in blas.bounds.enumerated() {
-            info += [SIMD4(b.lo, Float(bitPattern: blas.roots[m])), SIMD4(b.hi, 0)]
+        for (m, b) in instanceBounds.enumerated() {
+            info += [SIMD4(b.lo, Float(bitPattern: blas.roots[m])), SIMD4(b.hi, Float(bitPattern: swayingMeshes[m] ? CustomRayTracer.sways : 0))]
         }
         for vm in scene.virtualMeshes {   // after the ordinary meshes (GPUInstanceData.meshIndex of virtual instances)
             info += [SIMD4(vm.bounds.lo, 0), SIMD4(vm.bounds.hi, 0)]
@@ -292,6 +304,7 @@ final class CustomRayTracer {
         let grids = FoliageVoxels.build(scene: scene)
         voxelGrids = try buffer(grids.grids, "rtVoxelGrids")
         voxels = try buffer(grids.cells, "rtVoxels")
+        cutouts = try buffer(scene.cutouts.flatMap(\.alpha), "rtCutouts")
         if !grids.grids.isEmpty {
             print(String(format: "Plant voxels: %d grids, %.1f MB, built in %.1f ms", grids.grids.count,
                          Double(grids.cells.count * 4) / 1e6, (CACurrentMediaTime() - voxelStart) * 1000))
@@ -340,15 +353,16 @@ final class CustomRayTracer {
         p.storeBytes(of: parts.gpuAddress, toByteOffset: 96, as: UInt64.self)
         p.storeBytes(of: voxelGrids.gpuAddress, toByteOffset: 144, as: UInt64.self)
         p.storeBytes(of: voxels.gpuAddress, toByteOffset: 152, as: UInt64.self)
+        p.storeBytes(of: cutouts.gpuAddress, toByteOffset: 160, as: UInt64.self)
     }
 
     /// `blasRoot`: the mesh's, or for an assembly the root of the tree over its parts (`pad1` is then its number + 1).
-    static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32) -> RTInstance {
+    static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32, sways: Bool = false) -> RTInstance {
         let inv = inst.transform.inverse
         return RTInstance(row0: SIMD4(inv[0][0], inv[1][0], inv[2][0], inv[3][0]),
                           row1: SIMD4(inv[0][1], inv[1][1], inv[2][1], inv[3][1]),
                           row2: SIMD4(inv[0][2], inv[1][2], inv[2][2], inv[3][2]),
-                          blasRoot: blasRoot, mask: inst.mask, pad1: UInt32(inst.assembly + 1))
+                          blasRoot: blasRoot, mask: inst.mask, pad1: UInt32(inst.assembly + 1) | (sways ? CustomRayTracer.sways : 0))
     }
 
     /// CPU build (`METALRENDERER_RT_BUILD=cpu` only): this frame's instance data and dynamic TLAS.
@@ -356,7 +370,8 @@ final class CustomRayTracer {
         guard CustomRayTracer.cpuBuild else { return }
         let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
         for (i, s) in scene.instances.enumerated() {
-            inst[i] = CustomRayTracer.rtInstance(s, blasRoot: s.mesh >= 0 ? blasRoots[s.mesh] : s.assembly >= 0 ? assemblyRoots[s.assembly] : 0)
+            inst[i] = CustomRayTracer.rtInstance(s, blasRoot: s.mesh >= 0 ? blasRoots[s.mesh] : s.assembly >= 0 ? assemblyRoots[s.assembly] : 0,
+                                                 sways: s.mesh >= 0 && swayingMeshes[s.mesh])
         }
         guard dynamicIds.count >= 2 else { return }
         let boxes = dynamicIds.map { i -> AABB in
@@ -538,7 +553,7 @@ final class CustomRayTracer {
     func bind(_ enc: ComputePass, slot: Int, declare: Bool = true) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
         guard declare else { return }
-        enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot], parts, voxelGrids, voxels] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
+        enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot], parts, voxelGrids, voxels, cutouts] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
                          + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
         enc.useResource(stats, usage: [.read, .write])
     }

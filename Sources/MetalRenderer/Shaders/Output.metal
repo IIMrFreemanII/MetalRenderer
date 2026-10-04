@@ -55,8 +55,12 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
     if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
 #if CUSTOM_RT
-    if (FOLIAGE && res.part == HIT_VOXEL) {   // a far plant's voxels have no triangles to show: flat, in the plant's colour
-        output.write(float4(mix(float3(0.2f), debugHashColor(pcgHash(res.instance + 0x51ED27u)), 0.5f), 1.0f), tid);
+    if (FOLIAGE && res.part == HIT_VOXEL) {
+        // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level
+        // its rays march (green, orange, red: each twice as coarse).
+        float3 flat = mix(float3(0.2f), debugHashColor(pcgHash(res.instance + 0x51ED27u)), 0.5f);
+        if (u.viewMode == VIEW_LOD) flat = debugHeat(0.2f + 0.25f * float(accel.instances[res.instance].pad1 >> 24));
+        output.write(float4(flat, 1.0f), tid);
         return;
     }
 #endif
@@ -97,7 +101,12 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
             break;
         case VIEW_CLUSTERS: if (isVirtual) c = debugHashColor(cluster + instanceSeed); break;
         case VIEW_GROUPS:   if (isVirtual) c = debugHashColor(group * 0x9E3779B9u + instanceSeed); break;
-        case VIEW_LOD:      if (isVirtual) c = debugHeat(0.05f + float(level) / 10.0f); break;   // 0 = finest
+        case VIEW_LOD:   // 0 = finest; a plant's triangles are its finest
+            if (isVirtual) c = debugHeat(0.05f + float(level) / 10.0f);
+#if CUSTOM_RT
+            else if (FOLIAGE && res.part != HIT_NO_PART) c = debugHeat(0.05f);
+#endif
+            break;
         case VIEW_TRIANGLE_SIZE: {
             // Edge length (of a right triangle with the same area) in traced pixels: 1/8 px blue, 1 px green, 8 px red.
             float footprint = res.distance * 2.0f * u.camUp.w / float(u.height);

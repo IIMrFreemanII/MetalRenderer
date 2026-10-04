@@ -36,8 +36,8 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
     r.blasRoot = as_type<uint>(lo.w);
     r.mask = inst.pad0;
     r.pad0 = inst.pad1;   // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
-    r.pad1 = as_type<uint>(hi.w);   // assembly + 1 (the root above is then its tree of parts), or 0
-    if (FOLIAGE && r.pad1 != 0 && lodView.w > 0.0f) {
+    r.pad1 = as_type<uint>(hi.w);   // assembly + 1 (the root above is then its tree of parts) or RT_SWAYS, or 0
+    if (FOLIAGE && (r.pad1 & RT_ASSEMBLY) != 0 && lodView.w > 0.0f) {
         // A plant far from the camera is traced as its voxels: the level whose voxels are about `bias` traced pixels
         // there, + 1, in the top byte. Every ray sees a plant the same way (it goes by the camera, not the ray), and
         // each plant changes over at a distance of its own, so no line of them does at once.

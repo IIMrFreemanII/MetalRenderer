@@ -286,7 +286,16 @@ enum BVHBuilder {
     }
 
     /// One BLAS per mesh, all in one node buffer and one triangle buffer. Meshes are built in parallel.
-    static func buildBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh]) -> BLASResult {
+    /// A card triangle's three UVs, 10 bits a coordinate (0...1023 of 1024), and its alpha layer + 1 (1...15), in two
+    /// words: rtCutout in Shaders/Intersect.metal reads them back. Two zero words: not a card.
+    static func cutoutBits(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, layer: UInt32) -> (UInt32, UInt32) {
+        func q(_ x: Float) -> UInt32 { UInt32(min(max((x * 1024).rounded(), 0), 1023)) }
+        return (q(a.x) | q(a.y) << 10 | q(b.x) << 20 | (layer & 3) << 30, q(b.y) | q(c.x) << 10 | q(c.y) << 20 | (layer >> 2) << 30)
+    }
+
+    /// A leaf card's triangles (`GPUMesh.cutout`) carry their corners' UVs and alpha layer in the edges' spare floats
+    /// (`cutoutBits`), for the traversal's alpha test; `uvs` is only read for those.
+    static func buildBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh], uvs: [SIMD2<Float>] = []) -> BLASResult {
         var trees = [(nodes: [Node], order: [Int])](repeating: ([], []), count: meshes.count)
         // Each mesh's first triangle in the shared triangle buffer (its triangles keep their count, reordered).
         var triBases = [Int](repeating: 0, count: meshes.count + 1)
@@ -295,6 +304,7 @@ enum BVHBuilder {
         result.triangles = [SIMD4<Float>](repeating: .zero, count: 3 * triBases[meshes.count])
         positions.withUnsafeBufferPointer { pos in
             indices.withUnsafeBufferPointer { idx in
+              uvs.withUnsafeBufferPointer { uv in
                 trees.withUnsafeMutableBufferPointer { slots in
                     result.triangles.withUnsafeMutableBufferPointer { tris in
                         DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
@@ -313,15 +323,20 @@ enum BVHBuilder {
                             for t in tree.order {
                                 let base = first + 3 * t
                                 let p0 = pos[Int(idx[base])], p1 = pos[Int(idx[base + 1])], p2 = pos[Int(idx[base + 2])]
+                                var spare = (UInt32(0), UInt32(0))
+                                if mesh.cutout != 0, t >= Int(mesh.cutout & 0xFF_FFFF) {
+                                    spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: mesh.cutout >> 24)
+                                }
                                 tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
-                                tris[out + 1] = SIMD4(p1 - p0, 0)
-                                tris[out + 2] = SIMD4(p2 - p0, 0)
+                                tris[out + 1] = SIMD4(p1 - p0, Float(bitPattern: spare.0))
+                                tris[out + 2] = SIMD4(p2 - p0, Float(bitPattern: spare.1))
                                 out += 3
                             }
                             slots[m] = tree   // its own slot: no lock
                         }
                     }
                 }
+              }
             }
         }
         // Each mesh's nodes go to its own range of the node buffer: a tree of n leaves has n - 1 child-pair nodes (a
