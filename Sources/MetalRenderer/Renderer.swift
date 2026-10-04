@@ -593,7 +593,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let virtual = rayTracer == .custom && options.virtualGeometry
         // Generated plants are assemblies for the custom tracer and baked meshes for Metal's: another scene.
         let assemblies = rayTracer == .custom
-        let reused = current.flatMap { $0.usesVirtualGeometry == virtual && (!$0.hasPlants || $0.usesAssemblies == (assemblies && Scene.assembliesEnabled)) ? $0 : nil }
+        let reused = current.flatMap { $0.usesVirtualGeometry == virtual && (!$0.hasPlants || $0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants)) ? $0 : nil }
         let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies)
         let streamer = newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
             : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
@@ -1381,7 +1381,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         u.lightTable = SIMD4(UInt32(table.entries.count), UInt32(table.suns.count),
                              table.suns.first ?? 0, table.suns.count > 1 ? table.suns[1] : 0)
         if skyActive { u.flags |= UniformFlags.skyMap }
-        if settings.foliage.wind > 0 && !scene.assemblies.isEmpty { u.flags |= UniformFlags.wind }
+        if settings.foliage.wind > 0 && scene.hasFoliage { u.flags |= UniformFlags.wind }
         return u
     }
 
@@ -1574,7 +1574,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if !settings.paused { animTime += dt * settings.timeScale }
         // The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
         scene.update(time: animTime, dayTime: animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0))
-        scene.setSeason(settings.foliage.season)
+        scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }
 
     /// The wind on the plants this frame (custom ray tracer: Shaders/Foliage.metal).

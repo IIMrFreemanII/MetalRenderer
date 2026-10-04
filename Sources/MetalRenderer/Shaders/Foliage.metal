@@ -9,6 +9,7 @@
 // nothing is rebuilt. The boxes of the parts and plants are padded by the largest turn (Scene.Flora).
 
 constant float WIND_ROOT_SWAY = 0.022f;    // radians at full wind: the trunk's lean plus its swing
+constant float WIND_COVER_LEAN = 0.2f;     // how far grass and ferns lean at full wind, per unit of their height
 constant float WIND_LIMB_SPEED = 1.5f;     // radians per second of a limb's swing; boughs are quicker
 constant float WIND_BOUGH_SPEED = 3.4f;
 
@@ -69,3 +70,17 @@ inline float3 windTurn(float3 v, float3 axis, float angle) {
     return v + cross(axis, v) * s + (axis * dot(axis, v) - v) * oneMinusC;
 }
 inline float3 windTurn(float3 p, float3 pivot, float3 axis, float angle) { return pivot + windTurn(p - pivot, axis, angle); }
+
+// Ground cover (grass, ferns) has no bones: a patch leans as a whole, each point downwind by its height times this
+// (object space, level: the patch stands along +y). A shear is undone exactly by the opposite one, so the traversal
+// shears the ray back as it enters the patch, as it turns it back for a plant. The swing is a wave travelling
+// downwind, not the patch's own, so neighbouring patches move together. `row0...2`: world -> object, as for plantWind.
+inline float3 coverLean(float4 wind, float time, float4 row0, float4 row1, float4 row2) {
+    float3 origin = -(row0.xyz * row0.w + row1.xyz * row1.w + row2.xyz * row2.w) / dot(row0.xyz, row0.xyz);
+    float3 to = float3(wind.x, 0.0f, wind.y);
+    float2 downwind = float2(dot(row0.xyz, to), dot(row2.xyz, to));
+    float swing = 0.6f + 0.4f * windWave(time * 2.6f - dot(wind.xy, origin.xz) * 0.9f);
+    float lean = wind.z * WIND_COVER_LEAN * windGust(wind, origin, time) * swing;
+    downwind *= lean / max(length(downwind), 1e-6f);
+    return float3(downwind.x, 0.0f, downwind.y);
+}

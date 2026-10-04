@@ -289,6 +289,8 @@ enum SettingsTable {
                 .env(.foliage, "dir").when(plants).enabled(assemblies),
             S.slider("Gusts", \.foliage.gusts, FoliageSettings.gustRange, step: 0.05, fmt("%.2f")).env(.foliage, "gusts").when(plants).enabled(assemblies),
             S.slider("Season", \.foliage.season, FoliageSettings.seasonRange, step: 0.02, fmt("%.2f")).env(.foliage, "season").when(plants),
+            S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
+                .env(.foliage, "translucency").when(plants),
             S.slider("Distance LOD (voxels)", \.foliage.lod, FoliageSettings.lodRange, step: 0.25, fmt("%.2g px"))
                 .env(.foliage, "lod").when(plants).enabled(assemblies),
         ])
@@ -310,6 +312,9 @@ enum SettingsTable {
                 .env(.scene, "undergrowth").when { $0.scene.kind == .forest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
+            S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
+            S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }
+                .enabled(customTracer).advanced(),
             S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)

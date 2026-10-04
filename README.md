@@ -10,7 +10,8 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * the glTF **Gallery**;
   * six light demos (see "Light types" below);
   * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
-  * an **Open valley** for the sky and clouds (see "Sky and clouds" below).
+  * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
+  * a **Forest** of generated trees, bushes, ferns and grass on rolling ground (see "Generated plants" below).
 * **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
   * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
@@ -22,6 +23,11 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * In front of either sky there are volumetric clouds, and their shadows drift over the scene.
   * The sky lights everything: camera view, GI, reflections, fog.
   * Cost: 0.2–1 ms per frame, whatever the resolution.
+* **Generated plants:** oaks, birches, conifers, dead trees, bushes, ferns and grass, grown from a seed in about 2 ms.
+  * A tree is an **assembly**: a trunk, limbs and a few hundred placed copies of six shared boughs. The forest's 2,500 trees are 29 plants of 3,500 parts.
+  * **Wind** turns every limb and bough about its bone, and leans the grass, without rebuilding anything.
+  * Far plants are traced as **voxels**; a **season** setting turns the leaves and drops them; leaves let light through.
+  * Assemblies, wind, voxels and leaf fall are the custom tracer's. Metal's tracer renders the same plants as plain, still meshes.
 * **Volumetric fog and light:** height fog with drifting noise, plus soft-edged local fog volumes (ground mist, a stage haze, a glow around a lamp).
   * Every light type scatters in it, with ray-traced shadows, so sunlight falls in shafts through windows and spot beams are visible.
   * It is computed in a camera-aligned voxel grid ("froxels"), 8×8 traced pixels by 64 depth slices.
@@ -170,6 +176,14 @@ For the sky:
 * `Tools/test-assets/make-test-sky.py out.hdr [elevation] [azimuth]` writes a synthetic equirectangular test sky with a sun.
 * `METALRENDERER_BENCH=sky` renders the valley at morning, forenoon, noon, afternoon and evening, from the ground and from the air, plus the sun and mixed scenes. It adds clear-sky, no-cloud-shadow and constant-sky variants, then moving frames. It takes `METALRENDERER_LIGHTS_SCENES`.
 * `METALRENDERER_BENCH=skycheck` renders the valley in the afternoon, with a cloud shadow's edge in view. Each GI method runs against a 4-bounce path-traced reference, for the final image and indirect light, with cloud shadows on and off.
+
+For the plants:
+* `METALRENDERER_SCENE=forest` starts in the Forest; `trees=2500`, `undergrowth=100` (bushes, ferns and grass, percent) and `seed=1` change it. `seed` also picks the valley's trees.
+* `METALRENDERER_SCENE=forest,cards=1` shows the trees' leaves as cards; `baked=1` bakes the plants into plain meshes on the custom tracer too.
+* `METALRENDERER_FOLIAGE="wind=0.4,dir=25,gusts=0.7,season=0.3,translucency=1,lod=2"` sets the Foliage section of the panel.
+* `METALRENDERER_BENCH=forest` renders the forest paused (from the clearing, from above, close to a trunk, with 10,000 trees), then moving, natively and at 3×.
+* `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
+* `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
 
 The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com): install it before cloning (`brew install git-lfs && git lfs install`), or run `git lfs pull` afterwards. `.gitattributes` sends 3D models (`.glb`, `.fbx`, `.obj`, `.usd(z)`, `.blend`), HDR skies (`.hdr`, `.exr`) and the buffers and textures under `Assets/` to LFS. Put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
@@ -549,6 +563,79 @@ The first frame of a sky also draws the noise and the atmosphere's tables, and r
 * Cloud shadows cover a square around the scene's bounding sphere.
 * An image's sun needs a sun light in the scene to land on; without one, the image still lights GI.
 
+### Generated plants
+
+The plants are made at load time from a seed (`Foliage*.swift`); nothing is read from disk. The design follows Unreal Engine 5.7's Megaplants (the Procedural Vegetation Editor, Nanite Assemblies, skinning and voxels), adapted to a renderer that only traces rays.
+
+**The generator** is a chain of plain functions over a `Recipe`:
+* **Grower:** recursive, parametric growth by levels (trunk, limbs, twigs), in the manner of Weber and Penn, inside a crown shape. A plant's age (sapling, young, mature) scales its levels, lengths and counts.
+* **Modifiers:** curvature, gravity and light (a pull up or down per level), and carving against an ellipsoid (bushes).
+* **Mesher:** stems as tubes with fewer sides per level and one vertex at the tip; ribbons for fern stalks and grass. A mesh's size is counted first and filled by index, in parallel, one slot per plant.
+* **Leaf distributor:** leaves along the twigs by phyllotaxis (spiral, two rows, whorls), in a shuffled order, so any leading part of them is a random sample.
+* **Graft distributor:** each species has six **boughs** (a twig with side twigs and leaves, 330–850 triangles). A tree hangs them on its limbs, turned and scaled, a few hundred times.
+* The same seed gives the same plants, built in parallel or on one thread (`FoliageTests`).
+
+The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
+
+**The Forest** is 320 m of rolling ground (a heightfield, 205k triangles) with a level clearing around the camera and a trail leading out. Trees stand on a jittered grid, thinned by slope and a noise; conifers take the hills, oaks the low ground, birches the clearing's edge and the trail. Bushes and ferns grow under them, and grass in 2 m patches of 800 blades around the clearing. The valley's trees are the same plants.
+
+**Custom tracer:**
+
+| Megaplants feature | Here |
+|---|---|
+| Nanite Assemblies | A third instancing level. A plant is a tree over its parts, stored once with the static top-level nodes and shared by all its instances; a part is a placed mesh. The forest stores 283k triangles instead of 2.25M, and its BVH builds in 65 ms instead of 144. |
+| Skinning and wind | Every part has two rigid bones (its limb, and itself on that limb), and the plant leans about its foot. The turns are functions of the time: the traversal turns the ray back as it enters a plant and a part, and the shading turns the hit point forward, at this frame's time and the last one's, so moving leaves have motion vectors. Only the part boxes' padding is refitted, when the wind's strength changes. Grass and ferns have no bones: a patch is sheared downwind by its height, which the traversal undoes the same way. |
+| Nanite Voxels | Each plant has a 32-voxel grid with two coarser levels (1.7 MB for the forest). A voxel holds its optical depth, its share of leaf and its mean normal. A plant whose voxels are about 2 traced pixels (the `lod` setting) is marched instead of traced, and a ray stops in a voxel with the probability that it would have hit something there. Every ray sees a plant the same way, since the level goes by the camera. |
+| Seasons | The Season setting recolours the leaf materials, each shade of each species in its own time, and from late autumn drops leaves: a plant traces only the first part of each bough's (shuffled) leaf triangles. Conifers keep theirs. |
+| Two-sided foliage | A share of the leaves (35% for broad leaves) shows the light of its far side: for those, lighting, shadow rays and bounces use the flipped normal. Which leaves is fixed per leaf. It is an approximation: a leaf is lit from one side or the other, never both. The path-traced reference does the same, so the GI methods agree with it (below) without that proving it right. |
+
+**Textures** are generated too (`FoliageTextures.swift`): furrowed bark, birch bark, a veined leaf, a needle, a grass blade, and a colour map of the forest's ground (moss, the clearing, the trail, rock on slopes). A plant's texture is detail on its material's colour and has a fixed mean, so a plant's far voxels, which use the colour alone, match its triangles (within 1% from above).
+
+**Leaves as cards** (`cards=1`, off by default): each stretch of twig becomes two crossed rectangles showing a picture of the twig with its leaves, cut out by an alpha mask. The mask's texel coordinates ride in the spare floats of the card's triangles, and the traversal tests them (`rtCutout`). Custom tracer only; with Metal's, the leaves stay meshes.
+
+| Foliage setting | Default | Effect |
+|---|---|---|
+| Wind | 0.4 where there are plants | 0 = still, 1 = strong. At 0 the wind code is compiled out of the kernels. |
+| Wind direction, Gusts | 25°, 0.7 | Where it blows to; how much it comes in waves, which travel downwind. |
+| Season | 0.3 | 0 = spring, 0.3 = summer, 0.5–0.8 the leaves turn and fall, 1 = winter. |
+| Leaf translucency | 1 | Scales every species' share of backlit leaves; 0 = opaque leaves. |
+| Distance LOD (voxels) | 2 px | The voxel size, in traced pixels, at which a plant is marched instead of traced. 0 = never. At 4, near trees turn visibly grainy. |
+| Trees, Undergrowth, Plant seed | 2500, 100%, 1 | The Forest. Applied when the slider is released. |
+| Leaves as cards, Plants as plain meshes | Off | See above. |
+
+**Cost** on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METALRENDERER_BENCH=forest`, "forest moving 3x"), whole frame and the trace pass:
+
+| | Frame | Trace |
+|---|---|---|
+| Custom tracer, wind 0.4 (the default) | 12.8 ms | 6.6 ms |
+| Wind off | 11.1 ms | 5.4 ms |
+| Autumn (season 0.8) | 14.4 ms | 7.5 ms |
+| Voxels off (`lod=0`) | 13.1 ms | 6.7 ms |
+| Leaves as cards | 14.6 ms | 7.6 ms |
+| Plants as plain meshes (`baked=1`), still | 10.0 ms | 4.5 ms |
+| Metal's tracer (hardware ray tracing), plain meshes, still | 3.1 ms | 0.7 ms |
+
+* On this Mac, Metal's hardware ray tracing is three times faster on the baked forest than the custom tracer, and it gets none of the wind, the voxels or the leaf fall. The forest wasn't measured on a Mac without ray-tracing hardware.
+* The valley costs 2.5 ms a frame with its 16 generated trees, up from 1.9 ms with the box-and-sphere placeholders (2.4 ms with the wind off).
+
+**Checks** (`METALRENDERER_BENCH=forestcheck`):
+* The forest as assemblies and as baked meshes, with opaque leaves, from the clearing and from above: the same mean brightness (79.4 against 79.3, 72.8 against 72.8 of 255), and single pixels differing on thin geometry (1–3% of them by more than 8 levels).
+* Leaves against the sun, each GI method against a 512-frame path-traced reference: means within 1% (71.3 for the reference; 70.9 path traced, 71.2 cascades, 70.6 ReSTIR GI).
+* The LOD level view from above: triangles blue, the three voxel levels green, orange and red.
+* Scenes without plants render bit-identical to before the plants were added (Cornell, stress, market, gallery).
+
+**What didn't help:**
+* **Leaf cards.** They store fewer triangles (the forest's 24 boughs lose 9,900 of theirs) and are 13% slower (14.6 against 12.9 ms). A ray visits as many nodes and tests more triangles (13 against 9 per ray), because a card's box covers the whole twig, and each candidate hit reads the mask. One card per twig instead of two crossed was no faster. They are kept as an option.
+* **A 64-voxel grid.** Marching 64 steps costs more than tracing the plant's triangles, so a finer level would only ever be slower. 32 it is.
+* **Padding the parts' boxes for the strongest wind.** It cost 0.3 ms with no wind at all. The boxes are padded by the current strength, and the assemblies' nodes refitted when it changes.
+* **Keeping the leaf-fall limit in a register across the traversal loop.** 0.7 ms a frame in the wind; it is computed where a leaf is tested.
+
+**Limitations:**
+* Wind, voxels and leaf fall need the custom tracer. With Metal's the plants stand still and keep their leaves; their colours still follow the season.
+* A plant traced as voxels only leans with the wind; its boughs don't move. Far trunks are as grainy as far crowns.
+* Dead trees only lean. A patch of grass leans as one.
+* The ground's colour map has a texel every 31 cm.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -558,7 +645,7 @@ The View popup and key 9 cycle six views of what the primary rays hit. They run 
 | Triangles | A random colour per triangle, for all geometry. Virtual triangles keep their colour when the cut's BLAS is rebuilt. |
 | Clusters | A random colour per virtual-geometry cluster (up to 128 triangles); other geometry is grey. |
 | Groups | A random colour per cluster group, the unit the DAG simplifies and streams. |
-| LOD level | The cluster's DAG level on a blue (finest) to red (coarse) scale: finer near the camera, coarser far away. |
+| LOD level | The cluster's DAG level on a blue (finest) to red (coarse) scale: finer near the camera, coarser far away. Generated plants: blue where their triangles are traced, green, orange and red for the three voxel levels. |
 | Triangle size | Projected edge length in traced pixels: blue ⅛ px, green 1 px, red 8 px and more. Virtual geometry at the default error is mostly green-yellow; full-detail meshes are blue (sub-pixel triangles). |
 | Traversal cost | Node visits plus half the triangle tests of each primary ray, log scale: blue few, red ~500. Custom tracer only; Metal's intersector can't be counted, so the view is magenta. |
 
@@ -646,6 +733,13 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `Benchmark+Modes.swift` | The benchmark modes: each one's list of settings |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
 | `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, the Night market, and the light-check scene the `lightcheck` benchmark renders |
+| `Scene+Forest.swift` | Generated plants in a scene (`Flora`: materials, textures, assemblies and their wind bones) and the Forest |
+| `Foliage.swift` | The plant generator: recipes, the grower, leaf, card and bough distributors, the plant library |
+| `FoliageSpecies.swift` | Each species' recipes, by age, and its boughs' |
+| `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
+| `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
+| `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail |
+| `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
@@ -660,7 +754,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind) |
 
 ## Notes for M1 / M2 Macs
 

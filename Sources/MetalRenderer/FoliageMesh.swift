@@ -13,6 +13,7 @@ extension Foliage {
         var leafVertex: Int                 // vertices from here on are leaves'
         var leafIndex: Int                  // indices from here on
         var bounds: AABB
+        var cutout = false                  // the leaves are cards: cut out by their species' card sheet
 
         var triangles: Int { indices.count / 3 }
         var leafTriangles: Int { (indices.count - leafIndex) / 3 }
@@ -225,6 +226,30 @@ extension Foliage {
         }
     }
 
+    /// All the stems of a skeleton as tubes, then `cards` (two triangles each, in the order given).
+    static func cardMesh(_ skeleton: Skeleton, cards: [Card], up: SIMD3<Float>) -> Mesh {
+        var wood = MeshSize()
+        for s in skeleton.stems { wood = wood + stemSize(s) }
+        let side = 1 / Float(FoliageTextures.cardCells)
+        var mesh = build(wood + MeshSize(vertices: 4, indices: 6) * cards.count) { w in
+            skeleton.nodes.withUnsafeBufferPointer { nodes in
+                for s in skeleton.stems { write(s, nodes: nodes.baseAddress!, up: up, into: &w) }
+            }
+            for c in cards {
+                let u = Float(c.cell % FoliageTextures.cardCells) * side, v = Float(c.cell / FoliageTextures.cardCells) * side
+                let i = w.vertex(c.base - c.half, c.normal, SIMD2(u, v))
+                w.vertex(c.base + c.half, c.normal, SIMD2(u + side, v))
+                w.vertex(c.top + c.half, c.normal, SIMD2(u + side, v + side))
+                w.vertex(c.top - c.half, c.normal, SIMD2(u, v + side))
+                w.triangle(i, i + 1, i + 2)
+                w.triangle(i, i + 2, i + 3)
+            }
+            return (wood.vertices, wood.indices)
+        }
+        mesh.cutout = true
+        return mesh
+    }
+
     // MARK: - Grass
 
     /// A square patch of grass blades around the origin (many blades to a mesh: a blade is never an instance of its
@@ -311,7 +336,9 @@ extension Foliage {
                 return leaves ? (0, 0) : (size.vertices, size.indices)
             }
         }
-        return (bake(woodSize, leaves: false), bake(leafSize, leaves: true))
+        var leaves = bake(leafSize, leaves: true)
+        leaves.cutout = plant.parts.contains { ($0.shared ? palette[$0.mesh] : plant.meshes[$0.mesh]).cutout }
+        return (bake(woodSize, leaves: false), leaves)
     }
 
     // MARK: - Checks

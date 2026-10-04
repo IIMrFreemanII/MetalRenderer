@@ -7,7 +7,7 @@ extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
         "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
-        "lights": lights, "fog": fog, "sky": sky, "forest": forest,
+        "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
@@ -274,21 +274,54 @@ extension Benchmark {
     /// `METALRENDERER_SCENE=trees=...,seed=...,undergrowth=...` changes the forest.
     private static func forest() -> [Config] {
         let base = Config("", gi: .radianceCascades, scene: SceneSettings(kind: .forest)).still().frames(60)
-        var aerial = Camera()
-        aerial.position = [0, 55, 95]
-        aerial.pitch = -0.5
-        var close = Camera()
-        close.position = [-6, 1.6, -9]
-        close.yaw = -0.5
-        close.pitch = 0.35
         let moving = base.named("forest moving").moving()
         return [
             base.named("forest static"),
-            base.named("forest aerial").from(aerial),
-            base.named("forest closeup").from(close),
+            base.named("forest aerial").from(forestAerial),
+            base.named("forest closeup").from(forestCamera([-6, 1.6, -9], yaw: -0.5, pitch: 0.35)),
             base.named("forest 10k trees").with { $0.scene.trees = 10000 },
             moving,
             moving.named("forest moving 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 },
+        ]
+    }
+
+    private static func forestCamera(_ position: SIMD3<Float>, yaw: Float = 0, pitch: Float) -> Camera {
+        var c = Camera()
+        c.position = position
+        c.yaw = yaw
+        c.pitch = pitch
+        return c
+    }
+    private static let forestAerial = forestCamera([0, 55, 95], pitch: -0.5)
+
+    /// Checks of the forest's plants, paused, without wind or voxels:
+    /// * the plants as assemblies and baked into ordinary meshes, from the clearing and from above: the same pictures
+    ///   but for float noise (compare the PNGs);
+    /// * leaves lit from behind, looking up at the sun through a crown: a path-traced reference, then each GI method.
+    ///   The reference shades leaves the same way (a share of them shows its far side's light, `orientNormals`), so
+    ///   this checks that the methods agree on it, not the approximation itself;
+    /// * the leaves as cards, from the clearing and against the sun;
+    /// * the LOD view from above, with the voxels on.
+    private static func forestcheck() -> [Config] {
+        let still = Config("", gi: .radianceCascades, scene: SceneSettings(kind: .forest)) { $0.foliage.wind = 0; $0.foliage.lod = 0 }
+            .still().frames(60)
+        // Which leaves show their far side's light goes by the triangle's number, which baking changes: opaque leaves here.
+        let parts = still.with { $0.foliage.translucency = 0 }
+        let baked = parts.with { $0.scene.bakedPlants = true }
+        let lit = still.with { $0.renderScale = 0.5 }.from(forestCamera([-11, 1.6, -30], pitch: 0.85))   // on the trail, under an oak
+        return [
+            parts.named("assemblies"), baked.named("baked"),
+            parts.named("assemblies aerial").from(forestAerial), baked.named("baked aerial").from(forestAerial),
+        ] + references([lit.named("backlit ref").with { $0.giMode = .pathTraced }.reference(frames: 512)]) + [
+            lit.named("backlit pt").with { $0.giMode = .pathTraced },
+            lit.named("backlit cascades"),
+            lit.named("backlit restirgi").with { $0.giMode = .restirGI },
+            lit.named("backlit opaque").with { $0.foliage.translucency = 0 },
+            // Leaves as cards: the same views as "assemblies" and "backlit cascades", to compare with them.
+            still.named("cards").with { $0.scene.leafCards = true },
+            lit.named("backlit cards").with { $0.scene.leafCards = true },
+            // What each plant is traced as: its triangles (blue) or a level of its voxels.
+            still.named("lod view").with { $0.foliage.lod = 2 }.from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
         ]
     }
 

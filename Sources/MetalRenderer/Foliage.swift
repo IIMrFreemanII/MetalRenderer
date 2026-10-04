@@ -335,6 +335,46 @@ enum Foliage {
         return anchors
     }
 
+    /// A card stands for a stretch of twig and its leaves: a rectangle from `base` to `top`, `half` to either side,
+    /// showing one square of its species' card sheet (FoliageTextures.cardSheet), cut out by the sheet's alpha.
+    struct Card {
+        var base: SIMD3<Float>
+        var top: SIMD3<Float>
+        var half: SIMD3<Float>
+        var normal: SIMD3<Float>
+        var cell: Int
+    }
+
+    /// The stretch of twig a card's picture shows, metres (in a bough's own space, before it is hung and scaled).
+    static let cardTwig: Float = 0.45
+
+    /// Cards in place of `leaves(on:)`: two crossed along each stretch of about `cardTwig` of the stems that carry
+    /// leaves, so that a twig shows its leaves from any side. Shuffled, as the leaves are (leaf fall drops whole cards).
+    static func cards(on skeleton: Skeleton, _ leaf: LeafRecipe, up: SIMD3<Float>, rng: inout SplitMix64) -> [Card] {
+        var cards: [Card] = []
+        let size = FoliageTextures.cardSize(leaf, twig: cardTwig)
+        for s in skeleton.stems where Int(s.level) >= leaf.fromLevel {
+            let stretches = max(Int((s.length / cardTwig).rounded()), 1)
+            for k in 0..<stretches {
+                let a = skeleton.sample(s, Float(k) / Float(stretches)).position, b = skeleton.sample(s, Float(k + 1) / Float(stretches)).position
+                let reach = simd_length(b - a)
+                guard reach > 1e-4 else { continue }
+                let axis = (b - a) / reach
+                var flat = up - axis * dot(up, axis)
+                flat = length_squared(flat) < 1e-6 ? Foliage.perpendicular(axis, up: up) : normalize(flat)
+                let roll = rng.range(-0.5, 0.5)
+                for turn in [roll, roll + .pi / 2 + rng.range(-0.3, 0.3)] {
+                    let across = cross(axis, flat)
+                    let normal = flat * cos(turn) + across * sin(turn)
+                    cards.append(Card(base: a, top: b + axis * (0.9 * leaf.length), half: cross(axis, normal) * (size.x / 2), normal: normal,
+                                      cell: rng.int(FoliageTextures.cardCells * FoliageTextures.cardCells)))
+                }
+            }
+        }
+        for i in stride(from: cards.count - 1, to: 0, by: -1) { cards.swapAt(i, rng.int(i + 1)) }
+        return cards
+    }
+
     // MARK: - Plants
 
     /// A rigid piece of an assembly turns about its bone's pivot in the wind; a bone hangs on its parent's.
@@ -461,11 +501,15 @@ enum Foliage {
         return Plant(species: species, age: age, meshes: meshes, parts: parts, bones: bones, bounds: bounds)
     }
 
-    /// One bough of a species' palette: a twig with side twigs and leaves, lying along +Y with +Z up.
-    static func bough(_ species: Species, variant: Int, seed: UInt64) -> Mesh {
+    /// One bough of a species' palette: a twig with side twigs and leaves, lying along +Y with +Z up. `cards`: its
+    /// leaves as cards (a few rectangles with the leaves' picture) instead of a mesh each.
+    static func bough(_ species: Species, variant: Int, seed: UInt64, cards: Bool = false) -> Mesh {
         let recipe = boughRecipe(species, variant: variant)
         var rng = SplitMix64(seed: seed)
         let skeleton = grow(recipe, seed: rng.nextUInt64())
+        if cards, let leaf = recipe.leaf {
+            return cardMesh(skeleton, cards: Foliage.cards(on: skeleton, leaf, up: recipe.up, rng: &rng), up: recipe.up)
+        }
         let anchors = recipe.leaf.map { leaves(on: skeleton, $0, up: recipe.up, rng: &rng) } ?? []
         return mesh(skeleton, stems: nil, leaves: anchors, shape: recipe.leaf?.shape ?? .kite, fold: recipe.leaf?.fold ?? 0,
                     up: recipe.up, allLeaves: false)
@@ -488,7 +532,8 @@ enum Foliage {
     }
 
     /// Every species' palette and plants. The same seed gives the same library, built in parallel or not.
-    static func library(seed: UInt64, species: [Species] = Species.allCases, parallel: Bool = true) -> [SpeciesSet] {
+    /// `cards`: the boughs' leaves as cards.
+    static func library(seed: UInt64, species: [Species] = Species.allCases, parallel: Bool = true, cards: Bool = false) -> [SpeciesSet] {
         struct Job { var species: Species; var age: Age; var index: Int }
         var boughJobs: [Job] = [], plantJobs: [Job] = []
         for s in species {
@@ -497,7 +542,7 @@ enum Foliage {
         }
         let boughs = slots(boughJobs.count, parallel: parallel) { j -> Mesh in
             let job = boughJobs[j]
-            return bough(job.species, variant: job.index, seed: Foliage.seed(seed, job.species.rawValue, -1, job.index))
+            return bough(job.species, variant: job.index, seed: Foliage.seed(seed, job.species.rawValue, -1, job.index), cards: cards)
         }
         var palettes = [[Mesh]](repeating: [], count: Species.allCases.count)
         for (j, job) in boughJobs.enumerated() { palettes[job.species.rawValue].append(boughs[j]) }

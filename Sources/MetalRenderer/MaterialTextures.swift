@@ -15,6 +15,12 @@ enum MaterialTextures {
         var decoded = [(pixels: MTLBuffer, width: Int, height: Int)?](repeating: nil, count: sources.count)
         decoded.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: sources.count) { i in
+                if let raw = sources[i].raw {   // generated: the pixels as they are
+                    guard let buffer = sources[i].data.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) })
+                    else { return }
+                    slots[i] = (buffer, raw.width, raw.height)
+                    return
+                }
                 guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil) else { return }
                 let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
                                                 kCGImageSourceThumbnailMaxPixelSize: maxSize,

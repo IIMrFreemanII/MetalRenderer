@@ -30,8 +30,8 @@ struct Uniforms {
 struct MeshData {
     uint firstIndex;
     uint indexCount;
-    uint pad0;
-    uint pad1;
+    uint sways;       // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
+    uint cutout;      // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
 };
 
 struct InstanceData {
@@ -128,6 +128,8 @@ constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 // Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
 // it the traversal and the shading compile to what they were before assemblies.
 constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
+// Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the traversal cuts out by an alpha mask (rtCutout).
+constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
