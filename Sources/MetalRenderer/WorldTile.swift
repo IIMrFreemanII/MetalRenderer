@@ -13,6 +13,8 @@ import simd
 ///                  level 1, a box each at level 2. And the roads of the tile's part of the city's grid, each a
 ///                  sheet of asphalt on the ground, painted at levels 0 and 1: a broken line down its middle, and
 ///                  where streets meet a crossing for people and a line to stop at.
+///   The roads      between cities (World.Highway), where they cross the tile: asphalt in pieces of 8 m, each cut at
+///                  the tile's sides, with a line along each edge and a broken one down the middle at levels 0 and 1.
 ///   The trees      as placements: which plant of the world's library stands where.
 ///   The lights     a city's street lamps (level 0 and 1) and the share of its windows with a light behind them (on
 ///                  a building's box at level 2) are emissive, and the tile's lights (`lights`): the mesh lights a
@@ -172,6 +174,9 @@ struct WorldTile {
         }
         if let (city, from, roads) = world.roads(x0: origin.x, z0: origin.y, side: side) {
             add(roads, of: city, from: from, level: level, into: &opaque)
+        }
+        if let city = world.city(near: origin.x + side / 2, origin.y + side / 2), !city.highways.isEmpty {
+            add(city.highways, of: world, city: city, origin: origin, level: level, into: &opaque)
         }
         tile.chunks = opaque.finish() + glass.finish()
         tile.trees = world.trees(x0: origin.x, z0: origin.y, side: side, flora: flora)
@@ -446,6 +451,105 @@ struct WorldTile {
         opaque.add(lines, material(paint), place)
     }
 
+    /// The part of a convex polygon (x, z) where a * x + b * z >= c.
+    private static func clip(_ polygon: [SIMD2<Float>], _ a: Float, _ b: Float, _ c: Float) -> [SIMD2<Float>] {
+        var out: [SIMD2<Float>] = []
+        for i in polygon.indices {
+            let p = polygon[i], q = polygon[(i + 1) % polygon.count]
+            let dp = a * p.x + b * p.y - c, dq = a * q.x + b * q.y - c
+            if dp >= 0 { out.append(p) }
+            if (dp > 0 && dq < 0) || (dp < 0 && dq > 0) { out.append(p + (q - p) * (dp / (dp - dq))) }
+        }
+        return out
+    }
+
+    /// The roads between cities, where they cross the tile: each in pieces of 8 m along its axis, cut at the tile's
+    /// sides. At levels 0 and 1 the ground under a road is the road's own (World.height), and a piece lies flat on
+    /// it. At level 2 the ground's cells are wider than the road's shoulders: there a piece is cut along the cells'
+    /// triangles too, and each part lies on its triangle.
+    private static func add(_ roads: [World.Highway], of world: World, city: World.City, origin: SIMD2<Double>, level: Int,
+                            into opaque: inout Assembler) {
+        let asphalt = SurfaceMaterial(color: [0.1, 0.1, 0.11], surface: .asphalt), paint = SurfaceMaterial(color: [0.7, 0.7, 0.66])
+        var sheets = MeshBuilder(uvScale: asphalt.uvScale), lines = MeshBuilder(uvScale: paint.uvScale)
+        let side = World.tileSize, step = 8.0
+        // The asphalt's texture goes by the builder's x and z: these are from a place the texture repeats at all
+        // over the world, so a road is one surface from tile to tile.
+        let tile = Double(SurfaceKind.asphalt.tile)
+        let shift = SIMD2(Float(origin.x - (origin.x / tile).rounded(.down) * tile), Float(origin.y - (origin.y / tile).rounded(.down) * tile))
+        let cell = World.cellSize(level), n = Int(side / cell)
+        var heights: [Float] = []   // the ground's, at level 2: as `ground` has them
+        /// A polygon of road on the coarsest ground: its part in each of the ground's triangles, `lift` over it.
+        func drape(_ polygon: [SIMD2<Float>], lift: Float, into mesh: inout MeshBuilder) {
+            if heights.isEmpty {
+                heights = (0...n).flatMap { j in
+                    (0...n).map { i in world.height(origin.x + Double(Float(i) * cell), origin.y + Double(Float(j) * cell), city: city) }
+                }
+            }
+            let xs = polygon.map(\.x), zs = polygon.map(\.y)
+            let i0 = max(Int(xs.min()! / cell), 0), i1 = min(Int(xs.max()! / cell), n - 1)
+            let j0 = max(Int(zs.min()! / cell), 0), j1 = min(Int(zs.max()! / cell), n - 1)
+            guard i0 <= i1, j0 <= j1 else { return }
+            for j in j0...j1 {
+                for i in i0...i1 {
+                    let x0 = Float(i) * cell, z0 = Float(j) * cell
+                    let inside = clip(clip(clip(clip(polygon, 1, 0, x0), -1, 0, -x0 - cell), 0, 1, z0), 0, -1, -z0 - cell)
+                    guard inside.count >= 3 else { continue }
+                    let a = heights[j * (n + 1) + i], b = heights[j * (n + 1) + i + 1]
+                    let c = heights[(j + 1) * (n + 1) + i], d = heights[(j + 1) * (n + 1) + i + 1]
+                    // The cell's two triangles, either side of its diagonal from (i, j): the one toward +x, the one toward +z.
+                    for (part, dx, dz) in [(clip(inside, 1, -1, x0 - z0), b - a, d - b), (clip(inside, -1, 1, z0 - x0), d - c, c - a)]
+                    where part.count >= 3 {
+                        mesh.ground(part.map { SIMD3($0.x + shift.x, a + (($0.x - x0) * dx + ($0.y - z0) * dz) / cell + lift, $0.y + shift.y) })
+                    }
+                }
+            }
+        }
+        for road in roads {
+            // The tile's corner as (along the road's axis, across it).
+            let lo = road.axis == 0 ? origin : SIMD2(origin.y, origin.x)
+            let first = max(road.u0, lo.x), last = min(road.u1, lo.x + Double(side))
+            guard first < last else { continue }
+            var m = (first / step).rounded(.down)
+            while m * step < last {
+                let ua = max(m * step, first), ub = min((m + 1) * step, last)
+                m += 1
+                guard ub - ua > 1e-3 else { continue }
+                let (va, sa) = road.across(ua), (vb, sb) = road.across(ub)
+                let qa = (1 + sa * sa).squareRoot(), qb = (1 + sb * sb).squareRoot(), reach = Double(World.roadWidth) * max(qa, qb)
+                guard max(va, vb) + reach > lo.y, min(va, vb) - reach < lo.y + Double(side) else { continue }
+                let ha = road.half(ua), hb = road.half(ub), ya = road.bed(ua).level, yb = road.bed(ub).level
+                /// A piece from `s0` to `s1` of the way along (0...1), from `c0` to `c1` across: metres from the road's
+                /// middle, given half its width there.
+                func piece(_ s0: Float, _ s1: Float, _ c0: (Float) -> Float, _ c1: (Float) -> Float, lift: Float, into mesh: inout MeshBuilder) {
+                    func corner(_ s: Float, _ c: (Float) -> Float) -> SIMD2<Float> {
+                        let t = Double(s), across = Double(c(ha + (hb - ha) * s)) * (qa + (qb - qa) * t)
+                        let p = road.place(ua + (ub - ua) * t, va + (vb - va) * t + across)
+                        return SIMD2(Float(p.x - origin.x), Float(p.y - origin.y))
+                    }
+                    var polygon = [corner(s0, c0), corner(s1, c0), corner(s1, c1), corner(s0, c1)]
+                    polygon = clip(clip(clip(clip(polygon, 1, 0, 0), -1, 0, -side), 0, 1, 0), 0, -1, -side)
+                    guard polygon.count >= 3 else { return }
+                    guard level < 2 else { return drape(polygon, lift: lift, into: &mesh) }
+                    let from = Float(ua - lo.x), climb = (yb - ya) / Float(ub - ua)
+                    mesh.ground(polygon.map { SIMD3($0.x + shift.x, ya + ((road.axis == 0 ? $0.x : $0.y) - from) * climb + lift, $0.y + shift.y) })
+                }
+                piece(0, 1, { -$0 }, { $0 }, lift: roadHeight, into: &sheets)
+                guard level <= 1 else { continue }
+                piece(0, 1, { 0.3 - $0 }, { 0.45 - $0 }, lift: paintHeight, into: &lines)
+                piece(0, 1, { $0 - 0.45 }, { $0 - 0.3 }, lift: paintHeight, into: &lines)
+                // The middle line: 3 m of paint in every 8 m of road.
+                let count = max(Int((((ub - ua) * (ub - ua) + (vb - va) * (vb - va)).squareRoot() / 8).rounded()), 1)
+                for k in 0..<count {
+                    piece((Float(k) + 0.3125) / Float(count), (Float(k) + 0.6875) / Float(count), { _ in -0.08 }, { _ in 0.08 }, lift: paintHeight,
+                          into: &lines)
+                }
+            }
+        }
+        let place = translate([-shift.x, 0, -shift.y])
+        opaque.add(sheets, material(asphalt), place)
+        opaque.add(lines, material(paint), place)
+    }
+
     // MARK: - The tile's file
 
     /// A chunk in the file: where its arrays are among the tile's (MSL has no need of it: the renderer reads it).
@@ -600,6 +704,24 @@ struct WorldTile {
         let cx = Int((city.center.x / side).rounded(.down)), cz = Int((city.center.y / side).rounded(.down))
         print(String(format: "  the city at the origin: middle (%.0f, %.0f), radius %.0f m, ground at %.1f m", city.center.x, city.center.y,
                      city.radius, city.level))
+        for road in city.highways {
+            // Along it every 4 m: how long it is, how steep, and how far its ground is from the country's.
+            var length = 0.0, climb: Float = 0, cut: Float = 0, mean: Float = 0, turn = 0.0, count: Float = 0
+            for u in stride(from: road.u0, to: road.u1, by: 4) {
+                let (v, slope) = road.across(u), p = road.place(u, v), run = 4 * (1 + slope * slope).squareRoot()
+                length += run
+                turn = max(turn, abs(slope))
+                climb = max(climb, abs(road.bed(u + 4).level - road.bed(u).level) / Float(run))
+                let apart = abs(world.country(p.x, p.y) - road.bed(u).level)
+                cut = max(cut, apart)
+                mean += apart
+                count += 1
+            }
+            let out = road.u0 > city.center[road.axis], to = road.place(out ? road.u1 : road.u0, out ? road.v1 : road.v0)
+            print(String(format: "  a road along %@ toward the city at (%.0f, %.0f): %.0f m, at most %.0f degrees off its axis and %.1f%% steep, "
+                         + "%.1f m of cut or fill (%.1f at most)", road.axis == 0 ? "x" : "z", to.x, to.y, length, atan(turn) * 180 / .pi,
+                         climb * 100, mean / max(count, 1), cut))
+        }
         var jobs: [(x: Int, z: Int, level: Int)] = []
         for j in -8...8 {
             for i in -8...8 {
@@ -630,6 +752,16 @@ struct WorldTile {
             print(String(format: "  level %d: %3d tiles, %8d triangles (%d...%d a tile), %6d trees, %6.1f MB, %.1f ms a tile (%.1f the slowest)",
                          level, own.count, triangles.reduce(0, +), triangles.min() ?? 0, triangles.max() ?? 0, trees, Double(bytes) / 1e6,
                          mean * 1000, slowest * 1000))
+        }
+        if let road = city.highways.first {
+            // The tile 600 m along the first road, at each level.
+            let u = road.u0 > city.center[road.axis] ? road.u0 + 600 : road.u1 - 600, p = road.place(u, road.across(u).v)
+            let x = Int((p.x / side).rounded(.down)), z = Int((p.y / side).rounded(.down))
+            for level in 0..<World.levels {
+                let t = CFAbsoluteTimeGetCurrent(), tile = build(world, x: x, z: z, level: level, flora: flora)
+                print(String(format: "  a tile a road crosses, level %d: %d triangles, %d trees, %.1f ms", level, tile.triangles, tile.trees.count,
+                             (CFAbsoluteTimeGetCurrent() - t) * 1000))
+            }
         }
         let cover = world.groundCover(x0: city.center.x + Double(city.radius) + 400, z0: city.center.y, side: 32, flora: flora)
         print("  a ground-cover cell outside the city: \(cover.count) plants")

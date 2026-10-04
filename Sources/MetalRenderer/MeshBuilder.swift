@@ -89,6 +89,25 @@ struct MeshBuilder {
         else { quad([x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1]) }
     }
 
+    /// A convex polygon of ground: facing up whichever way its corners go round, with a floor's texture coordinates
+    /// (x and z), so that the pieces of a road that climbs are one surface.
+    mutating func ground(_ corners: [SIMD3<Float>]) {
+        guard corners.count >= 3 else { return }
+        var n = SIMD3<Float>.zero   // twice its area, along its normal (Newell's sum: its first corners may be in line)
+        for i in corners.indices {
+            let a = corners[i], b = corners[(i + 1) % corners.count]
+            n += SIMD3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y))
+        }
+        guard length_squared(n) > 1e-10 else { return }
+        let base = UInt32(positions.count), worldNormal = direction(normalize(n.y > 0 ? n : -n))
+        for p in n.y > 0 ? corners : corners.reversed() {
+            positions.append(point(p))
+            normals.append(worldNormal)
+            uvs.append(SIMD2(p.x, p.z) * uvScale)
+        }
+        for i in 1..<UInt32(corners.count - 1) { indices += [base, base + i, base + i + 1] }
+    }
+
     /// The side walls of a prism over `loop` (x, z corners, counter-clockwise seen from above) from `y0` to `y1`,
     /// facing outwards.
     mutating func prism(_ loop: [SIMD2<Float>], y0: Float, y1: Float) {

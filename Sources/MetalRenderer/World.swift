@@ -12,6 +12,9 @@ import simd
 ///   Cities   at most one to a 4 km cell, a disc of 300...900 m on ground levelled to its middle's height, its
 ///            streets a grid in the world's axes. A block is made from the seed and its place in the grid alone, and
 ///            a road lies along every side of a block that is built: the country's ground begins at the last road.
+///   Roads    from a city to the cities of the four cells next to its own, each leaving by the end of the street
+///            through the city's middle. The ground is the road's own for 10 m either side of its middle, and banked
+///            back into the hills beyond.
 ///   Forest   one candidate tree to a cell of a grid over the whole world, each from its cell's own random numbers;
 ///            wooded and open country alternate over half a kilometre; none in a city.
 struct World {
@@ -26,7 +29,7 @@ struct World {
     var lit: Float = 0.35
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
-    static let version = 4
+    static let version = 5
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.
@@ -43,6 +46,8 @@ struct World {
     static let cityApron: Float = 40, cityBlend: Float = 300
 
     private let broadSeed: UInt32, rollingSeed: UInt32, coverSeed: UInt32, standSeed: UInt32
+    /// The beds of the roads between cities that have been asked for (`bed`): each is worked out once.
+    private let roadbeds = Roadbeds()
 
     init(seed: UInt64) {
         self.seed = seed
@@ -69,10 +74,23 @@ struct World {
         var radius: Float               // of what is built
         var level: Float                // its ground's height
         var seed: UInt64
+        /// Its roads to the cities of the cells east, west, south and north of its own: those of them that have one.
+        var highways: [Highway] = []
     }
 
     /// The city of a 4 km cell, if it has one. It and the ground it levels stay 88 m inside the cell.
     func city(cell: SIMD2<Int>) -> City? {
+        guard var city = site(cell: cell) else { return nil }
+        for axis in 0..<2 {
+            let next = axis == 0 ? SIMD2(1, 0) : SIMD2(0, 1)
+            if let other = site(cell: cell &+ next) { city.highways.append(highway(from: city, to: other, axis: axis)) }
+            if let other = site(cell: cell &- next) { city.highways.append(highway(from: other, to: city, axis: axis)) }
+        }
+        return city
+    }
+
+    /// A cell's city without its highways.
+    private func site(cell: SIMD2<Int>) -> City? {
         let own = World.hash(seed, cell.x, cell.y, 0xC17)
         var rng = SplitMix64(seed: own)
         let roll = rng.next(), radius = rng.range(300, 900), u = Double(rng.next()), v = Double(rng.next())
@@ -83,9 +101,11 @@ struct World {
         return City(cell: cell, center: center, radius: radius, level: broad(center.x, center.y), seed: own)
     }
 
-    func city(near x: Double, _ z: Double) -> City? {
-        city(cell: SIMD2(Int((x / World.cityCell).rounded(.down)), Int((z / World.cityCell).rounded(.down))))
+    private static func cell(_ x: Double, _ z: Double) -> SIMD2<Int> {
+        SIMD2(Int((x / World.cityCell).rounded(.down)), Int((z / World.cityCell).rounded(.down)))
     }
+
+    func city(near x: Double, _ z: Double) -> City? { city(cell: World.cell(x, z)) }
 
     /// 1 on a city's level ground, 0 where the hills are their own again.
     func cityMask(_ city: City?, _ x: Double, _ z: Double) -> Float {
@@ -125,10 +145,21 @@ struct World {
         let natural = broad(x, z) + 15.3 * Terrain.fbm(x / 120, z / 120, octaves: 5, seed: rollingSeed)
         guard let city else { return natural }
         let mask = cityMask(city, x, z)
-        return mask <= 0 ? natural : mask >= 1 ? city.level : natural + (city.level - natural) * mask
+        var h = mask <= 0 ? natural : mask >= 1 ? city.level : natural + (city.level - natural) * mask
+        for road in city.highways {
+            guard let d = road.distance(x, z), d < Highway.shoulder + Highway.widestBank else { continue }
+            let (own, bank) = road.bed(road.axis == 0 ? x : z)
+            if d <= Highway.shoulder { h = own } else if d < Highway.shoulder + bank {
+                h += (own - h) * (1 - World.smoothstep(Highway.shoulder, Highway.shoulder + bank, d))
+            }
+        }
+        return h
     }
 
     func height(_ x: Double, _ z: Double) -> Float { height(x, z, city: city(near: x, z)) }
+
+    /// The ground's height as it is without the roads between cities: what a road is cut into or banked over.
+    func country(_ x: Double, _ z: Double) -> Float { height(x, z, city: site(cell: World.cell(x, z))) }
 
     /// 1 in the woods, 0 in open country.
     func woods(_ x: Double, _ z: Double) -> Float { World.smoothstep(-0.12, 0.1, Terrain.fbm(x / 420, z / 420, octaves: 3, seed: coverSeed)) }
@@ -137,6 +168,7 @@ struct World {
     /// and blocks lie on it: on the fields that are all around the city.)
     func ground(_ x: Double, _ z: Double, up: Float, city: City?) -> Int {
         if up < 0.8 { return Ground.rock }
+        if let road = highway(city, x, z), road.distance < Highway.shoulder { return Ground.meadow }
         if let field = field(city, x, z) { return field }
         if woods(x, z) + 0.2 * Terrain.noise(x / 14, z / 14, seed: standSeed &+ 32) < 0.5 { return Ground.meadow }
         return Terrain.noise(x / 9, z / 9, seed: standSeed &+ 31) > 0.18 ? Ground.moss : Ground.litter
@@ -232,7 +264,7 @@ struct World {
             let chance = rng.next(), pick = rng.next(), u = rng.next()
             let yaw = rng.range(0, 2 * .pi), size = rng.range(0.85, 1.2), shade = rng.int(16), which = rng.next()
             let cover = woods(x, z)
-            guard cover > 0, !belt(city, x, z) else { return }
+            guard cover > 0, !belt(city, x, z), (highway(city, x, z)?.distance ?? .infinity) > Highway.shoulder + 1 else { return }
             let slope = 1 - up(x, z, city: city)
             let density = cover * World.smoothstep(0.72, 0.86, 1 - slope) * (0.6 + 0.6 * Terrain.noise(x / 23, z / 23, seed: standSeed &+ 7))
             guard chance < density else { return }
@@ -268,6 +300,7 @@ struct World {
                 // (None on a road, and none in a field that is not a meadow.)
                 guard chance < likely(x, z) * min(undergrowth, 1), !paved(city, x, z, margin: 1.5),
                       (field(city, x, z) ?? Ground.meadow) == Ground.meadow else { return }
+                if let road = highway(city, x, z), road.distance < road.half + 1 { return }
                 let plants = flora.plants(species, old ? .mature : .young)
                 guard !plants.isEmpty else { return }
                 out.append(Placement(x: Float(x - x0), y: height(x, z, city: city) - sink, z: Float(z - z0), yaw: yaw, size: size,
@@ -286,6 +319,140 @@ struct World {
             (1 - 0.9 * woods(x, z)) * World.smoothstep(0.8, 0.9, up(x, z, city: city))
         }
         return out
+    }
+
+    // MARK: - Roads between cities
+
+    /// The road from a city to the city of the next cell east of it (axis 0: it runs along x) or south of it (axis
+    /// 1). It leaves the first by the street through its middle, where that street ends, and comes into the second
+    /// the same way: straight on at both ends, swinging over from the one's line to the other's between them. So it
+    /// is a graph over its axis, one place across (`across`) for each place along; and it stays between its two
+    /// cities, in their two cells, where no other road of theirs comes.
+    struct Highway: Equatable {
+        var axis: Int
+        /// Along the axis, where its curve begins and ends (`stub` beyond each city's last crossing); across it,
+        /// where it is there: the cities' middles.
+        var u0: Double, u1: Double, v0: Double, v1: Double
+        /// Its bed at each knot along its axis, from knot `first` (which is at `first * knot` metres) to beyond its
+        /// end: the road's height there, and how wide the bank beside it is.
+        var first = 0
+        var knots: [SIMD2<Float>] = []
+
+        /// Its asphalt, away from the cities: it leaves one as wide as a street.
+        static let width: Float = 8
+        /// From its middle, how far the ground is the road's own (at one height across it: the ground's cells of 4 m
+        /// under the asphalt are then level too). Beyond that the ground comes back to the country's over a bank:
+        /// `bank` metres wide, or `slope` times what the road is over or under the country there, `widestBank` at most.
+        static let shoulder: Float = 10, bank: Float = 36, slope: Float = 2.5, widestBank: Float = 120
+        /// Its first metres from a city's last crossing are a street's: straight, and on the city's level ground.
+        /// It stays on that level for `level` metres more, then comes down (or up) to its own over `ease`, or over
+        /// half its length.
+        static let stub: Float = 12, level = 32.0, ease = 700.0
+        /// Its height is given every `knot` metres along its axis, and straight between: the side of the coarsest
+        /// ground's cells, so that the ground under it is the same planes at every level.
+        static let knot = 16.0
+
+        /// Where it is across its axis `u` along it, and how fast that changes.
+        func across(_ u: Double) -> (v: Double, slope: Double) {
+            let t = min(max((u - u0) / (u1 - u0), 0), 1)
+            return (v0 + (v1 - v0) * t * t * t * (t * (6 * t - 15) + 10), (v1 - v0) / (u1 - u0) * 30 * t * t * (1 - t) * (1 - t))
+        }
+
+        /// Half the width of its asphalt `u` along it: a street's at its ends, its own from 24 m on.
+        func half(_ u: Double) -> Float {
+            (Highway.width + (World.roadWidth - Highway.width) * (1 - World.smoothstep(0, 24, Float(min(u - u0, u1 - u))))) / 2
+        }
+
+        func place(_ u: Double, _ v: Double) -> SIMD2<Double> { axis == 0 ? SIMD2(u, v) : SIMD2(v, u) }
+
+        /// Its height `u` along its axis, and how wide its bank is there: straight between its knots.
+        func bed(_ u: Double) -> (level: Float, bank: Float) {
+            let at = u / Highway.knot, k = at.rounded(.down), i = min(max(Int(k) - first, 0), knots.count - 2)
+            let a = knots[i], b = knots[i + 1], both = a + (b - a) * Float(min(max(at - Double(first + i), 0), 1))
+            return (both.x, both.y)
+        }
+
+        /// How far a place is from its middle line (across its direction there); nil beyond its ends.
+        func distance(_ x: Double, _ z: Double) -> Float? {
+            let u = axis == 0 ? x : z
+            guard u >= u0 - Double(Highway.stub), u <= u1 + Double(Highway.stub) else { return nil }
+            let (v, slope) = across(u)
+            return Float(abs((axis == 0 ? z : x) - v) / (1 + slope * slope).squareRoot())
+        }
+    }
+
+    /// How many blocks are built along an axis from the city's middle: the street through the middle ends at the
+    /// crossing that many from it, on either side.
+    func gate(_ city: City, axis: Int) -> Int {
+        var n = 0
+        while built(city, axis == 0 ? n : 0, axis == 1 ? n : 0) { n += 1 }
+        return n
+    }
+
+    private func highway(from a: City, to b: City, axis: Int) -> Highway {
+        func out(_ city: City) -> Double { Double(Float(gate(city, axis: axis)) * World.blockPitch[axis] + World.roadWidth / 2 + Highway.stub) }
+        var road = Highway(axis: axis, u0: a.center[axis] + out(a), u1: b.center[axis] - out(b), v0: a.center[1 - axis], v1: b.center[1 - axis])
+        road.first = Int(((road.u0 - Double(Highway.stub)) / Highway.knot).rounded(.down))
+        road.knots = roadbeds.bed(SIMD3(a.cell.x, a.cell.y, axis)) { bed(of: road, from: a, to: b) }
+        return road
+    }
+
+    /// The roads' beds that have been made, by the cell of the road's first city and its axis.
+    private final class Roadbeds {
+        private let lock = NSLock()
+        private var beds: [SIMD3<Int>: [SIMD2<Float>]] = [:]
+
+        func bed(_ key: SIMD3<Int>, make: () -> [SIMD2<Float>]) -> [SIMD2<Float>] {
+            lock.lock()
+            defer { lock.unlock() }
+            if let known = beds[key] { return known }
+            let made = make()
+            beds[key] = made
+            return made
+        }
+    }
+
+    /// A road's bed (`Highway.knots`). The road lies on the broadest of the hills alone (the two widest of `broad`'s
+    /// four waves): it goes through what rises above them in a cutting, and over what lies below on a bank. It
+    /// leaves a city on the city's level, and comes to its own over `ease` metres.
+    private func bed(of road: Highway, from a: City, to b: City) -> [SIMD2<Float>] {
+        func hills(_ u: Double) -> Float {
+            let p = road.place(u, road.across(u).v)
+            return 70 * Terrain.fbm(p.x / 1800, p.y / 1800, octaves: 2, seed: broadSeed)
+        }
+        let level = Highway.level, ease = min(Highway.ease, (road.u1 - road.u0) / 2 - level)
+        let lift0 = a.level - hills(road.u0 + level), lift1 = b.level - hills(road.u1 - level)
+        func share(_ d: Double) -> Float {
+            let t = Float(min(max(d / ease, 0), 1))
+            return 1 - t * t * t * (t * (6 * t - 15) + 10)
+        }
+        let last = Int(((road.u1 + Double(Highway.stub)) / Highway.knot).rounded(.down)) + 1
+        var heights: [Float] = [], apart: [Float] = []   // the road's, and how far it is from the country's
+        for k in road.first...last {
+            let u = Double(k) * Highway.knot, from = u - road.u0 - level, to = road.u1 - level - u
+            let y = from <= 0 ? a.level : to <= 0 ? b.level : hills(u) + lift0 * share(from) + lift1 * share(to)
+            let p = road.place(u, road.across(u).v)
+            heights.append(y)
+            apart.append(abs(country(p.x, p.y) - y))
+        }
+        // A bank is as wide as the deepest of the five knots around it asks for.
+        return heights.indices.map { i in
+            SIMD2(heights[i], min(max(Highway.bank, Highway.slope * apart[max(i - 2, 0)...min(i + 2, apart.count - 1)].max()!), Highway.widestBank))
+        }
+    }
+
+    /// The nearest of a city's highways to a place: how far its middle line is, and half the width of its asphalt
+    /// there. Nil with none within its bank.
+    func highway(_ city: City?, _ x: Double, _ z: Double) -> (distance: Float, half: Float)? {
+        guard let city else { return nil }
+        var found: (distance: Float, half: Float)?
+        for road in city.highways {
+            let u = road.axis == 0 ? x : z
+            guard let d = road.distance(x, z), d < found?.distance ?? Highway.shoulder + Highway.widestBank,
+                  d < Highway.shoulder + road.bed(u).bank else { continue }
+            found = (d, road.half(u))
+        }
+        return found
     }
 
     // MARK: - City blocks
@@ -387,7 +554,13 @@ struct World {
             let a = built(city, i - 1, j - 1), b = built(city, i, j - 1), c = built(city, i - 1, j), d = built(city, i, j)
             return [a || b, c || d, a || c, b || d]
         }
-        func junction(_ i: Int, _ j: Int) -> Bool { streets(i, j).reduce(0) { $0 + ($1 ? 1 : 0) } >= 3 }
+        // The corners a highway comes to, and from which of those four sides.
+        let gates: [(corner: SIMD2<Int>, toward: Int)] = city.highways.map { road in
+            let out = road.u0 > city.center[road.axis], n = gate(city, axis: road.axis)
+            return (road.axis == 0 ? SIMD2(out ? n : -n, 0) : SIMD2(0, out ? n : -n), (road.axis == 0 ? 2 : 0) + (out ? 1 : 0))
+        }
+        func highways(_ i: Int, _ j: Int) -> [Bool] { (0..<4).map { k in gates.contains { $0.corner == SIMD2(i, j) && $0.toward == k } } }
+        func junction(_ i: Int, _ j: Int) -> Bool { zip(streets(i, j), highways(i, j)).reduce(0) { $0 + ($1.0 || $1.1 ? 1 : 0) } >= 3 }
         for j in j0...j1 {
             for i in i0...i1 {
                 let middle = (SIMD2(Float(i), Float(j)) + 0.5) * pitch
@@ -403,6 +576,14 @@ struct World {
                                     junction: [junction(i, j), junction(i + 1, j)]))
                 }
                 if here.contains(true) { out.append(Road(rect: CityPlan.Rect(lo: c - half, hi: c + half), along: 2)) }
+                // A highway's first metres from the corner: a street's.
+                for (k, comes) in highways(i, j).enumerated() where comes {
+                    let axis = k < 2 ? 1 : 0, plus = k % 2 == 1, meets = junction(i, j)
+                    var lo = c - half, hi = c + half
+                    lo[axis] = c[axis] + (plus ? half : -half - Highway.stub)
+                    hi[axis] = c[axis] + (plus ? half + Highway.stub : -half)
+                    out.append(Road(rect: CityPlan.Rect(lo: lo, hi: hi), along: axis, junction: [plus && meets, !plus && meets]))
+                }
             }
         }
         return (city, SIMD2(Float(city.center.x - x0), Float(city.center.y - z0)), out)
