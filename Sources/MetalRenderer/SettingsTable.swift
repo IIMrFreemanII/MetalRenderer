@@ -492,6 +492,7 @@ enum SettingsTable {
             S.slider("Ambient light", \.fog.ambient, FogSettings.ambientRange, step: 0.05, fmt("%.2f")).env(.fogSet, "ambient").when(on),
             S.slider("Noise", \.fog.noise, FogSettings.noiseRange, step: 0.05, fmt("%.2f")).env(.fogSet, "noise").when(on),
             S.slider("Distance", \.fog.maxDistance, FogSettings.distanceRange, step: 5, fmt("%.0f m")).env(.fogSet, "far").when(on),
+            S.slider("Haze beyond", \.fog.haze, FogSettings.hazeRange, step: 0.05, fmt("%.2f")).env(.fogSet, "haze").when(on),
             S.check("Local fog volumes", \.fog.volumes).env(.fogSet, "volumes").when(on),
             S.check("Fog in reflections", \.fog.reflections).env(.fogSet, "reflections").when(on),
             S.slider("Base height", \.fog.baseHeight, FogSettings.baseHeightRange, step: 0.25, fmt("%.2f m")).env(.fogSet, "base").advanced().when(on),

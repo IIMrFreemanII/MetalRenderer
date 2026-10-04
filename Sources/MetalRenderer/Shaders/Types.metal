@@ -77,6 +77,8 @@ struct SkyParams {
     float4 ground;       // rgb = ground albedo below the horizon, w = the sky's observer altitude (m)
     uint4  flags;        // x = SKY_ATMOSPHERE / SKY_IMAGE, y = SKY_CLOUDS | SKY_SHADOWS | ..., z = update phase 0...15,
                          //   w = frame (jitters the cloud march)
+    float4 place;        // the clouds are the world's, not the scene's: xy = where the scene's origin is in the world
+                         //   (x, z; the open world's), zw = where the sky's observer is in the scene (x, z)
 };
 
 constant uint SKY_ATMOSPHERE = 1, SKY_IMAGE = 2;
@@ -96,7 +98,7 @@ struct SceneShading {
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
 };
-static_assert(sizeof(SceneShading) == 224, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
+static_assert(sizeof(SceneShading) == 240, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -171,7 +173,8 @@ struct FogParams {
     float4 albedo;          // rgb = height fog's albedo, w = ambient (sky colour x w lights the fog evenly)
     float4 noise;           // x = height fog's noise amount, y = noise tile size (m), z = time (s), w = this frame's
                             //   weight in the froxel history
-    float4 wind;            // xyz = wind (m/s)
+    float4 wind;            // xyz = wind (m/s), w = haze: the share of the height fog's density that goes on beyond
+                            //   the froxel grid, to the surface or without end (0 = none; fogHaze)
     float4 grid;            // x = near, y = far (view depth), z = log(far / near), w = depth slices
     uint4  counts;          // x, y = froxel columns and rows, z = volume count, w = FOG_* flags
     FogVolume volumes[FOG_MAX_VOLUMES];

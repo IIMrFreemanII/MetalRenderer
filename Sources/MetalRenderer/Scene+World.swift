@@ -4,8 +4,10 @@ import simd
 /// Which part of the open world a scene holds (Scene.worldPlace).
 struct WorldPlace {
     var world: World
-    /// The world's place that is the scene's origin (x, z): the scene's coordinates are metres from it.
-    var anchor: SIMD2<Double>
+    /// The world's place that is the scene's origin (x, z): the scene's coordinates are metres from it. A tile's
+    /// corner (`anchorTile`'s).
+    var anchor: SIMD2<Double> { WorldTile.origin(anchorTile.x, anchorTile.y) }
+    var anchorTile: SIMD2<Int>
     /// The tile the scene is made around.
     var tile: SIMD2<Int>
     /// The middle of that tile's ground, in the scene.
@@ -20,6 +22,19 @@ struct WorldPlace {
         func step(_ d: Double) -> Int { abs(d) > 0.75 ? Int((d + 0.5).rounded(.down)) : 0 }
         return SIMD2(tile.x + step(off.x), tile.y + step(off.y))
     }
+
+    /// How far the scene's middle may be from its origin, in tiles: 2 km, so with what is in sight no coordinate is
+    /// beyond 4.3 km, where a float still steps by half a millimetre.
+    static let reach = 8
+
+    /// The origin for a scene around `tile`: this one, or once the tile is `reach` tiles from it, a corner near
+    /// the tile (every `reach` tiles, so that the origin moves rarely).
+    func anchorTile(around tile: SIMD2<Int>) -> SIMD2<Int> {
+        let off = tile &- anchorTile
+        guard max(abs(off.x), abs(off.y)) > WorldPlace.reach else { return anchorTile }
+        func snap(_ t: Int) -> Int { Int((Double(t) / Double(WorldPlace.reach)).rounded()) * WorldPlace.reach }
+        return SIMD2(snap(tile.x), snap(tile.y))
+    }
 }
 
 extension World {
@@ -30,11 +45,11 @@ extension World {
         return (SIMD3(x, Double(height(x, z)) + 1.7, z), 0)
     }
 
-    /// The scenes' origin: the corner of the tile the origin's city has its middle in. (Coordinates stay small
-    /// around the first city; a world walked far from it needs the origin to follow.)
-    var anchor: SIMD2<Double> {
+    /// The scenes' first origin: the tile the origin's city has its middle in. (The origin follows the camera from
+    /// afar: WorldPlace.anchorTile(around:).)
+    var anchorTile: SIMD2<Int> {
         let city = city(cell: SIMD2(0, 0))!, side = Double(World.tileSize)
-        return SIMD2((city.center.x / side).rounded(.down) * side, (city.center.y / side).rounded(.down) * side)
+        return SIMD2(Int((city.center.x / side).rounded(.down)), Int((city.center.y / side).rounded(.down)))
     }
 }
 
@@ -54,7 +69,8 @@ extension Scene {
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
         let flora = Flora(self, seed: world.seed)
         let index = flora.index
-        let begin = world.start, anchor = world.anchor, side = Double(World.tileSize)
+        let begin = world.start, side = Double(World.tileSize)
+        let anchorTile = settings.worldAnchor ?? world.anchorTile, anchor = WorldTile.origin(anchorTile.x, anchorTile.y)
         let home = SIMD2(Int((begin.place.x / side).rounded(.down)), Int((begin.place.z / side).rounded(.down)))
         let middle = settings.worldTile ?? home
 
@@ -149,15 +165,22 @@ extension Scene {
         }
 
         addDaySun(half: 90)
-        var camera = Camera()
-        camera.position = SIMD3(Float(begin.place.x - anchor.x), Float(begin.place.y), Float(begin.place.z - anchor.y))
-        camera.yaw = begin.yaw
-        camera.pitch = 0.05
-        defaultCamera = camera
         let center = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
-        worldPlace = WorldPlace(world: world, anchor: anchor, tile: middle,
-                                middle: SIMD3(Float(center.x - anchor.x), world.height(center.x, center.y), Float(center.y - anchor.y)))
-        print(String(format: "World: around tile (%d, %d): %d tiles (%d kept), %d triangles, %d trees, %d of ground cover, in %.2f s",
-                     middle.x, middle.y, jobs.count, shared, triangles, trees, plants, CFAbsoluteTimeGetCurrent() - start))
+        let ground = SIMD3(Float(center.x - anchor.x), world.height(center.x, center.y), Float(center.y - anchor.y))
+        var camera = Camera()
+        if settings.worldTile == nil {
+            camera.position = SIMD3(Float(begin.place.x - anchor.x), Float(begin.place.y), Float(begin.place.z - anchor.y))
+            camera.yaw = begin.yaw
+            camera.pitch = 0.05
+        } else {
+            // A scene asked for somewhere else in the world: from above its middle.
+            camera.position = ground + SIMD3(0, 40, 0)
+            camera.pitch = -0.15
+        }
+        defaultCamera = camera
+        worldPlace = WorldPlace(world: world, anchorTile: anchorTile, tile: middle, middle: ground)
+        print(String(format: "World: around tile (%d, %d), origin at tile (%d, %d): %d tiles (%d kept), %d triangles, %d trees, %d of ground cover, in %.2f s",
+                     middle.x, middle.y, anchorTile.x, anchorTile.y, jobs.count, shared, triangles, trees, plants,
+                     CFAbsoluteTimeGetCurrent() - start))
     }
 }

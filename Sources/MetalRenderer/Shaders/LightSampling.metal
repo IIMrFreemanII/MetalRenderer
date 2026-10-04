@@ -254,6 +254,8 @@ float lightMapVisibility(Light light, uint l, texture2d_array<float, access::rea
         float R = light.params.w, texel = 2.0f * R / float(size);
         float3 q = p + ng * (1.5f * texel) - light.params.xyz;
         float2 tc = (float2(dot(q, t), dot(q, b)) / R * 0.5f + 0.5f) * float(size) - 0.5f;
+        // Off the map (the open world's covers what is near the camera): in the sun.
+        if (any(tc < -0.5f) || any(tc > float(size) - 0.5f)) return 1.0f;
         float depth = R * 1.05f - dot(q, w);
         return lightMapPCF(lightMap, l, tc, depth, 0.02f + texel);
     }

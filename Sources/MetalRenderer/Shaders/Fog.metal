@@ -396,6 +396,20 @@ inline float4 fogFromGrid(constant FogParams& f, texture3d<float> integrated, fl
     return s < 1.0f ? mix(float4(0.0f, 0.0f, 0.0f, 1.0f), v, s) : v;
 }
 
+// The height fog beyond the froxel grid (FogParams.wind.w > 0: it goes on at that share of its density), from the
+// grid's far end at tFar along the camera ray o + dir t to tEnd (INFINITY: the sky): `fogged` with it. Its light is
+// the grid's own over its far half: what was scattered in there per unit of light taken away.
+inline float4 fogHaze(constant FogParams& f, texture3d<float> integrated, float2 uv, float4 fogged, float3 o, float3 dir,
+                      float tFar, float tEnd) {
+    float tau = f.wind.w * heightFogDepth(o + dir * tFar, dir, tEnd - tFar, f);
+    if (!(tau > 0.0f)) return fogged;
+    float4 far = integrated.sample(fogGridSampler, float3(uv, (f.grid.w - 0.5f) / f.grid.w));
+    float4 mid = integrated.sample(fogGridSampler, float3(uv, (0.5f * f.grid.w - 0.5f) / f.grid.w));
+    float3 source = max(far.rgb - mid.rgb, 0.0f) / max(mid.a - far.a, 1e-3f);
+    float T = isFar(tau) ? 0.0f : exp(-tau);
+    return float4(fogged.rgb + fogged.a * source * (1.0f - T), fogged.a * T);
+}
+
 // Reference (benchmarks): the fog along each camera ray, marched in 32 jittered steps up to the surface (or the
 // fog's far distance), each with its own light sample and shadow ray, averaged over the frames of a paused scene:
 // ground truth for the froxel grid.

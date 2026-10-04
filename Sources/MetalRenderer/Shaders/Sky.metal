@@ -225,20 +225,21 @@ float4 cloudMarch(float3 v, float jitter, constant SkyParams& sp, texture3d<floa
     float c = dot(v, l);
     constexpr uint steps = 40;
     float dt = (t1 - t0) / float(steps);
+    float2 observer = sp.place.xy + sp.place.zw;   // where the march's origin is in the world (x, z)
     float3 L = float3(0.0f);
     float T = 1.0f;
     for (uint i = 0; i < steps && T > 0.01f; ++i) {
         float t = t0 + (float(i) + jitter) * dt;
         float3 pc = o + v * t;
         float h01 = cloudHeight(pc, sp);
-        float3 pw = float3(pc.x, pc.y - ATMO_GROUND, pc.z);
+        float3 pw = float3(pc.x + observer.x, pc.y - ATMO_GROUND, pc.z + observer.y);
         float sigma = cloudDensity(pw, h01, sp, shape, detail, true, dt);
         if (sigma <= 0.0f) continue;
         // Optical depth toward the sun: 5 steps, each twice as long (40 m ... 1.2 km).
         float tauSun = 0.0f, step = 40.0f, along = 0.0f;
         for (uint k = 0; k < 5; ++k) {
             float3 q = pc + l * (along + 0.5f * step);
-            tauSun += cloudDensity(float3(q.x, q.y - ATMO_GROUND, q.z), cloudHeight(q, sp), sp, shape, detail, false, step) * step;
+            tauSun += cloudDensity(float3(q.x + observer.x, q.y - ATMO_GROUND, q.z + observer.y), cloudHeight(q, sp), sp, shape, detail, false, step) * step;
             along += step;
             step *= 2.0f;
         }
@@ -342,7 +343,7 @@ kernel void cloudShadowKernel(constant SkyParams&             sp      [[buffer(0
     float dt = (t1 - t0) / float(steps), tau = 0.0f;
     for (uint i = 0; i < steps; ++i) {
         float3 pc = o + l * (t0 + (float(i) + 0.5f) * dt);
-        tau += cloudDensity(float3(pc.x, pc.y - ATMO_GROUND, pc.z), cloudHeight(pc, sp), sp, shape, detail, false, dt) * dt;
+        tau += cloudDensity(float3(pc.x + sp.place.x, pc.y - ATMO_GROUND, pc.z + sp.place.y), cloudHeight(pc, sp), sp, shape, detail, false, dt) * dt;
     }
     outShadow.write(float4(exp(-tau * sp.cloudShape.w)), tid);
 }

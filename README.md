@@ -168,7 +168,7 @@ For ReSTIR GI:
 
 For the fog:
 * `METALRENDERER_FOG=0` or `1` turns it off or on in every scene's preset.
-* `METALRENDERER_FOG_SET="density=0.03,g=0.6"` overrides its settings. The keys are `on`, `density`, `falloff`, `base`, `g`, `ambient`, `noise`, `tile`, `far`, `volumes` and `reflections`.
+* `METALRENDERER_FOG_SET="density=0.03,g=0.6"` overrides its settings. The keys are `on`, `density`, `falloff`, `base`, `g`, `ambient`, `noise`, `tile`, `far`, `haze`, `volumes` and `reflections`.
 * `METALRENDERER_BENCH=fog` renders each fog scene paused at t = 5 s with cascade GI. It renders fog off, the preset, no local volumes, no fogged reflections, path-traced GI and the scattering view, then moving frames (natively and 3× upscaled).
 * `METALRENDERER_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
 * Both fog modes take `METALRENDERER_LIGHTS_SCENES`.
@@ -197,7 +197,7 @@ For the plants:
 * `METALRENDERER_BENCH=forest` renders the forest paused (from the clearing, from above, close to a trunk, with 10,000 trees), then moving, natively and at 3×.
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
-* `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest. `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits.
+* `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest. `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles, and renders the start with the scene's origin elsewhere and a place 50 km out. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits.
 * `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, its meshes' trees, the plants' voxels) instead of taking it from `~/Library/Caches/MetalRenderer/generated`; `=1` caches the trees and voxels in an optimised build too. `METALRENDERER_CACHE_MB=4096` caps that folder.
 
@@ -492,6 +492,7 @@ A tiling 3D noise texture (three octaves of gradient noise, 64³) drifts with th
 | Ambient light | per scene | The sky colour × this lights the fog evenly. |
 | Noise | per scene | How much the drifting noise breaks up the height fog. |
 | Distance | per scene | The froxel grid's far end, from 10 to 150 m. Fog stops accumulating beyond it, including on the sky. |
+| Haze beyond | 0 (Open world: 0.4) | Beyond the grid the height fog goes on at this share of its density, to the surface or, on the sky, without end: in closed form along the camera ray, lit like the grid's far half (what was scattered in there per unit of light taken away). It hides where a large scene ends. 0 = none. |
 | Local fog volumes | On | The scene's volumes: ground mist in the hall and the garage, haze over the stage, a glow around the orbs, dust in the sun scene's room. |
 | Fog in reflections | On | One more shadow ray per reflection pixel. |
 
@@ -777,13 +778,21 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 | ...Metal's tracer | 0.15 s in the background; 0.2 s to swap it in (every mesh's structure is built again) |
 | A frame in flight, 640×400 → 1920×1200, cascades | 8.8 ms on the custom tracer, 5.9 ms on Metal's |
 | A frame from the start, 960×600 native, cascades | 10.2 ms on the custom tracer |
+| A flight of 2.75 km at 150 m/s | twelve scenes, one move of the origin, no failed frame on either tracer or API |
+
+**Range and precision.**
+* **The scene's origin follows the camera.** The world's places are doubles and tile numbers; a scene's coordinates are floats from a tile's corner, its origin. Once the scene's middle is 8 tiles (2 km) from that corner, the next scene takes a corner near its middle, the camera is moved by the difference, and the frames' histories start again. No coordinate is beyond 4.3 km, where a float steps by half a millimetre. A scene 50 km out renders as one at the start does; the start rendered with its origin 2.9 km away has the same mean brightness; no pixel of its sky or its city is more than 8 levels off, and 1% of the pixels are, all in its grass and bushes (thin geometry; a float's rounding of where it stands is the likely cause, not checked further).
+* **Haze.** The froxel fog ends at 150 m; beyond it the same height fog goes on at 0.4 of its density (`Haze beyond`, above), so the hills fade over 2 km and the horizon is the haze's colour: where the tiles end doesn't show.
+* **The sun's light map** (what GI rays take the sun's shadow from) covers 384 m around the camera and follows it in steps of 16 m; what is off the map is in the sun. Camera rays trace their shadow rays as everywhere.
+* **Clouds** are where the world has them, not where the scene's origin is: the sky's observer is the camera, and the cloud shadows' square is 4.6 km around it, so that shadows on the ground lie under their clouds wherever the camera goes (by construction; not compared in a picture).
+* The fog's noise repeats every 8 m, which divides a tile, so the fog stays as it is when the origin moves. The wind's gusts do not: the plants swing to another phase after a move (every 2 km at the soonest).
+* The camera's speed goes to 100 m/s (320 with Shift).
 
 **Limits** (the open world is not finished):
-* The scene's coordinates are metres from the first city's tile, in floats: fine for the first kilometres, not for a world walked 20 km out (the origin has to follow the camera).
-* The sun's light map and the clouds' shadows cover 384 m around the middle tile, and the fog reaches 150 m, so the world's edge at 2.2 km shows.
 * On Metal's tracer every tile crossing stalls 0.2 s. On both, a scene copies its tiles' geometry: memory was not measured.
 * Day only: a streamed city's lamps and lit windows would need the light table made again with the tiles.
 * The ground changes material in 1 m cells, and a city's ground is an asphalt disc.
+* GI sees no sun shadows beyond 384 m of the camera.
 
 ### Glass
 

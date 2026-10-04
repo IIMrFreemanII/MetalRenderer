@@ -287,11 +287,13 @@ extension Benchmark {
 
     /// The open world (World.swift), paused in the morning: from where it starts (the country outside the first city),
     /// from a street in that city, in the woods, and from above; then a flight of 600 m along the city's edge at
-    /// 60 m/s, which crosses two tiles: the scene is made again around each (the log says how long that took).
+    /// 60 m/s, which crosses two tiles: the scene is made again around each (the log says how long that took); then
+    /// the start with the scene's origin elsewhere, and a place 50 km out.
     /// `METALRENDERER_SCENE=seed=...,trees=...,undergrowth=...` changes the world.
     private static func world() -> [Config] {
         let settings = SceneSettings(kind: .world)
-        let w = World(seed: UInt64(settings.seed)), anchor = w.anchor, begin = w.start, city = w.city(cell: SIMD2(0, 0))!
+        let w = World(seed: UInt64(settings.seed)), home = w.anchorTile, begin = w.start, city = w.city(cell: SIMD2(0, 0))!
+        let anchor = WorldTile.origin(home.x, home.y)
         func at(_ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
             var c = Camera()
             c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
@@ -312,6 +314,10 @@ extension Benchmark {
             base.named("world aerial").from(at(begin.place.x, begin.place.z + 200, up: 220, pitch: -0.3)),
             flight,
             flight.named("world flight 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 },
+            // The scene's origin 2.9 km from where it is: the start again, which should look the same...
+            base.named("world moved").with { $0.scene.worldAnchor = home &+ SIMD2(8, -8) },
+            // ...and a scene 50 km out, around its own origin.
+            base.named("world far").with { $0.scene.worldTile = home &+ SIMD2(160, -120); $0.scene.worldAnchor = home &+ SIMD2(160, -120) },
         ]
     }
 
