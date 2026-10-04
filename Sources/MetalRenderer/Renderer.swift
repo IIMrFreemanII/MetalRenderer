@@ -1695,12 +1695,16 @@ final class Renderer: NSObject {
         var ready = false
         var swapFrame: UInt32?
         var started: CFTimeInterval = 0
+        var swaps = 0                   // background rebuilds swapped in (benchmark summary)
     }
     private var voxelLevels = VoxelLevels()
     private let voxelQueue = DispatchQueue(label: "voxel levels", qos: .utility)
     /// A rebuild once the view has moved this far (m), at most this often (s): METALRENDERER_VOXEL_STEP / _INTERVAL.
     private static let voxelStep = Float(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_STEP"] ?? "") ?? 1
     private static let voxelInterval = Double(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_INTERVAL"] ?? "") ?? 0.25
+    /// METALRENDERER_VOXEL_ASYNC=1: benchmarks rebuild in the background too, as the app does (its pictures then
+    /// depend on how long the builds take).
+    private static let voxelAsync = ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_ASYNC"] == "1"
 
     /// Swaps in a finished rebuild of the voxel levels and starts the next if the view moved (or the bias changed).
     /// Benchmarks rebuild here and wait: their pictures don't depend on how long a build takes.
@@ -1711,14 +1715,16 @@ final class Renderer: NSObject {
             voxels.swap()
             voxelLevels.ready = false
             voxelLevels.swapFrame = frameIndex
+            voxelLevels.swaps += 1
         }
+        // Not while a rebuild runs: it writes the levels and `pickedView`.
+        guard !voxelLevels.running else { return }
         let view = SIMD4(lod.camPos, settings.foliage.lod / max(lod.pixelScale, 1e-6))
         if let picked = voxels.pickedView, picked.w == view.w,
            distance(SIMD3(picked.x, picked.y, picked.z), lod.camPos) < Renderer.voxelStep { return }
-        guard !voxelLevels.running,
-              voxelLevels.swapFrame.map({ frameIndex >= $0 &+ UInt32(Renderer.maxFramesInFlight - 1) }) ?? true else { return }
+        guard voxelLevels.swapFrame.map({ frameIndex >= $0 &+ UInt32(Renderer.maxFramesInFlight - 1) }) ?? true else { return }
         let queue = buildQueue
-        if benchmark != nil {
+        if benchmark != nil && !Renderer.voxelAsync {
             if voxels.rebuild(for: view, queue: queue) {
                 voxels.swap()
                 voxelLevels.swapFrame = frameIndex
@@ -2129,9 +2135,10 @@ final class Renderer: NSObject {
         let slot = plan.slot
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
-        if let benchmark, benchmark.shouldCapture, let v = sceneBuffers.voxelLOD {
+        if let benchmark, benchmark.shouldCapture, let v = sceneBuffers.voxelLOD, !voxelLevels.running {
             print(String(format: "  Voxel levels: last rebuild picked in %.2f ms, built in %.2f ms, %d instances changed",
-                         v.last.pickMs, v.last.buildMs, v.last.changed))
+                         v.last.pickMs, v.last.buildMs, v.last.changed)
+                  + (Renderer.voxelAsync ? ", \(voxelLevels.swaps) background rebuilds swapped in" : ""))
         }
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
