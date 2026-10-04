@@ -74,10 +74,12 @@ final class VirtualGeometry {
     private let instanceTable: MTLBuffer
     private let workCount: Int
     let instanceCount: Int
+    /// Triangles at the finest level, over every instance (what drawing without LOD would trace).
+    let sourceTriangles: Int
     private let leafBoxes, keys, values, nodeParent, leafParent, fitCounters, counts: MTLBuffer
     private let requestStamp, lastUsed: MTLBuffer
     private var groupPageBuffers: [MTLBuffer] = []    // per slot: the CPU's residency table for that frame
-    private var counterBuffers: [MTLBuffer] = []      // per slot: selected, requests, overflow
+    private var counterBuffers: [MTLBuffer] = []      // per slot: selected, requests, overflow, triangles
     private var requestBuffers: [MTLBuffer] = []
     private(set) var selectedBuffers: [MTLBuffer] = []
     private(set) var rootsBuffers: [MTLBuffer] = []
@@ -119,7 +121,7 @@ final class VirtualGeometry {
     private var deferredFrees: [(offset: Int, order: Int, frame: UInt32)] = []
     private let copyQueue = DispatchQueue(label: "metalrenderer.vg.copy", qos: .userInitiated)
     private var completedFrame: UInt32 = 0
-    private(set) var stats = (selected: 0, overflow: false, residentGroups: 0, pending: 0, loadedThisFrame: 0)
+    private(set) var stats = (selected: 0, triangles: 0, overflow: false, residentGroups: 0, pending: 0, loadedThisFrame: 0)
     var bytesPerFrame = 32 << 20
 
     /// `instances`: (scene instance index, virtual mesh index) for every virtual instance.
@@ -166,6 +168,7 @@ final class VirtualGeometry {
         }
         workCount = work
         instanceCount = instances.count
+        sourceTriangles = instances.reduce(0) { $0 + meshes[$1.mesh].triangleCount }
 
         poolBytes = max(poolMB, 64) << 20
         pool = try buffer(poolBytes, "vgPool", shared: true)
@@ -218,8 +221,8 @@ final class VirtualGeometry {
     var groupCount: Int { groups.count }
     var clusterCount: Int { meshes.reduce(0) { $0 + $1.clusters.count } }
     var summary: String {
-        String(format: "VG: %d clusters drawn%@, %d groups resident (%.0f MB of %d), %d requests waiting", stats.selected,
-               stats.overflow ? " (capacity reached)" : "", stats.residentGroups, residentMB, poolBytes >> 20, stats.pending)
+        String(format: "VG: %d triangles in %d clusters drawn%@, %d groups resident (%.0f MB of %d), %d requests waiting",
+               stats.triangles, stats.selected, stats.overflow ? " (capacity reached)" : "", stats.residentGroups, residentMB, poolBytes >> 20, stats.pending)
     }
 
     private func allocate(_ g: Int) -> Bool {
@@ -312,7 +315,7 @@ final class VirtualGeometry {
 
     /// The frame that used `slot` has finished on the GPU: collect its requests (any thread).
     func collect(slot: Int, frame: UInt32) {
-        let c = counterBuffers[slot].contents().bindMemory(to: UInt32.self, capacity: 3)
+        let c = counterBuffers[slot].contents().bindMemory(to: UInt32.self, capacity: 4)
         let n = min(Int(c[1]), VirtualGeometry.requestCapacity)
         let r = requestBuffers[slot].contents().bindMemory(to: SIMD2<UInt32>.self, capacity: VirtualGeometry.requestCapacity)
         lock.lock()
@@ -323,6 +326,7 @@ final class VirtualGeometry {
         }
         completedFrame = max(completedFrame, frame)
         stats.selected = Int(c[0])
+        stats.triangles = Int(c[3])
         stats.overflow = c[2] != 0
         lock.unlock()
     }

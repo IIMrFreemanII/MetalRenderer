@@ -8,8 +8,17 @@ struct DebugInfo {
         case blas(meshes: Int, instances: Int, sourceTriangles: Int, triangles: Int, clusters: Int, megabytes: Double,
                   rebuilds: Int, lastBuildMs: Double, lastRefineMs: Double, lastCutMs: Double, skipped: Int, builder: String, busy: Bool)
         /// One tree over the frame's cut of clusters, streamed into a pool (VirtualGeometry, METALRENDERER_VG_MODE=clusters).
-        case clusters(meshes: Int, instances: Int, clusters: Int, groups: Int, selected: Int, capacity: Int, overflow: Bool,
-                      residentGroups: Int, residentMB: Double, poolMB: Int, pending: Int, loadedThisFrame: Int)
+        case clusters(meshes: Int, instances: Int, clusters: Int, groups: Int, sourceTriangles: Int, triangles: Int, selected: Int,
+                      capacity: Int, overflow: Bool, residentGroups: Int, residentMB: Double, poolMB: Int, pending: Int, loadedThisFrame: Int)
+
+        /// Triangles traced this frame (the cut).
+        var triangles: Int {
+            switch self {
+            case .off: 0
+            case let .blas(_, _, _, triangles, _, _, _, _, _, _, _, _, _): triangles
+            case let .clusters(_, _, _, _, _, triangles, _, _, _, _, _, _, _, _): triangles
+            }
+        }
     }
 
     var stats = ""
@@ -194,7 +203,9 @@ final class DebugPanel: NSObject {
         scene.set([
             ("Scene", d.sceneTitle, nil),
             ("Instances", d.virtualInstances > 0 ? "\(d.instances) (\(d.virtualInstances) virtual)" : "\(d.instances)", nil),
-            ("Triangles", Self.count(d.triangles) + (d.virtualInstances > 0 ? " (without virtual)" : ""), nil),
+            ("Triangles", d.virtualInstances == 0 ? Self.count(d.triangles)
+                : d.vg.triangles > 0 ? "\(Self.count(d.triangles + d.vg.triangles)) (\(Self.count(d.vg.triangles)) virtual)"
+                : Self.count(d.triangles) + " (virtual not drawn)", nil),
             ("Lights", lights.isEmpty ? "none" : lights.joined(separator: ", "), nil),
             ("Light table", d.lightTable ? "on, \(Self.count(d.lightTableEntries)) entries" : "off (256 lights or fewer)", nil),
             ("Direct light", d.directMode, nil),
@@ -214,7 +225,7 @@ final class DebugPanel: NSObject {
                 ("Mode", "per-instance BLAS (\(builder))", nil),
                 ("Meshes", "\(meshes) in \(instances) instances", nil),
                 ("Traced triangles", Self.count(triangles), nil),
-                ("Finest level", Self.count(source) + (source > 0 ? String(format: " (cut is %.2g%%)", 100 * Double(triangles) / Double(source)) : ""), nil),
+                ("Finest level", Self.finest(source, cut: triangles), nil),
                 ("Clusters in cut", Self.count(clusters), nil),
                 ("BLAS memory", String(format: "%.1f MB", megabytes), nil),
                 ("Rebuilds", String(format: "%d total, %.1f/s", rebuilds, rebuildRate), nil),
@@ -222,12 +233,14 @@ final class DebugPanel: NSObject {
                 ("Last build", String(format: "%.1f ms", lastBuildMs) + (busy ? ", building" : ""), nil),
                 ("Last refine", builder == "hybrid" ? String(format: "%.0f ms (SAH, in the background)", lastRefineMs) : "—", nil),
             ]
-        case let .clusters(meshes, instances, clusters, groups, selected, capacity, overflow, residentGroups, residentMB, poolMB, pending, loaded):
+        case let .clusters(meshes, instances, clusters, groups, source, triangles, selected, capacity, overflow, residentGroups, residentMB, poolMB, pending, loaded):
             vgRows = [
                 ("Mode", "cluster tree (streamed pool)", nil),
                 ("Meshes", "\(meshes) in \(instances) instances", nil),
                 ("Clusters drawn", "\(Self.count(selected)) of \(Self.count(capacity))" + (overflow ? ", capacity reached" : ""),
                  overflow ? .systemRed : nil),
+                ("Traced triangles", Self.count(triangles), nil),
+                ("Finest level", Self.finest(source, cut: triangles), nil),
                 ("Clusters total", "\(Self.count(clusters)) in \(Self.count(groups)) groups", nil),
                 ("Groups resident", "\(Self.count(residentGroups)) of \(Self.count(groups))", nil),
                 ("Pool", String(format: "%.0f of %d MB", residentMB, poolMB), residentMB > 0.95 * Double(poolMB) ? .systemOrange : nil),
@@ -283,6 +296,11 @@ final class DebugPanel: NSObject {
         passTimes.stringValue = (lines + ["total".padding(toLength: width, withPad: " ", startingAt: 0) + String(format: " %6.2f ms", total)])
             .joined(separator: "\n")
         passTimes.isHidden = false
+    }
+
+    /// Triangles at the finest level, and the share of them the cut traces.
+    private static func finest(_ source: Int, cut: Int) -> String {
+        count(source) + (source > 0 ? String(format: " (cut is %.2g%%)", 100 * Double(cut) / Double(source)) : "")
     }
 
     /// 1234 -> "1,234"; millions as "12.3M".
