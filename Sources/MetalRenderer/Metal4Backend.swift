@@ -36,7 +36,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private var resident: [ObjectIdentifier: (allocation: MTLAllocation, used: UInt32)] = [:]
     private var residencyChanged = false
     private var frameCount: UInt32 = 0
-    private static let residencyLife: UInt32 = 600          // frames
+    /// Frames. `METALRENDERER_RESIDENCY_LIFE=<frames>` shortens it, so that a run of a thousand frames reaches the
+    /// dropping: a resource some frame reaches without declaring it faults a few hundred frames after its last use.
+    private static let residencyLife: UInt32 = ProcessInfo.processInfo.environment["METALRENDERER_RESIDENCY_LIFE"].flatMap { UInt32($0) } ?? 600
 
     // Work that stays on the Metal 3 queue in the middle of a frame (`interlude`): each queue waits for the other
     // through this event's values.

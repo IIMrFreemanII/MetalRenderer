@@ -775,8 +775,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
+        // The textures too, unless they are a sparse heap's (Metal 3's streamer: `bindScene` declares the heap).
+        // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
+        // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
-            + (textureStreamer == nil ? materialTextures : [])
+            + (textureStreamer?.placement == false ? [] : materialTextures)
     }
 
     /// One bottom-level (primitive) acceleration structure per mesh, built once. The meshes that deform (the crowd's
