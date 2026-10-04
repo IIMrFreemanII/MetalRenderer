@@ -97,11 +97,13 @@ extension Scene {
         Scene.keptLock.lock()
         let kept = Scene.keptTiles
         Scene.keptLock.unlock()
-        var tiles = jobs.map { kept[$0.key] }
+        // (A tile kept by a scene of Metal's tracer has no trees: taken from its file again, and given them.)
+        let withTrees = borrowsTrees
+        var tiles = jobs.map { kept[$0.key].flatMap { !withTrees || $0.hasTrees ? $0 : nil } }
         let shared = tiles.reduce(0) { $0 + ($1 == nil ? 0 : 1) }
         tiles.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: jobs.count) { k in
-                if out[k] == nil { out[k] = WorldTile.make(world, x: jobs[k].x, z: jobs[k].z, level: jobs[k].level, flora: index) }
+                if out[k] == nil { out[k] = WorldTile.make(world, x: jobs[k].x, z: jobs[k].z, level: jobs[k].level, flora: index, trees: withTrees) }
             }
         }
         Scene.keptLock.lock()
@@ -158,7 +160,8 @@ extension Scene {
                     if first < 0 { first = added }
                 }
                 let mesh = addMesh(borrowing: BorrowedMesh(positions: chunk.positions, normals: chunk.normals, uvs: chunk.uvs,
-                                                           indices: chunk.indices, materials: chunk.triangleMaterials),
+                                                           indices: chunk.indices, materials: chunk.triangleMaterials,
+                                                           tree: withTrees ? chunk.tree : nil),
                                    bounds: chunk.bounds, name: "\(jobs[k].key) chunk \(c)")
                 addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry)
                 triangles += chunk.triangles

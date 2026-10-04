@@ -29,6 +29,8 @@ final class MeshBlock {
         let cutout: UInt32
     }
     private var built: Tree?
+    /// The tree as the mesh came with it (a tile's file has it), until it is in a buffer.
+    private var borrowed: Scene.BorrowedTree?
     private let lock = NSLock()
     /// A mesh of fewer triangles isn't cached: its tree is built sooner than a file is read.
     private static let cachedTriangles = 4_000
@@ -39,6 +41,7 @@ final class MeshBlock {
     init(device: MTLDevice, name: String, mesh: Scene.BorrowedMesh) throws {
         self.name = name
         (vertexCount, indexCount) = (mesh.positions.count, mesh.indices.count)
+        if let tree = mesh.tree, tree.fits(indexCount: mesh.indices.count) { borrowed = tree }
         let indexOffset = MeshBlock.indexOffset(vertices: vertexCount)
         let length = indexOffset + indexCount * MemoryLayout<UInt32>.stride + indexCount / 3
         guard let buffer = device.makeBuffer(length: max((length + 15) & ~15, 16), options: .storageModeShared) else {
@@ -64,11 +67,37 @@ final class MeshBlock {
         return built != nil
     }
 
-    /// The tree, built the first time it is asked for (any thread).
+    /// Whether the mesh's tree is there to copy: nothing is built for it.
+    var hasBorrowedTree: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return borrowed != nil
+    }
+
+    /// The tree, copied from where the mesh has it or built, the first time it is asked for (any thread).
     func tree(device: MTLDevice, cutout: UInt32) throws -> Tree {
         lock.lock()
         defer { lock.unlock() }
         if let built, built.cutout == cutout { return built }
+        if let borrowed, cutout == 0 {
+            let bytes = borrowed.memory.count * MemoryLayout<SIMD4<Float>>.stride
+            guard let buffer = device.makeBuffer(length: max(bytes, 16), options: .storageModeShared) else {
+                throw RendererError.resourceCreation("the tree of \(name)")
+            }
+            buffer.label = "tree of " + name
+            // (The copy isn't the closure's last call: see the note on Swift 6.4 in CustomRayTracer.init. A closure
+            // that ends in memmove leaves this function, which throws, looking as if it had thrown.)
+            let copied = borrowed.memory.withUnsafeBufferPointer { from -> Int in
+                guard let base = from.baseAddress else { return 0 }
+                memcpy(buffer.contents(), base, bytes)
+                return from.count
+            }
+            guard copied == borrowed.memory.count else { throw RendererError.resourceCreation("the tree of \(name)") }
+            let tree = Tree(buffer: buffer, nodeCount: borrowed.nodeCount, triangles: indexCount / 3, bounds: borrowed.bounds,
+                            depth: borrowed.depth, cutout: 0)
+            (built, self.borrowed) = (tree, nil)
+            return tree
+        }
         let base = geometry.contents()
         let positions = base.bindMemory(to: SIMD3<Float>.self, capacity: 2 * vertexCount)
         let uvs = (base + 2 * vertexCount * MemoryLayout<SIMD3<Float>>.stride).bindMemory(to: SIMD2<Float>.self, capacity: vertexCount)

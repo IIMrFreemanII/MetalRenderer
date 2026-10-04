@@ -193,6 +193,8 @@ final class Scene {
     /// Generated plants as assemblies of shared parts (custom ray tracer only); otherwise each is baked into meshes of its own.
     private(set) var assemblies: [Assembly] = []
     let usesAssemblies: Bool
+    /// The custom tracer traces the scene: the meshes it borrows come with their trees (an open world's tiles).
+    let borrowsTrees: Bool
     /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
     private(set) var hasPlants = false
     private(set) var hasSwayingMeshes = false
@@ -289,6 +291,7 @@ final class Scene {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
+        self.borrowsTrees = assemblies
         self.usesCards = assemblies && settings.leafCards
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
@@ -804,7 +807,21 @@ final class Scene {
         var uvs: Stored<SIMD2<Float>>
         var indices: Stored<UInt32>             // into its own vertices
         var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
+        var tree: BorrowedTree? = nil           // the custom tracer's, where it is built already (a tile's file has it)
         var mesh = 0                            // in `meshes`
+    }
+
+    /// A borrowed mesh's tree as the custom tracer reads it (`BVHBuilder.buildBLAS(...storage:)`, of a mesh without a
+    /// cutout): `nodeCount` nodes, the root first, then three vectors for each of the mesh's triangles; in vectors.
+    struct BorrowedTree {
+        var memory: Stored<SIMD4<Float>>
+        var nodeCount: Int
+        var depth: Int
+        var bounds: AABB
+
+        static let vectorsPerNode = MemoryLayout<BVHNode>.stride / MemoryLayout<SIMD4<Float>>.stride
+        /// Whether it is as long as the tree of a mesh of `indexCount` indices is.
+        func fits(indexCount: Int) -> Bool { nodeCount % 3 == 0 && memory.count == nodeCount * BorrowedTree.vectorsPerNode + indexCount }
     }
 
     /// Adds a borrowed mesh, with its bounds as they are known. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s,

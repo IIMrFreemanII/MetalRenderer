@@ -184,10 +184,10 @@ final class CustomRayTracer {
     /// The meshes' trees: the arrays' meshes' in one result, and each borrowed mesh's with its block (MeshBlock.tree:
     /// built here if this is the first scene to trace it), its root the block's place in `blocks`.
     private static func trees(of scene: Scene, geometry: SceneBuffers?, device: MTLDevice) throws
-        -> (blas: BVHBuilder.BLASResult, geometry: String?, cached: Bool, blocks: [MeshBlock.Tree], new: Int) {
+        -> (blas: BVHBuilder.BLASResult, geometry: String?, cached: Bool, blocks: [MeshBlock.Tree], new: Int, copied: Int) {
         guard scene.hasBorrowedMeshes else {
             let trees = BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
-            return (trees.blas, trees.geometry, trees.cached, [], 0)
+            return (trees.blas, trees.geometry, trees.cached, [], 0, 0)
         }
         guard let blocks = geometry?.blocks, blocks.count == scene.meshes.count else {
             throw RendererError.resourceCreation("the trees of a scene with borrowed meshes, without its buffers")
@@ -197,6 +197,7 @@ final class CustomRayTracer {
         var trees = BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: meshes, uvs: scene.uvs)
         let own = blocks.indices.filter { blocks[$0] != nil }
         let new = own.reduce(0) { $0 + (blocks[$1]!.hasTree ? 0 : 1) }
+        let copied = own.reduce(0) { $0 + (blocks[$1]!.hasBorrowedTree ? 1 : 0) }   // (not built: their tiles' files have them)
         var built = [MeshBlock.Tree?](repeating: nil, count: own.count)
         built.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: own.count) { k in
@@ -209,7 +210,7 @@ final class CustomRayTracer {
             trees.blas.bounds[m] = tree.bounds
             trees.blas.maxDepth = max(trees.blas.maxDepth, tree.depth)
         }
-        return (trees.blas, trees.geometry, trees.cached, built.map { $0! }, new)
+        return (trees.blas, trees.geometry, trees.cached, built.map { $0! }, new, copied)
     }
 
     /// `instances`: a copy of `scene.instances` taken on the main thread when this runs in the background for a scene
@@ -221,7 +222,7 @@ final class CustomRayTracer {
         self.device = device
         let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
-        let (blas, geometryHash, cached, blocks, newBlocks) = try CustomRayTracer.trees(of: scene, geometry: sceneGeometry, device: device)
+        let (blas, geometryHash, cached, blocks, newBlocks, copiedBlocks) = try CustomRayTracer.trees(of: scene, geometry: sceneGeometry, device: device)
         blasRoots = blas.roots
         // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it, and
         // a pose slot's (its mesh deforms) that of every pose: on the CPU, the GPU keeps the exact ones.
@@ -480,7 +481,7 @@ final class CustomRayTracer {
         print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms%@%@",
                      blas.nodes.count, blas.triangles.count / 3, staticCount, staticNodes.count, staticDepth, dynamicIds.count,
                      (CACurrentMediaTime() - start) * 1000, cached ? " (the meshes' trees from the cache)" : "",
-                     (blocks.isEmpty ? "" : "; \(blocks.count) meshes with trees of their own (\(newBlocks) new)")
+                     (blocks.isEmpty ? "" : "; \(blocks.count) meshes with trees of their own (\(newBlocks) new, \(newBlocks - copiedBlocks) built)")
                          + (tiles.isEmpty ? "" : "; \(tileInstances) instances more in \(tilePartOf.count) parts of \(tiles.count) blocks (\(newTiles) new), \(tileNodes) nodes, depth \(tileDepth)")))
         if !roots.isEmpty {
             // The traversal's stack holds one entry per level it has gone down, all three levels together.
