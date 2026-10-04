@@ -118,7 +118,9 @@ inline uint voxelSeed(Ray r, uint id) {
 // VOXEL_BOXES (Metal's tracer): a far plant's wood instance is a box, one per grid and level (VoxelGrids.swift),
 // whose primitive data names the grid and the level, and its leaf instance is masked out (VoxelLOD.swift). The ray
 // queries are then intersection queries: the traversal hands the loop each box it meets, which rtVoxels marches;
-// triangles stay the traversal's own (opaque: never handed to the loop).
+// triangles stay the traversal's own (opaque: never handed to the loop). A voxel hit is kept here and never
+// committed to the query: commit_bounding_box_intersection costs far more than the candidates the shorter ray would
+// save (M4 Max, the open world's road views: 25-30 ms a frame committing, 9-12 ms not).
 struct VoxelBox {
     device const RTVoxels* grid;
     device const uint*     cells;   // every grid's cells (the grid's offsets count from here)
@@ -137,8 +139,16 @@ inline intersection_params voxelParams(bool any) {
     return p;
 }
 
-// The query's candidate box: marched, and committed if the ray stops in it before what is committed so far (then
-// `v` has the hit: its distance, cell and level).
+// No voxel hit yet: what the query loops start `v` from.
+inline Hit voxelMiss(Ray r) {
+    Hit v;
+    v.hit = false;
+    v.distance = r.tmax;
+    return v;
+}
+
+// The query's candidate box: marched as far as the nearest hit so far, `v`'s or the triangle the query has
+// committed. True if the ray stops in it: `v` is then that hit (its distance, instance, cell and level).
 template <typename Q>
 inline bool voxelCandidate(thread Q& q, Ray r, thread Hit& v) {
     device const VoxelBox& box = *(device const VoxelBox*)q.get_candidate_primitive_data();
@@ -146,10 +156,10 @@ inline bool voxelCandidate(thread Q& q, Ray r, thread Hit& v) {
     float3 o = q.get_candidate_ray_origin(), d = q.get_candidate_ray_direction(), inv = rtSafeInverse(d);
     Hit c;
     c.hit = false;
-    c.distance = q.get_committed_intersection_type() == intersection_type::none ? r.tmax : q.get_committed_distance();
+    c.distance = q.get_committed_intersection_type() == intersection_type::none ? v.distance : min(v.distance, q.get_committed_distance());
     if (!rtVoxels(box.cells, *box.grid, box.level, o, d, inv, -o * inv, r.tmin, voxelSeed(r, id), 1.0f, c)) return false;
-    q.commit_bounding_box_intersection(c.distance);
     v = c;
+    v.instance = id;
     return true;
 }
 
@@ -157,23 +167,20 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
     if (VOXEL_BOXES) {
         intersection_query<triangle_data, instancing> q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
-        Hit v;
+        Hit v = voxelMiss(r);
         while (q.next()) voxelCandidate(q, r, v);
-        intersection_type type = q.get_committed_intersection_type();
+        // The nearer of the voxel hit and the query's triangle (a voxel is only ever kept in front of the triangle
+        // committed by then, but a nearer triangle may have come after it).
+        bool triangle = q.get_committed_intersection_type() == intersection_type::triangle;
+        if (v.hit && !(triangle && q.get_committed_distance() < v.distance)) return v;   // rtVoxels: the cell, the level, HIT_VOXEL
         Hit h;
-        h.hit = type != intersection_type::none;
-        h.distance = h.hit ? q.get_committed_distance() : INFINITY;
+        h.hit = triangle;
+        h.distance = triangle ? q.get_committed_distance() : INFINITY;
+        h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(0.0f);
         h.instance = TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id();
+        h.primitive = q.get_committed_primitive_id();
         h.cluster = HIT_NO_CLUSTER;
-        if (type == intersection_type::bounding_box) {
-            h.barycentrics = v.barycentrics;   // x = the level
-            h.primitive = v.primitive;         // the cell
-            h.part = HIT_VOXEL;
-        } else {
-            h.barycentrics = type == intersection_type::triangle ? q.get_committed_triangle_barycentric_coord() : float2(0.0f);
-            h.primitive = q.get_committed_primitive_id();
-            h.part = HIT_NO_PART;
-        }
+        h.part = HIT_NO_PART;
         return h;
     }
     intersector<triangle_data, instancing> isect;
@@ -196,9 +203,10 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
     if (VOXEL_BOXES) {
         intersection_query<instancing> q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
-        Hit v;
+        Hit v = voxelMiss(r);
         while (q.next()) voxelCandidate(q, r, v);
-        return q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
+        float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
+        return v.hit ? min(v.distance, t) : t;
     }
     intersector<instancing> isect;   // no triangle_data: barycentrics aren't needed
     isect.assume_geometry_type(geometry_type::triangle);
@@ -212,7 +220,7 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
     if (VOXEL_BOXES) {
         intersection_query<instancing> q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(true));
-        Hit v;
+        Hit v = voxelMiss(r);
         while (q.next()) {
             if (voxelCandidate(q, r, v)) { t = v.distance; return true; }   // any hit will do
         }

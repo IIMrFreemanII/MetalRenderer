@@ -308,26 +308,6 @@ enum SceneKind: Int, CaseIterable, Codable {
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
-/// Far plants on Metal's tracer (VoxelLOD): their voxel grids, as on the custom tracer, or always their triangles.
-enum MetalPlantVoxels: Int, CaseIterable, Codable {
-    /// Voxels where Metal traverses in hardware (M3 and later). On software ray tracing the ray queries a voxel box
-    /// needs cost every ray of the scene about 30% (M1 Max, the forest), more than far plants as voxels save.
-    case auto
-    case voxels
-    case triangles
-
-    var title: String {
-        switch self {
-        case .auto: return "Auto (hardware ray tracing)"
-        case .voxels: return "Voxels"
-        case .triangles: return "Triangles"
-        }
-    }
-
-    /// Far plants are voxels on a GPU that can do `caps`.
-    func on(_ caps: Capabilities) -> Bool { self == .voxels || (self == .auto && caps.hardwareRayTracing) }
-}
-
 enum CityStyle: Int, CaseIterable, Codable {
     case mixed              // towers in the centre, mid-rise blocks around them, old town and warehouses at the edge
     case oldtown            // narrow plastered houses with pitched roofs and shutters
@@ -427,8 +407,11 @@ struct SceneSettings: Equatable, Codable {
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
     /// by an alpha mask the custom tracer tests. Off: every leaf is a mesh of its own.
     var leafCards = false
-    /// Metal's tracer: far plants as voxels (VoxelLOD) or always triangles.
-    var metalVoxels = MetalPlantVoxels.auto
+    /// Metal's tracer: far plants as their voxel grids (VoxelLOD), as on the custom tracer, instead of their
+    /// triangles. Off: it is slower wherever it was measured. In software (M1 Max) the ray queries a voxel box needs
+    /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
+    /// forest takes 1.3 to 2.1 times as long, the open world 3 times.
+    var voxelBoxes = false
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000

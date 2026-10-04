@@ -657,8 +657,8 @@ final class Renderer: NSObject {
         let virtual = rayTracer == .custom && options.virtualGeometry
         // Generated plants are assemblies for the custom tracer and baked meshes for Metal's: another scene.
         let assemblies = rayTracer == .custom
-        // Metal's: far plants as voxels where that pays (MetalPlantVoxels), which makes the scene's plants differently too.
-        let voxelBoxes = rayTracer == .metal && sceneSettings.metalVoxels.on(Capabilities.current)
+        // Metal's: far plants as voxels if asked for (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
+        let voxelBoxes = rayTracer == .metal && sceneSettings.voxelBoxes
         let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual
             && (!$0.hasPlants || ($0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants) && $0.usesVoxelBoxes == voxelBoxes)) ? $0 : nil }
         let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies, voxelBoxes: voxelBoxes)

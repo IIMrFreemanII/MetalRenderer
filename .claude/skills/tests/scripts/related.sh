@@ -37,11 +37,12 @@ if [[ $suites == " " ]]; then
     [[ -n $f ]] || continue
     name=${f##*/}
     case $f in
+      Tests/MetalRendererTests/FoliageTests.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;   # three suites in one file
       Tests/MetalRendererTests/*Tests.swift) add "${name%.swift}" ;;
       Tests/*) add MetalRendererTests ;;                     # a shared helper: every suite uses it
       Sources/MetalRenderer/Shaders/BVHBuild.metal) add BVHTests CacheTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/Foliage.metal) add FoliageTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Foliage.metal) add FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
@@ -55,7 +56,8 @@ if [[ $suites == " " ]]; then
           CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
           Crowd*.swift|SkinnedCharacter.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
           FBXReader.swift) add FBXTests ;;
-          Foliage*.swift|Scene+Forest.swift) add FoliageTests ;;
+          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
+          Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;

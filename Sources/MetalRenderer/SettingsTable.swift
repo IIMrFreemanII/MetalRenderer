@@ -72,7 +72,6 @@ extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
 extension CityStyle: EnvNamed {}
-extension MetalPlantVoxels: EnvNamed {}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
@@ -336,8 +335,8 @@ enum SettingsTable {
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }
                 .enabled(customTracer).advanced(),
-            S.popup("Far plants (Metal)", \.scene.metalVoxels, titled(\.title)).env(.scene, "voxels")
-                .when { $0.scene.kind.hasPlants }.enabled { $0.rayTracer == .metal },
+            S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }
+                .enabled { $0.rayTracer == .metal }.advanced(),
             S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)

@@ -209,6 +209,15 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(b.fovDegrees, 70)
     }
 
+    /// Metal's tracer traces far plants as their triangles unless asked for their voxels, which are slower wherever
+    /// they were measured.
+    func testFarPlantsAreTrianglesUnlessAskedFor() {
+        XCTAssertFalse(defaults.scene.voxelBoxes)
+        var s = defaults
+        SettingsEnv.applyAll(to: &s, defaults: defaults, from: ["METALRENDERER_SCENE": "forest,voxels=1"])
+        XCTAssertTrue(s.scene.voxelBoxes)
+    }
+
     /// A slider shows the value it just set: its position after a move is inside the slider and stays put when the
     /// slider is moved to it again (to a tolerance: the fog's wind heading is derived from a vector).
     func testSlidersShowWhatTheySet() {

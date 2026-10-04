@@ -258,7 +258,7 @@ final class Scene {
     /// Metal's tracer: a baked plant's mesh -> its voxel plant (`voxelPlants`), | `meshVoxelsLeaves` for its leaves.
     private(set) var meshVoxels: [Int: UInt32] = [:]
     static let meshVoxelsLeaves: UInt32 = 0x8000_0000
-    /// Metal's tracer, with far baked plants as their voxels (MetalPlantVoxels): the plants have grids.
+    /// Metal's tracer, with far baked plants as their voxels (SceneSettings.voxelBoxes): the plants have grids.
     let usesVoxelBoxes: Bool
     /// ...and it does: a still scene with such plants (VoxelLOD rebuilds a still scene's structure).
     var hasVoxelBoxes: Bool { usesVoxelBoxes && isStill && !meshVoxels.isEmpty }
