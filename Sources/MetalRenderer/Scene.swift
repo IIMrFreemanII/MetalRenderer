@@ -234,6 +234,8 @@ final class Scene {
     /// Window glass: only camera rays meet it (they pass through it and take its reflection, traceKernel); to shadow
     /// and GI rays it isn't there, so light goes through windows.
     static let maskGlass: UInt32 = 4
+    /// A far plant as its voxels (Metal's tracer: VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
+    static let maskVoxels: UInt32 = 8
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
@@ -250,6 +252,16 @@ final class Scene {
     let borrowsTrees: Bool
     /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
     private(set) var hasPlants = false
+    /// The plants that are voxels when far (FoliageVoxels): on the custom tracer one per assembly, in its order; on
+    /// Metal's, one per baked plant with boughs, its wood and leaf meshes in `meshVoxels`.
+    private(set) var voxelPlants: [FoliageVoxels.Plant] = []
+    /// Metal's tracer: a baked plant's mesh -> its voxel plant (`voxelPlants`), | `meshVoxelsLeaves` for its leaves.
+    private(set) var meshVoxels: [Int: UInt32] = [:]
+    static let meshVoxelsLeaves: UInt32 = 0x8000_0000
+    /// Metal's tracer, with far baked plants as their voxels (MetalPlantVoxels): the plants have grids.
+    let usesVoxelBoxes: Bool
+    /// ...and it does: a still scene with such plants (VoxelLOD rebuilds a still scene's structure).
+    var hasVoxelBoxes: Bool { usesVoxelBoxes && isStill && !meshVoxels.isEmpty }
     private(set) var hasSwayingMeshes = false
     /// Leaf cards' alpha layers (FoliageTextures.CardSheet), each FoliageTextures.cardSheetSize squared: the custom
     /// tracer tests a card's hits against its layer. `coverage`: the share of a card that is there.
@@ -340,13 +352,15 @@ final class Scene {
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
     /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
-    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false,
+    /// `voxelBoxes`: Metal's tracer traces far baked plants as their voxels (VoxelLOD).
+    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
          building: ((Scene) -> Void)? = nil) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
         self.borrowsTrees = assemblies
         self.usesCards = assemblies && settings.leafCards
+        self.usesVoxelBoxes = voxelBoxes && !assemblies
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
@@ -576,10 +590,11 @@ final class Scene {
         // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
-        // buffers of their own. Bit 24: GROUPED, some instances are in groups. (Shaders/Types.metal.)
+        // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
+        // voxel boxes on Metal's tracer. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
-            | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0)
+            | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1012,6 +1027,17 @@ final class Scene {
     func addAssembly(_ assembly: Assembly) -> Int {
         assemblies.append(assembly)
         return assemblies.count - 1
+    }
+
+    func addVoxelPlant(_ plant: FoliageVoxels.Plant) -> Int {
+        voxelPlants.append(plant)
+        return voxelPlants.count - 1
+    }
+
+    /// Mesh `mesh` is voxel plant `plant`'s wood, or its leaves (Metal's tracer: VoxelLOD).
+    func setMeshVoxels(_ mesh: Int, plant: Int, leaves: Bool) {
+        guard mesh >= 0 else { return }
+        meshVoxels[mesh] = UInt32(plant) | (leaves ? Scene.meshVoxelsLeaves : 0)
     }
 
     /// An instance of an assembly: `material` is its wood's, and the next material its leaves'.

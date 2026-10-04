@@ -374,7 +374,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
     private var restirGIGrid: RestirGITargets?
     private var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
-    private var instanceAS: [MTLAccelerationStructure] { sceneBuffers.instanceStructures }
+    private var instanceAS: [MTLAccelerationStructure] {
+        sceneBuffers.voxelLOD.map { [MTLAccelerationStructure](repeating: $0.current, count: Renderer.maxFramesInFlight) }
+            ?? sceneBuffers.instanceStructures
+    }
     private var instanceScratch: [MTLBuffer] { sceneBuffers.instanceScratch }
     private var instanceASBuilt = Set<Int>()
     private let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
@@ -613,6 +616,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var primitives: [String: MTLAccelerationStructure]   // the scene's named meshes' structures (Metal's tracer)
         var blocks: [String: MeshBlock]                      // its borrowed meshes' buffers
         var instanceBlocks: [String: InstanceBlock]          // its instance groups' blocks
+        var voxelGrids: VoxelGrids?                          // its plants' voxel grids (Metal's tracer)
         /// The open world's next scene (`settings.scene`, if it is that) is drawn with the textures this one has: they
         /// stay as they are streamed. By the sources' identities.
         var worldTextures: (identities: [String], textures: [MTLTexture], streamer: TextureStreamer?)?
@@ -623,15 +627,17 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     traversalStats: CustomRayTracer.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
                     primitives: builtRayTracer == .metal && builtAPI == settings.api ? namedPrimitives : [:], blocks: namedBlocks,
                     instanceBlocks: namedInstanceBlocks,
+                    voxelGrids: builtRayTracer == .metal && builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids : nil,
                     worldTextures: settings.scene.isSameWorld(as: scene.settings) && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
     private func bufferOptions(rayTracer: RayTracerKind, api: RenderAPI, known: [String: MTLAccelerationStructure],
-                               blocks: [String: MeshBlock], instanceBlocks: [String: InstanceBlock]) -> SceneBuffers.Options {
+                               blocks: [String: MeshBlock], instanceBlocks: [String: InstanceBlock],
+                               voxelGrids: VoxelGrids? = nil) -> SceneBuffers.Options {
         SceneBuffers.Options(rayTracer: rayTracer, api: api, slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
                              compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known, blocks: blocks,
-                             instanceBlocks: instanceBlocks)
+                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids)
     }
 
     /// The pipelines for `kind` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
@@ -650,8 +656,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let virtual = rayTracer == .custom && options.virtualGeometry
         // Generated plants are assemblies for the custom tracer and baked meshes for Metal's: another scene.
         let assemblies = rayTracer == .custom
-        let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual && (!$0.hasPlants || $0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants)) ? $0 : nil }
-        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies)
+        // Metal's: far plants as voxels where that pays (MetalPlantVoxels), which makes the scene's plants differently too.
+        let voxelBoxes = rayTracer == .metal && sceneSettings.metalVoxels.on(Capabilities.current)
+        let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual
+            && (!$0.hasPlants || ($0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants) && $0.usesVoxelBoxes == voxelBoxes)) ? $0 : nil }
+        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies, voxelBoxes: voxelBoxes)
         let kept = options.worldTextures.flatMap { $0.identities == newScene.textures.map(\.identity) ? $0 : nil }
         let streamer = kept != nil ? kept?.streamer
             : newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
@@ -662,7 +671,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let buffers = reused != nil ? nil : try autoreleasepool {
             try SceneBuffers(device: device, queue: buildQueue, scene: newScene,
                              options: bufferOptions(rayTracer: rayTracer, api: options.api, known: options.primitives, blocks: options.blocks,
-                                                    instanceBlocks: options.instanceBlocks))
+                                                    instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids))
         }
         let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
                                                             geometry: buffers, slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil
@@ -818,6 +827,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                 self[keyPath: c].position.x += moved.x
                 self[keyPath: c].position.z += moved.y
             }
+            // ...and so is where Freeze LOD holds the detail for.
+            frozenLOD?.0 += SIMD3(moved.x, 0, moved.y)
         }
         if !(sameWorld && moved == .zero && oldRayTracer == builtRayTracer) {
             resetGIState()
@@ -876,7 +887,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // records, which it reaches through theirs.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
-        shadingResources += sceneBuffers.instanceResources
+        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? [])
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
@@ -1411,6 +1422,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         simulate(size)
         let slot = Int(frameIndex) % Renderer.maxFramesInFlight
         let lod = detailView(height: size.height)
+        updateVoxelLOD(lod)
         customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
         customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
                                       camPos: lod.camPos, pixelScale: lod.pixelScale, tau: lod.tau, sceneInstances: scene.instances)
@@ -1598,6 +1610,59 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         if !settings.virtualGeometry.freeze { frozenLOD = nil } else if frozenLOD == nil { frozenLOD = live }
         let lod = frozenLOD ?? live
         return VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
+    }
+
+    /// Metal's tracer: where the far baked plants' voxel levels are (VoxelLOD). A rebuild runs on `voxelQueue`, the
+    /// structure it built is swapped in at a frame's start, and the next may start once no frame in flight traces the
+    /// structure it builds into: `maxFramesInFlight - 1` frames after a swap.
+    private struct VoxelLevels {
+        weak var owner: VoxelLOD?
+        var running = false
+        var ready = false
+        var swapFrame: UInt32?
+        var started: CFTimeInterval = 0
+    }
+    private var voxelLevels = VoxelLevels()
+    private let voxelQueue = DispatchQueue(label: "voxel levels", qos: .utility)
+    /// A rebuild once the view has moved this far (m), at most this often (s): METALRENDERER_VOXEL_STEP / _INTERVAL.
+    private static let voxelStep = Float(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_STEP"] ?? "") ?? 1
+    private static let voxelInterval = Double(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_INTERVAL"] ?? "") ?? 0.25
+
+    /// Swaps in a finished rebuild of the voxel levels and starts the next if the view moved (or the bias changed).
+    /// Benchmarks rebuild here and wait: their pictures don't depend on how long a build takes.
+    private func updateVoxelLOD(_ lod: VGView) {
+        guard let voxels = sceneBuffers.voxelLOD else { return }
+        if voxelLevels.owner !== voxels { voxelLevels = VoxelLevels(owner: voxels) }
+        if voxelLevels.ready {
+            voxels.swap()
+            voxelLevels.ready = false
+            voxelLevels.swapFrame = frameIndex
+        }
+        let view = SIMD4(lod.camPos, settings.foliage.lod / max(lod.pixelScale, 1e-6))
+        if let picked = voxels.pickedView, picked.w == view.w,
+           distance(SIMD3(picked.x, picked.y, picked.z), lod.camPos) < Renderer.voxelStep { return }
+        guard !voxelLevels.running,
+              voxelLevels.swapFrame.map({ frameIndex >= $0 &+ UInt32(Renderer.maxFramesInFlight - 1) }) ?? true else { return }
+        let queue = buildQueue
+        if benchmark != nil {
+            if voxels.rebuild(for: view, queue: queue) {
+                voxels.swap()
+                voxelLevels.swapFrame = frameIndex
+            }
+            return
+        }
+        let now = CACurrentMediaTime()
+        guard now - voxelLevels.started >= Renderer.voxelInterval else { return }
+        voxelLevels.running = true
+        voxelLevels.started = now
+        voxelQueue.async { [weak self] in
+            let built = voxels.rebuild(for: view, queue: queue)
+            DispatchQueue.main.async {
+                guard let self, self.voxelLevels.owner === voxels else { return }
+                self.voxelLevels.running = false
+                self.voxelLevels.ready = built
+            }
+        }
     }
 
     // MARK: - Frame plan
@@ -1990,6 +2055,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let slot = plan.slot
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
+        if let benchmark, benchmark.shouldCapture, let v = sceneBuffers.voxelLOD {
+            print(String(format: "  Voxel levels: last rebuild picked in %.2f ms, built in %.2f ms, %d instances changed",
+                         v.last.pickMs, v.last.buildMs, v.last.changed))
+        }
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
             print("  " + ts.summary)
@@ -2876,7 +2945,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Freeze LOD does something: it holds the custom tracer's cut of the virtual meshes and its plants' voxel levels
     /// (`detailView`). The open world's tiles follow the camera regardless.
     private var lodFreezes: Bool {
-        customRT != nil && (scene.usesVirtualGeometry || (scene.hasPlants && scene.usesAssemblies))
+        (customRT != nil && (scene.usesVirtualGeometry || (scene.hasPlants && scene.usesAssemblies))) || sceneBuffers?.voxelLOD != nil
     }
 
     /// Why the view shown has nothing (or less than its name says) to show for this scene and these settings; nil if

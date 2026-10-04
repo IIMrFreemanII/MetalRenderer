@@ -20,7 +20,8 @@ inline Ray makeRay(float3 origin, float3 direction, float tmin, float tmax) {
 constant uint HIT_NO_CLUSTER = 0xFFFFFFFFu;
 constant uint HIT_NO_PART = 0xFFFFFFFFu;
 constant uint HIT_VOXEL   = 0xFFFFFFFEu;   // Hit.part: a voxel of a far plant's grid; `primitive` is then its cell's
-                                           // low 24 bits (leaf share, normal: FoliageVoxels.swift)
+                                           // low 24 bits (leaf share, normal: FoliageVoxels.swift), barycentrics.x
+                                           // the grid's level
 
 struct Hit {
     bool   hit;
@@ -33,11 +34,148 @@ struct Hit {
                            // `primitive` is then a triangle of the part's mesh
 };
 
+// Far plants as voxel grids (VOXELS: the custom tracer's assemblies, or Metal's voxel boxes): shared by both tracers.
+// A plant's voxel grid, for when it is far away (FoliageVoxels.swift).
+struct RTVoxels {
+    float4 lo;        // xyz = the grid's corner (plant space), w = a level 0 voxel's size
+    uint4  dims;      // xyz = level 0 voxels per axis; each next level has half, rounded up; w = 1: an evergreen
+    uint4  offsets;   // xyz = where levels 0, 1, 2 start among the cells
+};
+static_assert(sizeof(RTVoxels) == 48, "RTVoxels: FoliageVoxels.Grid");
+constant float VOXEL_DEPTH = 4.0f;   // a cell's 255 = this optical depth across a level 0 voxel
+constant uint  VOXEL_LEVELS = 3;
+constant float VOXEL_SHADE = 0.62f;  // a voxel's colour over its materials' (traceSurface)
+
+inline float3 rtSafeInverse(float3 d) {
+    return 1.0f / select(d, copysign(float3(1e-12f), d), abs(d) < 1e-12f);
+}
+
+inline uint3 voxelDims(uint3 d, uint level) { return max((d + ((1u << level) - 1u)) >> level, uint3(1u)); }
+
+// A far plant as its voxel grid: marches level `level` of `g` along o + d t (the plant's space; t as everywhere) a
+// voxel at a time and stops in a voxel with the chance that a ray through it meets some of what is in it, so that
+// on average the plant covers what its triangles would. Empty stretches are crossed a coarsest-level cell at a
+// time. `seed`: the ray's own. True on a hit: h.distance, h.primitive (the cell's leaf share and normal), h.part,
+// and the level in h.barycentrics.x. `voxels`: every grid's cells (the offsets in `g` count from there).
+// `keep`: the share of its leaves the plant still has (a grid with dims.w set is an evergreen's: all of them).
+inline bool rtVoxels(device const uint* voxels, RTVoxels g, uint level, float3 o, float3 d, float3 inv, float3 oi, float tmin,
+                     uint seed, float keep, thread Hit& h) {
+    float3 lo = g.lo.xyz, hi = lo + float3(g.dims.xyz) * g.lo.w;
+    float3 ta = fma(lo, inv, oi), tb = fma(hi, inv, oi);
+    float3 tn = min(ta, tb), tf = max(ta, tb);
+    float t0 = max(max(tn.x, tn.y), max(tn.z, tmin)), t1 = min(min(tf.x, tf.y), min(tf.z, h.distance));
+    if (t0 > t1) return false;
+    const uint coarse = VOXEL_LEVELS - 1u;
+    uint3 n = voxelDims(g.dims.xyz, level), nc = voxelDims(g.dims.xyz, coarse);
+    float size = g.lo.w * float(1u << level), sizeC = g.lo.w * float(1u << coarse);
+    device const uint* cells = voxels + g.offsets[level];
+    device const uint* cellsC = voxels + g.offsets[coarse];
+    float dt = size / length(d);
+    float depthScale = VOXEL_DEPTH / 255.0f * float(1u << level);
+    float fallen = g.dims.w != 0u ? 0.0f : (1.0f - keep) * (1.0f / 255.0f);
+    // Jittered along the ray; a ray that starts inside the grid (a shadow ray from one of its voxels) begins past
+    // the voxel it starts in.
+    float t = t0 + (float(pcgHash(seed) >> 8) * (1.0f / 16777216.0f) + (t0 > tmin ? 0.0f : 0.75f)) * dt;
+    for (uint i = 0; i < 400u && t < t1; ++i) {
+        float3 p = max(o + d * t - lo, 0.0f);
+        if (level < coarse) {
+            uint3 c = min(uint3(p / sizeC), nc - 1u);
+            if (cellsC[(c.z * nc.y + c.y) * nc.x + c.x] == 0u) {   // nothing here: on to the far side of this cell
+                float3 cl = lo + float3(c) * sizeC;
+                float3 e = max(fma(cl, inv, oi), fma(cl + sizeC, inv, oi));
+                t = max(t + dt, min(min(e.x, e.y), e.z) + 0.25f * dt);
+                continue;
+            }
+        }
+        uint3 v = min(uint3(p / size), n - 1u);
+        uint cell = cells[(v.z * n.y + v.y) * n.x + v.x];
+        if (cell != 0u) {
+            float u = float(pcgHash(seed + (i + 1u) * 0x9E3779B9u) >> 8) * (1.0f / 16777216.0f);
+            if (u < 1.0f - exp(-float(cell >> 24) * depthScale * (1.0f - float((cell >> 16) & 0xFFu) * fallen))) {
+                h.hit = true;
+                h.distance = t;
+                h.barycentrics = float2(float(level), 0.0f);
+                h.primitive = cell & 0x00FFFFFFu;
+                h.cluster = HIT_NO_CLUSTER;
+                h.part = HIT_VOXEL;
+                return true;
+            }
+        }
+        t += dt;
+    }
+    return false;
+}
+
+// A ray's own seed for a march through instance `id`'s voxels.
+inline uint voxelSeed(Ray r, uint id) {
+    return pcgHash(as_type<uint>(r.direction.x) ^ pcgHash(as_type<uint>(r.direction.y) ^ pcgHash(as_type<uint>(r.origin.x) + id)));
+}
+
 #if !CUSTOM_RT
 
 #define SCENE_ACCEL instance_acceleration_structure
 
+// VOXEL_BOXES (Metal's tracer): a far plant's wood instance is a box, one per grid and level (VoxelGrids.swift),
+// whose primitive data names the grid and the level, and its leaf instance is masked out (VoxelLOD.swift). The ray
+// queries are then intersection queries: the traversal hands the loop each box it meets, which rtVoxels marches;
+// triangles stay the traversal's own (opaque: never handed to the loop).
+struct VoxelBox {
+    device const RTVoxels* grid;
+    device const uint*     cells;   // every grid's cells (the grid's offsets count from here)
+    uint level;
+    uint pad0, pad1, pad2;
+};
+static_assert(sizeof(VoxelBox) == 32, "VoxelBox: VoxelGrids.BoxData");
+
+// Rays that meet the scene's geometry meet the voxel boxes too.
+inline uint voxelMask(uint mask) { return (mask & MASK_GEOMETRY) != 0 ? mask | MASK_VOXELS : mask; }
+
+inline intersection_params voxelParams(bool any) {
+    intersection_params p;
+    p.assume_geometry_type(geometry_type::triangle | geometry_type::bounding_box);
+    p.accept_any_intersection(any);
+    return p;
+}
+
+// The query's candidate box: marched, and committed if the ray stops in it before what is committed so far (then
+// `v` has the hit: its distance, cell and level).
+template <typename Q>
+inline bool voxelCandidate(thread Q& q, Ray r, thread Hit& v) {
+    device const VoxelBox& box = *(device const VoxelBox*)q.get_candidate_primitive_data();
+    uint id = TILED ? q.get_candidate_user_instance_id() : q.get_candidate_instance_id();
+    float3 o = q.get_candidate_ray_origin(), d = q.get_candidate_ray_direction(), inv = rtSafeInverse(d);
+    Hit c;
+    c.hit = false;
+    c.distance = q.get_committed_intersection_type() == intersection_type::none ? r.tmax : q.get_committed_distance();
+    if (!rtVoxels(box.cells, *box.grid, box.level, o, d, inv, -o * inv, r.tmin, voxelSeed(r, id), 1.0f, c)) return false;
+    q.commit_bounding_box_intersection(c.distance);
+    v = c;
+    return true;
+}
+
 Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
+    if (VOXEL_BOXES) {
+        intersection_query<triangle_data, instancing> q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
+        Hit v;
+        while (q.next()) voxelCandidate(q, r, v);
+        intersection_type type = q.get_committed_intersection_type();
+        Hit h;
+        h.hit = type != intersection_type::none;
+        h.distance = h.hit ? q.get_committed_distance() : INFINITY;
+        h.instance = TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id();
+        h.cluster = HIT_NO_CLUSTER;
+        if (type == intersection_type::bounding_box) {
+            h.barycentrics = v.barycentrics;   // x = the level
+            h.primitive = v.primitive;         // the cell
+            h.part = HIT_VOXEL;
+        } else {
+            h.barycentrics = type == intersection_type::triangle ? q.get_committed_triangle_barycentric_coord() : float2(0.0f);
+            h.primitive = q.get_committed_primitive_id();
+            h.part = HIT_NO_PART;
+        }
+        return h;
+    }
     intersector<triangle_data, instancing> isect;
     isect.assume_geometry_type(geometry_type::triangle);
     isect.force_opacity(forced_opacity::opaque);
@@ -55,6 +193,13 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
 
 // Closest hit distance only (INFINITY if none).
 float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
+    if (VOXEL_BOXES) {
+        intersection_query<instancing> q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
+        Hit v;
+        while (q.next()) voxelCandidate(q, r, v);
+        return q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
+    }
     intersector<instancing> isect;   // no triangle_data: barycentrics aren't needed
     isect.assume_geometry_type(geometry_type::triangle);
     isect.force_opacity(forced_opacity::opaque);
@@ -64,6 +209,17 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
 
 // Any hit (shadow rays): true if something is in the way; `t` = its distance.
 bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
+    if (VOXEL_BOXES) {
+        intersection_query<instancing> q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(true));
+        Hit v;
+        while (q.next()) {
+            if (voxelCandidate(q, r, v)) { t = v.distance; return true; }   // any hit will do
+        }
+        bool hit = q.get_committed_intersection_type() != intersection_type::none;
+        t = hit ? q.get_committed_distance() : r.tmax;
+        return hit;
+    }
     intersector<instancing> isect;
     isect.assume_geometry_type(geometry_type::triangle);
     isect.force_opacity(forced_opacity::opaque);
@@ -140,17 +296,6 @@ inline float3 partWind(RTPart part, PlantWind w, float strength, float3 p, bool 
     }
     return windTurn(p, w.axis, w.angle);   // the root: about the plant's origin
 }
-
-// A plant's voxel grid, for when it is far away (FoliageVoxels.swift).
-struct RTVoxels {
-    float4 lo;        // xyz = the grid's corner (plant space), w = a level 0 voxel's size
-    uint4  dims;      // xyz = level 0 voxels per axis; each next level has half, rounded up; w = 1: an evergreen
-    uint4  offsets;   // xyz = where levels 0, 1, 2 start in RTScene.voxels
-};
-static_assert(sizeof(RTVoxels) == 48, "RTVoxels: FoliageVoxels.Grid");
-constant float VOXEL_DEPTH = 4.0f;   // a cell's 255 = this optical depth across a level 0 voxel
-constant uint  VOXEL_LEVELS = 3;
-constant float VOXEL_SHADE = 0.62f;  // a voxel's colour over its materials' (traceSurface)
 
 struct RTScene {
     device const BVHNode*    tlas;        // static top-level nodes, then this frame's dynamic and cluster trees
@@ -252,10 +397,6 @@ inline bool rtSlab(float3 lo, float3 hi, float3 inv, float3 oi, float tmin, floa
     return tnear <= min(min(tf.x, tf.y), min(tf.z, tmax));
 }
 
-inline float3 rtSafeInverse(float3 d) {
-    return 1.0f / select(d, copysign(float3(1e-12f), d), abs(d) < 1e-12f);
-}
-
 constant uint CUTOUT_SIZE = 512;   // a leaf-card alpha layer's side (FoliageTextures.cardSheetSize)
 
 // A leaf card is there only where its picture is. Its triangles carry their corners' UVs (10 bits a coordinate) and
@@ -299,61 +440,6 @@ inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, floa
 // The share of its leaves a deciduous plant still has when `fall` of all leaves are down: each plant in its own time.
 inline float plantKeep(float fall, uint instance) {
     return 1.0f - saturate(fall * 1.6f - 0.6f * float(pcgHash(instance + 0xFA11u) & 0xFFu) * (1.0f / 255.0f));
-}
-
-inline uint3 voxelDims(uint3 d, uint level) { return max((d + ((1u << level) - 1u)) >> level, uint3(1u)); }
-
-// A far plant as its voxel grid: marches level `level` of `g` along o + d t (the plant's space; t as everywhere) a
-// voxel at a time and stops in a voxel with the chance that a ray through it meets some of what is in it, so that
-// on average the plant covers what its triangles would. Empty stretches are crossed a coarsest-level cell at a
-// time. `seed`: the ray's own. True on a hit: h.distance, h.primitive (the cell's leaf share and normal), h.part.
-// `keep`: the share of its leaves the plant still has (a grid with dims.w set is an evergreen's: all of them).
-inline bool rtVoxels(constant RTScene& sc, RTVoxels g, uint level, float3 o, float3 d, float3 inv, float3 oi, float tmin,
-                     uint seed, float keep, thread Hit& h) {
-    float3 lo = g.lo.xyz, hi = lo + float3(g.dims.xyz) * g.lo.w;
-    float3 ta = fma(lo, inv, oi), tb = fma(hi, inv, oi);
-    float3 tn = min(ta, tb), tf = max(ta, tb);
-    float t0 = max(max(tn.x, tn.y), max(tn.z, tmin)), t1 = min(min(tf.x, tf.y), min(tf.z, h.distance));
-    if (t0 > t1) return false;
-    const uint coarse = VOXEL_LEVELS - 1u;
-    uint3 n = voxelDims(g.dims.xyz, level), nc = voxelDims(g.dims.xyz, coarse);
-    float size = g.lo.w * float(1u << level), sizeC = g.lo.w * float(1u << coarse);
-    device const uint* cells = sc.voxels + g.offsets[level];
-    device const uint* cellsC = sc.voxels + g.offsets[coarse];
-    float dt = size / length(d);
-    float depthScale = VOXEL_DEPTH / 255.0f * float(1u << level);
-    float fallen = g.dims.w != 0u ? 0.0f : (1.0f - keep) * (1.0f / 255.0f);
-    // Jittered along the ray; a ray that starts inside the grid (a shadow ray from one of its voxels) begins past
-    // the voxel it starts in.
-    float t = t0 + (float(pcgHash(seed) >> 8) * (1.0f / 16777216.0f) + (t0 > tmin ? 0.0f : 0.75f)) * dt;
-    for (uint i = 0; i < 400u && t < t1; ++i) {
-        float3 p = max(o + d * t - lo, 0.0f);
-        if (level < coarse) {
-            uint3 c = min(uint3(p / sizeC), nc - 1u);
-            if (cellsC[(c.z * nc.y + c.y) * nc.x + c.x] == 0u) {   // nothing here: on to the far side of this cell
-                float3 cl = lo + float3(c) * sizeC;
-                float3 e = max(fma(cl, inv, oi), fma(cl + sizeC, inv, oi));
-                t = max(t + dt, min(min(e.x, e.y), e.z) + 0.25f * dt);
-                continue;
-            }
-        }
-        uint3 v = min(uint3(p / size), n - 1u);
-        uint cell = cells[(v.z * n.y + v.y) * n.x + v.x];
-        if (cell != 0u) {
-            float u = float(pcgHash(seed + (i + 1u) * 0x9E3779B9u) >> 8) * (1.0f / 16777216.0f);
-            if (u < 1.0f - exp(-float(cell >> 24) * depthScale * (1.0f - float((cell >> 16) & 0xFFu) * fallen))) {
-                h.hit = true;
-                h.distance = t;
-                h.barycentrics = float2(0.0f);
-                h.primitive = cell & 0x00FFFFFFu;
-                h.cluster = HIT_NO_CLUSTER;
-                h.part = HIT_VOXEL;
-                return true;
-            }
-        }
-        t += dt;
-    }
-    return false;
 }
 
 constant uint RT_INSTANCE_EXIT = 0xFFFFFFFEu;   // stack marker: back to the top level (world space) below here
@@ -523,8 +609,8 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                         }
                         // Far from the camera, its voxels instead, at the level rtPrepKernel chose for it this frame.
                         if (voxelLevel != 0) {
-                            uint seed = pcgHash(as_type<uint>(r.direction.x) ^ pcgHash(as_type<uint>(r.direction.y) ^ pcgHash(as_type<uint>(r.origin.x) + id)));
-                            if (rtVoxels(sc, sc.voxelGrids[assembly - 1u], voxelLevel - 1u, o, d, inv, oi, r.tmin, seed, falling ? plantKeep(sc.windTime.w, id) : 1.0f, h)) {
+                            uint seed = voxelSeed(r, id);
+                            if (rtVoxels(sc.voxels, sc.voxelGrids[assembly - 1u], voxelLevel - 1u, o, d, inv, oi, r.tmin, seed, falling ? plantKeep(sc.windTime.w, id) : 1.0f, h)) {
                                 h.instance = id;
                                 if (ANY) return true;
                             }

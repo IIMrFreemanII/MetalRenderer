@@ -359,8 +359,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
 
     uint id = res.instance;
     InstanceData inst = instanceRecord(s.instances, id);
-#if CUSTOM_RT
-    if (FOLIAGE && res.part == HIT_VOXEL) {
+    if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxel: where the ray stopped in it, the voxel's mean normal, and its wood's and leaves'
         // colours by how much of it is leaf.
         float2 e = float2(float(res.primitive & 0xFFu), float((res.primitive >> 8) & 0xFFu)) * (2.0f / 255.0f) - 1.0f;
@@ -383,7 +382,6 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         sf.instanceId = surfaceInstance(id);
         return sf;
     }
-#endif
     float2 bc = res.barycentrics;
     float w0 = 1.0f - bc.x - bc.y;
     HitVertices hv = fetchHitVertices(res, inst, accel, s);

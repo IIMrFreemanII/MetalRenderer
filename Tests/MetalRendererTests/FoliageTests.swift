@@ -1,4 +1,5 @@
 import XCTest
+import Metal
 import simd
 @testable import MetalRenderer
 
@@ -215,11 +216,11 @@ final class ForestTests: XCTestCase {
 
 /// What the custom tracer adds to plants: the room the wind's turns need, the voxel grids of far plants, the seasons.
 final class FoliageRuntimeTests: XCTestCase {
-    private func forest(trees: Int = 120) -> Scene {
+    private func forest(trees: Int = 120, assemblies: Bool = true) -> Scene {
         var settings = SceneSettings(kind: .forest)
         settings.trees = trees
         settings.undergrowth = 25
-        return Scene(settings, assemblies: true)
+        return Scene(settings, assemblies: assemblies, voxelBoxes: !assemblies)
     }
 
     /// p turned by `angle` about the unit `axis` through `pivot` (Shaders/Foliage.metal's windTurn, without its series).
@@ -291,7 +292,7 @@ final class FoliageRuntimeTests: XCTestCase {
     /// the same scene gives the same cells.
     func testVoxelGridsCoverThePlants() {
         let scene = forest(trees: 60)
-        let (grids, cells) = FoliageVoxels.build(scene: scene)
+        let (grids, cells) = FoliageVoxels.build(scene.voxelPlants)
         XCTAssertEqual(grids.count, scene.assemblies.count)
         XCTAssertTrue(scene.assemblies.contains(where: \.evergreen) && scene.assemblies.contains { !$0.evergreen })
         var end: UInt32 = 0
@@ -330,8 +331,81 @@ final class FoliageRuntimeTests: XCTestCase {
             XCTAssertLessThan(filled * 2, d0.x * d0.y * d0.z)   // a plant is mostly air
         }
         XCTAssertEqual(Int(end), cells.count)
-        let again = FoliageVoxels.build(scene: forest(trees: 60))
+        let again = FoliageVoxels.build(forest(trees: 60).voxelPlants)
         XCTAssertEqual(again.cells, cells)
+    }
+
+    /// Metal's tracer bakes the plants, and has the same plants' voxels for its far ones: a grid for each baked plant
+    /// with boughs, the same as the custom tracer's assembly of it, and its wood and leaf meshes pointing at it.
+    func testBakedPlantsHaveTheAssembliesVoxels() {
+        let custom = forest(trees: 60), metal = forest(trees: 60, assemblies: false)
+        XCTAssertTrue(metal.assemblies.isEmpty && !metal.voxelPlants.isEmpty)
+        let built = FoliageVoxels.build(metal.voxelPlants), reference = FoliageVoxels.build(custom.voxelPlants)
+        let byKey = Dictionary(uniqueKeysWithValues: custom.voxelPlants.enumerated().map { ($1.key, $0) })
+        for (p, plant) in metal.voxelPlants.enumerated() {
+            guard let c = byKey[plant.key] else { return XCTFail("\(plant.key) has no assembly") }
+            let g = built.grids[p], r = reference.grids[c]
+            XCTAssertEqual(g.lo, r.lo)
+            XCTAssertEqual(g.dims, r.dims)
+            let d0 = SIMD3<Int>(Int(g.dims.x), Int(g.dims.y), Int(g.dims.z))
+            let count = (0..<FoliageVoxels.levels).reduce(0) { n, level in let d = FoliageVoxels.dims(d0, level: level); return n + d.x * d.y * d.z }
+            XCTAssertEqual(Array(built.cells[Int(g.offsets.x)..<Int(g.offsets.x) + count]),
+                           Array(reference.cells[Int(r.offsets.x)..<Int(r.offsets.x) + count]))
+        }
+        // Every voxel plant is some baked plant's wood, and maybe its leaves.
+        let woods = Set(metal.meshVoxels.values.filter { $0 & Scene.meshVoxelsLeaves == 0 })
+        XCTAssertEqual(woods.count, metal.voxelPlants.count)
+        XCTAssertTrue(metal.meshVoxels.values.contains { $0 & Scene.meshVoxelsLeaves != 0 })
+    }
+
+    /// Metal's voxel levels pick what rtPrepKernel does: a level up each time the distance doubles, from where a level
+    /// 0 voxel is the bias in traced pixels; none without a bias. The box data is MSL VoxelBox's size.
+    func testVoxelLevelsFollowTheDistance() {
+        // A voxel of 0.1 m at 26 m is 2 traced pixels when the pixel scale is 1300 (bias 2: view 2 / 1300).
+        let view: Float = 2.0 / 1300, size: Float = 0.1
+        func level(_ d: Float) -> UInt8 { VoxelLOD.level(distance: d, size: size, view: view, jitter: 0) }
+        XCTAssertEqual(level(64), 0)
+        XCTAssertEqual(level(66), 1)
+        XCTAssertEqual(level(131), 2)
+        XCTAssertEqual(level(261), 3)
+        XCTAssertEqual(level(100_000), 3)
+        XCTAssertEqual(VoxelLOD.level(distance: 100_000, size: size, view: 0, jitter: 0), 0)
+        XCTAssertEqual(MemoryLayout<VoxelGrids.BoxData>.stride, 32)
+        XCTAssertEqual(VoxelLOD.pcgHash(0), 129708002)   // Shaders/Sampling.metal's
+    }
+
+    /// On Metal's tracer a far plant's wood instance names its grid's box at its level, and its leaves are masked out;
+    /// back at triangles, both descriptors are as they were.
+    func testFarBakedPlantsAreVoxelBoxes() throws {
+        let scene = forest(trees: 60, assemblies: false)
+        XCTAssertTrue(scene.hasVoxelBoxes)
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .metal, api: .metal3, slots: 3))
+        let voxels = try XCTUnwrap(buffers.voxelLOD)
+        XCTAssertEqual(buffers.primitives.count, scene.meshes.count + VoxelGrids.levels * scene.voxelPlants.count)
+        let base = buffers.instanceDescriptors[0].contents()
+        func bytes(_ i: Int) -> [UInt8] { Array(UnsafeRawBufferPointer(start: base + i * 64 + 48, count: 16)) }
+        let plants = scene.instances.indices.filter { scene.meshVoxels[scene.instances[$0].mesh] != nil }
+        XCTAssertFalse(plants.isEmpty)
+        let before = plants.map(bytes)
+        // From 100 km every plant is its coarsest level.
+        XCTAssertTrue(voxels.rebuild(for: SIMD4(100_000, 0, 0, 1), queue: queue))
+        for i in plants {
+            let v = scene.meshVoxels[scene.instances[i].mesh]!, mask = (base + i * 64).load(fromByteOffset: 52, as: UInt32.self)
+            if v & Scene.meshVoxelsLeaves != 0 {
+                XCTAssertEqual(mask, 0)
+            } else {
+                XCTAssertEqual(mask, Scene.maskVoxels)
+                XCTAssertEqual((base + i * 64).load(fromByteOffset: 60, as: UInt32.self),
+                               UInt32(scene.meshes.count + VoxelGrids.levels * Int(v) + VoxelGrids.levels - 1))
+            }
+        }
+        // No bias: all of them their triangles again, byte for byte.
+        XCTAssertTrue(voxels.rebuild(for: SIMD4(100_000, 0, 0, 0), queue: queue))
+        XCTAssertEqual(plants.map(bytes), before)
+        XCTAssertFalse(voxels.rebuild(for: SIMD4(0, 0, 0, 0), queue: queue))   // nothing changed: nothing built
     }
 
     /// The detail textures all have the mean the shaders and the materials' colours assume, the bark tiles, and a

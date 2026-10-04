@@ -170,6 +170,14 @@ constant bool TILED = false;
 #else
 constant bool TILED = GROUPED;
 #endif
+// Bit 23 = VOXEL_BOXES: on Metal's tracer, far plants are voxel boxes (VoxelLOD.swift): bounding boxes whose rays the
+// ray queries march through the plant's grid (rtVoxels). VOXELS: far plants can be voxels on this tracer.
+constant bool VOXEL_BOXES = (LIGHT_SPEC & 0x00800000u) != 0;
+#if CUSTOM_RT
+constant bool VOXELS = FOLIAGE;
+#else
+constant bool VOXELS = VOXEL_BOXES;
+#endif
 constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
 struct InstanceBlockRef { device const InstanceData* records; };
 inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {
@@ -260,6 +268,7 @@ constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups p
 
 constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
+constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
 constant uint MASK_ALL      = 0xFF;
 
 constant float RAY_EPSILON  = 1e-3f;

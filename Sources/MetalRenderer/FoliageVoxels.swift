@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Distance level of detail for assemblies (generated plants; custom ray tracer): each plant as a grid of voxels
+/// Distance level of detail for generated plants (both tracers: VoxelLOD.swift on Metal's): each plant as a grid of voxels
 /// holding how much leaf and wood is in them. Once a plant is far enough that a voxel is smaller than a pixel, rays
 /// march its grid instead of walking its parts' triangles, and stop in a voxel with the probability that a ray
 /// through it would have hit something (`rtVoxels` in Shaders/Intersect.metal). On average a far crown then covers
@@ -31,31 +31,39 @@ enum FoliageVoxels {
         return SIMD3(max((d.x + r) >> level, 1), max((d.y + r) >> level, 1), max((d.z + r) >> level, 1))
     }
 
+    /// What a plant's grid is made of: its meshes, placed in its space. The same on both tracers: an assembly's parts
+    /// (custom tracer), or the parts a baked plant was flattened from (Metal's).
+    struct Piece {
+        var mesh: Foliage.Mesh
+        var transform: float4x4         // into plant space
+        var firstLeaf: UInt32           // the mesh's triangles from here on are leaves
+        var leafCoverage: Float = 1     // the share of a leaf triangle that is there: a card's picture's (Scene.cutouts)
+    }
+    struct Plant {
+        var key: String                 // what it is (its library, species and number): the cache's name for it
+        var pieces: [Piece]
+        var evergreen: Bool
+    }
+
     /// Of `build`'s output: a change of the voxelisation makes other files in the cache.
     static let version = 1
 
-    /// `build`, from the cache or into it (GeneratedCache). `geometry`: the hash of the scene's meshes
-    /// (BVHBuilder.cachedBLAS); the file is named by it and by how the assemblies place them. Nil: not cached.
-    static func cached(scene: Scene, geometry: String?) -> (grids: [Grid], cells: [UInt32]) {
-        guard let geometry, !scene.assemblies.isEmpty else { return build(scene: scene) }
+    /// `build`, from the cache or into it (GeneratedCache); the file is named by the plants' keys and their cards'
+    /// coverage, which is all their meshes are made from.
+    static func cached(_ plants: [Plant]) -> (grids: [Grid], cells: [UInt32]) {
+        guard !plants.isEmpty else { return ([], []) }
         var hasher = GeneratedCache.Hasher()
-        hasher.add(geometry)
-        for assembly in scene.assemblies {
-            hasher.add([UInt32(assembly.parts.count), assembly.evergreen ? 1 : 0])
-            hasher.add(assembly.parts.flatMap { [UInt32($0.mesh), $0.firstLeaf] })
-            hasher.add(assembly.parts.flatMap { part -> [Float] in
-                let c = part.transform.columns
-                return [c.0.x, c.0.y, c.0.z, c.1.x, c.1.y, c.1.z, c.2.x, c.2.y, c.2.z, c.3.x, c.3.y, c.3.z]
-            })
+        for plant in plants {
+            hasher.add(plant.key)
+            hasher.add(plant.pieces.map(\.leafCoverage))
         }
-        hasher.add(scene.cutouts.map(\.coverage))
         let name = "voxels-\(hasher.name()).sect", key = "voxels v\(version) \(resolution) \(levels)"
         let grid = SectionFile.id("grid"), cell = SectionFile.id("cell")
         if let file = GeneratedCache.load(name, key: key), let grids: [Grid] = file.array(grid), let cells: [UInt32] = file.array(cell),
-           grids.count == scene.assemblies.count {
+           grids.count == plants.count {
             return (grids, cells)
         }
-        let built = build(scene: scene)
+        let built = build(plants)
         var writer = SectionFile.Writer()
         writer.add(grid, built.grids)
         writer.add(cell, built.cells)
@@ -63,18 +71,11 @@ enum FoliageVoxels {
         return built
     }
 
-    /// Every assembly's grid (offsets from 0: `build` places them) and cells. The plants are voxelised in parallel.
-    static func build(scene: Scene) -> (grids: [Grid], cells: [UInt32]) {
-        let assemblies = scene.assemblies, coverage = scene.cutouts.map(\.coverage)
-        var built = [(grid: Grid, cells: [UInt32])](repeating: (Grid(), []), count: assemblies.count)
-        scene.positions.withUnsafeBufferPointer { positions in
-            scene.indices.withUnsafeBufferPointer { indices in
-                built.withUnsafeMutableBufferPointer { slots in
-                    DispatchQueue.concurrentPerform(iterations: assemblies.count) { a in
-                        slots[a] = voxelise(assemblies[a], meshes: scene.meshes, coverage: coverage, positions: positions, indices: indices)
-                    }
-                }
-            }
+    /// Every plant's grid (offsets from 0: `build` places them) and cells. The plants are voxelised in parallel.
+    static func build(_ plants: [Plant]) -> (grids: [Grid], cells: [UInt32]) {
+        var built = [(grid: Grid, cells: [UInt32])](repeating: (Grid(), []), count: plants.count)
+        built.withUnsafeMutableBufferPointer { slots in
+            DispatchQueue.concurrentPerform(iterations: plants.count) { p in slots[p] = voxelise(plants[p]) }
         }
         var grids: [Grid] = [], cells: [UInt32] = []
         cells.reserveCapacity(built.reduce(0) { $0 + $1.cells.count })
@@ -95,10 +96,14 @@ enum FoliageVoxels {
         return UInt32(q.x) | UInt32(q.y) << 8
     }
 
-    private static func voxelise(_ assembly: Scene.Assembly, meshes: [GPUMesh], coverage: [Float], positions: UnsafeBufferPointer<SIMD3<Float>>,
-                                 indices: UnsafeBufferPointer<UInt32>) -> (grid: Grid, cells: [UInt32]) {
+    private static func voxelise(_ plant: Plant) -> (grid: Grid, cells: [UInt32]) {
+        // The box of the placed vertices (a piece's own box, turned, would be looser).
         var box = AABB()
-        for part in assembly.parts { box.grow(part.bounds) }
+        for piece in plant.pieces {
+            let c = piece.transform.columns
+            let x = Foliage.xyz(c.0), y = Foliage.xyz(c.1), z = Foliage.xyz(c.2), origin = Foliage.xyz(c.3)
+            for p in piece.mesh.positions { box.grow(x * p.x + y * p.y + z * p.z + origin) }
+        }
         let extent = box.hi - box.lo
         let size = max(extent.max() / Float(resolution), 1e-3)
         let d0 = SIMD3<Int>(max(Int((extent.x / size).rounded(.up)), 1), max(Int((extent.y / size).rounded(.up)), 1),
@@ -109,14 +114,13 @@ enum FoliageVoxels {
         var normal = [SIMD3<Float>](repeating: .zero, count: count)
         let heart = SIMD3<Float>((box.lo.x + box.hi.x) / 2, box.lo.y + 0.35 * extent.y, (box.lo.z + box.hi.z) / 2)
         let top = SIMD3<Float>(Float(d0.x - 1), Float(d0.y - 1), Float(d0.z - 1))
-        for part in assembly.parts {
-            let mesh = meshes[part.mesh]
-            let c = part.transform.columns
+        for piece in plant.pieces {
+            let positions = piece.mesh.positions, indices = piece.mesh.indices
+            let c = piece.transform.columns
             let x = Foliage.xyz(c.0), y = Foliage.xyz(c.1), z = Foliage.xyz(c.2), origin = Foliage.xyz(c.3)
             @inline(__always) func placed(_ i: UInt32) -> SIMD3<Float> { let p = positions[Int(i)]; return x * p.x + y * p.y + z * p.z + origin }
-            let first = Int(mesh.firstIndex)
-            for t in 0..<Int(mesh.indexCount) / 3 {
-                let p0 = placed(indices[first + 3 * t]), e1 = placed(indices[first + 3 * t + 1]) - p0, e2 = placed(indices[first + 3 * t + 2]) - p0
+            for t in 0..<indices.count / 3 {
+                let p0 = placed(indices[3 * t]), e1 = placed(indices[3 * t + 1]) - p0, e2 = placed(indices[3 * t + 2]) - p0
                 let cr = cross(e1, e2)
                 let twice = length(cr)
                 guard twice > 0 else { continue }
@@ -125,8 +129,8 @@ enum FoliageVoxels {
                 // A triangle bigger than a voxel (the trunk's) is spread over k x k points of it.
                 let k = min(max(Int((max(length(e1), length(e2)) / (0.7 * size)).rounded(.up)), 1), 16)
                 // A card is only there where its picture is: its area counts by that share.
-                let isLeaf = UInt32(t) >= part.firstLeaf
-                let there = isLeaf && mesh.cutout != 0 ? coverage[Int(mesh.cutout >> 24) - 1] : 1
+                let isLeaf = UInt32(t) >= piece.firstLeaf
+                let there = isLeaf ? piece.leafCoverage : 1
                 let share = twice / 2 / Float(k * k) * there
                 for i in 0..<k {
                     for j in 0..<(2 * (k - i) - 1) {
@@ -142,7 +146,7 @@ enum FoliageVoxels {
             }
         }
 
-        var grid = Grid(lo: SIMD4(box.lo, size), dims: SIMD4(UInt32(d0.x), UInt32(d0.y), UInt32(d0.z), assembly.evergreen ? 1 : 0))
+        var grid = Grid(lo: SIMD4(box.lo, size), dims: SIMD4(UInt32(d0.x), UInt32(d0.y), UInt32(d0.z), plant.evergreen ? 1 : 0))
         var cells: [UInt32] = []
         var d = d0
         for level in 0..<levels {

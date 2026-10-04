@@ -31,7 +31,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * A tree is an **assembly**: a trunk, limbs and a few hundred placed copies of six shared boughs. The forest's 2,500 trees are 29 plants of 3,500 parts.
   * **Wind** turns every limb and bough about its bone, and leans the grass, without rebuilding anything.
   * Far plants are traced as **voxels**; a **season** setting turns the leaves and drops them; leaves let light through.
-  * Assemblies, wind, voxels and leaf fall are the custom tracer's. Metal's tracer renders the same plants as plain, still meshes.
+  * Assemblies, wind and leaf fall are the custom tracer's. Metal's tracer renders the same plants as plain, still meshes, and far ones as the same voxels where it has ray-tracing hardware.
 * **Volumetric fog and light:** height fog with drifting noise, plus soft-edged local fog volumes (ground mist, a stage haze, a glow around a lamp).
   * Every light type scatters in it, with ray-traced shadows, so sunlight falls in shafts through windows and spot beams are visible.
   * It is computed in a camera-aligned voxel grid ("froxels"), 8×8 traced pixels by 64 depth slices.
@@ -626,8 +626,13 @@ The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
 | Season | 0.3 | 0 = spring, 0.3 = summer, 0.5–0.8 the leaves turn and fall, 1 = winter. |
 | Leaf translucency | 1 | Scales every species' share of backlit leaves; 0 = opaque leaves. |
 | Distance LOD (voxels) | 2 px | The voxel size, in traced pixels, at which a plant is marched instead of traced. 0 = never. At 4, near trees turn visibly grainy. |
+| Far plants (Metal) | Auto | Metal's tracer: far plants as their voxels (Auto: where Metal has ray-tracing hardware), or always their triangles. `voxels=auto\|voxels\|triangles`. |
 | Trees, Undergrowth, Plant seed | 2500, 100%, 1 | The Forest. Applied when the slider is released. |
 | Leaves as cards, Plants as plain meshes | Off | See above. |
+
+**Voxels on Metal's tracer** (`VoxelLOD.swift`, `VoxelGrids.swift`). The baked plants have the assemblies' grids (the same cells: one builder, `FoliageVoxels.Plant`, for both tracers). Each grid level is a bounding-box structure of one box, whose primitive data names the grid and the level. A far plant's wood instance points at its level's box and its leaf instance is masked out, and the ray queries become intersection queries: the traversal hands each box it meets to the shader, which marches it with the custom tracer's `rtVoxels`, while triangles stay the traversal's own. The levels follow the custom tracer's rule, Freeze LOD and the `lod` bias included.
+* A still scene's instance structure is built once, for tracing. When the camera has moved a metre, the levels are picked again on the CPU (the open world's 700,000 plant instances in 14 ms) and another structure is built in the background (36 ms on an M1 Max) and swapped in at a frame's start: the levels trail the camera by a few frames, and the frames trace as fast as before. Benchmarks rebuild at the frame's start and wait, so their pictures don't depend on timing.
+* Measured on an M1 Max (software ray tracing), the forest from above, 960×600: the voxels have the triangles' mean brightness (73.8, 77.2, 67.6 against 73.8, 76.7, 67.9) and the LOD view matches the custom tracer's plant for plant. But the intersection queries cost every ray about 30% (`forest`, every view, no plant as voxels), more than far plants as voxels save (9% of the frame from the air, nothing from the ground). So by default they are used only where Metal traverses in hardware (M3 and later), which hasn't been measured.
 
 **Cost** on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METALRENDERER_BENCH=forest`, "forest moving 3x"), whole frame and the trace pass:
 
@@ -672,7 +677,7 @@ The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
 * **Keeping the leaf-fall limit in a register across the traversal loop.** 0.7 ms a frame in the wind; it is computed where a leaf is tested.
 
 **Limitations:**
-* Wind, voxels and leaf fall need the custom tracer. With Metal's the plants stand still and keep their leaves; their colours still follow the season.
+* Wind and leaf fall need the custom tracer. With Metal's the plants stand still and keep their leaves; their colours still follow the season. Its voxels are on by default only with ray-tracing hardware (see above), and need a still scene.
 * A plant traced as voxels only leans with the wind; its boughs don't move. Far trunks are as grainy as far crowns.
 * Dead trees only lean. A patch of grass leans as one.
 * The ground's colour map has a texel every 31 cm.
@@ -984,7 +989,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `FoliageSpecies.swift` | Each species' recipes, by age, and its boughs' |
 | `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
 | `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
-| `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail |
+| `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail, made from the library's plants for both tracers |
+| `VoxelGrids.swift`, `VoxelLOD.swift` | Metal's tracer: the grids as one-box structures per level, and far plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
