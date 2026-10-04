@@ -1319,9 +1319,10 @@ What Metal 4 does differently on macOS 26.5, found while matching the images:
 
 * `MTL4ComputeCommandEncoder.generateMipmaps` keeps one texel of each 2×2 instead of their mean, for 2D, array and 3D textures alike (a 0…1 ramp ends in a 1×1 level of 0.98, not 0.49). The sky's mips are its means, so skies came out hazier. Mip generation goes through the Metal 3 queue instead.
 * MetalFX's Metal 4 denoising scaler fails an assertion in MPSGraph as it is created (`Incompatible shape for parameter at index 0`) for nearly every size: of 19 tried, only 960×540 and 960×544 to twice that worked. The denoiser stays the Metal 3 one under Metal 4. MetalFX's Metal 4 temporal and spatial scalers work and match.
-* Both of those, and texture streaming (Metal 4 maps placement-sparse textures only, the streamer uses a sparse heap), run in a Metal 3 command buffer between two of the frame's Metal 4 ones; each queue waits for the other through an `MTLSharedEvent`.
+* Both of those run in a Metal 3 command buffer between two of the frame's Metal 4 ones; each queue waits for the other through an `MTLSharedEvent`.
+* Texture streaming: a residency set takes no sparse heap, so the streamed textures are placement sparse on a placement heap. The streamer hands out the heap's tiles and the queue maps them between the frame's command buffers. A placement-sparse texture is not part of its heap: each one is declared every frame, or the residency set lets it go 600 frames after its last upload and the kernels that sample it fault. The Gallery's and the city's benchmark frames match Metal 3's bit for bit.
 * Argument-table bindings are captured at each dispatch, so one table serves the whole frame. `MTL4Compiler` takes the same MSL 3.2 source and function constants. Metal 4 requires indirect TLAS instance descriptors (72 bytes, the mesh's structure by resource ID).
-* Not there under Metal 4: the settings panel's per-pass GPU timings (they time encoders, and a Metal 4 frame is one), and texture streaming is untested (the models weren't on the test machine).
+* Not there under Metal 4: the settings panel's per-pass GPU timings (they time encoders, and a Metal 4 frame is one).
 
 What didn't help:
 

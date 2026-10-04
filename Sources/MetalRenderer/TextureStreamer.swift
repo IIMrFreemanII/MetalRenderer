@@ -58,6 +58,8 @@ final class TextureStreamer {
 
     var placement: Bool { tileAllocator != nil }
     var textures: [MTLTexture] { entries.map(\.texture) }
+    /// Per texture: its finest level the shaders may sample.
+    var residentLevels: [Int] { entries.map(\.resident) }
     var details: String {
         entries.map { e in "  \(e.texture.label ?? "?"): \(e.levels[0].width)px wanted \(e.wanted) resident \(e.resident)" }
             .joined(separator: "\n")
@@ -319,6 +321,14 @@ final class TextureStreamer {
         var mapped: [Int] = []
         var ops: [SparseMapping] = []
         for level in levels {
+            // Given back but not unmapped yet (the unmap waits for the frames in flight): it is still mapped and
+            // still holds its pixels, so it comes back as it is and the unmap is dropped.
+            if let pending = pendingUnmaps.firstIndex(where: { $0.entry == i && $0.level == level }) {
+                pendingUnmaps.remove(at: pending)
+                mappedBytes += e.bytesPerLevel[level]
+                entries[i].resident = level
+                continue
+            }
             let size = level == tail ? e.levels[level...].reduce(0) { $0 + $1.size } : e.levels[level].size
             if !mapped.isEmpty && bytes + size > budget && level < e.floor { break }
             if placement {
@@ -347,7 +357,7 @@ final class TextureStreamer {
                 }
             }
         }
-        entries[i].resident = mapped.min()!
+        entries[i].resident = min(entries[i].resident, mapped.min()!)
         stats.uploadedMB += Double(bytes) / 1_048_576
         stats.levelsMapped += mapped.count
         return bytes
