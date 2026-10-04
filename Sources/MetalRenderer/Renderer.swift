@@ -3085,7 +3085,7 @@ final class Renderer: NSObject {
                          builder: VirtualBLAS.builder.rawValue, busy: vg.isBusy)
         } else if let vg = customRT?.virtualGeometry {
             d.vg = .clusters(meshes: vg.meshCount, instances: vg.instanceCount, clusters: vg.clusterCount, groups: vg.groupCount,
-                             selected: vg.stats.selected, capacity: VirtualGeometry.capacity, overflow: vg.stats.overflow,
+                             sourceTriangles: vg.sourceTriangles, triangles: vg.stats.triangles, selected: vg.stats.selected, capacity: VirtualGeometry.capacity, overflow: vg.stats.overflow,
                              residentGroups: vg.stats.residentGroups, residentMB: vg.residentMB, poolMB: vg.poolBytes >> 20,
                              pending: vg.stats.pending, loadedThisFrame: vg.stats.loadedThisFrame)
         }

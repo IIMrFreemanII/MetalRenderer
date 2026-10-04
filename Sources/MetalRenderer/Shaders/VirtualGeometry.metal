@@ -38,8 +38,8 @@ struct VGParams {
 };
 static_assert(sizeof(VGParams) == 48, "VGParams: VirtualGeometry's Params");
 
-kernel void vgResetKernel(device uint* counters [[buffer(0)]]) {   // selected, requests, overflow
-    counters[0] = 0; counters[1] = 0; counters[2] = 0;
+kernel void vgResetKernel(device uint* counters [[buffer(0)]]) {   // selected, requests, overflow, triangles
+    counters[0] = 0; counters[1] = 0; counters[2] = 0; counters[3] = 0;
 }
 
 // Projected error in traced pixels of `error` (object space) over `sphere` (object space) seen from the camera.
@@ -98,6 +98,7 @@ kernel void vgCutKernel(constant VGParams&           p           [[buffer(0)]],
     lastUsed[c.group] = p.frame;
     uint idx = atomic_fetch_add_explicit(&counters[0], 1u, memory_order_relaxed);
     if (idx >= p.capacity) { atomic_store_explicit(&counters[2], 1u, memory_order_relaxed); return; }
+    atomic_fetch_add_explicit(&counters[3], c.triangles, memory_order_relaxed);   // for the Debug window
     selected[idx] = uint2(vi.instance, page + c.pageOffset / 16);
     // Object-space box (vgFitKernel moves it to world space above the instance's subtree), and a key that sorts by
     // virtual instance first (8 bits), then along a Morton curve inside the mesh's bounds (22 bits).
