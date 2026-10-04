@@ -70,6 +70,33 @@ struct Terrain {
         return sum
     }
 
+    /// The same noise at a place given in doubles: the lattice cell is found exactly, however far out it is, and
+    /// only the place inside the cell is a float (the open world, World.swift).
+    static func noise(_ x: Double, _ y: Double, seed: UInt32) -> Float {
+        let bx = x.rounded(.down), by = y.rounded(.down)
+        let ix = Int32(truncatingIfNeeded: Int(bx)), iy = Int32(truncatingIfNeeded: Int(by))
+        let f = SIMD2(Float(x - bx), Float(y - by))
+        @inline(__always) func corner(_ dx: Int32, _ dy: Int32) -> Float {
+            let a = Float(hash(ix &+ dx, iy &+ dy, seed) & 0xFFFF) * (2 * Float.pi / 65536)
+            return cos(a) * (f.x - Float(dx)) + sin(a) * (f.y - Float(dy))
+        }
+        let u = f * f * f * (f * (f * 6 - 15) + 10)
+        let low = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * u.x
+        let high = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * u.x
+        return low + (high - low) * u.y
+    }
+
+    static func fbm(_ x: Double, _ y: Double, octaves: Int, seed: UInt32) -> Float {
+        var sum: Float = 0, amplitude: Float = 1, qx = x, qy = y
+        for o in 0..<octaves {
+            sum += amplitude * noise(qx, qy, seed: seed &+ UInt32(o))
+            amplitude *= 0.5
+            qx *= 2
+            qy *= 2
+        }
+        return sum
+    }
+
     // MARK: - The surface
 
     /// The cell under (x, z) and the position inside it, clamped to the terrain.

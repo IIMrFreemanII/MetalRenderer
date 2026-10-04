@@ -182,6 +182,12 @@ if let seed = ProcessInfo.processInfo.environment["METALRENDERER_FOLIAGE_TEST"] 
     exit(0)
 }
 
+/// `METALRENDERER_WORLD_TEST=<seed>`: makes the open world's tiles around its first city, times them, and exits.
+if let seed = ProcessInfo.processInfo.environment["METALRENDERER_WORLD_TEST"] {
+    WorldTile.runTest(seed: UInt64(seed) ?? 1)
+    exit(0)
+}
+
 setlinebuf(stdout)   // whole lines also into a pipe or a file: a log is complete when the app is stopped
 let app = NSApplication.shared
 let delegate = AppDelegate()

@@ -613,6 +613,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                              pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
 
+    private static let flightOverride: (velocity: SIMD3<Float>, turn: Int)? = {
+        let parts = (ProcessInfo.processInfo.environment["METALRENDERER_FLIGHT"] ?? "").split(separator: ",").compactMap { Float($0) }
+        return parts.count >= 3 ? (SIMD3(parts[0], parts[1], parts[2]), parts.count > 3 ? Int(parts[3]) : 0) : nil
+    }()
+
     /// Starts preparing `settings.scene` / `settings.rayTracer` in the background; `install` swaps it in when done.
     private func startLoadingScene() {
         let wanted = (scene: settings.scene, rayTracer: settings.rayTracer, api: settings.api)
@@ -730,10 +735,16 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             pipelines = oldPipelines
             try? createSceneResources()
         }
-        resetGIState()
-        upscalerReset = true
-        accumCount = 0
-        colorAccumCount = 0
+        // The open world made around another tile is the same world in the same place: what the frames have gathered
+        // of it holds.
+        var before = old.settings, after = scene.settings
+        (before.worldTile, after.worldTile) = (nil, nil)
+        if !(after.kind == .world && before == after && oldRayTracer == builtRayTracer) {
+            resetGIState()
+            upscalerReset = true
+            accumCount = 0
+            colorAccumCount = 0
+        }
         if resetCamera {
             camera = scene.defaultCamera
             prevCamera = camera
@@ -775,8 +786,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
+        // The textures too, unless they are a sparse heap's (Metal 3's streamer: `bindScene` declares the heap).
+        // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
+        // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
-            + (textureStreamer == nil ? materialTextures : [])
+            + (textureStreamer?.placement == false ? [] : materialTextures)
     }
 
     /// One bottom-level (primitive) acceleration structure per mesh, built once. The meshes that deform (the crowd's
@@ -1422,6 +1436,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         noteFrameStart()
         let size = frameSize(on: surface)
         guard let t = renderTargets(for: size) else { return }
+        // The open world: the scene is made around the tile the camera is in (Scene+World.swift).
+        if let place = scene.worldPlace, settings.scene.kind == .world, loading == nil {
+            let wanted = place.wanted(for: camera.position)
+            if wanted != place.tile { settings.scene.worldTile = wanted }
+        }
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             if benchmark != nil { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
@@ -1590,6 +1609,12 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             dt = benchmark.fixedDt   // deterministic animation so every setting renders the same frames
             if benchmark.current.cameraPath {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
+            }
+            // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
+            // `frames`, there and back again, turning every so many frames).
+            if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
+                let back = Renderer.flightOverride.map { $0.turn > 0 && (benchmark.frameInConfig / $0.turn) % 2 == 1 } ?? false
+                camera.position += velocity * (back ? -dt : dt)
             }
         }
         updateCamera(dt: dt)

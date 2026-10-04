@@ -414,7 +414,7 @@ final class TextureStreamer {
                 throw RendererError.resourceCreation("texture staging")
             }
             if source.raw != nil {   // generated: the pixels as they are
-                source.data.copyBytes(to: pixels.contents().assumingMemoryBound(to: UInt8.self), count: w * h * 4)
+                source.rawPixels.copyBytes(to: pixels.contents().assumingMemoryBound(to: UInt8.self), count: w * h * 4)
             } else if let image = images[i] {
                 var space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
                 if space.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB)! }

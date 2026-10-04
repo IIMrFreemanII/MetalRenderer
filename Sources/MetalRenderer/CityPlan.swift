@@ -136,6 +136,20 @@ struct CityPlan {
         }
     }
 
+    /// One block by itself, for a city that has no end (World.swift): `rect` from kerb to kerb, `ring` = how far out
+    /// of its city it is (0 = the middle, 1 = the edge), everything else from `seed`. Its lots, lamps and trees are
+    /// in `rect`'s coordinates; no streets (the world lays the roads between its blocks).
+    init(block rect: Rect, ring: Float, seed: UInt64, park: Bool = false) {
+        settings = CitySettings()
+        self.seed = Int(truncatingIfNeeded: seed)
+        var rng = SplitMix64(seed: seed)
+        extent = rect
+        blocks = [Block(rect: rect, style: CityPlan.district(.mixed, ring: ring, &rng), park: park)]
+        if !park { subdivide(block: 0, ring: ring, &rng) }
+        furnish(block: 0, &rng)
+        for i in lots.indices { lots[i].seed = SplitMix64.mix(seed &* 0x1_0000_0001 &+ UInt64(i) &* 0x9E37_79B9_7F4A_7C15) }
+    }
+
     /// A block's style in a city of `style`: for the mixed city, by how far out the block is (`ring`: 0 = the middle,
     /// 1 = the outermost blocks), with some noise.
     private static func district(_ style: CityStyle, ring: Float, _ rng: inout SplitMix64) -> CityStyle {

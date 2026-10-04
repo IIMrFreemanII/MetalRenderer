@@ -13,6 +13,10 @@ import simd
 /// Everything is a pure function of the recipe and the seed: sizes are counted before meshing, meshes are filled by
 /// index into exactly sized arrays, and the variants are built in parallel, one slot each (FoliageMesh.swift).
 enum Foliage {
+    /// Of the library: which plants there are, in what order. The open world's tiles name a plant by its place in
+    /// its species' set (World.Placement), so a change of the sets makes other tile files.
+    static let version = 1
+
     enum Species: Int, CaseIterable {
         case oak, birch, conifer, dead, bush, fern, grass
 

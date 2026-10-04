@@ -12,7 +12,7 @@ extension Benchmark {
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
-        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd, "city": city,
+        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd, "city": city, "world": world,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -282,6 +282,36 @@ extension Benchmark {
             base.named("forest 10k trees").with { $0.scene.trees = 10000 },
             moving,
             moving.named("forest moving 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 },
+        ]
+    }
+
+    /// The open world (World.swift), paused in the morning: from where it starts (the country outside the first city),
+    /// from a street in that city, in the woods, and from above; then a flight of 600 m along the city's edge at
+    /// 60 m/s, which crosses two tiles: the scene is made again around each (the log says how long that took).
+    /// `METALRENDERER_SCENE=seed=...,trees=...,undergrowth=...` changes the world.
+    private static func world() -> [Config] {
+        let settings = SceneSettings(kind: .world)
+        let w = World(seed: UInt64(settings.seed)), anchor = w.anchor, begin = w.start, city = w.city(cell: SIMD2(0, 0))!
+        func at(_ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
+            var c = Camera()
+            c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
+            c.yaw = yaw
+            c.pitch = pitch
+            return c
+        }
+        // The first place deep in the woods east of the start.
+        var woods = begin.place.x
+        while w.woods(woods, begin.place.z) < 0.95 && woods < begin.place.x + 3000 { woods += 16 }
+        let base = Config("", gi: .radianceCascades, scene: settings).still().frames(60)
+        let flight = base.named("world flight").moving().from(at(begin.place.x, begin.place.z, up: 70, yaw: .pi / 2, pitch: -0.12))
+            .flying([60, 0, 0]).frames(600)
+        return [
+            base.named("world start"),
+            base.named("world street").from(at(city.center.x, city.center.y + 40, up: 1.7, pitch: 0.12)),
+            base.named("world woods").from(at(woods + 40, begin.place.z, up: 1.7, yaw: .pi / 2, pitch: 0.05)),
+            base.named("world aerial").from(at(begin.place.x, begin.place.z + 200, up: 220, pitch: -0.3)),
+            flight,
+            flight.named("world flight 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 },
         ]
     }
 

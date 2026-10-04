@@ -380,6 +380,50 @@ enum BVHBuilder {
         return result
     }
 
+    /// Of `buildBLAS`'s output: a change of the builder makes other files in the cache.
+    static let version = 1
+    /// Scenes with fewer triangles aren't cached: building their trees is quicker than hashing and reading a file.
+    private static let cachedTriangles = 20_000
+    private enum Section {
+        static let nodes = SectionFile.id("node"), triangles = SectionFile.id("tris"), roots = SectionFile.id("root")
+        static let bounds = SectionFile.id("bnds"), nodeBases = SectionFile.id("base"), depth = SectionFile.id("dpth")
+    }
+
+    /// `buildBLAS`, from the cache if these meshes' trees are in it (GeneratedCache; the file is named by a hash of
+    /// the geometry, so other geometry is another file), and into it otherwise. `geometry`: that hash, for what else
+    /// is derived from the same meshes (nil: these aren't cached: an optimised build, or a scene too small for it).
+    static func cachedBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh], uvs: [SIMD2<Float>] = [])
+        -> (blas: BLASResult, geometry: String?, cached: Bool) {
+        func build() -> BLASResult { buildBLAS(positions: positions, indices: indices, meshes: meshes, uvs: uvs) }
+        guard GeneratedCache.cachesTrees, indices.count / 3 >= cachedTriangles else { return (build(), nil, false) }
+        var hasher = GeneratedCache.Hasher()
+        hasher.add(positions)
+        hasher.add(indices)
+        hasher.add(meshes)
+        if meshes.contains(where: { $0.cutout != 0 }) { hasher.add(uvs) }   // only cards' UVs are in the trees
+        let geometry = hasher.name()
+        let name = "blas-\(geometry).sect", key = "blas v\(version)"
+        if let file = GeneratedCache.load(name, key: key),
+           let nodes: [BVHNode] = file.array(Section.nodes), let triangles: [SIMD4<Float>] = file.array(Section.triangles),
+           let roots: [UInt32] = file.array(Section.roots), let bounds: [AABB] = file.array(Section.bounds),
+           let nodeBases: [Int] = file.array(Section.nodeBases), let depth: [Int] = file.array(Section.depth),
+           triangles.count == indices.count, roots.count == meshes.count, bounds.count == meshes.count,
+           nodeBases.count == meshes.count + 1, nodeBases.last == nodes.count, depth.count == 1 {
+            return (BLASResult(nodes: nodes, triangles: triangles, roots: roots, bounds: bounds, nodeBases: nodeBases, maxDepth: depth[0]),
+                    geometry, true)
+        }
+        let built = build()
+        var writer = SectionFile.Writer()
+        writer.add(Section.nodes, built.nodes)
+        writer.add(Section.triangles, built.triangles)
+        writer.add(Section.roots, built.roots)
+        writer.add(Section.bounds, built.bounds)
+        writer.add(Section.nodeBases, built.nodeBases)
+        writer.add(Section.depth, [built.maxDepth])
+        GeneratedCache.store(name, key: key, writer)
+        return (built, geometry, false)
+    }
+
     /// TLAS over instances with world-space `boxes`; leaves are the instance indices `ids`. Appends to `nodes`, whose
     /// first element will sit at `nodeBase` in the GPU buffer, and returns the root ref (an instance leaf ref if there is only one, `none` if none).
     static func buildTLAS(boxes: [AABB], ids: [Int], masks: [UInt32], nodeBase: Int,
