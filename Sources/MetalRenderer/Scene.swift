@@ -17,6 +17,8 @@ final class Scene {
         var prevTransform: float4x4
         var animation: ((Float) -> float4x4)?
         var virtualMesh = -1                  // >= 0: index into `virtualMeshes` (then `mesh` is -1)
+        var assembly = -1                     // >= 0: index into `assemblies` (then `mesh` is -1 and `material` is its
+                                              // wood's, with its leaves' right after it)
         /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; the custom ray
         /// tracer reads its rows as the world -> object matrix).
         var normalMatrix = matrix_identity_float4x4
@@ -33,6 +35,45 @@ final class Scene {
         var moves: Bool { animation != nil || poseAnimated || travels }
     }
 
+    /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
+    /// (the species' boughs). Every instance of the plant shares it; the custom ray tracer walks a tree over the parts.
+    struct Assembly {
+        /// What a part turns about in the wind (Shaders/Foliage.metal). `angle`: its largest turn, at full wind; 0 = it doesn't.
+        struct Bone {
+            var pivot = SIMD3<Float>()        // plant space, at rest
+            var angle: Float = 0
+            var axis = SIMD3<Float>(1, 0, 0)
+            var phase: Float = 0
+        }
+        /// The whole plant's largest lean about its foot, at full wind (WIND_ROOT_SWAY in Shaders/Foliage.metal).
+        static let rootSway: Float = 0.022
+        struct Part {
+            var mesh: Int
+            var transform: float4x4           // into plant space: a rotation, a uniform scale and a translation
+            var firstLeaf: UInt32             // the mesh's triangles from here on take the leaves' material
+            var leafCount: UInt32 = 0         // how many they are (autumn drops them from the end); 0 = it keeps them
+            var bone: Int
+            var bounds: AABB                  // of the placed mesh, in plant space (its vertices', not its box's)
+            var windPad: Float = 0            // how far its bones' largest turns (full wind) can move any of it
+            var limb = Bone()                 // the limb it is, or hangs on
+            var bough = Bone()                // itself on that limb, if it is a bough
+        }
+        var parts: [Part]
+        var bounds: AABB
+        var evergreen = false
+    }
+
+    /// A leaf material as `setLeaves` changes it: its summer colour, what it turns to in autumn and when in the year
+    /// (0...1), if it turns at all, and how much light it lets through.
+    struct LeafMaterial {
+        var material: Int
+        var summer: SIMD3<Float>
+        var autumn: SIMD3<Float>? = nil
+        var turn: Float = 0
+        var translucency: Float
+        var gain: Float = 1                   // the material's colour is the leaf's times this (1 / its texture's mean)
+    }
+
     /// An encoded image a material samples (decoded and uploaded by the renderer).
     struct TextureSource {
         var data: Data
@@ -40,6 +81,8 @@ final class Scene {
         var name: String
         var modelPath: String                 // the glTF file (texture streaming caches per file)
         var cacheKey: String                  // unique within the file: image index + colour space
+        /// Generated (`addGeneratedTexture`): `data` is this many RGBA8 pixels, not an encoded image.
+        var raw: (width: Int, height: Int)? = nil
     }
 
     /// A light's shape. Angles in radians.
@@ -138,6 +181,21 @@ final class Scene {
     private(set) var virtualMeshes: [VirtualMesh] = []
     private(set) var virtualMeshNames: [String] = []
     let usesVirtualGeometry: Bool
+    /// Generated plants as assemblies of shared parts (custom ray tracer only); otherwise each is baked into meshes of its own.
+    private(set) var assemblies: [Assembly] = []
+    let usesAssemblies: Bool
+    /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
+    private(set) var hasPlants = false
+    private(set) var hasSwayingMeshes = false
+    /// Leaf cards' alpha layers (FoliageTextures.CardSheet), each FoliageTextures.cardSheetSize squared: the custom
+    /// tracer tests a card's hits against its layer. `coverage`: the share of a card that is there.
+    private(set) var cutouts: [(alpha: [UInt8], coverage: Float)] = []
+    /// Plants' leaves as cards (`settings.leafCards`, where the tracer cuts them out: the custom one).
+    let usesCards: Bool
+    /// Something the wind moves and the shaders' FOLIAGE paths trace: assemblies, or ground cover that leans.
+    var hasFoliage: Bool { !assemblies.isEmpty || hasSwayingMeshes }
+    private var leafMaterials: [LeafMaterial] = []
+    private var leafState = SIMD2<Float>(-1, -1)   // the season and translucency they are set to
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
     private(set) var hasSpecular = false
     private(set) var indices: [UInt32] = []
@@ -182,9 +240,11 @@ final class Scene {
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
-    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false) {
+    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
+        self.usesAssemblies = assemblies && !settings.bakedPlants
+        self.usesCards = assemblies && settings.leafCards
         if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
@@ -199,9 +259,10 @@ final class Scene {
         case .fog: buildFogHall()
         case .valley: buildValley()
         case .market: buildMarket()
+        case .forest: buildForest()
         case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
-        case .city: buildCity(settings.city, night: false)
-        case .cityNight: buildCity(settings.city, night: true)
+        case .city: buildCity(settings.city, seed: settings.seed, night: false)
+        case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -348,7 +409,7 @@ final class Scene {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.mask == Scene.maskGeometry {
             let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
-                                               : meshBounds[inst.mesh]
+                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
             for corner in 0..<8 {
                 let c = SIMD3<Float>(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z)
                 let p = inst.transform * SIMD4<Float>(c, 1)
@@ -363,6 +424,7 @@ final class Scene {
 
     /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
     /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
+    /// Assembly instances: meshIndex points past those too (the table then lists the assemblies).
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
     /// only the ones that move, the rest being unchanged.
     func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool) {
@@ -371,7 +433,9 @@ final class Scene {
             out[i] = GPUInstanceData(transform: inst.transform,
                                      prevTransform: inst.prevTransform,
                                      normalMatrix: inst.normalMatrix,
-                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh) : UInt32(meshes.count + inst.virtualMesh),
+                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh)
+                                         : inst.assembly >= 0 ? UInt32(meshes.count + virtualMeshes.count + inst.assembly)
+                                         : UInt32(meshes.count + inst.virtualMesh),
                                      materialIndex: UInt32(inst.material),
                                      pad0: inst.mask,
                                      pad1: virtualRank[i])
@@ -393,12 +457,14 @@ final class Scene {
     var forcesLightTable = false
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
-    /// Bit 30: the scene has meshes that deform (a crowd's pose slots; DEFORMING_MESHES in Shaders/Types.metal).
-    /// Bit 29: it has glass (GLASS). Bit 28: some mesh has several materials (MULTI_MATERIAL).
+    /// The bits under it: the features the scene's shaders are compiled with.
     var lightTypeMask: UInt32 {
-        let deforming: UInt32 = crowd?.slots.isEmpty == false ? 0x4000_0000 : 0
-        let glass: UInt32 = hasGlass ? 0x2000_0000 : 0, multi: UInt32 = triangleMaterials.isEmpty ? 0 : 0x1000_0000
-        return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | deforming | glass | multi) { mask, l in   // spheres always: an empty scene needs some type
+        // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
+        // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
+        // MULTI_MATERIAL, some mesh has several materials. (Shaders/Types.metal.)
+        let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
+            | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (triangleMaterials.isEmpty ? 0 : 0x0400_0000)
+        return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
             case .sphere: type = GPULight.sphere
@@ -734,6 +800,50 @@ final class Scene {
         }
     }
 
+    /// How far ground cover leans at full wind, per unit of its height (WIND_COVER_LEAN in Shaders/Foliage.metal).
+    static let coverLean: Float = 0.2
+
+    /// A generated mesh (Foliage, Terrain): its arrays appended whole, its bounds as it counted them. `sways`: ground
+    /// cover standing along +y, which the custom tracer leans in the wind (every instance of it).
+    /// `cutout`: the alpha layer (`addCutout`) that cuts out its leaves, if they are cards.
+    func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil) -> Int {
+        let baseVertex = UInt32(positions.count)
+        let firstIndex = UInt32(indices.count)
+        positions += mesh.positions
+        normals += mesh.normals
+        uvs += mesh.uvs
+        indices.reserveCapacity(indices.count + mesh.indices.count)
+        for i in mesh.indices { indices.append(i + baseVertex) }
+        meshes.append(GPUMesh(firstIndex: firstIndex, indexCount: UInt32(mesh.indices.count), sways: sways ? 1 : 0,
+                              cutout: cutout.map { UInt32($0 + 1) << 24 | UInt32(mesh.leafIndex / 3) } ?? 0))
+        if sways { hasSwayingMeshes = true }
+        meshBounds.append((mesh.bounds.lo, mesh.bounds.hi))
+        return meshes.count - 1
+    }
+
+    func addCutout(alpha: [UInt8], coverage: Float) -> Int {
+        precondition(alpha.count == FoliageTextures.cardSheetSize * FoliageTextures.cardSheetSize && cutouts.count < 15,
+                     "Scene.addCutout: a layer is a card sheet's alpha, and a triangle names one of 15")
+        cutouts.append((alpha, coverage))
+        return cutouts.count - 1
+    }
+
+    func addAssembly(_ assembly: Assembly) -> Int {
+        assemblies.append(assembly)
+        return assemblies.count - 1
+    }
+
+    /// An instance of an assembly: `material` is its wood's, and the next material its leaves'.
+    @discardableResult
+    func addInstance(assembly: Int, _ material: Int, _ transform: float4x4) -> Int {
+        instances.append(Instance(mesh: -1, material: material, mask: Scene.maskGeometry, transform: transform, prevTransform: transform,
+                                  animation: nil, assembly: assembly, normalMatrix: transform.inverse.transpose))
+        return instances.count - 1
+    }
+
+    /// Generated plants were placed (Flora): see `hasPlants`.
+    func notePlants() { hasPlants = true }
+
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
     func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
@@ -744,7 +854,7 @@ final class Scene {
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
     func addGlassMaterial(tint: SIMD3<Float>) -> Int {
         hasGlass = true
-        return addMaterial(GPUMaterial(albedo: SIMD4(tint, 0), emission: SIMD4(.zero, 0), params: SIMD4(0, 1, 0, 1)))
+        return addMaterial(GPUMaterial(albedo: SIMD4(tint, 0), emission: SIMD4(.zero, 0), params: SIMD4(0, 1, 0, 0)))
     }
 
     /// Any material, as it is.
@@ -768,9 +878,58 @@ final class Scene {
     }
 
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
-    func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero) -> Int {
-        materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1)))
+    /// `translucency`: a leaf's, the share of its light that comes through from the far side.
+    /// `texture`: its base colour's detail (the colour is multiplied by it), from `addGeneratedTexture`.
+    func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero, translucency: Float = 0, texture: UInt32 = .max) -> Int {
+        materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1), params: SIMD4(0, 1, 0, translucency),
+                                     textures: SIMD4(texture, .max, .max, .max)))
         return materials.count - 1
+    }
+
+    func addLeafMaterial(_ material: LeafMaterial) { leafMaterials.append(material) }
+
+    /// A texture made here rather than read from a model (FoliageTextures): the index a material names it by. The
+    /// streamer keeps one cache file for all of a scene kind's, named by their pixels, so a change remakes it.
+    func addGeneratedTexture(_ image: FoliageTextures.Image, name: String) -> UInt32 {
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in image.pixels { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 }
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MetalRenderer/generated")
+        textures.append(TextureSource(data: Data(image.pixels), srgb: true, name: "generated/\(name)",
+                                      modelPath: folder.appendingPathComponent("\(settings.kind)").path,
+                                      cacheKey: "\(name)-\(image.width)x\(image.height)-\(String(hash, radix: 16))",
+                                      raw: (image.width, image.height)))
+        return UInt32(textures.count - 1)
+    }
+
+    /// The share of the deciduous plants' leaves that have fallen at `season` (the custom ray tracer drops them).
+    static func leafFall(season: Float) -> Float {
+        let t = min(max((season - 0.62) / 0.33, 0), 1)
+        return t * t * (3 - 2 * t)
+    }
+
+    /// The leaves at `season`: 0 = spring (fresh, light), 0.3 = summer, from 0.5 they turn, each material in its own
+    /// time, and by winter (1) what is left is brown; evergreens stay as they are. `translucency` scales how much
+    /// light every leaf lets through (0 = none: opaque leaves). Only the materials change (the renderer uploads the range).
+    func setLeaves(season s: Float, translucency: Float = 1) {
+        guard leafState != SIMD2(s, translucency), !leafMaterials.isEmpty else { return }
+        leafState = SIMD2(s, translucency)
+        func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = min(max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t) }
+        var lo = Int.max, hi = 0
+        for m in leafMaterials {
+            var color = m.summer
+            if let autumn = m.autumn {
+                color *= 1 + SIMD3<Float>(0.25, 0.3, 0.1) * (1 - smooth(0, 0.25, s))
+                color += (autumn - color) * smooth(m.turn - 0.1, m.turn + 0.1, s)
+                color += (SIMD3<Float>(0.2, 0.13, 0.07) - color) * smooth(0.82, 1, s) * 0.8
+            }
+            let albedo = SIMD4(color * m.gain, materials[m.material].albedo.w), through = m.translucency * translucency
+            guard materials[m.material].albedo != albedo || materials[m.material].params.w != through else { continue }
+            materials[m.material].albedo = albedo
+            materials[m.material].params.w = through
+            lo = min(lo, m.material); hi = max(hi, m.material + 1)
+        }
+        guard lo < hi else { return }
+        materialsDirty = materialsDirty.map { min($0.lowerBound, lo)..<max($0.upperBound, hi) } ?? lo..<hi
     }
 
     @discardableResult

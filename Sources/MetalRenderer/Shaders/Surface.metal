@@ -130,11 +130,17 @@ struct Surface {
     float  metallic;
     float  roughness;
     float  specular;      // specular weight: 0 = diffuse-only material
-    float  transmission;  // 1 = window glass (albedo = its tint): traceKernel carries camera rays through it
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
+    bool   backlit;       // a translucent leaf showing the light of its far side: orientNormals faces it away
 };
+
+// Light through a leaf comes out yellower than what it reflects.
+constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
+// The mean of a plant's detail texture (FoliageTextures.mean): its material's colour is the plant's over this, and
+// what shades a plant without its texture (its far voxels) multiplies by it instead.
+constant float GENERATED_TEXTURE_MEAN = 0.7f;
 
 // Emission a GI or bounce ray picks up at a hit: none from emissive-mesh lights, whose light next-event estimation
 // and the light maps already deliver (as the light spheres, which GI rays don't even see).
@@ -218,6 +224,9 @@ inline float4 sampleMaterial(thread const struct SceneData& s, uint index, float
 inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3& ng, thread float3& ns) {
     ng = dot(sf.geomNormal, rayDir) > 0.0f ? -sf.geomNormal : sf.geomNormal;
     ns = dot(sf.normal, ng) < 0.0f ? -sf.normal : sf.normal;
+    // A leaf lit from behind: everything that lights the surface, casts its shadow rays and bounces off it works on
+    // the far side instead, which is all the light through a thin leaf needs.
+    if (sf.backlit) { ng = -ng; ns = -ns; }
 }
 
 // Pixel-footprint spreads for texture filtering (ray cones without curvature): radians of spread per unit distance.
@@ -233,12 +242,28 @@ struct HitVertices {
     uint3 i;          // with prevOffset: the vertices' places in the position buffer
     uint triangle;    // its place in the index buffer / 3 (~0: virtual geometry, which has no index buffer)
     uint prevOffset;  // MeshData.prevOffset (0 = the previous frame's object-space positions are these ones)
+    bool   leaf;   // a leaf of an assembly's part: shaded with the material after the instance's
+    bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
+
+#if CUSTOM_RT
+// A part's point and direction in its plant's space. The part's rows are the inverse (plant -> part) of a rotation,
+// a uniform scale and a translation, so its transpose over the squared scale is the way back.
+inline float3 partPoint(RTPart part, float3 p) {
+    float3 q = p - float3(part.row0.w, part.row1.w, part.row2.w);
+    return (part.row0.xyz * q.x + part.row1.xyz * q.y + part.row2.xyz * q.z) / dot(part.row0.xyz, part.row0.xyz);
+}
+inline float3 partDirection(RTPart part, float3 v) {   // not unit length
+    return part.row0.xyz * v.x + part.row1.xyz * v.y + part.row2.xyz * v.z;
+}
+#endif
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
     v.i = uint3(0u);
     v.prevOffset = 0;
     v.triangle = ~0u;
+    v.leaf = v.sways = false;
+    uint meshIndex = inst.meshIndex;
 #if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         // Virtual geometry: the hit cluster's vertices, in the streaming pool.
@@ -265,8 +290,17 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         }
         return v;
     }
+    // An assembly's part: its mesh's triangle, brought into the plant's space (the instance's object space).
+    bool inPart = FOLIAGE && res.part != HIT_NO_PART;
+    RTPart part;
+    if (inPart) {
+        part = accel.parts[res.part];
+        meshIndex = part.mesh;
+        v.leaf = res.primitive >= part.firstLeaf;
+    }
 #endif
-    MeshData mesh = s.meshes[inst.meshIndex];
+    MeshData mesh = s.meshes[meshIndex];
+    v.sways = mesh.sways != 0;
     uint base = mesh.firstIndex + res.primitive * 3;
     v.triangle = base / 3;
     for (uint k = 0; k < 3; ++k) {
@@ -278,6 +312,14 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         v.t[k] = s.uvs[i];
     }
     if (DEFORMING_MESHES) v.prevOffset = mesh.prevOffset;
+#if CUSTOM_RT
+    if (inPart) {
+        for (uint k = 0; k < 3; ++k) {
+            v.p[k] = partPoint(part, v.p[k]);
+            v.n[k] = partDirection(part, v.n[k]);
+        }
+    }
+#endif
     return v;
 }
 
@@ -287,14 +329,40 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     Surface sf;
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
-    sf.metallic = sf.specular = sf.transmission = 0.0f;
+    sf.metallic = sf.specular = 0.0f;
     sf.roughness = 1.0f;
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;
     sf.lightEmitter = false;
+    sf.backlit = false;
     if (!res.hit) return sf;
 
     InstanceData inst = s.instances[res.instance];
+#if CUSTOM_RT
+    if (FOLIAGE && res.part == HIT_VOXEL) {
+        // A far plant's voxel: where the ray stopped in it, the voxel's mean normal, and its wood's and leaves'
+        // colours by how much of it is leaf.
+        float2 e = float2(float(res.primitive & 0xFFu), float((res.primitive >> 8) & 0xFFu)) * (2.0f / 255.0f) - 1.0f;
+        float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
+        if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * select(float2(-1.0f), float2(1.0f), n.xy >= 0.0f);
+        // Leaves hide most of the wood they hang on: the voxel shows more leaf than its share of the area. And what
+        // is in a voxel shades itself, which a single point of it can't: VOXEL_SHADE makes up for that (matched to
+        // the triangles' mean brightness in the forest from above).
+        float leaf = sqrt(float((res.primitive >> 16) & 0xFFu) * (1.0f / 255.0f));
+        sf.hit = true;
+        sf.position = r.origin + r.direction * res.distance;
+        sf.prevPosition = sf.position;
+        sf.normal = sf.geomNormal = normalize((inst.normalMatrix * float4(normalize(n), 0.0f)).xyz);
+        Material leaves = s.materials[inst.materialIndex + 1u];
+        sf.albedo = VOXEL_SHADE * GENERATED_TEXTURE_MEAN * mix(s.materials[inst.materialIndex].albedo.rgb, leaves.albedo.rgb, leaf);
+        if (leaves.params.w > 0.0f) {   // its leaves' share of light from behind, as for a leaf below
+            sf.backlit = float(pcgHash(res.primitive ^ as_type<uint>(res.distance)) & 0xFFFFu) * (1.0f / 65536.0f) < leaves.params.w * leaf;
+            if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
+        }
+        sf.instanceId = res.instance;
+        return sf;
+    }
+#endif
     float2 bc = res.barycentrics;
     float w0 = 1.0f - bc.x - bc.y;
     HitVertices hv = fetchHitVertices(res, inst, accel, s);
@@ -304,17 +372,39 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     float3 objN   = n0 * w0 + n1 * bc.x + n2 * bc.y;
     float3 objNg  = cross(p1 - p0, p2 - p0);
 
-    uint materialIndex = inst.materialIndex;
-    if (MULTI_MATERIAL && hv.triangle != ~0u) materialIndex += s.triangleMaterials[hv.triangle];
-    Material mat = s.materials[materialIndex];
-    sf.hit = true;
-    sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
-    // A deforming mesh (a crowd's pose slot): where the point was in the previous frame's pose.
     float3 prevObjPos = objPos;
+    // A deforming mesh (a crowd's pose slot): where the point was in the previous frame's pose.
     if (DEFORMING_MESHES && hv.prevOffset != 0) {
         prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
                    + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
     }
+#if CUSTOM_RT
+    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
+        // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
+        // frame ago (the motion vector), and its normals now.
+        RTPart part = accel.parts[res.part];
+        float4 r0 = inst.normalMatrix[0], r1 = inst.normalMatrix[1], r2 = inst.normalMatrix[2];   // world -> plant rows
+        prevObjPos = partWind(part, plantWind(accel.wind, accel.windTime.y, r0, r1, r2, res.instance), accel.wind.z, objPos, true);
+        PlantWind w = plantWind(accel.wind, accel.windTime.x, r0, r1, r2, res.instance);
+        objPos = partWind(part, w, accel.wind.z, objPos, true);
+        objN = partWind(part, w, accel.wind.z, objN, false);
+        objNg = partWind(part, w, accel.wind.z, objNg, false);
+    } else if (FOLIAGE && hv.sways && windOn(accel.wind.z > 0.0f)) {
+        // Ground cover: sheared downwind by its height (coverLean), now and a frame ago. A shear by k along y takes a
+        // normal n to n - y (k . n).
+        float4 r0 = inst.normalMatrix[0], r1 = inst.normalMatrix[1], r2 = inst.normalMatrix[2];
+        float3 lean = coverLean(accel.wind, accel.windTime.x, r0, r1, r2);
+        prevObjPos = objPos + coverLean(accel.wind, accel.windTime.y, r0, r1, r2) * objPos.y;
+        objPos += lean * objPos.y;
+        objN.y -= dot(lean, objN);
+        objNg.y -= dot(lean, objNg);
+    }
+#endif
+    uint materialIndex = inst.materialIndex + (hv.leaf ? 1u : 0u);
+    if (MULTI_MATERIAL && hv.triangle != ~0u) materialIndex += s.triangleMaterials[hv.triangle];
+    Material mat = s.materials[materialIndex];
+    sf.hit = true;
+    sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
     sf.prevPosition = (inst.prevTransform * float4(prevObjPos, 1.0f)).xyz;
     sf.normal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
@@ -323,9 +413,16 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.metallic = mat.albedo.a;
     sf.roughness = mat.emission.a;
     sf.specular = mat.params.x;
-    if (GLASS) sf.transmission = mat.params.w;
     sf.instanceId = res.instance;
     sf.lightEmitter = mat.params.z > 0.0f;
+    if (mat.params.w > 0.0f) {
+        // Translucent (a leaf): the material's share of the leaves shows the light of the far side, the rest that of
+        // the near side. Leaf by leaf (two triangles are one), always the same ones: nothing flickers, and a crown
+        // as a whole reflects and transmits in the material's proportion.
+        uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (res.instance * 0x85EBCA6Bu);
+        sf.backlit = float(pcgHash(leafId) & 0xFFFFu) * (1.0f / 65536.0f) < mat.params.w;
+        if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
+    }
 
     if (any(mat.textures != uint4(NO_TEXTURE))) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;

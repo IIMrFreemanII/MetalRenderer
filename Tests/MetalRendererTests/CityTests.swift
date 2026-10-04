@@ -13,8 +13,8 @@ final class CityTests: XCTestCase {
         return c
     }
 
-    private func scene(night: Bool = false, _ change: (inout CitySettings) -> Void = { _ in }) -> Scene {
-        Scene(SceneSettings(kind: night ? .cityNight : .city, city: settings(change)))
+    private func scene(night: Bool = false, seed: Int = 1, _ change: (inout CitySettings) -> Void = { _ in }) -> Scene {
+        Scene(SceneSettings(kind: night ? .cityNight : .city, city: settings(change), seed: seed))
     }
 
     // MARK: - The plan
@@ -22,7 +22,7 @@ final class CityTests: XCTestCase {
     func testLotsStandInsideTheirBlocksAndApart() {
         for seed in 0..<12 {
             for style in CityStyle.allCases {
-                let plan = CityPlan(settings { $0.seed = seed; $0.blocks = 1 + seed % 4; $0.style = style })
+                let plan = CityPlan(settings { $0.blocks = 1 + seed % 4; $0.style = style }, seed: seed)
                 XCTAssertEqual(plan.blocks.count, plan.settings.blocks * plan.settings.blocks)
                 for lot in plan.lots {
                     let block = plan.blocks[lot.block]
@@ -62,7 +62,7 @@ final class CityTests: XCTestCase {
     }
 
     func testThePlanIsSeeded() {
-        let a = CityPlan(settings()), b = CityPlan(settings()), c = CityPlan(settings { $0.seed = 2 })
+        let a = CityPlan(settings()), b = CityPlan(settings()), c = CityPlan(settings(), seed: 2)
         XCTAssertEqual(a.lots.map(\.rect), b.lots.map(\.rect))
         XCTAssertEqual(a.lots.map(\.seed), b.lots.map(\.seed))
         XCTAssertNotEqual(a.lots.map(\.rect), c.lots.map(\.rect))
@@ -70,7 +70,7 @@ final class CityTests: XCTestCase {
     }
 
     func testEveryStyleIsBuiltInAMixedCity() {
-        let styles = Set((0..<4).flatMap { seed in CityPlan(self.settings { $0.seed = seed; $0.blocks = 6 }).lots.map(\.style) })
+        let styles = Set((0..<4).flatMap { seed in CityPlan(self.settings { $0.blocks = 6 }, seed: seed).lots.map(\.style) })
         XCTAssertEqual(styles, Set(CityStyle.allCases).subtracting([.mixed]))
         XCTAssertTrue(CityPlan(settings { $0.blocks = 4 }).blocks.contains { $0.park })
     }
@@ -78,7 +78,7 @@ final class CityTests: XCTestCase {
     // MARK: - The scenes
 
     func testTheSameSettingsBuildTheSameCity() {
-        let a = scene(), b = scene(), c = scene { $0.seed = 7 }
+        let a = scene(), b = scene(), c = scene(seed: 7)
         XCTAssertEqual(a.positions, b.positions)
         XCTAssertEqual(a.indices, b.indices)
         XCTAssertEqual(a.instances.map(\.transform), b.instances.map(\.transform))
@@ -103,11 +103,11 @@ final class CityTests: XCTestCase {
         let s = scene()
         let glass = s.instances.filter { $0.mask == Scene.maskGlass }
         XCTAssertGreaterThan(glass.count, 5)
-        XCTAssertTrue(glass.allSatisfy { s.materials[$0.material].params.w == 1 }, "glass has a glass material")
-        XCTAssertTrue(s.instances.allSatisfy { $0.mask == Scene.maskGlass || s.materials[$0.material].params.w == 0 })
+        XCTAssertTrue(glass.allSatisfy { s.materials[$0.material].emission.x == 0 && s.materials[$0.material].albedo.x > 0.3 },
+                      "a pane's material is its tint")
         XCTAssertTrue(s.hasGlass)
-        XCTAssertEqual(s.lightTypeMask & 0x3000_0000, 0x3000_0000, "the shaders are told of the glass and the materials per triangle")
-        XCTAssertEqual(Scene().lightTypeMask & 0x3000_0000, 0, "...and of neither in a scene without them")
+        XCTAssertEqual(s.lightTypeMask & 0x0C00_0000, 0x0C00_0000, "the shaders are told of the glass and the materials per triangle")
+        XCTAssertEqual(Scene().lightTypeMask & 0x0C00_0000, 0, "...and of neither in a scene without them")
         // One offset per triangle, and none past the scene's materials.
         XCTAssertEqual(s.triangleMaterials.count, s.indices.count / 3)
         XCTAssertTrue(Scene().triangleMaterials.isEmpty)

@@ -9,9 +9,9 @@ import simd
 /// are one emissive mesh.
 /// Seeded: the same settings build the same city.
 extension Scene {
-    func buildCity(_ city: CitySettings, night: Bool) {
+    func buildCity(_ city: CitySettings, seed: Int, night: Bool) {
         let start = CFAbsoluteTimeGetCurrent()
-        let plan = CityPlan(city)
+        let plan = CityPlan(city, seed: seed)
 
         // The generated textures, each kind's added the first time a material asks for it.
         let maps = city.textures ? ProceduralTextures.sources(SurfaceKind.allCases) : [:]

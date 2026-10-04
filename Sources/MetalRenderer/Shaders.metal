@@ -18,6 +18,7 @@ using namespace metal::raytracing;
 // In this order: a piece may use what the pieces above it declare.
 #include "Shaders/Types.metal"             // structs shared with GPUTypes.swift, flags, flagOn / passOn
 #include "Shaders/Sampling.metal"          // hashes, Rng, Sampler (blue noise), hemisphere sampling
+#include "Shaders/Foliage.metal"           // generated plants: the wind that turns their parts
 #include "Shaders/Intersect.metal"         // Ray, Hit and the ray queries: Metal's intersector or the custom BVH traversal
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table

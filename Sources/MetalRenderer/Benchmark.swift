@@ -43,6 +43,7 @@ final class Benchmark {
             s.scene = scene
             s.fog = FogSettings.preset(for: scene.kind)
             s.sky = SkySettings.preset(for: scene.kind)
+            s.foliage = FoliageSettings.preset(for: scene.kind)
             change(&s)
             self.name = name
             settings = s
@@ -94,7 +95,8 @@ final class Benchmark {
             // The fog and sky of the scene the run ends up with, unless this config set its own.
             if !ownFog { s.fog = FogSettings.preset(for: s.scene.kind) }
             if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }
-            for variable in [EnvVariable.fogSet, .skySet, .denoise] { SettingsEnv.apply(variable, to: &s, from: env) }
+            if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
+            for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
             for variable in [EnvVariable.restir, .restirGI, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }

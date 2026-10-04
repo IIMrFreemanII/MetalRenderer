@@ -32,7 +32,10 @@ struct MeshData {
     uint indexCount;
     uint vertexOffset;  // a skinned character's pose slot: its vertices are this far after the ones its indices name
     uint prevOffset;    // ...and its previous frame's positions this far after those (0 = the mesh doesn't deform)
+    uint sways;         // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
+    uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
 };
+static_assert(sizeof(MeshData) == 24, "MeshData: GPUMesh");
 
 struct InstanceData {
     float4x4 transform;
@@ -49,7 +52,7 @@ struct Material {
     float4 emission;    // rgb = emitted radiance, a = roughness
     float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
                         // z = 1: its emission is sampled as an emissive-mesh light,
-                        // w = 1: window glass (GLASS; rgb of albedo = its tint): camera rays pass through it
+                        // w = translucency (leaves): this share of them is lit from behind (traceSurface)
     uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
 };
 
@@ -124,18 +127,24 @@ constant uint LIGHT_MESH   = 5;
 // (e.g. a pipeline made without it) every type is handled. Bit 31 = LIGHT_TABLE: a scene with many lights (more than
 // Scene.lightTableThreshold), where nothing may loop over the lights or keep something per light: GI and the path
 // tracer sample the light table instead of per-light light maps, and the sky draws only the suns' discs.
-// Bit 30 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
-// Only then does a hit read MeshData's offsets and a previous position: a scene without them traces the code it
-// always did (the offsets cost the trace 7% in the stress hall when every scene paid for them).
-// Bit 29 = GLASS: some instances are window glass (MASK_GLASS), which camera rays pass through (traceKernel).
-// Bit 28 = MULTI_MATERIAL: some meshes have several materials (SceneShading.triangleMaterials; the city's buildings).
+// The bits above the types compile whole features in (below): a scene without them traces the code it always did.
 constant uint lightTypesConstant [[function_constant(0)]];
-constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7000003Fu;
+constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7C00003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
-constant bool DEFORMING_MESHES = (LIGHT_SPEC & 0x40000000u) != 0;
-constant bool GLASS = (LIGHT_SPEC & 0x20000000u) != 0;
-constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x10000000u) != 0;
+// Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
+// it the traversal and the shading compile to what they were before assemblies.
+constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
+// Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the traversal cuts out by an alpha mask (rtCutout).
+constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
+// Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
+// Only then does a hit read MeshData's offsets and a previous position (the offsets cost the trace 7% in the stress
+// hall when every scene paid for them).
+constant bool DEFORMING_MESHES = (LIGHT_SPEC & 0x10000000u) != 0;
+// Bit 27 = GLASS: some instances are window glass (MASK_GLASS), which camera rays pass through (glassKernel).
+constant bool GLASS = (LIGHT_SPEC & 0x08000000u) != 0;
+// Bit 26 = MULTI_MATERIAL: some meshes have several materials (SceneShading.triangleMaterials; the city's buildings).
+constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
@@ -189,6 +198,7 @@ constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference marc
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
 constant uint FLAG_RESTIR        = 32768; // direct light from ReSTIR DI (restirTemporalKernel, restirSpatialKernel)
 constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
+constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (RTScene.wind.z > 0), the plants' parts turn
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
@@ -205,6 +215,9 @@ constant uint FIXED_PASS      = is_function_constant_defined(fixedPassConstant) 
 // `bit` of Uniforms.flags (flagOn) or of the kernel's own flags (passOn): the compiled-in value where there is one.
 inline bool flagOn(uint flags, uint bit) { return (((FIXED_FLAG_MASK & bit) != 0 ? FIXED_FLAGS : flags) & bit) != 0; }
 inline bool passOn(uint flags, uint bit) { return (((FIXED_PASS_MASK & bit) != 0 ? FIXED_PASS : flags) & bit) != 0; }
+// The wind, for the ray queries and the shading, which see no uniforms: compiled in or out where the kernel's variant
+// fixes FLAG_WIND, else `blowing` (the scene's wind strength, read at run time).
+inline bool windOn(bool blowing) { return (FIXED_FLAG_MASK & FLAG_WIND) != 0 ? (FIXED_FLAGS & FLAG_WIND) != 0 : blowing; }
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights

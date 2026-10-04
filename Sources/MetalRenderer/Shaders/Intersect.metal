@@ -18,6 +18,9 @@ inline Ray makeRay(float3 origin, float3 direction, float tmin, float tmax) {
 }
 
 constant uint HIT_NO_CLUSTER = 0xFFFFFFFFu;
+constant uint HIT_NO_PART = 0xFFFFFFFFu;
+constant uint HIT_VOXEL   = 0xFFFFFFFEu;   // Hit.part: a voxel of a far plant's grid; `primitive` is then its cell's
+                                           // low 24 bits (leaf share, normal: FoliageVoxels.swift)
 
 struct Hit {
     bool   hit;
@@ -26,6 +29,8 @@ struct Hit {
     uint   instance;
     uint   primitive;      // triangle index within the instance's mesh (or within its virtual-geometry cluster)
     uint   cluster;        // custom tracer: this frame's selected virtual-geometry cluster, or HIT_NO_CLUSTER
+    uint   part;           // custom tracer: the part of the instance's assembly (RTScene.parts), or HIT_NO_PART;
+                           // `primitive` is then a triangle of the part's mesh
 };
 
 #if !CUSTOM_RT
@@ -44,6 +49,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
     h.instance = res.instance_id;
     h.primitive = res.primitive_id;
     h.cluster = HIT_NO_CLUSTER;
+    h.part = HIT_NO_PART;
     return h;
 }
 
@@ -72,6 +78,8 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
 // Custom BVH traversal (layouts: BVH.swift / CustomRayTracer.swift). Two top-level trees (static instances, built
 // once; moving instances, rebuilt every frame) over per-mesh bottom-level trees. Nodes hold both children's boxes;
 // a child ref with bit 31 set is a leaf: an instance (top level) or (count - 1) << 28 | first triangle (bottom).
+// An instance of an assembly (a generated plant) has a middle level: a tree over the plant's parts, in the plant's
+// space, shared by all its instances; its leaves are parts (RTPart), each a placed mesh with its own bottom-level tree.
 struct BVHNode {
     float4 lo0;   // xyz = child 0 box min, w = child 0 ref (bits)
     float4 hi0;   // xyz = child 0 box max, w = instance masks under child 0 (bits, top level only)
@@ -85,9 +93,50 @@ struct RTInstance {
     float4 row2;
     uint blasRoot;
     uint mask;
-    uint pad0;
-    uint pad1;
+    uint pad0;    // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
+    uint pad1;    // FOLIAGE: RT_ASSEMBLY bits = assembly + 1 (blasRoot is then its tree of parts), the top byte = the
+                  // voxel level it is traced at this frame + 1, or 0 for its triangles; RT_SWAYS = ground cover
 };
+constant uint RT_ASSEMBLY = 0x7FFFFFu, RT_SWAYS = 0x800000u;
+
+struct RTPart {
+    float4 row0;  // plant -> part rows
+    float4 row1;
+    float4 row2;
+    uint blasRoot;
+    uint mesh;        // the part's mesh, for shading
+    uint firstLeaf;   // its triangles from here on take the instance's leaf material (the one after its wood's)
+    uint leafCount;   // how many they are, in a shuffled order: autumn drops them from the end (0 = evergreen)
+    float4 limb;      // the wind's bones (Shaders/Foliage.metal): xyz = pivot (plant space), w = its largest turn, 0 = none
+    float4 limbAxis;  // xyz = the turn's axis, w = phase
+    float4 bough;     // the bone on the limb (the part itself, if it hangs on one)
+    float4 boughAxis;
+};
+static_assert(sizeof(RTPart) == 128, "RTPart: CustomRayTracer.swift");
+
+// A part's point (or direction) in the wind: from where it is at rest in its plant's space to where it is now.
+inline float3 partWind(RTPart part, PlantWind w, float strength, float3 p, bool point) {
+    if (part.bough.w != 0.0f) {
+        float a = boneAngle(part.bough, part.boughAxis, w.gust, w.phase, w.time, strength, WIND_BOUGH_SPEED);
+        p = point ? windTurn(p, part.bough.xyz, part.boughAxis.xyz, a) : windTurn(p, part.boughAxis.xyz, a);
+    }
+    if (part.limb.w != 0.0f) {
+        float a = boneAngle(part.limb, part.limbAxis, w.gust, w.phase, w.time, strength, WIND_LIMB_SPEED);
+        p = point ? windTurn(p, part.limb.xyz, part.limbAxis.xyz, a) : windTurn(p, part.limbAxis.xyz, a);
+    }
+    return windTurn(p, w.axis, w.angle);   // the root: about the plant's origin
+}
+
+// A plant's voxel grid, for when it is far away (FoliageVoxels.swift).
+struct RTVoxels {
+    float4 lo;        // xyz = the grid's corner (plant space), w = a level 0 voxel's size
+    uint4  dims;      // xyz = level 0 voxels per axis; each next level has half, rounded up; w = 1: an evergreen
+    uint4  offsets;   // xyz = where levels 0, 1, 2 start in RTScene.voxels
+};
+static_assert(sizeof(RTVoxels) == 48, "RTVoxels: FoliageVoxels.Grid");
+constant float VOXEL_DEPTH = 4.0f;   // a cell's 255 = this optical depth across a level 0 voxel
+constant uint  VOXEL_LEVELS = 3;
+constant float VOXEL_SHADE = 0.62f;  // a voxel's colour over its materials' (traceSurface)
 
 struct RTScene {
     device const BVHNode*    tlas;        // static top-level nodes, then this frame's dynamic and cluster trees
@@ -105,8 +154,16 @@ struct RTScene {
     uint dynamicRoot;
     uint virtualBase;                     // the cluster tree's first node
     uint pad;
+    device const RTPart*     parts;       // every assembly's parts (FOLIAGE)
+    float4 wind;                          // xy = where the wind blows to (world x, z; unit), z = strength (0 = still),
+                                          // w = gustiness; written every frame (CustomRayTracer.encodeBuild)
+    float4 windTime;                      // x = this frame's time (s), y = the last frame's, w = the share of the
+                                          // leaves that have fallen (the season)
+    device const RTVoxels*   voxelGrids;  // per assembly
+    device const uint*       voxels;      // their cells
+    device const uchar*      cutouts;     // leaf cards' alpha layers, CUTOUT_SIZE squared each (ALPHA_TEST)
 };
-static_assert(sizeof(RTScene) == 96, "RTScene: CustomRayTracer.writeArgs writes these offsets");
+static_assert(sizeof(RTScene) == 176 && __builtin_offsetof(RTScene, cutouts) == 160, "RTScene: CustomRayTracer.writeArgs writes these offsets");
 
 #ifndef RT_STATS
 #define RT_STATS 0
@@ -117,7 +174,8 @@ static_assert(sizeof(RTScene) == 96, "RTScene: CustomRayTracer.writeArgs writes 
 #define RT_STAT(i, n)
 #endif
 // Counters (RT_STATS: global; COST traversals: per ray, for the "Traversal cost" view): 0 rays, 1 top nodes,
-// 2 bottom nodes, 3 instance entries, 4 cluster entries, 5 triangle tests, 6 nodes inside virtual instances.
+// 2 bottom nodes, 3 instance entries, 4 cluster and part entries, 5 triangle tests, 6 nodes inside virtual instances
+// and assemblies.
 // Global only: 7 = pushes the full stack turned away (RT_ROOM).
 #define RT_COUNT(i, n) { if (COST) cost[i] += (n); RT_STAT(i, n); }
 
@@ -184,8 +242,26 @@ inline float3 rtSafeInverse(float3 d) {
     return 1.0f / select(d, copysign(float3(1e-12f), d), abs(d) < 1e-12f);
 }
 
+constant uint CUTOUT_SIZE = 512;   // a leaf-card alpha layer's side (FoliageTextures.cardSheetSize)
+
+// A leaf card is there only where its picture is. Its triangles carry their corners' UVs (10 bits a coordinate) and
+// their alpha layer + 1 in the spare floats of their edges (BVHBuilder.cutoutBits); two zero words: not a card.
+inline bool rtCutout(device const uchar* cutouts, uint a, uint b, float u, float v) {
+    uint layer = (a >> 30) | ((b >> 30) << 2);
+    if (layer == 0) return true;
+    float2 t0 = float2(float(a & 1023u), float((a >> 10) & 1023u));
+    float2 t1 = float2(float((a >> 20) & 1023u), float(b & 1023u));
+    float2 t2 = float2(float((b >> 10) & 1023u), float((b >> 20) & 1023u));
+    float2 uv = (t0 + (t1 - t0) * u + (t2 - t0) * v) * (float(CUTOUT_SIZE) / 1024.0f);
+    uint2 texel = min(uint2(uv), uint2(CUTOUT_SIZE - 1u));
+    return cutouts[((layer - 1u) * CUTOUT_SIZE + texel.y) * CUTOUT_SIZE + texel.x] != 0;
+}
+
 // Möller-Trumbore, both faces. Updates h (closest so far) and returns true on a nearer hit.
-inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, float tmin, thread Hit& h) {
+// `limit`: triangles of the mesh from this one on aren't there (a plant's fallen leaves). `cutouts`: the alpha
+// layers its leaf cards are tested against.
+inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, float tmin, thread Hit& h, uint limit = 0xFFFFFFFFu,
+                       device const uchar* cutouts = nullptr) {
     float3 pv = cross(d, e2.xyz);
     float det = dot(e1.xyz, pv);
     if (det == 0.0f) return false;
@@ -197,7 +273,8 @@ inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, floa
     float v = dot(d, qv) * inv;
     if (v < 0.0f || u + v > 1.0f) return false;
     float t = dot(e2.xyz, qv) * inv;
-    if (t < tmin || t > h.distance) return false;
+    if (t < tmin || t > h.distance || as_type<uint>(v0.w) >= limit) return false;
+    if (ALPHA_TEST && cutouts != nullptr && !rtCutout(cutouts, as_type<uint>(e1.w), as_type<uint>(e2.w), u, v)) return false;
     h.hit = true;
     h.distance = t;
     h.barycentrics = float2(u, v);
@@ -205,11 +282,72 @@ inline bool rtTriangle(float3 o, float3 d, float4 v0, float4 e1, float4 e2, floa
     return true;
 }
 
+// The share of its leaves a deciduous plant still has when `fall` of all leaves are down: each plant in its own time.
+inline float plantKeep(float fall, uint instance) {
+    return 1.0f - saturate(fall * 1.6f - 0.6f * float(pcgHash(instance + 0xFA11u) & 0xFFu) * (1.0f / 255.0f));
+}
+
+inline uint3 voxelDims(uint3 d, uint level) { return max((d + ((1u << level) - 1u)) >> level, uint3(1u)); }
+
+// A far plant as its voxel grid: marches level `level` of `g` along o + d t (the plant's space; t as everywhere) a
+// voxel at a time and stops in a voxel with the chance that a ray through it meets some of what is in it, so that
+// on average the plant covers what its triangles would. Empty stretches are crossed a coarsest-level cell at a
+// time. `seed`: the ray's own. True on a hit: h.distance, h.primitive (the cell's leaf share and normal), h.part.
+// `keep`: the share of its leaves the plant still has (a grid with dims.w set is an evergreen's: all of them).
+inline bool rtVoxels(constant RTScene& sc, RTVoxels g, uint level, float3 o, float3 d, float3 inv, float3 oi, float tmin,
+                     uint seed, float keep, thread Hit& h) {
+    float3 lo = g.lo.xyz, hi = lo + float3(g.dims.xyz) * g.lo.w;
+    float3 ta = fma(lo, inv, oi), tb = fma(hi, inv, oi);
+    float3 tn = min(ta, tb), tf = max(ta, tb);
+    float t0 = max(max(tn.x, tn.y), max(tn.z, tmin)), t1 = min(min(tf.x, tf.y), min(tf.z, h.distance));
+    if (t0 > t1) return false;
+    const uint coarse = VOXEL_LEVELS - 1u;
+    uint3 n = voxelDims(g.dims.xyz, level), nc = voxelDims(g.dims.xyz, coarse);
+    float size = g.lo.w * float(1u << level), sizeC = g.lo.w * float(1u << coarse);
+    device const uint* cells = sc.voxels + g.offsets[level];
+    device const uint* cellsC = sc.voxels + g.offsets[coarse];
+    float dt = size / length(d);
+    float depthScale = VOXEL_DEPTH / 255.0f * float(1u << level);
+    float fallen = g.dims.w != 0u ? 0.0f : (1.0f - keep) * (1.0f / 255.0f);
+    // Jittered along the ray; a ray that starts inside the grid (a shadow ray from one of its voxels) begins past
+    // the voxel it starts in.
+    float t = t0 + (float(pcgHash(seed) >> 8) * (1.0f / 16777216.0f) + (t0 > tmin ? 0.0f : 0.75f)) * dt;
+    for (uint i = 0; i < 400u && t < t1; ++i) {
+        float3 p = max(o + d * t - lo, 0.0f);
+        if (level < coarse) {
+            uint3 c = min(uint3(p / sizeC), nc - 1u);
+            if (cellsC[(c.z * nc.y + c.y) * nc.x + c.x] == 0u) {   // nothing here: on to the far side of this cell
+                float3 cl = lo + float3(c) * sizeC;
+                float3 e = max(fma(cl, inv, oi), fma(cl + sizeC, inv, oi));
+                t = max(t + dt, min(min(e.x, e.y), e.z) + 0.25f * dt);
+                continue;
+            }
+        }
+        uint3 v = min(uint3(p / size), n - 1u);
+        uint cell = cells[(v.z * n.y + v.y) * n.x + v.x];
+        if (cell != 0u) {
+            float u = float(pcgHash(seed + (i + 1u) * 0x9E3779B9u) >> 8) * (1.0f / 16777216.0f);
+            if (u < 1.0f - exp(-float(cell >> 24) * depthScale * (1.0f - float((cell >> 16) & 0xFFu) * fallen))) {
+                h.hit = true;
+                h.distance = t;
+                h.barycentrics = float2(0.0f);
+                h.primitive = cell & 0x00FFFFFFu;
+                h.cluster = HIT_NO_CLUSTER;
+                h.part = HIT_VOXEL;
+                return true;
+            }
+        }
+        t += dt;
+    }
+    return false;
+}
+
 constant uint RT_INSTANCE_EXIT = 0xFFFFFFFEu;   // stack marker: back to the top level (world space) below here
 constant uint RT_CLUSTER = 0x40000000u;         // top-level leaf flag: a virtual-geometry cluster, not an instance
 constant uint RT_ENTER   = 0x40000000u;         // internal-node ref flag: the subtree holds one virtual instance's
                                                 // clusters, in its object space (enter the instance here)
 constant uint RT_OBJECT_EXIT = 0xFFFFFFFDu;     // stack marker: back from a cluster's BVH to its instance's subtree
+constant uint RT_PART_EXIT   = 0xFFFFFFFCu;     // stack marker: back from a part's BLAS to its assembly's tree (plant space)
 
 // All levels in one loop: entering an instance switches the ray to object space and pushes a marker; popping the
 // marker switches back. Every SIMD lane then runs the same node-fetch code whichever level it is in, instead of
@@ -217,7 +355,7 @@ constant uint RT_OBJECT_EXIT = 0xFFFFFFFDu;     // stack marker: back from a clu
 // Three top-level trees: static instances, moving instances, and this frame's cut of the virtual meshes. The cut's
 // tree splits by instance first: a ref flagged RT_ENTER is one instance's subtree, in its object space, whose leaves
 // are clusters with their own small BVHs in the streaming pool. Levels: 0 = world, 1 = inside a virtual instance's
-// subtree, 2 = inside a BLAS or a cluster's BVH. Returns true on a hit when ANY.
+// subtree or an assembly's tree of parts, 2 = inside a BLAS or a cluster's BVH. Returns true on a hit when ANY.
 template <bool ANY, bool COST = false>
 inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, thread uint* cost = nullptr) {
     uint stack[RT_STACK];
@@ -240,6 +378,11 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
     device const float4* bottomTris = sc.tris;
     uint cluster = HIT_NO_CLUSTER;
     VGClusterView view;
+    uint part = HIT_NO_PART;
+    float3 plantO = float3(0.0f), plantD = float3(0.0f);   // the ray in the plant's space, while inside an assembly
+    bool windy = FOLIAGE && windOn(sc.wind.z > 0.0f);
+    float plantGust = 0.0f, plantPhase = 0.0f;             // that plant's wind (PlantWind)
+    bool falling = FOLIAGE && sc.windTime.w > 0.0f;        // autumn: the deciduous plants have dropped some leaves
     while (true) {
         if ((ref & RT_LEAF) == 0) {
             if ((ref & RT_ENTER) != 0) {   // a virtual instance's subtree: into its object space (from the world)
@@ -276,7 +419,38 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
             }
         } else if (level < 2) {
             uint id = ref & ~RT_LEAF;
-            if ((id & RT_CLUSTER) != 0) {   // a cluster: into its BVH (already in object space inside a subtree)
+            if (FOLIAGE && level == 1 && (id & RT_CLUSTER) == 0) {   // a part of the assembly: into its mesh's BLAS
+                if (RT_ROOM(sp)) {
+                    device const RTPart& p = sc.parts[id];   // a reference: the bones are read only in the wind
+                    float3 po = plantO, pd = plantD;
+                    if (windy) {   // the ray, turned back to where the part is at rest: its limb's turn, then its own
+                        if (p.limb.w != 0.0f) {
+                            float a = -boneAngle(p.limb, p.limbAxis, plantGust, plantPhase, sc.windTime.x, sc.wind.z, WIND_LIMB_SPEED);
+                            po = windTurn(po, p.limb.xyz, p.limbAxis.xyz, a);
+                            pd = windTurn(pd, p.limbAxis.xyz, a);
+                        }
+                        if (p.bough.w != 0.0f) {
+                            float a = -boneAngle(p.bough, p.boughAxis, plantGust, plantPhase, sc.windTime.x, sc.wind.z, WIND_BOUGH_SPEED);
+                            po = windTurn(po, p.bough.xyz, p.boughAxis.xyz, a);
+                            pd = windTurn(pd, p.boughAxis.xyz, a);
+                        }
+                    }
+                    float4 o4 = float4(po, 1.0f), d4 = float4(pd, 0.0f);
+                    o = float3(dot(p.row0, o4), dot(p.row1, o4), dot(p.row2, o4));
+                    d = float3(dot(p.row0, d4), dot(p.row1, d4), dot(p.row2, d4));
+                    inv = rtSafeInverse(d);
+                    oi = -o * inv;
+                    level = 2;
+                    part = id;
+                    cluster = HIT_NO_CLUSTER;
+                    bottomNodes = sc.blas;
+                    bottomTris = sc.tris;
+                    RT_COUNT(4, 1u);
+                    stack[sp++] = RT_PART_EXIT;
+                    ref = p.blasRoot;
+                    continue;
+                }
+            } else if ((id & RT_CLUSTER) != 0) {   // a cluster: into its BVH (already in object space inside a subtree)
                 cluster = id & ~RT_CLUSTER;
                 uint2 rc = sc.clusters[cluster];
                 bool enter = level == 0;    // a lone cluster in the world-space part of the tree
@@ -316,15 +490,52 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     d = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));   // not normalized: t is shared
                     inv = rtSafeInverse(d);
                     oi = -o * inv;
-                    level = 2;
                     instance = id;
-                    cluster = HIT_NO_CLUSTER;
-                    bottomNodes = nodes;
-                    bottomTris = tris;
                     RT_COUNT(3, 1u);
-                    stack[sp++] = RT_INSTANCE_EXIT;
-                    ref = root;
-                    continue;
+                    uint assembly = inst.pad1 & RT_ASSEMBLY, voxelLevel = inst.pad1 >> 24;
+                    if (FOLIAGE && assembly != 0) {   // an assembly: the tree over its parts, in the plant's space
+                        if (windy) {   // ... as it stands before the wind leans it: the root's turn, undone
+                            PlantWind plant = plantWind(sc.wind, sc.windTime.x, inst.row0, inst.row1, inst.row2, id);
+                            plantGust = plant.gust;
+                            plantPhase = plant.phase;
+                            o = windTurn(o, plant.axis, -plant.angle);
+                            d = windTurn(d, plant.axis, -plant.angle);
+                            inv = rtSafeInverse(d);
+                            oi = -o * inv;
+                        }
+                        // Far from the camera, its voxels instead, at the level rtPrepKernel chose for it this frame.
+                        if (voxelLevel != 0) {
+                            uint seed = pcgHash(as_type<uint>(r.direction.x) ^ pcgHash(as_type<uint>(r.direction.y) ^ pcgHash(as_type<uint>(r.origin.x) + id)));
+                            if (rtVoxels(sc, sc.voxelGrids[assembly - 1u], voxelLevel - 1u, o, d, inv, oi, r.tmin, seed, falling ? plantKeep(sc.windTime.w, id) : 1.0f, h)) {
+                                h.instance = id;
+                                if (ANY) return true;
+                            }
+                            o = r.origin; d = r.direction; inv = worldInv; oi = worldOi;   // and on, in the world
+                        } else {
+                            level = 1;
+                            plantO = o;
+                            plantD = d;
+                            stack[sp++] = RT_INSTANCE_EXIT;
+                            ref = root;
+                            continue;
+                        }
+                    } else {
+                        if (windy && (inst.pad1 & RT_SWAYS) != 0) {   // ground cover: the ray, sheared back to where it stands at rest
+                            float3 lean = coverLean(sc.wind, sc.windTime.x, inst.row0, inst.row1, inst.row2);
+                            o -= lean * o.y;
+                            d -= lean * d.y;
+                            inv = rtSafeInverse(d);
+                            oi = -o * inv;
+                        }
+                        stack[sp++] = RT_INSTANCE_EXIT;
+                        ref = root;
+                        level = 2;
+                        cluster = HIT_NO_CLUSTER;
+                        part = HIT_NO_PART;
+                        bottomNodes = nodes;
+                        bottomTris = tris;
+                        continue;
+                    }
                 }
             }
         } else if (ref != RT_NONE) {   // RT_NONE: the empty child of a single-leaf mesh
@@ -338,14 +549,23 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     if (rtTriangle(o, d, float4(p0, as_type<float>(t)), float4(p1 - p0, 0.0f), float4(p2 - p0, 0.0f), r.tmin, h)) {
                         h.instance = instance;
                         h.cluster = cluster;
+                        h.part = HIT_NO_PART;
                         if (ANY) return true;
                     }
                 }
             } else {
+                // The part's triangles from `limit` on have fallen (worked out here, from what the loop holds anyway:
+                // a value kept across the loop for it cost the traversal 0.7 ms a frame in the wind).
+                uint limit = 0xFFFFFFFFu;
+                if (falling && part != HIT_NO_PART) {
+                    device const RTPart& p = sc.parts[part];
+                    if (p.leafCount != 0) limit = p.firstLeaf + uint(float(p.leafCount) * plantKeep(sc.windTime.w, instance));
+                }
                 for (uint t = first; t < end; ++t) {
-                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h)) {
+                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h, limit, bottomTris == sc.tris ? sc.cutouts : nullptr)) {   // a virtual BLAS keeps other things there
                         h.instance = instance;
                         h.cluster = HIT_NO_CLUSTER;
+                        h.part = part;
                         if (ANY) return true;
                     }
                 }
@@ -363,6 +583,13 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                 level = 1;
                 continue;
             }
+            if (FOLIAGE && ref == RT_PART_EXIT) {
+                level = 1;
+                o = plantO; d = plantD;
+                inv = rtSafeInverse(d);
+                oi = -o * inv;
+                continue;
+            }
             break;
         }
     }
@@ -376,6 +603,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     h.instance = 0;
     h.primitive = 0;
     h.cluster = HIT_NO_CLUSTER;
+    h.part = HIT_NO_PART;
     rtTraverse<false>(sc, r, mask, h);
     return h;
 }
@@ -389,6 +617,7 @@ Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint* cost) {
     h.instance = 0;
     h.primitive = 0;
     h.cluster = HIT_NO_CLUSTER;
+    h.part = HIT_NO_PART;
     rtTraverse<false, true>(sc, r, mask, h, cost);
     return h;
 }
@@ -403,6 +632,7 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     h.hit = false;
     h.distance = r.tmax;
     h.cluster = HIT_NO_CLUSTER;
+    h.part = HIT_NO_PART;
     bool hit = rtTraverse<true>(sc, r, mask, h);
     t = h.distance;
     return hit;

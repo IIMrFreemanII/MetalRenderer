@@ -11,6 +11,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * six light demos (see "Light types" below);
   * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
   * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
+  * a **Forest** of generated trees, bushes, ferns and grass on rolling ground (see "Generated plants" below);
   * a **Crowd**: a square with thousands of animated characters, skinned on the GPU (see "Animated characters" below);
   * a generated **City**, by day and at night: blocks of procedural buildings with glass windows and rooms behind them (see "Procedural city" below).
 * **Glass:** window panes the camera sees through and sees reflections in, and that light passes (see "Glass" below).
@@ -25,6 +26,11 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * In front of either sky there are volumetric clouds, and their shadows drift over the scene.
   * The sky lights everything: camera view, GI, reflections, fog.
   * Cost: 0.2–1 ms per frame, whatever the resolution.
+* **Generated plants:** oaks, birches, conifers, dead trees, bushes, ferns and grass, grown from a seed in about 2 ms.
+  * A tree is an **assembly**: a trunk, limbs and a few hundred placed copies of six shared boughs. The forest's 2,500 trees are 29 plants of 3,500 parts.
+  * **Wind** turns every limb and bough about its bone, and leans the grass, without rebuilding anything.
+  * Far plants are traced as **voxels**; a **season** setting turns the leaves and drops them; leaves let light through.
+  * Assemblies, wind, voxels and leaf fall are the custom tracer's. Metal's tracer renders the same plants as plain, still meshes.
 * **Volumetric fog and light:** height fog with drifting noise, plus soft-edged local fog volumes (ground mist, a stage haze, a glow around a lamp).
   * Every light type scatters in it, with ray-traced shadows, so sunlight falls in shafts through windows and spot beams are visible.
   * It is computed in a camera-aligned voxel grid ("froxels"), 8×8 traced pixels by 64 depth slices.
@@ -172,7 +178,7 @@ For the crowd:
 * `METALRENDERER_CROWD=frozen` skips the per-frame skinning and refits: the crowd keeps the pose the CPU gave it at load.
 
 For the city:
-* `METALRENDERER_SCENE=city` or `citynight` starts in the City; add `seed=7`, `blocks=1`...`10`, `style=mixed|oldtown|residential|warehouse|office|modern`, `lit=0.5`, `rooms=0.3` and `textures=0` (`METALRENDERER_SCENE="citynight,blocks=1,style=oldtown"` is one block of old houses at night).
+* `METALRENDERER_SCENE=city` or `citynight` starts in the City; add `seed=7` (the plants' seed too), `blocks=1`...`10`, `style=mixed|oldtown|residential|warehouse|office|modern`, `lit=0.5`, `rooms=0.3` and `textures=0` (`METALRENDERER_SCENE="citynight,blocks=1,style=oldtown"` is one block of old houses at night).
 * `METALRENDERER_BENCH=city` renders it from above, from the road and in front of one building, a block of each style, flat against textured, and the night with the frame before; then times it at 1 to 100 blocks by day and at night.
 
 For the sky:
@@ -182,6 +188,14 @@ For the sky:
 * `Tools/test-assets/make-test-sky.py out.hdr [elevation] [azimuth]` writes a synthetic equirectangular test sky with a sun.
 * `METALRENDERER_BENCH=sky` renders the valley at morning, forenoon, noon, afternoon and evening, from the ground and from the air, plus the sun and mixed scenes. It adds clear-sky, no-cloud-shadow and constant-sky variants, then moving frames. It takes `METALRENDERER_LIGHTS_SCENES`.
 * `METALRENDERER_BENCH=skycheck` renders the valley in the afternoon, with a cloud shadow's edge in view. Each GI method runs against a 4-bounce path-traced reference, for the final image and indirect light, with cloud shadows on and off.
+
+For the plants:
+* `METALRENDERER_SCENE=forest` starts in the Forest; `trees=2500`, `undergrowth=100` (bushes, ferns and grass, percent) and `seed=1` change it. `seed` also picks the valley's trees.
+* `METALRENDERER_SCENE=forest,cards=1` shows the trees' leaves as cards; `baked=1` bakes the plants into plain meshes on the custom tracer too.
+* `METALRENDERER_FOLIAGE="wind=0.4,dir=25,gusts=0.7,season=0.3,translucency=1,lod=2"` sets the Foliage section of the panel.
+* `METALRENDERER_BENCH=forest` renders the forest paused (from the clearing, from above, close to a trunk, with 10,000 trees), then moving, natively and at 3×.
+* `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
+* `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
 
 The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com): install it before cloning (`brew install git-lfs && git lfs install`), or run `git lfs pull` afterwards. `.gitattributes` sends 3D models (`.glb`, `.fbx`, `.obj`, `.usd(z)`, `.blend`), HDR skies (`.hdr`, `.exr`) and the buffers and textures under `Assets/` to LFS. Put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
@@ -253,7 +267,7 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Characters | 2048 | Crowd: how many characters stand, walk and run in the square, 1 to 131072. Applied when you release the slider. |
 | Poses | 64 | Crowd: how many poses the GPU animates each frame; every character shows one of them. More poses, fewer characters in step with each other. |
 | Detail level | 3 | Crowd: the mesh the poses are skinned at. 0 is the full mesh (about 50k triangles), each level has half the triangles of the one before (level 3: about 6.5k). |
-| City seed | 1 | City: which city is built, 0 to 999. Applied when you release the slider, as the others below. |
+| City seed | 1 | City: which city is built, 0 to 999 (the same setting as the plants' seed, `seed`). Applied when you release the slider, as the others below. |
 | City blocks | 4 × 4 | City: blocks along each side of the street grid, 1 to 10. |
 | Building style | Mixed districts | City: every style by district, or one of them everywhere (old town, residential blocks, warehouses, office towers, modern mid-rise). |
 | Lit windows | 35% | City at night: the share of windows with a light on behind them. |
@@ -570,6 +584,79 @@ The first frame of a sky also draws the noise and the atmosphere's tables, and r
 * Cloud shadows cover a square around the scene's bounding sphere.
 * An image's sun needs a sun light in the scene to land on; without one, the image still lights GI.
 
+### Generated plants
+
+The plants are made at load time from a seed (`Foliage*.swift`); nothing is read from disk. The design follows Unreal Engine 5.7's Megaplants (the Procedural Vegetation Editor, Nanite Assemblies, skinning and voxels), adapted to a renderer that only traces rays.
+
+**The generator** is a chain of plain functions over a `Recipe`:
+* **Grower:** recursive, parametric growth by levels (trunk, limbs, twigs), in the manner of Weber and Penn, inside a crown shape. A plant's age (sapling, young, mature) scales its levels, lengths and counts.
+* **Modifiers:** curvature, gravity and light (a pull up or down per level), and carving against an ellipsoid (bushes).
+* **Mesher:** stems as tubes with fewer sides per level and one vertex at the tip; ribbons for fern stalks and grass. A mesh's size is counted first and filled by index, in parallel, one slot per plant.
+* **Leaf distributor:** leaves along the twigs by phyllotaxis (spiral, two rows, whorls), in a shuffled order, so any leading part of them is a random sample.
+* **Graft distributor:** each species has six **boughs** (a twig with side twigs and leaves, 330–850 triangles). A tree hangs them on its limbs, turned and scaled, a few hundred times.
+* The same seed gives the same plants, built in parallel or on one thread (`FoliageTests`).
+
+The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
+
+**The Forest** is 320 m of rolling ground (a heightfield, 205k triangles) with a level clearing around the camera and a trail leading out. Trees stand on a jittered grid, thinned by slope and a noise; conifers take the hills, oaks the low ground, birches the clearing's edge and the trail. Bushes and ferns grow under them, and grass in 2 m patches of 800 blades around the clearing. The valley's trees are the same plants.
+
+**Custom tracer:**
+
+| Megaplants feature | Here |
+|---|---|
+| Nanite Assemblies | A third instancing level. A plant is a tree over its parts, stored once with the static top-level nodes and shared by all its instances; a part is a placed mesh. The forest stores 283k triangles instead of 2.25M, and its BVH builds in 65 ms instead of 144. |
+| Skinning and wind | Every part has two rigid bones (its limb, and itself on that limb), and the plant leans about its foot. The turns are functions of the time: the traversal turns the ray back as it enters a plant and a part, and the shading turns the hit point forward, at this frame's time and the last one's, so moving leaves have motion vectors. Only the part boxes' padding is refitted, when the wind's strength changes. Grass and ferns have no bones: a patch is sheared downwind by its height, which the traversal undoes the same way. |
+| Nanite Voxels | Each plant has a 32-voxel grid with two coarser levels (1.7 MB for the forest). A voxel holds its optical depth, its share of leaf and its mean normal. A plant whose voxels are about 2 traced pixels (the `lod` setting) is marched instead of traced, and a ray stops in a voxel with the probability that it would have hit something there. Every ray sees a plant the same way, since the level goes by the camera. |
+| Seasons | The Season setting recolours the leaf materials, each shade of each species in its own time, and from late autumn drops leaves: a plant traces only the first part of each bough's (shuffled) leaf triangles. Conifers keep theirs. |
+| Two-sided foliage | A share of the leaves (35% for broad leaves) shows the light of its far side: for those, lighting, shadow rays and bounces use the flipped normal. Which leaves is fixed per leaf. It is an approximation: a leaf is lit from one side or the other, never both. The path-traced reference does the same, so the GI methods agree with it (below) without that proving it right. |
+
+**Textures** are generated too (`FoliageTextures.swift`): furrowed bark, birch bark, a veined leaf, a needle, a grass blade, and a colour map of the forest's ground (moss, the clearing, the trail, rock on slopes). A plant's texture is detail on its material's colour and has a fixed mean, so a plant's far voxels, which use the colour alone, match its triangles (within 1% from above).
+
+**Leaves as cards** (`cards=1`, off by default): each stretch of twig becomes two crossed rectangles showing a picture of the twig with its leaves, cut out by an alpha mask. The mask's texel coordinates ride in the spare floats of the card's triangles, and the traversal tests them (`rtCutout`). Custom tracer only; with Metal's, the leaves stay meshes.
+
+| Foliage setting | Default | Effect |
+|---|---|---|
+| Wind | 0.4 where there are plants | 0 = still, 1 = strong. At 0 the wind code is compiled out of the kernels. |
+| Wind direction, Gusts | 25°, 0.7 | Where it blows to; how much it comes in waves, which travel downwind. |
+| Season | 0.3 | 0 = spring, 0.3 = summer, 0.5–0.8 the leaves turn and fall, 1 = winter. |
+| Leaf translucency | 1 | Scales every species' share of backlit leaves; 0 = opaque leaves. |
+| Distance LOD (voxels) | 2 px | The voxel size, in traced pixels, at which a plant is marched instead of traced. 0 = never. At 4, near trees turn visibly grainy. |
+| Trees, Undergrowth, Plant seed | 2500, 100%, 1 | The Forest. Applied when the slider is released. |
+| Leaves as cards, Plants as plain meshes | Off | See above. |
+
+**Cost** on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METALRENDERER_BENCH=forest`, "forest moving 3x"), whole frame and the trace pass:
+
+| | Frame | Trace |
+|---|---|---|
+| Custom tracer, wind 0.4 (the default) | 12.8 ms | 6.6 ms |
+| Wind off | 11.1 ms | 5.4 ms |
+| Autumn (season 0.8) | 14.4 ms | 7.5 ms |
+| Voxels off (`lod=0`) | 13.1 ms | 6.7 ms |
+| Leaves as cards | 14.6 ms | 7.6 ms |
+| Plants as plain meshes (`baked=1`), still | 10.0 ms | 4.5 ms |
+| Metal's tracer (hardware ray tracing), plain meshes, still | 3.1 ms | 0.7 ms |
+
+* On this Mac, Metal's hardware ray tracing is three times faster on the baked forest than the custom tracer, and it gets none of the wind, the voxels or the leaf fall. The forest wasn't measured on a Mac without ray-tracing hardware.
+* The valley costs 2.5 ms a frame with its 16 generated trees, up from 1.9 ms with the box-and-sphere placeholders (2.4 ms with the wind off).
+
+**Checks** (`METALRENDERER_BENCH=forestcheck`):
+* The forest as assemblies and as baked meshes, with opaque leaves, from the clearing and from above: the same mean brightness (79.4 against 79.3, 72.8 against 72.8 of 255), and single pixels differing on thin geometry (1–3% of them by more than 8 levels).
+* Leaves against the sun, each GI method against a 512-frame path-traced reference: means within 1% (71.3 for the reference; 70.9 path traced, 71.2 cascades, 70.6 ReSTIR GI).
+* The LOD level view from above: triangles blue, the three voxel levels green, orange and red.
+* Scenes without plants render bit-identical to before the plants were added (Cornell, stress, market, gallery).
+
+**What didn't help:**
+* **Leaf cards.** They store fewer triangles (the forest's 24 boughs lose 9,900 of theirs) and are 13% slower (14.6 against 12.9 ms). A ray visits as many nodes and tests more triangles (13 against 9 per ray), because a card's box covers the whole twig, and each candidate hit reads the mask. One card per twig instead of two crossed was no faster. They are kept as an option.
+* **A 64-voxel grid.** Marching 64 steps costs more than tracing the plant's triangles, so a finer level would only ever be slower. 32 it is.
+* **Padding the parts' boxes for the strongest wind.** It cost 0.3 ms with no wind at all. The boxes are padded by the current strength, and the assemblies' nodes refitted when it changes.
+* **Keeping the leaf-fall limit in a register across the traversal loop.** 0.7 ms a frame in the wind; it is computed where a leaf is tested.
+
+**Limitations:**
+* Wind, voxels and leaf fall need the custom tracer. With Metal's the plants stand still and keep their leaves; their colours still follow the season.
+* A plant traced as voxels only leans with the wind; its boughs don't move. Far trunks are as grainy as far crowns.
+* Dead trees only lean. A patch of grass leans as one.
+* The ground's colour map has a texel every 31 cm.
+
 ### Animated characters
 
 The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk and a run. Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
@@ -642,18 +729,18 @@ The **City** and **City at night** scenes are generated: a seeded street grid of
   * "Built in" is the generator plus the custom tracer's trees (about half each); 10 × 10 has 75,000 windows, 8,200 of them with rooms.
   * By day the city has one light, the sun, and its frame grows slowly with its size: rays walk one tree per building.
   * At night it is 192 mesh lights of 8,900 triangles (1,706 and 58,000 at 10 × 10), and ReSTIR DI is most of the frame, as in the Night market.
-  * Metal's tracer runs it too (10 × 10: 1,737 structures, 485 MB after compaction, 6.6 ms a frame), and Metal 4 draws the same images as Metal 3.
+  * Metal's tracer runs it too (10 × 10: 1,737 structures, 485 MB after compaction, 6.6 ms a frame), and Metal 4 draws the same images as Metal 3 (but see the limits).
 * **Checked** by `CityTests`, `BuildingTests` and `ProceduralTextureTests`: the plan's lots stand inside their blocks and apart; every style's meshes are valid over many seeds and lots (finite, unit normals, no triangle without area or, where textured, without UV area, inside the lot, under the limit); outlines close around their plans; a seed always builds the same city; the textures tile.
-* **Limits:** every building is unique, so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
+* **Limits:** under Metal 4 the texture streamer faults on the GPU when it maps a texture's level again after unmapping it, and the frames after that are black: flying far from the city and back does it, as the Gallery does (`METALRENDERER_TEXTURE_STREAMING=0` or `textures=0` avoids it; Metal 3 is not affected). Every building is unique, so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
 
 ### Glass
 
 Window glass is thin and clear, or tinted: the camera sees through it and sees its mirror reflection, and to light it isn't there.
 
-* Glass is an instance mask (`Scene.maskGlass`) and a material flag (`GPUMaterial.params.w`, the albedo is the tint). Shadow, GI and reflection rays only meet geometry, so sunlight falls into rooms and a room's lamp lights the pavement, with no change to those kernels.
+* Glass is an instance mask (`Scene.maskGlass`); its material's albedo is the tint. Shadow, GI and reflection rays only meet geometry, so sunlight falls into rooms and a room's lamp lights the pavement, with no change to those kernels.
 * `traceKernel`'s camera ray doesn't meet it either: the G-buffer holds the surface behind the pane, so direct light, GI, ReSTIR, the denoisers and the reflection pass light and filter that surface as usual.
 * `glassKernel` (`Shaders/Glass.metal`) runs right after the trace: the camera ray again, against the glass alone, as far as the surface the trace found. For up to 4 panes it multiplies what comes through, (1 − Fresnel) × tint each, into the G-buffer's albedo, F0 and emission; for the first pane it traces one mirror ray, lights its hit with one light sample, and adds Fresnel × that to the emission.
-* It is compiled in only for scenes with glass (bit 29 of the light-type constant), so every other scene draws what it drew, bit for bit, at the same speed.
+* It is compiled in only for scenes with glass (a bit of the light-type constant), so every other scene draws what it drew, bit for bit, at the same speed.
 * **Why a pass of its own:** `traceKernel` is short of registers. With the panes' rays inside it, every pixel of the city traced at a third of the speed (13.6 ms a frame from the road against 10.4); with only the ray through the panes inside it, as one call in a loop, the two kernels together were still 0.3 ms slower. One glass mesh per wall instead of per building changed nothing.
 * **Cost:** 0.2 to 1.9 ms by day (the table above), more at night, when the mirror ray's hit draws its light from the light table.
 * **Limits:** no refraction; glass doesn't tint or dim the light that passes it; the reflection's one light sample is filtered only by the upscaler (among many lights it is held low, so a dark pane doesn't sparkle); reflections off other surfaces see the room, not the pane.
@@ -667,7 +754,7 @@ The View popup and key 9 cycle six views of what the primary rays hit. They run 
 | Triangles | A random colour per triangle, for all geometry. Virtual triangles keep their colour when the cut's BLAS is rebuilt. |
 | Clusters | A random colour per virtual-geometry cluster (up to 128 triangles); other geometry is grey. |
 | Groups | A random colour per cluster group, the unit the DAG simplifies and streams. |
-| LOD level | The cluster's DAG level on a blue (finest) to red (coarse) scale: finer near the camera, coarser far away. |
+| LOD level | The cluster's DAG level on a blue (finest) to red (coarse) scale: finer near the camera, coarser far away. Generated plants: blue where their triangles are traced, green, orange and red for the three voxel levels. |
 | Triangle size | Projected edge length in traced pixels: blue ⅛ px, green 1 px, red 8 px and more. Virtual geometry at the default error is mostly green-yellow; full-detail meshes are blue (sub-pixel triangles). |
 | Traversal cost | Node visits plus half the triangle tests of each primary ray, log scale: blue few, red ~500. Custom tracer only; Metal's intersector can't be counted, so the view is magenta. |
 
@@ -758,6 +845,13 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `Benchmark+Modes.swift` | The benchmark modes: each one's list of settings |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
 | `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, the Night market, and the light-check scene the `lightcheck` benchmark renders |
+| `Scene+Forest.swift` | Generated plants in a scene (`Flora`: materials, textures, assemblies and their wind bones) and the Forest |
+| `Foliage.swift` | The plant generator: recipes, the grower, leaf, card and bough distributors, the plant library |
+| `FoliageSpecies.swift` | Each species' recipes, by age, and its boughs' |
+| `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
+| `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
+| `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail |
+| `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
@@ -785,7 +879,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Crowd` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind), `Crowd` |
 
 ## Notes for M1 / M2 Macs
 

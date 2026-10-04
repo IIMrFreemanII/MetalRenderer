@@ -399,7 +399,7 @@ final class TextureStreamer {
         var images = [CGImage?](repeating: nil, count: sources.count)
         images.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: sources.count) { i in
-                guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil),
+                guard sources[i].raw == nil, let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil),
                       let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return }
                 slots[i] = image   // its own slot: no lock
             }
@@ -408,19 +408,23 @@ final class TextureStreamer {
         func put<T>(_ v: T) { withUnsafeBytes(of: v) { header.append(contentsOf: $0) } }
         var blobs: [(key: String, levels: [(width: Int, height: Int, bytes: Data)])] = []
         for (i, source) in sources.enumerated() {
-            guard let image = images[i] else { throw RendererError.resourceCreation("decoding texture \(source.name)") }
-            let w = image.width, h = image.height
+            guard source.raw != nil || images[i] != nil else { throw RendererError.resourceCreation("decoding texture \(source.name)") }
+            let w = source.raw?.width ?? images[i]!.width, h = source.raw?.height ?? images[i]!.height
             guard let pixels = device.makeBuffer(length: w * h * 4, options: .storageModeShared) else {
                 throw RendererError.resourceCreation("texture staging")
             }
-            var space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
-            if space.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB)! }
-            guard let ctx = CGContext(data: pixels.contents(), width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else {
-                throw RendererError.resourceCreation("texture context")
+            if source.raw != nil {   // generated: the pixels as they are
+                source.data.copyBytes(to: pixels.contents().assumingMemoryBound(to: UInt8.self), count: w * h * 4)
+            } else if let image = images[i] {
+                var space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+                if space.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB)! }
+                guard let ctx = CGContext(data: pixels.contents(), width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: space,
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else {
+                    throw RendererError.resourceCreation("texture context")
+                }
+                ctx.interpolationQuality = .none
+                ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
             }
-            ctx.interpolationQuality = .none
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
             let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: source.srgb ? .rgba8Unorm_srgb : .rgba8Unorm,
                                                                 width: w, height: h, mipmapped: true)
             desc.usage = .shaderRead

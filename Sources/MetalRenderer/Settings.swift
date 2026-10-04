@@ -257,6 +257,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case fog                // a misty hall: sun shafts through tall windows, a searchlight, ground mist
     case valley             // an open valley under the sky: a day cycle, drifting clouds and their shadows
     case market             // a night market: thousands of festoon bulbs (`lights`), lanterns, lit windows, neon signs
+    case forest             // generated trees, bushes, ferns and grass (`trees`, `seed`) on rolling ground, a day cycle
     case crowd              // a square under the sun with `characters` animated characters on `poses` pose slots
     case city               // a generated city (`CitySettings`) under the sun: blocks of procedural buildings, a day cycle
     case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
@@ -275,6 +276,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .fog: return "Misty hall"
         case .valley: return "Open valley"
         case .market: return "Night market"
+        case .forest: return "Forest"
         case .crowd: return "Crowd"
         case .city: return "City"
         case .cityNight: return "City at night"
@@ -284,11 +286,13 @@ enum SceneKind: Int, CaseIterable, Codable {
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s), or nil.
-    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .city ? 180 : nil }
+    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : nil }
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
     /// The scene's default camera depends on how it was built (its size), so it is asked of the scene itself.
     var cameraFromScene: Bool { self == .crowd || isCity }
+    /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
+    var hasPlants: Bool { self == .forest || self == .valley }
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -313,8 +317,8 @@ enum CityStyle: Int, CaseIterable, Codable {
 }
 
 /// The generated city (the City scenes): changing any of it builds the city again.
+/// (Which city is `SceneSettings.seed`'s to say, as for the plants.)
 struct CitySettings: Equatable, Codable {
-    var seed = 1
     /// Blocks along each side of the street grid (1 = a single block).
     var blocks = 4
     var style = CityStyle.mixed
@@ -325,7 +329,6 @@ struct CitySettings: Equatable, Codable {
     /// Generated brick, plaster, concrete, tile and paving textures (ProceduralTextures); off: flat colours.
     var textures = true
 
-    static let seedRange = 0...999
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1
     static let roomRange: ClosedRange<Float> = 0...0.5
@@ -372,7 +375,22 @@ struct SceneSettings: Equatable, Codable {
     /// Benchmarks only (METALRENDERER_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
     var lightCheck: String? = nil
 
+    /// The forest: how many trees, and bushes, ferns and grass as a percentage of the usual; the seed of the plants
+    /// (and of the forest's ground and where everything stands).
+    var trees = 2500
+    var undergrowth = 100
+    var seed = 1
+    /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
+    /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
+    var bakedPlants = false
+    /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
+    /// by an alpha mask the custom tracer tests. Off: every leaf is a mesh of its own.
+    var leafCards = false
+
     static let objectRange = 0...2000
+    static let treeRange = 0...20000
+    static let undergrowthRange = 0...200
+    static let seedRange = 0...999
     static let lightRange = 1...16384
     static let characterRange = 1...131_072
     static let poseRange = 1...512
@@ -447,6 +465,9 @@ struct FogSettings: Equatable, Codable {
             f.enabled = true; f.density = 0.012; f.heightFalloff = 0.08; f.anisotropy = 0.4; f.ambient = 0.5; f.maxDistance = 60
         case .valley:
             f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
+            f.maxDistance = 150
+        case .forest:
+            f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
         case .spots:
             f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
@@ -531,6 +552,9 @@ struct SkySettings: Equatable, Codable {
             // Small, low clouds (a stylised scale), so their shadows visibly cross the 400 m valley.
             s.mode = .atmosphere; s.coverage = 0.4; s.cloudBase = 700; s.cloudThickness = 800; s.cloudScale = 800
             s.density = 0.04; s.windSpeed = 14; s.shadowStrength = 0.7
+        case .forest:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 900; s.cloudThickness = 900; s.cloudScale = 1400
+            s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
         }
         if let o = override {
             switch o {
@@ -555,6 +579,35 @@ enum RenderAPI: Int, CaseIterable, Codable {
 }
 
 /// Everything the settings panel and the keyboard shortcuts can change.
+/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (custom ray
+/// tracer: plants as assemblies; Metal's traces them baked and still).
+struct FoliageSettings: Equatable, Codable {
+    var wind: Float = 0                 // 0 = still ... 1 = a strong wind
+    var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
+    var gusts: Float = 0.7              // 0 = steady ... 1 = it comes in waves
+    /// Far plants are traced as voxels (FoliageVoxels) from where a voxel is this many traced pixels: 0 = never.
+    /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
+    var lod: Float = 2
+    /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
+    var season: Float = 0.3
+    /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
+    var translucency: Float = 1
+
+    static let windRange: ClosedRange<Float> = 0...1
+    static let directionRange: ClosedRange<Float> = -180...180
+    static let gustRange: ClosedRange<Float> = 0...1
+    static let lodRange: ClosedRange<Float> = 0...4
+    static let seasonRange: ClosedRange<Float> = 0...1
+    static let translucencyRange: ClosedRange<Float> = 0...1
+
+    /// A breeze where there are plants.
+    static func preset(for kind: SceneKind) -> FoliageSettings {
+        var f = FoliageSettings()
+        if kind.hasPlants { f.wind = 0.4 }
+        return f
+    }
+}
+
 struct RenderSettings: Equatable, Codable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
     var upscaleFactor: CGFloat = 3     // MetalFX output / traced resolution; 0 = off
@@ -583,6 +636,7 @@ struct RenderSettings: Equatable, Codable {
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
     var fog = FogSettings.preset(for: .cornell)
     var sky = SkySettings.preset(for: .cornell)
+    var foliage = FoliageSettings.preset(for: .cornell)
     // Camera and animation
     var exposure: Float = 0            // stops (EV) before the tone curve
     var toneMap = ToneMap.aces
@@ -597,6 +651,7 @@ struct RenderSettings: Equatable, Codable {
         giMode = defaults.giMode
         if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
         fog = FogSettings.preset(for: scene.kind)
+        foliage = FoliageSettings.preset(for: scene.kind)
         let image = sky.mode == .image ? sky : nil   // an image the user opened stays
         sky = SkySettings.preset(for: scene.kind)
         if let image { sky.mode = .image; sky.imagePath = image.imagePath; sky.imageExposure = image.imageExposure }

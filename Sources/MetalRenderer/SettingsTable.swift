@@ -84,6 +84,7 @@ enum EnvVariable: String, CaseIterable {
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
     case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
+    case foliage = "METALRENDERER_FOLIAGE"
 
     var isList: Bool { self.index >= EnvVariable.scene.index }
     private var index: Int { EnvVariable.allCases.firstIndex(of: self)! }
@@ -280,7 +281,23 @@ enum SettingsTable {
     private static func fmt<T: CVarArg>(_ format: String) -> (T) -> String { { String(format: format, $0) } }
     private static func titled<T: CaseIterable>(_ title: (T) -> String) -> [(String, T)] { T.allCases.map { (title($0), $0) } }
 
-    static let sections: [Section] = [scene, camera, directLight, rendering, globalIllumination, fog, sky, denoiser, memory]
+    static let sections: [Section] = [scene, camera, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
+
+    private static let foliage: Section = {
+        let plants: When = { $0.scene.kind.hasPlants }
+        let assemblies: When = { $0.rayTracer == .custom }   // Metal's tracer has the plants baked: they stand still
+        return Section(title: "Foliage", rows: [
+            S.slider("Wind", \.foliage.wind, FoliageSettings.windRange, step: 0.05, fmt("%.2f")).env(.foliage, "wind").when(plants).enabled(assemblies),
+            S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
+                .env(.foliage, "dir").when(plants).enabled(assemblies),
+            S.slider("Gusts", \.foliage.gusts, FoliageSettings.gustRange, step: 0.05, fmt("%.2f")).env(.foliage, "gusts").when(plants).enabled(assemblies),
+            S.slider("Season", \.foliage.season, FoliageSettings.seasonRange, step: 0.02, fmt("%.2f")).env(.foliage, "season").when(plants),
+            S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
+                .env(.foliage, "translucency").when(plants),
+            S.slider("Distance LOD (voxels)", \.foliage.lod, FoliageSettings.lodRange, step: 0.25, fmt("%.2g px"))
+                .env(.foliage, "lod").when(plants).enabled(assemblies),
+        ])
+    }()
 
     private static let scene: Section = {
         let customTracer: When = { $0.rayTracer == .custom }   // Metal would need its acceleration structures rebuilt per cut
@@ -300,8 +317,7 @@ enum SettingsTable {
                 .env(.scene, "poses").when { $0.scene.kind == .crowd },
             S.slider("Detail level", \.scene.detail, SceneSettings.detailRange, live: false)
                 .env(.scene, "detail").when { $0.scene.kind == .crowd },
-            S.slider("City seed", \.scene.city.seed, CitySettings.seedRange, live: false)
-                .env(.scene, "seed").when(city),
+            S.slider("City seed", \.scene.seed, SceneSettings.seedRange, live: false).when(city),   // `seed`, as the plants'
             S.slider("City blocks", \.scene.city.blocks, CitySettings.blockRange, live: false) { "\($0) x \($0)" }
                 .env(.scene, "blocks").when(city),
             S.popup("Building style", \.scene.city.style, titled(\.title)).env(.scene, "style").when(city),
@@ -310,6 +326,15 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
+                .env(.scene, "trees").when { $0.scene.kind == .forest },
+            S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
+                .env(.scene, "undergrowth").when { $0.scene.kind == .forest },
+            S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
+                .env(.scene, "seed").when { $0.scene.kind.hasPlants },
+            S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
+            S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }
+                .enabled(customTracer).advanced(),
             S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)

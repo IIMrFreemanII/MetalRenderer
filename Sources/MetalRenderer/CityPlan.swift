@@ -77,6 +77,7 @@ struct CityPlan {
     static let margin: Float = 300      // open ground around the outermost streets
 
     let settings: CitySettings
+    let seed: Int
     private(set) var blocks: [Block] = []
     private(set) var lots: [Lot] = []
     private(set) var streets: [Street] = []
@@ -85,10 +86,11 @@ struct CityPlan {
     /// The streets and everything inside them.
     private(set) var extent = Rect(lo: .zero, hi: .zero)
 
-    init(_ settings: CitySettings) {
+    init(_ settings: CitySettings, seed: Int = 1) {
         self.settings = settings
+        self.seed = seed
         let n = max(settings.blocks, 1)
-        var rng = SplitMix64(seed: 0xC17F_0000 ^ UInt64(truncatingIfNeeded: settings.seed) &* 0x9E37_79B9)
+        var rng = SplitMix64(seed: 0xC17F_0000 ^ UInt64(truncatingIfNeeded: seed) &* 0x9E37_79B9)
 
         // The grid: block sizes, and the roads between and around them (the middle ones are avenues).
         func roads(_ count: Int) -> [Float] {
@@ -130,7 +132,7 @@ struct CityPlan {
             furnish(block: b, &rng)
         }
         for i in lots.indices {
-            lots[i].seed = SplitMix64.mix(UInt64(truncatingIfNeeded: settings.seed) &* 0x1_0000_0001 &+ UInt64(i) &* 0x9E37_79B9_7F4A_7C15)
+            lots[i].seed = SplitMix64.mix(UInt64(truncatingIfNeeded: seed) &* 0x1_0000_0001 &+ UInt64(i) &* 0x9E37_79B9_7F4A_7C15)
         }
     }
 

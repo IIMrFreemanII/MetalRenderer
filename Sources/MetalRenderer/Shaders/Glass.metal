@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------------------------
-// 1b. Window glass (GLASS scenes: instances with MASK_GLASS and a material with params.w = 1). Thin and clear or
+// 1b. Window glass (GLASS scenes: instances with MASK_GLASS, whose material's albedo is the tint). Thin and clear or
 //     tinted: camera rays see through it and see its mirror reflection; to shadow, GI and reflection rays it isn't
 //     there, so light goes through windows. traceKernel doesn't meet it either: its G-buffer holds the surface
 //     behind the pane, which every later pass lights and filters as usual. This kernel runs right after it and
@@ -78,7 +78,7 @@ kernel void glassKernel(constant Uniforms&               u          [[buffer(0)]
             light = fresnel * glassReflection(u, accel, s, g.position + gng * RAY_EPSILON, reflect(dir, gn), rng);
         }
         glazed = true;
-        through *= (1.0f - fresnel) * (g.transmission > 0.0f ? g.albedo : float3(0.0f));
+        through *= (1.0f - fresnel) * g.albedo;
         reach -= distance(g.position, origin) + RAY_EPSILON;
         origin = g.position + dir * RAY_EPSILON;
     }

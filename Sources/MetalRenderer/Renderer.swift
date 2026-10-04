@@ -375,6 +375,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var prevCamera = Camera()
     private var frameIndex: UInt32 = 0
     private var animTime: Float = 0
+    private var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
     private var lastTime = CACurrentMediaTime()
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
     var settings = RenderSettings() {
@@ -595,8 +596,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?,
                               instances: [Scene.Instance]? = nil, options: LoadOptions) throws -> PreparedScene {
         let virtual = rayTracer == .custom && options.virtualGeometry
-        let reused = current.flatMap { $0.usesVirtualGeometry == virtual ? $0 : nil }
-        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual)
+        // Generated plants are assemblies for the custom tracer and baked meshes for Metal's: another scene.
+        let assemblies = rayTracer == .custom
+        let reused = current.flatMap { $0.usesVirtualGeometry == virtual && (!$0.hasPlants || $0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants)) ? $0 : nil }
+        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies)
         let streamer = newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
             : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
                                   slots: Renderer.maxFramesInFlight, placement: options.api == .metal4)
@@ -1402,6 +1405,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         u.lightTable = SIMD4(UInt32(table.entries.count), UInt32(table.suns.count),
                              table.suns.first ?? 0, table.suns.count > 1 ? table.suns[1] : 0)
         if skyActive { u.flags |= UniformFlags.skyMap }
+        if settings.foliage.wind > 0 && scene.hasFoliage { u.flags |= UniformFlags.wind }
         return u
     }
 
@@ -1590,9 +1594,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
         updateCamera(dt: dt)
         camera.fovY = settings.fovDegrees * .pi / 180
+        previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
         // The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
         scene.update(time: animTime, dayTime: animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0))
+        scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
+    }
+
+    /// The wind on the plants this frame (custom ray tracer: Shaders/Foliage.metal).
+    private var windFrame: WindFrame {
+        let f = settings.foliage, a = f.windDirection * .pi / 180
+        return WindFrame(wind: SIMD4(cos(a), sin(a), f.wind, f.gusts), time: animTime, previousTime: previousAnimTime, lodBias: f.lod,
+                         leafFall: Scene.leafFall(season: f.season))
     }
 
     /// The viewpoint virtual geometry picks its detail for: the camera, or where it was when "Freeze LOD" was turned on.
@@ -1868,7 +1881,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
         // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
         if let customRT, let enc = passes.compute("tlas", serial: true) {
-            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: lod)
+            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: lod, wind: windFrame)
             passes.endCompute()
         }
     }
@@ -2603,6 +2616,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         supersampling = c.accumulate && c.supersample
         colorAccumCount = 0
         animTime = c.startTime
+        previousAnimTime = c.startTime
         resetGIState()
         upscalerReset = true
         print("benchmark: \(c.name)")
@@ -2875,7 +2889,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         d.sceneTitle = settings.scene.kind.title
         d.instances = scene.instances.count
         d.virtualInstances = scene.instances.filter { $0.virtualMesh >= 0 }.count
-        d.triangles = scene.instances.reduce(0) { $0 + ($1.mesh >= 0 ? Int(scene.meshes[$1.mesh].indexCount) / 3 : 0) }
+        let assemblyTriangles = scene.assemblies.map { $0.parts.reduce(0) { $0 + Int(scene.meshes[$1.mesh].indexCount) / 3 } }
+        d.triangles = scene.instances.reduce(0) {
+            $0 + ($1.mesh >= 0 ? Int(scene.meshes[$1.mesh].indexCount) / 3 : $1.assembly >= 0 ? assemblyTriangles[$1.assembly] : 0)
+        }
         d.suns = scene.lights.filter { $0.kind.isSun }.count
         d.analyticLights = Int(scene.lightGroupEnd.w) - d.suns   // spheres, spots, rects, tubes
         d.meshLights = scene.meshLights.count

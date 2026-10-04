@@ -29,11 +29,13 @@ enum Kernel: Int, CaseIterable {
     var fixedFlags: UInt32 {
         typealias F = UniformFlags
         switch self {
-        case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights
-        case .manyLights, .manyLightsReuse: return F.blueNoise
+        // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
+        case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
+        case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
         case .restirSpatial: return F.specular
-        case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights
-        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap
+        case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
+        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
+        case .rcProbe, .rcTraceMerge, .lightMap: return F.wind
         case .fogInject: return F.blueNoise | F.skyMap
         default: return 0
         }

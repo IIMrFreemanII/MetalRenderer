@@ -83,7 +83,7 @@ enum SettingsEnv {
     }
 
     /// `METALRENDERER_SCENE`'s items that aren't settings of the table: the scene's kind as a bare word (cornell,
-    /// stress, gallery, spots, sun, area, tubes, emissive, mixed, fog, valley, market, crowd, city, citynight),
+    /// stress, gallery, spots, sun, area, tubes, emissive, mixed, fog, valley, market, forest, crowd, city, citynight),
     /// `check=<light>` for the light-check scene (Scene.buildLightCheck; "empty" = just the floor) and `model=<path>`,
     /// which adds a glTF model as File > Open does, in front of the default camera.
     private static func applySceneItem(_ kv: [String], to s: inout SceneSettings) -> Bool {

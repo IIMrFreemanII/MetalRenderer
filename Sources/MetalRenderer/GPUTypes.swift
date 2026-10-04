@@ -52,6 +52,7 @@ enum UniformFlags {
     static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
     static let restir: UInt32 = 32768        // direct light from ReSTIR DI (restirTemporalKernel / restirSpatialKernel)
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
+    static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).
@@ -126,6 +127,9 @@ struct GPUMesh {
     /// previous frame's positions `prevOffset` after those. Both 0 for every other mesh.
     var vertexOffset: UInt32 = 0
     var prevOffset: UInt32 = 0
+    var sways: UInt32 = 0              // 1 = ground cover that leans in the wind (Scene.coverLean)
+    var cutout: UInt32 = 0             // leaf cards: its triangles from (the low 24 bits) on are cut out by the alpha
+                                       // layer (the top byte) - 1 of Scene.cutouts; 0 = none
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
@@ -187,7 +191,7 @@ struct GPUMaterial {
     var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
     var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
-                                            // z = 1: an emissive-mesh light's (buildMeshLights), w = 1: window glass
+                                            // z = 1: an emissive-mesh light's (buildMeshLights)
     var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
 }
@@ -255,7 +259,7 @@ struct GPUFogParams {
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
-    precondition(MemoryLayout<GPUMesh>.stride == 16, "GPUMesh layout mismatch")
+    precondition(MemoryLayout<GPUMesh>.stride == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
     precondition(MemoryLayout<GPUJoint>.stride == 48, "GPUJoint layout mismatch")
