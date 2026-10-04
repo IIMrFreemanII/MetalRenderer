@@ -31,6 +31,38 @@ enum FoliageVoxels {
         return SIMD3(max((d.x + r) >> level, 1), max((d.y + r) >> level, 1), max((d.z + r) >> level, 1))
     }
 
+    /// Of `build`'s output: a change of the voxelisation makes other files in the cache.
+    static let version = 1
+
+    /// `build`, from the cache or into it (GeneratedCache). `geometry`: the hash of the scene's meshes
+    /// (BVHBuilder.cachedBLAS); the file is named by it and by how the assemblies place them. Nil: not cached.
+    static func cached(scene: Scene, geometry: String?) -> (grids: [Grid], cells: [UInt32]) {
+        guard let geometry, !scene.assemblies.isEmpty else { return build(scene: scene) }
+        var hasher = GeneratedCache.Hasher()
+        hasher.add(geometry)
+        for assembly in scene.assemblies {
+            hasher.add([UInt32(assembly.parts.count), assembly.evergreen ? 1 : 0])
+            hasher.add(assembly.parts.flatMap { [UInt32($0.mesh), $0.firstLeaf] })
+            hasher.add(assembly.parts.flatMap { part -> [Float] in
+                let c = part.transform.columns
+                return [c.0.x, c.0.y, c.0.z, c.1.x, c.1.y, c.1.z, c.2.x, c.2.y, c.2.z, c.3.x, c.3.y, c.3.z]
+            })
+        }
+        hasher.add(scene.cutouts.map(\.coverage))
+        let name = "voxels-\(hasher.name()).sect", key = "voxels v\(version) \(resolution) \(levels)"
+        let grid = SectionFile.id("grid"), cell = SectionFile.id("cell")
+        if let file = GeneratedCache.load(name, key: key), let grids: [Grid] = file.array(grid), let cells: [UInt32] = file.array(cell),
+           grids.count == scene.assemblies.count {
+            return (grids, cells)
+        }
+        let built = build(scene: scene)
+        var writer = SectionFile.Writer()
+        writer.add(grid, built.grids)
+        writer.add(cell, built.cells)
+        GeneratedCache.store(name, key: key, writer)
+        return built
+    }
+
     /// Every assembly's grid (offsets from 0: `build` places them) and cells. The plants are voxelised in parallel.
     static func build(scene: Scene) -> (grids: [Grid], cells: [UInt32]) {
         let assemblies = scene.assemblies, coverage = scene.cutouts.map(\.coverage)

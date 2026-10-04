@@ -16,7 +16,7 @@ enum MaterialTextures {
         decoded.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: sources.count) { i in
                 if let raw = sources[i].raw {   // generated: the pixels as they are
-                    guard let buffer = sources[i].data.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) })
+                    guard let buffer = sources[i].rawPixels.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) })
                     else { return }
                     slots[i] = (buffer, raw.width, raw.height)
                     return

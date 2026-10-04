@@ -196,6 +196,7 @@ For the plants:
 * `METALRENDERER_BENCH=forest` renders the forest paused (from the clearing, from above, close to a trunk, with 10,000 trees), then moving, natively and at 3×.
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
+* `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, its meshes' trees, the plants' voxels) instead of taking it from `~/Library/Caches/MetalRenderer/generated`; `=1` caches the trees and voxels in an optimised build too. `METALRENDERER_CACHE_MB=4096` caps that folder.
 
 The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com): install it before cloning (`brew install git-lfs && git lfs install`), or run `git lfs pull` afterwards. `.gitattributes` sends 3D models (`.glb`, `.fbx`, `.obj`, `.usd(z)`, `.blend`), HDR skies (`.hdr`, `.exr`) and the buffers and textures under `Assets/` to LFS. Put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
@@ -645,7 +646,22 @@ The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
 * The LOD level view from above: triangles blue, the three voxel levels green, orange and red.
 * Scenes without plants render bit-identical to before the plants were added (Cornell, stress, market, gallery).
 
+**Loading** (from the launch to the scene ready to draw; `swift build` is the unoptimised build Xcode's Run uses):
+
+| | Unoptimised, before | Unoptimised | Optimised |
+|---|---|---|---|
+| Forest, custom tracer | 9.9 s | 0.9 s | 0.17 s |
+| Forest, Metal's tracer | 4.7 s | 1.25 s | 0.2 s |
+
+* An optimised build never needed help: the whole forest is made in 0.1 s. An unoptimised one runs the same loops 30 to 100 times slower, and three things took nearly all of its time.
+* **The meshes' trees and the plants' voxels are cached** (`SectionFile.swift`, `GeneratedCache`): 6.5 s to build, 0.35 s to read. A file is named by a hash of the geometry it was built from (SHA-256, which the hardware does: tens of megabytes in milliseconds in any build), so changed geometry is another file and none is ever stale. Only unoptimised builds do this (see below).
+* **A generated texture is named by what it is drawn from** (its generator's version and the seed), not by its pixels, and is drawn only when the texture cache doesn't have its mip chain: the forest's ground map took 1.7 s. `FoliageTextures.version` is the name's version; a test holds each texture's hash and fails when a pattern changes without it.
+* **What takes a loop over a plant's vertices is done for all plants at once**, on every core (`Scene.Flora`): the parts' boxes of an assembly (1.1 s) and the baking for Metal's tracer (2.6 s).
+* The cache's files are arrays of the structures the renderer uses, each at a page boundary behind a table of sections: nothing is parsed, and a file of another format, for another key or cut short is a miss. Reading one copies its arrays; it saves no memory.
+
 **What didn't help:**
+* **Caching the trees in an optimised build.** It builds a city's trees (5.3 million triangles) in 0.13 s, and takes 0.15 s to hash the meshes and copy the trees out of their 420 MB file. The forest gains 55 ms, the city nothing: not worth the disk.
+* **A file of the plant library** (meshes, parts, bones). Planned, and not needed: the library takes 17 ms unoptimised; what was slow was done per plant on one core.
 * **Leaf cards.** They store fewer triangles (the forest's 24 boughs lose 9,900 of theirs) and are 13% slower (14.6 against 12.9 ms). A ray visits as many nodes and tests more triangles (13 against 9 per ray), because a card's box covers the whole twig, and each candidate hit reads the mask. One card per twig instead of two crossed was no faster. They are kept as an option.
 * **A 64-voxel grid.** Marching 64 steps costs more than tracing the plant's triangles, so a finer level would only ever be slower. 32 it is.
 * **Padding the parts' boxes for the strongest wind.** It cost 0.3 ms with no wind at all. The boxes are padded by the current strength, and the assemblies' nodes refitted when it changes.
@@ -841,6 +857,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator, and the tile's cache file |
 | `CacheFile.swift` | Where the app keeps what it derives (`~/Library/Caches/MetalRenderer`) and how it writes it; the launch timer |
+| `SectionFile.swift` | Cache files of arrays behind a table of sections, and the generated scenes' cache folder (its names, its cap) |
 | `Benchmark.swift` | Benchmark mode (`METALRENDERER_BENCH`): a setting of a run (`Config`), the frame clock, timing table and PNG capture |
 | `Benchmark+Modes.swift` | The benchmark modes: each one's list of settings |
 | `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |

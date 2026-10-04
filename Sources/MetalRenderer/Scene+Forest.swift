@@ -15,6 +15,13 @@ extension Scene {
             case assembly(Int)
         }
         private var placed: [[Placed?]]                         // by species, then plant
+        /// What `add` needs of a plant that takes a loop over its vertices: its parts' boxes, placed (an assembly),
+        /// or the plant baked into a wood and a leaf mesh. Made for every plant at once by `init`, in parallel.
+        private enum Prepared {
+            case boxes([AABB])
+            case flat(wood: Foliage.Mesh, leaves: Foliage.Mesh)
+        }
+        private let prepared: [[Prepared]]                      // by species, then plant
         private var palettes: [[Int]]                           // by species: its bough meshes in the scene
         private var shades: [[Int]]                             // by species: wood materials, each followed by a leaf material
         private var textures = [UInt32?](repeating: nil, count: FoliageTextures.Kind.allCases.count)   // made on first use
@@ -26,6 +33,35 @@ extension Scene {
             for set in Foliage.library(seed: seed, species: species, cards: scene.usesCards) { bySpecies[set.species.rawValue] = set }
             sets = bySpecies
             placed = bySpecies.map { [Placed?](repeating: nil, count: $0?.plants.count ?? 0) }
+            let jobs = bySpecies.enumerated().flatMap { s, set in (set?.plants.indices ?? 0..<0).map { (species: s, plant: $0) } }
+            let assemblies = scene.usesAssemblies
+            var made = [Prepared](repeating: .boxes([]), count: jobs.count)
+            made.withUnsafeMutableBufferPointer { slots in
+                DispatchQueue.concurrentPerform(iterations: jobs.count) { j in   // a plant each: its own slot
+                    let set = bySpecies[jobs[j].species]!, plant = set.plants[jobs[j].plant]
+                    // A plant of one part is an assembly only for the wind to lean it: a dead tree. Ferns and grass
+                    // are meshes that lean by themselves (`sways`).
+                    guard assemblies, plant.parts.count > 1 || set.species == .dead else {
+                        let baked = Foliage.flatten(plant, palette: set.palette)
+                        slots[j] = .flat(wood: baked.wood, leaves: baked.leaves)
+                        return
+                    }
+                    slots[j] = .boxes(plant.parts.map { part in
+                        // The placed vertices' own bounds: a bough's box, turned, would be far looser.
+                        let mesh = part.shared ? set.palette[part.mesh] : plant.meshes[part.mesh]
+                        var box = AABB()
+                        let c = part.transform.columns
+                        let x = Foliage.xyz(c.0), y = Foliage.xyz(c.1), z = Foliage.xyz(c.2), origin = Foliage.xyz(c.3)
+                        mesh.positions.withUnsafeBufferPointer { for p in $0 { box.grow(x * p.x + y * p.y + z * p.z + origin) } }
+                        return box
+                    })
+                }
+            }
+            var next = 0
+            prepared = bySpecies.map { set in
+                defer { next += set?.plants.count ?? 0 }
+                return Array(made[next..<(next + (set?.plants.count ?? 0))])
+            }
             palettes = [[Int]](repeating: [], count: bySpecies.count)
             shades = [[Int]](repeating: [], count: bySpecies.count)
             sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: bySpecies.count)
@@ -81,7 +117,10 @@ extension Scene {
         }
         private func texture(_ kind: FoliageTextures.Kind) -> UInt32 {
             if let made = textures[kind.rawValue] { return made }
-            let made = scene.addGeneratedTexture(FoliageTextures.make(kind), name: kind.name)
+            let size = FoliageTextures.size(kind)
+            let made = scene.addGeneratedTexture(name: kind.name, width: size.width, height: size.height, key: "v\(FoliageTextures.version)") {
+                FoliageTextures.make(kind)
+            }
             textures[kind.rawValue] = made
             return made
         }
@@ -108,14 +147,15 @@ extension Scene {
         /// The plant as the scene holds it, added on first use.
         private func add(_ set: Foliage.SpeciesSet, _ index: Int) -> Placed {
             let plant = set.plants[index], s = set.species.rawValue
-            // A plant of one part is an assembly only for the wind to lean it: a dead tree. Ferns and grass are meshes
-            // that lean by themselves (`sways`).
-            guard scene.usesAssemblies, plant.parts.count > 1 || set.species == .dead else {
-                let baked = Foliage.flatten(plant, palette: set.palette)
+            let boxes: [AABB]
+            switch prepared[s][index] {
+            case .flat(let wood, let leaves):
                 let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
-                return .flat(wood: baked.wood.indices.isEmpty ? -1 : scene.addMesh(baked.wood, sways: sways),
-                             leaves: baked.leaves.indices.isEmpty ? -1
-                                 : scene.addMesh(baked.leaves, sways: sways, cutout: baked.leaves.cutout ? sheet(set.species)?.layer : nil))
+                return .flat(wood: wood.indices.isEmpty ? -1 : scene.addMesh(wood, sways: sways),
+                             leaves: leaves.indices.isEmpty ? -1
+                                 : scene.addMesh(leaves, sways: sways, cutout: leaves.cutout ? sheet(set.species)?.layer : nil))
+            case .boxes(let placed):
+                boxes = placed
             }
             if palettes[s].isEmpty { palettes[s] = set.palette.map { scene.addMesh($0, cutout: $0.cutout ? sheet(set.species)?.layer : nil) } }
             let own = plant.meshes.map { scene.addMesh($0) }
@@ -132,13 +172,9 @@ extension Scene {
             func reach(_ box: AABB, _ p: SIMD3<Float>) -> Float { length(simd_max(abs(box.lo - p), abs(box.hi - p))) }
 
             var bounds = AABB()
-            let parts = plant.parts.map { part -> Assembly.Part in
+            let parts = plant.parts.enumerated().map { p, part -> Assembly.Part in
                 let mesh = part.shared ? set.palette[part.mesh] : plant.meshes[part.mesh]
-                // The placed vertices' own bounds: a bough's box, turned, would be far looser.
-                var box = AABB()
-                let c = part.transform.columns
-                let x = Foliage.xyz(c.0), y = Foliage.xyz(c.1), z = Foliage.xyz(c.2), origin = Foliage.xyz(c.3)
-                mesh.positions.withUnsafeBufferPointer { for p in $0 { box.grow(x * p.x + y * p.y + z * p.z + origin) } }
+                let box = boxes[p]
                 var placed = Assembly.Part(mesh: part.shared ? palettes[s][part.mesh] : own[part.mesh], transform: part.transform,
                                            firstLeaf: UInt32(mesh.leafIndex / 3),
                                            leafCount: set.species == .conifer ? 0 : UInt32(mesh.leafTriangles), bone: part.bone, bounds: box)
@@ -219,16 +255,18 @@ extension Scene {
 
         // The ground's colours, a texel every 31 cm: leaf litter and soil under the trees, moss in patches, greener in
         // the clearing, the trail's bare earth, rock where it is steep.
-        let colors = FoliageTextures.image(1024, 1024) { u, v in
-            let x = (u - 0.5) * terrain.size, z = (v - 0.5) * terrain.size, p = SIMD2(x, z)
-            var color = SIMD3<Float>(0.15, 0.13, 0.075)
-            color += (SIMD3(0.085, 0.13, 0.05) - color) * smoothstep(0.05, 0.3, Terrain.noise(p / 9, seed: noiseSeed &+ 31)) * 0.7
-            color += (SIMD3(0.12, 0.16, 0.06) - color) * (1 - smoothstep(34, 70, length(p))) * 0.8
-            color += (SIMD3(0.24, 0.23, 0.21) - color) * (1 - smoothstep(0.7, 0.85, terrain.normal(x, z).y))
-            color += (SIMD3(0.27, 0.215, 0.145) - color) * (1 - offTrail(x, z))
-            return color * (1 + 0.45 * Terrain.noise(p / 2.5, seed: noiseSeed &+ 32) + 0.35 * Terrain.noise(p / 0.7, seed: noiseSeed &+ 33))
+        let colors = addGeneratedTexture(name: "ground", width: 1024, height: 1024, key: "seed \(seed) v\(FoliageTextures.version)") {
+            FoliageTextures.image(1024, 1024) { u, v in
+                let x = (u - 0.5) * terrain.size, z = (v - 0.5) * terrain.size, p = SIMD2(x, z)
+                var color = SIMD3<Float>(0.15, 0.13, 0.075)
+                color += (SIMD3(0.085, 0.13, 0.05) - color) * smoothstep(0.05, 0.3, Terrain.noise(p / 9, seed: noiseSeed &+ 31)) * 0.7
+                color += (SIMD3(0.12, 0.16, 0.06) - color) * (1 - smoothstep(34, 70, length(p))) * 0.8
+                color += (SIMD3(0.24, 0.23, 0.21) - color) * (1 - smoothstep(0.7, 0.85, terrain.normal(x, z).y))
+                color += (SIMD3(0.27, 0.215, 0.145) - color) * (1 - offTrail(x, z))
+                return color * (1 + 0.45 * Terrain.noise(p / 2.5, seed: noiseSeed &+ 32) + 0.35 * Terrain.noise(p / 0.7, seed: noiseSeed &+ 33))
+            }
         }
-        let ground = addMaterial(albedo: [1, 1, 1], texture: addGeneratedTexture(colors, name: "ground"))
+        let ground = addMaterial(albedo: [1, 1, 1], texture: colors)
         addInstance(addMesh(terrain.mesh()), ground, matrix_identity_float4x4)
 
         let flora = Flora(self, seed: seed)

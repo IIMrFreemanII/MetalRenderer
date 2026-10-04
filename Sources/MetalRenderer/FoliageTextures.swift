@@ -23,11 +23,26 @@ enum FoliageTextures {
         var name: String { "\(self)" }
     }
 
+    /// Of what `make` and the scenes' own generated textures draw (the forest's ground): the caches name a texture
+    /// by this, not by its pixels, so that a cached one is never drawn at all. Whoever changes a pattern changes this
+    /// (FoliageTests holds each texture's hash and fails otherwise).
+    static let version = 1
+
+    static func size(_ kind: Kind) -> (width: Int, height: Int) {
+        switch kind {
+        case .roughBark, .birchBark: return (256, 256)
+        case .leaf: return (128, 128)
+        case .needle: return (16, 32)
+        case .grass: return (32, 64)
+        }
+    }
+
     static func make(_ kind: Kind) -> Image {
+        let (w, h) = size(kind)
         switch kind {
         case .roughBark:
             // Plates with dark furrows between them, running along the stem, and a crack across now and then.
-            return image(256, 256, normalized: true) { u, v in
+            return image(w, h, normalized: true) { u, v in
                 let warp = 1.3 * noise(u * 3, v * 2, 3, 2, 5) + 0.5 * noise(u * 7, v * 6, 7, 6, 9)
                 let edge = min(abs(noise(u * 9 + warp, v * 2, 9, 2, 1)), abs(noise(u * 14 - warp, v * 3, 14, 3, 11)) * 1.4)
                 let furrow = 1 - min(edge / 0.07, 1)
@@ -38,7 +53,7 @@ enum FoliageTextures {
             }
         case .birchBark:
             // Pale and smooth, with dark dashes across it and a dark, rough patch here and there.
-            return image(256, 256, normalized: true) { u, v in
+            return image(w, h, normalized: true) { u, v in
                 let dash = max(0, noise(u * 3, v * 44, 3, 44, 4) - 0.14) * max(0, noise(u * 2, v * 7, 2, 7, 5) + 0.3)
                 let patch = max(0, noise(u * 3, v * 2.5, 3, 3, 6) - 0.2)
                 let shade = 0.95 + 0.1 * noise(u * 20, v * 20, 20, 20, 7) - 22 * dash - 4.5 * patch
@@ -46,12 +61,12 @@ enum FoliageTextures {
             }
         case .leaf:
             // u across (the midrib at 0.5), v from the base to the tip: the midrib and side veins paler, the edge darker.
-            return image(128, 128, normalized: true) { u, v in leafShade(u, v) + SIMD3(repeating: 0.35 * noise(u * 4, v * 4, 4, 4, 8)) }
+            return image(w, h, normalized: true) { u, v in leafShade(u, v) + SIMD3(repeating: 0.35 * noise(u * 4, v * 4, 4, 4, 8)) }
         case .needle:
-            return image(16, 32, normalized: true) { _, v in SIMD3(repeating: 0.6 + 0.4 * v) }
+            return image(w, h, normalized: true) { _, v in SIMD3(repeating: 0.6 + 0.4 * v) }
         case .grass:
             // Darker where it leaves the ground, with a pale midrib.
-            return image(32, 64, normalized: true) { u, v in
+            return image(w, h, normalized: true) { u, v in
                 let rib = max(0, 1 - abs(u - 0.5) / 0.12)
                 let shade = 0.45 + 0.55 * v + 0.12 * rib
                 return SIMD3(shade, shade, shade * (0.75 + 0.25 * v))

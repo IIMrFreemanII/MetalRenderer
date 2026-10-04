@@ -83,6 +83,11 @@ final class Scene {
         var cacheKey: String                  // unique within the file: image index + colour space
         /// Generated (`addGeneratedTexture`): `data` is this many RGBA8 pixels, not an encoded image.
         var raw: (width: Int, height: Int)? = nil
+        /// ...or they are drawn by this when someone needs them (a texture the caches already hold never is).
+        var pixels: (() -> Data)? = nil
+
+        /// A generated texture's pixels, drawn now if they are behind `pixels`.
+        var rawPixels: Data { pixels?() ?? data }
     }
 
     /// A light's shape. Angles in radians.
@@ -893,11 +898,23 @@ final class Scene {
     func addGeneratedTexture(_ image: FoliageTextures.Image, name: String) -> UInt32 {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for byte in image.pixels { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 }
-        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MetalRenderer/generated")
+        // (With the cache off, a file of its own: the mip chains named by parameters stay as they are.)
         textures.append(TextureSource(data: Data(image.pixels), srgb: true, name: "generated/\(name)",
-                                      modelPath: folder.appendingPathComponent("\(settings.kind)").path,
+                                      modelPath: GeneratedCache.folder.appendingPathComponent("\(settings.kind)\(GeneratedCache.enabled ? "" : "-uncached")").path,
                                       cacheKey: "\(name)-\(image.width)x\(image.height)-\(String(hash, radix: 16))",
                                       raw: (image.width, image.height)))
+        return UInt32(textures.count - 1)
+    }
+
+    /// A generated texture that `draw` draws only if no cache holds it: the caches name it by `key`, which says
+    /// everything its pixels depend on (the generator's version, a seed). With the cache off it is drawn here and
+    /// named by its pixels, as above.
+    func addGeneratedTexture(name: String, width: Int, height: Int, key: String, _ draw: @escaping () -> FoliageTextures.Image) -> UInt32 {
+        guard GeneratedCache.enabled else { return addGeneratedTexture(draw(), name: name) }
+        textures.append(TextureSource(data: Data(), srgb: true, name: "generated/\(name)",
+                                      modelPath: GeneratedCache.folder.appendingPathComponent("\(settings.kind)").path,
+                                      cacheKey: "\(name)-\(width)x\(height)-\(key)", raw: (width, height),
+                                      pixels: { Data(draw().pixels) }))
         return UInt32(textures.count - 1)
     }
 

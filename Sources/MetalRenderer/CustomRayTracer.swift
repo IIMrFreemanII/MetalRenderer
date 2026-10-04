@@ -167,7 +167,7 @@ final class CustomRayTracer {
         self.device = device
         let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
-        let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
+        let (blas, geometryHash, cached) = BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
         blasRoots = blas.roots
         // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it, and
         // a pose slot's (its mesh deforms) that of every pose: on the CPU, the GPU keeps the exact ones.
@@ -311,7 +311,7 @@ final class CustomRayTracer {
         }
         parts = try buffer(partRecords, "rtParts")
         let voxelStart = CACurrentMediaTime()
-        let grids = FoliageVoxels.build(scene: scene)
+        let grids = FoliageVoxels.cached(scene: scene, geometry: geometryHash)
         voxelGrids = try buffer(grids.grids, "rtVoxelGrids")
         voxels = try buffer(grids.cells, "rtVoxels")
         cutouts = try buffer(scene.cutouts.flatMap(\.alpha), "rtCutouts")
@@ -345,9 +345,9 @@ final class CustomRayTracer {
             crowdRefit = (try buffer(links, "rtCrowdLinks"), try buffer([UInt32](repeating: 0, count: nodeCount), "rtCrowdArrived"),
                           nodeBase, nodeCount, first...last)
         }
-        print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms",
+        print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms%@",
                      blas.nodes.count, blas.triangles.count / 3, staticCount, staticNodes.count, staticDepth, dynamicIds.count,
-                     (CACurrentMediaTime() - start) * 1000))
+                     (CACurrentMediaTime() - start) * 1000, cached ? " (the meshes' trees from the cache)" : ""))
         if !roots.isEmpty {
             // The traversal's stack holds one entry per level it has gone down, all three levels together.
             let deepest = staticDepth + partDepth + blas.maxDepth + 3
