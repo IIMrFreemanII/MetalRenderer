@@ -90,7 +90,8 @@ one on the same run folder and `diff` what they print.
 
 ## Tests
 
-`swift test` takes about 40 s (it compiles the kernel variants on the GPU). It guards:
+The whole `swift test` takes about 40 s (it compiles the kernel variants on the GPU), so run only the suites that
+cover the change: `.claude/skills/tests/scripts/related.sh` picks them (the `tests` skill). The suites guard:
 * `SettingsTableTests`: env names are unique, every setting and random panel states round-trip, bad input is
   skipped, sliders show what they set.
 * `BenchmarkModesTests`: every mode builds named settings, the modifiers, env overrides, scene presets.

@@ -53,6 +53,7 @@ enum UniformFlags {
     static let restir: UInt32 = 32768        // direct light from ReSTIR DI (restirTemporalKernel / restirSpatialKernel)
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
+    static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).
@@ -139,7 +140,9 @@ struct GPUMesh {
     /// (0 in the scene, and for a mesh in the scene's buffers), and how many vertices it has there.
     var block: UInt64 = 0
     var vertexCount: UInt32 = 0
-    var pad: UInt32 = 0
+    /// The level of detail it was made at, + 1 (0 = it has no levels): an open-world tile's ring, a crowd character's
+    /// detail, a baked plant (its finest). Only the LOD debug view reads it (Scene.setDetailLevel).
+    var lod: UInt32 = 0
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).

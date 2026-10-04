@@ -182,6 +182,7 @@ extension Scene {
                                                            indices: chunk.indices, materials: chunk.triangleMaterials,
                                                            tree: withTrees ? chunk.tree : nil),
                                    bounds: chunk.bounds, name: "\(jobs[k].key) chunk \(c)")
+                setDetailLevel(mesh, jobs[k].level)
                 placed.append(addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry))
                 triangles += chunk.triangles
             }

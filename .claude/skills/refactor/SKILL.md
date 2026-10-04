@@ -39,7 +39,9 @@ Four rules:
    .claude/skills/refactor/scripts/baseline.sh
    ```
    It copies the tree as it stands (uncommitted work included) into the worktree `../MetalGI-base` and builds it in
-   release. `swift test` must be green before you start: a test that fails already isn't yours to explain later.
+   release. The suites that cover the feature must be green before you start
+   (`.claude/skills/tests/scripts/related.sh --base <the commit before the feature>`): a test that fails already
+   isn't yours to explain later. Don't run the whole suite unless the user asks (the `tests` skill).
 3. **Survey.** Go through "What to look for" with the diff open. Write the candidates as a short list, ranked by
    what each pays back (not by the order of the checklist): what, where (`File.swift:line`), what it removes or
    guards, and which proof covers it.
@@ -54,7 +56,7 @@ Four rules:
    candidate would change behaviour the user can see, or one of the things under "What stays fixed".
 4. **Apply one candidate at a time.** After each one:
    ```bash
-   swift test
+   .claude/skills/tests/scripts/related.sh
    ```
    ```bash
    .claude/skills/refactor/scripts/same.sh quick

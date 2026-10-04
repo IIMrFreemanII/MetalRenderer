@@ -342,7 +342,8 @@ enum SettingsTable {
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),
-            S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled(virtual),
+            // It also holds the plants' voxel levels (custom tracer).
+            S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled { virtual($0) || ($0.rayTracer == .custom && $0.scene.kind.hasPlants) },
             S.check("Specular (glTF PBR)", \.specular).env(.specular),
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
             S.custom(.clearModels).when { !$0.scene.extraModels.isEmpty },
