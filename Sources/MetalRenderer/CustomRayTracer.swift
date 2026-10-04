@@ -213,7 +213,7 @@ final class CustomRayTracer {
         return (trees.blas, trees.geometry, trees.cached, built.map { $0! }, new, copied)
     }
 
-    /// `instances`: a copy of `scene.instances` taken on the main thread when this runs in the background for a scene
+    /// `instances`: a copy of `scene.instances` taken on the render thread when this runs in the background for a scene
     /// that is still being drawn (`Scene.update` rewrites the transforms there every frame).
     /// `geometry`: the scene's buffers, which have the blocks of its borrowed meshes (its arrays hold only the
     /// others).
@@ -444,7 +444,7 @@ final class CustomRayTracer {
         }
         parts = try buffer(partRecords, "rtParts")
         let voxelStart = CACurrentMediaTime()
-        let grids = FoliageVoxels.cached(scene: scene, geometry: geometryHash)
+        let grids = FoliageVoxels.cached(scene.voxelPlants)
         voxelGrids = try buffer(grids.grids, "rtVoxelGrids")
         voxels = try buffer(grids.cells, "rtVoxels")
         cutouts = try buffer(scene.cutouts.flatMap(\.alpha), "rtCutouts")

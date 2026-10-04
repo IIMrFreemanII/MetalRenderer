@@ -55,16 +55,14 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 #endif
     if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
-#if CUSTOM_RT
-    if (FOLIAGE && res.part == HIT_VOXEL) {
+    if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level
-        // its rays march (green, orange, red: each twice as coarse).
+        // its rays march (green, orange, red: each twice as coarse; rtVoxels leaves it in barycentrics.x).
         float3 flat = mix(float3(0.2f), debugHashColor(pcgHash(res.instance + 0x51ED27u)), 0.5f);
-        if (u.viewMode == VIEW_LOD) flat = debugHeat(0.2f + 0.25f * float(accel.instances[res.instance].pad1 >> 24));
+        if (u.viewMode == VIEW_LOD) flat = debugHeat(0.2f + 0.25f * (res.barycentrics.x + 1.0f));
         output.write(float4(flat, 1.0f), tid);
         return;
     }
-#endif
 
     InstanceData inst = instanceRecord(s.instances, res.instance);
     HitVertices hv = fetchHitVertices(res, inst, accel, s);

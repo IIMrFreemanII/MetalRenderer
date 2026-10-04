@@ -241,6 +241,13 @@ final class InstanceBlock {
         UnsafePointer((storage.buffer.contents() + storage.offset).bindMemory(to: GPUInstanceData.self, capacity: count))
     }
 
+    /// `body` over its records (any thread).
+    func withRecords<T>(_ body: (UnsafeBufferPointer<GPUInstanceData>) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(UnsafeBufferPointer(start: held, count: count))
+    }
+
     private var triangleCount: Int?
     /// The triangles of its instances in all (the Debug window's count), counted the first time it is asked for.
     /// `of`: a record's mesh's or assembly's.
@@ -380,6 +387,8 @@ struct SceneBuffers {
         var blocks: [String: MeshBlock] = [:]
         /// Its instance groups' blocks, by their names.
         var instanceBlocks: [String: InstanceBlock] = [:]
+        /// Its plants' voxel grids (Metal's tracer), which a scene of the same plants takes as they are.
+        var voxelGrids: VoxelGrids?
     }
 
     /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
@@ -408,6 +417,9 @@ struct SceneBuffers {
     private(set) var primitiveRefit: PrimitiveRefit?        // the meshes that deform (the crowd's pose slots)
     private(set) var instanceStructures: [MTLAccelerationStructure] = []   // per slot
     private(set) var instanceScratch: [MTLBuffer] = []      // per slot; none for a still scene
+    /// A still scene with baked plants that have voxel grids: their levels, and the structures over the instances
+    /// they are built into (the frames trace its `current`, not `instanceStructures`).
+    private(set) var voxelLOD: VoxelLOD?
 
     static func descriptorStride(_ api: RenderAPI) -> Int { api == .metal4 ? indirectStride : 64 }
     static let indirectStride = 72
@@ -437,7 +449,8 @@ struct SceneBuffers {
                        .reduce(0) { $0 + $1.length }),
                 mb(distinct(instanceData + instanceDescriptors + instanceResources).reduce(0) { $0 + $1.length }),
                 mb(primitives.reduce(0) { $0 + $1.size }),
-                mb(distinct(instanceStructures).reduce(0) { $0 + $1.size } + instanceScratch.reduce(0) { $0 + $1.length }))
+                mb(distinct(instanceStructures).reduce(0) { $0 + $1.size } + instanceScratch.reduce(0) { $0 + $1.length })
+                    + (voxelLOD.map { $0.megabytes + $0.grids.megabytes } ?? 0))
     }
 
     /// Has the GPU use `buffers` now (a few bytes of each are copied), and waits for it. The first command buffer to
@@ -587,6 +600,13 @@ struct SceneBuffers {
         if still { descriptors = [MTLBuffer](repeating: descriptors[0], count: options.slots) }
         instanceDescriptors = descriptors
         try buildPrimitives(device: device, queue: queue, scene: scene, options: options)
+        // Far baked plants: their grids' boxes after the meshes' structures (VoxelLOD names them from there).
+        let voxelGrids = still && scene.hasVoxelBoxes
+            ? try options.voxelGrids.flatMap { $0.key == VoxelGrids.key(scene.voxelPlants) ? $0 : nil }
+                ?? VoxelGrids(device: device, queue: queue, plants: scene.voxelPlants)
+            : nil
+        let meshStructures = primitives.count
+        if let voxelGrids { primitives += voxelGrids.boxes }
         guard let placeholder = primitives.first else { return }
 
         // The instances' structures, sized from the descriptor a build uses (the structure and its scratch buffer
@@ -631,11 +651,37 @@ struct SceneBuffers {
             throw RendererError.resourceCreation("acceleration structure command encoder")
         }
         let build = update(instanceStructures[0], instanceScratch[0], slot: 0)
+        // Indirect descriptors name the meshes' structures by ID: the build reads them, so they must be resident (a
+        // structure the GPU has let go of reads as empty, and its instances aren't in the tree).
+        if indirect { encoder.useResources(primitives, usage: .read) }
         encoder.build(accelerationStructure: build.structure, descriptor: build.descriptor(indirect: indirect),
                       scratchBuffer: build.scratch, scratchBufferOffset: 0)
         encoder.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
+        if let voxelGrids {
+            // Every baked plant's instance that has a grid: the scene's own, and the blocks' (by their places).
+            let lookup = scene.meshVoxels, records = voxelGrids.gridRecords
+            var entries: [VoxelLOD.Entry] = []
+            for (i, inst) in scene.instances.enumerated() where inst.mesh >= 0 {
+                if let e = VoxelLOD.entry(descriptor: i, transform: inst.transform, mesh: inst.mesh, mask: inst.mask, meshVoxels: lookup, grids: records) {
+                    entries.append(e)
+                }
+            }
+            for (b, block) in instanceBlocks.enumerated() {
+                block.withRecords { r in
+                    for i in r.indices {
+                        if let e = VoxelLOD.entry(descriptor: firsts[b] + i, transform: r[i].transform, mesh: Int(r[i].meshIndex),
+                                                  mask: r[i].pad0, meshVoxels: lookup, grids: records) {
+                            entries.append(e)
+                        }
+                    }
+                }
+            }
+            voxelLOD = try VoxelLOD(device: device, grids: voxelGrids, entries: entries, descriptors: descriptors[0], stride: stride,
+                                    indirect: indirect, primitives: primitives, meshCount: meshStructures, instanceCount: total,
+                                    usage: usage, current: instanceStructures[0], scratch: instanceScratch[0])
+        }
         instanceStructures = [MTLAccelerationStructure](repeating: instanceStructures[0], count: options.slots)
         instanceScratch = []
     }

@@ -70,9 +70,7 @@ extension Scene {
             made.withUnsafeMutableBufferPointer { slots in
                 DispatchQueue.concurrentPerform(iterations: jobs.count) { j in   // a plant each: its own slot
                     let set = bySpecies[jobs[j].species]!, plant = set.plants[jobs[j].plant]
-                    // A plant of one part is an assembly only for the wind to lean it: a dead tree. Ferns and grass
-                    // are meshes that lean by themselves (`sways`).
-                    guard assemblies, plant.parts.count > 1 || set.species == .dead else {
+                    guard assemblies, Flora.hasVoxels(plant, set.species) else {
                         let baked = Foliage.flatten(plant, palette: set.palette)
                         slots[j] = .flat(wood: baked.wood, leaves: baked.leaves)
                         return
@@ -194,6 +192,22 @@ extension Scene {
             return (vertices, indices)
         }
 
+        /// A plant that is an assembly where the scene has them, and voxels when far on either tracer: one with
+        /// boughs, or a dead tree (an assembly only for the wind to lean it). Ferns and grass are meshes that lean by
+        /// themselves (`sways`), close to the ground: always triangles.
+        static func hasVoxels(_ plant: Foliage.Plant, _ species: Foliage.Species) -> Bool { plant.parts.count > 1 || species == .dead }
+
+        /// What the plant's voxels are made of (FoliageVoxels): its parts, as the custom tracer's assembly places them.
+        private func voxelPlant(_ set: Foliage.SpeciesSet, _ index: Int) -> FoliageVoxels.Plant {
+            let plant = set.plants[index]
+            return FoliageVoxels.Plant(key: "\(library): \(set.species) \(index)", pieces: plant.parts.map { part in
+                let mesh = part.shared ? set.palette[part.mesh] : plant.meshes[part.mesh]
+                // A card is only there where its picture is (the shared boughs' leaves are the cards).
+                let coverage = part.shared && mesh.cutout ? sheet(set.species).map { scene.cutouts[$0.layer].coverage } ?? 1 : 1
+                return FoliageVoxels.Piece(mesh: mesh, transform: part.transform, firstLeaf: UInt32(mesh.leafIndex / 3), leafCoverage: coverage)
+            }, evergreen: set.species == .conifer)
+        }
+
         /// The library's plants by species and age, for the open world's placing (World.swift).
         var index: World.Flora { World.Flora(sets.compactMap { $0 }) }
 
@@ -206,11 +220,19 @@ extension Scene {
                 let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
                 let name = "\(library): \(set.species) \(index)"
                 let layer = leaves.cutout ? sheet(set.species)?.layer : nil
-                // A baked plant has one level of detail: its finest.
+                // A baked plant is its finest level; on Metal's tracer, one with boughs is voxels when far (VoxelLOD).
                 func finest(_ m: Int) -> Int { scene.setDetailLevel(m, 0); return m }
+                func flat(wood w: Int, leaves l: Int) -> Placed {
+                    if scene.usesVoxelBoxes, w >= 0, Flora.hasVoxels(plant, set.species) {
+                        let voxels = scene.addVoxelPlant(voxelPlant(set, index))
+                        scene.setMeshVoxels(w, plant: voxels, leaves: false)
+                        scene.setMeshVoxels(l, plant: voxels, leaves: true)
+                    }
+                    return .flat(wood: w, leaves: l)
+                }
                 guard borrows else {
-                    return .flat(wood: wood.indices.isEmpty ? -1 : finest(scene.addMesh(wood, sways: sways, name: name + " wood")),
-                                 leaves: leaves.indices.isEmpty ? -1 : finest(scene.addMesh(leaves, sways: sways, cutout: layer, name: name + " leaves")))
+                    return flat(wood: wood.indices.isEmpty ? -1 : finest(scene.addMesh(wood, sways: sways, name: name + " wood")),
+                                leaves: leaves.indices.isEmpty ? -1 : finest(scene.addMesh(leaves, sways: sways, cutout: layer, name: name + " leaves")))
                 }
                 // The meshes stay the library's (arrays share their storage): the renderer copies them from here.
                 func lend(_ mesh: Foliage.Mesh, _ name: String, cutout: Int? = nil) -> Int {
@@ -220,7 +242,7 @@ extension Scene {
                                          bounds: mesh.bounds, name: name, sways: sways,
                                          cutout: cutout.map { UInt32($0 + 1) << 24 | UInt32(mesh.leafIndex / 3) } ?? 0)
                 }
-                return .flat(wood: finest(lend(wood, name + " wood")), leaves: finest(lend(leaves, name + " leaves", cutout: layer)))
+                return flat(wood: finest(lend(wood, name + " wood")), leaves: finest(lend(leaves, name + " leaves", cutout: layer)))
             case .boxes(let placed):
                 boxes = placed
             }
@@ -262,7 +284,10 @@ extension Scene {
             let sway = 1.1 * Assembly.rootSway * reach(bounds, .zero)
             bounds.lo -= SIMD3(repeating: sway)
             bounds.hi += SIMD3(repeating: sway)
-            return .assembly(scene.addAssembly(Assembly(parts: parts, bounds: bounds, evergreen: set.species == .conifer)))
+            let assembly = scene.addAssembly(Assembly(parts: parts, bounds: bounds, evergreen: set.species == .conifer))
+            let voxels = scene.addVoxelPlant(voxelPlant(set, index))
+            precondition(voxels == assembly, "an assembly's grid is the voxel plant of its number")
+            return .assembly(assembly)
         }
 
         /// The species' materials and their textures. `place` adds a species' with its first plant; a scene whose

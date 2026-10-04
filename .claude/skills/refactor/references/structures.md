@@ -63,7 +63,7 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
   `fixedPassFlags`, and the shader reads it with `flagOn` / `passOn` (Shaders/Types.metal).
 * **Signs it was bypassed.** `makeComputePipelineState` or `makeLibrary` outside Pipelines.swift (both go through
   `Pipelines.makeState`, which uses Metal 4's compiler when there is one); a pipeline stored as its own property; a
-  compile on the main thread or in the frame loop; `(u.flags & FLAG_…) != 0` in a kernel that has variants.
+  compile on the main thread or the render thread (the frame loop); `(u.flags & FLAG_…) != 0` in a kernel that has variants.
 * **Guard.** `KernelVariantsTests`.
 
 ## Capabilities: `Capabilities.swift`
@@ -85,9 +85,10 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
 * **Plugging in.** A new pass binds and dispatches through `ComputePass` only, so both back ends get it. Something
   one API can't do yet is said in one place, with the reason and the OS version (as for mipmaps and the denoising
   scaler under Metal 4).
-* **Where the frame ends up** is a `RenderSurface` (RenderSurface.swift): the window's `MTKView`, or the
-  `OffscreenSurface` every benchmark run draws into. The renderer asks it for the output texture and never for a view.
-* **Signs it was bypassed.** `MTLComputeCommandEncoder` in a stage builder; `MTKView` or `currentDrawable` in Renderer; `api == .metal4` checks scattered over
+* **Where the frame ends up** is a `RenderSurface` (RenderSurface.swift): the window's `LayerSurface` (its view's
+  CAMetalLayer), or the `OffscreenSurface` every benchmark run draws into. The renderer asks it for the output texture
+  and never for a view.
+* **Signs it was bypassed.** `MTLComputeCommandEncoder` in a stage builder; a view, a window or `nextDrawable` in Renderer; `api == .metal4` checks scattered over
   the stages; a feature that renders under one API and silently does nothing under the other.
 * **Guard.** None that runs by itself. For a refactor, `same.sh <mode> -- METALRENDERER_API=metal4` shows Metal 4
   still draws what it drew. Metal 3 against Metal 4 is the `api` mode run once per API and `pngdiff.py` between the

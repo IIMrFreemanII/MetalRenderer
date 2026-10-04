@@ -1,16 +1,21 @@
 import AppKit
-import MetalKit
+import Metal
 import UniformTypeIdentifiers
 
 protocol InputHandler: AnyObject {
     func keyDown(_ event: NSEvent)
     func keyUp(_ event: NSEvent)
+    func flagsChanged(_ event: NSEvent)
     func mouseDragged(dx: Float, dy: Float)
 }
 
-/// MTKView that forwards keyboard and mouse input to the renderer.
-final class RenderView: MTKView {
+/// The window's view: its layer is the CAMetalLayer the render thread draws into (`surface`), and it forwards keyboard
+/// and mouse input to the renderer.
+final class RenderView: NSView {
     weak var inputHandler: InputHandler?
+    let surface: LayerSurface
+    let device: MTLDevice
+    private var occlusionObserver: NSObjectProtocol?
 
     var onDropModels: (([URL]) -> Void)?
 
@@ -18,11 +23,44 @@ final class RenderView: MTKView {
     static let openableExtensions = ["glb", "gltf", "hdr", "exr"]
     static let modelTypes: [UTType] = openableExtensions.compactMap { UTType(filenameExtension: $0) }
 
-    override init(frame: CGRect, device: MTLDevice?) {
-        super.init(frame: frame, device: device)
+    init(frame: CGRect, device: MTLDevice) {
+        self.device = device
+        surface = LayerSurface(device: device)
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .duringViewResize
         registerForDraggedTypes([.fileURL])
     }
     required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func makeBackingLayer() -> CALayer { surface.layer }
+
+    // The render thread reads the size at the start of each frame.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateSurfaceSize()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateSurfaceSize()
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        surface.window = window
+        updateSurfaceSize()
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = nil
+        // No frames while the window is hidden or minimized. (A benchmark draws on regardless.)
+        guard let window, !Benchmark.isEnabled else { return }
+        occlusionObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification,
+                                                                   object: window, queue: .main) { [weak self] _ in
+            guard let self, let window = self.window else { return }
+            self.surface.isVisible = window.occlusionState.contains(.visible)
+        }
+    }
+    private func updateSurfaceSize() {
+        surface.setSize(bounds.size, backingScale: window?.backingScaleFactor ?? 2)
+    }
 
     private func modelURLs(_ info: NSDraggingInfo) -> [URL] {
         let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
@@ -42,6 +80,7 @@ final class RenderView: MTKView {
     // Not calling super avoids the system "beep" for unhandled keys.
     override func keyDown(with event: NSEvent) { inputHandler?.keyDown(event) }
     override func keyUp(with event: NSEvent) { inputHandler?.keyUp(event) }
+    override func flagsChanged(with event: NSEvent) { inputHandler?.flagsChanged(event) }
 
     override func mouseDragged(with event: NSEvent) {
         inputHandler?.mouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY))

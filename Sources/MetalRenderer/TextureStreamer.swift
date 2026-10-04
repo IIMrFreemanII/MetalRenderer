@@ -166,7 +166,7 @@ final class TextureStreamer {
                      CFAbsoluteTimeGetCurrent() - start))
     }
 
-    /// Main thread, ahead of `frame`'s own work: apply the latest feedback, map and upload finer levels, schedule
+    /// Render thread, ahead of `frame`'s own work: apply the latest feedback, map and upload finer levels, schedule
     /// unmaps, publish this slot's resident levels, reset its feedback. Returns what the frame has to encode.
     func update(frame: UInt32, slot: Int, framesInFlight: Int) -> TextureStreamWork {
         work = TextureStreamWork()
