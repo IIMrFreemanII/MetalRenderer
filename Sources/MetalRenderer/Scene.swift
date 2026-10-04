@@ -921,7 +921,15 @@ final class Scene {
             meshes.append(GPUMesh(firstIndex: meshes[part.mesh].firstIndex, indexCount: meshes[part.mesh].indexCount))
             meshBounds.append((character.boundsMin, character.boundsMax))
             crowd.slots[i].mesh = meshes.count - 1
+            setDetailLevel(meshes.count - 1, part.level)
         }
+    }
+
+    /// Mesh `m` was made at level of detail `level` (0 = the finest) of a system that has levels: the LOD debug view
+    /// shows it (GPUMesh.lod).
+    func setDetailLevel(_ m: Int, _ level: Int) {
+        guard m >= 0 else { return }
+        meshes[m].lod = UInt32(level + 1)
     }
 
     /// Mesh `m`'s bounds in its own space: for a pose slot, of every pose it may take.

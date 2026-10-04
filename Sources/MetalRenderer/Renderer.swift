@@ -1705,6 +1705,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         p.restirGI = settings.giEnabled && p.giMode == .restirGI
         if p.restirGI { p.restirGIGrid = restirGITargets(width: width, height: height) }
         p.restirGIHistory = restirGIWritten   // read after restirGITargets: new reservoirs hold nothing
+        // Only these write t.giDebug: with any other method the "GI debug" view would show what one of them left.
+        if p.cascades || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
 
         // Denoising (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
         //   Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
@@ -2766,7 +2768,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             sceneName += String(format: " — VG %.1fM triangles, %.0f MB", Double(vg.stats.triangles) / 1e6, vg.stats.megabytes)
         }
         if let ts = textureStreamer { sceneName += String(format: " — textures %.0f MB", ts.stats.residentMB) }
-        if frozenLOD != nil && scene.usesVirtualGeometry { sceneName += " — LOD frozen" }
+        if frozenLOD != nil && lodFreezes { sceneName += " — LOD frozen" }
         surface?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
                                 sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
                                 s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
@@ -2871,6 +2873,38 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         }
     }
 
+    /// Freeze LOD does something: it holds the custom tracer's cut of the virtual meshes and its plants' voxel levels
+    /// (`detailView`). The open world's tiles follow the camera regardless.
+    private var lodFreezes: Bool {
+        customRT != nil && (scene.usesVirtualGeometry || (scene.hasPlants && scene.usesAssemblies))
+    }
+
+    /// Why the view shown has nothing (or less than its name says) to show for this scene and these settings; nil if
+    /// it shows what it says.
+    private var viewNote: String? {
+        let virtual = scene.instances.contains { $0.virtualMesh >= 0 }
+        switch settings.viewMode {
+        case 5 where neuralDenoise:
+            return "History length is the SVGF denoiser's: MetalFX's denoising scaler keeps its own history."
+        case 5 where !denoiserOn:
+            return "The denoiser is off: no history."
+        case 7 where !settings.giEnabled || ![.radianceCascades, .restirGI].contains(activeGIMode):
+            return "GI debug is drawn by radiance cascades and ReSTIR GI only."
+        case 9...10 where !virtual:
+            return "Clusters and groups belong to virtual geometry (custom tracer, glTF meshes of 64K+ triangles: the "
+                + "gallery or added models). Other geometry shows its level of detail, faded."
+        case 11 where !virtual && !(scene.hasPlants && scene.usesAssemblies) && !scene.meshes.contains(where: { $0.lod != 0 }):
+            return "Nothing in this scene has levels of detail: virtual geometry needs the custom tracer and big glTF "
+                + "meshes; plants, crowds and the open world's tiles have theirs."
+        case 13 where builtRayTracer == .metal:
+            return "Metal's tracer can't count its traversal: magenta. Switch to the custom tracer for the cost."
+        case 14 where !settings.fog.enabled:
+            return "Fog is off."
+        default:
+            return nil
+        }
+    }
+
     /// What the Debug window shows (built when it asks, on the stats tick).
     func debugInfo() -> DebugInfo {
         var d = DebugInfo()
@@ -2909,7 +2943,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                              pending: vg.stats.pending, loadedThisFrame: vg.stats.loadedThisFrame)
         }
         d.vgPixelError = settings.virtualGeometry.pixelError
-        d.vgFrozen = frozenLOD != nil && scene.usesVirtualGeometry
+        d.vgFrozen = frozenLOD != nil && lodFreezes
+        d.lodFreezes = lodFreezes
+        d.viewNote = viewNote
         if let ts = textureStreamer {
             d.textures = (ts.stats.residentMB, ts.budgetBytes >> 20, ts.stats.levelsMapped, ts.stats.uploadedMB)
         }

@@ -2,7 +2,8 @@
 // 3c. Geometry debug views (view modes 8-13), a pass of their own that runs only while one is shown: re-traces the
 //     primary rays and colours each pixel by what it hit. Virtual triangles carry their cluster, group, DAG level and
 //     index within the cluster (VirtualBLAS packs them into the free w components of e1 / e2; in cluster mode the
-//     cluster's pool header holds group and level, VirtualGeometry.upload).
+//     cluster's pool header holds group and level, VirtualGeometry.upload). Other geometry with levels of detail
+//     carries its level in its mesh record (GPUMesh.lod), on both tracers.
 // ---------------------------------------------------------------------------------------------
 
 constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;
@@ -93,20 +94,26 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
         level = b >> 24;
     }
 #endif
+    // The level of detail, 0 = finest: a virtual triangle's DAG level, else its mesh's (GPUMesh.lod: an open-world
+    // tile's ring, a crowd character's detail, a baked plant). A plant's parts are its finest.
+    const float3 grey = float3(0.45f);  // geometry without levels; in the cluster and group views, what isn't virtual
+    float3 lodColor = grey;
+    if (isVirtual) lodColor = debugHeat(0.05f + float(level) / 10.0f);
+#if CUSTOM_RT
+    else if (FOLIAGE && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
+#endif
+    else if (s.meshes[inst.meshIndex].lod != 0) lodColor = debugHeat(0.05f + 0.3f * float(s.meshes[inst.meshIndex].lod - 1));
+
     uint instanceSeed = pcgHash(res.instance + 0x51ED27u);
-    float3 c = float3(0.45f);           // geometry that isn't virtual, in the views that are about virtual geometry
+    float3 c = grey;
     switch (u.viewMode) {
         case VIEW_TRIANGLES:
             c = debugHashColor(isVirtual ? local + pcgHash(cluster + instanceSeed) : res.primitive + instanceSeed);
             break;
-        case VIEW_CLUSTERS: if (isVirtual) c = debugHashColor(cluster + instanceSeed); break;
-        case VIEW_GROUPS:   if (isVirtual) c = debugHashColor(group * 0x9E3779B9u + instanceSeed); break;
-        case VIEW_LOD:   // 0 = finest; a plant's triangles are its finest
-            if (isVirtual) c = debugHeat(0.05f + float(level) / 10.0f);
-#if CUSTOM_RT
-            else if (FOLIAGE && res.part != HIT_NO_PART) c = debugHeat(0.05f);
-#endif
-            break;
+        // Geometry that isn't virtual has no clusters or groups: its level, faded.
+        case VIEW_CLUSTERS: c = isVirtual ? debugHashColor(cluster + instanceSeed) : mix(grey, lodColor, 0.5f); break;
+        case VIEW_GROUPS:   c = isVirtual ? debugHashColor(group * 0x9E3779B9u + instanceSeed) : mix(grey, lodColor, 0.5f); break;
+        case VIEW_LOD:      c = lodColor; break;
         case VIEW_TRIANGLE_SIZE: {
             // Edge length (of a right triangle with the same area) in traced pixels: 1/8 px blue, 1 px green, 8 px red.
             float footprint = res.distance * 2.0f * u.camUp.w / float(u.height);
@@ -279,7 +286,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 4: c = albedo; break;
         case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); break; }
         case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
-        case 7: c = giDebug.read(tid).rgb; break;                 // GI technique's debug view
+        case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;

@@ -24,6 +24,8 @@ struct DebugInfo {
     var vg = VirtualGeometry.off
     var vgPixelError: Float = 1
     var vgFrozen = false
+    var lodFreezes = false              // Freeze LOD does something here (Renderer.lodFreezes)
+    var viewNote: String?               // why the view shown has nothing to show here (Renderer.viewNote)
     var textures: (residentMB: Double, budgetMB: Int, levelsMapped: Int, uploadedMB: Double)?
     var allocatedMB = 0.0, workingSetMB = 0.0
     var traversal: (stats: TraversalStats, frames: Int)?
@@ -42,16 +44,16 @@ final class DebugPanel: NSObject {
     private let passTimes = NSTextField(labelWithString: "")
     private let debugView = NSPopUpButton()
     private let freezeLOD = NSButton(checkboxWithTitle: "Freeze LOD (L)", target: nil, action: nil)
+    private let viewNote = NSTextField(wrappingLabelWithString: "")
     private let counters = NSButton(checkboxWithTitle: "Traversal counters (recompiles shaders)", target: nil, action: nil)
     private let frame = Section("Frame")
+    private let view = Section("View")
     private let passes = Section("GPU passes")
     private let scene = Section("Scene")
     private let vg = Section("Virtual geometry")
     private let textures = Section("Texture streaming")
     private let memory = Section("Memory")
     private let traversal = Section("Ray traversal (custom tracer)")
-    /// The debug views offered here: Final, then the geometry views (RenderSettings.geometryViews).
-    private let debugViewModes = [0] + Array(RenderSettings.geometryViews)
     private var lastRebuilds: (count: Int, time: CFTimeInterval)?
     private var rebuildRate = 0.0
 
@@ -87,7 +89,10 @@ final class DebugPanel: NSObject {
             control.controlSize = .small
             control.font = .systemFont(ofSize: small)
         }
-        debugView.addItems(withTitles: debugViewModes.map { RenderSettings.viewModes[$0] })
+        debugView.addItems(withTitles: RenderSettings.viewModes)
+        viewNote.font = .systemFont(ofSize: small)
+        viewNote.textColor = .secondaryLabelColor
+        viewNote.isHidden = true
         profile.isHidden = !renderer.passProfilingSupported
         graph.translatesAutoresizingMaskIntoConstraints = false
         graph.heightAnchor.constraint(equalToConstant: 96).isActive = true
@@ -98,10 +103,11 @@ final class DebugPanel: NSObject {
         passes.add(passTimes)
         let controls = NSStackView(views: [label("Debug view"), debugView, freezeLOD])
         controls.spacing = 6
-        vg.add(controls)
+        view.add(controls)
+        view.add(viewNote)
         traversal.add(counters)
 
-        let stack = NSStackView(views: [frame, passes, scene, vg, textures, memory, traversal])
+        let stack = NSStackView(views: [frame, view, passes, scene, vg, textures, memory, traversal])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -170,8 +176,7 @@ final class DebugPanel: NSObject {
     // MARK: - Updates
 
     private func update(from s: RenderSettings) {
-        debugView.selectItem(at: debugViewModes.firstIndex(of: s.viewMode) ?? -1)
-        if debugViewModes.firstIndex(of: s.viewMode) == nil { debugView.setTitle(RenderSettings.viewModes[s.viewMode]) }
+        debugView.selectItem(at: s.viewMode)
         freezeLOD.state = s.virtualGeometry.freeze ? .on : .off
     }
 
@@ -179,6 +184,9 @@ final class DebugPanel: NSObject {
         guard panel.isVisible else { return }
         let d = renderer.debugInfo()
         stats.stringValue = d.stats + String(format: " — CPU %.1f ms (encode %.2f)", d.cpuMs, d.encodeMs)
+        freezeLOD.isEnabled = d.lodFreezes
+        viewNote.stringValue = d.viewNote ?? ""
+        viewNote.isHidden = d.viewNote == nil
 
         let lights = [(d.analyticLights, "analytic"), (d.meshLights, "mesh"), (d.suns, d.suns == 1 ? "sun" : "suns")]
             .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
@@ -291,7 +299,7 @@ final class DebugPanel: NSObject {
     @objc private func freezeLODChanged() { renderer.settings.virtualGeometry.freeze = freezeLOD.state == .on }
     @objc private func debugViewChanged() {
         guard debugView.indexOfSelectedItem >= 0 else { return }
-        renderer.settings.viewMode = debugViewModes[debugView.indexOfSelectedItem]
+        renderer.settings.viewMode = debugView.indexOfSelectedItem
     }
     @objc private func countersChanged() {
         counters.isEnabled = false
