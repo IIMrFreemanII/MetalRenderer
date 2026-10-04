@@ -64,6 +64,7 @@ extension Scene {
         case .fog: return camera([1.2, 1.7, 2.6], yaw: -0.04, pitch: 0.1)
         case .valley: return camera([4, 2.2, 38], yaw: -0.15, pitch: 0.12)
         case .market: return camera([0.6, 1.7, 30], yaw: 0.02, pitch: 0.12)
+        case .forest: return camera([1.5, 1.7, 10], yaw: 0.06, pitch: 0.1)
         case .cornell, .stress, .gallery: return nil
         }
     }
@@ -483,8 +484,6 @@ extension Scene {
         let wall = addMaterial(albedo: [0.78, 0.74, 0.66])
         let roof = addMaterial(albedo: [0.55, 0.2, 0.12])
         let slate = addMaterial(albedo: [0.25, 0.26, 0.3])
-        let trunk = addMaterial(albedo: [0.3, 0.2, 0.12])
-        let leaves = addMaterial(albedo: [0.13, 0.28, 0.09])
         let hill = addMaterial(albedo: [0.24, 0.34, 0.15])
         let wood = addMaterial(albedo: [0.45, 0.33, 0.2])
         let pond = addPBRMaterial(baseColor: [0.03, 0.05, 0.06], metallic: 0, roughness: 0.04)
@@ -521,29 +520,35 @@ extension Scene {
         addInstance(kit.cube, slate, translate([-8, 9.2, -36]) * rotate(.pi / 4, [0, 0, 1]) * scale([7.4, 7.4, 18.4]))
         addInstance(kit.cube, wall, translate([-8, 10, -24]) * scale([5, 20, 5]))                    // tower
         addInstance(kit.cube, slate, translate([-8, 22, -24]) * rotate(.pi / 4, [0, 1, 0]) * scale([3.2, 4, 3.2]))
-        // Trees: along the road, in a copse, and alone in the fields.
-        func tree(_ x: Float, _ z: Float, _ size: Float = 1) {
-            kit.box([x, 1.5 * size, z], [0.4 * size, 3 * size, 0.4 * size], trunk)
-            kit.ball([x, 4.2 * size, z], 2.2 * size, leaves)
+        // Trees (Foliage): young oaks and birches along the road, grown trees in a copse and alone in the fields.
+        let flora = Flora(self, seed: UInt64(max(settings.seed, 0)), species: [.oak, .birch, .conifer])
+        var pick = SplitMix64(seed: 0x7EE5 &+ UInt64(max(settings.seed, 0)))
+        func tree(_ x: Float, _ z: Float, _ species: Foliage.Species, _ age: Foliage.Age, _ size: Float) {
+            let plants = flora.plants(species, age)
+            flora.place(species, plants[pick.int(plants.count)], at: [x, -0.1, z], yaw: pick.range(0, 2 * .pi), size: size,
+                        shade: pick.int(16))
         }
-        for i in 0..<8 { tree(-60 + Float(i) * 14, 6, 0.9 + 0.15 * Float(i % 3)) }
-        for (x, z) in [(Float(55), Float(-30)), (60, -24), (66, -32), (58, -38), (70, -26), (-60, 40), (80, 30), (-110, -20)] {
-            tree(x, z, 1.2)
+        for i in 0..<8 { tree(-60 + Float(i) * 14, 6, i % 2 == 0 ? .oak : .birch, .young, 0.75 + 0.08 * Float(i % 3)) }
+        for (i, (x, z)) in [(Float(55), Float(-30)), (60, -24), (66, -32), (58, -38), (70, -26), (-60, 40), (80, 30), (-110, -20)].enumerated() {
+            tree(x, z, [.oak, .conifer, .birch, .oak][i % 4], .mature, 0.6)
         }
         // A fence along the meadow, close to the camera.
         for i in 0..<16 { kit.box([10 + Float(i) * 2.5, 0.6, 22], [0.12, 1.2, 0.12], wood) }
         kit.box([28.75, 0.9, 22], [37.5, 0.08, 0.08], wood)
         kit.box([28.75, 0.5, 22], [37.5, 0.08, 0.08], wood)
 
-        // The sun: morning in the east (+x) to evening in the west (-x), passing ahead of the camera (-z), and back,
-        // 90 s each way; t = 0 is mid-morning. Its colour comes from the atmosphere.
-        let half: Float = 90
+        addDaySun(half: 90)
+        defaultCamera = Scene.demoCamera(.valley)!
+    }
+
+    /// The valley's and the forest's sun: morning in the east (+x) to evening in the west (-x), passing ahead of the
+    /// camera (-z), and back, `half` seconds each way; t = 0 is mid-morning. Its colour comes from the atmosphere.
+    func addDaySun(half: Float) {
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { t in
             let phase = 0.5 - 0.5 * cos(.pi * (t / half + 0.35))   // 0 = morning, 1 = evening
             let e = Scene.degrees(10 + 50 * sin(.pi * phase)), a = Scene.degrees(20 + 140 * phase)
             return LightPose(position: .zero, direction: [cos(e) * cos(a), sin(e), -cos(e) * sin(a)])
         }
-        defaultCamera = Scene.demoCamera(.valley)!
     }
 
     // MARK: - Mixed

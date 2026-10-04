@@ -7,7 +7,7 @@ extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
         "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
-        "lights": lights, "fog": fog, "sky": sky,
+        "lights": lights, "fog": fog, "sky": sky, "forest": forest,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
@@ -267,6 +267,29 @@ extension Benchmark {
             let moving = base.named("\(kind) moving").moving()
             return out + [moving, moving.named("\(kind) moving 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 }]
         }
+    }
+
+    /// The forest (generated plants on rolling ground) paused in the morning: from the clearing, from above, close to
+    /// a trunk at the clearing's edge, and with four times the trees; then moving (timing), also at the app's 3x.
+    /// `METALRENDERER_SCENE=trees=...,seed=...,undergrowth=...` changes the forest.
+    private static func forest() -> [Config] {
+        let base = Config("", gi: .radianceCascades, scene: SceneSettings(kind: .forest)).still().frames(60)
+        var aerial = Camera()
+        aerial.position = [0, 55, 95]
+        aerial.pitch = -0.5
+        var close = Camera()
+        close.position = [-6, 1.6, -9]
+        close.yaw = -0.5
+        close.pitch = 0.35
+        let moving = base.named("forest moving").moving()
+        return [
+            base.named("forest static"),
+            base.named("forest aerial").from(aerial),
+            base.named("forest closeup").from(close),
+            base.named("forest 10k trees").with { $0.scene.trees = 10000 },
+            moving,
+            moving.named("forest moving 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 },
+        ]
     }
 
     // MARK: - Quality against references

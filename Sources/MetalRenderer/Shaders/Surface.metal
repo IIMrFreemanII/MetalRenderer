@@ -131,7 +131,11 @@ struct Surface {
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
+    bool   backlit;       // a translucent leaf showing the light of its far side: orientNormals faces it away
 };
+
+// Light through a leaf comes out yellower than what it reflects.
+constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
 
 // Emission a GI or bounce ray picks up at a hit: none from emissive-mesh lights, whose light next-event estimation
 // and the light maps already deliver (as the light spheres, which GI rays don't even see).
@@ -215,6 +219,9 @@ inline float4 sampleMaterial(thread const struct SceneData& s, uint index, float
 inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3& ng, thread float3& ns) {
     ng = dot(sf.geomNormal, rayDir) > 0.0f ? -sf.geomNormal : sf.geomNormal;
     ns = dot(sf.normal, ng) < 0.0f ? -sf.normal : sf.normal;
+    // A leaf lit from behind: everything that lights the surface, casts its shadow rays and bounces off it works on
+    // the far side instead, which is all the light through a thin leaf needs.
+    if (sf.backlit) { ng = -ng; ns = -ns; }
 }
 
 // Pixel-footprint spreads for texture filtering (ray cones without curvature): radians of spread per unit distance.
@@ -227,9 +234,24 @@ struct HitVertices {
     float3 p[3];
     float3 n[3];
     float2 t[3];
+    bool   leaf;   // a leaf of an assembly's part: shaded with the material after the instance's
 };
+
+#if CUSTOM_RT
+// A part's point and direction in its plant's space. The part's rows are the inverse (plant -> part) of a rotation,
+// a uniform scale and a translation, so its transpose over the squared scale is the way back.
+inline float3 partPoint(RTPart part, float3 p) {
+    float3 q = p - float3(part.row0.w, part.row1.w, part.row2.w);
+    return (part.row0.xyz * q.x + part.row1.xyz * q.y + part.row2.xyz * q.z) / dot(part.row0.xyz, part.row0.xyz);
+}
+inline float3 partDirection(RTPart part, float3 v) {   // not unit length
+    return part.row0.xyz * v.x + part.row1.xyz * v.y + part.row2.xyz * v.z;
+}
+#endif
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
+    v.leaf = false;
+    uint meshIndex = inst.meshIndex;
 #if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         // Virtual geometry: the hit cluster's vertices, in the streaming pool.
@@ -256,8 +278,16 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         }
         return v;
     }
+    // An assembly's part: its mesh's triangle, brought into the plant's space (the instance's object space).
+    bool inPart = FOLIAGE && res.part != HIT_NO_PART;
+    RTPart part;
+    if (inPart) {
+        part = accel.parts[res.part];
+        meshIndex = part.mesh;
+        v.leaf = res.primitive >= part.firstLeaf;
+    }
 #endif
-    MeshData mesh = s.meshes[inst.meshIndex];
+    MeshData mesh = s.meshes[meshIndex];
     uint base = mesh.firstIndex + res.primitive * 3;
     for (uint k = 0; k < 3; ++k) {
         uint i = s.indices[base + k];
@@ -265,6 +295,14 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         v.n[k] = s.normals[i];
         v.t[k] = s.uvs[i];
     }
+#if CUSTOM_RT
+    if (inPart) {
+        for (uint k = 0; k < 3; ++k) {
+            v.p[k] = partPoint(part, v.p[k]);
+            v.n[k] = partDirection(part, v.n[k]);
+        }
+    }
+#endif
     return v;
 }
 
@@ -279,9 +317,35 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;
     sf.lightEmitter = false;
+    sf.backlit = false;
     if (!res.hit) return sf;
 
     InstanceData inst = s.instances[res.instance];
+#if CUSTOM_RT
+    if (FOLIAGE && res.part == HIT_VOXEL) {
+        // A far plant's voxel: where the ray stopped in it, the voxel's mean normal, and its wood's and leaves'
+        // colours by how much of it is leaf.
+        float2 e = float2(float(res.primitive & 0xFFu), float((res.primitive >> 8) & 0xFFu)) * (2.0f / 255.0f) - 1.0f;
+        float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
+        if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * select(float2(-1.0f), float2(1.0f), n.xy >= 0.0f);
+        // Leaves hide most of the wood they hang on: the voxel shows more leaf than its share of the area. And what
+        // is in a voxel shades itself, which a single point of it can't: VOXEL_SHADE makes up for that (matched to
+        // the triangles' mean brightness in the forest from above).
+        float leaf = sqrt(float((res.primitive >> 16) & 0xFFu) * (1.0f / 255.0f));
+        sf.hit = true;
+        sf.position = r.origin + r.direction * res.distance;
+        sf.prevPosition = sf.position;
+        sf.normal = sf.geomNormal = normalize((inst.normalMatrix * float4(normalize(n), 0.0f)).xyz);
+        Material leaves = s.materials[inst.materialIndex + 1u];
+        sf.albedo = VOXEL_SHADE * mix(s.materials[inst.materialIndex].albedo.rgb, leaves.albedo.rgb, leaf);
+        if (leaves.params.w > 0.0f) {   // its leaves' share of light from behind, as for a leaf below
+            sf.backlit = float(pcgHash(res.primitive ^ as_type<uint>(res.distance)) & 0xFFFFu) * (1.0f / 65536.0f) < leaves.params.w * leaf;
+            if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
+        }
+        sf.instanceId = res.instance;
+        return sf;
+    }
+#endif
     float2 bc = res.barycentrics;
     float w0 = 1.0f - bc.x - bc.y;
     HitVertices hv = fetchHitVertices(res, inst, accel, s);
@@ -291,10 +355,24 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     float3 objN   = n0 * w0 + n1 * bc.x + n2 * bc.y;
     float3 objNg  = cross(p1 - p0, p2 - p0);
 
-    Material mat = s.materials[inst.materialIndex];
+    float3 prevObjPos = objPos;
+#if CUSTOM_RT
+    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
+        // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
+        // frame ago (the motion vector), and its normals now.
+        RTPart part = accel.parts[res.part];
+        float4 r0 = inst.normalMatrix[0], r1 = inst.normalMatrix[1], r2 = inst.normalMatrix[2];   // world -> plant rows
+        prevObjPos = partWind(part, plantWind(accel.wind, accel.windTime.y, r0, r1, r2, res.instance), accel.wind.z, objPos, true);
+        PlantWind w = plantWind(accel.wind, accel.windTime.x, r0, r1, r2, res.instance);
+        objPos = partWind(part, w, accel.wind.z, objPos, true);
+        objN = partWind(part, w, accel.wind.z, objN, false);
+        objNg = partWind(part, w, accel.wind.z, objNg, false);
+    }
+#endif
+    Material mat = s.materials[inst.materialIndex + (hv.leaf ? 1u : 0u)];
     sf.hit = true;
     sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
-    sf.prevPosition = (inst.prevTransform * float4(objPos, 1.0f)).xyz;
+    sf.prevPosition = (inst.prevTransform * float4(prevObjPos, 1.0f)).xyz;
     sf.normal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
     sf.albedo = mat.albedo.rgb;
@@ -304,6 +382,14 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.specular = mat.params.x;
     sf.instanceId = res.instance;
     sf.lightEmitter = mat.params.z > 0.0f;
+    if (mat.params.w > 0.0f) {
+        // Translucent (a leaf): the material's share of the leaves shows the light of the far side, the rest that of
+        // the near side. Leaf by leaf (two triangles are one), always the same ones: nothing flickers, and a crown
+        // as a whole reflects and transmits in the material's proportion.
+        uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (res.instance * 0x85EBCA6Bu);
+        sf.backlit = float(pcgHash(leafId) & 0xFFFFu) * (1.0f / 65536.0f) < mat.params.w;
+        if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
+    }
 
     if (any(mat.textures != uint4(NO_TEXTURE))) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;

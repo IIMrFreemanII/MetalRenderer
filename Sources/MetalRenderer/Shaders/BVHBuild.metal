@@ -21,6 +21,9 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
                          device const uint*         dynSlot    [[buffer(3)]],   // per instance: index among the moving ones, or ~0
                          device RTInstance*         out        [[buffer(4)]],
                          device float4*             leafBoxes  [[buffer(5)]],
+                         device const RTVoxels*     voxelGrids [[buffer(6)]],   // per assembly (FOLIAGE)
+                         constant float4&           lodView    [[buffer(7)]],   // xyz = the camera, w = a traced pixel's angle
+                                                                                //   x the LOD bias (0 = triangles always)
                          uint i [[thread_position_in_grid]])
 {
     if (i >= instanceCount) return;
@@ -33,7 +36,15 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
     r.blasRoot = as_type<uint>(lo.w);
     r.mask = inst.pad0;
     r.pad0 = inst.pad1;   // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
-    r.pad1 = 0;
+    r.pad1 = as_type<uint>(hi.w);   // assembly + 1 (the root above is then its tree of parts), or 0
+    if (FOLIAGE && r.pad1 != 0 && lodView.w > 0.0f) {
+        // A plant far from the camera is traced as its voxels: the level whose voxels are about `bias` traced pixels
+        // there, + 1, in the top byte. Every ray sees a plant the same way (it goes by the camera, not the ray), and
+        // each plant changes over at a distance of its own, so no line of them does at once.
+        float size = voxelGrids[r.pad1 - 1].lo.w * length(inst.transform[0].xyz);
+        float lod = log2(distance(inst.transform[3].xyz, lodView.xyz) * lodView.w / size) + float(pcgHash(i) & 0xFFu) * (0.5f / 255.0f) - 0.25f;
+        if (lod >= 0.0f) r.pad1 |= (min(uint(lod), VOXEL_LEVELS - 1u) + 1u) << 24;
+    }
     out[i] = r;
     uint k = dynSlot[i];
     if (k == RT_NONE) return;
