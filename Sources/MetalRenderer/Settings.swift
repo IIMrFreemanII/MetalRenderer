@@ -46,6 +46,7 @@ enum DirectLightMode: Int, CaseIterable, Codable {
     case exact      // one shadow ray per light (cost grows with the light count; references)
     case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
     case restir     // ReSTIR DI: candidates from the light table, temporal + spatial reuse, one shadow ray (O(1))
+    case megalights // MegaLights-style: lights culled into screen tiles, a few MIS-combined samples per pixel, no reuse
 
     var title: String {
         switch self {
@@ -53,10 +54,11 @@ enum DirectLightMode: Int, CaseIterable, Codable {
         case .exact: return "Exact"
         case .grouped: return "Grouped"
         case .restir: return "ReSTIR"
+        case .megalights: return "MegaLights"
         }
     }
 
-    /// `METALRENDERER_DIRECT=auto|exact|grouped|restir`; `METALRENDERER_LIGHTS=all` is exact.
+    /// `METALRENDERER_DIRECT=auto|exact|grouped|restir|megalights`; `METALRENDERER_LIGHTS=all` is exact.
     static let initial: DirectLightMode = {
         let env = ProcessInfo.processInfo.environment
         if let v = env["METALRENDERER_DIRECT"], let m = allCases.first(where: { "\($0)" == v.lowercased() }) { return m }
@@ -90,6 +92,36 @@ struct RestirSettings: Equatable, Codable {
     static let spatialPassRange = 0...2
     static let spatialSampleRange = 1...8
     static let radiusRange: ClosedRange<Float> = 4...64
+}
+
+/// MegaLights-style direct light (Shaders/MegaLights.metal, after Unreal Engine 5.5's MegaLights): the lights are culled
+/// into 16x16-pixel tiles by how far their light reaches, and each pixel shades `samples` light samples with one shadow
+/// ray each: some picked from its tile's list by unshadowed luminance (steered toward the lights the tile found visible
+/// last frame), `treeSamples` drawn from the light tree (LightTree: the far field), combined by multiple importance
+/// sampling, so the cutoff, a full list and the guiding change only the noise, never the brightness. SVGF then denoises
+/// the direct light as radiance.
+struct MegaLightsSettings: Equatable, Codable {
+    var samples = 4                 // light samples (shadow rays) per pixel, the suns' aside
+    var treeSamples = 2             // ...of which from the light tree (the rest from the tile's list)
+    var capacity = 256              // lights a tile's list holds (more: the tree samples still reach them)
+    var cutoff: Float = 0.002       // a light reaches as far as its unshadowed light, exposed, stays above this
+    var partition = true            // each light from one strategy (the list its lights in reach, the tree the rest):
+                                    // no tree walks for list samples; off = MIS (balance heuristic) between the two
+    var guiding = true              // pick the lights the tile saw lit last frame more often
+    var guideWeight: Float = 0.25   // ...the others' weight
+    var denoiseSigma: Float = 3     // SVGF for MegaLights' direct light, as RestirSettings'
+    var denoisePasses = 4
+    var denoiseHistory: Float = 8
+    var varianceBoost: Float = 1    // independent samples every frame: their temporal variance is what it is
+
+    static let sampleRange = 1...8
+    static let treeSampleRange = 1...8   // at most `samples`
+    static let capacityOptions = [64, 128, 256]   // powers of two (the tile's sort), at most ML_MAX_CAPACITY
+    static let cutoffRange: ClosedRange<Float> = 0.0001...0.1
+    static let guideWeightRange: ClosedRange<Float> = 0.05...1
+    /// Lights a scene may have (a tile's list holds 16-bit indices); with more, MegaLights falls back to ReSTIR, as it
+    /// does with more suns than it lights apart (LightTable.maxSuns: the tree leaves the suns out).
+    static let maxLights = 0xFFFF
 }
 
 /// The light grid (Shaders/Regir.metal): a camera-centred world-space grid of light reservoirs, rebuilt every
@@ -686,6 +718,7 @@ struct RenderSettings: Equatable, Codable {
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     var directLight = DirectLightMode.initial
     var restir = RestirSettings()
+    var megaLights = MegaLightsSettings()
     var restirGI = RestirGISettings()
     var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
     var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):

@@ -204,6 +204,39 @@ final class RestirTargets {
     }
 }
 
+/// MegaLights' state (Shaders/MegaLights.metal): the tiles' light lists, their visible-light hashes (ping-ponged: last
+/// frame's steer this frame's picks) and the direct specular light the reflection pass adds.
+final class MegaLightsTargets {
+    let width: Int, height: Int, capacity: Int
+    let tilesX: Int, tilesY: Int
+    let lists: MTLBuffer          // per tile: count, lights reached, then `capacity` sorted 16-bit light indices
+    let guide: [MTLBuffer]        // [2] per tile: 128 bits, the lights it found visible
+    let specular: MTLTexture      // direct specular light (rgba16F)
+
+    init(device: MTLDevice, width: Int, height: Int, capacity: Int) throws {
+        self.width = width
+        self.height = height
+        self.capacity = capacity
+        tilesX = (width + GPUMegaLightsParams.tile - 1) / GPUMegaLightsParams.tile
+        tilesY = (height + GPUMegaLightsParams.tile - 1) / GPUMegaLightsParams.tile
+        func buffer(_ label: String, _ length: Int) throws -> MTLBuffer {
+            guard let b = device.makeBuffer(length: length, options: .storageModePrivate) else {
+                throw RendererError.resourceCreation("buffer \(label)")
+            }
+            b.label = label
+            return b
+        }
+        lists = try buffer("megalights lists", tilesX * tilesY * (capacity + 2) * MemoryLayout<UInt16>.stride)
+        guide = [try buffer("megalights guide0", tilesX * tilesY * 16), try buffer("megalights guide1", tilesX * tilesY * 16)]
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture megalights specular") }
+        t.label = "megalights specular"
+        specular = t
+    }
+}
+
 /// ReSTIR GI's per-pixel state (Shaders/RestirGI.metal). A reservoir is two textures: rgba32F (x_s, W) and rgba32Uint
 /// (normal, light, M | age | flags).
 final class RestirGITargets {
@@ -375,6 +408,12 @@ final class Renderer: NSObject {
     private var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
     private var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
     private var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
+    private var megaLightsGrid: MegaLightsTargets?
+    private var lightTree: LightTree?               // MegaLights' far field: built on its first frame in a scene
+    private var lightTreeRefitFrame: UInt32 = 0
+    private var lightTreeBuffers: [MTLBuffer?] = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
+    private var lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)   // what each slot's holds
+    private var megaLightsWritten = false           // last frame's MegaLights pass left its tiles' visible-light hashes
     private var restirGIGrid: RestirGITargets?
     private var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
     private var instanceAS: [MTLAccelerationStructure] {
@@ -737,6 +776,7 @@ final class Renderer: NSObject {
                                 count: scene.lights.count)
         stageComplete = false
         restirWritten = false
+        megaLightsWritten = false
         restirGIWritten = false
         instanceASBuilt = []
         textureStreamer = prepared?.streamer
@@ -840,6 +880,7 @@ final class Renderer: NSObject {
             // At night the tiles' lights are other ones: what the pixels kept of the lights (a reservoir names its
             // light by its place in the scene's table) is of the scene before.
             restirWritten = false
+            megaLightsWritten = false
             reservoirsWritten = false
         }
         if resetCamera {
@@ -1278,6 +1319,8 @@ final class Renderer: NSObject {
     /// Per slot: the lights, then the light table.
     private func createLightBuffers() throws {
         _ = scene.takeLightTrianglesDirty()   // written here as they are now
+        lightTree = nil                       // the scene's lights: made again from them when MegaLights first runs
+        lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)
         lightTrianglesPending = [Range<Int>?](repeating: nil, count: Renderer.maxFramesInFlight)
         for _ in 0..<Renderer.maxFramesInFlight {
             guard let lights = device.makeBuffer(length: max(scene.lights.count * MemoryLayout<GPULight>.stride + scene.lightTable.byteCount, 64),
@@ -1401,10 +1444,11 @@ final class Renderer: NSObject {
         u.flags = (historyValid ? UniformFlags.historyValid : 0) | (denoiserOn ? UniformFlags.denoise : 0)
         if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
         if usesSpecular { u.flags |= UniformFlags.specular }
-        // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). ReSTIR: restir kernels.
+        // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). ReSTIR and MegaLights:
+        // their own kernels.
         switch directMode {
         case .exact: u.flags |= UniformFlags.allLights
-        case .restir: u.flags |= UniformFlags.restir
+        case .restir, .megalights: u.flags |= UniformFlags.restir
         default: break
         }
         if settings.lightMaps && giMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
@@ -1512,7 +1556,7 @@ final class Renderer: NSObject {
         stages.head = headStages(plan, targets: t)
         stages.gi = giStages(plan, targets: t)
         (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
-        stages.restir = restirStages(plan, targets: t)
+        stages.restir = restirStages(plan, targets: t) + megaLightsStages(plan, targets: t)
         stages.denoise = sampledLightStages(plan, targets: t)
         stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
         stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
@@ -1764,6 +1808,11 @@ final class Renderer: NSObject {
         var restirGrid: RestirTargets?
         var restirHistory = false
         var restirSettings = RestirSettings()   // references: unbiased initial sampling alone
+        var megaLights = false                  // MegaLights lights the scene...
+        var megaLightsGrid: MegaLightsTargets?  // ...with these tiles (nil if they couldn't be allocated: no stages)...
+        var megaLightsHistory = false           // ...whose visible-light hashes the last frame filled
+        var megaLightsSettings = MegaLightsSettings()
+        var lightTree: (buffer: MTLBuffer, nodes: Int)?   // its far field, this frame's
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
         var lightMaps = false
         var specular = false                    // reflections (glTF specular materials)
@@ -1801,6 +1850,7 @@ final class Renderer: NSObject {
         p.giMode = activeGIMode
         let directMode = activeDirectMode
         p.restir = directMode == .restir
+        p.megaLights = directMode == .megalights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
         p.history = historyValid
@@ -1862,21 +1912,22 @@ final class Renderer: NSObject {
         //   ReSTIR with the shadow denoiser (split): its visibility goes through the visibility filter, its unshadowed
         //   light through SVGF, and the composite multiplies them.
         p.restirSplit = p.restir && shadowDenoiserOn && settings.restir.splitVisibility
-        p.shadowDenoiser = shadowDenoiserOn && (!p.restir || p.restirSplit)
+        p.shadowDenoiser = shadowDenoiserOn && !p.megaLights && (!p.restir || p.restirSplit)
         //   Every kernel of the frame is told, not only the composite: with the shadow denoiser the composite adds the
         //   analytic lights' direct specular (exact GGX x visibility), so the reflection pass must not add its own sample.
         if p.shadowDenoiser { p.uniforms.flags |= UniformFlags.shadowDenoiser }
         p.separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled || p.shadowDenoiser
         let passCount = settings.denoiser.passes(for: p.giMode)
-        p.directPasses = p.restir ? DenoiserSettings.passRange.clamp(settings.restir.denoisePasses) : passCount
+        p.directPasses = p.restir ? DenoiserSettings.passRange.clamp(settings.restir.denoisePasses)
+            : p.megaLights ? DenoiserSettings.passRange.clamp(settings.megaLights.denoisePasses) : passCount
         p.indirectPasses = p.restirGI ? DenoiserSettings.passRange.clamp(settings.restirGI.denoisePasses) : techniqueGI ? 1 : passCount
         // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
-        // of its own; otherwise it joins the direct light. (ReSTIR samples their triangles from the light table.)
-        p.meshLights = !scene.meshLights.isEmpty && !p.restir
+        // of its own; otherwise it joins the direct light. (ReSTIR and MegaLights sample their triangles themselves.)
+        p.meshLights = !scene.meshLights.isEmpty && !p.restir && !p.megaLights
         p.denoiseMeshLights = p.meshLights && p.shadowDenoiser
 
         // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
-        p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir
+        p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir && !p.megaLights
         p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
         p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
 
@@ -1890,6 +1941,16 @@ final class Renderer: NSObject {
             p.restirGrid = restirTargets(width: width, height: height, chains: RestirSettings.chainRange.clamp(p.restirSettings.chains))
         }
         p.restirHistory = restirWritten       // read after restirTargets, as above
+
+        // MegaLights. Its sampling is unbiased as it is: references keep it (but its firefly clamp).
+        p.megaLightsSettings = settings.megaLights
+        if p.megaLights {
+            let options = MegaLightsSettings.capacityOptions
+            let capacity = options.first { $0 >= settings.megaLights.capacity } ?? options.last!
+            p.megaLightsGrid = megaLightsTargets(width: width, height: height, capacity: capacity)
+            p.lightTree = lightTreeBuffer(slot: slot)
+        }
+        p.megaLightsHistory = megaLightsWritten   // read after megaLightsTargets: new hashes hold nothing
 
         if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
         p.accumCount = accumCount             // read after accumulationTextures: new textures start a new average
@@ -1925,6 +1986,7 @@ final class Renderer: NSObject {
     private func finishFrame(_ plan: FramePlan) {
         restirGIWritten = plan.restirGIGrid != nil
         restirWritten = plan.restirGrid != nil
+        megaLightsWritten = plan.megaLightsGrid != nil
         reservoirsWritten = plan.lightReuse
         if plan.accumulation != nil { accumCount += 1 }
         if plan.fog != nil && plan.fogReference == nil {   // the froxel grid was written
@@ -1952,7 +2014,7 @@ final class Renderer: NSObject {
         var lightGrid: [ComputeStage] = []           // 1a. the light grid, before everything that samples lights
         var head: [ComputeStage] = []                // 1b, 2. light maps, the trace
         var gi: [ComputeStage] = []                  // 2b. radiance cascades or ReSTIR GI (they write t.indirect)
-        var restir: [ComputeStage] = []              // 2e. ReSTIR DI
+        var restir: [ComputeStage] = []              // 2e. ReSTIR DI or MegaLights
         var reflections: [ComputeStage] = []         // 2d. after the GI (they read its result)
         var fog: [ComputeStage] = []                 // 3d. first of the stages below
         var denoise: [ComputeStage] = []             // 2c, 3. sampled direct light, the denoisers
@@ -2277,7 +2339,7 @@ final class Renderer: NSObject {
                                   composite: inout CompositeInputs) -> (trace: [ComputeStage], denoise: [ComputeStage]) {
         guard plan.specular else { return ([], []) }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
-        let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular
+        let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular ?? plan.megaLightsGrid?.specular
         let trace = [ComputeStage(pass: "reflections") { [self] enc in
             bind(enc, .reflection, uniforms, pass: fogParams.reflectionPassFlags, sceneSlot: slot)
             var fp = fogParams
@@ -2358,6 +2420,46 @@ final class Renderer: NSObject {
             })
         }
         return stages
+    }
+
+    /// 2e. MegaLights: after the trace (its G-buffer), before the reflections (they add its direct specular) and the
+    /// denoiser. The tiles' light lists, then each pixel's samples, shaded.
+    private func megaLightsStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        guard let mg = plan.megaLightsGrid else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
+        let m = plan.megaLightsSettings
+        let flags: UInt32 = (m.guiding && plan.megaLightsHistory ? GPUMegaLightsParams.guideValid : 0)
+            | (m.partition ? GPUMegaLightsParams.partition : 0)
+        // The firefly clamp at 4 x the built-in one, as ReSTIR's; none for references.
+        let clamp: Float = plan.accumulating ? 0 : 4 * 10
+        // The cutoff is of exposed light: what it changes on screen doesn't depend on the scene's brightness.
+        let cutoff = MegaLightsSettings.cutoffRange.clamp(m.cutoff) / max(uniforms.post.x, 1e-6)
+        let samples = MegaLightsSettings.sampleRange.clamp(m.samples)
+        let treeSamples = min(MegaLightsSettings.treeSampleRange.clamp(m.treeSamples), samples)
+        let tree = plan.lightTree
+        let params = GPUMegaLightsParams(config: SIMD4(UInt32(samples - treeSamples), UInt32(mg.capacity), flags, UInt32(mg.tilesX)),
+                                         tree: SIMD4(UInt32(treeSamples), UInt32(tree?.nodes ?? 0), 0, 0),
+                                         tuning: SIMD4(cutoff, MegaLightsSettings.guideWeightRange.clamp(m.guideWeight), clamp, 0))
+        let guide = mg.guide[cur], prevGuide = mg.guide[prev]
+        return [ComputeStage(pass: "megalights") { [self] enc in
+            var p = params
+            bind(enc, .megaLightsCull, uniforms, sceneSlot: slot)
+            enc.setBytes(&p, length: MemoryLayout<GPUMegaLightsParams>.stride, index: 9)
+            enc.setBuffer(mg.lists, offset: 0, index: 10)
+            enc.setBuffer(guide, offset: 0, index: 13)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur]])
+            dispatch(enc, .megaLightsCull, width: mg.tilesX * GPUMegaLightsParams.tile, height: mg.tilesY * GPUMegaLightsParams.tile)
+        }, ComputeStage(pass: "megalights") { [self] enc in
+            var p = params
+            bind(enc, .megaLightsSample, uniforms, pass: p.config.z, sceneSlot: slot)
+            enc.setBytes(&p, length: MemoryLayout<GPUMegaLightsParams>.stride, index: 9)
+            enc.setBuffer(mg.lists, offset: 0, index: 10)
+            enc.setBuffer(guide, offset: 0, index: 13)
+            enc.setBuffer(prevGuide, offset: 0, index: 14)
+            enc.setBuffer(tree?.buffer ?? prevGuide, offset: 0, index: 15)   // (no tree: no lights but suns, not read)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.direct, mg.specular])
+            dispatch(enc, .megaLightsSample, width: size.width, height: size.height)
+        }]
     }
 
     /// 2c. Direct light that is sampled per pixel: one light per group with more than 4 lights (manyLightsKernel), and
@@ -2459,6 +2561,12 @@ final class Renderer: NSObject {
         restirUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(settings.restir.denoiseSigma)
         restirUniforms.denoise.w = max(settings.restir.varianceBoost, 1)
         restirUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(settings.restir.denoiseHistory)
+        // MegaLights' direct light: the same, with its own settings.
+        let ml = settings.megaLights
+        var megaLightsUniforms = plan.uniforms
+        megaLightsUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(ml.denoiseSigma)
+        megaLightsUniforms.denoise.w = max(ml.varianceBoost, 1)
+        megaLightsUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(ml.denoiseHistory)
         // ReSTIR GI's indirect light: the same, with its own settings.
         let rgi = settings.restirGI
         var restirGIUniforms = plan.uniforms
@@ -2468,7 +2576,8 @@ final class Renderer: NSObject {
         restirGIUniforms.denoise.z = DenoiserSettings.antiLagRange.clamp(rgi.antiLag)
         func signal(_ noisy: [MTLTexture], _ d: DenoiseTargets, _ passes: Int) -> DenoiseSignal {
             let restirs = plan.restir && d === (plan.restirSplit ? t.denoise[3] : t.denoise[0])
-            let uniforms = plan.restirGI && d === t.denoise[1] ? restirGIUniforms : restirs ? restirUniforms : plan.uniforms
+            let uniforms = plan.restirGI && d === t.denoise[1] ? restirGIUniforms : restirs ? restirUniforms
+                : plan.megaLights && d === t.denoise[0] ? megaLightsUniforms : plan.uniforms
             return DenoiseSignal(noisy: noisy, targets: d, passes: passes, uniforms: uniforms)
         }
         var signals: [DenoiseSignal] = []
@@ -2721,6 +2830,7 @@ final class Renderer: NSObject {
     private func resetGIState() {
         historyValid = false
         restirWritten = false
+        megaLightsWritten = false
         restirGIWritten = false
         skyRefreshed = nil
         fogLastFrame = nil
@@ -2741,7 +2851,7 @@ final class Renderer: NSObject {
         prevCamera = camera
         accumulating = c.accumulate
         referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil
-        referenceDirectMode = c.accumulate && (c.directLight == .exact || c.directLight == .restir) ? c.directLight : nil
+        referenceDirectMode = c.accumulate && [.exact, .restir, .megalights].contains(c.directLight) ? c.directLight : nil
         accumCount = 0
         supersampling = c.accumulate && c.supersample
         colorAccumCount = 0
@@ -2805,6 +2915,8 @@ final class Renderer: NSObject {
         }
         switch settings.directLight {
         case .auto: return scene.usesLightTable ? .restir : .grouped   // ReSTIR wins above ~256 lights (METALRENDERER_BENCH=restir)
+        case .megalights where scene.lights.count > MegaLightsSettings.maxLights
+                            || scene.lights.lazy.filter({ $0.kind.isSun }).count > LightTable.maxSuns: return .restir
         case let mode: return mode
         }
     }
@@ -2822,6 +2934,37 @@ final class Renderer: NSObject {
         restirGrid = try? RestirTargets(device: device, width: width, height: height, chains: chains)
         restirWritten = false
         return restirGrid
+    }
+    /// The light tree in this frame's slot: built from this frame's light records on MegaLights' first frame in a scene,
+    /// refit once a frame for the lights that change, and copied into the slot's buffer when that one is behind.
+    private func lightTreeBuffer(slot: Int) -> (buffer: MTLBuffer, nodes: Int)? {
+        if lightTree == nil {
+            lightTree = LightTree(lights: lightStage)
+        } else if lightTreeRefitFrame != frameIndex {
+            let changes = scene.lightTreeChanges
+            lightTree?.refit(lights: lightStage, moved: changes.moved, scaled: changes.scaled)
+        }
+        lightTreeRefitFrame = frameIndex
+        guard let tree = lightTree, !tree.nodes.isEmpty else { return nil }
+        if (lightTreeBuffers[slot]?.length ?? 0) < tree.byteCount {
+            lightTreeBuffers[slot] = device.makeBuffer(length: tree.byteCount, options: .storageModeShared)
+            lightTreeBuffers[slot]?.label = "light tree"
+            lightTreeVersions[slot] = -1
+        }
+        guard let buffer = lightTreeBuffers[slot] else { return nil }
+        if lightTreeVersions[slot] != tree.version {
+            let nodeBytes = tree.nodes.count * MemoryLayout<GPULightTreeNode>.stride
+            tree.nodes.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            tree.paths.withUnsafeBytes { buffer.contents().advanced(by: nodeBytes).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            lightTreeVersions[slot] = tree.version
+        }
+        return (buffer, tree.nodes.count)
+    }
+    private func megaLightsTargets(width: Int, height: Int, capacity: Int) -> MegaLightsTargets? {
+        if let m = megaLightsGrid, m.width == width, m.height == height, m.capacity == capacity { return m }
+        megaLightsGrid = try? MegaLightsTargets(device: device, width: width, height: height, capacity: capacity)
+        megaLightsWritten = false
+        return megaLightsGrid
     }
     private static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
@@ -2851,6 +2994,7 @@ final class Renderer: NSObject {
         sizes[Kernel.trace.rawValue] = MTLSize(width: 16, height: 8, depth: 1)
         sizes[Kernel.atrous.rawValue] = MTLSize(width: 16, height: 16, depth: 1)
         sizes[Kernel.regirBuild.rawValue] = MTLSize(width: 64, height: 1, depth: 1)
+        sizes[Kernel.megaLightsCull.rawValue] = MTLSize(width: 16, height: 16, depth: 1)   // its tile: leave it
         for item in (ProcessInfo.processInfo.environment["METALRENDERER_TG"] ?? "").split(separator: ",") {
             let kv = item.split(separator: "="), wh = kv.count == 2 ? kv[1].split(separator: "x").compactMap { Int($0) } : []
             let name = (kv.first ?? "").lowercased().filter { $0 != " " }

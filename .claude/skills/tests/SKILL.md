@@ -53,6 +53,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `GLTFLoader` | GLTFLoaderTests |
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
+| `LightTree.swift` | LightTreeTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |

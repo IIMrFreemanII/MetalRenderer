@@ -25,7 +25,7 @@ for d in runs:
         lr = luminance(r)
         unclipped = r.max(axis=2) < 0.98
         bright = unclipped & (lr >= np.quantile(lr[unclipped], 0.98))
-        for path in ("shadow-denoiser", "svgf", "restir"):
+        for path in ("shadow-denoiser", "svgf", "restir", "megalights"):
             img = capture(d, f"{scene}-{path}")
             if img is None: continue
             prev = capture(d, f"{scene}-{path}-prev")
