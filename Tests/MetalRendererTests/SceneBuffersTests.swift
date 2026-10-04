@@ -384,5 +384,70 @@ final class SceneBuffersTests: XCTestCase {
         b.seed = 7
         XCTAssertFalse(a.isSameWorld(as: b))
         XCTAssertFalse(SceneSettings(kind: .forest).isSameWorld(as: SceneSettings(kind: .forest)))
+        // The night is a world of its own.
+        b = a
+        b.kind = .worldNight
+        XCTAssertFalse(a.isSameWorld(as: b))
+        a.kind = .worldNight
+        XCTAssertTrue(a.isSameWorld(as: b))
+    }
+
+    /// A borrowed mesh of several materials, one of them emissive, with the light that came with it (an open world's
+    /// tile at night): the scene samples it as its own emissive instances, with the material the light names.
+    func testABorrowedMeshComesWithItsLight() throws {
+        func lit(firstEmits: Bool) -> Scene {
+            Scene(SceneSettings(kind: .cornell)) { scene in
+                let own = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+                scene.addInstance(scene.addMesh(self.quad(0)), own, matrix_identity_float4x4)
+                // The borrowed mesh's materials: its first triangle has the first, the others the second.
+                let first = firstEmits ? scene.addMaterial(albedo: .zero, emission: [1, 1, 1]) : scene.addMaterial(albedo: [0.5, 0.5, 0.5])
+                _ = scene.addMaterial(albedo: .zero, emission: [2, 4, 8])
+                let positions: [SIMD3<Float>] = [[0, 5, 0], [2, 5, 0], [2, 5, 2], [0, 5, 2], [1, 6, 1]]
+                let borrowed = Scene.BorrowedMesh(positions: .made(positions), normals: .made([SIMD3<Float>](repeating: [0, 1, 0], count: 5)),
+                                                  uvs: .made((0..<5).map { SIMD2(Float($0), 0.5) }),
+                                                  indices: .made([0, 1, 2, 0, 2, 3, 0, 1, 4]), materials: .made([0, 1, 1]))
+                let instance = scene.addInstance(scene.addMesh(borrowing: borrowed, bounds: AABB(lo: [0, 5, 0], hi: [2, 6, 2]), name: "a tile's chunk"),
+                                                 first, translate([10, 0, 0]))
+                // Its light, made as a tile makes its own: the two triangles of the second material, after a stranger.
+                var draft = Scene.MeshLightDraft()
+                draft.add(positions[0], positions[2], positions[3], emission: [2, 4, 8])
+                draft.add(positions[0], positions[1], positions[4], emission: [2, 4, 8])
+                var light = draft.finish(instance: instance, firstTriangle: 0)!
+                light.materialOffset = 1
+                let stranger = GPUEmissiveTriangle(v0: .zero, e1: .zero, e2: .zero, uv12: .zero)
+                scene.addMeshLight(Scene.BorrowedLight(light: light, triangles: .made([stranger] + draft.triangles), range: 1..<3))
+            }
+        }
+        for firstEmits in [false, true] {
+            let scene = lit(firstEmits: firstEmits)
+            // The scene's own emissive instance, then the borrowed mesh's light: no other of the borrowed mesh, whose
+            // arrays the scene doesn't have, though its instance's material may emit.
+            XCTAssertEqual(scene.meshLights.count, 2)
+            let light = scene.meshLights[1]
+            XCTAssertEqual([light.instance, light.firstTriangle, light.triangleCount, light.materialOffset], [1, 2, 2, 1])
+            XCTAssertEqual(scene.emissiveTriangles.count, 4)
+            let areas: [Float] = [2, Float(2).squareRoot()]
+            XCTAssertEqual(SIMD3(scene.emissiveTriangles[2].v0.x, scene.emissiveTriangles[2].v0.y, scene.emissiveTriangles[2].v0.z), SIMD3(0, 5, 0))
+            XCTAssertEqual(scene.emissiveTriangles[2].v0.w, areas[0] / (areas[0] + areas[1]), accuracy: 1e-5)
+            XCTAssertEqual(scene.emissiveTriangles[3].v0.w, 1)
+            XCTAssertEqual(scene.emissiveTriangles[3].e2, SIMD4(1, 1, 1, 0))
+            XCTAssertLessThan(distance(light.power, SIMD3<Float>(2, 4, 8) * (areas[0] + areas[1])), 1e-4)
+            // Its material is a light's: GI doesn't count what it emits again. The mesh's other material isn't.
+            let material = scene.instances[1].material
+            XCTAssertEqual(scene.materials[material + 1].params.z, 1)
+            XCTAssertEqual(scene.materials[material].params.z, 0)
+            // The light's record names the material, and the table has its triangles.
+            var records = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero), count: scene.lights.count)
+            records.withUnsafeMutableBufferPointer { scene.writeLights(into: $0, all: true) }
+            let record = try XCTUnwrap(records.last)
+            XCTAssertEqual(record.axis.w, 1)
+            XCTAssertEqual(record.params.w.bitPattern, 1)
+            XCTAssertEqual(record.params.x.bitPattern, 2)
+            XCTAssertEqual(record.positionRadius.x, 11, accuracy: 1e-4)
+            XCTAssertEqual(records[records.count - 2].axis.w, 0, "the scene's own: its instance's material")
+            XCTAssertEqual(scene.lightTable.triangles.count, 4)
+            XCTAssertEqual(scene.lightTable.triangles[2].light, UInt32(scene.lights.count - 1))
+            XCTAssertEqual(scene.lightTable.triangles[3].radianceLum, 2 * 0.2126 + 4 * 0.7152 + 8 * 0.0722, accuracy: 1e-4)
+        }
     }
 }

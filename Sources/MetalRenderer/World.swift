@@ -21,6 +21,9 @@ struct World {
     var undergrowth: Float = 1
     /// The share of the 4 km cells with a city in them. (The cell around the origin always has one.)
     var cityShare: Float = 0.5
+    /// Night: the cities' street lamps are on, and `lit` of their windows have a light on behind them.
+    var night = false
+    var lit: Float = 0.35
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
     static let version = 3
@@ -33,6 +36,8 @@ struct World {
     /// Kerb to kerb, and from one block's corner to the next's: multiples of 4 m, so the roads lie on the ground's
     /// cells at levels 0 and 1.
     static let blockSize = SIMD2<Float>(72, 56), blockPitch = SIMD2<Float>(84, 68)
+    /// What the underside of a street lamp's head emits at night.
+    static let lampEmission = SIMD3<Float>(1.0, 0.78, 0.5) * 140
     /// How far beyond a city's last block its level ground rises back into the hills.
     static let cityBlend: Float = 300
 
@@ -268,12 +273,25 @@ struct World {
         var origin: SIMD2<Float>
     }
 
+    /// Whether `city` can have blocks in the square from (x0, z0), `side` across.
+    private func reaches(_ city: City, x0: Double, z0: Double, side: Double) -> Bool {
+        let lo = SIMD2(x0 - city.center.x, z0 - city.center.y), reach = Double(city.radius) + 64
+        return lo.x < reach && lo.y < reach && lo.x + side > -reach && lo.y + side > -reach
+    }
+
+    /// Whether the square from (x0, z0), `side` across, is one whose night is another thing than its day: where a
+    /// city can have blocks.
+    func hasNight(x0: Double, z0: Double, side: Double) -> Bool {
+        guard let city = city(near: x0 + side / 2, z0 + side / 2) else { return false }
+        return reaches(city, x0: x0, z0: z0, side: side)
+    }
+
     /// The blocks whose middle is in the square from (x0, z0), `side` across, in the order of their rows.
     func blocks(x0: Double, z0: Double, side: Double) -> (city: City, blocks: [Block])? {
         guard let city = city(near: x0 + side / 2, z0 + side / 2) else { return nil }
         let pitch = World.blockPitch, size = World.blockSize
-        let lo = SIMD2(x0 - city.center.x, z0 - city.center.y), reach = Double(city.radius) + 64
-        guard lo.x < reach, lo.y < reach, lo.x + side > -reach, lo.y + side > -reach else { return (city, []) }
+        let lo = SIMD2(x0 - city.center.x, z0 - city.center.y)
+        guard reaches(city, x0: x0, z0: z0, side: side) else { return (city, []) }
         var out: [Block] = []
         let i0 = Int((lo.x / Double(pitch.x)).rounded(.down)) - 1, i1 = Int(((lo.x + side) / Double(pitch.x)).rounded(.down)) + 1
         let j0 = Int((lo.y / Double(pitch.y)).rounded(.down)) - 1, j1 = Int(((lo.y + side) / Double(pitch.y)).rounded(.down)) + 1

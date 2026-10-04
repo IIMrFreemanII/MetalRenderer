@@ -12,7 +12,7 @@ extension Benchmark {
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
-        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd, "city": city, "world": world,
+        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -292,7 +292,7 @@ extension Benchmark {
     /// `METALRENDERER_SCENE=seed=...,trees=...,undergrowth=...` changes the world.
     private static func world() -> [Config] {
         let settings = SceneSettings(kind: .world)
-        let w = World(seed: UInt64(settings.seed)), home = w.anchorTile, begin = w.start, city = w.city(cell: SIMD2(0, 0))!
+        let w = worldOfRun(), home = w.anchorTile, begin = w.start, city = w.city(cell: SIMD2(0, 0))!
         let anchor = WorldTile.origin(home.x, home.y)
         func at(_ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
             var c = Camera()
@@ -318,6 +318,39 @@ extension Benchmark {
             base.named("world moved").with { $0.scene.worldAnchor = home &+ SIMD2(8, -8) },
             // ...and a scene 50 km out, around its own origin.
             base.named("world far").with { $0.scene.worldTile = home &+ SIMD2(160, -120); $0.scene.worldAnchor = home &+ SIMD2(160, -120) },
+        ]
+    }
+
+    /// The world the run's scenes are of (`METALRENDERER_SCENE=seed=...`), for placing the cameras in it.
+    private static func worldOfRun() -> World {
+        var s = RenderSettings()
+        SettingsEnv.apply(.scene, to: &s, from: env)
+        return World(seed: UInt64(max(s.scene.seed, 0)))
+    }
+
+    /// The open world at night, each view in a scene made around its own tile: a street of the first city, the city
+    /// from above and from 2 km out (where its buildings are boxes with their lit windows on them), and a drive of
+    /// 600 m down that street at 30 m/s, which crosses tiles: the scene's lights are other ones after each.
+    /// `METALRENDERER_SHOT_SWAP=<k>` ends the drive `k` frames after its first crossing.
+    private static func worldNight() -> [Config] {
+        let settings = SceneSettings(kind: .worldNight)
+        let w = worldOfRun(), home = w.anchorTile, city = w.city(cell: SIMD2(0, 0))!
+        let anchor = WorldTile.origin(home.x, home.y), side = Double(World.tileSize)
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: settings).still().frames(60)
+        func view(_ name: String, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Config {
+            var c = Camera()
+            c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
+            c.yaw = yaw
+            c.pitch = pitch
+            return base.named(name).from(c).with { $0.scene.worldTile = SIMD2(Int((x / side).rounded(.down)), Int((z / side).rounded(.down))) }
+        }
+        let cx = city.center.x, cz = city.center.y, r = Double(city.radius)
+        return [
+            view("night street", cx, cz + 40, up: 1.7, pitch: 0.12),
+            view("night crossing", cx + 30, cz + 3, up: 1.7, yaw: 0.9, pitch: 0.1),
+            view("night aerial", cx, cz + r + 150, up: 180, pitch: -0.3),
+            view("night far", cx, cz + r + 1700, up: 60, pitch: 0.0),
+            view("night drive", cx, cz + r - 20, up: 1.7, pitch: 0.08).moving().flying([0, 0, -30]).frames(1200),
         ]
     }
 

@@ -232,4 +232,81 @@ final class WorldTests: XCTestCase {
         }
         assertSame(tiles[0], WorldTile.build(world, x: tx, z: tz, level: 0, flora: flora), "a city tile made again")
     }
+
+    /// At night a city's tile is another one, with its lights; the country's is the day's.
+    func testNightTiles() throws {
+        var night = world
+        night.night = true
+        let city = try XCTUnwrap(world.city(cell: SIMD2(0, 0)))
+        let side = Double(World.tileSize)
+        let tx = Int((city.center.x / side).rounded(.down)), tz = Int((city.center.y / side).rounded(.down))
+
+        // Far from the city: the same tile, the same file.
+        XCTAssertFalse(night.hasNight(x0: Double(tx + 12) * side, z0: Double(tz) * side, side: side))
+        XCTAssertEqual(WorldTile.url(night, x: tx + 12, z: tz, level: 1), WorldTile.url(world, x: tx + 12, z: tz, level: 1))
+        XCTAssertEqual(WorldTile.key(night, x: tx + 12, z: tz, level: 1), WorldTile.key(world, x: tx + 12, z: tz, level: 1))
+        let country = WorldTile.build(night, x: tx + 12, z: tz, level: 1, flora: flora)
+        assertSame(country, WorldTile.build(world, x: tx + 12, z: tz, level: 1, flora: flora), "the country at night")
+        XCTAssertTrue(country.lights.isEmpty)
+        // In it: another file, and another again for another share of lit windows.
+        XCTAssertNotEqual(WorldTile.url(night, x: tx, z: tz, level: 0), WorldTile.url(world, x: tx, z: tz, level: 0))
+        XCTAssertNotEqual(WorldTile.key(night, x: tx, z: tz, level: 0), WorldTile.key(world, x: tx, z: tz, level: 0))
+        var brighter = night
+        brighter.lit = 0.6
+        XCTAssertNotEqual(WorldTile.key(night, x: tx, z: tz, level: 0), WorldTile.key(brighter, x: tx, z: tz, level: 0))
+
+        func emits(_ m: GPUMaterial) -> Bool { m.emission.x + m.emission.y + m.emission.z > 0 }
+        func isLamp(_ m: GPUMaterial) -> Bool { SIMD3(m.emission.x, m.emission.y, m.emission.z) == World.lampEmission }
+        var emitting: [Int] = []
+        for level in 0..<World.levels {
+            let day = WorldTile.build(world, x: tx, z: tz, level: level, flora: flora)
+            XCTAssertTrue(day.lights.isEmpty && day.emissive.count == 0)
+            XCTAssertFalse(day.chunks.contains { $0.materials.contains(where: emits) }, "nothing glows by day")
+
+            let tile = WorldTile.build(night, x: tx, z: tz, level: level, flora: flora)
+            XCTAssertFalse(tile.lights.isEmpty, "level \(level)")
+            // Street lamps to level 1; lit windows at every level (at 2, on the buildings' boxes).
+            let materials = tile.lights.map { tile.chunks[Int($0.chunk)].materials[Int($0.material)] }
+            XCTAssertEqual(materials.contains(where: isLamp), level <= 1, "level \(level)")
+            XCTAssertTrue(materials.contains { emits($0) && !isLamp($0) }, "level \(level)")
+            // A light is the triangles of its chunk that have its material, each once, one light after the other.
+            var next = 0
+            for light in tile.lights {
+                let chunk = tile.chunks[Int(light.chunk)], material = chunk.materials[Int(light.material)]
+                XCTAssertFalse(chunk.glass)
+                XCTAssertTrue(emits(material))
+                XCTAssertEqual(Int(light.first), next)
+                next += Int(light.count)
+                XCTAssertEqual(Int(light.count), chunk.triangleMaterials.array.filter { $0 == UInt8(light.material) }.count)
+                let own = tile.emissive.array[Int(light.first)..<Int(light.first + light.count)]
+                XCTAssertEqual(own.last?.v0.w, 1)
+                XCTAssertTrue(zip(own, own.dropFirst()).allSatisfy { $0.v0.w <= $1.v0.w }, "a running share of the light's power")
+                let area = own.reduce(Float(0)) { $0 + length(cross(SIMD3($1.e1.x, $1.e1.y, $1.e1.z), SIMD3($1.e2.x, $1.e2.y, $1.e2.z))) / 2 }
+                XCTAssertEqual(light.power.x, material.emission.x * area, accuracy: 1e-3 * light.power.x)
+                XCTAssertGreaterThan(light.center.w, 0)
+                for t in own {
+                    XCTAssertLessThanOrEqual(distance(SIMD3(t.v0.x, t.v0.y, t.v0.z), SIMD3(light.center.x, light.center.y, light.center.z)),
+                                             light.center.w * 1.001)
+                }
+            }
+            XCTAssertEqual(next, tile.emissive.count)
+            emitting.append(next)
+
+            // And its file has them.
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("WorldTests-\(UUID().uuidString).tile")
+            defer { try? FileManager.default.removeItem(at: url) }
+            try tile.write(to: url, key: "a night")
+            let stored = try XCTUnwrap(WorldTile(url: url, key: "a night", x: tx, z: tz, level: level))
+            assertSame(tile, stored, "from its file")
+            XCTAssertEqual(bytes(stored.lights), bytes(tile.lights))
+            XCTAssertEqual(stored.emissive.data, tile.emissive.data)
+        }
+
+        // The share of lit windows is the world's: with none, the lamps and the shops are all that is on.
+        var dark = night
+        dark.lit = 0
+        let few = WorldTile.build(dark, x: tx, z: tz, level: 0, flora: flora)
+        XCTAssertTrue(few.lights.contains { isLamp(few.chunks[Int($0.chunk)].materials[Int($0.material)]) })
+        XCTAssertLessThan(few.emissive.count, emitting[0] / 2)
+    }
 }

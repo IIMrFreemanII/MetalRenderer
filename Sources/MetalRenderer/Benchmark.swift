@@ -222,7 +222,15 @@ final class Benchmark {
     var current: Config { configs[configIndex] }
     var isFinished: Bool { configIndex >= configs.count }
     var isMeasuring: Bool { frameInConfig >= warmupFrames }
-    private var framesLeftInConfig: Int { warmupFrames + (current.frames ?? measuredFrames) - frameInConfig }
+    private var framesInConfig: Int { cut ?? (warmupFrames + (current.frames ?? measuredFrames)) }
+    private var framesLeftInConfig: Int { framesInConfig - frameInConfig }
+    /// `METALRENDERER_SHOT_SWAP=<k>`: a setting ends, and its picture is taken, `k` frames after the open world's
+    /// scene is first made around another tile (0: the first frame of the new scene), to see what a crossing shows.
+    static let swapShot = ProcessInfo.processInfo.environment["METALRENDERER_SHOT_SWAP"].flatMap { Int($0) }
+    private var cut: Int?
+    func noteSwap() {
+        if let k = Benchmark.swapShot, cut == nil { cut = min(frameInConfig + max(k, 0) + 1, framesInConfig) }
+    }
     var shouldCapture: Bool { framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2) }
 
     func noteDraw(resolution: String) {
@@ -232,7 +240,8 @@ final class Benchmark {
     /// Returns true when the config changed (the caller should reset its animation clock).
     func advance() -> Bool {
         frameInConfig += 1
-        guard frameInConfig >= warmupFrames + (current.frames ?? measuredFrames) else { return false }
+        guard frameInConfig >= framesInConfig else { return false }
+        cut = nil
         frameInConfig = 0
         configIndex += 1
         return true

@@ -58,6 +58,10 @@ extension World {
 /// camera moves into another tile, the renderer makes the scene around that one (`SceneSettings.worldTile`), in the
 /// background, from the tiles this one already has and the few that are new. A tile's trees are a group of instances
 /// (`Scene.InstanceGroup`), which the renderer keeps from one scene to the next as it keeps the tile's meshes.
+///
+/// At night (`SceneKind.worldNight`) the cities' tiles are their night's, and the scene's lights are the nearer
+/// tiles' own (`WorldTile.lights`): everything lit in the tiles next to the camera, the street lamps of the ones
+/// beyond them. Further out a lit window is seen, and lights nothing.
 extension Scene {
     /// `METALRENDERER_WORLD_GROUPS=0`: a tile's trees are the scene's own instances, made again with every scene (as
     /// they were before the tiles had groups: for comparing).
@@ -72,6 +76,9 @@ extension Scene {
         var world = World(seed: UInt64(max(settings.seed, 0)))
         world.treeDensity = Float(max(settings.trees, 0)) / 10.24      // the Forest's square is 10.24 hectares
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
+        let night = settings.kind == .worldNight
+        world.night = night
+        world.lit = settings.city.lit
         let flora = Flora(self, seed: world.seed, borrowing: true)
         // Every plant and its materials, first and in the library's order: every scene of the world then has the same
         // textures (the renderer keeps them) and the same numbers for its plants (so it keeps the tiles' trees too).
@@ -149,6 +156,7 @@ extension Scene {
             guard let tile else { continue }
             let origin = WorldTile.origin(jobs[k].x, jobs[k].z)
             let corner = SIMD3(Float(origin.x - anchor.x), 0, Float(origin.y - anchor.y))
+            var placed: [Int] = []       // the chunks' instances
             for (c, chunk) in tile.chunks.enumerated() {
                 // The chunk's materials, one after the other: its triangles name them from the first.
                 var first = -1
@@ -163,27 +171,40 @@ extension Scene {
                                                            indices: chunk.indices, materials: chunk.triangleMaterials,
                                                            tree: withTrees ? chunk.tree : nil),
                                    bounds: chunk.bounds, name: "\(jobs[k].key) chunk \(c)")
-                addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry)
+                placed.append(addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry))
                 triangles += chunk.triangles
+            }
+            // Its lights, where they are near enough to light what is seen: all of them next to the camera, the
+            // street lamps a ring further out.
+            for light in tile.lights where tile.level <= 1 {
+                let material = tile.chunks[Int(light.chunk)].materials[Int(light.material)]
+                let lamp = SIMD3(material.emission.x, material.emission.y, material.emission.z) == World.lampEmission
+                guard tile.level == 0 || lamp else { continue }
+                let first = Int(light.first), c = light.center, n = light.normal
+                addMeshLight(BorrowedLight(light: MeshLight(instance: placed[Int(light.chunk)], firstTriangle: 0, triangleCount: Int(light.count),
+                                                            center: SIMD3(c.x, c.y, c.z), radius: c.w, normal: SIMD3(n.x, n.y, n.z),
+                                                            flatness: n.w, power: SIMD3(light.power.x, light.power.y, light.power.z),
+                                                            materialOffset: Int(light.material)),
+                                           triangles: tile.emissive, range: first..<(first + Int(light.count))))
             }
             // Its trees, the same at every level: a group, which the renderer keeps from scene to scene. (Where they
             // are from this scene's origin is in the group's name.)
-            let placed = tile.trees
+            let standing = tile.trees
             func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species))! }
-            trees += placed.count
+            trees += standing.count
             guard Scene.groupsTrees else {
-                for t in placed {
+                for t in standing {
                     flora.place(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw, size: t.size, shade: Int(t.shade))
                 }
                 continue
             }
-            let count = placed.reduce(0) { $0 + flora.instanceCount(species($1), Int($1.plant)) }
+            let count = standing.reduce(0) { $0 + flora.instanceCount(species($1), Int($1.plant)) }
             guard count > 0 else { continue }
             addGroup(name: "trees of \(WorldTile.place(world, x: jobs[k].x, z: jobs[k].z)) from \(anchorTile.x) \(anchorTile.y), \(flora.name)",
                      count: count) {
                 var out: [Instance] = []
                 out.reserveCapacity(count)
-                for t in placed {
+                for t in standing {
                     flora.instances(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw, size: t.size,
                                     shade: Int(t.shade), into: &out)
                 }
@@ -201,7 +222,16 @@ extension Scene {
             plants += placements.count
         }
 
-        addDaySun(half: 90)
+        if night {
+            skyColor = [0.006, 0.009, 0.02]
+            forcesLightTable = true
+            // The moon.
+            addLight(.sun(angularRadius: 0.0045), color: [0.035, 0.045, 0.07]) { _ in
+                LightPose(position: .zero, direction: normalize([0.45, 0.7, 0.35]))
+            }
+        } else {
+            addDaySun(half: 90)
+        }
         let center = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
         let ground = SIMD3(Float(center.x - anchor.x), world.height(center.x, center.y), Float(center.y - anchor.y))
         var camera = Camera()

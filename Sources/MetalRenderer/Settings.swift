@@ -262,6 +262,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case city               // a generated city (`CitySettings`) under the sun: blocks of procedural buildings, a day cycle
     case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
     case world              // the open world (World.swift): hills, forest and cities without end, made around the camera
+    case worldNight         // the same world at night: the cities' lit windows and street lamps, the moon
 
     var title: String {
         switch self {
@@ -282,6 +283,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .city: return "City"
         case .cityNight: return "City at night"
         case .world: return "Open world"
+        case .worldNight: return "Open world at night"
         }
     }
 
@@ -292,11 +294,15 @@ enum SceneKind: Int, CaseIterable, Codable {
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
     /// The scene's default camera depends on how it was built (its size), so it is asked of the scene itself.
-    var cameraFromScene: Bool { self == .crowd || isCity || self == .world }
+    /// The open world, by day or by night (Scene+World.swift).
+    var isWorld: Bool { self == .world || self == .worldNight }
+    /// Scenes at night with a share of their windows lit (`CitySettings.lit`).
+    var hasLitWindows: Bool { self == .cityNight || self == .worldNight }
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
-    var hasPlants: Bool { self == .forest || self == .valley || self == .world }
+    var hasPlants: Bool { self == .forest || self == .valley || isWorld }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
-    var hasForest: Bool { self == .forest || self == .world }
+    var hasForest: Bool { self == .forest || isWorld }
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -411,7 +417,7 @@ struct SceneSettings: Equatable, Codable {
     func isSameWorld(as other: SceneSettings) -> Bool {
         var a = self, b = other
         (a.worldTile, b.worldTile, a.worldAnchor, b.worldAnchor) = (nil, nil, nil, nil)
-        return kind == .world && a == b
+        return kind.isWorld && a == b
     }
 }
 
@@ -474,7 +480,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight:   // .cityNight: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .worldNight:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -560,7 +566,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .worldNight:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

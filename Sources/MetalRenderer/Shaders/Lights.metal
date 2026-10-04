@@ -320,7 +320,7 @@ MeshLightPoint sampleMeshLightPoint(Light light, float2 u, thread const SceneDat
     mp.b1 = su * (1.0f - u.y); mp.b2 = su * u.y;
     InstanceData inst = instanceRecord(s.instances, as_type<uint>(light.params.w));
     placeMeshLightPoint(mp, inst.transform);
-    mp.material = inst.materialIndex;
+    mp.material = inst.materialIndex + uint(light.axis.w);   // a mesh of several materials: this light's, from its first
     mp.valid = mp.area2 > 0.0f;
     return mp;
 }
@@ -486,12 +486,13 @@ inline MeshLightPoint triangleLightPoint(thread const SceneData& s, device const
                                          device const TriangleInfo* tris, uint index, float2 uv, bool prev) {
     MeshLightPoint mp;
     mp.tri = s.emissive[index];
-    InstanceData inst = instanceRecord(s.instances, as_type<uint>(lights[tris[index].light].params.w));
+    Light light = lights[tris[index].light];
+    InstanceData inst = instanceRecord(s.instances, as_type<uint>(light.params.w));
     float su = sqrt(uv.x);
     mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
     placeMeshLightPoint(mp, prev ? inst.prevTransform : inst.transform);
     mp.prob = 1.0f;
-    mp.material = inst.materialIndex;
+    mp.material = inst.materialIndex + uint(light.axis.w);
     mp.valid = mp.area2 > 0.0f;
     return mp;
 }
