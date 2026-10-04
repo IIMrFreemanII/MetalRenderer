@@ -12,7 +12,7 @@ extension Benchmark {
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
-        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
+        "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -293,13 +293,8 @@ extension Benchmark {
     private static func world() -> [Config] {
         let settings = SceneSettings(kind: .world)
         let w = worldOfRun(), home = w.anchorTile, begin = w.start, city = w.city(cell: SIMD2(0, 0))!
-        let anchor = WorldTile.origin(home.x, home.y)
         func at(_ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
-            var c = Camera()
-            c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
-            c.yaw = yaw
-            c.pitch = pitch
-            return c
+            worldCamera(w, x, z, up: up, yaw: yaw, pitch: pitch)
         }
         // The first place deep in the woods east of the start.
         var woods = begin.place.x
@@ -319,6 +314,16 @@ extension Benchmark {
             // ...and a scene 50 km out, around its own origin.
             base.named("world far").with { $0.scene.worldTile = home &+ SIMD2(160, -120); $0.scene.worldAnchor = home &+ SIMD2(160, -120) },
         ]
+    }
+
+    /// A camera `up` metres above the ground at world position (x, z) of `w`, in the coordinates of its start's scene.
+    private static func worldCamera(_ w: World, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
+        let anchor = WorldTile.origin(w.anchorTile.x, w.anchorTile.y)
+        var c = Camera()
+        c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
+        c.yaw = yaw
+        c.pitch = pitch
+        return c
     }
 
     /// The world the run's scenes are of (`METALRENDERER_SCENE=seed=...`), for placing the cameras in it.
@@ -799,6 +804,47 @@ extension Benchmark {
                     }.view(mode).still().frames(8).from(camera))
                 }
             }
+        }
+        return out
+    }
+
+    /// Every view mode, as the app draws it (radiance cascades, TAAU 3x from 0.5x), on each ray tracer in the scenes with
+    /// levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the open world's
+    /// tiles. Then the views that depend on the GI method with each method, and a few with MetalFX's denoising scaler
+    /// (skipped where the GPU has none).
+    private static func debugViews() -> [Config] {
+        var out: [Config] = []
+        let views = RenderSettings.viewModes.indices
+        for tracer in tracers {
+            for kind in [SceneKind.gallery, .forest, .crowd, .world] {
+                for mode in views {
+                    let name = "\(tracer.tag) \(kind.title.lowercased()) \(RenderSettings.viewModes[mode].lowercased())"
+                    out.append(Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: kind)) {
+                        $0.rayTracer = tracer.kind
+                    }.view(mode).still().frames(8))
+                }
+            }
+        }
+        // The open world from 900 m above its start, looking well down: its tiles' three levels in rings around the
+        // camera's tile (the scene is made around that tile: a camera elsewhere would move its middle).
+        let w = worldOfRun()
+        let aerial = worldCamera(w, w.start.place.x, w.start.place.z, up: 900, pitch: -1.0)
+        for tracer in tracers {
+            for mode in [9, 11] {
+                out.append(Config("\(tracer.tag) open world aerial \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
+                                  gi: .radianceCascades, scene: SceneSettings(kind: .world)) { $0.rayTracer = tracer.kind }
+                    .view(mode).still().frames(8).from(aerial))
+            }
+        }
+        for (tag, gi) in [("pt", GIMode.pathTraced), ("restir gi", .restirGI), ("cascades", .radianceCascades)] {
+            for mode in [1, 2, 5, 6, 7] {
+                out.append(Config("\(tag) cornell \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3, gi: gi)
+                    .view(mode).still().frames(8))
+            }
+        }
+        for mode in [0, 3, 5, 8, 11] {
+            out.append(Config("denoiser gallery \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
+                              scene: SceneSettings(kind: .gallery)) { $0.upscaler = .metalFXDenoised }.view(mode).still().frames(8))
         }
         return out
     }

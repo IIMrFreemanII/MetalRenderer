@@ -206,9 +206,11 @@ extension Scene {
                 let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
                 let name = "\(library): \(set.species) \(index)"
                 let layer = leaves.cutout ? sheet(set.species)?.layer : nil
+                // A baked plant has one level of detail: its finest.
+                func finest(_ m: Int) -> Int { scene.setDetailLevel(m, 0); return m }
                 guard borrows else {
-                    return .flat(wood: wood.indices.isEmpty ? -1 : scene.addMesh(wood, sways: sways, name: name + " wood"),
-                                 leaves: leaves.indices.isEmpty ? -1 : scene.addMesh(leaves, sways: sways, cutout: layer, name: name + " leaves"))
+                    return .flat(wood: wood.indices.isEmpty ? -1 : finest(scene.addMesh(wood, sways: sways, name: name + " wood")),
+                                 leaves: leaves.indices.isEmpty ? -1 : finest(scene.addMesh(leaves, sways: sways, cutout: layer, name: name + " leaves")))
                 }
                 // The meshes stay the library's (arrays share their storage): the renderer copies them from here.
                 func lend(_ mesh: Foliage.Mesh, _ name: String, cutout: Int? = nil) -> Int {
@@ -218,7 +220,7 @@ extension Scene {
                                          bounds: mesh.bounds, name: name, sways: sways,
                                          cutout: cutout.map { UInt32($0 + 1) << 24 | UInt32(mesh.leafIndex / 3) } ?? 0)
                 }
-                return .flat(wood: lend(wood, name + " wood"), leaves: lend(leaves, name + " leaves", cutout: layer))
+                return .flat(wood: finest(lend(wood, name + " wood")), leaves: finest(lend(leaves, name + " leaves", cutout: layer)))
             case .boxes(let placed):
                 boxes = placed
             }
