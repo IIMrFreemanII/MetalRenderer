@@ -49,7 +49,8 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `CityPlan`, `Scene+City` | CityTests, BuildingTests |
 | `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests |
 | `FBXReader` | FBXTests |
-| `Foliage*.swift`, `Scene+Forest`, `Shaders/Foliage.metal` | FoliageTests |
+| `Foliage*.swift`, `Scene+Forest`, `Shaders/Foliage.metal` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`) |
+| `VoxelGrids`, `VoxelLOD` | FoliageRuntimeTests, SceneBuffersTests |
 | `GLTFLoader` | GLTFLoaderTests |
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |

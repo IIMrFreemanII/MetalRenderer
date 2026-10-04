@@ -508,12 +508,12 @@ extension Benchmark {
             lit.named("backlit cards").with { $0.scene.leafCards = true },
             // What each plant is traced as: its triangles (blue) or a level of its voxels.
             still.named("lod view").with { $0.foliage.lod = 2 }.from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
-            // Metal's tracer: the baked plants, far ones as their voxels (VoxelLOD; forced: by default only with
-            // hardware ray tracing), against all of them as triangles.
+            // Metal's tracer: the baked plants, far ones as their voxels (VoxelLOD; off by default), against all of
+            // them as triangles.
             parts.named("metal triangles aerial").with { $0.rayTracer = .metal }.from(forestAerial),
-            parts.named("metal voxels aerial").with { $0.rayTracer = .metal; $0.scene.metalVoxels = .voxels; $0.foliage.lod = 2 }
+            parts.named("metal voxels aerial").with { $0.rayTracer = .metal; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
                 .from(forestAerial),
-            still.named("metal lod view").with { $0.rayTracer = .metal; $0.scene.metalVoxels = .voxels; $0.foliage.lod = 2 }
+            still.named("metal lod view").with { $0.rayTracer = .metal; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
                 .from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
         ]
     }

@@ -12,7 +12,7 @@ final class VoxelGrids {
         var grid: UInt64                // its RTVoxels record
         var cells: UInt64               // every grid's cells (the record's offsets count from here)
         var level: UInt32
-        var pad = SIMD3<UInt32>()
+        var pad: (UInt32, UInt32, UInt32) = (0, 0, 0)   // (a SIMD3 would be aligned to 16 bytes: 48 in all)
     }
 
     /// What it was made from: the plants' keys (FoliageVoxels.Plant.key), hashed.
