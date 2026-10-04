@@ -13,7 +13,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -422,6 +422,52 @@ extension Benchmark {
             view("ground far", cx, cz + r + 1500, up: 250, pitch: -0.12),
             view("ground fields", cx + r + 250, cz + r + 250, up: 90, yaw: -.pi / 4, pitch: -0.25),
             view("ground at night", cx + 4.5, cz + 14, up: 1.7, yaw: -0.5, pitch: -0.12, phase: 0),
+        ]
+    }
+
+    /// The road from the open world's first city to the next one (World.Highway), in the morning: from the crossing
+    /// it leaves the city by and from the fields beyond; before its deepest cutting and its highest bank;
+    /// where it first goes into the woods; from above, halfway; all of it from over the city (the further tiles'
+    /// roads lie on coarser ground) and from short of the other city; the crossing at night; and a flight of 600 m
+    /// along it at 60 m/s, which crosses tiles.
+    private static func worldRoads() -> [Config] {
+        let w = worldOfRun(), city = w.city(cell: SIMD2(0, 0))!
+        guard let road = city.highways.first else {
+            print("worldroads: the first city of this world has no city next to it, so no road (try another seed)")
+            return []
+        }
+        // Metres along the road's axis from this city's end of it.
+        let out = road.u0 > city.center[road.axis], run = road.u1 - road.u0
+        func at(_ along: Double) -> Double { out ? road.u0 + along : road.u1 - along }
+        /// From over the road `along` it, looking the way out of the city.
+        func view(_ name: String, _ along: Double, up: Float, pitch: Float, phase: Float = Heavens.start) -> Config {
+            let (v, slope) = road.across(at(along)), p = road.place(at(along), v), way = road.place(out ? 1 : -1, out ? slope : -slope)
+            return worldView(name, w, p.x, p.y, up: up, yaw: Float(atan2(way.x, -way.y)), pitch: pitch, phase: phase)
+        }
+        // How far the country is over the road (a cutting) or under it (a bank), along it.
+        func over(_ along: Double) -> Float {
+            let p = road.place(at(along), road.across(at(along)).v)
+            return w.country(p.x, p.y) - road.bed(at(along)).level
+        }
+        let places = Array(stride(from: 150.0, to: run - 150, by: 16))
+        let cutting = places.max { over($0) < over($1) } ?? run / 2, bank = places.min { over($0) < over($1) } ?? run / 2
+        let woods = places.first { a in
+            let p = road.place(at(a), road.across(at(a)).v)
+            return w.woods(p.x, p.y) > 0.95
+        } ?? run / 2
+        let flight = view("road flight", 200, up: 40, pitch: -0.25).moving().flying(SIMD3(road.axis == 0 ? 60 : 0, 0, road.axis == 0 ? 0 : 60) * (out ? 1 : -1))
+            .frames(600)
+        return [
+            view("road gate", -Double(World.Highway.stub) - 8, up: 1.7, pitch: -0.03),
+            view("road fields", 120, up: 2.2, pitch: -0.03),
+            view("road cutting", cutting - 110, up: 2.2, pitch: 0),
+            view("road bank", bank - 220, up: 45, pitch: -0.25),
+            view("road woods", woods + 60, up: 2.2, pitch: 0),
+            view("road above", run / 2 - 250, up: 180, pitch: -0.55),
+            view("road far", -40, up: 160, pitch: -0.2),
+            view("road arrival", run - 400, up: 35, pitch: -0.12),
+            view("road at night", -Double(World.Highway.stub) - 8, up: 1.7, pitch: -0.03, phase: 0),
+            flight,
         ]
     }
 

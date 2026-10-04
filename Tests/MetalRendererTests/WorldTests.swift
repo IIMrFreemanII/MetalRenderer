@@ -276,13 +276,17 @@ final class WorldTests: XCTestCase {
         XCTAssertLessThan(roads.count, 3 * built + 4 * span * 4, "roads where no block is")
         for road in roads {
             let r = road.rect
-            XCTAssertEqual(r.size, road.along == 0 ? SIMD2(World.blockSize.x, 2 * half) : road.along == 1 ? SIMD2(2 * half, World.blockSize.y) : SIMD2(2 * half, 2 * half))
+            // (A street is a block long; the first metres of a road to another city are a street too.)
+            let stub = World.Highway.stub
+            XCTAssertTrue(r.size == (road.along == 0 ? SIMD2(World.blockSize.x, 2 * half) : road.along == 1 ? SIMD2(2 * half, World.blockSize.y) : SIMD2(2 * half, 2 * half))
+                          || r.size == (road.along == 0 ? SIMD2(stub, 2 * half) : SIMD2(2 * half, stub)), "\(r.size)")
             for corner in [r.lo, r.hi, SIMD2(r.lo.x, r.hi.y), SIMD2(r.hi.x, r.lo.y)] {
                 for d in [SIMD2<Float>(0, 0), SIMD2(16, 16), SIMD2(-16, 16), SIMD2(16, -16), SIMD2(-16, -16)] {
                     XCTAssertEqual(world.height(city.center.x + Double(corner.x + d.x), city.center.y + Double(corner.y + d.y)), city.level)
                 }
             }
-            XCTAssertTrue(world.paved(city, city.center.x + Double(r.center.x), city.center.y + Double(r.center.y)))
+            let x = city.center.x + Double(r.center.x), z = city.center.y + Double(r.center.y)
+            XCTAssertTrue(world.paved(city, x, z) || (world.highway(city, x, z).map { $0.distance < $0.half } ?? false))
         }
         // In the middle of the city four streets meet at every crossing; at its edge fewer do.
         XCTAssertEqual(roads.first { $0.along == 1 && name($0.rect.lo, 1) == name(SIMD2(-half, half), 1) }?.junction, [true, true])
@@ -295,7 +299,9 @@ final class WorldTests: XCTestCase {
         for k in 0..<96 {
             let angle = Double(k) / 96 * 2 * .pi, x = city.center.x + (out + 4) * cos(angle), z = city.center.y + (out + 4) * sin(angle)
             let field = try XCTUnwrap(world.field(city, x, z), "the belt next to the city is open")
-            XCTAssertEqual(world.ground(x, z, up: 1, city: city), field)
+            // (But for the grass beside a road out of the city.)
+            let verge = (world.highway(city, x, z)?.distance ?? .infinity) < World.Highway.shoulder
+            XCTAssertEqual(world.ground(x, z, up: 1, city: city), verge ? World.Ground.meadow : field)
             kinds.insert(field)
             // The cell of the coarsest ground it is in (from the city's middle, a multiple of 16 m itself).
             let x0 = (x / 16).rounded(.down) * 16, z0 = (z / 16).rounded(.down) * 16
@@ -335,6 +341,152 @@ final class WorldTests: XCTestCase {
         XCTAssertGreaterThan(count(tiles[0], paint), 200)
         XCTAssertEqual(count(tiles[1], paint), count(tiles[0], paint))
         XCTAssertEqual(count(tiles[2], paint), 0)
+    }
+
+    /// The roads between cities: one from a city to each city in a cell next to its own, the same road from either
+    /// end, leaving by the end of the street through the city's middle and never near another road. The ground under
+    /// it is the road's own; a tile has the part of it that is in the tile, lying on the tile's ground at every
+    /// level; and nothing grows on it.
+    func testRoadsBetweenCities() throws {
+        typealias Highway = World.Highway
+        var roads: [(from: World.City, to: World.City, road: Highway)] = []
+        for j in -3...3 {
+            for i in -3...3 {
+                guard let city = world.city(cell: SIMD2(i, j)) else { continue }
+                var expected = 0
+                for (axis, step) in [(0, SIMD2(1, 0)), (1, SIMD2(0, 1))] {
+                    if let next = world.city(cell: SIMD2(i, j) &+ step) {
+                        expected += 1
+                        let road = try XCTUnwrap(city.highways.first { $0.axis == axis && $0.u0 > city.center[axis] })
+                        XCTAssertTrue(next.highways.contains(road), "the same road from its other end")
+                        roads.append((city, next, road))
+                    }
+                    if world.city(cell: SIMD2(i, j) &- step) != nil { expected += 1 }
+                }
+                XCTAssertEqual(city.highways.count, expected)
+            }
+        }
+        XCTAssertGreaterThan(roads.count, 8)
+        var steepest: Float = 0
+        for (a, b, road) in roads {
+            // From the last crossing of the one's middle street to the first of the other's, straight on at both.
+            let pitch = Double(World.blockPitch[road.axis]), reach = Double(World.roadWidth / 2 + Highway.stub)
+            XCTAssertEqual(road.u0, a.center[road.axis] + Double(world.gate(a, axis: road.axis)) * pitch + reach)
+            XCTAssertEqual(road.u1, b.center[road.axis] - Double(world.gate(b, axis: road.axis)) * pitch - reach)
+            XCTAssertTrue(world.built(a, road.axis == 0 ? world.gate(a, axis: road.axis) - 1 : 0, road.axis == 1 ? world.gate(a, axis: road.axis) - 1 : 0))
+            XCTAssertGreaterThan(road.u1 - road.u0, 800)
+            XCTAssertEqual(road.across(road.u0).v, a.center[1 - road.axis])
+            XCTAssertEqual(road.across(road.u1).v, b.center[1 - road.axis])
+            XCTAssertEqual(road.across(road.u0).slope, 0)
+            XCTAssertEqual(road.across(road.u1).slope, 0)
+            XCTAssertEqual(road.bed(road.u0).level, a.level)
+            XCTAssertEqual(road.bed(road.u1).level, b.level)
+            XCTAssertEqual(road.half(road.u0), World.roadWidth / 2)
+            XCTAssertEqual(road.half(road.u0 + 300), Highway.width / 2)
+            for u in stride(from: road.u0, to: road.u1 - 16, by: 16) {
+                let (v, slope) = road.across(u), p = road.place(u, v), q = (1 + slope * slope).squareRoot()
+                steepest = max(steepest, abs(road.bed(u + 16).level - road.bed(u).level) / Float(16 * q))
+                // The ground is the road's from its middle to 4 m beyond the asphalt in x and in z: the cells of
+                // the ground at levels 0 and 1 that are under the asphalt are the road's planes.
+                let edge = Double(road.half(u)) * q
+                for across in [-edge, 0, edge] {
+                    for (du, dv) in [(0.0, 0.0), (4, 4), (4, -4), (-4, 4), (-4, -4)] {
+                        let at = road.place(u + du, v + across + dv)
+                        XCTAssertEqual(world.height(at.x, at.y), road.bed(u + du).level, "\(u - road.u0) m along, \(across + dv) m across")
+                    }
+                }
+                XCTAssertEqual(world.ground(p.x, p.y, up: 1, city: world.city(near: p.x, p.y)), World.Ground.meadow)
+                // Where the road goes from the one city's cell into the other's, either city says the same of the ground.
+                if abs(u - Double(b.cell[road.axis]) * World.cityCell) < 64 {
+                    for across in [-60.0, -12, 0, 30] {
+                        let at = road.place(u, v + across * q)
+                        XCTAssertEqual(world.height(at.x, at.y, city: a), world.height(at.x, at.y, city: b))
+                    }
+                }
+                // No other road of either city comes near, away from the city itself.
+                for other in a.highways + b.highways where other != road {
+                    if let d = other.distance(p.x, p.y) { XCTAssertGreaterThan(d, 2 * (Highway.shoulder + Highway.widestBank)) }
+                }
+            }
+        }
+        XCTAssertLessThan(steepest, 0.2)
+        XCTAssertGreaterThan(steepest, 0.02)
+
+        // The first road of the origin's city, in the four tiles along it from 512 m out.
+        let (_, _, road) = try XCTUnwrap(roads.first { $0.from.cell == SIMD2(0, 0) || $0.to.cell == SIMD2(0, 0) })
+        let side = Double(World.tileSize)
+        let from = ((road.u0 + 512) / side).rounded(.down) * side
+        var expected = 0.0, tiles = Set<SIMD2<Int>>()
+        for u in stride(from: from, to: from + 4 * side, by: 8) {
+            let (va, sa) = road.across(u), (vb, sb) = road.across(u + 8)
+            let wa = Double(road.half(u)) * (1 + sa * sa).squareRoot(), wb = Double(road.half(u + 8)) * (1 + sb * sb).squareRoot()
+            expected += 8 * (wa + wb)
+            for v in [va - wa, va + wa, vb - wb, vb + wb] {
+                let p = road.place(u + 4, v)
+                tiles.insert(SIMD2(Int((p.x / side).rounded(.down)), Int((p.y / side).rounded(.down))))
+            }
+        }
+        let asphalt = SIMD3<Float>(0.1, 0.1, 0.11), paint = SIMD3<Float>(0.7, 0.7, 0.66)
+        /// The triangles of a tile that have a material of `color`: their corners.
+        func triangles(_ tile: WorldTile, _ color: SIMD3<Float>) -> [[SIMD3<Float>]] {
+            var out: [[SIMD3<Float>]] = []
+            for chunk in tile.chunks {
+                let own = Set(chunk.materials.indices.filter { SIMD3(chunk.materials[$0].albedo.x, chunk.materials[$0].albedo.y, chunk.materials[$0].albedo.z) == color })
+                let positions = chunk.positions.array, indices = chunk.indices.array
+                for (t, m) in chunk.triangleMaterials.array.enumerated() where own.contains(Int(m)) {
+                    out.append((0..<3).map { positions[Int(indices[3 * t + $0])] })
+                }
+            }
+            return out
+        }
+        for level in 0..<World.levels {
+            var area = 0.0, painted = 0
+            for at in tiles.sorted(by: { ($0.x, $0.y) < ($1.x, $1.y) }) {
+                let tile = WorldTile.build(world, x: at.x, z: at.y, level: level, flora: flora)
+                let x0 = Double(at.x) * side, z0 = Double(at.y) * side
+                let cell = World.cellSize(level), n = Int(World.tileSize / cell), ground = tile.chunks[0].positions.array
+                for corners in triangles(tile, asphalt) {
+                    for p in corners {
+                        XCTAssertTrue(p.x > -1e-3 && p.x < World.tileSize + 1e-3 && p.z > -1e-3 && p.z < World.tileSize + 1e-3, "in its tile")
+                        if level < 2 {
+                            XCTAssertEqual(p.y, world.height(x0 + Double(p.x), z0 + Double(p.z)) + 0.02, accuracy: 2e-3, "level \(level)")
+                        } else {
+                            // On the triangle of the tile's own ground that is under it.
+                            let i = min(Int(p.x / cell), n - 1), j = min(Int(p.z / cell), n - 1)
+                            let s = p.x / cell - Float(i), t = p.z / cell - Float(j)
+                            let a = ground[j * (n + 1) + i].y, b = ground[j * (n + 1) + i + 1].y
+                            let c = ground[(j + 1) * (n + 1) + i].y, d = ground[(j + 1) * (n + 1) + i + 1].y
+                            let under = s >= t ? a + (b - a) * s + (d - b) * t : a + (c - a) * t + (d - c) * s
+                            XCTAssertEqual(p.y, under + 0.02, accuracy: 5e-3, "level 2")
+                        }
+                    }
+                    let e1 = corners[1] - corners[0], e2 = corners[2] - corners[0]
+                    XCTAssertGreaterThan(e1.z * e2.x - e1.x * e2.z, 0, "it faces up")
+                    area += Double(abs(e1.z * e2.x - e1.x * e2.z)) / 2
+                }
+                painted += triangles(tile, paint).count
+                for tree in tile.trees {
+                    let x = x0 + Double(tree.x), z = z0 + Double(tree.z)
+                    XCTAssertGreaterThan(world.highway(world.city(near: x, z), x, z)?.distance ?? .infinity, Highway.shoulder + 1)
+                }
+            }
+            // All of the road, once: no piece left out where tiles meet, none twice.
+            XCTAssertEqual(area, expected, accuracy: expected * 1e-3, "level \(level)")
+            if level < 2 { XCTAssertGreaterThan(painted, 4 * 32 * 6) } else { XCTAssertEqual(painted, 0) }
+        }
+        // Grass comes up to the asphalt.
+        var grown = 0
+        for u in stride(from: from, to: from + 256, by: 32) {
+            let p = road.place(u, road.across(u).v)
+            let x0 = (p.x / 32).rounded(.down) * 32, z0 = (p.y / 32).rounded(.down) * 32
+            for plant in world.groundCover(x0: x0, z0: z0, side: 32, flora: flora) {
+                let x = x0 + Double(plant.x), z = z0 + Double(plant.z)
+                guard let near = world.highway(world.city(near: x, z), x, z) else { continue }
+                XCTAssertGreaterThanOrEqual(near.distance, near.half + 1)
+                if near.distance < Highway.shoulder { grown += 1 }
+            }
+        }
+        XCTAssertGreaterThan(grown, 20)
     }
 
     /// The world's day: the sun over -z at noon and under the horizon for four tenths of the day, the moon the light
