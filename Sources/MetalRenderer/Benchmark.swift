@@ -115,7 +115,9 @@ final class Benchmark {
 
     /// Scripted camera move for the "camera" settings: a yaw sweep plus dolly that ends at the default camera,
     /// still moving, so the last frame can be scored against the same t = 5 s references as the static frames.
-    static func cameraPose(progress p: Float, scene: SceneKind = .cornell) -> Camera {
+    /// `sceneCamera`: the scene's own default camera, for a scene whose camera depends on how it was built (the crowd,
+    /// the city).
+    static func cameraPose(progress p: Float, scene: SceneKind = .cornell, sceneCamera: Camera? = nil) -> Camera {
         var c = Camera(), start = Camera()
         if scene == .gallery {
             // From close to the left models, gliding back to the gallery overview.
@@ -129,7 +131,7 @@ final class Benchmark {
             start.position = SIMD3<Float>(7.0, 2.2, 12.0)
             start.yaw = -0.6
             start.pitch = -0.1
-        } else if let demo = Scene.demoCamera(scene) {
+        } else if let demo = Scene.demoCamera(scene) ?? (scene.cameraFromScene ? sceneCamera : nil) {
             // A step to the side and back, turning toward the default view.
             c = demo
             start.position = demo.position + SIMD3<Float>(1.5, 0.3, 1.5)
@@ -164,7 +166,7 @@ final class Benchmark {
     /// Each pass in its own command buffer, for per-pass timings (default). `METALRENDERER_BENCH_SPLIT=0` encodes frames
     /// exactly like normal mode (one command buffer) and reports only the whole-frame GPU time.
     static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_SPLIT"] != "0"
-    static let passOrder = ["tlas", "lightmap", "trace", "temporal", "atrous", "composite", "upscale"]
+    static let passOrder = ["skin", "blas", "tlas", "lightmap", "trace", "glass", "temporal", "atrous", "composite", "upscale"]
 
     /// The settings of `list` this GPU can run; the others are named with what they need (Capabilities).
     static func supported(_ list: [Config], on caps: Capabilities) -> (run: [Config], skipped: [String]) {

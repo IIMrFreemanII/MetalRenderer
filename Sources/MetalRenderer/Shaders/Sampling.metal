@@ -87,7 +87,7 @@ struct Sampler {
 };
 
 // A kernel's sample stream: `pixel` picks the blue-noise window, `dimension` is where the kernel's dimensions start
-// (kernels of one frame use ranges apart: trace 0, reflections 40, the direct-light kernels 64, mesh lights 96,
+// (kernels of one frame use ranges apart: trace 0, reflections 40, glass 52, the direct-light kernels 64, mesh lights 96,
 // ReSTIR GI 128), `seed` starts the white-noise stream.
 inline Sampler makeSampler(texture2d<float, access::read> blueNoise, constant Uniforms& u, uint2 pixel, uint dimension,
                            uint seed) {

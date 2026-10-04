@@ -51,7 +51,9 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
-    Surface sf = traceSurface(primary, MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height), recordTextures);   // pixel angle
+    // Window glass isn't met here: glassKernel adds it over the surface behind it.
+    Surface sf = traceSurface(primary, GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height),
+                              recordTextures);   // pixel angle
 
     bool upscale = flagOn(u.flags, FLAG_UPSCALE);
     if (!sf.hit) {

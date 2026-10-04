@@ -60,6 +60,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `quick` | the default setting, MetalFX temporal/spatial, camera moves, path traced, 0.75× native: fast smoke tests |
 | `stress` | the stress hall against light count (1–256), object count (0–2000) and GI method |
 | `restir` | 1 to 16384 lights for each direct-light method, plus the Night market |
+| `city` | the generated city: stills from three viewpoints and of each style, flat against textured, night; then 1 to 100 blocks by day and at night ("glass" is the panes' pass) |
 | `rt` | custom BVH against Metal's intersector, alternating per setting |
 | `hwrt` | each tracer with each output (SVGF + custom upscaler, SVGF + MetalFX temporal, MetalFX denoiser) |
 | `api` | Metal 3 against Metal 4, each tracer (stills first, for a `pngdiff` between two runs) |

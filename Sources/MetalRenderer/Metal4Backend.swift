@@ -222,6 +222,16 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
+    /// Through the Metal 3 queue: the per-mesh structures are built there (once per scene), and the ones that deform
+    /// are refitted where they were built.
+    func refitPrimitives(_ refit: PrimitiveRefit, pass: String) {
+        interlude(pass) { cb in
+            guard let enc = cb.makeAccelerationStructureCommandEncoder() else { return }
+            refit.encode(into: enc)
+            enc.endEncoding()
+        }
+    }
+
     /// The mapping updates go to the queue, between the command buffers so far and the ones after them (whose encoders
     /// wait for them, `queueStages`); the uploads into the new tiles follow in a command buffer of their own.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {

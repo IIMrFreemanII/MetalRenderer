@@ -282,6 +282,7 @@ enum BVHBuilder {
         var triangles: [SIMD4<Float>] = []   // 3 per triangle in leaf order: v0 (w = triangle index in mesh), e1, e2
         var roots: [UInt32] = []             // per mesh
         var bounds: [AABB] = []              // per mesh
+        var nodeBases: [Int] = []            // per mesh, and the end: its nodes are nodes[nodeBases[m] ..< nodeBases[m + 1]]
         var maxDepth = 0
     }
 
@@ -310,11 +311,12 @@ enum BVHBuilder {
                         DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
                             let mesh = meshes[m]
                             let triCount = Int(mesh.indexCount) / 3, first = Int(mesh.firstIndex)
+                            let offset = Int(mesh.vertexOffset)   // a pose slot's own vertices (Crowd)
                             var boxes: [AABB] = []
                             boxes.reserveCapacity(triCount)
                             for t in 0..<triCount {
                                 var b = AABB()
-                                for k in 0..<3 { b.grow(pos[Int(idx[first + 3 * t + k])]) }
+                                for k in 0..<3 { b.grow(pos[Int(idx[first + 3 * t + k]) + offset]) }
                                 boxes.append(b)
                             }
                             let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
@@ -322,7 +324,8 @@ enum BVHBuilder {
                             var out = 3 * triBases[m]
                             for t in tree.order {
                                 let base = first + 3 * t
-                                let p0 = pos[Int(idx[base])], p1 = pos[Int(idx[base + 1])], p2 = pos[Int(idx[base + 2])]
+                                let p0 = pos[Int(idx[base]) + offset], p1 = pos[Int(idx[base + 1]) + offset]
+                                let p2 = pos[Int(idx[base + 2]) + offset]
                                 var spare = (UInt32(0), UInt32(0))
                                 if mesh.cutout != 0, t >= Int(mesh.cutout & 0xFF_FFFF) {
                                     spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: mesh.cutout >> 24)
@@ -347,6 +350,7 @@ enum BVHBuilder {
             nodeBases[m + 1] = nodeBases[m] + (count == 0 ? 0 : max((count - 1) / 2, 1))
         }
         result.nodes = [BVHNode](repeating: BVHNode(), count: nodeBases[meshes.count])
+        result.nodeBases = nodeBases
         var roots = [UInt32](repeating: BVHNode.none, count: meshes.count)
         var depths = [Int](repeating: 0, count: meshes.count)
         result.nodes.withUnsafeMutableBufferPointer { out in

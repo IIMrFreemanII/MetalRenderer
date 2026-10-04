@@ -4,7 +4,7 @@ import QuartzCore
 
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
-    case trace, geometryDebug, lightMap
+    case trace, glass, geometryDebug, lightMap
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
@@ -13,9 +13,11 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, taau, tonemap
+    case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
     case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit
+    case crowdRefit             // ...and their bottom-level trees
 
     var function: String { "\(self)Kernel" }
     /// Exists only in the custom tracer's variant of the shaders (CUSTOM_RT).
@@ -153,7 +155,7 @@ struct Pipelines {
     var rt: RTPipelines? {
         kind != .custom ? nil :
             RTPipelines(prep: self[.rtPrep], keys: self[.rtKeys], sortLocal: self[.rtSortLocal], sortGlobal: self[.rtSortGlobal],
-                        hierarchy: self[.rtHierarchy], fit: self[.rtFit],
+                        hierarchy: self[.rtHierarchy], fit: self[.rtFit], crowdRefit: self[.crowdRefit],
                         vg: VGPipelines(reset: self[.vgReset], cut: self[.vgCut], finish: self[.vgFinish], pad: self[.vgPad],
                                         hierarchy: self[.vgHierarchy], fit: self[.vgFit]))
     }

@@ -123,9 +123,58 @@ struct GPUSkyParams {
 struct GPUMesh {
     var firstIndex: UInt32
     var indexCount: UInt32
+    /// A pose slot of a skinned character (Crowd): its vertices sit this far after the ones its indices name, and its
+    /// previous frame's positions `prevOffset` after those. Both 0 for every other mesh.
+    var vertexOffset: UInt32 = 0
+    var prevOffset: UInt32 = 0
     var sways: UInt32 = 0              // 1 = ground cover that leans in the wind (Scene.coverLean)
     var cutout: UInt32 = 0             // leaf cards: its triangles from (the low 24 bits) on are cut out by the alpha
                                        // layer (the top byte) - 1 of Scene.cutouts; 0 = none
+}
+
+/// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
+struct GPUSkinVertex: Equatable {
+    var joints: UInt32 = 0     // four joint indices, a byte each (the first in the low byte)
+    var w0: Float = 1          // the first three joints' weights; the fourth's is what is left of 1
+    var w1: Float = 0
+    var w2: Float = 0
+}
+
+/// A skeleton's joint (MSL CrowdJoint): where it sits in its parent, and its inverse bind transform (a rotation,
+/// then a translation), which takes a bind-pose vertex into the joint's space.
+struct GPUJoint: Equatable {
+    var local: SIMD4<Float>      // xyz = translation in the parent's space (m), w = the parent's index + 1 (bits; 0 = root)
+    var inverseBindRotation: SIMD4<Float>      // quaternion, xyzw
+    var inverseBindTranslation: SIMD4<Float>   // xyz
+
+    var parent: Int { Int(local.w.bitPattern) - 1 }
+}
+
+/// A joint's skinning matrix in a pose (MSL JointMatrix): the three rows of bind space -> posed space.
+struct GPUJointMatrix: Equatable {
+    var row0 = SIMD4<Float>(1, 0, 0, 0), row1 = SIMD4<Float>(0, 1, 0, 0), row2 = SIMD4<Float>(0, 0, 1, 0)
+
+    func point(_ p: SIMD3<Float>) -> SIMD3<Float> {
+        let v = SIMD4(p, 1)
+        return SIMD3(dot(row0, v), dot(row1, v), dot(row2, v))
+    }
+    func direction(_ d: SIMD3<Float>) -> SIMD3<Float> {
+        let v = SIMD4(d, 0)
+        return SIMD3(dot(row0, v), dot(row1, v), dot(row2, v))
+    }
+}
+
+/// A pose of the crowd at one time (MSL PoseSlot): two clips of its character, each at a time in keys, and how far
+/// the pose is from the first toward the second. A clip is named by where its keys start in the crowd's key tables.
+struct GPUPoseSlot: Equatable {
+    var rotationsA: UInt32 = 0   // clip A's first rotation key (a quaternion per joint and key)
+    var rootA: UInt32 = 0        // its first root-translation key
+    var rotationsB: UInt32 = 0
+    var rootB: UInt32 = 0
+    var timeA: Float = 0         // in keys, inside the loop
+    var timeB: Float = 0
+    var blend: Float = 0         // 0 = clip A alone
+    var pad: Float = 0
 }
 
 struct GPUInstanceData {
@@ -141,7 +190,8 @@ struct GPUInstanceData {
 struct GPUMaterial {
     var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
-    var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale
+    var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
+                                            // z = 1: an emissive-mesh light's (buildMeshLights)
     var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
 }
@@ -209,8 +259,12 @@ struct GPUFogParams {
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
-    precondition(MemoryLayout<GPUMesh>.stride == 16, "GPUMesh layout mismatch")
+    precondition(MemoryLayout<GPUMesh>.stride == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
+    precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
+    precondition(MemoryLayout<GPUJoint>.stride == 48, "GPUJoint layout mismatch")
+    precondition(MemoryLayout<GPUJointMatrix>.stride == 48, "GPUJointMatrix layout mismatch")
+    precondition(MemoryLayout<GPUPoseSlot>.stride == 32, "GPUPoseSlot layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")

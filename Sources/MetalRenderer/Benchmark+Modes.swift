@@ -12,7 +12,7 @@ extension Benchmark {
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
-        "skycheck": skycheck, "vgdebug": vgdebug,
+        "skycheck": skycheck, "vgdebug": vgdebug, "crowd": crowd, "city": city,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -670,6 +670,51 @@ extension Benchmark {
             }
         }
         return out
+    }
+
+    /// The crowd scene (animated characters, Crowd.swift) at the default settings, the animation running: frame time
+    /// against the number of poses the GPU animates ("skin": their matrices and vertices, "blas": their acceleration
+    /// structures), against the number of characters on them ("tlas", "trace", and the CPU's share in "cpu") and
+    /// against the poses' level of detail. Then the frames to look at: a still with the frame before it, and the
+    /// camera moving through the crowd. `METALRENDERER_CROWD_CHECK=1` compares what the GPU skinned with the CPU's.
+    private static func crowd() -> [Config] {
+        func square(_ name: String, characters: Int = 2048, poses: Int = 64, detail: Int = 3) -> Config {
+            Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades,
+                   scene: SceneSettings(kind: .crowd, characters: characters, poses: poses, detail: detail))
+        }
+        return [8, 32, 64, 128, 256].map { square("\($0) poses", poses: $0) }
+            + [256, 8192, 32768, 131_072].map { square("\($0) characters", characters: $0) }
+            + [1, 0].map { square("32 poses, detail \($0)", poses: 32, detail: $0) }
+            + [square("still").still(previous: true), square("camera move").cameraMove()]
+    }
+
+    /// The generated city (Scene+City.swift, CityPlan, BuildingGenerator). First the frames to look at: the default
+    /// city from above, from the road and in front of one building; a block of each style, close and whole; the same
+    /// street with flat colours instead of the generated textures; the city at night, and with more rooms behind its
+    /// windows (the frame before too: the windows' light is ReSTIR's). Then frame time against the city's size, by
+    /// day ("glass" is its panes' pass) and at night, and the camera moving over it.
+    private static func city() -> [Config] {
+        func town(_ name: String, night: Bool = false, _ change: (inout CitySettings) -> Void = { _ in }) -> Config {
+            var city = CitySettings()
+            change(&city)
+            return Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades,
+                          scene: SceneSettings(kind: night ? .cityNight : .city, city: city))
+        }
+        /// `c`, paused, seen from one of its city's own viewpoints.
+        func seen(_ view: CityPlan.View, _ c: Config, previous: Bool = false) -> Config {
+            c.from(CityPlan(c.settings.scene.city, seed: c.settings.scene.seed).camera(view)).still(previous: previous)
+        }
+        let styles = CityStyle.allCases.filter { $0 != .mixed }
+        let looks = [seen(.overview, town("overview")), seen(.street, town("street")), seen(.facade, town("facade"))]
+            + styles.map { style in seen(.facade, town("\(style)") { $0.blocks = 1; $0.style = style }) }
+            + styles.map { style in seen(.overview, town("\(style) block") { $0.blocks = 1; $0.style = style }) }
+            + [seen(.street, town("flat street") { $0.textures = false }),
+               seen(.overview, town("night", night: true), previous: true),
+               seen(.street, town("night street", night: true), previous: true),
+               seen(.facade, town("night rooms", night: true) { $0.rooms = 0.5; $0.lit = 0.6 }, previous: true)]
+        let sizes = [1, 2, 4, 6, 8, 10].map { n in town("\(n) x \(n) blocks") { $0.blocks = n } }
+            + [4, 10].map { n in town("night, \(n) x \(n) blocks", night: true) { $0.blocks = n } }
+        return looks + sizes + [town("camera move").cameraMove()]
     }
 
     /// The geometry debug views at the gallery overview and close-up, native resolution (crisp PNGs), with virtual

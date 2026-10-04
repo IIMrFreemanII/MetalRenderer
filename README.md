@@ -11,7 +11,10 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * six light demos (see "Light types" below);
   * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
   * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
-  * a **Forest** of generated trees, bushes, ferns and grass on rolling ground (see "Generated plants" below).
+  * a **Forest** of generated trees, bushes, ferns and grass on rolling ground (see "Generated plants" below);
+  * a **Crowd**: a square with thousands of animated characters, skinned on the GPU (see "Animated characters" below);
+  * a generated **City**, by day and at night: blocks of procedural buildings with glass windows and rooms behind them (see "Procedural city" below).
+* **Glass:** window panes the camera sees through and sees reflections in, and that light passes (see "Glass" below).
 * **Light types:** sphere (point) lights, **spot** lights, a **sun** with a sky colour, **rect** area lights and **tube** lights.
   * Every type has soft ray-traced shadows, GGX highlights, the shadow denoiser and every GI method.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
@@ -57,7 +60,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * Rays see one tight tree per model.
   * The gallery's 17.9M triangles trace as a 0.4M-triangle cut in 40 MB, instead of ~1.5 GB, at about the same speed (see below).
   * Debug views (key 9) show triangles, clusters, groups, DAG levels, projected triangle size and traversal cost. Freeze LOD (L) keeps the cut chosen for where the camera was, so you can fly up and inspect it.
-* **Physically based materials:** GGX specular with Smith visibility and Schlick Fresnel for glTF materials; the generated scenes stay diffuse and unchanged.
+* **Physically based materials:** GGX specular with Smith visibility and Schlick Fresnel for glTF materials and the city's glass, metal and stone; the other generated scenes stay diffuse and unchanged.
   * Direct specular is exact per light (representative-point sphere lights), multiplied by the shadow denoiser's visibility in the composite.
   * Indirect specular comes from a reflection pass: one GGX visible-normal ray per pixel, divided by an analytic specular albedo and denoised.
   * References follow full paths.
@@ -169,6 +172,15 @@ For the fog:
 * `METALRENDERER_BENCH=fogcheck` renders the froxel grid against a reference that marches every camera ray in 32 steps, each with its own shadow ray, averaged over 512 frames. It renders direct light only, as the scattering view and as the final image, for the Misty hall, the spots and the sun scene.
 * Both fog modes take `METALRENDERER_LIGHTS_SCENES`.
 
+For the crowd:
+* `METALRENDERER_SCENE=crowd` starts in the Crowd scene; add `characters=32768`, `poses=128` and `detail=0`...`4` for its size, the number of poses the GPU animates and their level of detail (`METALRENDERER_SCENE="crowd,characters=8192,poses=64"`).
+* `METALRENDERER_BENCH=crowd` times it against the number of poses, of characters and the level of detail, then renders a still and a camera move. With `METALRENDERER_CROWD_CHECK=1` every captured frame compares the vertices the GPU skinned with the CPU's, and (custom tracer) checks the refitted trees box by box.
+* `METALRENDERER_CROWD=frozen` skips the per-frame skinning and refits: the crowd keeps the pose the CPU gave it at load.
+
+For the city:
+* `METALRENDERER_SCENE=city` or `citynight` starts in the City; add `seed=7` (the plants' seed too), `blocks=1`...`10`, `style=mixed|oldtown|residential|warehouse|office|modern`, `lit=0.5`, `rooms=0.3` and `textures=0` (`METALRENDERER_SCENE="citynight,blocks=1,style=oldtown"` is one block of old houses at night).
+* `METALRENDERER_BENCH=city` renders it from above, from the road and in front of one building, a block of each style, flat against textured, and the night with the frame before; then times it at 1 to 100 blocks by day and at night.
+
 For the sky:
 * `METALRENDERER_SCENE=valley` starts in the Open valley.
 * `METALRENDERER_SKY=constant`, `atmosphere` or an image path overrides every scene's sky.
@@ -252,6 +264,15 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's fog and sky defaults (and resets the GI method to radiance cascades). Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
 | Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
 | Lights | 32 | Stress test: moving sphere lights, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 the bulbs also shrink. Night market: festoon bulbs, 4096 by default. |
+| Characters | 2048 | Crowd: how many characters stand, walk and run in the square, 1 to 131072. Applied when you release the slider. |
+| Poses | 64 | Crowd: how many poses the GPU animates each frame; every character shows one of them. More poses, fewer characters in step with each other. |
+| Detail level | 3 | Crowd: the mesh the poses are skinned at. 0 is the full mesh (about 50k triangles), each level has half the triangles of the one before (level 3: about 6.5k). |
+| City seed | 1 | City: which city is built, 0 to 999 (the same setting as the plants' seed, `seed`). Applied when you release the slider, as the others below. |
+| City blocks | 4 × 4 | City: blocks along each side of the street grid, 1 to 10. |
+| Building style | Mixed districts | City: every style by district, or one of them everywhere (old town, residential blocks, warehouses, office towers, modern mid-rise). |
+| Lit windows | 35% | City at night: the share of windows with a light on behind them. |
+| Rooms behind windows | 15% | City: the share of windows with a room behind the glass instead of a blind, 0 to 50%. |
+| Generated textures | On | City: brick, plaster, concrete, tile and paving textures. Off: flat colours. |
 | Ray tracing | Custom BVH | Custom BVH or Metal's acceleration structures and intersector. Switching recompiles the shaders and rebuilds the scene's trees in the background, while the view keeps drawing with the old tracer (2 to 4 seconds the first time, then milliseconds). The images match to 58–72 dB PSNR, and every quality score in the benchmarks is within ±0.2 dB. |
 | Virtual geometry | On | Custom ray tracer only: big glTF meshes as streamed level-of-detail cuts. Off: full-detail meshes. |
 | Geometry error | 1 px | The cut's allowed geometric error in traced pixels. 0.5 px: about 2× the triangles, closer to full detail; 2 px: half. Changes apply within a few frames. |
@@ -636,6 +657,94 @@ The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
 * Dead trees only lean. A patch of grass leans as one.
 * The ground's colour map has a texel every 31 cm.
 
+### Animated characters
+
+The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk and a run. Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
+
+* **Poses are animated, not characters.** Everything here is ray traced, so a deformed mesh is not something a vertex shader does to an instance: it needs vertices of its own and an acceleration structure around them. The crowd keeps a pool of *pose slots* (`Crowd.swift`). A slot is one character playing one clip, or a cross-fade of two, from some point of its loop. Each frame the GPU animates every slot once, and every character in the square is an ordinary instance of one slot's mesh. A frame's cost follows the number of slots, not of characters: 131072 characters on 64 slots cost what 64 poses cost, plus a larger top-level tree. Characters on the same slot move in step, which a few dozen slots per clip hide well; a character that must move on its own takes a slot to itself.
+* **A frame's work, all in compute** (`Shaders/Crowd.metal`, `CrowdSkinner.swift`):
+  * `crowdPoseKernel`, one thread per joint and slot: the joint's skinning matrix. The thread walks up from its joint to the root (a skeleton is about a dozen joints deep), blending each rotation between two keys of the clip and, in a cross-fade, between the two clips.
+  * `crowdSkinKernel`, one thread per vertex and slot: linear blend skinning of up to four joints, into the slot's range of the scene's position and normal buffers. Hits then read a pose's vertices like any mesh's (`MeshData.vertexOffset`).
+  * The slots' bottom-level structures are refitted: a pose keeps its triangles, so its tree keeps its shape and only the boxes move. The custom tracer does it in `crowdRefitKernel`, one thread per node, bottom-up through the same arrival counters as the top-level build. Metal's tracer refits its per-slot structures.
+  * Then the top-level tree, as for any moving instance.
+* **Motion vectors.** The skinning keeps each slot's previous positions, and a hit on a deforming mesh interpolates them for the point's previous position (`MeshData.prevOffset`). The denoisers, the upscalers and the reuse passes then reproject limbs the way they reproject moving objects. Without it they throw a moving limb's history away, and limbs come out at traced resolution. Both offsets are compiled in only for a scene that has a crowd (`DEFORMING_MESHES`, with the scene's light types): read at every hit of every scene, they cost the trace 7% in the stress hall; now the other scenes trace the code they always did and render the same images, bit for bit.
+* **Import** (`FBXReader.swift`, `SkinnedCharacter.swift`): a reader of binary FBX written for this, with no dependencies.
+  * The file is memory-mapped and never copied. A node is a 24-byte record of offsets, names are compared as bytes, and what isn't wanted is stepped over by its end offset: a clip file carries a whole copy of its character's mesh that is never touched.
+  * Arrays are inflated once, when asked for, straight into the Swift array they become, on all cores. The six files are read at the same time.
+  * The skeleton is matched by joint name (the files list the joints in different orders). Clips are retargeted to each character by its joints' rotations away from the bind pose, so X Bot, whose joint axes and bone lengths differ from Y Bot's, plays Y Bot's clips. A clip's travel is taken out and kept as its speed.
+  * Coarser levels of the mesh come from `MeshSimplifier`, whose collapses keep a subset of the vertices, so skin weights carry over.
+  * On this M1 Max the six files (12.6 MB) are read in 26 ms and retargeted in 2 ms; the levels of detail take 320 ms. All of it is then kept in one cache file, which loads in 3 ms.
+* **What it costs** (`METALRENDERER_BENCH=crowd`: M1 Max, 640×400 upscaled 3×, cascades GI, 2048 characters, 64 poses and detail level 3 unless the row says otherwise, the animation running; ms):
+
+  | Custom tracer | skin | blas | tlas | trace | frame (Metal 3) | frame (Metal 4) |
+  |---|---|---|---|---|---|---|
+  | 8 poses | 0.04 | 0.26 | 0.35 | 3.24 | 8.5 | 7.4 |
+  | 64 poses | 0.43 | 1.23 | 0.14 | 3.46 | 10.8 | 8.4 |
+  | 256 poses | 1.02 | 4.57 | 0.14 | 3.55 | 15.5 | 10.8 |
+  | 256 characters | 0.45 | 1.21 | 0.07 | 2.39 | 9.1 | 6.9 |
+  | 32768 characters | 0.42 | 1.25 | 0.47 | 5.05 | 13.6 | 11.1 |
+  | 131072 characters | 0.29 | 0.96 | 1.07 | 5.26 | 13.9 | 12.8 |
+  | 32 poses, full detail | 0.86 | 4.90 | 0.13 | 3.59 | 15.6 | 10.7 |
+
+  * The pass columns are Metal 3's. A benchmark times each pass in its own command buffer, which costs the small passes a few tenths of a millisecond there: under Metal 4 the same 64 poses take 0.14 ms to skin and 0.68 ms to refit, and both grow in step with the pose count.
+  * A pose's cost is its triangles: the refit is what a level of detail buys back (4.9 ms for 32 poses at full detail, 0.9 ms at level 3).
+  * The CPU's share is 0.3 ms up to a few thousand characters, 1.1 ms at 32768 and 3.5 ms at 131072: a walker's transform is still written by the CPU every frame.
+  * **Metal's tracer** pays about 0.09 ms per refitted structure on this GPU, whatever its size: 6.3 ms for 64 poses and 23 ms for 256, against 1.2 and 4.6 ms above. Use fewer poses with it.
+* **Checked** by `METALRENDERER_CROWD_CHECK=1` in every setting of the mode, on the custom tracer under both APIs and on Metal's under Metal 3: the GPU's vertices are within 3 µm of the CPU's, and no refitted triangle, box or bound is off. Metal 3 and Metal 4 render the same images.
+* **Limits:**
+  * Metal's tracer under Metal 4 needs a GPU with Metal 4 ray tracing (M3 and later): that combination's refit is written the same way, through the Metal 3 queue, but has not been run.
+  * A character has one material, so the bots' two colours (body and joints) are one tint each.
+  * A walking row shares one motion and one size, so its members keep their distances; nothing steers around anything.
+  * Cross-fades keep two clips at the same point of their loops, which is right for clips that start on the same foot.
+
+### Procedural city
+
+The **City** and **City at night** scenes are generated: a seeded street grid of 1 to 100 blocks, and on every lot a building of its own (`CityPlan.swift`, `Building*.swift`, `Scene+City.swift`). Nothing is loaded; the same settings always build the same city.
+
+* **The plan** (`CityPlan`): block sizes are jittered and the middle roads are avenues. A block's district decides its style: office towers in the middle, modern mid-rise and brick apartment blocks around them, old-town houses and warehouses at the edge, and one block near the middle is a park. Houses and apartment blocks stand shoulder to shoulder around their block with a courtyard behind; towers and warehouses stand free. Each lot knows what its four sides look onto (a street, open ground, a neighbour's wall).
+* **A building** (`BuildingGenerator`) is made from its lot, style, height and seed:
+  * **The plan and massing:** a rectangle, or an L, U, T or courtyard ring; towers stand on a podium and step in on their way up, and a mid-rise's top floor can stand back behind a terrace.
+  * **The facades** are a split grammar: storeys, then a pier at each end and equal bays, then a tile per bay. Tiles: a recessed window (wall cut around it, reveals, frame with mullions and transom, sill, lintel, shutters), a glazed door onto a balcony (bars, a glass balustrade or a solid one), the front door with its step, a shop window under a sign and an awning, a warehouse's loading door. Ledges and the cornice run around the building, mitred at its corners. Party walls are blank.
+  * **The tops:** a flat roof with a parapet and things on it (the stair's head, air handlers, a water tank, a mast), or a gabled, hipped or mansard roof (with dormers), chimneys through it. An L's two gabled roofs meet in a valley.
+  * **Five styles** (old town, residential, warehouse, office, modern), each a set of ranges and palettes that a building draws from, so two of a style are related, not alike.
+  * Nothing is laid flat on anything else, because coplanar faces show as noise when ray traced: walls are cut around their openings, and what projects is a box without its back.
+* **Windows are real.** Every window has a pane of glass (see "Glass" below) in a frame, and behind it either a blind (drawn all the way, part of the way or not at all) or a room: a box with a floor, walls, a ceiling and a piece of furniture, half the building's depth at most. Shops are rooms with a counter and shelves. `rooms` sets the share.
+* **At night** a share of the windows (`lit`) have a light on: the blind glows, or the room's ceiling lamp is on and its light falls through the glass onto the street. A building's lit blinds are one emissive mesh and its lamps another, so it is two mesh lights however many windows it has; a block's street lamps are one more. The scene asks for the light table whatever its light count (ReSTIR DI lights it, as in the Night market).
+* **Meshes of several materials.** A building's walls, trim, frames, roof and rooms are one mesh: each triangle carries an offset to add to its instance's material index (`Scene.addMesh(_:uvs:materials:)`, `SceneShading.triangleMaterials`, compiled in only for scenes that use it). With a mesh per material, a ray that met a building walked a dozen trees with the same bounding box: the street view took 15.4 ms instead of 8.4.
+* **Generated textures** (`ProceduralTextures.swift`): brick, plaster, concrete, roof tiles, asphalt, paving and metal panels, each a tiling base-colour map and normal map (the metal a roughness map too), 512 or 1024 pixels, made on all cores in 0.2 s the first time and kept as PNGs in `~/Library/Caches/MetalRenderer/textures`. They are near white: a building's own colour tints them, and UVs are in metres, so bricks are the same size on every wall. They go through the texture streamer like a model's. `textures=0` builds the city in flat colours.
+* **Detail has a limit.** A building is kept under 60k triangles: a big one's upper storeys get windows without frames and sills, and a tall tower's get one ribbon of glass per wall.
+* **What it costs** (`METALRENDERER_BENCH=city`: M1 Max, 640×400 upscaled 3×, cascades GI, the custom tracer; ms):
+
+  | | buildings | triangles | built in | trace | glass | reflections | ReSTIR | frame |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 × 1 blocks | 10 | 0.07M | 5 ms | 0.82 | 0.48 | 0.48 | | 4.9 |
+  | 4 × 4 (default), from above | 99 | 0.68M | 0.07 s | 1.22 | 0.88 | 0.77 | | 6.4 |
+  | 4 × 4, from the road | | | | 1.82 | 1.85 | 1.18 | | 9.2 |
+  | 6 × 6 | 309 | 1.8M | 0.2 s | 1.47 | 0.97 | 1.01 | | 7.1 |
+  | 10 × 10 | 868 | 5.3M | 0.5 s | 1.66 | 1.09 | 0.77 | | 6.8 |
+  | night, 4 × 4, from above | | | | 0.63 | 1.12 | 0.81 | 8.9 | 17.3 |
+  | night, 4 × 4, from the road | | | | 1.02 | 2.89 | 1.16 | 12.8 | 26.1 |
+  | night, 10 × 10 | | | | 0.93 | 1.38 | 0.78 | 9.4 | 19.3 |
+
+  * "Built in" is the generator plus the custom tracer's trees (about half each); 10 × 10 has 75,000 windows, 8,200 of them with rooms.
+  * By day the city has one light, the sun, and its frame grows slowly with its size: rays walk one tree per building.
+  * At night it is 192 mesh lights of 8,900 triangles (1,706 and 58,000 at 10 × 10), and ReSTIR DI is most of the frame, as in the Night market.
+  * Metal's tracer runs it too (10 × 10: 1,737 structures, 485 MB after compaction, 6.6 ms a frame), and Metal 4 draws the same images as Metal 3 (but see the limits).
+* **Checked** by `CityTests`, `BuildingTests` and `ProceduralTextureTests`: the plan's lots stand inside their blocks and apart; every style's meshes are valid over many seeds and lots (finite, unit normals, no triangle without area or, where textured, without UV area, inside the lot, under the limit); outlines close around their plans; a seed always builds the same city; the textures tile.
+* **Limits:** under Metal 4 the texture streamer faults on the GPU when it maps a texture's level again after unmapping it, and the frames after that are black: flying far from the city and back does it, as the Gallery does (`METALRENDERER_TEXTURE_STREAMING=0` or `textures=0` avoids it; Metal 3 is not affected). Every building is unique, so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
+
+### Glass
+
+Window glass is thin and clear, or tinted: the camera sees through it and sees its mirror reflection, and to light it isn't there.
+
+* Glass is an instance mask (`Scene.maskGlass`); its material's albedo is the tint. Shadow, GI and reflection rays only meet geometry, so sunlight falls into rooms and a room's lamp lights the pavement, with no change to those kernels.
+* `traceKernel`'s camera ray doesn't meet it either: the G-buffer holds the surface behind the pane, so direct light, GI, ReSTIR, the denoisers and the reflection pass light and filter that surface as usual.
+* `glassKernel` (`Shaders/Glass.metal`) runs right after the trace: the camera ray again, against the glass alone, as far as the surface the trace found. For up to 4 panes it multiplies what comes through, (1 − Fresnel) × tint each, into the G-buffer's albedo, F0 and emission; for the first pane it traces one mirror ray, lights its hit with one light sample, and adds Fresnel × that to the emission.
+* It is compiled in only for scenes with glass (a bit of the light-type constant), so every other scene draws what it drew, bit for bit, at the same speed.
+* **Why a pass of its own:** `traceKernel` is short of registers. With the panes' rays inside it, every pixel of the city traced at a third of the speed (13.6 ms a frame from the road against 10.4); with only the ray through the panes inside it, as one call in a loop, the two kernels together were still 0.3 ms slower. One glass mesh per wall instead of per building changed nothing.
+* **Cost:** 0.2 to 1.9 ms by day (the table above), more at night, when the mirror ray's hit draws its light from the light table.
+* **Limits:** no refraction; glass doesn't tint or dim the light that passes it; the reflection's one light sample is filtered only by the upscaler (among many lights it is held low, so a dark pane doesn't sparkle); reflections off other surfaces see the room, not the pane.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -681,6 +790,9 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
                        direct (up to 4 lights): 1 shadow ray per light (+ per-light visibility and penumbra width)
                        indirect (path traced): cosine-sampled path, NEE at every bounce
                        (lighting is stored without albedo so the denoiser can blur it freely)
+    2a glassKernel     scenes with window glass: the camera ray against the panes in front of the traced surface ->
+                       what comes through them into the albedo, F0 and emission; the first pane's mirror ray,
+                       its hit lit by 1 light sample, into the emission
     2c manyLightsKernel more than 4 lights: per light group, pick 1 light by unshadowed light, 1 shadow ray
                        (+ per-group visibility and penumbra width); manyLightsReuseKernel also resamples
                        against last frame's picks (default)
@@ -743,6 +855,19 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
+| `FBXReader.swift` | Binary FBX: a memory-mapped reader that skips what isn't asked for and inflates arrays in place |
+| `SkinnedCharacter.swift` | Characters and clips from FBX (skeleton, skin, retargeting, levels of detail), posing and skinning on the CPU, the cache file |
+| `Crowd.swift` | The crowd's pose slots: what each plays at a time, and where its walkers are |
+| `CrowdSkinner.swift` | The crowd's GPU buffers and per-frame dispatches, and the check against the CPU |
+| `Scene+Crowd.swift` | The Crowd scene |
+| `Scene+City.swift` | The City scenes: the streets, the buildings' meshes and materials, the sun or the moon |
+| `CityPlan.swift` | The city's layout from its settings: street grid, districts, lots, lamps and trees, viewpoints |
+| `Building.swift` | The building generator: what to build, a building's parts, plans (`Footprint`), tiers and massing, the detail limit |
+| `Building+Facade.swift` | The facade grammar: storeys, bays, and the window, balcony, door, shop and loading-door tiles |
+| `Building+Roof.swift` | Flat, gabled, hipped and mansard roofs, chimneys, and what stands on a flat roof |
+| `BuildingStyle.swift` | The five styles: proportions, pieces and palettes a building draws from |
+| `MeshBuilder.swift` | Quads, boxes, prisms, cylinders and balls with texture coordinates in metres, for generated meshes |
+| `ProceduralTextures.swift` | The city's generated tiling textures and their cache files |
 | `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |
@@ -754,7 +879,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind) |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind), `Crowd` |
 
 ## Notes for M1 / M2 Macs
 
@@ -1106,7 +1231,11 @@ What didn't help:
    * With 2000 objects the frame still costs 1.4 ms more than with 400; sorting secondary rays by direction for coherence is the other thing to try.
 4. **Better GI caching:** radiance cascades and ReSTIR GI's multi-bounce feedback fall back to the scene's average indirect light at points no screen pixel covers, and cascades lose 7 dB to the path tracer in cluttered scenes like the stress hall. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
 5. **Cheaper ReSTIR GI:** its paths cost what the path tracer's do, so it runs at 2–3× the cascades' cost. Half-resolution reservoirs (with full-resolution reuse), or paths that end in a world-space radiance cache after one bounce, would cut that. The multi-bounce feedback alone, which made most of its gain, could also be given to the plain path tracer. And a denoiser that uses the reservoirs' confidence (ReBLUR or ReLAX-style) might turn reuse's lower raw noise into a lower error, which SVGF doesn't.
-6. **Deforming meshes:** update vertices in a compute pass, then refit that mesh's bottom-level tree with a bottom-up box pass like `rtFitKernel` (or call `refit` on its BLAS with the Metal tracer).
+6. **The crowd, further:**
+   * Write the walkers' transforms on the GPU (instance data and Metal's instance descriptors), which is what the CPU still does per character and frame.
+   * Metal's tracer pays per refitted structure: refit half the slots a frame, or build the poses' structures with Metal 4's own acceleration-structure encoder where it exists.
+   * Pick a pose's level of detail by its nearest character's distance, with full-detail slots for the characters next to the camera.
+   * Keep the bots' two materials (a material index per triangle), and read skins and animations from glTF too.
 7. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
 8. **Virtual geometry:** a GPU-built (or treelet-optimized) BLAS over the cut would let the cut update every frame; LOD cross-fades would hide the rare pop; the Metal tracer could build BLASes over the cut too.
 9. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.

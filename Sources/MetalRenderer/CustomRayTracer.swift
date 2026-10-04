@@ -42,6 +42,7 @@ struct WindFrame {
 /// Kernels that build the dynamic TLAS (Shaders/BVHBuild.metal).
 struct RTPipelines {
     let prep, keys, sortLocal, sortGlobal, hierarchy, fit: MTLComputePipelineState
+    let crowdRefit: MTLComputePipelineState   // the crowd's pose slots: their bottom-level trees, every frame
     let vg: VGPipelines
 }
 
@@ -139,6 +140,13 @@ final class CustomRayTracer {
     let virtualGeometry: VirtualGeometry?
     let virtualBLAS: VirtualBLAS?
     static let clusterMode = ProcessInfo.processInfo.environment["METALRENDERER_VG_MODE"] == "clusters"
+    /// The crowd's pose slots (Crowd): their bottom-level trees keep the shape they were built with and are refitted
+    /// to the skinned vertices every frame (crowdRefitKernel). `links`: per node its parent and its mesh; `arrived`:
+    /// the kernel's counters.
+    private var crowdRefit: (links: MTLBuffer, arrived: MTLBuffer, nodeBase: Int, nodeCount: Int, meshes: ClosedRange<Int>)?
+    private var refitTag: UInt32 = 0
+    /// MSL CrowdRefitParams.
+    private struct RefitParams { var nodeBase: UInt32, nodeCount: UInt32, tag: UInt32, pad: UInt32 = 0 }
     private let dummy: MTLBuffer                  // stands in for the virtual-geometry buffers without any
     /// Traversal counters (compiled in with RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which
     /// recompiles the shaders): rays, top-level nodes, bottom-level nodes, instance entries, cluster entries, triangle tests.
@@ -161,13 +169,15 @@ final class CustomRayTracer {
         let start = CACurrentMediaTime()
         let blas = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
         blasRoots = blas.roots
-        // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it.
+        // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it, and
+        // a pose slot's (its mesh deforms) that of every pose: on the CPU, the GPU keeps the exact ones.
         var instanceBounds = blas.bounds
         for (m, mesh) in scene.meshes.enumerated() where mesh.sways != 0 {
             let reach = Scene.coverLean * max(abs(instanceBounds[m].lo.y), abs(instanceBounds[m].hi.y))
             instanceBounds[m].lo -= SIMD3(reach, 0, reach)
             instanceBounds[m].hi += SIMD3(reach, 0, reach)
         }
+        for s in scene.crowd?.slots ?? [] { instanceBounds[s.mesh] = scene.localBounds(mesh: s.mesh) }
         meshBounds = instanceBounds
         swayingMeshes = scene.meshes.map { $0.sways != 0 }
         cpu = (blas, blas.triangles)
@@ -320,6 +330,21 @@ final class CustomRayTracer {
         leafParent = try buffer([UInt32](repeating: 0, count: max(dyn.count, 1)), "rtLeafParent")
         counters = try buffer([UInt32](repeating: 0, count: max(dyn.count, 1)), "rtCounters")
         for slot in 0..<slots { writeArgs(slot: slot) }
+        if let crowd = scene.crowd, let first = crowd.slots.map(\.mesh).min(), let last = crowd.slots.map(\.mesh).max() {
+            precondition(last - first + 1 == crowd.slots.count, "the pose slots' meshes are consecutive")
+            let nodeBase = blas.nodeBases[first], nodeCount = blas.nodeBases[last + 1] - nodeBase
+            var links = [SIMD2<UInt32>](repeating: SIMD2(BVHNode.none, 0), count: nodeCount)
+            for m in first...last {
+                for n in blas.nodeBases[m]..<blas.nodeBases[m + 1] {
+                    links[n - nodeBase].y = UInt32(m)
+                    for k in 0..<2 where blas.nodes[n].ref(k) & BVHNode.leafBit == 0 {
+                        links[Int(blas.nodes[n].ref(k)) - nodeBase].x = UInt32(n) | (k == 1 ? 0x8000_0000 : 0)
+                    }
+                }
+            }
+            crowdRefit = (try buffer(links, "rtCrowdLinks"), try buffer([UInt32](repeating: 0, count: nodeCount), "rtCrowdArrived"),
+                          nodeBase, nodeCount, first...last)
+        }
         print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms",
                      blas.nodes.count, blas.triangles.count / 3, staticCount, staticNodes.count, staticDepth, dynamicIds.count,
                      (CACurrentMediaTime() - start) * 1000))
@@ -453,6 +478,70 @@ final class CustomRayTracer {
         }
         virtualGeometry?.encode(enc, slot: slot, rt: pipelines, vg: pipelines.vg, instanceData: instanceData, tlasNodes: tlasNodes[slot],
                                 nodeBase: virtualNodeBase, camPos: view.camPos, pixelScale: view.pixelScale, tau: view.tau, frame: view.frame)
+    }
+
+    /// The crowd's pose slots: their triangles and boxes from this frame's skinned vertices, and their bounds for the
+    /// build above (so it comes first). `positions`, `indices` and `meshes` are the scene's buffers.
+    func encodeCrowdRefit(_ enc: ComputePass, positions: MTLBuffer, indices: MTLBuffer, meshes: MTLBuffer) {
+        guard let refit = crowdRefit, let pipelines else { return }
+        refitTag &+= 1
+        var p = RefitParams(nodeBase: UInt32(refit.nodeBase), nodeCount: UInt32(refit.nodeCount), tag: refitTag)
+        enc.setComputePipelineState(pipelines.crowdRefit)
+        enc.setBytes(&p, length: MemoryLayout<RefitParams>.stride, index: 0)
+        enc.setBuffer(blasNodes, offset: 0, index: 1)
+        enc.setBuffer(triangles, offset: 0, index: 2)
+        enc.setBuffer(refit.links, offset: 0, index: 3)
+        enc.setBuffer(refit.arrived, offset: 0, index: 4)
+        enc.setBuffer(positions, offset: 0, index: 5)
+        enc.setBuffer(indices, offset: 0, index: 6)
+        enc.setBuffer(meshes, offset: 0, index: 7)
+        enc.setBuffer(meshInfo, offset: 0, index: 8)
+        enc.dispatchThreads(MTLSize(width: refit.nodeCount, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+    }
+
+    /// The pose slots' trees as the GPU left them (the frame must be done), against `positions`: every triangle
+    /// record is its triangle's current vertices, every box is exactly the box of what lies below it, and each mesh's
+    /// bounds are its root's. Returns what doesn't hold (METALRENDERER_CROWD_CHECK=1).
+    func checkCrowdRefit(scene: Scene, positions: MTLBuffer) -> (triangles: Int, boxes: Int, bounds: Int) {
+        guard let refit = crowdRefit else { return (0, 0, 0) }
+        let nodes = blasNodes.contents().bindMemory(to: BVHNode.self, capacity: blasNodes.length / MemoryLayout<BVHNode>.stride)
+        let tris = triangles.contents().bindMemory(to: SIMD4<Float>.self, capacity: triangles.length / 16)
+        let p = positions.contents().bindMemory(to: SIMD3<Float>.self, capacity: positions.length / 16)
+        let info = meshInfo.contents().bindMemory(to: SIMD4<Float>.self, capacity: meshInfo.length / 16)
+        var wrong = (triangles: 0, boxes: 0, bounds: 0)
+        for m in refit.meshes {
+            let mesh = scene.meshes[m]
+            /// The box of what is below `ref`, counting the boxes on the way that aren't it.
+            func box(_ ref: UInt32) -> AABB {
+                var b = AABB()
+                if ref == BVHNode.none { return b }
+                if ref & BVHNode.leafBit != 0 {
+                    let first = Int(ref & 0x0FFF_FFFF), count = Int((ref >> 28) & 7) + 1
+                    for t in first..<(first + count) {
+                        let base = Int(mesh.firstIndex) + 3 * Int(tris[3 * t].w.bitPattern), offset = Int(mesh.vertexOffset)
+                        let p0 = p[Int(scene.indices[base]) + offset], p1 = p[Int(scene.indices[base + 1]) + offset]
+                        let p2 = p[Int(scene.indices[base + 2]) + offset]
+                        let v0 = tris[3 * t], e1 = tris[3 * t + 1], e2 = tris[3 * t + 2]
+                        if SIMD3(v0.x, v0.y, v0.z) != p0 || SIMD3(e1.x, e1.y, e1.z) != p1 - p0 || SIMD3(e2.x, e2.y, e2.z) != p2 - p0 {
+                            wrong.triangles += 1
+                        }
+                        b.grow(p0); b.grow(p1); b.grow(p2)
+                    }
+                    return b
+                }
+                let n = nodes[Int(ref)]
+                for k in 0..<2 where n.ref(k) != BVHNode.none {
+                    let below = box(n.ref(k))
+                    if below.lo != n.lo(k) || below.hi != n.hi(k) { wrong.boxes += 1 }
+                    b.grow(below)
+                }
+                return b
+            }
+            let all = box(blasRoots[m])
+            let lo = info[2 * m], hi = info[2 * m + 1]
+            if SIMD3(lo.x, lo.y, lo.z) != all.lo || SIMD3(hi.x, hi.y, hi.z) != all.hi { wrong.bounds += 1 }
+        }
+        return wrong
     }
 
     /// An LBVH over `leafBoxes` (Morton keys, bitonic sort, Karras hierarchy, bottom-up boxes) into `nodes` from
@@ -618,8 +707,9 @@ final class CustomRayTracer {
                 var brute = Float.infinity
                 for t in 0..<triCount {
                     let base = Int(mesh.firstIndex) + 3 * t
-                    let p0 = scene.positions[Int(scene.indices[base])], p1 = scene.positions[Int(scene.indices[base + 1])],
-                        p2 = scene.positions[Int(scene.indices[base + 2])]
+                    let offset = Int(mesh.vertexOffset)
+                    let p0 = scene.positions[Int(scene.indices[base]) + offset], p1 = scene.positions[Int(scene.indices[base + 1]) + offset],
+                        p2 = scene.positions[Int(scene.indices[base + 2]) + offset]
                     if let h = CustomRayTracer.triangle(o, d, p0, p1 - p0, p2 - p0), h < brute { brute = h }
                 }
                 let bvh = intersectBLAS(root: blasRoots[m], o: o, d: d, tmax: .infinity)

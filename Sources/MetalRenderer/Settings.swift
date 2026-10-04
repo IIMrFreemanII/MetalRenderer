@@ -258,6 +258,9 @@ enum SceneKind: Int, CaseIterable, Codable {
     case valley             // an open valley under the sky: a day cycle, drifting clouds and their shadows
     case market             // a night market: thousands of festoon bulbs (`lights`), lanterns, lit windows, neon signs
     case forest             // generated trees, bushes, ferns and grass (`trees`, `seed`) on rolling ground, a day cycle
+    case crowd              // a square under the sun with `characters` animated characters on `poses` pose slots
+    case city               // a generated city (`CitySettings`) under the sun: blocks of procedural buildings, a day cycle
+    case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
 
     var title: String {
         switch self {
@@ -274,15 +277,61 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .valley: return "Open valley"
         case .market: return "Night market"
         case .forest: return "Forest"
+        case .crowd: return "Crowd"
+        case .city: return "City"
+        case .cityNight: return "City at night"
         }
     }
 
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s), or nil.
-    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .forest ? 180 : nil }
+    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : nil }
+    /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
+    var isCity: Bool { self == .city || self == .cityNight }
+    /// The scene's default camera depends on how it was built (its size), so it is asked of the scene itself.
+    var cameraFromScene: Bool { self == .crowd || isCity }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
     var hasPlants: Bool { self == .forest || self == .valley }
+}
+
+/// Which buildings the city is made of: every style by district, or one of them everywhere.
+enum CityStyle: Int, CaseIterable, Codable {
+    case mixed              // towers in the centre, mid-rise blocks around them, old town and warehouses at the edge
+    case oldtown            // narrow plastered houses with pitched roofs and shutters
+    case residential        // brick apartment blocks with balconies around courtyards
+    case warehouse          // low, wide brick halls with big windows and loading doors
+    case office             // glass towers on podiums, with setbacks
+    case modern             // concrete and panel mid-rise blocks with ribbon windows
+
+    var title: String {
+        switch self {
+        case .mixed: return "Mixed districts"
+        case .oldtown: return "Old town"
+        case .residential: return "Residential blocks"
+        case .warehouse: return "Warehouses"
+        case .office: return "Office towers"
+        case .modern: return "Modern mid-rise"
+        }
+    }
+}
+
+/// The generated city (the City scenes): changing any of it builds the city again.
+/// (Which city is `SceneSettings.seed`'s to say, as for the plants.)
+struct CitySettings: Equatable, Codable {
+    /// Blocks along each side of the street grid (1 = a single block).
+    var blocks = 4
+    var style = CityStyle.mixed
+    /// At night: the share of windows with a light on behind them.
+    var lit: Float = 0.35
+    /// The share of windows with a room behind the glass instead of a blind (at night the lit ones have a lamp).
+    var rooms: Float = 0.15
+    /// Generated brick, plaster, concrete, tile and paving textures (ProceduralTextures); off: flat colours.
+    var textures = true
+
+    static let blockRange = 1...10
+    static let litRange: ClosedRange<Float> = 0...1
+    static let roomRange: ClosedRange<Float> = 0...0.5
 }
 
 /// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
@@ -313,6 +362,12 @@ struct SceneSettings: Equatable, Codable {
     var kind = SceneKind.cornell
     var objects = 400
     var lights = 32
+    /// The crowd scene: how many characters, and how many poses the GPU animates for them each frame (Crowd).
+    var characters = 2048
+    var poses = 64
+    /// ...and at which level of detail they are skinned and traced: 0 = the full mesh, each level half the one before.
+    var detail = 3
+    var city = CitySettings()
     var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
     /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
     /// Off: they only light what GI rays happen to hit, as before.
@@ -337,6 +392,9 @@ struct SceneSettings: Equatable, Codable {
     static let undergrowthRange = 0...200
     static let seedRange = 0...999
     static let lightRange = 1...16384
+    static let characterRange = 1...131_072
+    static let poseRange = 1...512
+    static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 }
 
@@ -397,8 +455,12 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area:
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight:   // .cityNight: thousands of lit windows scatter in blotches
             break
+        case .city:
+            // Haze: the far end of an avenue fades toward the sky.
+            f.enabled = true; f.density = 0.0012; f.heightFalloff = 0.01; f.anisotropy = 0.5; f.noise = 0.15
+            f.maxDistance = 150
         case .market:
             f.enabled = true; f.density = 0.012; f.heightFalloff = 0.08; f.anisotropy = 0.4; f.ambient = 0.5; f.maxDistance = 60
         case .valley:
@@ -475,12 +537,17 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
         case .mixed:
             s.mode = .atmosphere; s.coverage = 0.25; s.shadows = false   // the sun is low: clouds near the horizon
+        case .crowd:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1200; s.cloudThickness = 1000; s.cloudScale = 2500
+        case .city:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1400; s.cloudThickness = 1200; s.cloudScale = 3000
+            s.shadowStrength = 0.6
         case .valley:
             // Small, low clouds (a stylised scale), so their shadows visibly cross the 400 m valley.
             s.mode = .atmosphere; s.coverage = 0.4; s.cloudBase = 700; s.cloudThickness = 800; s.cloudScale = 800

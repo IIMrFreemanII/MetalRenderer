@@ -27,6 +27,7 @@ using namespace metal::raytracing;
 #include "Shaders/Fog.metal"               // volumetric fog: fogInject / fogIntegrate / fogReference
 #include "Shaders/Sky.metal"               // atmosphere, clouds, the sky map and its noise
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
+#include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
@@ -35,3 +36,4 @@ using namespace metal::raytracing;
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
 #include "Shaders/BVHBuild.metal"          // custom ray tracer: the per-frame top-level tree (rt* kernels)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its tree (vg* kernels)
+#include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices, vertices and trees (crowd* kernels)

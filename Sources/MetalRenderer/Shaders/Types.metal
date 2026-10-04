@@ -30,9 +30,12 @@ struct Uniforms {
 struct MeshData {
     uint firstIndex;
     uint indexCount;
-    uint sways;       // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
-    uint cutout;      // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
+    uint vertexOffset;  // a skinned character's pose slot: its vertices are this far after the ones its indices name
+    uint prevOffset;    // ...and its previous frame's positions this far after those (0 = the mesh doesn't deform)
+    uint sways;         // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
+    uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
 };
+static_assert(sizeof(MeshData) == 24, "MeshData: GPUMesh");
 
 struct InstanceData {
     float4x4 transform;
@@ -87,10 +90,13 @@ struct SceneShading {
     device const float*           minLod;      // per texture: finest resident mip level (texture streaming)
     device atomic_uint*           feedback;    // per texture: 16 counters, samples wanting each mip level this frame
     device const EmissiveTriangle* emissive;   // emissive-mesh lights' triangles
+    device const uchar*           triangleMaterials;   // with MULTI_MATERIAL: per triangle of the index buffer, what to
+                                               // add to its instance's material index (a mesh of several materials)
     texture2d_array<float>        sky;         // with FLAG_SKY_MAP: [0] upper, [1] lower hemisphere (skyKernel)
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
 };
+static_assert(sizeof(SceneShading) == 224, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -121,8 +127,9 @@ constant uint LIGHT_MESH   = 5;
 // (e.g. a pipeline made without it) every type is handled. Bit 31 = LIGHT_TABLE: a scene with many lights (more than
 // Scene.lightTableThreshold), where nothing may loop over the lights or keep something per light: GI and the path
 // tracer sample the light table instead of per-light light maps, and the sky draws only the suns' discs.
+// The bits above the types compile whole features in (below): a scene without them traces the code it always did.
 constant uint lightTypesConstant [[function_constant(0)]];
-constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x3Fu;
+constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7C00003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 // Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
@@ -130,6 +137,14 @@ constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the traversal cuts out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
+// Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
+// Only then does a hit read MeshData's offsets and a previous position (the offsets cost the trace 7% in the stress
+// hall when every scene paid for them).
+constant bool DEFORMING_MESHES = (LIGHT_SPEC & 0x10000000u) != 0;
+// Bit 27 = GLASS: some instances are window glass (MASK_GLASS), which camera rays pass through (glassKernel).
+constant bool GLASS = (LIGHT_SPEC & 0x08000000u) != 0;
+// Bit 26 = MULTI_MATERIAL: some meshes have several materials (SceneShading.triangleMaterials; the city's buildings).
+constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
@@ -208,6 +223,7 @@ constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser hand
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
 
 constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
+constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_ALL      = 0xFF;
 
 constant float RAY_EPSILON  = 1e-3f;

@@ -24,9 +24,15 @@ final class Scene {
         var normalMatrix = matrix_identity_float4x4
         /// A light's proxy whose light moves (`LightMotion.animated`): `Scene.update` re-poses it every frame.
         var poseAnimated = false
+        /// A member of the crowd: its mesh is a pose slot's, which deforms every frame (Crowd).
+        var skinned = false
+        /// ...that walks: `Scene.update` moves it along its lane.
+        var travels = false
 
-        /// Never moves: its transform is the one it was added with (the ray tracers' static trees).
-        var isStatic: Bool { animation == nil && !poseAnimated }
+        /// Never moves or deforms: its transform is the one it was added with (the ray tracers' static trees).
+        var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
+        /// Its transform changes from frame to frame.
+        var moves: Bool { animation != nil || poseAnimated || travels }
     }
 
     /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
@@ -163,6 +169,9 @@ final class Scene {
     /// light spheres never block their own light.
     static let maskGeometry: UInt32 = 1
     static let maskLights: UInt32 = 2
+    /// Window glass: only camera rays meet it (they pass through it and take its reflection, traceKernel); to shadow
+    /// and GI rays it isn't there, so light goes through windows.
+    static let maskGlass: UInt32 = 4
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
@@ -190,6 +199,9 @@ final class Scene {
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
     private(set) var hasSpecular = false
     private(set) var indices: [UInt32] = []
+    /// For meshes of several materials (the city's buildings): per triangle of `indices`, what to add to its
+    /// instance's material index. Empty if no mesh has more than one; otherwise one entry per triangle.
+    private(set) var triangleMaterials: [UInt8] = []
     private(set) var meshes: [GPUMesh] = []
     private(set) var materials: [GPUMaterial] = []
     private(set) var instances: [Instance] = []
@@ -201,8 +213,6 @@ final class Scene {
     private var materialsDirty: Range<Int>?
     /// What `update` has to touch every frame, found once by init (nil while it builds the scene: everything then).
     private var animated: (instances: [Int], lights: [Int], scaledLights: [Int])?
-    /// The instances that move (everything else keeps the records of its first frame).
-    var animatedInstances: [Int] { animated?.instances ?? Array(instances.indices) }
     /// The lights whose GPU record changes from frame to frame (moving, flickering, the mesh lights of moving
     /// instances), and each instance's rank + 1 among the virtual ones (0 = not virtual).
     private var changingLights: [Int] = []
@@ -214,6 +224,10 @@ final class Scene {
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     var defaultCamera = Camera()
     let settings: SceneSettings
+    /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
+    private(set) var hasGlass = false
+    /// The scene's animated characters, if it has any (Scene+Crowd.swift).
+    private(set) var crowd: Crowd?
 
     var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
     var skyAnimation: ((Float) -> SIMD3<Float>)?
@@ -246,9 +260,13 @@ final class Scene {
         case .valley: buildValley()
         case .market: buildMarket()
         case .forest: buildForest()
+        case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
+        case .city: buildCity(settings.city, seed: settings.seed, night: false)
+        case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
+        finishCrowd()
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
         let (lo, hi) = bounds()
@@ -258,11 +276,14 @@ final class Scene {
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
 
         // Nothing is added from here on: what the frame loop asks for every frame is fixed.
+        if !triangleMaterials.isEmpty {
+            triangleMaterials += [UInt8](repeating: 0, count: indices.count / 3 - triangleMaterials.count)
+        }
         hasSpecular = materials.contains { $0.params.x > 0 }
         switch ProcessInfo.processInfo.environment["METALRENDERER_LIGHT_TABLE"] {
         case "1": usesLightTable = true
         case "0": usesLightTable = false
-        default: usesLightTable = lights.count > Scene.lightTableThreshold
+        default: usesLightTable = forcesLightTable || lights.count > Scene.lightTableThreshold
         }
         firstSun = lights.firstIndex { $0.kind.isSun }
         var rank: UInt32 = 0
@@ -272,7 +293,7 @@ final class Scene {
             return rank
         }
         func moves(_ l: Light) -> Bool { l.kind.isSun || l.motion == .animated }
-        animated = (instances: instances.indices.filter { !instances[$0].isStatic },
+        animated = (instances: instances.indices.filter { instances[$0].moves },
                     lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
                     scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
         changingLights = lights.indices.filter {
@@ -319,12 +340,28 @@ final class Scene {
         }
         if let skyAnimation { skyColor = skyAnimation(day) }
         for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
+        if let crowd {
+            // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
+            // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
+            crowd.pose(at: t)
+            for w in crowd.walkers {
+                let (p, previous) = w.positions(crowd.slots[w.slot])
+                instances[w.instance].transform.columns.3 = SIMD4(p, 1)
+                instances[w.instance].prevTransform.columns.3 = SIMD4(previous, 1)
+                instances[w.instance].normalMatrix.columns.0.w = -dot(w.inverse0, p)
+                instances[w.instance].normalMatrix.columns.1.w = -dot(w.inverse1, p)
+                instances[w.instance].normalMatrix.columns.2.w = -dot(w.inverse2, p)
+            }
+        }
     }
 
     private func setTransform(_ i: Int, _ transform: float4x4) {
         instances[i].transform = transform
         instances[i].normalMatrix = transform.inverse.transpose
     }
+
+    /// The instances whose transform changes from frame to frame.
+    var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
 
     /// The range of materials changed since the last call (nil: none), which is then forgotten.
     func takeMaterialsDirty() -> Range<Int>? {
@@ -415,12 +452,19 @@ final class Scene {
     /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off. Set once, by init.
     static let lightTableThreshold = 256
     private(set) var usesLightTable = false
+    /// Set by a scene's builder: the light table whatever the count. (The city at night: a building's lit windows are
+    /// one mesh light wrapped around it, which the per-light loops of a scene with few lights sample badly.)
+    var forcesLightTable = false
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
+    /// The bits under it: the features the scene's shaders are compiled with.
     var lightTypeMask: UInt32 {
-        // Bit 30: FOLIAGE, the scene has assemblies or leaning ground cover; bit 29: ALPHA_TEST, it has leaf cards
-        // (Shaders/Types.metal).
-        lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)) { mask, l in   // spheres always: an empty scene needs some type
+        // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
+        // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
+        // MULTI_MATERIAL, some mesh has several materials. (Shaders/Types.metal.)
+        let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
+            | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (triangleMaterials.isEmpty ? 0 : 0x0400_0000)
+        return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
             case .sphere: type = GPULight.sphere
@@ -669,9 +713,16 @@ final class Scene {
         }
     }
 
-    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil) -> Int {
+    /// `materials`: for a mesh of several materials, each triangle's material as an offset from the material its
+    /// instance names (which is then the first of a run of materials added one after the other).
+    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil) -> Int {
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
+        if let offsets {
+            precondition(offsets.count == mesh.indices.count / 3, "one material per triangle")
+            triangleMaterials += [UInt8](repeating: 0, count: indices.count / 3 - triangleMaterials.count)   // the meshes before it
+            triangleMaterials += offsets
+        }
         positions += mesh.positions
         normals += mesh.normals
         uvs += meshUVs ?? [SIMD2<Float>](repeating: .zero, count: mesh.positions.count)
@@ -680,6 +731,73 @@ final class Scene {
         meshBounds.append((mesh.positions.reduce(SIMD3(repeating: .infinity), simd_min),
                            mesh.positions.reduce(SIMD3(repeating: -.infinity), simd_max)))
         return meshes.count - 1
+    }
+
+    // MARK: - Crowd
+
+    /// Takes `crowd` as this scene's: its characters' bind-pose meshes and a mesh per pose slot.
+    func adopt(_ crowd: Crowd) {
+        self.crowd = crowd
+        for p in crowd.parts.indices {
+            let geometry = crowd.geometry(part: p)
+            crowd.parts[p].bindVertex = positions.count
+            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs)
+        }
+        for i in crowd.slots.indices {
+            // A pose: its character's triangles over vertices of its own, which `finishCrowd` places. Its bounds are
+            // those of every pose the character takes.
+            let part = crowd.parts[crowd.slots[i].part], character = crowd.characters[part.character]
+            meshes.append(GPUMesh(firstIndex: meshes[part.mesh].firstIndex, indexCount: meshes[part.mesh].indexCount))
+            meshBounds.append((character.boundsMin, character.boundsMax))
+            crowd.slots[i].mesh = meshes.count - 1
+        }
+    }
+
+    /// Mesh `m`'s bounds in its own space: for a pose slot, of every pose it may take.
+    func localBounds(mesh m: Int) -> AABB { AABB(lo: meshBounds[m].0, hi: meshBounds[m].1) }
+
+    /// Marks instance `i` as a member of the crowd (its mesh is a pose slot's).
+    func setSkinned(_ i: Int, travels: Bool) {
+        instances[i].skinned = true
+        instances[i].travels = travels
+    }
+
+    /// Once every mesh is in: the pose slots' vertices go after them (each slot's current positions and normals,
+    /// then every slot's previous positions), skinned on the CPU to the pose at time 0. The GPU rewrites them every
+    /// frame from then on; these are what the acceleration structures are first built from.
+    private func finishCrowd() {
+        guard let crowd, !crowd.slots.isEmpty else { return }
+        var next = positions.count
+        for p in crowd.parts.indices {
+            crowd.parts[p].currentBase = next
+            next += crowd.parts[p].slotCount * crowd.parts[p].vertexCount
+        }
+        let currentEnd = next
+        for p in crowd.parts.indices {
+            crowd.parts[p].previousBase = next
+            next += crowd.parts[p].slotCount * crowd.parts[p].vertexCount
+        }
+        positions += [SIMD3<Float>](repeating: .zero, count: next - positions.count)
+        normals += [SIMD3<Float>](repeating: .zero, count: currentEnd - normals.count)
+        crowd.pose(at: 0)
+        let geometry = crowd.parts.indices.map { crowd.geometry(part: $0) }
+        positions.withUnsafeMutableBufferPointer { p in
+            normals.withUnsafeMutableBufferPointer { n in
+                DispatchQueue.concurrentPerform(iterations: crowd.slots.count) { i in
+                    let character = geometry[crowd.slots[i].part]
+                    let range = crowd.vertexRange(slot: i)
+                    SkinnedCharacter.skin(positions: character.positions, normals: character.normals, skin: character.skin,
+                                          palette: crowd.palette(slot: i), into: p.baseAddress! + range.current,
+                                          n.baseAddress! + range.current)
+                    (p.baseAddress! + range.previous).update(from: p.baseAddress! + range.current, count: range.count)
+                }
+            }
+        }
+        for i in crowd.slots.indices {
+            let range = crowd.vertexRange(slot: i), part = crowd.parts[crowd.slots[i].part]
+            meshes[crowd.slots[i].mesh].vertexOffset = UInt32(range.current - part.bindVertex)
+            meshes[crowd.slots[i].mesh].prevOffset = UInt32(range.previous - range.current)
+        }
     }
 
     /// How far ground cover leans at full wind, per unit of its height (WIND_COVER_LEAN in Shaders/Foliage.metal).
@@ -731,6 +849,32 @@ final class Scene {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))
         return materials.count - 1
+    }
+
+    /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
+    func addGlassMaterial(tint: SIMD3<Float>) -> Int {
+        hasGlass = true
+        return addMaterial(GPUMaterial(albedo: SIMD4(tint, 0), emission: SIMD4(.zero, 0), params: SIMD4(0, 1, 0, 0)))
+    }
+
+    /// Any material, as it is.
+    func addMaterial(_ material: GPUMaterial) -> Int {
+        materials.append(material)
+        return materials.count - 1
+    }
+
+    /// An image for materials to sample: its index for `GPUMaterial.textures`.
+    func addTexture(_ source: TextureSource) -> UInt32 {
+        textures.append(source)
+        return UInt32(textures.count - 1)
+    }
+
+    /// Room for this much more geometry (a builder that knows how much it is about to add).
+    func reserveGeometry(vertices: Int, indices count: Int) {
+        positions.reserveCapacity(positions.count + vertices)
+        normals.reserveCapacity(normals.count + vertices)
+        uvs.reserveCapacity(uvs.count + vertices)
+        indices.reserveCapacity(indices.count + count)
     }
 
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
@@ -859,7 +1003,7 @@ final class Scene {
         }
         let lumWeights = SIMD3<Float>(0.2126, 0.7152, 0.0722)
         var flagged = Set<Int>()
-        for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry {
+        for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry && !inst.skinned {
             let material = materials[inst.material]
             let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
             guard factor.max() > 0 else { continue }

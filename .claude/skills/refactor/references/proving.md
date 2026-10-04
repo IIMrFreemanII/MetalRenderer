@@ -26,7 +26,9 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Upscalers, the output path | `upscale`, `quality`, `hwrtq` |
 | Tracers, acceleration structures | `rt`, `hwrt` (both tracers), and any mode with `-- METALRENDERER_RT=metal` |
 | Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
-| Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery` (needs the LFS models in both trees) |
+| Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery`, with `-- METALRENDERER_ASSETS=<repo>/Assets` (see below) |
+| Skinned characters, the crowd, deforming meshes | `crowd` with `-- METALRENDERER_CROWD_CHECK=1` (its log lines compare the GPU's vertices and refitted trees with the CPU's) |
+| The city, the building generator, glass, meshes of several materials | `city` (its first 17 settings are stills: narrow with `"overview\|street\|facade\|night"`), also with `-- METALRENDERER_RT=metal` |
 | Capability fallbacks | any mode with `-- METALRENDERER_CAPS=rt` and the like |
 
 What a mode costs, per run, on an M4 Max under macOS 27.0 without the references (`same.sh` runs it twice):
@@ -46,6 +48,10 @@ What a mode costs, per run, on an M4 Max under macOS 27.0 without the references
 
 Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
 other seventeen together take about five minutes per binary, so ten for a comparison.
+
+`vgdebug` and `gallery` need both binaries to read the same models *and the same caches*: pass
+`METALRENDERER_ASSETS=<repo>/Assets`. Left alone, the baseline builds its own cluster DAGs in its worktree, and two
+builds of a DAG differ (the virtual-geometry views then differ in a fifth of their pixels, with nothing changed).
 
 When images differ:
 * **Run `same.sh --self <mode> "<filter>"`.** It compares the baseline with itself. A setting that differs there

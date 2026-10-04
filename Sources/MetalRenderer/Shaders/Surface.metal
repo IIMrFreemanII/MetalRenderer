@@ -10,6 +10,7 @@ struct SceneData {
     device const float*        minLod;
     device atomic_uint*        feedback;
     device const EmissiveTriangle* emissive;
+    device const uchar*        triangleMaterials;
     device const Light*        lights;
     uint                       lightCount;
     uint4                      lightTable;      // Uniforms.lightTable, for the samplers that draw from the table
@@ -27,6 +28,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.minLod = shading.minLod;
     s.feedback = shading.feedback;
     s.emissive = shading.emissive;
+    s.triangleMaterials = shading.triangleMaterials;
     s.sky = shading.sky;
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
@@ -237,6 +239,9 @@ struct HitVertices {
     float3 p[3];
     float3 n[3];
     float2 t[3];
+    uint3 i;          // with prevOffset: the vertices' places in the position buffer
+    uint triangle;    // its place in the index buffer / 3 (~0: virtual geometry, which has no index buffer)
+    uint prevOffset;  // MeshData.prevOffset (0 = the previous frame's object-space positions are these ones)
     bool   leaf;   // a leaf of an assembly's part: shaded with the material after the instance's
     bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
@@ -254,6 +259,9 @@ inline float3 partDirection(RTPart part, float3 v) {   // not unit length
 #endif
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
+    v.i = uint3(0u);
+    v.prevOffset = 0;
+    v.triangle = ~0u;
     v.leaf = v.sways = false;
     uint meshIndex = inst.meshIndex;
 #if CUSTOM_RT
@@ -294,12 +302,16 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     MeshData mesh = s.meshes[meshIndex];
     v.sways = mesh.sways != 0;
     uint base = mesh.firstIndex + res.primitive * 3;
+    v.triangle = base / 3;
     for (uint k = 0; k < 3; ++k) {
         uint i = s.indices[base + k];
-        v.p[k] = s.positions[i];
-        v.n[k] = s.normals[i];
+        uint own = DEFORMING_MESHES ? i + mesh.vertexOffset : i;   // a pose slot's own vertex
+        v.i[k] = own;
+        v.p[k] = s.positions[own];
+        v.n[k] = s.normals[own];
         v.t[k] = s.uvs[i];
     }
+    if (DEFORMING_MESHES) v.prevOffset = mesh.prevOffset;
 #if CUSTOM_RT
     if (inPart) {
         for (uint k = 0; k < 3; ++k) {
@@ -361,6 +373,11 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     float3 objNg  = cross(p1 - p0, p2 - p0);
 
     float3 prevObjPos = objPos;
+    // A deforming mesh (a crowd's pose slot): where the point was in the previous frame's pose.
+    if (DEFORMING_MESHES && hv.prevOffset != 0) {
+        prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
+                   + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
+    }
 #if CUSTOM_RT
     if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
         // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
@@ -383,7 +400,9 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         objNg.y -= dot(lean, objNg);
     }
 #endif
-    Material mat = s.materials[inst.materialIndex + (hv.leaf ? 1u : 0u)];
+    uint materialIndex = inst.materialIndex + (hv.leaf ? 1u : 0u);
+    if (MULTI_MATERIAL && hv.triangle != ~0u) materialIndex += s.triangleMaterials[hv.triangle];
+    Material mat = s.materials[materialIndex];
     sf.hit = true;
     sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
     sf.prevPosition = (inst.prevTransform * float4(prevObjPos, 1.0f)).xyz;
