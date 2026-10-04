@@ -300,6 +300,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     private var primitiveAS: [MTLAccelerationStructure] { sceneBuffers.primitives }   // Metal ray tracer only
     private var primitiveASResources: [MTLResource] = []
     private var namedPrimitives: [String: MTLAccelerationStructure] { sceneBuffers?.namedPrimitives ?? [:] }
+    private var namedBlocks: [String: MeshBlock] { sceneBuffers?.namedBlocks ?? [:] }
     /// The crowd's pose slots, if the scene has a crowd: the skinning, and for the Metal tracer their structures' refit.
     private var crowdSkinner: CrowdSkinner?
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
@@ -609,6 +610,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         var api: RenderAPI
         var compiler: AnyObject?    // Metal 4's, for `api`
         var primitives: [String: MTLAccelerationStructure]   // the scene's named meshes' structures (Metal's tracer)
+        var blocks: [String: MeshBlock]                      // its borrowed meshes' buffers
         /// The open world's next scene (`settings.scene`, if it is that) is drawn with the textures this one has: they
         /// stay as they are streamed. By the sources' identities.
         var worldTextures: (identities: [String], textures: [MTLTexture], streamer: TextureStreamer?)?
@@ -617,14 +619,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
                     textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
                     traversalStats: CustomRayTracer.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
-                    primitives: builtRayTracer == .metal && builtAPI == settings.api ? namedPrimitives : [:],
+                    primitives: builtRayTracer == .metal && builtAPI == settings.api ? namedPrimitives : [:], blocks: namedBlocks,
                     worldTextures: settings.scene.isSameWorld(as: scene.settings) && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
-    private func bufferOptions(rayTracer: RayTracerKind, api: RenderAPI, known: [String: MTLAccelerationStructure]) -> SceneBuffers.Options {
+    private func bufferOptions(rayTracer: RayTracerKind, api: RenderAPI, known: [String: MTLAccelerationStructure],
+                               blocks: [String: MeshBlock]) -> SceneBuffers.Options {
         SceneBuffers.Options(rayTracer: rayTracer, api: api, slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
-                             compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known)
+                             compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known, blocks: blocks)
     }
 
     /// The pipelines for `kind` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
@@ -654,7 +657,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // The scene's buffers and structures, unless the frames are still animating it.
         let buffers = reused != nil ? nil : try autoreleasepool {
             try SceneBuffers(device: device, queue: buildQueue, scene: newScene,
-                             options: bufferOptions(rayTracer: rayTracer, api: options.api, known: options.primitives))
+                             options: bufferOptions(rayTracer: rayTracer, api: options.api, known: options.primitives, blocks: options.blocks))
         }
         let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
                                                             geometry: buffers, slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil
@@ -724,7 +727,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         textureStreamer = prepared?.streamer
         let buffers = try prepared?.buffers ?? SceneBuffers(device: device, queue: buildQueue, scene: scene,
                                                             options: bufferOptions(rayTracer: builtRayTracer, api: builtAPI,
-                                                                                   known: builtRayTracer == .metal ? namedPrimitives : [:]))
+                                                                                   known: builtRayTracer == .metal ? namedPrimitives : [:],
+                                                                                   blocks: namedBlocks))
         sceneBuffers = buffers
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
@@ -856,8 +860,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         // The textures too, unless they are a sparse heap's (Metal 3's streamer: `bindScene` declares the heap).
         // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
         // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
+        // And the borrowed meshes' buffers, which a hit reaches through the mesh table.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
-            + (textureStreamer?.placement == false ? [] : materialTextures)
+            + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.

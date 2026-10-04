@@ -213,8 +213,7 @@ final class Scene {
     private(set) var triangleMaterials: [UInt8] = []
     private(set) var hasMaterialOffsets = false    // some mesh has several materials (set once, by init)
     private(set) var borrowed: [BorrowedMesh] = []
-    /// The scene's vertices and indices in all: the arrays', then the borrowed meshes'. Set once, by init.
-    private(set) var vertexCount = 0, indexCount = 0
+    private(set) var hasBorrowedMeshes = false     // (set once, by init: `borrowed` is let go of with the geometry)
     private(set) var meshes: [GPUMesh] = []
     /// What some meshes are made from, said in full (an open world's tile and chunk, a plant of a library): a mesh
     /// of the same name in another scene is the same triangles in the same order, so what was built for it holds
@@ -297,7 +296,7 @@ final class Scene {
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
-        placeBorrowed()
+        hasBorrowedMeshes = !borrowed.isEmpty
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
         if let place = worldPlace {
@@ -501,9 +500,11 @@ final class Scene {
     var lightTypeMask: UInt32 {
         // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
-        // MULTI_MATERIAL, some mesh has several materials. (Shaders/Types.metal.)
+        // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
+        // buffers of their own. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
+            | (hasBorrowedMeshes ? 0x0200_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -776,8 +777,9 @@ final class Scene {
     }
 
     /// A mesh whose arrays stay where they are (an open world's tile: in its file, mapped) instead of being copied
-    /// into the scene's. The renderer copies them from there into its buffers, after the scene's own arrays
-    /// (SceneBuffers), and whoever needs such a mesh's triangles reads them there.
+    /// into the scene's. On the GPU it is in a buffer of its own, which the scenes that have a mesh of its name share
+    /// (MeshBlock in SceneBuffers.swift): the renderer copies it from here into that buffer the first time, and
+    /// whoever needs its triangles after that reads them there.
     struct BorrowedMesh {
         var positions: Stored<SIMD3<Float>>
         var normals: Stored<SIMD3<Float>>
@@ -785,13 +787,10 @@ final class Scene {
         var indices: Stored<UInt32>             // into its own vertices
         var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
         var mesh = 0                            // in `meshes`
-        /// Where it is among all the scene's vertices and indices: after the arrays' (set once, by init).
-        var firstVertex = 0
-        var firstIndex = 0
     }
 
-    /// Adds a borrowed mesh, with its bounds as they are known. Its place in the mesh table (`firstIndex`) is set
-    /// when the scene is whole. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s, the cutout as the table has it.
+    /// Adds a borrowed mesh, with its bounds as they are known. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s,
+    /// the cutout as the table has it.
     func addMesh(borrowing mesh: BorrowedMesh, bounds: AABB, name: String, sways: Bool = false, cutout: UInt32 = 0) -> Int {
         precondition(mesh.normals.count == mesh.positions.count && mesh.uvs.count == mesh.positions.count
                      && (mesh.materials.map { $0.count * 3 == mesh.indices.count } ?? true), "a vertex's arrays, and a material per triangle")
@@ -799,26 +798,15 @@ final class Scene {
         mesh.mesh = meshes.count
         borrowed.append(mesh)
         meshNames[meshes.count] = name
-        meshes.append(GPUMesh(firstIndex: 0, indexCount: UInt32(mesh.indices.count), sways: sways ? 1 : 0, cutout: cutout))
+        meshes.append(GPUMesh(firstIndex: 0, indexCount: UInt32(mesh.indices.count), sways: sways ? 1 : 0, cutout: cutout,
+                              vertexCount: UInt32(mesh.positions.count)))
         if sways { hasSwayingMeshes = true }
         meshBounds.append((bounds.lo, bounds.hi))
         return meshes.count - 1
     }
 
-    /// The borrowed meshes' places, after everything the arrays hold.
-    private func placeBorrowed() {
-        var vertex = positions.count, index = indices.count
-        for b in borrowed.indices {
-            (borrowed[b].firstVertex, borrowed[b].firstIndex) = (vertex, index)
-            meshes[borrowed[b].mesh].firstIndex = UInt32(index)
-            vertex += borrowed[b].positions.count
-            index += borrowed[b].indices.count
-        }
-        (vertexCount, indexCount) = (vertex, index)
-    }
-
     /// Lets go of the vertex and index arrays and of the borrowed meshes, once the renderer has them in its buffers
-    /// and the ray tracer in its trees: for a scene that is made again when anything about it changes, never built
+    /// and the ray tracer has their trees: for a scene that is made again when anything about it changes, never built
     /// from twice (the open world's). The meshes' table, bounds and names stay.
     func releaseGeometry() {
         (positions, normals, uvs, indices, triangleMaterials, borrowed) = ([], [], [], [], [], [])

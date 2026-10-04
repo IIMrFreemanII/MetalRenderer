@@ -3,8 +3,8 @@ import Metal
 import simd
 @testable import MetalRenderer
 
-/// A scene on the GPU (SceneBuffers.swift): borrowed meshes, a still scene's one set of instances, and Metal's
-/// per-mesh structures handed on from one scene to the next.
+/// A scene on the GPU (SceneBuffers.swift): borrowed meshes in buffers of their own, a still scene's one set of
+/// instances, and the blocks and Metal's per-mesh structures handed on from one scene to the next.
 final class SceneBuffersTests: XCTestCase {
     private func quad(_ y: Float) -> MeshGeometry {
         ([[0, y, 0], [1, y, 0], [1, y, 1], [0, y, 1]], [SIMD3<Float>](repeating: [0, 1, 0], count: 4), [0, 1, 2, 0, 2, 3])
@@ -31,15 +31,16 @@ final class SceneBuffersTests: XCTestCase {
         Array(UnsafeBufferPointer(start: buffer.contents().bindMemory(to: T.self, capacity: count), count: count))
     }
 
-    func testBorrowedMeshesComeAfterTheArrays() throws {
+    func testBorrowedMeshesAreInBuffersOfTheirOwn() throws {
         let scene = scene()
         XCTAssertEqual(scene.positions.count, 8)
-        XCTAssertEqual(scene.vertexCount, 13)
-        XCTAssertEqual(scene.indexCount, 21)
-        XCTAssertEqual(scene.meshes.map(\.firstIndex), [0, 12, 6], "the borrowed mesh's indices follow the arrays'")
+        XCTAssertEqual(scene.indices.count, 12)
+        XCTAssertEqual(scene.meshes.map(\.firstIndex), [0, 0, 6], "the borrowed mesh's indices are its own")
         XCTAssertEqual(scene.meshes.map(\.indexCount), [6, 9, 6])
-        XCTAssertTrue(scene.hasMaterialOffsets)
-        XCTAssertEqual(scene.lightTypeMask & 0x0400_0000, 0x0400_0000)
+        XCTAssertEqual(scene.meshes.map(\.vertexCount), [0, 5, 0])
+        XCTAssertTrue(scene.hasMaterialOffsets && scene.hasBorrowedMeshes)
+        XCTAssertEqual(scene.lightTypeMask & 0x0600_0000, 0x0600_0000, "MULTI_MATERIAL and STREAMED")
+        XCTAssertEqual(self.scene().lightTypeMask, scene.lightTypeMask)
         XCTAssertEqual(scene.meshNames, [1: "a tile's chunk"])
         XCTAssertTrue(scene.isStill)
         XCTAssertFalse(self.scene(moving: true).isStill)
@@ -47,17 +48,27 @@ final class SceneBuffersTests: XCTestCase {
 
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: .init(rayTracer: .custom, api: .metal3, slots: 3))
-        let positions: [SIMD3<Float>] = contents(buffers.positions, 13)
-        XCTAssertEqual(Array(positions[..<8]), scene.positions)
-        XCTAssertEqual(positions[12], [1, 6, 1])
-        let uvs: [SIMD2<Float>] = contents(buffers.uvs, 13)
-        XCTAssertEqual(uvs[9], [1, 0.5])
-        let indices: [UInt32] = contents(buffers.indices, 21)
-        XCTAssertEqual(Array(indices[..<12]), scene.indices)
-        XCTAssertEqual(Array(indices[12...]), [8, 9, 10, 8, 10, 11, 8, 9, 12], "the borrowed mesh's indices, as the scene's")
-        let offsets: [UInt8] = contents(buffers.triangleMaterials, 7)
-        XCTAssertEqual(offsets, [0, 0, 0, 0, 0, 1, 1])
+        var options = SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3)
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: options)
+        // The arrays' meshes are in the scene's buffers, with a material offset (0) for each of their triangles.
+        XCTAssertEqual(contents(buffers.positions, 8), scene.positions)
+        XCTAssertEqual(contents(buffers.indices, 12), scene.indices)
+        XCTAssertEqual(contents(buffers.triangleMaterials, 4), [UInt8](repeating: 0, count: 4))
+        // The borrowed one is in its block: its arrays one after the other, its indices as they were.
+        XCTAssertEqual(buffers.blocks.map { $0 == nil }, [true, false, true])
+        let block = try XCTUnwrap(buffers.blocks[1])
+        XCTAssertEqual([block.vertexCount, block.indexCount, block.indexOffset], [5, 9, 200])
+        XCTAssertEqual(block.name, "a tile's chunk")
+        let vertices: [SIMD3<Float>] = contents(block.geometry, 10)
+        XCTAssertEqual(vertices[4], [1, 6, 1])
+        XCTAssertEqual(vertices[9], [0, 1, 0], "the normals follow the positions")
+        let raw = block.geometry.contents()
+        XCTAssertEqual(Array(UnsafeBufferPointer(start: (raw + 160).bindMemory(to: SIMD2<Float>.self, capacity: 5), count: 5))[1], [1, 0.5])
+        XCTAssertEqual(Array(UnsafeBufferPointer(start: (raw + 200).bindMemory(to: UInt32.self, capacity: 9), count: 9)), [0, 1, 2, 0, 2, 3, 0, 1, 4])
+        XCTAssertEqual(Array(UnsafeBufferPointer(start: (raw + 236).bindMemory(to: UInt8.self, capacity: 3), count: 3)), [0, 1, 1])
+        let table: [GPUMesh] = contents(buffers.meshes, 3)
+        XCTAssertEqual(table.map(\.block), [0, block.geometry.gpuAddress, 0], "the mesh table says where it is")
+        XCTAssertTrue(buffers.buffers.contains { $0 === block.geometry })
 
         // A still scene: one set of instance records, written.
         XCTAssertTrue(buffers.still)
@@ -66,23 +77,50 @@ final class SceneBuffersTests: XCTestCase {
         XCTAssertEqual(records.map(\.meshIndex), [0, 1, 2])
         XCTAssertEqual(records[1].transform.columns.3.x, 10)
         // One that moves: a set per frame slot, for the frames to write.
-        let moving = try SceneBuffers(device: device, queue: queue, scene: self.scene(moving: true),
-                                      options: .init(rayTracer: .custom, api: .metal3, slots: 3))
+        let moving = try SceneBuffers(device: device, queue: queue, scene: self.scene(moving: true), options: options)
         XCTAssertFalse(moving.still)
         XCTAssertFalse(moving.instanceData[0] === moving.instanceData[1])
+        XCTAssertFalse(moving.blocks[1] === block, "not handed the block: its own")
 
-        // The custom tracer's trees over the buffers are the trees over the same meshes in arrays.
-        let all: [SIMD3<Float>] = contents(buffers.positions, 13)
-        let fromArrays = BVHBuilder.buildBLAS(positions: all, indices: indices, meshes: scene.meshes)
+        // The next scene with a mesh of that name takes the block; a mesh of another name gets a new one.
+        options.blocks = buffers.namedBlocks
+        XCTAssertEqual(Array(options.blocks.keys), ["a tile's chunk"])
+        let next = try SceneBuffers(device: device, queue: queue, scene: self.scene(), options: options)
+        XCTAssertTrue(next.blocks[1] === block)
+        let other = try SceneBuffers(device: device, queue: queue, scene: self.scene(borrowedName: "another chunk"), options: options)
+        XCTAssertFalse(other.blocks[1] === block)
+
+        // The custom tracer: the arrays' meshes' trees in its buffers, the borrowed mesh's with its block: the tree
+        // over the same triangles in arrays, its root first and its triangles after its nodes, built once.
+        XCTAssertFalse(block.hasTree)
         let tracer = try CustomRayTracer(device: device, scene: scene, geometry: buffers, slots: 3)
-        let triangles: [SIMD4<Float>] = contents(tracer.triangles, fromArrays.triangles.count)
-        XCTAssertEqual(triangles.map(\.w.bitPattern), fromArrays.triangles.map(\.w.bitPattern))
-        XCTAssertEqual(triangles.map { SIMD3($0.x, $0.y, $0.z) }, fromArrays.triangles.map { SIMD3($0.x, $0.y, $0.z) })
+        XCTAssertTrue(block.hasTree)
+        let arrays = BVHBuilder.buildBLAS(positions: scene.positions, indices: scene.indices,
+                                          meshes: [scene.meshes[0], GPUMesh(firstIndex: 0, indexCount: 0), scene.meshes[2]])
+        XCTAssertEqual(contents(tracer.triangles, 12), arrays.triangles)
+        let tree = try block.tree(device: device, cutout: 0)
+        XCTAssertTrue(tracer.buffers.contains { $0 === tree.buffer })
+        let alone = BVHBuilder.buildBLAS(positions: Array(vertices[..<5]), indices: [0, 1, 2, 0, 2, 3, 0, 1, 4],
+                                         meshes: [GPUMesh(firstIndex: 0, indexCount: 9)])
+        XCTAssertEqual([tree.nodeCount, tree.triangles, tree.depth], [3, 3, alone.maxDepth], "its node, and two to a multiple of three")
+        XCTAssertEqual(alone.roots, [0])
+        XCTAssertEqual(tree.bounds.hi, [2, 6, 2])
+        // The same node, but its leaf counts the triangles from the buffer's start: 3 nodes are as long as 4 triangles.
+        let nodes: [BVHNode] = contents(tree.buffer, 3)
+        XCTAssertEqual(alone.nodes.count, 1)
+        XCTAssertEqual([nodes[0].ref(0), nodes[0].ref(1)], [alone.nodes[0].ref(0) + 4, alone.nodes[0].ref(1) + 4])
+        XCTAssertEqual([nodes[0].lo(0), nodes[0].hi(0)], [alone.nodes[0].lo(0), alone.nodes[0].hi(0)])
+        let triangles = UnsafeBufferPointer(start: (tree.buffer.contents() + tree.nodeCount * MemoryLayout<BVHNode>.stride)
+            .bindMemory(to: SIMD4<Float>.self, capacity: 9), count: 9)
+        XCTAssertEqual(triangles.map(\.w.bitPattern), alone.triangles.map(\.w.bitPattern))
+        XCTAssertEqual(triangles.map { SIMD3($0.x, $0.y, $0.z) }, alone.triangles.map { SIMD3($0.x, $0.y, $0.z) })
+        _ = try CustomRayTracer(device: device, scene: self.scene(), geometry: next, slots: 3)
+        XCTAssertTrue(try block.tree(device: device, cutout: 0).buffer === tree.buffer, "the next scene's tracer takes the tree")
         XCTAssertThrowsError(try CustomRayTracer(device: device, scene: scene, slots: 3), "borrowed meshes, and no buffers to read them from")
 
         scene.releaseGeometry()
         XCTAssertTrue(scene.positions.isEmpty && scene.borrowed.isEmpty && scene.geometryReleased)
-        XCTAssertEqual(scene.lightTypeMask & 0x0400_0000, 0x0400_0000, "what the shaders are compiled for stays")
+        XCTAssertEqual(scene.lightTypeMask & 0x0600_0000, 0x0600_0000, "what the shaders are compiled for stays")
         XCTAssertEqual(scene.meshes.count, 3)
     }
 

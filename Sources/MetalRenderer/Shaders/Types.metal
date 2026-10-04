@@ -34,8 +34,14 @@ struct MeshData {
     uint prevOffset;    // ...and its previous frame's positions this far after those (0 = the mesh doesn't deform)
     uint sways;         // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
     uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
+    // STREAMED: a mesh in a buffer of its own (MeshBlock in SceneBuffers.swift) instead of the scene's, or null. There:
+    // `vertexCount` positions, as many normals, as many UVs, `indexCount` indices into them, a material offset
+    // (a byte) per triangle.
+    device const float3* block;
+    uint vertexCount;
+    uint pad;
 };
-static_assert(sizeof(MeshData) == 24, "MeshData: GPUMesh");
+static_assert(sizeof(MeshData) == 40, "MeshData: GPUMesh");
 
 struct InstanceData {
     float4x4 transform;
@@ -131,7 +137,7 @@ constant uint LIGHT_MESH   = 5;
 // tracer sample the light table instead of per-light light maps, and the sky draws only the suns' discs.
 // The bits above the types compile whole features in (below): a scene without them traces the code it always did.
 constant uint lightTypesConstant [[function_constant(0)]];
-constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7C00003Fu;
+constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7E00003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 // Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
@@ -147,6 +153,9 @@ constant bool DEFORMING_MESHES = (LIGHT_SPEC & 0x10000000u) != 0;
 constant bool GLASS = (LIGHT_SPEC & 0x08000000u) != 0;
 // Bit 26 = MULTI_MATERIAL: some meshes have several materials (SceneShading.triangleMaterials; the city's buildings).
 constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
+// Bit 25 = STREAMED: some meshes are in buffers of their own (MeshData.block; an open world's tiles), which a hit
+// reaches through the mesh table and the custom traversal through its instances' records (RT_OWN_TREE).
+constant bool STREAMED = (LIGHT_SPEC & 0x02000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
