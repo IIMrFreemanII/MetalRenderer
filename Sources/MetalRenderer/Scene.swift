@@ -17,6 +17,8 @@ final class Scene {
         var prevTransform: float4x4
         var animation: ((Float) -> float4x4)?
         var virtualMesh = -1                  // >= 0: index into `virtualMeshes` (then `mesh` is -1)
+        var assembly = -1                     // >= 0: index into `assemblies` (then `mesh` is -1 and `material` is its
+                                              // wood's, with its leaves' right after it)
         /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; the custom ray
         /// tracer reads its rows as the world -> object matrix).
         var normalMatrix = matrix_identity_float4x4
@@ -25,6 +27,43 @@ final class Scene {
 
         /// Never moves: its transform is the one it was added with (the ray tracers' static trees).
         var isStatic: Bool { animation == nil && !poseAnimated }
+    }
+
+    /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
+    /// (the species' boughs). Every instance of the plant shares it; the custom ray tracer walks a tree over the parts.
+    struct Assembly {
+        /// What a part turns about in the wind (Shaders/Foliage.metal). `angle`: its largest turn, at full wind; 0 = it doesn't.
+        struct Bone {
+            var pivot = SIMD3<Float>()        // plant space, at rest
+            var angle: Float = 0
+            var axis = SIMD3<Float>(1, 0, 0)
+            var phase: Float = 0
+        }
+        /// The whole plant's largest lean about its foot, at full wind (WIND_ROOT_SWAY in Shaders/Foliage.metal).
+        static let rootSway: Float = 0.022
+        struct Part {
+            var mesh: Int
+            var transform: float4x4           // into plant space: a rotation, a uniform scale and a translation
+            var firstLeaf: UInt32             // the mesh's triangles from here on take the leaves' material
+            var leafCount: UInt32 = 0         // how many they are (autumn drops them from the end); 0 = it keeps them
+            var bone: Int
+            var bounds: AABB                  // of the placed mesh, in plant space (its vertices', not its box's)
+            var windPad: Float = 0            // how far its bones' largest turns (full wind) can move any of it
+            var limb = Bone()                 // the limb it is, or hangs on
+            var bough = Bone()                // itself on that limb, if it is a bough
+        }
+        var parts: [Part]
+        var bounds: AABB
+        var evergreen = false
+    }
+
+    /// A leaf material that changes with the season (`setSeason`): its summer and autumn colours, and when in the
+    /// year (0...1) it turns.
+    struct SeasonalMaterial {
+        var material: Int
+        var summer: SIMD3<Float>
+        var autumn: SIMD3<Float>
+        var turn: Float
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -129,6 +168,15 @@ final class Scene {
     private(set) var virtualMeshes: [VirtualMesh] = []
     private(set) var virtualMeshNames: [String] = []
     let usesVirtualGeometry: Bool
+    /// Generated plants as assemblies of shared parts (custom ray tracer only); otherwise each is baked into meshes of its own.
+    private(set) var assemblies: [Assembly] = []
+    let usesAssemblies: Bool
+    /// `METALRENDERER_ASSEMBLIES=0`: plants baked flat on the custom tracer too (to compare the two).
+    static let assembliesEnabled = ProcessInfo.processInfo.environment["METALRENDERER_ASSEMBLIES"] != "0"
+    /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
+    private(set) var hasPlants = false
+    private var seasonal: [SeasonalMaterial] = []
+    private var season: Float = -1
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
     private(set) var hasSpecular = false
     private(set) var indices: [UInt32] = []
@@ -143,6 +191,8 @@ final class Scene {
     private var materialsDirty: Range<Int>?
     /// What `update` has to touch every frame, found once by init (nil while it builds the scene: everything then).
     private var animated: (instances: [Int], lights: [Int], scaledLights: [Int])?
+    /// The instances that move (everything else keeps the records of its first frame).
+    var animatedInstances: [Int] { animated?.instances ?? Array(instances.indices) }
     /// The lights whose GPU record changes from frame to frame (moving, flickering, the mesh lights of moving
     /// instances), and each instance's rank + 1 among the virtual ones (0 = not virtual).
     private var changingLights: [Int] = []
@@ -166,9 +216,10 @@ final class Scene {
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
-    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false) {
+    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
+        self.usesAssemblies = assemblies && Scene.assembliesEnabled
         if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
@@ -183,6 +234,7 @@ final class Scene {
         case .fog: buildFogHall()
         case .valley: buildValley()
         case .market: buildMarket()
+        case .forest: buildForest()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -309,7 +361,7 @@ final class Scene {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.mask == Scene.maskGeometry {
             let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
-                                               : meshBounds[inst.mesh]
+                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
             for corner in 0..<8 {
                 let c = SIMD3<Float>(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z)
                 let p = inst.transform * SIMD4<Float>(c, 1)
@@ -324,6 +376,7 @@ final class Scene {
 
     /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
     /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
+    /// Assembly instances: meshIndex points past those too (the table then lists the assemblies).
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
     /// only the ones that move, the rest being unchanged.
     func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool) {
@@ -332,7 +385,9 @@ final class Scene {
             out[i] = GPUInstanceData(transform: inst.transform,
                                      prevTransform: inst.prevTransform,
                                      normalMatrix: inst.normalMatrix,
-                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh) : UInt32(meshes.count + inst.virtualMesh),
+                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh)
+                                         : inst.assembly >= 0 ? UInt32(meshes.count + virtualMeshes.count + inst.assembly)
+                                         : UInt32(meshes.count + inst.virtualMesh),
                                      materialIndex: UInt32(inst.material),
                                      pad0: inst.mask,
                                      pad1: virtualRank[i])
@@ -352,7 +407,8 @@ final class Scene {
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
     var lightTypeMask: UInt32 {
-        lights.reduce(usesLightTable ? 0x8000_0001 : UInt32(1)) { mask, l in   // spheres always: an empty scene needs some type
+        // Bit 30: FOLIAGE, the scene has assemblies (Shaders/Types.metal).
+        lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | (assemblies.isEmpty ? 0 : 0x4000_0000)) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
             case .sphere: type = GPULight.sphere
@@ -614,6 +670,36 @@ final class Scene {
         return meshes.count - 1
     }
 
+    /// A generated mesh (Foliage, Terrain): its arrays appended whole, its bounds as it counted them.
+    func addMesh(_ mesh: Foliage.Mesh) -> Int {
+        let baseVertex = UInt32(positions.count)
+        let firstIndex = UInt32(indices.count)
+        positions += mesh.positions
+        normals += mesh.normals
+        uvs += mesh.uvs
+        indices.reserveCapacity(indices.count + mesh.indices.count)
+        for i in mesh.indices { indices.append(i + baseVertex) }
+        meshes.append(GPUMesh(firstIndex: firstIndex, indexCount: UInt32(mesh.indices.count)))
+        meshBounds.append((mesh.bounds.lo, mesh.bounds.hi))
+        return meshes.count - 1
+    }
+
+    func addAssembly(_ assembly: Assembly) -> Int {
+        assemblies.append(assembly)
+        return assemblies.count - 1
+    }
+
+    /// An instance of an assembly: `material` is its wood's, and the next material its leaves'.
+    @discardableResult
+    func addInstance(assembly: Int, _ material: Int, _ transform: float4x4) -> Int {
+        instances.append(Instance(mesh: -1, material: material, mask: Scene.maskGeometry, transform: transform, prevTransform: transform,
+                                  animation: nil, assembly: assembly, normalMatrix: transform.inverse.transpose))
+        return instances.count - 1
+    }
+
+    /// Generated plants were placed (Flora): see `hasPlants`.
+    func notePlants() { hasPlants = true }
+
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
     func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
@@ -622,9 +708,36 @@ final class Scene {
     }
 
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
-    func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero) -> Int {
-        materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1)))
+    /// `translucency`: a leaf's, the share of its light that comes through from the far side.
+    func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero, translucency: Float = 0) -> Int {
+        materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1), params: SIMD4(0, 1, 0, translucency)))
         return materials.count - 1
+    }
+
+    func addSeasonal(_ material: SeasonalMaterial) { seasonal.append(material) }
+
+    /// The share of the deciduous plants' leaves that have fallen at `season` (the custom ray tracer drops them).
+    static func leafFall(season: Float) -> Float {
+        let t = min(max((season - 0.62) / 0.33, 0), 1)
+        return t * t * (3 - 2 * t)
+    }
+
+    /// The leaves' colours at `season`: 0 = spring (fresh, light), 0.3 = summer, from 0.5 they turn, each material in
+    /// its own time, and by winter (1) what is left is brown. Only the materials change (the renderer uploads the range).
+    func setSeason(_ s: Float) {
+        guard s != season, !seasonal.isEmpty else { return }
+        season = s
+        func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = min(max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t) }
+        var lo = Int.max, hi = 0
+        for m in seasonal {
+            let spring = 1 - smooth(0, 0.25, s)
+            var color = m.summer * (1 + SIMD3<Float>(0.25, 0.3, 0.1) * spring)
+            color += (m.autumn - color) * smooth(m.turn - 0.1, m.turn + 0.1, s)
+            color += (SIMD3<Float>(0.2, 0.13, 0.07) - color) * smooth(0.82, 1, s) * 0.8
+            materials[m.material].albedo = SIMD4(color, materials[m.material].albedo.w)
+            lo = min(lo, m.material); hi = max(hi, m.material + 1)
+        }
+        materialsDirty = materialsDirty.map { min($0.lowerBound, lo)..<max($0.upperBound, hi) } ?? lo..<hi
     }
 
     @discardableResult

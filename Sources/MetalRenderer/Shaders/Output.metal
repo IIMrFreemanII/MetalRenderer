@@ -54,6 +54,12 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 #endif
     if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
+#if CUSTOM_RT
+    if (FOLIAGE && res.part == HIT_VOXEL) {   // a far plant's voxels have no triangles to show: flat, in the plant's colour
+        output.write(float4(mix(float3(0.2f), debugHashColor(pcgHash(res.instance + 0x51ED27u)), 0.5f), 1.0f), tid);
+        return;
+    }
+#endif
 
     InstanceData inst = s.instances[res.instance];
     HitVertices hv = fetchHitVertices(res, inst, accel, s);

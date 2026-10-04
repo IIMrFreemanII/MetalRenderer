@@ -52,6 +52,7 @@ enum UniformFlags {
     static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
     static let restir: UInt32 = 32768        // direct light from ReSTIR DI (restirTemporalKernel / restirSpatialKernel)
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
+    static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).

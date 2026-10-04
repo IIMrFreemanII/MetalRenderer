@@ -48,7 +48,8 @@ struct Material {
     float4 albedo;      // rgb = base colour, a = metallic
     float4 emission;    // rgb = emitted radiance, a = roughness
     float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
-                        // z = 1: its emission is sampled as an emissive-mesh light
+                        // z = 1: its emission is sampled as an emissive-mesh light,
+                        // w = translucency (leaves): this share of them is lit from behind (traceSurface)
     uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
 };
 
@@ -124,6 +125,9 @@ constant uint lightTypesConstant [[function_constant(0)]];
 constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x3Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
+// Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
+// it the traversal and the shading compile to what they were before assemblies.
+constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
 constant bool POINT_LIGHTS_ONLY = (LIGHT_TYPES & ~3u) == 0;   // spheres and spots
 
 // One triangle of an emissive-mesh light (GPUTypes.swift GPUEmissiveTriangle), object space.
@@ -177,6 +181,7 @@ constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference marc
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
 constant uint FLAG_RESTIR        = 32768; // direct light from ReSTIR DI (restirTemporalKernel, restirSpatialKernel)
 constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
+constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (RTScene.wind.z > 0), the plants' parts turn
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
@@ -193,6 +198,9 @@ constant uint FIXED_PASS      = is_function_constant_defined(fixedPassConstant) 
 // `bit` of Uniforms.flags (flagOn) or of the kernel's own flags (passOn): the compiled-in value where there is one.
 inline bool flagOn(uint flags, uint bit) { return (((FIXED_FLAG_MASK & bit) != 0 ? FIXED_FLAGS : flags) & bit) != 0; }
 inline bool passOn(uint flags, uint bit) { return (((FIXED_PASS_MASK & bit) != 0 ? FIXED_PASS : flags) & bit) != 0; }
+// The wind, for the ray queries and the shading, which see no uniforms: compiled in or out where the kernel's variant
+// fixes FLAG_WIND, else `blowing` (the scene's wind strength, read at run time).
+inline bool windOn(bool blowing) { return (FIXED_FLAG_MASK & FLAG_WIND) != 0 ? (FIXED_FLAGS & FLAG_WIND) != 0 : blowing; }
 constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
                                         // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights

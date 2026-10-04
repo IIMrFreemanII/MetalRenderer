@@ -172,6 +172,12 @@ if let path = ProcessInfo.processInfo.environment["METALRENDERER_VG_TEST"] {
     exit(0)
 }
 
+/// `METALRENDERER_FOLIAGE_TEST=<seed>`: builds the procedural plants, times and checks them, and exits (no window).
+if let seed = ProcessInfo.processInfo.environment["METALRENDERER_FOLIAGE_TEST"] {
+    Foliage.runTest(seed: UInt64(seed) ?? 1)
+    exit(0)
+}
+
 setlinebuf(stdout)   // whole lines also into a pipe or a file: a log is complete when the app is stopped
 let app = NSApplication.shared
 let delegate = AppDelegate()
