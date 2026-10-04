@@ -83,6 +83,10 @@ struct CityPlan {
     private(set) var streets: [Street] = []
     private(set) var lamps: [Lamp] = []
     private(set) var trees: [SIMD3<Float>] = []         // x, z and the tree's size
+    /// The courtyards: the open ground inside a block whose houses stand around its edge.
+    private(set) var courts: [Rect] = []
+    /// A courtyard's trees (x, z and size), for whoever plants them (`init(block:)`).
+    private(set) var courtTrees: [SIMD3<Float>] = []
     /// The streets and everything inside them.
     private(set) var extent = Rect(lo: .zero, hi: .zero)
 
@@ -148,6 +152,14 @@ struct CityPlan {
         if !park { subdivide(block: 0, ring: ring, &rng) }
         furnish(block: 0, &rng)
         for i in lots.indices { lots[i].seed = SplitMix64.mix(seed &* 0x1_0000_0001 &+ UInt64(i) &* 0x9E37_79B9_7F4A_7C15) }
+        // A lawn in each courtyard, with a tree or two on it.
+        for court in courts {
+            let lawn = court.inset(4)
+            guard lawn.size.x > 3, lawn.size.y > 3 else { continue }
+            for _ in 0..<max(1, Int(lawn.size.x * lawn.size.y / 160)) {
+                courtTrees.append(SIMD3(rng.range(lawn.lo.x, lawn.hi.x), rng.range(lawn.lo.y, lawn.hi.y), rng.range(0.9, 1.4)))
+            }
+        }
     }
 
     /// A block's style in a city of `style`: for the mixed city, by how far out the block is (`ring`: 0 = the middle,
@@ -229,6 +241,7 @@ struct CityPlan {
                 }
             } else {
                 // A ring: full rows along the two long sides, shorter ones between them at the ends.
+                courts.append(site.inset(depth))
                 for (row, yaw) in [(0, Float.pi), (1, Float(0))] {
                     let x = cuts(size.x, widths)
                     for k in 0..<x.count - 1 {

@@ -8,8 +8,11 @@ import simd
 ///
 ///   The ground     a grid of cells (1, 4 or 16 m by level) with a skirt down its sides, which hides the step to a
 ///                  neighbour of another level; each cell of one of the world's ground materials.
-///   The city       the blocks whose middle is in the tile: sidewalks, street lamps and trees, and the buildings
-///                  (BuildingGenerator): whole at level 0, without their glass at level 1, a box each at level 2.
+///   The city       the blocks whose middle is in the tile: sidewalks inside a kerb, lawns in the courtyards, street
+///                  lamps and trees, and the buildings (BuildingGenerator): whole at level 0, without their glass at
+///                  level 1, a box each at level 2. And the roads of the tile's part of the city's grid, each a
+///                  sheet of asphalt on the ground, painted at levels 0 and 1: a broken line down its middle, and
+///                  where streets meet a crossing for people and a line to stop at.
 ///   The trees      as placements: which plant of the world's library stands where.
 ///   The lights     a city's street lamps (level 0 and 1) and the share of its windows with a light behind them (on
 ///                  a building's box at level 2) are emissive, and the tile's lights (`lights`): the mesh lights a
@@ -167,6 +170,9 @@ struct WorldTile {
         if let (city, blocks) = world.blocks(x0: origin.x, z0: origin.y, side: side) {
             for block in blocks { add(block, of: city, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
         }
+        if let (city, from, roads) = world.roads(x0: origin.x, z0: origin.y, side: side) {
+            add(roads, of: city, from: from, level: level, into: &opaque)
+        }
         tile.chunks = opaque.finish() + glass.finish()
         tile.trees = world.trees(x0: origin.x, z0: origin.y, side: side, flora: flora)
         tile.addLights()
@@ -219,7 +225,7 @@ struct WorldTile {
         func h(_ i: Int, _ j: Int) -> Float { heights[(j + 1) * m + i + 1] }
         // Every ground material, in the world's order: a cell's material index is then the world's.
         for material in World.groundMaterials { _ = assembler.slot(material) }
-        let scale = 1 / SurfaceKind.asphalt.tile
+        let scale = 1 / World.groundTile
         assembler.withOpen { chunk in
             let base = UInt32(chunk.positions.count)
             precondition(base == 0, "the ground is a tile's first mesh")
@@ -277,15 +283,28 @@ struct WorldTile {
         let paving = SurfaceMaterial(color: [0.52, 0.5, 0.47], surface: .paving)
         var sidewalks = builder(paving)
         let r = plan.blocks[0].rect
-        sidewalks.box([r.lo.x, 0, r.lo.y], [r.hi.x, 0.15, r.hi.y], faces: [.sides, .top])
-        opaque.add(sidewalks, material(paving), place)
-        if plan.blocks[0].park {
-            let grass = SurfaceMaterial(color: [0.2, 0.34, 0.12])
-            var lawn = builder(grass)
-            let l = r.inset(CityPlan.sidewalk)
-            lawn.box([l.lo.x, 0.15, l.lo.y], [l.hi.x, 0.22, l.hi.y], faces: [.sides, .top])
-            opaque.add(lawn, material(grass), place)
+        if level == 0 {
+            // The kerb: a border of stone around the paving.
+            let stone = SurfaceMaterial(color: [0.6, 0.59, 0.56]), inner = r.inset(WorldTile.kerb)
+            var kerb = builder(stone)
+            kerb.box([r.lo.x, 0, r.lo.y], [r.hi.x, 0.15, r.hi.y], faces: .sides)
+            kerb.floor(x0: r.lo.x, x1: r.hi.x, z0: r.lo.y, z1: inner.lo.y, y: 0.15)
+            kerb.floor(x0: r.lo.x, x1: r.hi.x, z0: inner.hi.y, z1: r.hi.y, y: 0.15)
+            kerb.floor(x0: r.lo.x, x1: inner.lo.x, z0: inner.lo.y, z1: inner.hi.y, y: 0.15)
+            kerb.floor(x0: inner.hi.x, x1: r.hi.x, z0: inner.lo.y, z1: inner.hi.y, y: 0.15)
+            opaque.add(kerb, material(stone), place)
+            sidewalks.floor(x0: inner.lo.x, x1: inner.hi.x, z0: inner.lo.y, z1: inner.hi.y, y: 0.15)
+        } else {
+            sidewalks.box([r.lo.x, 0, r.lo.y], [r.hi.x, 0.15, r.hi.y], faces: [.sides, .top])
         }
+        opaque.add(sidewalks, material(paving), place)
+        // Grass: a park's, and the courtyards'.
+        let grass = SurfaceMaterial(color: [0.2, 0.34, 0.12])
+        var lawn = builder(grass)
+        for l in plan.blocks[0].park ? [r.inset(CityPlan.sidewalk)] : plan.courts.map({ $0.inset(1.5) }) where l.size.x > 1 && l.size.y > 1 {
+            lawn.box([l.lo.x, 0.15, l.lo.y], [l.hi.x, 0.22, l.hi.y], faces: [.sides, .top])
+        }
+        opaque.add(lawn, material(grass), place)
         if level <= 1 {
             // Street lamps, as the City scene's: their heads' undersides are lights, and from further away the heads
             // are all there is of them.
@@ -312,7 +331,7 @@ struct WorldTile {
         if level <= 1 {
             let bark = SurfaceMaterial(color: [0.25, 0.18, 0.12]), leaves = SurfaceMaterial(color: [0.12, 0.26, 0.08])
             var trunks = builder(bark), crowns = builder(leaves)
-            for tree in plan.trees {
+            for tree in plan.trees + plan.courtTrees {
                 let p = SIMD3<Float>(tree.x, 0.15, tree.y), size = tree.z
                 trunks.cylinder(p, radius: 0.16 * size, topRadius: 0.1 * size, height: 2.6 * size, segments: 6, cap: false)
                 crowns.ball(p + [0, 3.9 * size, 0], radius: SIMD3(1.7, 1.9, 1.7) * size, subdivisions: level == 0 ? 1 : 0)
@@ -377,6 +396,54 @@ struct WorldTile {
                 }
             }
         }
+    }
+
+    /// How wide a block's kerb is, and how far over the ground the roads and the paint on them lie.
+    private static let kerb: Float = 0.3, roadHeight: Float = 0.02, paintHeight: Float = 0.03
+
+    /// The roads: asphalt, and at levels 0 and 1 what is painted on it.
+    private static func add(_ roads: [World.Road], of city: World.City, from origin: SIMD2<Float>, level: Int, into opaque: inout Assembler) {
+        let asphalt = SurfaceMaterial(color: [0.1, 0.1, 0.11], surface: .asphalt), paint = SurfaceMaterial(color: [0.7, 0.7, 0.66])
+        var sheets = MeshBuilder(uvScale: asphalt.uvScale), lines = MeshBuilder(uvScale: paint.uvScale)
+        for road in roads {
+            let r = road.rect
+            sheets.floor(x0: r.lo.x, x1: r.hi.x, z0: r.lo.y, z1: r.hi.y, y: roadHeight)
+            guard level <= 1, road.along < 2 else { continue }
+            // Along the street `u` (from its low end), across it `v` (from its middle, toward +z or +x).
+            let alongX = road.along == 0, length = alongX ? r.size.x : r.size.y, half = (alongX ? r.size.y : r.size.x) / 2
+            func mark(_ u0: Float, _ u1: Float, _ v0: Float, _ v1: Float) {
+                if alongX {
+                    lines.floor(x0: r.lo.x + u0, x1: r.lo.x + u1, z0: r.center.y + v0, z1: r.center.y + v1, y: paintHeight)
+                } else {
+                    lines.floor(x0: r.center.x + v0, x1: r.center.x + v1, z0: r.lo.y + u0, z1: r.lo.y + u1, y: paintHeight)
+                }
+            }
+            // Cars keep to the right: going toward +x that is +z, going toward +z it is -x.
+            let right: Float = alongX ? 1 : -1
+            var from: Float = 2, to = length - 2
+            for end in 0..<2 where road.junction[end] {
+                /// From `d0` to `d1` metres in from this end.
+                func markIn(_ d0: Float, _ d1: Float, _ v0: Float, _ v1: Float) {
+                    if end == 0 { mark(d0, d1, v0, v1) } else { mark(length - d1, length - d0, v0, v1) }
+                }
+                // Where people cross: stripes half a metre wide.
+                for k in 0..<Int(2 * half) {
+                    let v = -half + 0.25 + Float(k)
+                    markIn(0.6, 3.6, v, v + 0.5)
+                }
+                // Where the cars that come to the crossing stop: across their lane.
+                let lane: Float = end == 0 ? -right : right
+                markIn(4.6, 5, min(lane * 0.08, lane * half), max(lane * 0.08, lane * half))
+                if end == 0 { from = 7 } else { to = length - 7 }
+            }
+            // The middle line: 3 m of paint, 5 m of none.
+            let count = Int(((to - from + 5) / 8).rounded(.down))
+            let first = from + (to - from - (Float(count) * 8 - 5)) / 2
+            for k in 0..<max(count, 0) { mark(first + Float(k) * 8, first + Float(k) * 8 + 3, -0.08, 0.08) }
+        }
+        let place = translate([origin.x, city.level, origin.y])
+        opaque.add(sheets, material(asphalt), place)
+        opaque.add(lines, material(paint), place)
     }
 
     // MARK: - The tile's file

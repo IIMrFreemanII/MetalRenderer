@@ -223,7 +223,9 @@ final class WorldTests: XCTestCase {
                 XCTAssertEqual(chunk.normals.count, chunk.positions.count)
                 XCTAssertEqual(chunk.uvs.count, chunk.positions.count)
                 XCTAssertFalse(chunk.bounds.isEmpty)
-                for m in chunk.materials where m.textures.x != .max && m.textures.x != World.groundDetail { XCTAssertNotNil(World.kind(ofTexture: m.textures.x)) }
+                for m in chunk.materials where m.textures.x != .max && m.textures.x != World.groundDetail && m.textures.x != World.fieldRows {
+                    XCTAssertNotNil(World.kind(ofTexture: m.textures.x))
+                }
             }
             // Buildings stand on the city's ground, and are no skyscrapers of a kilometre.
             let top = tile.chunks.map(\.bounds.hi.y).max()!
@@ -231,6 +233,108 @@ final class WorldTests: XCTestCase {
             XCTAssertLessThan(top, city.level + 200)
         }
         assertSame(tiles[0], WorldTile.build(world, x: tx, z: tz, level: 0, flora: flora), "a city tile made again")
+    }
+
+    /// A city's ground: a street along every side of a built block and a crossing at each of its corners, each one
+    /// tile's; all of it on level ground, the coarsest ground's cells under it too. Around it fields, their sides on
+    /// those cells; and nothing grows on a road.
+    func testACitysGround() throws {
+        let city = try XCTUnwrap(world.city(cell: SIMD2(0, 0)))
+        let side = Double(World.tileSize), pitch = World.blockPitch, half = World.roadWidth / 2
+        let tx = Int((city.center.x / side).rounded(.down)), tz = Int((city.center.y / side).rounded(.down))
+        let reach = Int((Double(city.radius) / side).rounded(.up)) + 1
+        func name(_ lo: SIMD2<Float>, _ along: Int) -> [Int] { [Int(lo.x.rounded()), Int(lo.y.rounded()), along] }
+        var seen = Set<[Int]>(), roads: [World.Road] = []
+        for j in -reach...reach {
+            for i in -reach...reach {
+                let x0 = Double(tx + i) * side, z0 = Double(tz + j) * side
+                guard let found = world.roads(x0: x0, z0: z0, side: side) else { continue }
+                XCTAssertEqual(found.city, city)
+                XCTAssertEqual(found.origin, SIMD2(Float(city.center.x - x0), Float(city.center.y - z0)))
+                for road in found.roads {
+                    XCTAssertTrue(seen.insert(name(road.rect.lo, road.along)).inserted, "a road in two tiles")
+                    roads.append(road)
+                }
+            }
+        }
+        var built = 0
+        let span = Int(city.radius / pitch.y) + 2
+        for j in -span...span {
+            for i in -span...span where world.built(city, i, j) {
+                built += 1
+                let c = SIMD2(Float(i), Float(j)) * pitch
+                let around: [(SIMD2<Float>, Int)] = [
+                    (c + SIMD2(-half, half), 1), (c + SIMD2(pitch.x - half, half), 1), (c + SIMD2(half, -half), 0), (c + SIMD2(half, pitch.y - half), 0),
+                    (c - half, 2), (c + pitch - half, 2), (c + SIMD2(pitch.x, 0) - half, 2), (c + SIMD2(0, pitch.y) - half, 2)]
+                for (lo, along) in around { XCTAssertTrue(seen.contains(name(lo, along)), "block \(i) \(j) has no road \(along) at \(lo)") }
+                // The block itself is paved, and no road lies on it.
+                XCTAssertTrue(world.paved(city, city.center.x + Double(c.x + pitch.x / 2), city.center.y + Double(c.y + pitch.y / 2)))
+                XCTAssertFalse(roads.contains { $0.rect.overlaps(CityPlan.Rect(lo: c + half, hi: c + pitch - half)) })
+            }
+        }
+        XCTAssertGreaterThan(built, 30)
+        XCTAssertLessThan(roads.count, 3 * built + 4 * span * 4, "roads where no block is")
+        for road in roads {
+            let r = road.rect
+            XCTAssertEqual(r.size, road.along == 0 ? SIMD2(World.blockSize.x, 2 * half) : road.along == 1 ? SIMD2(2 * half, World.blockSize.y) : SIMD2(2 * half, 2 * half))
+            for corner in [r.lo, r.hi, SIMD2(r.lo.x, r.hi.y), SIMD2(r.hi.x, r.lo.y)] {
+                for d in [SIMD2<Float>(0, 0), SIMD2(16, 16), SIMD2(-16, 16), SIMD2(16, -16), SIMD2(-16, -16)] {
+                    XCTAssertEqual(world.height(city.center.x + Double(corner.x + d.x), city.center.y + Double(corner.y + d.y)), city.level)
+                }
+            }
+            XCTAssertTrue(world.paved(city, city.center.x + Double(r.center.x), city.center.y + Double(r.center.y)))
+        }
+        // In the middle of the city four streets meet at every crossing; at its edge fewer do.
+        XCTAssertEqual(roads.first { $0.along == 1 && name($0.rect.lo, 1) == name(SIMD2(-half, half), 1) }?.junction, [true, true])
+        XCTAssertTrue(roads.contains { $0.along < 2 && $0.junction.contains(false) })
+
+        // Beyond the last road: fields, each of one kind over a cell of the coarsest ground, and no tree in them.
+        let out = Double(city.radius + World.cityApron)
+        XCTAssertFalse(world.paved(city, city.center.x + out, city.center.y, margin: 2))
+        var kinds = Set<Int>()
+        for k in 0..<96 {
+            let angle = Double(k) / 96 * 2 * .pi, x = city.center.x + (out + 4) * cos(angle), z = city.center.y + (out + 4) * sin(angle)
+            let field = try XCTUnwrap(world.field(city, x, z), "the belt next to the city is open")
+            XCTAssertEqual(world.ground(x, z, up: 1, city: city), field)
+            kinds.insert(field)
+            // The cell of the coarsest ground it is in (from the city's middle, a multiple of 16 m itself).
+            let x0 = (x / 16).rounded(.down) * 16, z0 = (z / 16).rounded(.down) * 16
+            for (dx, dz) in [(0.5, 0.5), (15.5, 0.5), (0.5, 15.5), (15.5, 15.5)] {
+                if let other = world.field(city, x0 + dx, z0 + dz) { XCTAssertEqual(other, field) }
+            }
+        }
+        XCTAssertGreaterThan(kinds.count, 2)
+        XCTAssertNil(world.field(city, city.center.x + out + Double(World.cityBlend) + 50, city.center.y))
+        XCTAssertNil(world.field(nil, 0, 0))
+
+        // Grass and bushes come up to the roads and stop there, and none grow in a sown field.
+        var grown = 0
+        for k in -12..<12 {
+            let x0 = city.center.x + Double(k) * 32, z0 = city.center.y + (Double(city.radius) / 32).rounded(.down) * 32 - 64
+            for j in 0..<5 {
+                for p in world.groundCover(x0: x0, z0: z0 + Double(j) * 32, side: 32, flora: flora) {
+                    let x = x0 + Double(p.x), z = z0 + Double(j) * 32 + Double(p.z)
+                    XCTAssertFalse(world.paved(city, x, z, margin: 1))
+                    XCTAssertEqual(world.field(city, x, z) ?? World.Ground.meadow, World.Ground.meadow)
+                    grown += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(grown, 100)
+
+        // A tile's roads are a few sheets at the edge of sight, and painted nearer.
+        let tiles = (0..<World.levels).map { WorldTile.build(world, x: tx, z: tz, level: $0, flora: flora) }
+        func count(_ tile: WorldTile, _ color: SIMD3<Float>) -> Int {
+            tile.chunks.reduce(0) { sum, chunk in
+                let own = Set(chunk.materials.indices.filter { SIMD3(chunk.materials[$0].albedo.x, chunk.materials[$0].albedo.y, chunk.materials[$0].albedo.z) == color
+                                                               && chunk.materials[$0].textures.x == .max })
+                return sum + chunk.triangleMaterials.array.reduce(0) { $0 + (own.contains(Int($1)) ? 1 : 0) }
+            }
+        }
+        let paint = SIMD3<Float>(0.7, 0.7, 0.66)
+        XCTAssertGreaterThan(count(tiles[0], paint), 200)
+        XCTAssertEqual(count(tiles[1], paint), count(tiles[0], paint))
+        XCTAssertEqual(count(tiles[2], paint), 0)
     }
 
     /// The world's day: the sun over -z at noon and under the horizon for four tenths of the day, the moon the light
