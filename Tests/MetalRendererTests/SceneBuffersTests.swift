@@ -384,12 +384,13 @@ final class SceneBuffersTests: XCTestCase {
         b.seed = 7
         XCTAssertFalse(a.isSameWorld(as: b))
         XCTAssertFalse(SceneSettings(kind: .forest).isSameWorld(as: SceneSettings(kind: .forest)))
-        // The night is a world of its own.
+        // By night it is the same world, with its lights; with another share of lit windows it is another.
         b = a
-        b.kind = .worldNight
-        XCTAssertFalse(a.isSameWorld(as: b))
-        a.kind = .worldNight
+        b.worldLit = true
+        XCTAssertNotEqual(a, b)
         XCTAssertTrue(a.isSameWorld(as: b))
+        b.city.lit = 0.6
+        XCTAssertFalse(a.isSameWorld(as: b))
     }
 
     /// A borrowed mesh of several materials, one of them emissive, with the light that came with it (an open world's
@@ -449,5 +450,61 @@ final class SceneBuffersTests: XCTestCase {
             XCTAssertEqual(scene.lightTable.triangles[2].light, UInt32(scene.lights.count - 1))
             XCTAssertEqual(scene.lightTable.triangles[3].radianceLum, 2 * 0.2126 + 4 * 0.7152 + 8 * 0.0722, accuracy: 1e-4)
         }
+    }
+
+    /// The open world's lights (`Scene.cityLights`): materials that emit nothing as the scene is made, and their
+    /// borrowed meshes' lights with them; as far on as the sun's height says, in the materials and in the light table.
+    func testCityLightsComeOn() throws {
+        let degree = Float.pi / 180
+        let scene = Scene(SceneSettings(kind: .cornell)) { scene in
+            let wall = scene.addMaterial(albedo: [0.5, 0.5, 0.5])
+            let lamp = scene.addMaterial(albedo: [0.6, 0.6, 0.6])        // off: what it emits is the city light's to say
+            let window = scene.addMaterial(albedo: [0.8, 0.8, 0.7])
+            XCTAssertEqual([wall, lamp, window], [0, 1, 2])
+            let positions: [SIMD3<Float>] = [[0, 5, 0], [2, 5, 0], [2, 5, 2], [0, 5, 2]]
+            let borrowed = Scene.BorrowedMesh(positions: .made(positions), normals: .made([SIMD3<Float>](repeating: [0, 1, 0], count: 4)),
+                                              uvs: .made([SIMD2<Float>](repeating: .zero, count: 4)),
+                                              indices: .made([0, 1, 2, 0, 2, 3, 0, 1, 3]), materials: .made([1, 2, 0]))
+            let instance = scene.addInstance(scene.addMesh(borrowing: borrowed, bounds: AABB(lo: [0, 5, 0], hi: [2, 5, 2]), name: "a chunk"),
+                                             wall, matrix_identity_float4x4)
+            for (offset, emission, triangle) in [(1, SIMD3<Float>(100, 80, 50), (0, 1, 2)), (2, SIMD3<Float>(1, 1, 1), (0, 2, 3))] {
+                var draft = Scene.MeshLightDraft()
+                draft.add(positions[triangle.0], positions[triangle.1], positions[triangle.2], emission: emission)
+                var light = draft.finish(instance: instance, firstTriangle: 0)!
+                light.materialOffset = offset
+                scene.addMeshLight(Scene.BorrowedLight(light: light, triangles: .made(draft.triangles), range: 0..<1))
+                scene.cityLights.append(Scene.CityLight(material: wall + offset, emission: emission, window: offset == 1 ? nil : 0.5))
+            }
+        }
+        // The lights are there, off: nothing emits, and the table says so.
+        XCTAssertEqual(scene.meshLights.count, 2)
+        XCTAssertEqual(scene.lightTable.triangles.map(\.radianceLum), [0, 0])
+        XCTAssertEqual(scene.lightTable.entries.count, 2, "but they are in it, each by what it emits when on")
+        XCTAssertGreaterThan(scene.lightTable.entries[0].pdf, scene.lightTable.entries[1].pdf)
+        XCTAssertEqual(scene.materials[1].params.z, 1, "a light's material")
+        XCTAssertNil(scene.takeMaterialsDirty())
+        XCTAssertNil(scene.takeLightTrianglesDirty())
+
+        // The sun sets: the lamp is on, the window (its time is half-way through the dusk) not yet.
+        scene.setCityLights(sunElevation: 0.2 * degree)
+        XCTAssertEqual(scene.materials[1].emission, SIMD4(100, 80, 50, 1))
+        XCTAssertEqual(scene.materials[2].emission, SIMD4(0, 0, 0, 1))
+        XCTAssertEqual(scene.lightTable.triangles[0].radianceLum, 100 * 0.2126 + 80 * 0.7152 + 50 * 0.0722, accuracy: 1e-3)
+        XCTAssertEqual(scene.lightTable.triangles[1].radianceLum, 0)
+        XCTAssertEqual(scene.takeMaterialsDirty(), 1..<2)
+        XCTAssertEqual(scene.takeLightTrianglesDirty(), 0..<1)
+        // Dark: both; and nothing more to change after that.
+        scene.setCityLights(sunElevation: -12 * degree)
+        XCTAssertEqual(scene.materials[2].emission, SIMD4(1, 1, 1, 1))
+        XCTAssertEqual(scene.lightTable.triangles[1].radianceLum, 1, accuracy: 1e-5)
+        XCTAssertEqual(scene.takeMaterialsDirty(), 2..<3)
+        XCTAssertEqual(scene.takeLightTrianglesDirty(), 1..<2)
+        scene.setCityLights(sunElevation: -20 * degree)
+        XCTAssertNil(scene.takeMaterialsDirty())
+        // Morning: off again.
+        scene.setCityLights(sunElevation: 10 * degree)
+        XCTAssertEqual(scene.materials[1].emission, SIMD4(0, 0, 0, 1))
+        XCTAssertEqual(scene.lightTable.triangles.map(\.radianceLum), [0, 0])
+        XCTAssertEqual(scene.takeMaterialsDirty(), 1..<3)
     }
 }

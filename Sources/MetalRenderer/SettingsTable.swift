@@ -496,6 +496,7 @@ enum SettingsTable {
             S.slider("Haze beyond", \.fog.haze, FogSettings.hazeRange, step: 0.05, fmt("%.2f")).env(.fogSet, "haze").when(on),
             S.check("Local fog volumes", \.fog.volumes).env(.fogSet, "volumes").when(on),
             S.check("Fog in reflections", \.fog.reflections).env(.fogSet, "reflections").when(on),
+            S.check("Lights scatter in it", \.fog.lights).env(.fogSet, "lights").when(on),
             S.slider("Base height", \.fog.baseHeight, FogSettings.baseHeightRange, step: 0.25, fmt("%.2f m")).env(.fogSet, "base").advanced().when(on),
             S.slider("Noise tile", \.fog.noiseScale, FogSettings.noiseScaleRange, step: 0.5, fmt("%.1f m")).env(.fogSet, "tile").advanced().when(on),
             // The wind's horizontal speed and heading; its env name carries the whole vector.

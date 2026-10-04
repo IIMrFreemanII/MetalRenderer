@@ -281,6 +281,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         return q
     }()
     private var materialsPending: [Range<Int>?] = []   // per slot: the materials changed since it was last written
+    private var lightTrianglesPending: [Range<Int>?] = []   // ...and the light table's triangles (the open world's dusk)
     private var frameDataWritten: [Bool] = []          // per slot: a frame's instances and lights have been written to it
     /// This frame's instance and light records, kept from frame to frame: only what moves or flickers is rewritten, then
     /// each goes to the slot's buffer in one copy. (Writing the records straight into the shared buffers costs the GPU
@@ -362,7 +363,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
     /// (16-byte aligned).
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
-    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 240: the shader asserts it
+    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 272: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
@@ -834,6 +835,8 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             camera = scene.defaultCamera
             prevCamera = camera
         }
+        // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
+        if sameWorld, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
         if #available(macOS 26.0, *) { (metal4Storage as? Metal4Frame)?.noteSceneChange() }
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
@@ -1014,7 +1017,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
         p.counts = SIMD4(UInt32(grid.columns), UInt32(grid.rows), UInt32(volumes.count),
                          GPUFogParams.enabled | (historyValid ? GPUFogParams.historyValid : 0)
-                         | (f.reflections ? GPUFogParams.reflections : 0))
+                         | (f.reflections ? GPUFogParams.reflections : 0) | (f.lights ? 0 : GPUFogParams.skyLight))
         return p
     }
 
@@ -1145,8 +1148,25 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             sunRadius = lights[i].positionRadius.w
         }
         let sunGround: SIMD3<Float>
+        var sunTop = Atmosphere.solarIrradiance, glow = SIMD3<Float>(0, 1, 0), glowTop = SIMD3<Float>(), stars: Float = 0
         if let image {
             sunGround = image.sunDirection == nil ? .zero : image.sunIrradiance
+        } else if let heavens = scene.heavens {
+            // The open world: the light is the sun, or the moon once the sun has set; the sun then still lights the
+            // sky from under the horizon.
+            var light = Atmosphere.solarIrradiance * heavens.adaptation * heavens.sunUp
+            sunTop = Atmosphere.solarIrradiance * heavens.adaptation
+            stars = heavens.stars
+            if heavens.lightIsMoon {
+                glow = heavens.sun
+                if heavens.sunElevation > Heavens.twilightEnd { glowTop = sunTop }
+                sunTop = Heavens.nightSkyIrradiance * heavens.moonlight
+                light = Heavens.moonIrradiance * (heavens.moonlight * heavens.moonUp)
+            }
+            if atmosphereCache == nil || length(atmosphereCache!.sun - sunDir) > 1e-4 {
+                atmosphereCache = (sunDir, Atmosphere.sunIrradiance(toward: sunDir))
+            }
+            sunGround = atmosphereCache!.ground / Atmosphere.solarIrradiance * light
         } else {
             if atmosphereCache == nil || length(atmosphereCache!.sun - sunDir) > 1e-4 {
                 atmosphereCache = (sunDir, Atmosphere.sunIrradiance(toward: sunDir))
@@ -1164,8 +1184,10 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let sphere = scene.sceneSphere
         var p = GPUSkyParams()
         p.sun = SIMD4(sunDir, sunRadius)
-        p.sunTop = SIMD4(Atmosphere.solarIrradiance, 0)
+        p.sunTop = SIMD4(sunTop, 0)
         p.sunGround = SIMD4(sunGround, 0)
+        p.glow = SIMD4(glow, stars)
+        p.glowTop = SIMD4(glowTop, 0)
         p.cloudLayer = SIMD4(sky.cloudBase, sky.cloudBase + max(sky.cloudThickness, 100),
                              SkySettings.coverageRange.clamp(sky.coverage), SkySettings.densityRange.clamp(sky.density))
         p.cloudShape = SIMD4(max(sky.cloudScale, 100), sky.erosion, animTime, sky.shadowStrength)
@@ -1244,12 +1266,15 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     /// Per slot: the lights, then the light table.
     private func createLightBuffers() throws {
+        _ = scene.takeLightTrianglesDirty()   // written here as they are now
+        lightTrianglesPending = [Range<Int>?](repeating: nil, count: Renderer.maxFramesInFlight)
         for _ in 0..<Renderer.maxFramesInFlight {
             guard let lights = device.makeBuffer(length: max(scene.lights.count * MemoryLayout<GPULight>.stride + scene.lightTable.byteCount, 64),
                                                  options: .storageModeShared) else {
                 throw RendererError.resourceCreation("per-frame buffers")
             }
-            // The light table, after the lights: written once (it doesn't change while the scene lives).
+            // The light table, after the lights: written once (but for the triangles of lights that go on and off
+            // with the time of day: writeFrameData).
             var offset = scene.lights.count * MemoryLayout<GPULight>.stride
             scene.lightTable.entries.withUnsafeBytes { raw in
                 if raw.count > 0 { lights.contents().advanced(by: offset).copyMemory(from: raw.baseAddress!, byteCount: raw.count) }
@@ -1299,6 +1324,22 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
                     .copyMemory(from: base.advanced(by: range.lowerBound * stride), byteCount: range.count * stride)
             }
             materialsPending[slot] = nil
+        }
+        // The open world's lights as they come on: how bright the light table says their triangles are.
+        if let dirty = scene.takeLightTrianglesDirty() {
+            for s in lightTrianglesPending.indices {
+                lightTrianglesPending[s] = lightTrianglesPending[s].map { min($0.lowerBound, dirty.lowerBound)..<max($0.upperBound, dirty.upperBound) } ?? dirty
+            }
+        }
+        if let range = lightTrianglesPending[slot] {
+            let table = scene.lightTable, stride = MemoryLayout<GPUTriangleInfo>.stride
+            let offset = scene.lights.count * MemoryLayout<GPULight>.stride + table.entries.count * MemoryLayout<GPULightTableEntry>.stride
+            table.triangles.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                lightBuffers[slot].contents().advanced(by: offset + range.lowerBound * stride)
+                    .copyMemory(from: base.advanced(by: range.lowerBound * stride), byteCount: range.count * stride)
+            }
+            lightTrianglesPending[slot] = nil
         }
         var sky = false
         lightStage.withUnsafeMutableBufferPointer { lights in
@@ -1394,6 +1435,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             }
         }
         if scene.worldPlace != nil { scene.follow(camera.position) }
+        setWorldLights()
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
@@ -1580,10 +1622,18 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         camera.fovY = settings.fovDegrees * .pi / 180
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
-        // The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
-        scene.update(time: animTime, dayTime: animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0))
+        scene.update(time: animTime, dayTime: dayTime)
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }
+
+    /// The open world's scene is one with its cities' lights from a little before the sun sets until a little after
+    /// it has risen (`SceneSettings.worldLit`).
+    private func setWorldLights() {
+        if settings.scene.kind.isWorld { settings.scene.worldLit = Heavens(at: dayTime).sunElevation < World.lightsReady }
+    }
+
+    /// The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
+    private var dayTime: Float { animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0) }
 
     /// The wind on the plants this frame (custom ray tracer: Shaders/Foliage.metal).
     private var windFrame: WindFrame {
@@ -2596,6 +2646,9 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
 
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
         settings = c.resolvedSettings()
+        animTime = c.startTime
+        previousAnimTime = c.startTime
+        setWorldLights()   // the scene it starts with is the one its time of day asks for
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             rebuildScene(resetCamera: false)
         }
@@ -2607,8 +2660,6 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         accumCount = 0
         supersampling = c.accumulate && c.supersample
         colorAccumCount = 0
-        animTime = c.startTime
-        previousAnimTime = c.startTime
         resetGIState()
         upscalerReset = true
         streaming = Streaming()

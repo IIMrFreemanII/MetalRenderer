@@ -233,38 +233,85 @@ final class WorldTests: XCTestCase {
         assertSame(tiles[0], WorldTile.build(world, x: tx, z: tz, level: 0, flora: flora), "a city tile made again")
     }
 
-    /// At night a city's tile is another one, with its lights; the country's is the day's.
-    func testNightTiles() throws {
-        var night = world
-        night.night = true
+    /// The world's day: the sun over -z at noon and under the horizon for four tenths of the day, the moon the light
+    /// when it is; the cities' lights come on as it sets, and the scene has them before they do.
+    func testTheDay() {
+        func at(_ phase: Float) -> Heavens { Heavens(at: (phase - Heavens.start) * Heavens.day) }
+        let degree = Float.pi / 180
+        XCTAssertEqual(Heavens.phase(at: 0), Heavens.start)
+        XCTAssertEqual(Heavens.phase(at: 1.5 * Heavens.day), Heavens.start + 0.5, accuracy: 1e-5)
+        XCTAssertEqual(Heavens.phase(at: 0.75 * Heavens.day), Heavens.start + 0.75 - 1, accuracy: 1e-5)
+        XCTAssertEqual(SceneKind.world.dayCycle, Heavens.day)
+
+        XCTAssertEqual(at(0.5).sunElevation, 60 * degree, accuracy: 1e-3)
+        XCTAssertEqual(at(0).sunElevation, -24 * degree, accuracy: 1e-3)
+        XCTAssertEqual(at(0.5).sun.x, 0, accuracy: 1e-5)
+        XCTAssertLessThan(at(0.5).sun.z, 0)
+        XCTAssertGreaterThan(at(0.3).sun.x, 0, "it rises in the east")
+        var night = 0
+        for step in 0..<1000 {
+            let h = at(Float(step) / 1000)
+            XCTAssertEqual(length(h.sun), 1, accuracy: 1e-5)
+            XCTAssertEqual(length(h.moon), 1, accuracy: 1e-5)
+            XCTAssertGreaterThan(max(h.sun.y, h.moon.y), 0.05, "one of them is always up")
+            XCTAssertEqual(h.light, h.lightIsMoon ? h.moon : h.sun)
+            XCTAssertEqual(h.lightIsMoon, h.sunElevation <= -Heavens.discRadius)
+            if h.lightIsMoon {
+                night += 1
+                XCTAssertEqual(h.moonUp, 1, "the moon is up when it is the light")
+            } else {
+                XCTAssertEqual(h.moonlight, 0, "no moonlight while any of the sun is up")
+            }
+            XCTAssertTrue(h.adaptation >= 1 && h.adaptation <= 128)
+        }
+        XCTAssertTrue((370...390).contains(night), "\(night) thousandths of the day")
+        XCTAssertEqual(at(0).moonlight, 1)
+        XCTAssertEqual(at(0.5).adaptation, 1)
+        // The eye adapts more the lower the sun.
+        let heights = stride(from: Float(0.5), through: 1, by: 0.01).map { at($0) }
+        XCTAssertTrue(zip(heights, heights.dropFirst()).allSatisfy { $0.adaptation <= $1.adaptation })
+
+        // The lights: off by day and when the scene first has them, on in the dark; a lamp as the sun sets, the
+        // windows one after the other.
+        for window in [nil, 0, 0.5, 0.999] as [Float?] {
+            XCTAssertEqual(World.lightOn(elevation: 30 * degree, window: window), 0)
+            XCTAssertEqual(World.lightOn(elevation: World.lightsReady, window: window), 0)
+            XCTAssertEqual(World.lightOn(elevation: 3.01 * degree, window: window), 0)
+            XCTAssertEqual(World.lightOn(elevation: -8 * degree, window: window), 1)
+        }
+        XCTAssertEqual(World.lightOn(elevation: 0.5 * degree), 1, "the lamps are on as the sun sets")
+        XCTAssertGreaterThan(World.lightOn(elevation: degree, window: 0), World.lightOn(elevation: degree, window: 0.5))
+        XCTAssertEqual(World.lightOn(elevation: -2 * degree, window: 0.9), 0)
+    }
+
+    /// A city's tile has its lights, and is made for the share of its windows that are lit; the country's has none.
+    func testTileLights() throws {
         let city = try XCTUnwrap(world.city(cell: SIMD2(0, 0)))
         let side = Double(World.tileSize)
         let tx = Int((city.center.x / side).rounded(.down)), tz = Int((city.center.y / side).rounded(.down))
 
-        // Far from the city: the same tile, the same file.
-        XCTAssertFalse(night.hasNight(x0: Double(tx + 12) * side, z0: Double(tz) * side, side: side))
-        XCTAssertEqual(WorldTile.url(night, x: tx + 12, z: tz, level: 1), WorldTile.url(world, x: tx + 12, z: tz, level: 1))
-        XCTAssertEqual(WorldTile.key(night, x: tx + 12, z: tz, level: 1), WorldTile.key(world, x: tx + 12, z: tz, level: 1))
-        let country = WorldTile.build(night, x: tx + 12, z: tz, level: 1, flora: flora)
-        assertSame(country, WorldTile.build(world, x: tx + 12, z: tz, level: 1, flora: flora), "the country at night")
-        XCTAssertTrue(country.lights.isEmpty)
-        // In it: another file, and another again for another share of lit windows.
-        XCTAssertNotEqual(WorldTile.url(night, x: tx, z: tz, level: 0), WorldTile.url(world, x: tx, z: tz, level: 0))
-        XCTAssertNotEqual(WorldTile.key(night, x: tx, z: tz, level: 0), WorldTile.key(world, x: tx, z: tz, level: 0))
-        var brighter = night
+        var brighter = world
         brighter.lit = 0.6
-        XCTAssertNotEqual(WorldTile.key(night, x: tx, z: tz, level: 0), WorldTile.key(brighter, x: tx, z: tz, level: 0))
+        // Far from the city: the same tile whatever the share of lit windows, and no lights.
+        XCTAssertFalse(world.hasCity(x0: Double(tx + 12) * side, z0: Double(tz) * side, side: side))
+        XCTAssertEqual(WorldTile.key(brighter, x: tx + 12, z: tz, level: 1), WorldTile.key(world, x: tx + 12, z: tz, level: 1))
+        let country = WorldTile.build(brighter, x: tx + 12, z: tz, level: 1, flora: flora)
+        assertSame(country, WorldTile.build(world, x: tx + 12, z: tz, level: 1, flora: flora), "the country")
+        XCTAssertTrue(country.lights.isEmpty)
+        // In it: another tile for another share.
+        XCTAssertTrue(world.hasCity(x0: Double(tx) * side, z0: Double(tz) * side, side: side))
+        XCTAssertNotEqual(WorldTile.key(world, x: tx, z: tz, level: 0), WorldTile.key(brighter, x: tx, z: tz, level: 0))
 
         func emits(_ m: GPUMaterial) -> Bool { m.emission.x + m.emission.y + m.emission.z > 0 }
         func isLamp(_ m: GPUMaterial) -> Bool { SIMD3(m.emission.x, m.emission.y, m.emission.z) == World.lampEmission }
         var emitting: [Int] = []
         for level in 0..<World.levels {
-            let day = WorldTile.build(world, x: tx, z: tz, level: level, flora: flora)
-            XCTAssertTrue(day.lights.isEmpty && day.emissive.count == 0)
-            XCTAssertFalse(day.chunks.contains { $0.materials.contains(where: emits) }, "nothing glows by day")
-
-            let tile = WorldTile.build(night, x: tx, z: tz, level: level, flora: flora)
+            let tile = WorldTile.build(world, x: tx, z: tz, level: level, flora: flora)
             XCTAssertFalse(tile.lights.isEmpty, "level \(level)")
+            // What emits has a colour: what it looks like by day, when it is off.
+            for chunk in tile.chunks where !chunk.glass {
+                for m in chunk.materials where emits(m) { XCTAssertGreaterThan(m.albedo.x + m.albedo.y + m.albedo.z, 0.3) }
+            }
             // Street lamps to level 1; lit windows at every level (at 2, on the buildings' boxes).
             let materials = tile.lights.map { tile.chunks[Int($0.chunk)].materials[Int($0.material)] }
             XCTAssertEqual(materials.contains(where: isLamp), level <= 1, "level \(level)")
@@ -303,7 +350,7 @@ final class WorldTests: XCTestCase {
         }
 
         // The share of lit windows is the world's: with none, the lamps and the shops are all that is on.
-        var dark = night
+        var dark = world
         dark.lit = 0
         let few = WorldTile.build(dark, x: tx, z: tz, level: 0, flora: flora)
         XCTAssertTrue(few.lights.contains { isLamp(few.chunks[Int($0.chunk)].materials[Int($0.material)]) })

@@ -134,17 +134,18 @@ inline float miePhase(float c, float g) {   // Cornette-Shanks
     return 3.0f / (8.0f * M_PI_F) * (1.0f - g2) * (1.0f + c * c) / ((2.0f + g2) * pow(max(1.0f + g2 - 2.0f * g * c, 1e-4f), 1.5f));
 }
 
-// Sky radiance toward unit v for an observer near the ground: single scattering marched in 20 steps (denser near
-// the observer), lit through the transmittance table, plus the multiple-scattering table; below the horizon, the
-// lit ground at the end. `skyMean` = the sky's mean radiance (lights the ground from around).
-float3 atmosphereRadiance(float3 v, constant SkyParams& sp, texture2d<float> transmittance, texture2d<float> multiScatter,
-                          float3 skyMean) {
-    float3 o = float3(0.0f, ATMO_GROUND + sp.ground.w, 0.0f), l = sp.sun.xyz;
+// Sky radiance toward unit v for an observer near the ground, of light of irradiance E above the atmosphere from
+// toward l: single scattering marched in 20 steps (denser near the observer), lit through the transmittance table,
+// plus the multiple-scattering table; below the horizon, the lit ground at the end. `skyMean` = the sky's mean
+// radiance (lights the ground from around).
+float3 atmosphereLit(float3 v, float3 l, float3 E, constant SkyParams& sp, texture2d<float> transmittance,
+                     texture2d<float> multiScatter, float3 skyMean) {
+    float3 o = float3(0.0f, ATMO_GROUND + sp.ground.w, 0.0f);
     float2 g = raySphere(o, v, ATMO_GROUND);
     bool ground = g.x > 0.0f && g.y > g.x;
     float tMax = ground ? g.x : raySphere(o, v, ATMO_TOP).y;
     float c = dot(v, l), pR = rayleighPhase(c), pM = miePhase(c, MIE_G);
-    float3 L = float3(0.0f), T = float3(1.0f), E = sp.sunTop.rgb;
+    float3 L = float3(0.0f), T = float3(1.0f);
     constexpr uint steps = 20;
     float t0 = 0.0f;
     for (uint i = 0; i < steps; ++i) {
@@ -166,6 +167,15 @@ float3 atmosphereRadiance(float3 v, constant SkyParams& sp, texture2d<float> tra
         float3 sunAtGround = atmosphereTransmittance(transmittance, pg + n, l) * E * max(dot(n, l), 0.0f);
         L += T * sp.ground.rgb / M_PI_F * (sunAtGround + M_PI_F * skyMean);
     }
+    return L;
+}
+
+// The sky toward v: lit by the sun, and by what else lights the atmosphere (SkyParams.glow: at dusk the sun under
+// the horizon, when the sky's light on the ground is the moon's).
+float3 atmosphereRadiance(float3 v, constant SkyParams& sp, texture2d<float> transmittance, texture2d<float> multiScatter,
+                          float3 skyMean) {
+    float3 L = atmosphereLit(v, sp.sun.xyz, sp.sunTop.rgb, sp, transmittance, multiScatter, skyMean);
+    if (any(sp.glowTop.rgb > 0.0f)) L += atmosphereLit(v, sp.glow.xyz, sp.glowTop.rgb, sp, transmittance, multiScatter, float3(0.0f));
     return L;
 }
 
@@ -265,6 +275,18 @@ inline float3 equirectSample(texture2d<float> image, float3 d) {
     return image.sample(cloudSampler, uv, level(0)).rgb;
 }
 
+// The night's stars: one sky texel in 500 is one (the texture's texels are of equal solid angle, so they are spread
+// evenly), most of them faint; they dim toward the horizon, and clouds hide them.
+inline float3 starLight(uint2 texel, float3 dir) {
+    uint h = pcgHash(texel.x + pcgHash(texel.y + 0x57A125u));
+    if (h % 500u != 0u) return float3(0.0f);
+    uint k = pcgHash(h);
+    float u = float(k & 0xFFFFu) / 65535.0f, warm = float(k >> 16) / 65535.0f;
+    float3 tint = mix(float3(0.75f, 0.85f, 1.0f), float3(1.0f, 0.85f, 0.7f), warm);
+    float u2 = u * u;
+    return tint * ((0.03f + 1.5f * u2 * u2 * u2) * smoothstep(0.0f, 0.25f, dir.y));
+}
+
 // Updates the sky texture, slice z (0 = upper, 1 = lower hemisphere): the texels with (x & 3) + 4 (y & 3) = this
 // frame's phase, one per thread (a sixteenth of the grid is dispatched, so no SIMD lanes idle), or every texel with
 // SKY_UPDATE_ALL. Clouds blend into the texel's last value (wind.w) to smooth their march's noise; a full update
@@ -289,6 +311,7 @@ kernel void skyKernel(constant SkyParams&                       sp        [[buff
     float3 mean = skyMean[0].rgb;
     float3 background = sp.flags.x == SKY_IMAGE ? equirectSample(image, dir)
                                                 : atmosphereRadiance(dir, sp, transmittance, multiScatter, mean);
+    if (tid.z == 0 && sp.glow.w > 0.0f && sp.flags.x == SKY_ATMOSPHERE) background += starLight(texel, dir) * sp.glow.w;
     float4 result = float4(background, 1.0f);
     bool clouds = (sp.flags.y & SKY_CLOUDS) != 0 && (sp.flags.x == SKY_ATMOSPHERE || (sp.flags.y & SKY_CLOUDS_OVER_IMAGE) != 0);
     if (tid.z == 0 && clouds) {

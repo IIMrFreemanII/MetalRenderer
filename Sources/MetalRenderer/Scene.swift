@@ -327,6 +327,25 @@ final class Scene {
     private(set) var crowd: Crowd?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
+    /// ...and where its sun and moon are now (`update`).
+    private(set) var heavens: Heavens?
+    /// Its materials that are lights at night, each with what it emits when it is on, and which it is: a street lamp
+    /// (`window` nil), or a window that comes on at its own time in the dusk (`World.lightOn`).
+    struct CityLight {
+        var material: Int
+        var emission: SIMD3<Float>
+        var window: Float?
+        /// How far on it is, 0...1, and the light table's triangles that have its material (where the scene samples
+        /// its lights).
+        var on: Float = 0
+        var triangles: [Range<Int>] = []
+    }
+    /// (Added with their materials, which emit nothing until `setCityLights` says so.)
+    var cityLights: [CityLight] = []
+    private var cityLightsElevation: Float?
+    /// What each of the light table's triangles emits when its light is on.
+    private var cityLightRadiance: [Float] = []
+    private var lightTrianglesDirty: Range<Int>?
 
     var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
     var skyAnimation: ((Float) -> SIMD3<Float>)?
@@ -365,7 +384,7 @@ final class Scene {
         case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
         case .city: buildCity(settings.city, seed: settings.seed, night: false)
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
-        case .world, .worldNight: buildWorld()
+        case .world: buildWorld()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -382,6 +401,7 @@ final class Scene {
             if lo.x <= hi.x { sceneSphere = SIMD4((lo + hi) / 2, max(length(hi - lo) / 2, 1)) }
         }
         lightTable = LightTable(scene: self)
+        bindCityLights()
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
 
@@ -452,6 +472,11 @@ final class Scene {
             for l in lights.indices where !lights[l].isMesh { pose(l, placed: true) }
         }
         if let skyAnimation { skyColor = skyAnimation(day) }
+        if worldPlace != nil {
+            let now = Heavens(at: day)
+            heavens = now
+            setCityLights(sunElevation: now.sunElevation)
+        }
         for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
@@ -1129,6 +1154,54 @@ final class Scene {
         materialsDirty = materialsDirty.map { min($0.lowerBound, lo)..<max($0.upperBound, hi) } ?? lo..<hi
     }
 
+    /// The open world's lights, as far on as they are with the sun `sunElevation` high (radians): what their
+    /// materials emit. (A light the scene samples takes what it emits from its material; how likely it is to be
+    /// picked stays what it is when it is on.)
+    /// The same goes into the light table's triangles (`GPUTriangleInfo.radianceLum`), which say how bright a light
+    /// is to whoever picks one among many: a light that is off is not picked.
+    func setCityLights(sunElevation: Float) {
+        // Above and below the heights between which lights come on, nothing changes.
+        let degree = Float.pi / 180, elevation = min(max(sunElevation, -9 * degree), 4 * degree)
+        guard cityLightsElevation != elevation, !cityLights.isEmpty else { return }
+        cityLightsElevation = elevation
+        var lo = Int.max, hi = 0, first = Int.max, last = 0
+        for i in cityLights.indices {
+            let light = cityLights[i], on = World.lightOn(elevation: elevation, window: light.window)
+            guard on != light.on else { continue }
+            cityLights[i].on = on
+            materials[light.material].emission = SIMD4(light.emission * on, materials[light.material].emission.w)
+            lo = min(lo, light.material); hi = max(hi, light.material + 1)
+            for range in light.triangles {
+                for t in range { lightTable.triangles[t].radianceLum = cityLightRadiance[t] * on }
+                first = min(first, range.lowerBound); last = max(last, range.upperBound)
+            }
+        }
+        if lo < hi { materialsDirty = materialsDirty.map { min($0.lowerBound, lo)..<max($0.upperBound, hi) } ?? lo..<hi }
+        if first < last {
+            lightTrianglesDirty = lightTrianglesDirty.map { min($0.lowerBound, first)..<max($0.upperBound, last) } ?? first..<last
+        }
+    }
+
+    /// Which of the light table's triangles each city light has: its material's mesh lights'. They start as their
+    /// lights do, off.
+    private func bindCityLights() {
+        guard !cityLights.isEmpty, !meshLights.isEmpty else { return }
+        let index = Dictionary(uniqueKeysWithValues: cityLights.enumerated().map { ($1.material, $0) })
+        cityLightRadiance = lightTable.triangles.map(\.radianceLum)
+        for light in meshLights {
+            guard let c = index[instances[light.instance].material + light.materialOffset] else { continue }
+            let range = light.firstTriangle..<(light.firstTriangle + light.triangleCount)
+            cityLights[c].triangles.append(range)
+            for t in range { lightTable.triangles[t].radianceLum = cityLightRadiance[t] * cityLights[c].on }
+        }
+    }
+
+    /// The light table's triangles changed since the last call (`setCityLights`), for the renderer to write again.
+    func takeLightTrianglesDirty() -> Range<Int>? {
+        defer { lightTrianglesDirty = nil }
+        return lightTrianglesDirty
+    }
+
     @discardableResult
     func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
                              mask: UInt32 = Scene.maskGeometry,
@@ -1193,7 +1266,8 @@ final class Scene {
     /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
     /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
     private func buildMeshLights() {
-        guard materials.contains(where: { $0.emission.x > 0 || $0.emission.y > 0 || $0.emission.z > 0 }) else { return }
+        // (A borrowed mesh's lights may be off as the scene is made: the open world's by day.)
+        guard !borrowedLights.isEmpty || materials.contains(where: { $0.emission.x > 0 || $0.emission.y > 0 || $0.emission.z > 0 }) else { return }
         emissiveTriangles.reserveCapacity(borrowedLights.reduce(0) { $0 + $1.range.count })
         var textureCache: [Int: ((SIMD2<Float>) -> SIMD3<Float>)?] = [:]
         func emissiveTexture(_ index: UInt32) -> ((SIMD2<Float>) -> SIMD3<Float>)? {

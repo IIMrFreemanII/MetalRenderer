@@ -13,6 +13,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
+        "worlddusk": worldDusk,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -333,21 +334,37 @@ extension Benchmark {
         return World(seed: UInt64(max(s.scene.seed, 0)))
     }
 
-    /// The open world at night, each view in a scene made around its own tile: a street of the first city, the city
-    /// from above and from 2 km out (where its buildings are boxes with their lit windows on them), and a drive of
-    /// 600 m down that street at 30 m/s, which crosses tiles: the scene's lights are other ones after each.
-    /// `METALRENDERER_SHOT_SWAP=<k>` ends the drive `k` frames after its first crossing.
+    /// The offset (`RenderSettings.timeOfDay`) that puts a paused setting's clock, at its 5 s, at `phase` of the
+    /// open world's day (0 = midnight, 0.5 = noon; the sun sets at 0.81 and rises at 0.19).
+    private static func worldTime(_ phase: Float) -> Float {
+        let t = phase - Heavens.start - 5 / Heavens.day
+        return t - t.rounded(.down)
+    }
+
+    /// A view of the open world from (x, z) of the world, `up` over its ground, at `phase` of its day, in a scene made
+    /// around the tile it is in.
+    private static func worldView(_ name: String, _ w: World, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float,
+                                  phase: Float) -> Config {
+        let home = w.anchorTile, anchor = WorldTile.origin(home.x, home.y), side = Double(World.tileSize)
+        var c = Camera()
+        c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
+        c.yaw = yaw
+        c.pitch = pitch
+        return Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .world)).still().frames(60).from(c)
+            .with {
+                $0.scene.worldTile = SIMD2(Int((x / side).rounded(.down)), Int((z / side).rounded(.down)))
+                $0.timeOfDay = worldTime(phase)
+            }
+    }
+
+    /// The open world in the middle of its night, each view in a scene made around its own tile: a street of the
+    /// first city, the city from above and from 2 km out (where its buildings are boxes with their lit windows on
+    /// them), and a drive of 600 m down that street at 30 m/s, which crosses tiles: the scene's lights are other ones
+    /// after each. `METALRENDERER_SHOT_SWAP=<k>` ends the drive `k` frames after its first crossing.
     private static func worldNight() -> [Config] {
-        let settings = SceneSettings(kind: .worldNight)
-        let w = worldOfRun(), home = w.anchorTile, city = w.city(cell: SIMD2(0, 0))!
-        let anchor = WorldTile.origin(home.x, home.y), side = Double(World.tileSize)
-        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: settings).still().frames(60)
+        let w = worldOfRun(), city = w.city(cell: SIMD2(0, 0))!
         func view(_ name: String, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Config {
-            var c = Camera()
-            c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
-            c.yaw = yaw
-            c.pitch = pitch
-            return base.named(name).from(c).with { $0.scene.worldTile = SIMD2(Int((x / side).rounded(.down)), Int((z / side).rounded(.down))) }
+            worldView(name, w, x, z, up: up, yaw: yaw, pitch: pitch, phase: 0)
         }
         let cx = city.center.x, cz = city.center.y, r = Double(city.radius)
         return [
@@ -357,6 +374,27 @@ extension Benchmark {
             view("night far", cx, cz + r + 1700, up: 60, pitch: 0.0),
             view("night drive", cx, cz + r - 20, up: 1.7, pitch: 0.08).moving().flying([0, 0, -30]).frames(1200),
         ]
+    }
+
+    /// The open world's day from afternoon to night and on to the morning, paused at each time: the first city from
+    /// above its southern edge, looking over it at the sky where the sun sets, and one of its streets. Then the dusk
+    /// as it goes by, from the street and from above: 20 s from before the sun sets until dark, in which the scene is
+    /// made again with the city's lights (the log says when) and they come on. `METALRENDERER_SHOT_SWAP=<k>` ends
+    /// these `k` frames after that scene is in.
+    private static func worldDusk() -> [Config] {
+        let w = worldOfRun(), city = w.city(cell: SIMD2(0, 0))!
+        let cx = city.center.x, cz = city.center.y, r = Double(city.radius)
+        let times: [(String, Float)] = [("afternoon", 0.7), ("evening", 0.78), ("sunset", 0.803), ("lamps on", 0.812), ("dusk", 0.822),
+                                        ("twilight", 0.84), ("last light", 0.87), ("midnight", 0), ("first light", 0.14),
+                                        ("sunrise", 0.197), ("morning", 0.25)]
+        var configs = times.map { worldView("above, \($0.0)", w, cx - 60, cz + r + 120, up: 150, yaw: 0.5, pitch: -0.18, phase: $0.1) }
+        configs += times.map { worldView("street, \($0.0)", w, cx, cz + 40, up: 1.7, pitch: 0.12, phase: $0.1) }
+        // The clock runs: 20 s of it, from the sun 9 degrees up to 9 under the horizon.
+        configs += [
+            worldView("street, dusk going by", w, cx, cz + 40, up: 1.7, pitch: 0.12, phase: 0.77).moving().frames(1200),
+            worldView("above, dusk going by", w, cx - 60, cz + r + 120, up: 150, yaw: 0.5, pitch: -0.18, phase: 0.77).moving().frames(1200),
+        ]
+        return configs
     }
 
     private static func forestCamera(_ position: SIMD3<Float>, yaw: Float = 0, pitch: Float) -> Camera {
