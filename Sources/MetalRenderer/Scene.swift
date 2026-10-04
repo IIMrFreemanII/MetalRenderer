@@ -146,6 +146,59 @@ final class Scene {
         var normal: SIMD3<Float>              // object space, area-weighted mean normal (zero if closed)
         var flatness: Float                   // |sum of area x normal| / area: 1 = flat, 0 = closed or round
         var power: SIMD3<Float>               // sum of emitted radiance x area (object space)
+        /// Its material, from its instance's: the triangles of a mesh of several materials that have this one.
+        var materialOffset = 0
+    }
+
+    /// A mesh light's triangles as they are put together: each weighed by area x emitted luminance, and the bounding
+    /// sphere / mean normal the shaders weigh the whole light by.
+    struct MeshLightDraft {
+        private(set) var triangles: [GPUEmissiveTriangle] = []
+        private var weights: [Float] = []
+        private var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
+        private var areaNormal = SIMD3<Float>(repeating: 0), area: Float = 0
+        private var power = SIMD3<Float>(repeating: 0)
+
+        /// A triangle that emits `le` (its mean radiance); nothing if it has no area or emits nothing.
+        mutating func add(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, uv0: SIMD2<Float> = .zero, uv1: SIMD2<Float> = .zero,
+                          uv2: SIMD2<Float> = .zero, emission le: SIMD3<Float>) {
+            let e1 = p1 - p0, e2 = p2 - p0
+            let cr = cross(e1, e2)
+            let triArea = length(cr) / 2
+            guard triArea > 0 else { return }
+            let w = triArea * dot(le, SIMD3<Float>(0.2126, 0.7152, 0.0722))
+            guard w > 0 else { return }
+            weights.append(w)
+            triangles.append(GPUEmissiveTriangle(v0: SIMD4(p0, 0), e1: SIMD4(e1, uv0.x), e2: SIMD4(e2, uv0.y),
+                                                 uv12: SIMD4(uv1.x, uv1.y, uv2.x, uv2.y)))
+            for p in [p0, p1, p2] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
+            areaNormal += cr / 2
+            area += triArea
+            power += le * triArea
+        }
+
+        /// The light of `instance`, its triangles from `firstTriangle` (their `v0.w` now the running share of its
+        /// power); nil if nothing was added.
+        mutating func finish(instance: Int, firstTriangle: Int) -> MeshLight? {
+            guard !weights.isEmpty else { return nil }
+            let total = weights.reduce(0, +)
+            var running: Float = 0
+            for (k, w) in weights.enumerated() {
+                running += w
+                triangles[k].v0.w = k == weights.count - 1 ? 1 : running / total
+            }
+            return MeshLight(instance: instance, firstTriangle: firstTriangle, triangleCount: weights.count, center: (lo + hi) / 2,
+                             radius: max(length(hi - lo) / 2, 1e-3), normal: length(areaNormal) > 0 ? normalize(areaNormal) : .zero,
+                             flatness: min(length(areaNormal) / area, 1), power: power)
+        }
+    }
+
+    /// A mesh light made already (an open world's tile has its own in its file): `light.instance` is the instance of
+    /// the borrowed mesh it is of, its triangles are `triangles[range]`.
+    struct BorrowedLight {
+        var light: MeshLight
+        var triangles: Stored<GPUEmissiveTriangle>
+        var range: Range<Int>
     }
 
     /// A local fog volume (FogVolume in Shaders/Types.metal): a soft-edged box or sphere of denser fog, optionally moving.
@@ -242,6 +295,7 @@ final class Scene {
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
+    private var borrowedLights: [BorrowedLight] = []
     private(set) var emissiveTriangles: [GPUEmissiveTriangle] = []
     /// The materials changed since the renderer last took this (light proxies whose brightness is animated): the
     /// smallest range that holds them all.
@@ -311,7 +365,7 @@ final class Scene {
         case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
         case .city: buildCity(settings.city, seed: settings.seed, night: false)
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
-        case .world: buildWorld()
+        case .world, .worldNight: buildWorld()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -583,7 +637,7 @@ final class Scene {
             let n = m.flatness > 0 ? normalize(linear.inverse.transpose * m.normal) : SIMD3<Float>(0, 1, 0)
             return GPULight(positionRadius: SIMD4(c.x, c.y, c.z, m.radius * maxScale),
                             color: SIMD4(m.power * areaScale, 4 * GPULight.mesh),
-                            axis: SIMD4(n, 0),
+                            axis: SIMD4(n, Float(m.materialOffset)),
                             params: SIMD4(Float(bitPattern: UInt32(m.firstTriangle)), Float(bitPattern: UInt32(m.triangleCount)),
                                           m.flatness, Float(bitPattern: UInt32(m.instance))))
         }
@@ -1124,11 +1178,15 @@ final class Scene {
 
     // MARK: - Emissive-mesh lights
 
+    /// A light that comes with a borrowed mesh, made already: sampled as the scene's own emissive instances are.
+    func addMeshLight(_ light: BorrowedLight) { borrowedLights.append(light) }
+
     /// Every geometry instance with an emissive material becomes a mesh light (after the analytic lights, which
     /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
     /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
     private func buildMeshLights() {
         guard materials.contains(where: { $0.emission.x > 0 || $0.emission.y > 0 || $0.emission.z > 0 }) else { return }
+        emissiveTriangles.reserveCapacity(borrowedLights.reduce(0) { $0 + $1.range.count })
         var textureCache: [Int: ((SIMD2<Float>) -> SIMD3<Float>)?] = [:]
         func emissiveTexture(_ index: UInt32) -> ((SIMD2<Float>) -> SIMD3<Float>)? {
             guard index != .max else { return nil }
@@ -1137,8 +1195,8 @@ final class Scene {
             textureCache[Int(index)] = sampler
             return sampler
         }
-        let lumWeights = SIMD3<Float>(0.2126, 0.7152, 0.0722)
         var flagged = Set<Int>()
+        let lent = Set(borrowed.map(\.mesh))   // their lights come with them (`addMeshLight`)
         for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry && !inst.skinned {
             let material = materials[inst.material]
             let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
@@ -1146,57 +1204,41 @@ final class Scene {
             let positions: [SIMD3<Float>], uvsOf: [SIMD2<Float>], tris: ArraySlice<UInt32>
             if let src = emitterSources[i] {
                 (positions, uvsOf, tris) = (src.positions, src.uvs, src.indices[...])
-            } else if inst.mesh >= 0, Int(meshes[inst.mesh].firstIndex) < indices.count {   // not a borrowed mesh
+            } else if inst.mesh >= 0, !lent.contains(inst.mesh), Int(meshes[inst.mesh].firstIndex) < indices.count {
                 let m = meshes[inst.mesh]
                 (positions, uvsOf, tris) = (self.positions, uvs, indices[Int(m.firstIndex) ..< Int(m.firstIndex + m.indexCount)])
             } else {
                 continue
             }
             let texture = emissiveTexture(material.textures.w)
-            var light = MeshLight(instance: i, firstTriangle: emissiveTriangles.count, triangleCount: 0,
-                                  center: .zero, radius: 0, normal: .zero, flatness: 0, power: .zero)
-            var weights: [Float] = []
-            var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
-            var areaNormal = SIMD3<Float>(repeating: 0), area: Float = 0
+            var draft = MeshLightDraft()
             let t = Array(tris)
             for f in stride(from: 0, to: t.count - 2, by: 3) {
                 let (a, b, c) = (Int(t[f]), Int(t[f + 1]), Int(t[f + 2]))
-                let p0 = positions[a], e1 = positions[b] - p0, e2 = positions[c] - p0
-                let cr = cross(e1, e2)
-                let triArea = length(cr) / 2
-                guard triArea > 0 else { continue }
                 let uv0 = a < uvsOf.count ? uvsOf[a] : .zero, uv1 = b < uvsOf.count ? uvsOf[b] : .zero
                 let uv2 = c < uvsOf.count ? uvsOf[c] : .zero
                 var le = factor
                 if let texture {
                     le *= (texture((uv0 + uv1 + uv2) / 3) * 2 + texture(uv0) + texture(uv1) + texture(uv2)) / 5
                 }
-                let w = triArea * dot(le, lumWeights)
-                guard w > 0 else { continue }
-                weights.append(w)
-                emissiveTriangles.append(GPUEmissiveTriangle(v0: SIMD4(p0, 0), e1: SIMD4(e1, uv0.x), e2: SIMD4(e2, uv0.y),
-                                                             uv12: SIMD4(uv1.x, uv1.y, uv2.x, uv2.y)))
-                for p in [p0, positions[b], positions[c]] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
-                areaNormal += cr / 2
-                area += triArea
-                light.power += le * triArea
+                draft.add(positions[a], positions[b], positions[c], uv0: uv0, uv1: uv1, uv2: uv2, emission: le)
             }
-            guard !weights.isEmpty else { continue }
-            let total = weights.reduce(0, +)
-            var running: Float = 0
-            for (k, w) in weights.enumerated() {
-                running += w
-                emissiveTriangles[light.firstTriangle + k].v0.w = k == weights.count - 1 ? 1 : running / total
-            }
-            light.triangleCount = weights.count
-            light.center = (lo + hi) / 2
-            light.radius = max(length(hi - lo) / 2, 1e-3)
-            light.flatness = min(length(areaNormal) / area, 1)
-            light.normal = length(areaNormal) > 0 ? normalize(areaNormal) : .zero
+            guard let light = draft.finish(instance: i, firstTriangle: emissiveTriangles.count) else { continue }
+            emissiveTriangles += draft.triangles
             meshLights.append(light)
             lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
             flagged.insert(inst.material)
         }
+        // The lights that came with borrowed meshes: their triangles as they are.
+        for borrowed in borrowedLights {
+            var light = borrowed.light
+            light.firstTriangle = emissiveTriangles.count
+            borrowed.triangles.withUnsafeBufferPointer { emissiveTriangles.append(contentsOf: UnsafeBufferPointer(rebasing: $0[borrowed.range])) }
+            meshLights.append(light)
+            lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
+            flagged.insert(instances[light.instance].material + light.materialOffset)
+        }
+        borrowedLights = []
         for m in flagged { materials[m].params.z = 1 }
         if !meshLights.isEmpty {
             print(String(format: "Emissive lights: %d meshes, %d triangles", meshLights.count, emissiveTriangles.count))

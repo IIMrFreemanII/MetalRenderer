@@ -11,6 +11,9 @@ import simd
 ///   The city       the blocks whose middle is in the tile: sidewalks, street lamps and trees, and the buildings
 ///                  (BuildingGenerator): whole at level 0, without their glass at level 1, a box each at level 2.
 ///   The trees      as placements: which plant of the world's library stands where.
+///   At night       a city's tile is another one (`World.night`): its street lamps are on (level 0 and 1) and a
+///                  share of its windows are lit (on a building's box at level 2), and what emits is the tile's
+///                  lights too (`lights`): the mesh lights a scene samples, made once, with the tile.
 ///
 /// Its meshes are chunks: a chunk's triangles name their materials by a byte, an index into the chunk's own list
 /// (a city tile has more than 256 materials: it is several chunks). Window glass is in chunks of its own.
@@ -41,9 +44,23 @@ struct WorldTile {
         var materials: [GPUMaterial] = []
     }
 
+    /// A light of the tile: the triangles of a chunk that have one of its materials, an emissive one, as a mesh
+    /// light (Scene.MeshLight). 64 bytes, as the tile's file holds it.
+    struct Light {
+        var chunk: UInt32
+        var material: UInt32            // in the chunk's list
+        var first: UInt32, count: UInt32   // its triangles among `emissive`
+        var center: SIMD4<Float>        // of the triangles' bounding sphere; w = its radius
+        var normal: SIMD4<Float>        // their area-weighted mean normal; w = flatness
+        var power: SIMD4<Float>         // sum of emitted radiance x area
+    }
+
     let x: Int, z: Int, level: Int
     var chunks: [Chunk] = []
     var trees: [World.Placement] = []
+    var lights: [Light] = []
+    /// The lights' triangles, in their chunks' coordinates: a light's one after the other.
+    var emissive: Stored<GPUEmissiveTriangle> = .made([])
 
     /// From the world's origin to the tile's corner.
     static func origin(_ x: Int, _ z: Int) -> SIMD2<Double> { SIMD2(Double(x), Double(z)) * Double(World.tileSize) }
@@ -147,11 +164,40 @@ struct WorldTile {
         var opaque = Assembler(glass: false), glass = Assembler(glass: true)
         ground(world, origin: origin, level: level, into: &opaque)
         if let (city, blocks) = world.blocks(x0: origin.x, z0: origin.y, side: side) {
-            for block in blocks { add(block, of: city, level: level, opaque: &opaque, glass: &glass) }
+            for block in blocks { add(block, of: city, level: level, night: world.night ? world.lit : nil, opaque: &opaque, glass: &glass) }
         }
         tile.chunks = opaque.finish() + glass.finish()
         tile.trees = world.trees(x0: origin.x, z0: origin.y, side: side, flora: flora)
+        if world.night { tile.addLights() }
         return tile
+    }
+
+    /// The tile's lights: for each chunk, the triangles of each of its emissive materials.
+    private mutating func addLights() {
+        var triangles: [GPUEmissiveTriangle] = []
+        for (c, chunk) in chunks.enumerated() where !chunk.glass {
+            let emission = chunk.materials.map { SIMD3($0.emission.x, $0.emission.y, $0.emission.z) }
+            guard emission.contains(where: { $0.max() > 0 }) else { continue }
+            var drafts = [Scene.MeshLightDraft](repeating: Scene.MeshLightDraft(), count: emission.count)
+            chunk.positions.withUnsafeBufferPointer { positions in
+                chunk.indices.withUnsafeBufferPointer { indices in
+                    chunk.triangleMaterials.withUnsafeBufferPointer { materials in
+                        for t in 0..<materials.count where emission[Int(materials[t])].max() > 0 {
+                            drafts[Int(materials[t])].add(positions[Int(indices[3 * t])], positions[Int(indices[3 * t + 1])],
+                                                          positions[Int(indices[3 * t + 2])], emission: emission[Int(materials[t])])
+                        }
+                    }
+                }
+            }
+            for m in drafts.indices {
+                guard let light = drafts[m].finish(instance: 0, firstTriangle: triangles.count) else { continue }
+                lights.append(Light(chunk: UInt32(c), material: UInt32(m), first: UInt32(triangles.count), count: UInt32(light.triangleCount),
+                                    center: SIMD4(light.center, light.radius), normal: SIMD4(light.normal, light.flatness),
+                                    power: SIMD4(light.power, 0)))
+                triangles += drafts[m].triangles
+            }
+        }
+        emissive = .made(triangles)
     }
 
     /// The ground: the grid's cells, then a skirt down each of its four sides.
@@ -220,8 +266,9 @@ struct WorldTile {
         }
     }
 
-    /// A block of a city: its sidewalk and what stands on it.
-    private static func add(_ block: World.Block, of city: World.City, level: Int, opaque: inout Assembler, glass: inout Assembler) {
+    /// A block of a city: its sidewalk and what stands on it. `night`: the share of its windows that are lit, at night.
+    private static func add(_ block: World.Block, of city: World.City, level: Int, night: Float?, opaque: inout Assembler,
+                            glass: inout Assembler) {
         let plan = block.plan
         let place = translate([block.origin.x, city.level, block.origin.y])
         func builder(_ m: SurfaceMaterial) -> MeshBuilder { MeshBuilder(uvScale: m.uvScale) }
@@ -237,22 +284,32 @@ struct WorldTile {
             lawn.box([l.lo.x, 0.15, l.lo.y], [l.hi.x, 0.22, l.hi.y], faces: [.sides, .top])
             opaque.add(lawn, material(grass), place)
         }
-        if level == 0 {
-            // Street lamps and the street's trees, as the City scene's.
+        if level == 0 || (night != nil && level == 1) {
+            // Street lamps, as the City scene's: at night their heads' undersides are lights, and from further away
+            // (where by day there are none) the heads are all there is of them.
             let iron = SurfaceMaterial(color: [0.07, 0.075, 0.08])
-            var posts = builder(iron)
+            let lampLight = SurfaceMaterial(color: .zero, emission: World.lampEmission)
+            var posts = builder(iron), heads = builder(lampLight)
             for lamp in plan.lamps {
                 let p = SIMD3<Float>(lamp.position.x, 0.15, lamp.position.y), out = SIMD3<Float>(lamp.toRoad.x, 0, lamp.toRoad.y)
                 let across = SIMD3<Float>(-out.z, 0, out.x)
-                posts.cylinder(p, radius: 0.08, topRadius: 0.05, height: 6.2, segments: 8)
                 let a = p + [0, 6.1, 0], b = a + out * 1.6
-                posts.box(simd_min(a - across * 0.04, b + across * 0.04) - [0, 0.04, 0], simd_max(a - across * 0.04, b + across * 0.04) + [0, 0.04, 0])
+                if level == 0 {
+                    posts.cylinder(p, radius: 0.08, topRadius: 0.05, height: 6.2, segments: 8)
+                    posts.box(simd_min(a - across * 0.04, b + across * 0.04) - [0, 0.04, 0], simd_max(a - across * 0.04, b + across * 0.04) + [0, 0.04, 0])
+                }
                 let c = b - out * 0.35
                 let lo = simd_min(c - across * 0.14 - out * 0.3, c + across * 0.14 + out * 0.3)
                 let hi = simd_max(c - across * 0.14 - out * 0.3, c + across * 0.14 + out * 0.3)
-                posts.box(lo - [0, 0.14, 0], hi - [0, 0.04, 0])
+                if night == nil {
+                    posts.box(lo - [0, 0.14, 0], hi - [0, 0.04, 0])
+                } else {
+                    posts.box(lo - [0, 0.14, 0], hi - [0, 0.04, 0], faces: [.sides, .top])
+                    heads.floor(x0: lo.x, x1: hi.x, z0: lo.z, z1: hi.z, y: lo.y - 0.14, up: false)
+                }
             }
             opaque.add(posts, material(iron), place)
+            opaque.add(heads, material(lampLight), place)
         }
         if level <= 1 {
             let bark = SurfaceMaterial(color: [0.25, 0.18, 0.12]), leaves = SurfaceMaterial(color: [0.12, 0.26, 0.08])
@@ -266,7 +323,9 @@ struct WorldTile {
             opaque.add(crowns, material(leaves), place)
         }
         // The buildings, each from its lot's own seed, in the lots' order.
-        let specs = plan.lots.map { BuildingSpec(lot: $0, city: plan.settings, night: false) }
+        var settings = plan.settings
+        settings.lit = night ?? settings.lit
+        let specs = plan.lots.map { BuildingSpec(lot: $0, city: settings, night: night != nil) }
         var built = [Building?](repeating: nil, count: specs.count)
         built.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: specs.count) { i in out[i] = BuildingGenerator.generate(specs[i]) }
@@ -289,6 +348,20 @@ struct WorldTile {
                 top.floor(x0: lo.x, x1: hi.x, z0: lo.z, z1: hi.z, y: hi.y)
                 opaque.add(walls, material(wall.material), transform)
                 opaque.add(top, material(roof.material), transform)
+                // At night, its lit windows: each moved out of the building, along its normal, onto the box.
+                if let lit = building.parts.first(where: { $0.slot == .lit }) {
+                    var windows = builder(lit.material)
+                    let p = lit.mesh.positions, normals = lit.mesh.normals
+                    for q in stride(from: 0, to: p.count - 3, by: 4) {
+                        let n = normals[q], middle = (p[q] + p[q + 1] + p[q + 2] + p[q + 3]) / 4
+                        var out = Float.infinity
+                        for k in 0..<3 where abs(n[k]) > 1e-3 { out = min(out, ((n[k] > 0 ? hi[k] : lo[k]) - middle[k]) / n[k]) }
+                        guard out.isFinite else { continue }
+                        let by = n * (max(out, 0) + 0.05)
+                        windows.quad(p[q] + by, p[q + 1] + by, p[q + 2] + by, p[q + 3] + by)
+                    }
+                    opaque.add(windows, material(lit.material), transform)
+                }
                 continue
             }
             for part in building.parts {
@@ -321,16 +394,27 @@ struct WorldTile {
         /// The chunks' trees (the plants above are `trees`): a record a chunk, and the trees one after the other.
         /// A file may have none: it is then written again with them when a tile with trees is asked for.
         static let chunkTrees = SectionFile.id("bvhr"), treeMemory = SectionFile.id("bvhm")
+        /// The tile's lights and their triangles, if it has any.
+        static let lights = SectionFile.id("lite"), emissive = SectionFile.id("emtr")
     }
 
     /// The tile's file: one folder to a world and its settings, one below it to a level.
     static func url(_ world: World, x: Int, z: Int, level: Int) -> URL {
         GeneratedCache.folder.appendingPathComponent("world-\(world.seed)-v\(World.version)").appendingPathComponent("\(level)")
-            .appendingPathComponent("\(x)_\(z).tile")
+            .appendingPathComponent("\(x)_\(z)\(hasNight(world, x: x, z: z) ? "-night" : "").tile")
+    }
+
+    /// Whether the tile is another one at night, and the world is at night: a city's tile. (The country's is the
+    /// day's.)
+    private static func hasNight(_ world: World, x: Int, z: Int) -> Bool {
+        let origin = origin(x, z)
+        return world.night && world.hasNight(x0: origin.x, z0: origin.y, side: Double(World.tileSize))
     }
 
     /// What the file was made for: the world's settings and the plants' library too.
-    static func key(_ world: World, x: Int, z: Int, level: Int) -> String { "\(place(world, x: x, z: z)) level \(level)" }
+    static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
+        "\(place(world, x: x, z: z)) level \(level)\(hasNight(world, x: x, z: z) ? " night, lit \(world.lit)" : "")"
+    }
 
     /// The same without the level: what a tile's trees are made for (every level has the same ones).
     static func place(_ world: World, x: Int, z: Int) -> String {
@@ -359,6 +443,10 @@ struct WorldTile {
         writer.add(Section.triangleMaterials, stride: MemoryLayout<UInt8>.stride, parts: chunks.map(\.triangleMaterials.data))
         writer.add(Section.materials, materials)
         writer.add(Section.trees, trees)
+        if !lights.isEmpty {
+            writer.add(Section.lights, lights)
+            writer.add(Section.emissive, stride: MemoryLayout<GPUEmissiveTriangle>.stride, parts: [emissive.data])
+        }
         if hasTrees {
             var treeRecords: [TreeRecord] = [], vectors = 0
             for chunk in chunks {
@@ -404,6 +492,13 @@ struct WorldTile {
             chunks.append(Chunk(positions: .mapped(p), normals: .mapped(n), uvs: .mapped(uv), indices: .mapped(index),
                                 triangleMaterials: .mapped(offsets), materials: Array(materials[m]), glass: r.glass != 0,
                                 bounds: AABB(lo: SIMD3(r.lo.x, r.lo.y, r.lo.z), hi: SIMD3(r.hi.x, r.hi.y, r.hi.z))))
+        }
+        if let lights: [Light] = file.array(Section.lights) {
+            guard let emissive = file.mapped(Section.emissive, of: GPUEmissiveTriangle.self) else { return nil }
+            let count = emissive.count / MemoryLayout<GPUEmissiveTriangle>.stride
+            guard lights.allSatisfy({ Int($0.chunk) < chunks.count && Int($0.material) < chunks[Int($0.chunk)].materials.count
+                                      && Int($0.first) + Int($0.count) <= count }) else { return nil }
+            (self.lights, self.emissive) = (lights, .mapped(emissive))
         }
         guard let treeRecords: [TreeRecord] = file.array(Section.chunkTrees), treeRecords.count == chunks.count,
               let memory = file.mapped(Section.treeMemory, of: SIMD4<Float>.self) else { return }

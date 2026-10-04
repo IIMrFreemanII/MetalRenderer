@@ -208,7 +208,8 @@ struct GPULight {
     var positionRadius: SIMD4<Float>  // xyz = centre, w = radius (sphere, spot, tube, mesh bounds), angular radius (sun)
     var color: SIMD4<Float>           // rgb = intensity / irradiance (sun) / radiance (rect) / sum of L x area (mesh),
                                       // w = shadow-denoiser group (0...3) + 4 x type (GPULight.sphere...)
-    var axis: SIMD4<Float>            // xyz = spot axis, rect normal, toward the sun, tube half axis, mesh mean normal
+    var axis: SIMD4<Float>            // xyz = spot axis, rect normal, toward the sun, tube half axis, mesh mean normal;
+                                      // w = mesh: its material, from its instance's first
     var params: SIMD4<Float>          // spot: cos outer, cos inner | rect: half-width tangent, half height
                                       // sun: light-map bounds centre, radius | mesh: first triangle, count, flatness,
                                       // instance (bit cast)

@@ -117,7 +117,8 @@ struct Light {
                             //   sum of radiance x area (mesh); w = shadow-denoiser group + 4 x type (LIGHT_*), so
                             //   the per-light weight loops read only the first 32 bytes of a sphere light
     float4 axis;            // xyz = spot axis, rect normal (it emits along it), direction toward the sun,
-                            //   tube half axis (centre +- axis), mesh mean normal
+                            //   tube half axis (centre +- axis), mesh mean normal; w = mesh: its material, from
+                            //   its instance's first (a mesh of several materials)
     float4 params;          // spot: cos outer, cos inner | rect: half-width tangent xyz, half height
                             // sun: light-map bounds centre xyz, radius | mesh: first triangle, triangle count,
                             //   flatness, instance (uints bit cast, but flatness)

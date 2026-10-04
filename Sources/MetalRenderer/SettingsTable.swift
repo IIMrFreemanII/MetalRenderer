@@ -322,7 +322,7 @@ enum SettingsTable {
                 .env(.scene, "blocks").when(city),
             S.popup("Building style", \.scene.city.style, titled(\.title)).env(.scene, "style").when(city),
             S.slider("Lit windows", \.scene.city.lit, CitySettings.litRange, step: 0.05, live: false, percent)
-                .env(.scene, "lit").when { $0.scene.kind == .cityNight },
+                .env(.scene, "lit").when { $0.scene.kind.hasLitWindows },
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),

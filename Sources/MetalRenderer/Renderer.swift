@@ -824,6 +824,11 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
             upscalerReset = true
             accumCount = 0
             colorAccumCount = 0
+        } else if !scene.meshLights.isEmpty || old.parts?.scene.meshLights.isEmpty == false {
+            // At night the tiles' lights are other ones: what the pixels kept of the lights (a reservoir names its
+            // light by its place in the scene's table) is of the scene before.
+            restirWritten = false
+            reservoirsWritten = false
         }
         if resetCamera {
             camera = scene.defaultCamera
@@ -833,6 +838,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
         if sameWorld, benchmark?.isMeasuring == true { streaming.installedMs.append(installedMs) }
+        if sameWorld { benchmark?.noteSwap() }
         print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing, %@ (installed in %.0f ms)", scene.settings.kind.title,
                      sceneBuffers.instanceCount, scene.lights.count, builtRayTracer.title, builtAPI.title, installedMs))
     }
@@ -1379,7 +1385,7 @@ final class Renderer: NSObject, MTKViewDelegate, InputHandler {
         let size = frameSize(on: surface)
         guard let t = renderTargets(for: size) else { return }
         // The open world: the scene is made around the tile the camera is in (Scene+World.swift).
-        if let place = scene.worldPlace, settings.scene.kind == .world, loading == nil {
+        if let place = scene.worldPlace, settings.scene.kind.isWorld, loading == nil {
             let wanted = place.wanted(for: camera.position)
             if wanted != place.tile {
                 settings.scene.worldTile = wanted
