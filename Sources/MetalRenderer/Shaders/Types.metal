@@ -73,9 +73,12 @@ struct RegirReservoir;
 
 // The sky (GPUTypes.swift GPUSkyParams); see "Sky and clouds" below.
 struct SkyParams {
-    float4 sun;          // xyz = toward the sun (unit), w = its angular radius
+    float4 sun;          // xyz = toward the sun (unit), w = its angular radius. (The open world's night: the moon.)
     float4 sunTop;       // rgb = sun irradiance above the atmosphere (atmosphere mode)
     float4 sunGround;    // rgb = sun irradiance at the ground (the sun light's colour)
+    float4 glow;         // xyz = toward what else lights the atmosphere: the sun under the horizon, once the moon is
+    float4 glowTop;      //   the light; rgb = its irradiance above the atmosphere (0 = nothing else)
+                         //   glow.w = how bright the stars are (0 = none: by day)
     float4 cloudLayer;   // x = cloud base altitude (m), y = top (m), z = coverage (0...1), w = extinction (1/m)
     float4 cloudShape;   // x = shape noise tile (m), y = detail erosion, z = time (s), w = shadow strength
     float4 wind;         // xyz = wind (m/s), w = weight of a new cloud sample in a texel (1 = replace)
@@ -104,7 +107,7 @@ struct SceneShading {
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
 };
-static_assert(sizeof(SceneShading) == 240, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
+static_assert(sizeof(SceneShading) == 272, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -215,6 +218,7 @@ struct FogParams {
 constant uint FOG_HISTORY_VALID = 1;   // last frame's froxel grid can be reprojected
 constant uint FOG_REFLECTIONS   = 2;   // reflection rays are fogged too
 constant uint FOG_ENABLED       = 4;
+constant uint FOG_SKY_LIGHT     = 8;   // only the suns' light scatters in it (and the sky's), not the scene's other lights
 
 constant uint FLAG_HISTORY_VALID = 1;
 constant uint FLAG_DENOISE       = 2;

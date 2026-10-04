@@ -105,9 +105,12 @@ struct GPURestirGIParams {
 
 /// The sky (MSL SkyParams): the per-slot copy lives in the shading arguments (SceneShading), the sky kernels get it directly.
 struct GPUSkyParams {
-    var sun = SIMD4<Float>()          // xyz = toward the sun (unit), w = its angular radius
+    var sun = SIMD4<Float>()          // xyz = toward the sun (unit), w = its angular radius. (The open world's night: the moon.)
     var sunTop = SIMD4<Float>()       // rgb = sun irradiance above the atmosphere (atmosphere mode)
     var sunGround = SIMD4<Float>()    // rgb = sun irradiance at the ground (the sun light's colour)
+    var glow = SIMD4<Float>()         // xyz = toward what else lights the atmosphere: the sun under the horizon, once the
+    var glowTop = SIMD4<Float>()      // moon is the light; rgb = its irradiance above the atmosphere (0 = nothing else)
+                                      // glow.w = how bright the stars are (0 = none: by day)
     var cloudLayer = SIMD4<Float>()   // x = cloud base altitude (m), y = top (m), z = coverage (0...1), w = extinction (1/m)
     var cloudShape = SIMD4<Float>()   // x = shape noise tile (m), y = detail erosion, z = time (s), w = shadow strength
     var wind = SIMD4<Float>()         // xyz = wind (m/s), w = weight of a new cloud sample in a texel (1 = replace)
@@ -249,6 +252,7 @@ struct GPUFogParams {
     static let historyValid: UInt32 = 1  // last frame's froxel grid matches: reproject it
     static let reflections: UInt32 = 2   // reflection rays are fogged too
     static let enabled: UInt32 = 4       // fog is on (reflections test it)
+    static let skyLight: UInt32 = 8      // only the suns' light scatters in it (and the sky's): FogSettings.lights off
 
     /// reflectionKernel's own flag (MSL REFLECT_FOG), for the variant with it compiled in.
     static let reflectionsFogged: UInt32 = 1
@@ -282,7 +286,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
-    precondition(MemoryLayout<GPUSkyParams>.stride == 160, "GPUSkyParams layout mismatch")
+    precondition(MemoryLayout<GPUSkyParams>.stride == 192, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")

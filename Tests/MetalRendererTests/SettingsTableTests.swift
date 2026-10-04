@@ -123,7 +123,8 @@ final class SettingsTableTests: XCTestCase {
     /// Each setting on its own: a change shows up in the export and reads back as the same settings. A setting added
     /// to RenderSettings without a line in the table fails here.
     func testEverySettingRoundTrips() {
-        let unexported: Set<String> = ["virtualGeometry.freeze"]   // session state, like the camera
+        // Session state, like the camera; and what the renderer sets by the time of day.
+        let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit"]
         let changes = singleChanges()
         XCTAssertGreaterThan(changes.count, 120)
         for (path, s) in changes where !unexported.contains(path) {

@@ -59,9 +59,12 @@ extension World {
 /// background, from the tiles this one already has and the few that are new. A tile's trees are a group of instances
 /// (`Scene.InstanceGroup`), which the renderer keeps from one scene to the next as it keeps the tile's meshes.
 ///
-/// At night (`SceneKind.worldNight`) the cities' tiles are their night's, and the scene's lights are the nearer
-/// tiles' own (`WorldTile.lights`): everything lit in the tiles next to the camera, the street lamps of the ones
-/// beyond them. Further out a lit window is seen, and lights nothing.
+/// Its day (`Heavens`) goes through dusk into night: the scene's light from the sky is the sun, then the moon, and the
+/// cities' lamps and windows come on as the sun sets, each material's emission at its own time (`setCityLights`).
+/// From a little before that until a little after they go off in the morning, the scene is one made with
+/// `SceneSettings.worldLit`: its lights are then the nearer tiles' own too (`WorldTile.lights`), everything lit in the
+/// tiles next to the camera and the street lamps of the ones beyond them. Further out a lit window is seen, and
+/// lights nothing. By day nothing samples them.
 extension Scene {
     /// `METALRENDERER_WORLD_GROUPS=0`: a tile's trees are the scene's own instances, made again with every scene (as
     /// they were before the tiles had groups: for comparing).
@@ -76,8 +79,7 @@ extension Scene {
         var world = World(seed: UInt64(max(settings.seed, 0)))
         world.treeDensity = Float(max(settings.trees, 0)) / 10.24      // the Forest's square is 10.24 hectares
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
-        let night = settings.kind == .worldNight
-        world.night = night
+        let lit = settings.worldLit
         world.lit = settings.city.lit
         let flora = Flora(self, seed: world.seed, borrowing: true)
         // Every plant and its materials, first and in the library's order: every scene of the world then has the same
@@ -164,8 +166,17 @@ extension Scene {
                     var material = m
                     if let kind = World.kind(ofTexture: m.textures.x) { material.textures = textures(kind) }
                     if m.textures.x == World.groundDetail { material.textures.x = detail }
+                    // What is a light at night is off until the time of day says otherwise (`setCityLights`).
+                    let emission = SIMD3(m.emission.x, m.emission.y, m.emission.z), light = !chunk.glass && emission != .zero
+                    if light { material.emission = SIMD4(.zero, m.emission.w) }
                     let added = chunk.glass ? addGlassMaterial(tint: SIMD3(m.albedo.x, m.albedo.y, m.albedo.z)) : addMaterial(material)
                     if first < 0 { first = added }
+                    if light {
+                        // A window's time is its material's own, the same in every scene of the world.
+                        let own = World.hash(world.seed, jobs[k].x, jobs[k].z, UInt64(c) << 32 | UInt64(added - first) << 8 | UInt64(tile.level))
+                        cityLights.append(CityLight(material: added, emission: emission,
+                                                    window: emission == World.lampEmission ? nil : Float(own >> 40) / Float(1 << 24)))
+                    }
                 }
                 let mesh = addMesh(borrowing: BorrowedMesh(positions: chunk.positions, normals: chunk.normals, uvs: chunk.uvs,
                                                            indices: chunk.indices, materials: chunk.triangleMaterials,
@@ -176,7 +187,7 @@ extension Scene {
             }
             // Its lights, where they are near enough to light what is seen: all of them next to the camera, the
             // street lamps a ring further out.
-            for light in tile.lights where tile.level <= 1 {
+            for light in tile.lights where lit && tile.level <= 1 {
                 let material = tile.chunks[Int(light.chunk)].materials[Int(light.material)]
                 let lamp = SIMD3(material.emission.x, material.emission.y, material.emission.z) == World.lampEmission
                 guard tile.level == 0 || lamp else { continue }
@@ -222,16 +233,11 @@ extension Scene {
             plants += placements.count
         }
 
-        if night {
-            skyColor = [0.006, 0.009, 0.02]
-            forcesLightTable = true
-            // The moon.
-            addLight(.sun(angularRadius: 0.0045), color: [0.035, 0.045, 0.07]) { _ in
-                LightPose(position: .zero, direction: normalize([0.45, 0.7, 0.35]))
-            }
-        } else {
-            addDaySun(half: 90)
+        // The light from the sky: the sun, and once it has set the moon (its colour is the atmosphere's to say).
+        addLight(.sun(angularRadius: Heavens.discRadius), color: [1, 1, 1]) { t in
+            LightPose(position: .zero, direction: Heavens(at: t).light)
         }
+        if lit { forcesLightTable = true }
         let center = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
         let ground = SIMD3(Float(center.x - anchor.x), world.height(center.x, center.y), Float(center.y - anchor.y))
         var camera = Camera()

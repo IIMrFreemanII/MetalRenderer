@@ -204,7 +204,8 @@ float3 fogSampleElement(uint element, float2 uv, float3 p, thread const SceneDat
 // none reaches p.
 constant float FOG_UNIFORM_PICKS = 0.1f;
 
-uint pickFogLight(device const Light* lights, uint lightCount, float3 p, float3 v, float g, float3 u, thread float& pdf) {
+uint pickFogLight(device const Light* lights, uint lightCount, float3 p, float3 v, float g, float3 u, bool sunsOnly,
+                  thread float& pdf) {
     float weighted = 0.0f, uniform = 0.0f;
     uint pickW = lightCount, pickU = lightCount;
     bool useUniform = u.z < FOG_UNIFORM_PICKS;
@@ -214,6 +215,7 @@ uint pickFogLight(device const Light* lights, uint lightCount, float3 p, float3 
     LightSubset ls = lightSubset(lightCount, u.y);
     for (uint j = 0; j < ls.count; ++j) {
         uint i = lightSubsetIndex(ls, j, lightCount);
+        if (sunsOnly && lightType(lights[i]) != LIGHT_SUN) continue;
         float3 l;
         float w = luminance(lightVolumeWeight(lights[i], p, l)) * phaseHG(-dot(l, v), g);
         if (w <= 0.0f) continue;
@@ -244,9 +246,12 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
     float g = f.medium.w, pdf;
     // With the light grid (ReGIR, scenes with many lights): RIS over a few grid and table candidates by their
     // unshadowed in-scatter, then one shadow ray to the pick, in place of the weighted loop over a light subset.
+    // With FOG_SKY_LIGHT the suns are the only candidates (a city's thousands of lamps and windows, one sample a
+    // froxel, scatter in blotches).
     RegirCell cell;
-    uint M = s.lightTable.x > 0 ? FOG_GRID_CANDIDATES : 0u, Mg = regirShare(s, p, M, cell);
-    if (Mg > 0) {
+    bool sunsOnly = (f.counts.w & FOG_SKY_LIGHT) != 0;
+    uint M = s.lightTable.x > 0 && !sunsOnly ? FOG_GRID_CANDIDATES : 0u, Mg = regirShare(s, p, M, cell);
+    if (Mg > 0 || (sunsOnly && s.lightTable.y > 0)) {
         device const LightTableEntry* entries = lightTableEntries(s.lights, s.lightCount);
         device const TriangleInfo* tris = lightTableTriangles(s.lights, s.lightCount, s.lightTable.x);
         uint picked = ELEMENT_NONE;
@@ -273,7 +278,7 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
         if (T < 1e-4f || !isVisible(p, target, accel)) return ambient;
         return ambient + E * (T * phaseHG(-dot(l, v), g) * (wSum / pickedTarget));
     }
-    uint li = pickFogLight(s.lights, s.lightCount, p, v, g, float3(u.xy, uMix), pdf);
+    uint li = pickFogLight(s.lights, s.lightCount, p, v, g, float3(u.xy, uMix), sunsOnly, pdf);
     if (li >= s.lightCount || pdf <= 0.0f) return ambient;
     Light light = s.lights[li];
     float3 target, l;

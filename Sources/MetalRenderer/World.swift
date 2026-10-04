@@ -21,8 +21,7 @@ struct World {
     var undergrowth: Float = 1
     /// The share of the 4 km cells with a city in them. (The cell around the origin always has one.)
     var cityShare: Float = 0.5
-    /// Night: the cities' street lamps are on, and `lit` of their windows have a light on behind them.
-    var night = false
+    /// The share of the cities' windows with a light behind them, which is on at night.
     var lit: Float = 0.35
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
@@ -279,9 +278,9 @@ struct World {
         return lo.x < reach && lo.y < reach && lo.x + side > -reach && lo.y + side > -reach
     }
 
-    /// Whether the square from (x0, z0), `side` across, is one whose night is another thing than its day: where a
-    /// city can have blocks.
-    func hasNight(x0: Double, z0: Double, side: Double) -> Bool {
+    /// Whether the square from (x0, z0), `side` across, is one a city can have blocks in: what is made for it
+    /// depends on the cities' settings (`lit`).
+    func hasCity(x0: Double, z0: Double, side: Double) -> Bool {
         guard let city = city(near: x0 + side / 2, z0 + side / 2) else { return false }
         return reaches(city, x0: x0, z0: z0, side: side)
     }
@@ -313,5 +312,93 @@ struct World {
             }
         }
         return (city, out)
+    }
+}
+
+// MARK: - The day
+
+/// Where the world's sun and moon are at a time of its day, and what they light.
+///
+/// The sun goes round as it does at a latitude of 48 degrees in late spring: up for six tenths of the day, 60 degrees
+/// high at noon, 24 under the horizon at midnight; it rises in the east (+x) and passes over -z. The moon is across
+/// the sky from it, up from before the sun sets until after it rises, 37 degrees high at midnight.
+struct Heavens: Equatable {
+    /// Toward the sun and toward the moon (unit), wherever they are.
+    var sun: SIMD3<Float>, moon: SIMD3<Float>
+    /// How much of the sun's disc is over the horizon, and of the moon's.
+    var sunUp: Float, moonUp: Float
+    /// How much of the moon's light there is to see: none while the sun is up, all of it once the sun is 6 degrees
+    /// under the horizon.
+    var moonlight: Float
+
+    /// How bright the stars are, 0...1: out between the sun's 3 and 10 degrees under the horizon.
+    var stars: Float { World.smooth(-3 * .pi / 180, -10 * .pi / 180, sunElevation) }
+
+    /// The eye adapts as the day ends, and nothing here stands for it but the lights: the sun's light, on the ground
+    /// and in the sky, is this many times what it is, from 1 with the sun 10 degrees up to 128 with it 6 under the
+    /// horizon. (Left as it is, sunset is a hundredth of noon and dusk is over as it begins: the cities' lights and
+    /// the moon are as bright as an eye used to the night sees them.)
+    var adaptation: Float {
+        let e = sunElevation * 180 / .pi
+        return exp2(min(0.3 * max(10 - e, 0) + 0.6 * max(-2 - e, 0), 7))
+    }
+
+    /// The scene has one light from the sky: the sun while any of it is up, then the moon.
+    var lightIsMoon: Bool { sunUp <= 0 }
+    var light: SIMD3<Float> { lightIsMoon ? moon : sun }
+    /// The sun's height over the horizon, radians.
+    var sunElevation: Float { asin(min(max(sun.y, -1), 1)) }
+
+    /// The world's day in seconds, and the part of it that has gone by at time 0 (midnight is 0, noon 0.5): the
+    /// clock starts in the middle of the morning.
+    static let day: Float = 240, start: Float = 0.4
+    /// The moon's irradiance above the atmosphere, in the renderer's units: about a twentieth of the sun's (the eye
+    /// has adapted), and bluer.
+    static let moonIrradiance = SIMD3<Float>(0.1, 0.14, 0.26)
+    /// What lights the night's atmosphere, from where the moon is: far more than the moon's own light would, so
+    /// that the night's sky lights the ground about as much as the moon does (a night to see by).
+    static let nightSkyIrradiance = SIMD3<Float>(0.9, 0.75, 0.8)
+    static let discRadius: Float = 0.27 * .pi / 180
+    /// The sun's height below which the sky has no more light from it.
+    static let twilightEnd: Float = -18 * .pi / 180
+
+    /// The part of the day gone by at `time` (seconds on the scene's day clock): 0...1.
+    static func phase(at time: Float) -> Float {
+        let p = start + time / day
+        return p - p.rounded(.down)
+    }
+
+    init(at time: Float) {
+        let latitude = Float(48) * .pi / 180
+        /// A body `declination` north of the sky's equator, `hour` past its highest.
+        func body(_ hour: Float, _ declination: Float) -> SIMD3<Float> {
+            SIMD3(-cos(declination) * sin(hour),
+                  sin(latitude) * sin(declination) + cos(latitude) * cos(declination) * cos(hour),
+                  cos(latitude) * sin(declination) - sin(latitude) * cos(declination) * cos(hour))
+        }
+        func up(_ d: SIMD3<Float>) -> Float { World.smooth(-Heavens.discRadius, Heavens.discRadius, asin(min(max(d.y, -1), 1))) }
+        let hour = 2 * Float.pi * (Heavens.phase(at: time) - 0.5)
+        sun = body(hour, 18 * .pi / 180)
+        moon = body(hour + .pi, -5 * .pi / 180)
+        sunUp = up(sun)
+        moonUp = up(moon)
+        moonlight = World.smooth(-0.5 * .pi / 180, -6 * .pi / 180, asin(min(max(sun.y, -1), 1)))
+    }
+}
+
+extension World {
+    /// 0 at a, 1 at b, smoothly (a may be the larger).
+    static func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { smoothstep(a, b, x) }
+
+    /// The sun's height (radians) below which a scene of the world is made with its cities' lights (`SceneSettings.
+    /// worldLit`): before any of them comes on, so that the scene is there when they do.
+    static let lightsReady: Float = 6 * .pi / 180
+    /// How far on a light is with the sun `elevation` high (radians), 0...1: a street lamp, which comes on as the
+    /// sun sets, or with `window` (0...1, the window's own) a window, each at its own time between then and dark.
+    static func lightOn(elevation: Float, window: Float? = nil) -> Float {
+        let degree = Float.pi / 180
+        guard let window else { return smooth(2.5 * degree, 0.5 * degree, elevation) }
+        let on = (3 - 9 * window) * degree
+        return smooth(on, on - 1.2 * degree, elevation)
     }
 }

@@ -261,8 +261,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     case crowd              // a square under the sun with `characters` animated characters on `poses` pose slots
     case city               // a generated city (`CitySettings`) under the sun: blocks of procedural buildings, a day cycle
     case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
-    case world              // the open world (World.swift): hills, forest and cities without end, made around the camera
-    case worldNight         // the same world at night: the cities' lit windows and street lamps, the moon
+    case world              // the open world (World.swift): hills, forest and cities without end, made around the camera;
+                            // its day goes through dusk into a night of lit windows, street lamps and the moon
 
     var title: String {
         switch self {
@@ -283,21 +283,23 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .city: return "City"
         case .cityNight: return "City at night"
         case .world: return "Open world"
-        case .worldNight: return "Open world at night"
         }
     }
 
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
-    /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s), or nil.
-    var dayCycle: Float? { self == .sun ? 60 : self == .valley || self == .forest || self == .city || self == .world ? 180 : nil }
+    /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
+    /// open world's whole day, with its night), or nil.
+    var dayCycle: Float? {
+        self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : self == .world ? Heavens.day : nil
+    }
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
     /// The scene's default camera depends on how it was built (its size), so it is asked of the scene itself.
-    /// The open world, by day or by night (Scene+World.swift).
-    var isWorld: Bool { self == .world || self == .worldNight }
-    /// Scenes at night with a share of their windows lit (`CitySettings.lit`).
-    var hasLitWindows: Bool { self == .cityNight || self == .worldNight }
+    /// The open world (Scene+World.swift).
+    var isWorld: Bool { self == .world }
+    /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
+    var hasLitWindows: Bool { self == .cityNight || self == .world }
     var cameraFromScene: Bool { self == .crowd || isCity || isWorld }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
     var hasPlants: Bool { self == .forest || self == .valley || isWorld }
@@ -396,6 +398,9 @@ struct SceneSettings: Equatable, Codable {
     /// ...and the tile whose corner is the scene's origin (nil: the first city's). It follows the camera from afar, so
     /// that the scene's coordinates stay small however far the camera has gone.
     var worldAnchor: SIMD2<Int>? = nil
+    /// ...and whether its cities' lights are the scene's lights: the renderer's to set too, with the time of day
+    /// (`World.lightsReady`). By day nothing samples them, and they are off.
+    var worldLit = false
     /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
     /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
     var bakedPlants = false
@@ -413,10 +418,11 @@ struct SceneSettings: Equatable, Codable {
     static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 
-    /// The same open world, whatever tile the scene is made around and wherever its origin is.
+    /// The same open world, whatever tile the scene is made around, wherever its origin is and whatever the time of day.
     func isSameWorld(as other: SceneSettings) -> Bool {
         var a = self, b = other
         (a.worldTile, b.worldTile, a.worldAnchor, b.worldAnchor) = (nil, nil, nil, nil)
+        (a.worldLit, b.worldLit) = (false, false)
         return kind.isWorld && a == b
     }
 }
@@ -451,6 +457,7 @@ struct FogSettings: Equatable, Codable {
     var haze: Float = 0                 // ...but the height fog at this share of its density, as far as the eye sees (0 = none)
     var volumes = true                  // the scene's local fog volumes
     var reflections = true              // fog along reflection rays (one more shadow ray per reflection)
+    var lights = true                   // the scene's lights scatter in it; off: only the sun (or the moon) and the sky
 
     static let densityRange: ClosedRange<Float> = 0.002...0.3   // log slider
     static let falloffRange: ClosedRange<Float> = 0...1
@@ -480,7 +487,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .worldNight:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -498,6 +505,8 @@ struct FogSettings: Equatable, Codable {
             // The noise's tile divides the tiles' 256 m, so the fog stays as it is when the scene's origin moves.
             f.enabled = true; f.density = 0.002; f.heightFalloff = 0.012; f.anisotropy = 0.6; f.noise = 0.2; f.noiseScale = 8
             f.maxDistance = 150; f.haze = 0.4
+            // At night a froxel's one sample among a city's thousands of lamps and windows scatters in blotches.
+            f.lights = false
         case .spots:
             f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
         case .sun:
@@ -566,7 +575,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .worldNight:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -675,7 +684,7 @@ struct RenderSettings: Equatable, Codable {
     var fovDegrees: Float = 60         // vertical field of view
     var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     var timeScale: Float = 1           // animation speed (Pause stops it too)
-    var timeOfDay: Float = 0           // the sun and valley scenes: offset into the day cycle, as a fraction of it
+    var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
 
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults): the GI method, the night market's light count, the fog and the sky.
