@@ -72,6 +72,7 @@ extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
 extension CityStyle: EnvNamed {}
+extension MetalPlantVoxels: EnvNamed {}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
@@ -295,7 +296,7 @@ enum SettingsTable {
             S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
                 .env(.foliage, "translucency").when(plants),
             S.slider("Distance LOD (voxels)", \.foliage.lod, FoliageSettings.lodRange, step: 0.25, fmt("%.2g px"))
-                .env(.foliage, "lod").when(plants).enabled(assemblies),
+                .env(.foliage, "lod").when(plants),   // both tracers (Metal's: VoxelLOD)
         ])
     }()
 
@@ -335,6 +336,8 @@ enum SettingsTable {
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }
                 .enabled(customTracer).advanced(),
+            S.popup("Far plants (Metal)", \.scene.metalVoxels, titled(\.title)).env(.scene, "voxels")
+                .when { $0.scene.kind.hasPlants }.enabled { $0.rayTracer == .metal },
             S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)
@@ -342,8 +345,8 @@ enum SettingsTable {
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),
-            // It also holds the plants' voxel levels (custom tracer).
-            S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled { virtual($0) || ($0.rayTracer == .custom && $0.scene.kind.hasPlants) },
+            // It also holds the plants' voxel levels (both tracers).
+            S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled { virtual($0) || $0.scene.kind.hasPlants },
             S.check("Specular (glTF PBR)", \.specular).env(.specular),
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
             S.custom(.clearModels).when { !$0.scene.extraModels.isEmpty },

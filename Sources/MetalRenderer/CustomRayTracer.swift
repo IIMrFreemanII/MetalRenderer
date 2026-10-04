@@ -444,7 +444,7 @@ final class CustomRayTracer {
         }
         parts = try buffer(partRecords, "rtParts")
         let voxelStart = CACurrentMediaTime()
-        let grids = FoliageVoxels.cached(scene: scene, geometry: geometryHash)
+        let grids = FoliageVoxels.cached(scene.voxelPlants)
         voxelGrids = try buffer(grids.grids, "rtVoxelGrids")
         voxels = try buffer(grids.cells, "rtVoxels")
         cutouts = try buffer(scene.cutouts.flatMap(\.alpha), "rtCutouts")
