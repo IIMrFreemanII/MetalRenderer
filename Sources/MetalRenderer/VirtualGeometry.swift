@@ -327,7 +327,7 @@ final class VirtualGeometry {
         lock.unlock()
     }
 
-    /// Main thread, before encoding `frame`: publish finished loads, free evicted pages the GPU no longer reads, and
+    /// Render thread, before encoding `frame`: publish finished loads, free evicted pages the GPU no longer reads, and
     /// start loading the most wanted requests (their missing parents first) within the per-frame byte budget.
     func update(frame: UInt32, framesInFlight: Int) {
         lock.lock()

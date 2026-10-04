@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// (`customRow`).
 final class SettingsPanel: NSObject {
     let panel: NSPanel
-    private let renderer: Renderer
+    private let renderer: RendererController
     private let upscaleSteps: [CGFloat]
 
     private let showAdvancedBox = NSButton(checkboxWithTitle: "Show advanced", target: nil, action: nil)
@@ -35,7 +35,7 @@ final class SettingsPanel: NSObject {
     private var collapsed = Set(UserDefaults.standard.stringArray(forKey: "panel.collapsed") ?? [])
     private var showAdvanced = UserDefaults.standard.bool(forKey: "panel.advanced")
 
-    init(renderer: Renderer) {
+    init(renderer: RendererController) {
         self.renderer = renderer
         upscaleSteps = renderer.upscaleSteps
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 400),
@@ -124,7 +124,10 @@ final class SettingsPanel: NSObject {
             slider.numberOfTickMarks = model.ticks
             slider.allowsTickMarkValuesOnly = model.ticks > 0
             slider.isContinuous = model.live
-            onChange(slider) { [unowned self] in model.move(&self.renderer.settings, slider.doubleValue) }
+            onChange(slider) { [unowned self] in
+                let value = slider.doubleValue
+                self.renderer.update { model.move(&$0, value) }
+            }
             refreshers.append { s in
                 slider.doubleValue = model.position(s)
                 value.stringValue = model.text(s)
@@ -132,7 +135,10 @@ final class SettingsPanel: NSObject {
             return [label(spec.title), slider, value]
         case .checkbox(let get, let set):
             let box = NSButton(checkboxWithTitle: spec.title, target: nil, action: nil)
-            onChange(box) { [unowned self] in set(&self.renderer.settings, box.state == .on) }
+            onChange(box) { [unowned self] in
+                let on = box.state == .on
+                self.renderer.update { set(&$0, on) }
+            }
             refreshers.append { box.state = get($0) ? .on : .off }
             return [NSGridCell.emptyContentView, box]
         case .popup(let titles, let selected, let select):
@@ -142,7 +148,10 @@ final class SettingsPanel: NSObject {
                 popup.autoenablesItems = false
                 for (i, item) in popup.itemArray.enumerated() { item.isEnabled = available(i) }
             }
-            onChange(popup) { [unowned self] in select(&self.renderer.settings, popup.indexOfSelectedItem) }
+            onChange(popup) { [unowned self] in
+                let index = popup.indexOfSelectedItem
+                self.renderer.update { select(&$0, index) }
+            }
             refreshers.append { popup.selectItem(at: selected($0)) }
             return [label(spec.title), popup]
         case .custom(let row):
@@ -161,24 +170,28 @@ final class SettingsPanel: NSObject {
         switch row {
         case .scene:   // a new scene brings its own defaults and drops the models added to the old one
             let kinds = popup(SceneKind.allCases.map(\.title)) { [unowned self] popup in
-                var s = self.renderer.settings
-                s.scene.kind = SceneKind(rawValue: popup.indexOfSelectedItem) ?? .cornell
-                guard s.scene.kind != self.renderer.settings.scene.kind else { return }
-                s.scene.extraModels = []
-                s.applySceneDefaults(from: self.renderer.defaultSettings)   // e.g. the night market's light count
-                self.renderer.settings = s
+                let kind = SceneKind(rawValue: popup.indexOfSelectedItem) ?? .cornell, defaults = self.renderer.defaultSettings
+                guard kind != self.renderer.settings.scene.kind else { return }
+                self.renderer.update { s in
+                    guard kind != s.scene.kind else { return }
+                    s.scene.kind = kind
+                    s.scene.extraModels = []
+                    s.applySceneDefaults(from: defaults)   // e.g. the night market's light count
+                }
             }
             refreshers.append { kinds.selectItem(at: $0.scene.kind.rawValue) }
             return [label(title), kinds]
         case .clearModels:
             let button = NSButton(title: "Clear Added Models", target: nil, action: nil)
-            onChange(button) { [unowned self] in self.renderer.settings.scene.extraModels = [] }
+            onChange(button) { [unowned self] in self.renderer.update { $0.scene.extraModels = [] } }
             return [NSGridCell.emptyContentView, button]
         case .lightRays:   // shadow rays per light group and whether one ray's picks are reused: two settings
             let rays = popup(["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"]) { [unowned self] popup in
-                let choice = popup.indexOfSelectedItem
-                self.renderer.settings.manyLightRays = choice == 2 ? 2 : 1
-                self.renderer.settings.manyLightReuse = choice == 1 ? self.renderer.defaultSettings.manyLightReuse : 0
+                let choice = popup.indexOfSelectedItem, reuse = self.renderer.defaultSettings.manyLightReuse
+                self.renderer.update {
+                    $0.manyLightRays = choice == 2 ? 2 : 1
+                    $0.manyLightReuse = choice == 1 ? reuse : 0
+                }
             }
             refreshers.append { s in
                 rays.selectItem(at: s.manyLightRays >= 2 ? 2 : s.manyLightReuse > 0 ? 1 : 0)
@@ -188,7 +201,8 @@ final class SettingsPanel: NSObject {
         case .upscale:   // the factors this GPU's MetalFX supports
             let steps = upscaleSteps
             let factor = popup(steps.map { $0 == 0 ? "Off" : String(format: "%g×", $0) }) { [unowned self] popup in
-                self.renderer.settings.upscaleFactor = steps[popup.indexOfSelectedItem]
+                let factor = steps[popup.indexOfSelectedItem]
+                self.renderer.update { $0.upscaleFactor = factor }
             }
             factor.isEnabled = steps.count > 1
             refreshers.append { factor.selectItem(at: steps.firstIndex(of: $0.upscaleFactor) ?? 0) }
@@ -197,7 +211,7 @@ final class SettingsPanel: NSObject {
             let mode = popup(SkyMode.allCases.map(\.title)) { [unowned self] popup in
                 let mode = SkyMode(rawValue: popup.indexOfSelectedItem) ?? .constant
                 if mode == .image && self.renderer.settings.sky.imagePath == nil { self.chooseSkyImage() }
-                else { self.renderer.settings.sky.mode = mode }
+                else { self.renderer.update { $0.sky.mode = mode } }
             }
             refreshers.append { mode.selectItem(at: $0.sky.mode.rawValue) }
             return [label(title), mode]
@@ -211,7 +225,8 @@ final class SettingsPanel: NSObject {
             onChange(well) { [unowned self] in
                 guard let c = well.color.usingColorSpace(.sRGB) else { return }
                 let round = { (v: CGFloat) in Float((v * 100).rounded() / 100) }
-                self.renderer.settings.fog.albedo = [round(c.redComponent), round(c.greenComponent), round(c.blueComponent)]
+                let albedo: SIMD3<Float> = [round(c.redComponent), round(c.greenComponent), round(c.blueComponent)]
+                self.renderer.update { $0.fog.albedo = albedo }
             }
             refreshers.append {
                 let a = $0.fog.albedo
@@ -359,7 +374,7 @@ final class SettingsPanel: NSObject {
         } else if !s.denoiser.enabled {
             text = "Off: the composite shows the raw samples."
         } else {
-            let restir = renderer.directModeInUse == .restir
+            let restir = renderer.status?.directMode == .restir
             let shadow = s.denoiser.shadowDenoiser && (!restir || s.restir.splitVisibility)
             var generic: [String] = [], own: [String] = []
             let combined = s.giEnabled && s.giMode == .pathTraced && !s.denoiser.separateSignals && !shadow
@@ -386,12 +401,15 @@ final class SettingsPanel: NSObject {
     // MARK: - Buttons
 
     @objc private func resetToDefaults() {
-        var s = renderer.defaultSettings
-        s.scene = renderer.settings.scene   // render settings only; the loaded scene and tracer stay
-        s.rayTracer = renderer.settings.rayTracer
-        s.api = renderer.settings.api
-        s.applySceneDefaults(from: renderer.defaultSettings)
-        renderer.settings = s
+        let defaults = renderer.defaultSettings
+        renderer.update { s in
+            var reset = defaults
+            reset.scene = s.scene   // render settings only; the loaded scene and tracer stay
+            reset.rayTracer = s.rayTracer
+            reset.api = s.api
+            reset.applySceneDefaults(from: defaults)
+            s = reset
+        }
     }
     private func chooseSkyImage() {
         let panel = NSOpenPanel()

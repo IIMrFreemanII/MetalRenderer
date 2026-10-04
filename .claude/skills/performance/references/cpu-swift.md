@@ -46,10 +46,14 @@ nothing.
   * arrays use the per-slot shared buffer, filled with `withUnsafeBytes { contents().copyMemory(...) }`
     (VirtualBLAS.swift `tables[slot]`);
   * single structs inside fixed arrays use `withUnsafeMutableBytes` + `storeBytes` (GPUTypes.swift:167).
-* **The main thread is for UI.**
+* **The main thread is for UI; frames are on the render thread** (RenderThread.swift). The `Renderer` belongs to the
+  render thread: the main thread reaches it only through `RendererController`, which posts work with
+  `Renderer.perform` and gets values back.
   * Panels refresh at 2 Hz; only the frame graph updates every frame.
-  * Coalesce `DispatchQueue.main.async` hops to one per frame (the completed handler does exactly one).
-  * Don't touch AppKit from render callbacks.
+  * Coalesce `DispatchQueue.main.async` hops to one per frame (the completed handler does one `perform`, and the
+    Debug window's frame time one hop to main).
+  * Don't touch AppKit from the render thread or render callbacks; background work hands its result back with
+    `perform`, not `DispatchQueue.main`.
   * Don't hop through `Task`/`async` on the per-frame path: each hop costs scheduling and an allocation.
 
 ## 2. Hot loops (BVH, MeshSimplifier, MeshClusterizer, VirtualGeometryBuilder, BlueNoise, FogNoise)
