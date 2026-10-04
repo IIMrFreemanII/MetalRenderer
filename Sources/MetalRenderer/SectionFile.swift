@@ -56,6 +56,13 @@ struct SectionFile {
         }
     }
 
+    /// Section `id`'s bytes as they are in the mapping (no copy: nothing of them is in memory until it is read, and
+    /// the system may drop what was read, since it is the file's); nil as `array`. The mapping lives as long as they do.
+    func mapped<T>(_ id: UInt32, of type: T.Type = T.self) -> Data? {
+        guard let s = sections[id], s.stride == MemoryLayout<T>.stride else { return nil }
+        return data[(data.startIndex + s.offset)..<(data.startIndex + s.offset + s.bytes)]
+    }
+
     /// Section `id`'s bytes in the mapping, which stays mapped while the file (or what `body` keeps of it) lives.
     func withBytes<R>(_ id: UInt32, _ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R? {
         guard let s = sections[id] else { return nil }
@@ -91,6 +98,32 @@ struct SectionFile {
     }
 }
 
+/// An array as it was made, or as bytes of a section file, mapped. A mapped one takes no memory until it is read,
+/// and what was read the system can drop again: an open world's tiles, half a gigabyte of them in sight, are then
+/// their files' pages, not the process's.
+enum Stored<T> {
+    case made([T])
+    case mapped(Data)
+
+    var count: Int {
+        switch self {
+        case .made(let array): return array.count
+        case .mapped(let data): return data.count / MemoryLayout<T>.stride
+        }
+    }
+
+    func withUnsafeBufferPointer<R>(_ body: (UnsafeBufferPointer<T>) throws -> R) rethrows -> R {
+        switch self {
+        case .made(let array): return try array.withUnsafeBufferPointer(body)
+        case .mapped(let data): return try data.withUnsafeBytes { try body($0.bindMemory(to: T.self)) }
+        }
+    }
+
+    /// A copy.
+    var array: [T] { withUnsafeBufferPointer { Array($0) } }
+    subscript(i: Int) -> T { withUnsafeBufferPointer { $0[i] } }
+}
+
 /// The cache of what the generated scenes derive (generated textures' mip chains, the meshes' bottom-level trees,
 /// the plants' voxels): files in ~/Library/Caches/MetalRenderer/generated, named by what they were made from, so a
 /// change of the input is another file and a stale one is never read. `METALRENDERER_CACHE=0` reads and writes
@@ -123,6 +156,7 @@ enum GeneratedCache {
     struct Hasher {
         private var sha = SHA256()
         mutating func add<T>(_ values: [T]) { values.withUnsafeBytes { sha.update(bufferPointer: $0) } }
+        mutating func add<T>(_ values: UnsafeBufferPointer<T>) { sha.update(bufferPointer: UnsafeRawBufferPointer(values)) }
         mutating func add(_ text: String) { sha.update(data: Data(text.utf8)) }
         func name() -> String { sha.finalize().prefix(16).map { String(format: "%02x", $0) }.joined() }
     }

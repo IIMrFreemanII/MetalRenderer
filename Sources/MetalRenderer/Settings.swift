@@ -406,6 +406,13 @@ struct SceneSettings: Equatable, Codable {
     static let poseRange = 1...512
     static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
+
+    /// The same open world, whatever tile the scene is made around and wherever its origin is.
+    func isSameWorld(as other: SceneSettings) -> Bool {
+        var a = self, b = other
+        (a.worldTile, b.worldTile, a.worldAnchor, b.worldAnchor) = (nil, nil, nil, nil)
+        return kind == .world && a == b
+    }
 }
 
 /// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.

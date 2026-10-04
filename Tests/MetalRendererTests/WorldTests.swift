@@ -12,11 +12,11 @@ final class WorldTests: XCTestCase {
     private func assertSame(_ a: WorldTile, _ b: WorldTile, _ what: String, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(a.chunks.count, b.chunks.count, what, file: file, line: line)
         for (p, q) in zip(a.chunks, b.chunks) {
-            XCTAssertEqual(p.positions, q.positions, what, file: file, line: line)
-            XCTAssertEqual(p.normals, q.normals, what, file: file, line: line)
-            XCTAssertEqual(p.uvs, q.uvs, what, file: file, line: line)
-            XCTAssertEqual(p.indices, q.indices, what, file: file, line: line)
-            XCTAssertEqual(p.triangleMaterials, q.triangleMaterials, what, file: file, line: line)
+            XCTAssertEqual(p.positions.array, q.positions.array, what, file: file, line: line)
+            XCTAssertEqual(p.normals.array, q.normals.array, what, file: file, line: line)
+            XCTAssertEqual(p.uvs.array, q.uvs.array, what, file: file, line: line)
+            XCTAssertEqual(p.indices.array, q.indices.array, what, file: file, line: line)
+            XCTAssertEqual(p.triangleMaterials.array, q.triangleMaterials.array, what, file: file, line: line)
             XCTAssertEqual(bytes(p.materials), bytes(q.materials), what, file: file, line: line)
             XCTAssertEqual(p.glass, q.glass, what, file: file, line: line)
             XCTAssertEqual(p.bounds.lo, q.bounds.lo, what, file: file, line: line)
@@ -40,7 +40,7 @@ final class WorldTests: XCTestCase {
         assertSame(first, try XCTUnwrap(WorldTile(url: url, key: "a key", x: 3, z: -2, level: 1)), "from its file")
         XCTAssertNil(WorldTile(url: url, key: "another key", x: 3, z: -2, level: 1))
         // Another world is another ground.
-        XCTAssertNotEqual(WorldTile.build(World(seed: 8), x: 3, z: -2, level: 1, flora: flora).chunks[0].positions, first.chunks[0].positions)
+        XCTAssertNotEqual(WorldTile.build(World(seed: 8), x: 3, z: -2, level: 1, flora: flora).chunks[0].positions.array, first.chunks[0].positions.array)
     }
 
     /// Neighbouring tiles' grounds meet: the same heights and normals along the side they share, near the origin
@@ -68,9 +68,9 @@ final class WorldTests: XCTestCase {
                     let p = ground.positions[j * (m + 1) + i]
                     XCTAssertEqual(p.y, world.height(origin.x + Double(Float(i) * cell), origin.y + Double(Float(j) * cell)), "level \(level)")
                 }
-                XCTAssertTrue(ground.positions.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.y) < 400 })
-                XCTAssertTrue(ground.indices.allSatisfy { Int($0) < ground.positions.count })
-                XCTAssertTrue(ground.triangleMaterials.allSatisfy { Int($0) < ground.materials.count })
+                XCTAssertTrue(ground.positions.array.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.y) < 400 })
+                XCTAssertTrue(ground.indices.array.allSatisfy { Int($0) < ground.positions.count })
+                XCTAssertTrue(ground.triangleMaterials.array.allSatisfy { Int($0) < ground.materials.count })
                 XCTAssertEqual(ground.triangleMaterials.count * 3, ground.indices.count)
             }
         }
@@ -170,8 +170,8 @@ final class WorldTests: XCTestCase {
         for tile in tiles {
             for chunk in tile.chunks {
                 XCTAssertLessThanOrEqual(chunk.materials.count, 256)
-                XCTAssertTrue(chunk.indices.allSatisfy { Int($0) < chunk.positions.count })
-                XCTAssertTrue(chunk.triangleMaterials.allSatisfy { Int($0) < chunk.materials.count })
+                XCTAssertTrue(chunk.indices.array.allSatisfy { Int($0) < chunk.positions.count })
+                XCTAssertTrue(chunk.triangleMaterials.array.allSatisfy { Int($0) < chunk.materials.count })
                 XCTAssertEqual(chunk.triangleMaterials.count * 3, chunk.indices.count)
                 XCTAssertEqual(chunk.normals.count, chunk.positions.count)
                 XCTAssertEqual(chunk.uvs.count, chunk.positions.count)

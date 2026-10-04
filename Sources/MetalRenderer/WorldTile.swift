@@ -15,17 +15,27 @@ import simd
 /// (a city tile has more than 256 materials: it is several chunks). Window glass is in chunks of its own.
 struct WorldTile {
     struct Chunk {
+        var positions: Stored<SIMD3<Float>>
+        var normals: Stored<SIMD3<Float>>
+        var uvs: Stored<SIMD2<Float>>
+        var indices: Stored<UInt32>             // into this chunk's vertices
+        var triangleMaterials: Stored<UInt8>    // into `materials`
+        /// Generated surfaces' textures are named by kind (World.texture) in `textures.x`.
+        var materials: [GPUMaterial]
+        var glass: Bool
+        var bounds: AABB
+
+        var triangles: Int { indices.count / 3 }
+    }
+
+    /// A chunk being put together.
+    private struct Draft {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
         var uvs: [SIMD2<Float>] = []
-        var indices: [UInt32] = []              // into this chunk's vertices
-        var triangleMaterials: [UInt8] = []     // into `materials`
-        /// Generated surfaces' textures are named by kind (World.texture) in `textures.x`.
+        var indices: [UInt32] = []
+        var triangleMaterials: [UInt8] = []
         var materials: [GPUMaterial] = []
-        var glass = false
-        var bounds = AABB()
-
-        var triangles: Int { indices.count / 3 }
     }
 
     let x: Int, z: Int, level: Int
@@ -41,14 +51,11 @@ struct WorldTile {
     /// Collects meshes into chunks of at most 256 materials.
     private struct Assembler {
         let glass: Bool
-        private(set) var done: [Chunk] = []
-        private var open = Chunk()
+        private var done: [Draft] = []
+        private var open = Draft()
         private var slots: [Data: UInt8] = [:]
 
-        init(glass: Bool) {
-            self.glass = glass
-            open.glass = glass
-        }
+        init(glass: Bool) { self.glass = glass }
 
         /// The open chunk's index for `material`, starting another chunk if this one's list is full.
         mutating func slot(_ material: GPUMaterial) -> UInt8 {
@@ -62,8 +69,7 @@ struct WorldTile {
 
         private mutating func close() {
             if !open.indices.isEmpty { done.append(open) }
-            open = Chunk()
-            open.glass = glass
+            open = Draft()
             slots = [:]
         }
 
@@ -86,16 +92,17 @@ struct WorldTile {
         }
 
         /// The open chunk, to add vertices and triangles to by hand (the ground).
-        mutating func withOpen(_ body: (inout Chunk) -> Void) { body(&open) }
+        mutating func withOpen(_ body: (inout Draft) -> Void) { body(&open) }
 
         mutating func finish() -> [Chunk] {
             close()
-            for i in done.indices {
+            return done.map { draft in
                 var box = AABB()
-                done[i].positions.withUnsafeBufferPointer { for p in $0 { box.grow(p) } }
-                done[i].bounds = box
+                draft.positions.withUnsafeBufferPointer { for p in $0 { box.grow(p) } }
+                return Chunk(positions: .made(draft.positions), normals: .made(draft.normals), uvs: .made(draft.uvs),
+                             indices: .made(draft.indices), triangleMaterials: .made(draft.triangleMaterials),
+                             materials: draft.materials, glass: glass, bounds: box)
             }
-            return done
         }
     }
 
@@ -303,11 +310,11 @@ struct WorldTile {
                                        firstIndex: UInt32(indices.count), indexCount: UInt32(chunk.indices.count),
                                        firstMaterial: UInt32(materials.count), materialCount: UInt32(chunk.materials.count),
                                        glass: chunk.glass ? 1 : 0, lo: SIMD4(chunk.bounds.lo, 0), hi: SIMD4(chunk.bounds.hi, 0)))
-            positions += chunk.positions
-            normals += chunk.normals
-            uvs += chunk.uvs
-            indices += chunk.indices
-            triangleMaterials += chunk.triangleMaterials
+            chunk.positions.withUnsafeBufferPointer { positions.append(contentsOf: $0) }
+            chunk.normals.withUnsafeBufferPointer { normals.append(contentsOf: $0) }
+            chunk.uvs.withUnsafeBufferPointer { uvs.append(contentsOf: $0) }
+            chunk.indices.withUnsafeBufferPointer { indices.append(contentsOf: $0) }
+            chunk.triangleMaterials.withUnsafeBufferPointer { triangleMaterials.append(contentsOf: $0) }
             materials += chunk.materials
         }
         var writer = SectionFile.Writer()
@@ -327,23 +334,31 @@ struct WorldTile {
         (self.x, self.z, self.level) = (x, z, level)
     }
 
-    /// The tile in the file at `url`, if it is there, whole, and was written for `key`.
+    /// The tile in the file at `url`, if it is there, whole, and was written for `key`. Its chunks' arrays are the
+    /// file's, mapped.
     init?(url: URL, key: String, x: Int, z: Int, level: Int) {
         guard let file = SectionFile(url: url, key: key),
-              let records: [ChunkRecord] = file.array(Section.chunks), let positions: [SIMD3<Float>] = file.array(Section.positions),
-              let normals: [SIMD3<Float>] = file.array(Section.normals), let uvs: [SIMD2<Float>] = file.array(Section.uvs),
-              let indices: [UInt32] = file.array(Section.indices), let triangleMaterials: [UInt8] = file.array(Section.triangleMaterials),
+              let records: [ChunkRecord] = file.array(Section.chunks), let positions = file.mapped(Section.positions, of: SIMD3<Float>.self),
+              let normals = file.mapped(Section.normals, of: SIMD3<Float>.self), let uvs = file.mapped(Section.uvs, of: SIMD2<Float>.self),
+              let indices = file.mapped(Section.indices, of: UInt32.self), let triangleMaterials = file.mapped(Section.triangleMaterials, of: UInt8.self),
               let materials: [GPUMaterial] = file.array(Section.materials), let trees: [World.Placement] = file.array(Section.trees),
-              normals.count == positions.count, uvs.count == positions.count, triangleMaterials.count * 3 == indices.count else { return nil }
+              normals.count == positions.count, uvs.count * 2 == positions.count, triangleMaterials.count * 12 == indices.count else { return nil }
         (self.x, self.z, self.level) = (x, z, level)
         self.trees = trees
+        /// Elements `range` of a section, still in the mapping.
+        func slice(_ data: Data, _ range: Range<Int>, stride: Int) -> Data? {
+            guard range.upperBound * stride <= data.count else { return nil }
+            return data[(data.startIndex + range.lowerBound * stride)..<(data.startIndex + range.upperBound * stride)]
+        }
         for r in records {
             let v = Int(r.firstVertex)..<Int(r.firstVertex + r.vertexCount), i = Int(r.firstIndex)..<Int(r.firstIndex + r.indexCount)
             let m = Int(r.firstMaterial)..<Int(r.firstMaterial + r.materialCount)
-            guard v.upperBound <= positions.count, i.upperBound <= indices.count, m.upperBound <= materials.count else { return nil }
-            chunks.append(Chunk(positions: Array(positions[v]), normals: Array(normals[v]), uvs: Array(uvs[v]), indices: Array(indices[i]),
-                                triangleMaterials: Array(triangleMaterials[(i.lowerBound / 3)..<(i.upperBound / 3)]),
-                                materials: Array(materials[m]), glass: r.glass != 0,
+            guard m.upperBound <= materials.count, i.lowerBound % 3 == 0, i.count % 3 == 0,
+                  let p = slice(positions, v, stride: 16), let n = slice(normals, v, stride: 16), let uv = slice(uvs, v, stride: 8),
+                  let index = slice(indices, i, stride: 4),
+                  let offsets = slice(triangleMaterials, (i.lowerBound / 3)..<(i.upperBound / 3), stride: 1) else { return nil }
+            chunks.append(Chunk(positions: .mapped(p), normals: .mapped(n), uvs: .mapped(uv), indices: .mapped(index),
+                                triangleMaterials: .mapped(offsets), materials: Array(materials[m]), glass: r.glass != 0,
                                 bounds: AABB(lo: SIMD3(r.lo.x, r.lo.y, r.lo.z), hi: SIMD3(r.hi.x, r.hi.y, r.hi.z))))
         }
     }
@@ -399,14 +414,14 @@ struct WorldTile {
         print("  a ground-cover cell outside the city: \(cover.count) plants")
     }
 
-    /// The tile: from its file, or made now and written there (without the cache: made).
+    /// The tile: from its file, or made now and written there, then taken from the file all the same (its arrays are
+    /// then the file's pages). Without the cache: made, and kept as made.
     static func make(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora) -> WorldTile {
         let url = url(world, x: x, z: z, level: level), key = key(world, x: x, z: z, level: level)
         if GeneratedCache.enabled, let tile = WorldTile(url: url, key: key, x: x, z: z, level: level) { return tile }
         let tile = build(world, x: x, z: z, level: level, flora: flora)
-        if GeneratedCache.enabled {
-            do { try tile.write(to: url, key: key) } catch { print("World: tile \(x) \(z) not written: \(error)") }
-        }
-        return tile
+        guard GeneratedCache.enabled else { return tile }
+        do { try tile.write(to: url, key: key) } catch { print("World: tile \(x) \(z) not written: \(error)") }
+        return WorldTile(url: url, key: key, x: x, z: z, level: level) ?? tile
     }
 }

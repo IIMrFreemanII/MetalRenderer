@@ -76,6 +76,17 @@ struct TLASUpdate {
         d.usage = usage
         return d
     }
+
+    /// Metal 3's descriptor for a build from either kind of instance descriptors: a still scene's structure is built
+    /// once, off the frames, on a Metal 3 queue (SceneBuffers).
+    func descriptor(indirect: Bool) -> MTLInstanceAccelerationStructureDescriptor {
+        let d = descriptor
+        if indirect, #available(macOS 14.0, *) {
+            d.instancedAccelerationStructures = nil
+            d.instanceDescriptorType = .indirect
+        }
+        return d
+    }
 }
 
 /// This frame's refit of the Metal tracer's per-mesh structures that deform (the crowd's pose slots): each keeps its

@@ -88,6 +88,10 @@ final class Scene {
 
         /// A generated texture's pixels, drawn now if they are behind `pixels`.
         var rawPixels: Data { pixels?() ?? data }
+        /// Which image it is, for telling that two scenes' textures are the same ones (an open world's next scene
+        /// keeps the textures it is drawn with): its file and its key in it, which for a generated one says what
+        /// it is made from.
+        var identity: String { "\(modelPath)|\(cacheKey)|\(name)|\(srgb)|\(raw?.width ?? 0)x\(raw?.height ?? 0)|\(data.count)" }
     }
 
     /// A light's shape. Angles in radians.
@@ -207,7 +211,15 @@ final class Scene {
     /// For meshes of several materials (the city's buildings): per triangle of `indices`, what to add to its
     /// instance's material index. Empty if no mesh has more than one; otherwise one entry per triangle.
     private(set) var triangleMaterials: [UInt8] = []
+    private(set) var hasMaterialOffsets = false    // some mesh has several materials (set once, by init)
+    private(set) var borrowed: [BorrowedMesh] = []
+    /// The scene's vertices and indices in all: the arrays', then the borrowed meshes'. Set once, by init.
+    private(set) var vertexCount = 0, indexCount = 0
     private(set) var meshes: [GPUMesh] = []
+    /// What some meshes are made from, said in full (an open world's tile and chunk, a plant of a library): a mesh
+    /// of the same name in another scene is the same triangles in the same order, so what was built for it holds
+    /// there too (Metal's per-mesh structures: SceneBuffers).
+    private(set) var meshNames: [Int: String] = [:]
     private(set) var materials: [GPUMaterial] = []
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
@@ -218,6 +230,8 @@ final class Scene {
     private var materialsDirty: Range<Int>?
     /// What `update` has to touch every frame, found once by init (nil while it builds the scene: everything then).
     private var animated: (instances: [Int], lights: [Int], scaledLights: [Int])?
+    /// Nothing in the scene moves or deforms: its instances' records and the structure over them are made once.
+    private(set) var isStill = false
     /// The lights whose GPU record changes from frame to frame (moving, flickering, the mesh lights of moving
     /// instances), and each instance's rank + 1 among the virtual ones (0 = not virtual).
     private var changingLights: [Int] = []
@@ -253,12 +267,14 @@ final class Scene {
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
-    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false) {
+    /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
+    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false,
+         building: ((Scene) -> Void)? = nil) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
         self.usesCards = assemblies && settings.leafCards
-        if let check = settings.lightCheck { buildLightCheck(check) } else {
+        if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
         case .stress: buildStress(objects: settings.objects, lights: settings.lights)
@@ -281,12 +297,16 @@ final class Scene {
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
+        placeBorrowed()
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
-        let (lo, hi) = bounds()
-        if lo.x <= hi.x { sceneSphere = SIMD4((lo + hi) / 2, max(length(hi - lo) / 2, 1)) }
-        // The open world has no bounds worth a light map: what counts is what is near its middle tile.
-        if let place = worldPlace { sceneSphere = SIMD4(place.middle, 1.5 * World.tileSize) }
+        if let place = worldPlace {
+            // The open world has no bounds worth a light map: what counts is what is near its middle tile.
+            sceneSphere = SIMD4(place.middle, 1.5 * World.tileSize)
+        } else {
+            let (lo, hi) = bounds()
+            if lo.x <= hi.x { sceneSphere = SIMD4((lo + hi) / 2, max(length(hi - lo) / 2, 1)) }
+        }
         lightTable = LightTable(scene: self)
         update(time: 0)
         for i in instances.indices { instances[i].prevTransform = instances[i].transform }
@@ -295,6 +315,8 @@ final class Scene {
         if !triangleMaterials.isEmpty {
             triangleMaterials += [UInt8](repeating: 0, count: indices.count / 3 - triangleMaterials.count)
         }
+        hasMaterialOffsets = !triangleMaterials.isEmpty || borrowed.contains { $0.materials != nil }
+        if !hasPlants { Flora.forget() }
         hasSpecular = materials.contains { $0.params.x > 0 }
         switch ProcessInfo.processInfo.environment["METALRENDERER_LIGHT_TABLE"] {
         case "1": usesLightTable = true
@@ -312,6 +334,7 @@ final class Scene {
         animated = (instances: instances.indices.filter { instances[$0].moves },
                     lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
                     scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
+        isStill = instances.allSatisfy(\.isStatic)
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -443,7 +466,8 @@ final class Scene {
     /// Assembly instances: meshIndex points past those too (the table then lists the assemblies).
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
     /// only the ones that move, the rest being unchanged.
-    func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool) {
+    /// `range`: of all the instances, these (a part of them, for a caller that writes the parts side by side).
+    func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool, range: Range<Int>? = nil) {
         func write(_ i: Int) {
             let inst = instances[i]
             out[i] = GPUInstanceData(transform: inst.transform,
@@ -459,7 +483,7 @@ final class Scene {
         if !all, let animated {
             for i in animated.instances { write(i) }
         } else {
-            for i in instances.indices { write(i) }
+            for i in range ?? instances.indices { write(i) }
         }
     }
 
@@ -479,7 +503,7 @@ final class Scene {
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
-            | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (triangleMaterials.isEmpty ? 0 : 0x0400_0000)
+            | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -731,7 +755,9 @@ final class Scene {
 
     /// `materials`: for a mesh of several materials, each triangle's material as an offset from the material its
     /// instance names (which is then the first of a run of materials added one after the other).
-    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil) -> Int {
+    /// `name`: see `meshNames`.
+    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil) -> Int {
+        if let name { meshNames[meshes.count] = name }
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
         if let offsets {
@@ -748,6 +774,57 @@ final class Scene {
                            mesh.positions.reduce(SIMD3(repeating: -.infinity), simd_max)))
         return meshes.count - 1
     }
+
+    /// A mesh whose arrays stay where they are (an open world's tile: in its file, mapped) instead of being copied
+    /// into the scene's. The renderer copies them from there into its buffers, after the scene's own arrays
+    /// (SceneBuffers), and whoever needs such a mesh's triangles reads them there.
+    struct BorrowedMesh {
+        var positions: Stored<SIMD3<Float>>
+        var normals: Stored<SIMD3<Float>>
+        var uvs: Stored<SIMD2<Float>>
+        var indices: Stored<UInt32>             // into its own vertices
+        var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
+        var mesh = 0                            // in `meshes`
+        /// Where it is among all the scene's vertices and indices: after the arrays' (set once, by init).
+        var firstVertex = 0
+        var firstIndex = 0
+    }
+
+    /// Adds a borrowed mesh, with its bounds as they are known. Its place in the mesh table (`firstIndex`) is set
+    /// when the scene is whole. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s, the cutout as the table has it.
+    func addMesh(borrowing mesh: BorrowedMesh, bounds: AABB, name: String, sways: Bool = false, cutout: UInt32 = 0) -> Int {
+        precondition(mesh.normals.count == mesh.positions.count && mesh.uvs.count == mesh.positions.count
+                     && (mesh.materials.map { $0.count * 3 == mesh.indices.count } ?? true), "a vertex's arrays, and a material per triangle")
+        var mesh = mesh
+        mesh.mesh = meshes.count
+        borrowed.append(mesh)
+        meshNames[meshes.count] = name
+        meshes.append(GPUMesh(firstIndex: 0, indexCount: UInt32(mesh.indices.count), sways: sways ? 1 : 0, cutout: cutout))
+        if sways { hasSwayingMeshes = true }
+        meshBounds.append((bounds.lo, bounds.hi))
+        return meshes.count - 1
+    }
+
+    /// The borrowed meshes' places, after everything the arrays hold.
+    private func placeBorrowed() {
+        var vertex = positions.count, index = indices.count
+        for b in borrowed.indices {
+            (borrowed[b].firstVertex, borrowed[b].firstIndex) = (vertex, index)
+            meshes[borrowed[b].mesh].firstIndex = UInt32(index)
+            vertex += borrowed[b].positions.count
+            index += borrowed[b].indices.count
+        }
+        (vertexCount, indexCount) = (vertex, index)
+    }
+
+    /// Lets go of the vertex and index arrays and of the borrowed meshes, once the renderer has them in its buffers
+    /// and the ray tracer in its trees: for a scene that is made again when anything about it changes, never built
+    /// from twice (the open world's). The meshes' table, bounds and names stay.
+    func releaseGeometry() {
+        (positions, normals, uvs, indices, triangleMaterials, borrowed) = ([], [], [], [], [], [])
+        geometryReleased = true
+    }
+    private(set) var geometryReleased = false
 
     // MARK: - Crowd
 
@@ -822,7 +899,9 @@ final class Scene {
     /// A generated mesh (Foliage, Terrain): its arrays appended whole, its bounds as it counted them. `sways`: ground
     /// cover standing along +y, which the custom tracer leans in the wind (every instance of it).
     /// `cutout`: the alpha layer (`addCutout`) that cuts out its leaves, if they are cards.
-    func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil) -> Int {
+    /// `name`: see `meshNames`.
+    func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil, name: String? = nil) -> Int {
+        if let name { meshNames[meshes.count] = name }
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
         positions += mesh.positions
@@ -885,12 +964,16 @@ final class Scene {
         return UInt32(textures.count - 1)
     }
 
-    /// Room for this much more geometry (a builder that knows how much it is about to add).
-    func reserveGeometry(vertices: Int, indices count: Int) {
+    /// Room for this much more geometry (a builder that knows how much it is about to add): an array that grows by
+    /// itself doubles, and ends up to twice as large as what it holds.
+    func reserveGeometry(vertices: Int, indices count: Int, instances more: Int = 0) {
         positions.reserveCapacity(positions.count + vertices)
         normals.reserveCapacity(normals.count + vertices)
         uvs.reserveCapacity(uvs.count + vertices)
         indices.reserveCapacity(indices.count + count)
+        // In steps of 65536: a scene made again with a few more instances then asks for a block of the size the last
+        // one let go of, which the allocator hands back, instead of a new one (it keeps what was freed).
+        if more > 0 { instances.reserveCapacity((instances.count + more + 0xFFFF) & ~0xFFFF) }
     }
 
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
@@ -1021,6 +1104,7 @@ final class Scene {
     /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
     /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
     private func buildMeshLights() {
+        guard materials.contains(where: { $0.emission.x > 0 || $0.emission.y > 0 || $0.emission.z > 0 }) else { return }
         var textureCache: [Int: ((SIMD2<Float>) -> SIMD3<Float>)?] = [:]
         func emissiveTexture(_ index: UInt32) -> ((SIMD2<Float>) -> SIMD3<Float>)? {
             guard index != .max else { return nil }
@@ -1038,7 +1122,7 @@ final class Scene {
             let positions: [SIMD3<Float>], uvsOf: [SIMD2<Float>], tris: ArraySlice<UInt32>
             if let src = emitterSources[i] {
                 (positions, uvsOf, tris) = (src.positions, src.uvs, src.indices[...])
-            } else if inst.mesh >= 0 {
+            } else if inst.mesh >= 0, Int(meshes[inst.mesh].firstIndex) < indices.count {   // not a borrowed mesh
                 let m = meshes[inst.mesh]
                 (positions, uvsOf, tris) = (self.positions, uvs, indices[Int(m.firstIndex) ..< Int(m.firstIndex + m.indexCount)])
             } else {

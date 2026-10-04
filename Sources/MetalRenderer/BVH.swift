@@ -297,49 +297,53 @@ enum BVHBuilder {
     /// A leaf card's triangles (`GPUMesh.cutout`) carry their corners' UVs and alpha layer in the edges' spare floats
     /// (`cutoutBits`), for the traversal's alpha test; `uvs` is only read for those.
     static func buildBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh], uvs: [SIMD2<Float>] = []) -> BLASResult {
+        positions.withUnsafeBufferPointer { pos in
+            indices.withUnsafeBufferPointer { idx in
+                uvs.withUnsafeBufferPointer { uv in buildBLAS(positions: pos, indices: idx, meshes: meshes, uvs: uv) }
+            }
+        }
+    }
+
+    /// ...from arrays that are someone else's (the renderer's buffers, for a scene that keeps none: Scene.BorrowedMesh).
+    static func buildBLAS(positions pos: UnsafeBufferPointer<SIMD3<Float>>, indices idx: UnsafeBufferPointer<UInt32>, meshes: [GPUMesh],
+                          uvs uv: UnsafeBufferPointer<SIMD2<Float>>) -> BLASResult {
         var trees = [(nodes: [Node], order: [Int])](repeating: ([], []), count: meshes.count)
         // Each mesh's first triangle in the shared triangle buffer (its triangles keep their count, reordered).
         var triBases = [Int](repeating: 0, count: meshes.count + 1)
         for (m, mesh) in meshes.enumerated() { triBases[m + 1] = triBases[m] + Int(mesh.indexCount) / 3 }
         var result = BLASResult()
         result.triangles = [SIMD4<Float>](repeating: .zero, count: 3 * triBases[meshes.count])
-        positions.withUnsafeBufferPointer { pos in
-            indices.withUnsafeBufferPointer { idx in
-              uvs.withUnsafeBufferPointer { uv in
-                trees.withUnsafeMutableBufferPointer { slots in
-                    result.triangles.withUnsafeMutableBufferPointer { tris in
-                        DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
-                            let mesh = meshes[m]
-                            let triCount = Int(mesh.indexCount) / 3, first = Int(mesh.firstIndex)
-                            let offset = Int(mesh.vertexOffset)   // a pose slot's own vertices (Crowd)
-                            var boxes: [AABB] = []
-                            boxes.reserveCapacity(triCount)
-                            for t in 0..<triCount {
-                                var b = AABB()
-                                for k in 0..<3 { b.grow(pos[Int(idx[first + 3 * t + k]) + offset]) }
-                                boxes.append(b)
-                            }
-                            let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
-                            // The mesh's triangles in leaf order, into its own range of the buffer.
-                            var out = 3 * triBases[m]
-                            for t in tree.order {
-                                let base = first + 3 * t
-                                let p0 = pos[Int(idx[base]) + offset], p1 = pos[Int(idx[base + 1]) + offset]
-                                let p2 = pos[Int(idx[base + 2]) + offset]
-                                var spare = (UInt32(0), UInt32(0))
-                                if mesh.cutout != 0, t >= Int(mesh.cutout & 0xFF_FFFF) {
-                                    spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: mesh.cutout >> 24)
-                                }
-                                tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
-                                tris[out + 1] = SIMD4(p1 - p0, Float(bitPattern: spare.0))
-                                tris[out + 2] = SIMD4(p2 - p0, Float(bitPattern: spare.1))
-                                out += 3
-                            }
-                            slots[m] = tree   // its own slot: no lock
-                        }
+        trees.withUnsafeMutableBufferPointer { slots in
+            result.triangles.withUnsafeMutableBufferPointer { tris in
+                DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
+                    let mesh = meshes[m]
+                    let triCount = Int(mesh.indexCount) / 3, first = Int(mesh.firstIndex)
+                    let offset = Int(mesh.vertexOffset)   // a pose slot's own vertices (Crowd)
+                    var boxes: [AABB] = []
+                    boxes.reserveCapacity(triCount)
+                    for t in 0..<triCount {
+                        var b = AABB()
+                        for k in 0..<3 { b.grow(pos[Int(idx[first + 3 * t + k]) + offset]) }
+                        boxes.append(b)
                     }
+                    let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+                    // The mesh's triangles in leaf order, into its own range of the buffer.
+                    var out = 3 * triBases[m]
+                    for t in tree.order {
+                        let base = first + 3 * t
+                        let p0 = pos[Int(idx[base]) + offset], p1 = pos[Int(idx[base + 1]) + offset]
+                        let p2 = pos[Int(idx[base + 2]) + offset]
+                        var spare = (UInt32(0), UInt32(0))
+                        if mesh.cutout != 0, t >= Int(mesh.cutout & 0xFF_FFFF) {
+                            spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: mesh.cutout >> 24)
+                        }
+                        tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
+                        tris[out + 1] = SIMD4(p1 - p0, Float(bitPattern: spare.0))
+                        tris[out + 2] = SIMD4(p2 - p0, Float(bitPattern: spare.1))
+                        out += 3
+                    }
+                    slots[m] = tree   // its own slot: no lock
                 }
-              }
             }
         }
         // Each mesh's nodes go to its own range of the node buffer: a tree of n leaves has n - 1 child-pair nodes (a
@@ -394,6 +398,15 @@ enum BVHBuilder {
     /// is derived from the same meshes (nil: these aren't cached: an optimised build, or a scene too small for it).
     static func cachedBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh], uvs: [SIMD2<Float>] = [])
         -> (blas: BLASResult, geometry: String?, cached: Bool) {
+        positions.withUnsafeBufferPointer { pos in
+            indices.withUnsafeBufferPointer { idx in
+                uvs.withUnsafeBufferPointer { uv in cachedBLAS(positions: pos, indices: idx, meshes: meshes, uvs: uv) }
+            }
+        }
+    }
+
+    static func cachedBLAS(positions: UnsafeBufferPointer<SIMD3<Float>>, indices: UnsafeBufferPointer<UInt32>, meshes: [GPUMesh],
+                           uvs: UnsafeBufferPointer<SIMD2<Float>>) -> (blas: BLASResult, geometry: String?, cached: Bool) {
         func build() -> BLASResult { buildBLAS(positions: positions, indices: indices, meshes: meshes, uvs: uvs) }
         guard GeneratedCache.cachesTrees, indices.count / 3 >= cachedTriangles else { return (build(), nil, false) }
         var hasher = GeneratedCache.Hasher()
