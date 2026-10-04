@@ -92,12 +92,26 @@ struct RTInstance {
     float4 row1;
     float4 row2;
     uint blasRoot;
-    uint mask;
     uint pad0;    // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
+    uint mask;    // the instance's, and RT_OWN_TREE
     uint pad1;    // FOLIAGE: RT_ASSEMBLY bits = assembly + 1 (blasRoot is then its tree of parts), the top byte = the
                   // voxel level it is traced at this frame + 1, or 0 for its triangles; RT_SWAYS = ground cover
 };
 constant uint RT_ASSEMBLY = 0x7FFFFFu, RT_SWAYS = 0x800000u;
+// STREAMED: a mesh whose tree is in a buffer of its own (MeshBlock.Tree: its nodes, the root first, then its
+// triangles, which its leaves count from the buffer's start). In rtPrepKernel's mesh table its root has RT_BLOCK and
+// is its place in the table of those trees' addresses; its instances' records have RT_OWN_TREE in their mask and the
+// address where blasRoot and pad0 are (RTBlockInstance).
+constant uint RT_BLOCK = 0x40000000u, RT_OWN_TREE = 0x80000000u;
+struct RTBlockInstance {
+    float4 row0;
+    float4 row1;
+    float4 row2;
+    device const struct BVHNode* tree;
+    uint mask;
+    uint pad1;
+};
+static_assert(sizeof(RTBlockInstance) == 64 && sizeof(RTInstance) == 64, "RTInstance: CustomRayTracer.swift");
 
 struct RTPart {
     float4 row0;  // plant -> part rows
@@ -479,7 +493,11 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                 device const float4* tris = sc.tris;
                 uint root = inst.blasRoot;
                 bool present = true;
-                if (inst.pad0 != 0) {
+                if (STREAMED && (inst.mask & RT_OWN_TREE) != 0) {   // its tree is in a buffer of its own
+                    nodes = ((device const RTBlockInstance*)sc.instances)[id].tree;
+                    tris = (device const float4*)nodes;
+                    root = 0;
+                } else if (inst.pad0 != 0) {
                     VGBlas e = sc.vgBlas[inst.pad0 - 1];
                     nodes = e.nodes; tris = e.tris; root = 0;
                     present = e.triangles != 0;
@@ -562,7 +580,7 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     if (p.leafCount != 0) limit = p.firstLeaf + uint(float(p.leafCount) * plantKeep(sc.windTime.w, instance));
                 }
                 for (uint t = first; t < end; ++t) {
-                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h, limit, bottomTris == sc.tris ? sc.cutouts : nullptr)) {   // a virtual BLAS keeps other things there
+                    if (rtTriangle(o, d, bottomTris[3 * t], bottomTris[3 * t + 1], bottomTris[3 * t + 2], r.tmin, h, limit, STREAMED || bottomTris == sc.tris ? sc.cutouts : nullptr)) {   // a virtual BLAS keeps other things there (a streamed scene has none)
                         h.instance = instance;
                         h.cluster = HIT_NO_CLUSTER;
                         h.part = part;

@@ -24,6 +24,7 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
                          device const RTVoxels*     voxelGrids [[buffer(6)]],   // per assembly (FOLIAGE)
                          constant float4&           lodView    [[buffer(7)]],   // xyz = the camera, w = a traced pixel's angle
                                                                                 //   x the LOD bias (0 = triangles always)
+                         device const ulong*        blockTrees [[buffer(8)]],   // STREAMED: the trees in buffers of their own
                          uint i [[thread_position_in_grid]])
 {
     if (i >= instanceCount) return;
@@ -36,6 +37,12 @@ kernel void rtPrepKernel(constant uint&             instanceCount [[buffer(0)]],
     r.blasRoot = as_type<uint>(lo.w);
     r.mask = inst.pad0;
     r.pad0 = inst.pad1;   // virtual instance + 1 (its BLAS in RTScene.vgBlas), or 0
+    if (STREAMED && r.blasRoot != RT_NONE && (r.blasRoot & RT_BLOCK) != 0) {   // a mesh with a tree of its own: its address
+        ulong tree = blockTrees[r.blasRoot & ~RT_BLOCK];
+        r.blasRoot = uint(tree & 0xFFFFFFFFul);
+        r.pad0 = uint(tree >> 32);
+        r.mask |= RT_OWN_TREE;
+    }
     r.pad1 = as_type<uint>(hi.w);   // assembly + 1 (the root above is then its tree of parts) or RT_SWAYS, or 0
     if (FOLIAGE && (r.pad1 & RT_ASSEMBLY) != 0 && lodView.w > 0.0f) {
         // A plant far from the camera is traced as its voxels: the level whose voxels are about `bias` traced pixels

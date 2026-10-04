@@ -9,8 +9,8 @@ struct RTInstance {
     var row1 = SIMD4<Float>()
     var row2 = SIMD4<Float>()
     var blasRoot: UInt32 = 0
-    var mask: UInt32 = 0
     var pad0: UInt32 = 0
+    var mask: UInt32 = 0
     var pad1: UInt32 = 0
 }
 
@@ -97,6 +97,10 @@ final class CustomRayTracer {
     static let cpuBuild = ProcessInfo.processInfo.environment["METALRENDERER_RT_BUILD"] == "cpu"
     let blasNodes: MTLBuffer
     let triangles: MTLBuffer
+    /// The trees that are in buffers of their own (the borrowed meshes': MeshBlock.Tree), and their addresses, which
+    /// rtPrepKernel writes into their instances' records.
+    private let blockTrees: [MTLBuffer]
+    private let blockTable: MTLBuffer
     private var tlasNodes: [MTLBuffer] = []       // per slot: static TLAS nodes, then the dynamic TLAS
     private var instances: [MTLBuffer] = []       // per slot: RTInstance per scene instance
     private var sceneArgs: [MTLBuffer] = []       // per slot: RTScene
@@ -163,30 +167,52 @@ final class CustomRayTracer {
     /// The first node of this frame's cluster tree (after the static and dynamic trees).
     private var virtualNodeBase: Int { staticNodes.count + max(dynamicIds.count - 1, 1) }
 
-    /// The meshes' trees: from the scene's arrays, or for a scene with borrowed meshes from the buffers its vertices
-    /// were put together in.
-    private static func trees(of scene: Scene, geometry: SceneBuffers?) throws -> (blas: BVHBuilder.BLASResult, geometry: String?, cached: Bool) {
-        guard !scene.borrowed.isEmpty else {
-            return BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
+    /// A mesh's root that is not a node of `blasNodes` but, with this bit, the mesh's place among the trees that are
+    /// in buffers of their own (RT_BLOCK in Shaders/Intersect.metal); and what an instance of such a mesh has in its
+    /// mask (RT_OWN_TREE), its tree's address being where its root and `pad0` are.
+    static let blockRoot: UInt32 = 0x4000_0000, ownTree: UInt32 = 0x8000_0000
+
+    /// The meshes' trees: the arrays' meshes' in one result, and each borrowed mesh's with its block (MeshBlock.tree:
+    /// built here if this is the first scene to trace it), its root the block's place in `blocks`.
+    private static func trees(of scene: Scene, geometry: SceneBuffers?, device: MTLDevice) throws
+        -> (blas: BVHBuilder.BLASResult, geometry: String?, cached: Bool, blocks: [MeshBlock.Tree], new: Int) {
+        guard scene.hasBorrowedMeshes else {
+            let trees = BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: scene.meshes, uvs: scene.uvs)
+            return (trees.blas, trees.geometry, trees.cached, [], 0)
         }
-        guard let geometry else { throw RendererError.resourceCreation("the trees of a scene with borrowed meshes, without its buffers") }
-        func all<T>(_ buffer: MTLBuffer, _ count: Int) -> UnsafeBufferPointer<T> {
-            UnsafeBufferPointer(start: buffer.contents().bindMemory(to: T.self, capacity: count), count: count)
+        guard let blocks = geometry?.blocks, blocks.count == scene.meshes.count else {
+            throw RendererError.resourceCreation("the trees of a scene with borrowed meshes, without its buffers")
         }
-        return BVHBuilder.cachedBLAS(positions: all(geometry.positions, scene.vertexCount), indices: all(geometry.indices, scene.indexCount),
-                                     meshes: scene.meshes, uvs: all(geometry.uvs, scene.vertexCount))
+        var meshes = scene.meshes
+        for m in meshes.indices where blocks[m] != nil { meshes[m].indexCount = 0 }   // not in the arrays
+        var trees = BVHBuilder.cachedBLAS(positions: scene.positions, indices: scene.indices, meshes: meshes, uvs: scene.uvs)
+        let own = blocks.indices.filter { blocks[$0] != nil }
+        let new = own.reduce(0) { $0 + (blocks[$1]!.hasTree ? 0 : 1) }
+        var built = [MeshBlock.Tree?](repeating: nil, count: own.count)
+        built.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: own.count) { k in
+                out[k] = try? blocks[own[k]]!.tree(device: device, cutout: scene.meshes[own[k]].cutout)
+            }
+        }
+        for (entry, m) in own.enumerated() {
+            guard let tree = built[entry] else { throw RendererError.resourceCreation("the tree of mesh \(m)") }
+            trees.blas.roots[m] = tree.nodeCount == 0 ? BVHNode.none : CustomRayTracer.blockRoot | UInt32(entry)
+            trees.blas.bounds[m] = tree.bounds
+            trees.blas.maxDepth = max(trees.blas.maxDepth, tree.depth)
+        }
+        return (trees.blas, trees.geometry, trees.cached, built.map { $0! }, new)
     }
 
     /// `instances`: a copy of `scene.instances` taken on the main thread when this runs in the background for a scene
     /// that is still being drawn (`Scene.update` rewrites the transforms there every frame).
-    /// `geometry`: the scene's buffers, where the vertices of a scene with borrowed meshes are (its arrays hold only
-    /// the others).
+    /// `geometry`: the scene's buffers, which have the blocks of its borrowed meshes (its arrays hold only the
+    /// others).
     init(device: MTLDevice, scene: Scene, instances sceneInstances: [Scene.Instance]? = nil, geometry: SceneBuffers? = nil, slots: Int,
          poolMB: Int = 768) throws {
         self.device = device
         let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
-        let (blas, geometryHash, cached) = try CustomRayTracer.trees(of: scene, geometry: geometry)
+        let (blas, geometryHash, cached, blocks, newBlocks) = try CustomRayTracer.trees(of: scene, geometry: geometry, device: device)
         blasRoots = blas.roots
         // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it, and
         // a pose slot's (its mesh deforms) that of every pose: on the CPU, the GPU keeps the exact ones.
@@ -301,6 +327,8 @@ final class CustomRayTracer {
         }
         blasNodes = try buffer(blas.nodes, "blasNodes")
         triangles = try buffer(blas.triangles, "bvhTriangles")
+        blockTrees = blocks.map(\.buffer)
+        blockTable = try buffer(blocks.map(\.buffer.gpuAddress), "rtBlockTrees")
         virtualGeometry = virtualInstances.isEmpty || !CustomRayTracer.clusterMode ? nil
             : try VirtualGeometry(device: device, meshes: scene.virtualMeshes, instances: virtualInstances, poolMB: poolMB, slots: slots)
         virtualBLAS = virtualInstances.isEmpty || CustomRayTracer.clusterMode ? nil
@@ -367,16 +395,17 @@ final class CustomRayTracer {
             crowdRefit = (try buffer(links, "rtCrowdLinks"), try buffer([UInt32](repeating: 0, count: nodeCount), "rtCrowdArrived"),
                           nodeBase, nodeCount, first...last)
         }
-        print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms%@",
+        print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms%@%@",
                      blas.nodes.count, blas.triangles.count / 3, staticCount, staticNodes.count, staticDepth, dynamicIds.count,
-                     (CACurrentMediaTime() - start) * 1000, cached ? " (the meshes' trees from the cache)" : ""))
+                     (CACurrentMediaTime() - start) * 1000, cached ? " (the meshes' trees from the cache)" : "",
+                     blocks.isEmpty ? "" : "; \(blocks.count) meshes with trees of their own (\(newBlocks) new)"))
         if !roots.isEmpty {
             // The traversal's stack holds one entry per level it has gone down, all three levels together.
             let deepest = staticDepth + partDepth + blas.maxDepth + 3
             print("Assemblies: \(roots.count) plants of \(partRecords.count) parts, trees \(partDepth) deep over BLASes \(blas.maxDepth) deep"
                   + (deepest > 64 ? " — \(deepest) LEVELS IN ALL: the traversal's stack (RT_STACK) may overflow" : ""))
         }
-        if CustomRayTracer.checked, scene.borrowed.isEmpty { selfTest(scene: scene) }   // (it reads the scene's arrays)
+        if CustomRayTracer.checked, !scene.hasBorrowedMeshes { selfTest(scene: scene) }   // (it reads the scene's arrays)
     }
 
     /// RTScene (160 bytes, asserted in Shaders/Intersect.metal): 10 GPU addresses, then the static and dynamic root refs and the
@@ -404,12 +433,15 @@ final class CustomRayTracer {
     }
 
     /// `blasRoot`: the mesh's, or for an assembly the root of the tree over its parts (`pad1` is then its number + 1).
-    static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32, sways: Bool = false) -> RTInstance {
+    /// `tree`: for a mesh whose tree is in a buffer of its own, that buffer's address.
+    static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32, sways: Bool = false, tree: UInt64? = nil) -> RTInstance {
         let inv = inst.transform.inverse
         return RTInstance(row0: SIMD4(inv[0][0], inv[1][0], inv[2][0], inv[3][0]),
                           row1: SIMD4(inv[0][1], inv[1][1], inv[2][1], inv[3][1]),
                           row2: SIMD4(inv[0][2], inv[1][2], inv[2][2], inv[3][2]),
-                          blasRoot: blasRoot, mask: inst.mask, pad1: UInt32(inst.assembly + 1) | (sways ? CustomRayTracer.sways : 0))
+                          blasRoot: tree.map { UInt32(truncatingIfNeeded: $0) } ?? blasRoot, pad0: tree.map { UInt32($0 >> 32) } ?? 0,
+                          mask: inst.mask | (tree == nil ? 0 : ownTree),
+                          pad1: UInt32(inst.assembly + 1) | (sways ? CustomRayTracer.sways : 0))
     }
 
     /// CPU build (`METALRENDERER_RT_BUILD=cpu` only): this frame's instance data and dynamic TLAS.
@@ -417,8 +449,10 @@ final class CustomRayTracer {
         guard CustomRayTracer.cpuBuild else { return }
         let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
         for (i, s) in scene.instances.enumerated() {
-            inst[i] = CustomRayTracer.rtInstance(s, blasRoot: s.mesh >= 0 ? blasRoots[s.mesh] : s.assembly >= 0 ? assemblyRoots[s.assembly] : 0,
-                                                 sways: s.mesh >= 0 && swayingMeshes[s.mesh])
+            let root = s.mesh >= 0 ? blasRoots[s.mesh] : s.assembly >= 0 ? assemblyRoots[s.assembly] : 0
+            let own = s.mesh >= 0 && root != BVHNode.none && root & CustomRayTracer.blockRoot != 0
+            inst[i] = CustomRayTracer.rtInstance(s, blasRoot: root, sways: s.mesh >= 0 && swayingMeshes[s.mesh],
+                                                 tree: own ? blockTrees[Int(root & ~CustomRayTracer.blockRoot)].gpuAddress : nil)
         }
         guard dynamicIds.count >= 2 else { return }
         let boxes = dynamicIds.map { i -> AABB in
@@ -486,6 +520,7 @@ final class CustomRayTracer {
             enc.setBuffer(leafBoxes, offset: 0, index: 5)
             // Plants turn to voxels where a voxel is `lodBias` traced pixels: by the view the virtual geometry is cut for.
             enc.setBuffer(voxelGrids, offset: 0, index: 6)
+            enc.setBuffer(blockTable, offset: 0, index: 8)
             var lodView = SIMD4(view.camPos, wind.lodBias / max(view.pixelScale, 1e-6))
             enc.setBytes(&lodView, length: 16, index: 7)
             enc.setComputePipelineState(pipelines.prep)
@@ -662,13 +697,14 @@ final class CustomRayTracer {
 
     /// Binds the scene's argument buffer; with `declare` (the first bind in an encoder) also declares what it points at.
     /// The buffers a frame of a scene without virtual geometry reads (SceneBuffers.touch).
-    var buffers: [MTLBuffer] { tlasNodes + instances + [blasNodes, triangles, parts, voxelGrids, voxels, cutouts] }
+    var buffers: [MTLBuffer] { tlasNodes + instances + [blasNodes, triangles, parts, voxelGrids, voxels, cutouts] + blockTrees }
 
     func bind(_ enc: ComputePass, slot: Int, declare: Bool = true) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
         guard declare else { return }
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot], parts, voxelGrids, voxels, cutouts] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
                          + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
+        if !blockTrees.isEmpty { enc.useResources(blockTrees, usage: .read) }
         enc.useResource(stats, usage: [.read, .write])
     }
 

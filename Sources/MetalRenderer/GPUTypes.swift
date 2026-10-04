@@ -132,6 +132,11 @@ struct GPUMesh {
     var sways: UInt32 = 0              // 1 = ground cover that leans in the wind (Scene.coverLean)
     var cutout: UInt32 = 0             // leaf cards: its triangles from (the low 24 bits) on are cut out by the alpha
                                        // layer (the top byte) - 1 of Scene.cutouts; 0 = none
+    /// A mesh in a buffer of its own (MeshBlock): the buffer's GPU address, written where the scene's buffers are made
+    /// (0 in the scene, and for a mesh in the scene's buffers), and how many vertices it has there.
+    var block: UInt64 = 0
+    var vertexCount: UInt32 = 0
+    var pad: UInt32 = 0
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
@@ -261,7 +266,7 @@ struct GPUFogParams {
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
-    precondition(MemoryLayout<GPUMesh>.stride == 24, "GPUMesh layout mismatch")
+    precondition(MemoryLayout<GPUMesh>.stride == 40 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
     precondition(MemoryLayout<GPUJoint>.stride == 48, "GPUJoint layout mismatch")

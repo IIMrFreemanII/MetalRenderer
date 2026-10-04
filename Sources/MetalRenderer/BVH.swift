@@ -319,29 +319,12 @@ enum BVHBuilder {
                     let mesh = meshes[m]
                     let triCount = Int(mesh.indexCount) / 3, first = Int(mesh.firstIndex)
                     let offset = Int(mesh.vertexOffset)   // a pose slot's own vertices (Crowd)
-                    var boxes: [AABB] = []
-                    boxes.reserveCapacity(triCount)
-                    for t in 0..<triCount {
-                        var b = AABB()
-                        for k in 0..<3 { b.grow(pos[Int(idx[first + 3 * t + k]) + offset]) }
-                        boxes.append(b)
-                    }
-                    let tree = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+                    guard triCount > 0 else { return }   // (a mesh that is elsewhere: MeshBlock)
+                    let corners = pos.baseAddress! + offset, indices = UnsafeBufferPointer(rebasing: idx[first..<first + 3 * triCount])
+                    let tree = build(boxes: triangleBoxes(positions: corners, indices: indices), masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
                     // The mesh's triangles in leaf order, into its own range of the buffer.
-                    var out = 3 * triBases[m]
-                    for t in tree.order {
-                        let base = first + 3 * t
-                        let p0 = pos[Int(idx[base]) + offset], p1 = pos[Int(idx[base + 1]) + offset]
-                        let p2 = pos[Int(idx[base + 2]) + offset]
-                        var spare = (UInt32(0), UInt32(0))
-                        if mesh.cutout != 0, t >= Int(mesh.cutout & 0xFF_FFFF) {
-                            spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: mesh.cutout >> 24)
-                        }
-                        tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
-                        tris[out + 1] = SIMD4(p1 - p0, Float(bitPattern: spare.0))
-                        tris[out + 2] = SIMD4(p2 - p0, Float(bitPattern: spare.1))
-                        out += 3
-                    }
+                    writeTriangles(order: tree.order, positions: corners, uvs: uv.baseAddress, indices: indices, cutout: mesh.cutout,
+                                   into: tris.baseAddress! + 3 * triBases[m])
                     slots[m] = tree   // its own slot: no lock
                 }
             }
@@ -382,6 +365,60 @@ enum BVHBuilder {
             result.maxDepth = max(result.maxDepth, depths[m])
         }
         return result
+    }
+
+    /// A mesh's triangles' boxes. `positions`: where the vertices its `indices` name start.
+    private static func triangleBoxes(positions pos: UnsafePointer<SIMD3<Float>>, indices idx: UnsafeBufferPointer<UInt32>) -> [AABB] {
+        var boxes: [AABB] = []
+        boxes.reserveCapacity(idx.count / 3)
+        for t in 0..<idx.count / 3 {
+            var b = AABB()
+            for k in 0..<3 { b.grow(pos[Int(idx[3 * t + k])]) }
+            boxes.append(b)
+        }
+        return boxes
+    }
+
+    /// A mesh's triangles as the traversal reads them, three vectors each (`BLASResult.triangles`), in `order`.
+    private static func writeTriangles(order: [Int], positions pos: UnsafePointer<SIMD3<Float>>, uvs uv: UnsafePointer<SIMD2<Float>>?,
+                                       indices idx: UnsafeBufferPointer<UInt32>, cutout: UInt32, into tris: UnsafeMutablePointer<SIMD4<Float>>) {
+        var out = 0
+        for t in order {
+            let base = 3 * t
+            let p0 = pos[Int(idx[base])], p1 = pos[Int(idx[base + 1])], p2 = pos[Int(idx[base + 2])]
+            var spare = (UInt32(0), UInt32(0))
+            if cutout != 0, t >= Int(cutout & 0xFF_FFFF), let uv {
+                spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: cutout >> 24)
+            }
+            tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
+            tris[out + 1] = SIMD4(p1 - p0, Float(bitPattern: spare.0))
+            tris[out + 2] = SIMD4(p2 - p0, Float(bitPattern: spare.1))
+            out += 3
+        }
+    }
+
+    /// One mesh's tree, into memory of its own (MeshBlock): `storage` is asked for it once the tree's size is known.
+    /// There: the nodes, the root first, then three vectors for each triangle; the leaves count their triangles from
+    /// the memory's start, so that the traversal needs one address for both (`nodes`, the count returned, is a
+    /// multiple of three: 4 nodes are as long as 3 triangles). `indices` are into `positions` and `uvs`. Returns nil
+    /// if `storage` does.
+    static func buildBLAS(positions: UnsafePointer<SIMD3<Float>>, uvs: UnsafePointer<SIMD2<Float>>, indices: UnsafeBufferPointer<UInt32>,
+                          cutout: UInt32, storage: (_ nodes: Int) -> UnsafeMutableRawPointer?) -> (nodes: Int, bounds: AABB, depth: Int)? {
+        let tree = build(boxes: triangleBoxes(positions: positions, indices: indices), masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
+        let used = tree.nodes.isEmpty ? 0 : max((tree.nodes.count - 1) / 2, 1), count = (used + 2) / 3 * 3
+        guard let memory = storage(count) else { return nil }
+        precondition(MemoryLayout<BVHNode>.stride * 3 == MemoryLayout<SIMD4<Float>>.stride * 3 * 4)
+        let firstTriangle = count / 3 * 4
+        writeTriangles(order: tree.order, positions: positions, uvs: uvs, indices: indices, cutout: cutout,
+                       into: (memory + count * MemoryLayout<BVHNode>.stride).bindMemory(to: SIMD4<Float>.self, capacity: indices.count))
+        var nodes: [BVHNode] = []
+        nodes.reserveCapacity(count)
+        let root = emit(tree.nodes, nodeBase: 0, into: &nodes, forceInternalRoot: true) { BVHNode.blasLeaf(first: firstTriangle + $0.start, count: $0.count) }
+        precondition(nodes.count == used && (used == 0 || root == 0), "a tree's root is its first node")
+        nodes += [BVHNode](repeating: BVHNode(), count: count - used)
+        let out = memory.bindMemory(to: BVHNode.self, capacity: count)
+        for (i, node) in nodes.enumerated() { out[i] = node }
+        return (count, tree.nodes.first?.box ?? AABB(), depth(tree.nodes))
     }
 
     /// Of `buildBLAS`'s output: a change of the builder makes other files in the cache.

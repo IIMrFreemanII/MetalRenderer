@@ -1,6 +1,138 @@
 import Metal
 import simd
 
+/// A mesh in a buffer of its own: a borrowed mesh (`Scene.BorrowedMesh`: an open world's tile, a plant of the
+/// library), which is the same triangles in every scene that has a mesh of its name. The scenes share the block: a
+/// scene made around the next tile takes the blocks of the one being drawn (`SceneBuffers.Options.blocks`) and fills
+/// only the ones that are new, and a block goes when the last scene that has it does. A hit reaches its vertices
+/// through its address in the mesh table (`GPUMesh.block`, STREAMED in the shaders), the custom tracer its tree
+/// through its address in its instances' records.
+final class MeshBlock {
+    let name: String
+    /// `vertexCount` positions, as many normals, as many UVs, `indexCount` indices into them, and a material offset
+    /// (a byte) per triangle: one after the other (fetchHitVertices in Shaders/Surface.metal reads them so).
+    let geometry: MTLBuffer
+    let vertexCount: Int, indexCount: Int
+    var indexOffset: Int { MeshBlock.indexOffset(vertices: vertexCount) }
+    static func indexOffset(vertices: Int) -> Int { vertices * (2 * MemoryLayout<SIMD3<Float>>.stride + MemoryLayout<SIMD2<Float>>.stride) }
+
+    /// The custom tracer's tree over it, in a buffer of its own: `nodeCount` nodes, the root first (none: the mesh has
+    /// no triangle), then three vectors per triangle in leaf order (BVHBuilder.BLASResult.triangles), which the
+    /// leaves count from the buffer's start. `cutout`: the mesh's, as the scene the tree was built for had it (it is
+    /// in the triangles).
+    struct Tree {
+        let buffer: MTLBuffer
+        let nodeCount: Int
+        let triangles: Int
+        let bounds: AABB
+        let depth: Int
+        let cutout: UInt32
+    }
+    private var built: Tree?
+    private let lock = NSLock()
+    /// A mesh of fewer triangles isn't cached: its tree is built sooner than a file is read.
+    private static let cachedTriangles = 4_000
+    private enum Section {
+        static let nodes = SectionFile.id("node"), triangles = SectionFile.id("tris"), shape = SectionFile.id("shap"), bounds = SectionFile.id("bnds")
+    }
+
+    init(device: MTLDevice, name: String, mesh: Scene.BorrowedMesh) throws {
+        self.name = name
+        (vertexCount, indexCount) = (mesh.positions.count, mesh.indices.count)
+        let indexOffset = MeshBlock.indexOffset(vertices: vertexCount)
+        let length = indexOffset + indexCount * MemoryLayout<UInt32>.stride + indexCount / 3
+        guard let buffer = device.makeBuffer(length: max((length + 15) & ~15, 16), options: .storageModeShared) else {
+            throw RendererError.resourceCreation("buffer \(name)")
+        }
+        buffer.label = name
+        geometry = buffer
+        var at = buffer.contents()
+        func copy<T>(_ from: Stored<T>) {
+            from.withUnsafeBufferPointer { if let base = $0.baseAddress { at.copyMemory(from: base, byteCount: $0.count * MemoryLayout<T>.stride) } }
+            at += from.count * MemoryLayout<T>.stride
+        }
+        copy(mesh.positions)
+        copy(mesh.normals)
+        copy(mesh.uvs)
+        copy(mesh.indices)
+        if let materials = mesh.materials { copy(materials) }   // (a new buffer is zeros: one material)
+    }
+
+    var hasTree: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return built != nil
+    }
+
+    /// The tree, built the first time it is asked for (any thread).
+    func tree(device: MTLDevice, cutout: UInt32) throws -> Tree {
+        lock.lock()
+        defer { lock.unlock() }
+        if let built, built.cutout == cutout { return built }
+        let base = geometry.contents()
+        let positions = base.bindMemory(to: SIMD3<Float>.self, capacity: 2 * vertexCount)
+        let uvs = (base + 2 * vertexCount * MemoryLayout<SIMD3<Float>>.stride).bindMemory(to: SIMD2<Float>.self, capacity: vertexCount)
+        let indices = UnsafeBufferPointer(start: (base + indexOffset).bindMemory(to: UInt32.self, capacity: indexCount), count: indexCount)
+        func storage(_ nodes: Int) -> MTLBuffer? {
+            let made = device.makeBuffer(length: max(nodes * MemoryLayout<BVHNode>.stride + indexCount * MemoryLayout<SIMD4<Float>>.stride, 16),
+                                         options: .storageModeShared)
+            made?.label = "tree of " + name
+            return made
+        }
+        // From the cache, where trees are cached (an unoptimised build, which takes a minute over an open world's):
+        // a file named by the mesh's bytes.
+        var cache: String?
+        if GeneratedCache.cachesTrees, indexCount / 3 >= MeshBlock.cachedTriangles {
+            var hasher = GeneratedCache.Hasher()
+            hasher.add(UnsafeBufferPointer(start: positions, count: vertexCount))
+            hasher.add(indices)
+            if cutout != 0 {   // only cards' UVs are in the tree
+                hasher.add(UnsafeBufferPointer(start: uvs, count: vertexCount))
+                hasher.add("cutout \(cutout)")
+            }
+            cache = "tree-\(hasher.name()).sect"
+        }
+        let key = "tree v\(BVHBuilder.version)"
+        if let cache, let file = GeneratedCache.load(cache, key: key), let shape: [Int] = file.array(Section.shape), shape.count == 2,
+           let bounds: [AABB] = file.array(Section.bounds), bounds.count == 1, let buffer = storage(shape[0]) {
+            let nodeBytes = shape[0] * MemoryLayout<BVHNode>.stride, triangleBytes = indexCount * MemoryLayout<SIMD4<Float>>.stride
+            let read = file.withBytes(Section.nodes) { raw -> Bool in
+                guard raw.count == nodeBytes, let from = raw.baseAddress else { return raw.count == nodeBytes }
+                buffer.contents().copyMemory(from: from, byteCount: nodeBytes)
+                return true
+            } == true && file.withBytes(Section.triangles) { raw -> Bool in
+                guard raw.count == triangleBytes, let from = raw.baseAddress else { return raw.count == triangleBytes }
+                (buffer.contents() + nodeBytes).copyMemory(from: from, byteCount: triangleBytes)
+                return true
+            } == true
+            if read {
+                let tree = Tree(buffer: buffer, nodeCount: shape[0], triangles: indexCount / 3, bounds: bounds[0], depth: shape[1], cutout: cutout)
+                built = tree
+                return tree
+            }
+        }
+        var buffer: MTLBuffer?
+        let shape = BVHBuilder.buildBLAS(positions: positions, uvs: uvs, indices: indices, cutout: cutout) { nodes in
+            buffer = storage(nodes)
+            return buffer?.contents()
+        }
+        guard let shape, let buffer else { throw RendererError.resourceCreation("the tree of \(name)") }
+        let tree = Tree(buffer: buffer, nodeCount: shape.nodes, triangles: indexCount / 3, bounds: shape.bounds, depth: shape.depth, cutout: cutout)
+        if let cache {
+            var writer = SectionFile.Writer()
+            let nodes = buffer.contents().bindMemory(to: BVHNode.self, capacity: shape.nodes)
+            let triangles = (buffer.contents() + shape.nodes * MemoryLayout<BVHNode>.stride).bindMemory(to: SIMD4<Float>.self, capacity: indexCount)
+            writer.add(Section.nodes, Array(UnsafeBufferPointer(start: nodes, count: shape.nodes)))
+            writer.add(Section.triangles, Array(UnsafeBufferPointer(start: triangles, count: indexCount)))
+            writer.add(Section.shape, [shape.nodes, shape.depth])
+            writer.add(Section.bounds, [shape.bounds])
+            GeneratedCache.store(cache, key: key, writer)
+        }
+        built = tree
+        return tree
+    }
+}
+
 /// A scene on the GPU: its geometry's buffers, its instances' records, and for Metal's ray tracer its acceleration
 /// structures. Made on any thread: where the scene is prepared (the background, when the app changes scenes), so
 /// that installing a scene between two frames only swaps these in.
@@ -11,7 +143,7 @@ import simd
 ///
 /// A mesh with a name (`Scene.meshNames`: an open world's tile, a generated plant) is the same triangles in every
 /// scene that has it, so its structure outlives the scene: the next scene's `Options.known` hands it over, and only
-/// the meshes that are new are built.
+/// the meshes that are new are built. A borrowed mesh's vertices outlive the scene the same way (`MeshBlock`).
 struct SceneBuffers {
     struct Options {
         var rayTracer: RayTracerKind
@@ -24,9 +156,15 @@ struct SceneBuffers {
         var instanceUsage: MTLAccelerationStructureUsage = [.preferFastBuild, .refit]
         /// The per-mesh structures of the scene being drawn, by their meshes' names.
         var known: [String: MTLAccelerationStructure] = [:]
+        /// Its borrowed meshes' blocks, by their names.
+        var blocks: [String: MeshBlock] = [:]
     }
 
+    /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
     let positions, normals, indices, meshes, uvs, emissive, triangleMaterials: MTLBuffer
+    /// Per mesh: the block of a borrowed mesh, nil for a mesh of the arrays. Empty if no mesh is borrowed.
+    let blocks: [MeshBlock?]
+    private(set) var namedBlocks: [String: MeshBlock] = [:]
     let materials: [MTLBuffer]                              // per slot: light proxies' and leaves' materials change
     let instanceData: [MTLBuffer]                           // per slot (GPUInstanceData)
     let still: Bool                                         // the instances are written, and their structure built
@@ -42,9 +180,13 @@ struct SceneBuffers {
     static func descriptorStride(_ api: RenderAPI) -> Int { api == .metal4 ? 72 : 64 }
     private static let buildBatchBytes = 256 << 20
 
+    /// The borrowed meshes' buffers: a hit reads them through the addresses in the mesh table.
+    var blockBuffers: [MTLBuffer] { blocks.compactMap { $0?.geometry } }
+
     /// Every buffer of the scene a frame reads.
     var buffers: [MTLBuffer] {
         [positions, normals, indices, meshes, uvs, emissive, triangleMaterials] + materials + (still ? [instanceData[0]] : instanceData)
+            + blockBuffers
     }
 
     /// What the scene takes on the GPU, in megabytes: its geometry, its instances' records, and Metal's structures
@@ -55,7 +197,8 @@ struct SceneBuffers {
             var seen = Set<ObjectIdentifier>()
             return list.filter { seen.insert(ObjectIdentifier($0)).inserted }
         }
-        return (mb(([positions, normals, indices, meshes, uvs, emissive, triangleMaterials] + materials).reduce(0) { $0 + $1.length }),
+        return (mb(([positions, normals, indices, meshes, uvs, emissive, triangleMaterials] + materials + distinct(blockBuffers))
+                       .reduce(0) { $0 + $1.length }),
                 mb(distinct(instanceData + instanceDescriptors).reduce(0) { $0 + $1.length }),
                 mb(primitives.reduce(0) { $0 + $1.size }),
                 mb(distinct(instanceStructures).reduce(0) { $0 + $1.size } + instanceScratch.reduce(0) { $0 + $1.length }))
@@ -95,46 +238,46 @@ struct SceneBuffers {
             made.label = label
             return made
         }
-        if scene.borrowed.isEmpty {
-            positions = try buffer(scene.positions, "positions")
-            normals = try buffer(scene.normals, "normals")
-            indices = try buffer(scene.indices, "indices")
-            uvs = try buffer(scene.uvs, "uvs")
-            triangleMaterials = try buffer(scene.triangleMaterials, "triangleMaterials")
-        } else {
-            // The scene's arrays, then its borrowed meshes, each copied from where it is (a tile's file) to its place:
-            // its indices become the scene's.
-            func whole<T>(_ array: [T], _ count: Int, _ label: String) throws -> MTLBuffer {
-                let made = try empty(count * MemoryLayout<T>.stride, label)
-                array.withUnsafeBytes { if let base = $0.baseAddress, $0.count > 0 { made.contents().copyMemory(from: base, byteCount: $0.count) } }
-                return made
-            }
-            positions = try whole(scene.positions, scene.vertexCount, "positions")
-            normals = try whole(scene.normals, scene.vertexCount, "normals")
-            uvs = try whole(scene.uvs, scene.vertexCount, "uvs")
-            indices = try whole(scene.indices, scene.indexCount, "indices")
-            triangleMaterials = try whole(scene.triangleMaterials, scene.hasMaterialOffsets ? scene.indexCount / 3 : 0,
-                                          "triangleMaterials")   // (zeros where a mesh has none)
-            let borrowed = scene.borrowed
-            let p = positions.contents(), n = normals.contents(), uv = uvs.contents(), offsets = triangleMaterials.contents()
-            let index = indices.contents().bindMemory(to: UInt32.self, capacity: scene.indexCount)
-            DispatchQueue.concurrentPerform(iterations: borrowed.count) { b in
-                let mesh = borrowed[b]
-                func copy<T>(_ from: Stored<T>, to: UnsafeMutableRawPointer, at element: Int) {
-                    from.withUnsafeBufferPointer { to.advanced(by: element * MemoryLayout<T>.stride).copyMemory(from: $0.baseAddress!, byteCount: $0.count * MemoryLayout<T>.stride) }
-                }
-                guard mesh.positions.count > 0, mesh.indices.count > 0 else { return }
-                copy(mesh.positions, to: p, at: mesh.firstVertex)
-                copy(mesh.normals, to: n, at: mesh.firstVertex)
-                copy(mesh.uvs, to: uv, at: mesh.firstVertex)
-                if let materials = mesh.materials { copy(materials, to: offsets, at: mesh.firstIndex / 3) }
-                let base = UInt32(mesh.firstVertex)
-                mesh.indices.withUnsafeBufferPointer { local in
-                    for k in local.indices { index[mesh.firstIndex + k] = local[k] + base }
-                }
+        positions = try buffer(scene.positions, "positions")
+        normals = try buffer(scene.normals, "normals")
+        indices = try buffer(scene.indices, "indices")
+        uvs = try buffer(scene.uvs, "uvs")
+        // (Zeros for the arrays' triangles where only borrowed meshes have several materials: a hit reads one for each.)
+        triangleMaterials = scene.triangleMaterials.isEmpty && scene.hasMaterialOffsets
+            ? try empty(scene.indices.count / 3, "triangleMaterials") : try buffer(scene.triangleMaterials, "triangleMaterials")
+        // The borrowed meshes: each in the block the scene being drawn has it in, or copied from where it is (a tile's
+        // file) into a new one. The mesh table says where.
+        guard !scene.hasBorrowedMeshes || !scene.borrowed.isEmpty else {
+            throw RendererError.resourceCreation("the buffers of a scene that has let go of its borrowed meshes")
+        }
+        var table = scene.meshes
+        var blocks = [MeshBlock?](repeating: nil, count: scene.borrowed.isEmpty ? 0 : scene.meshes.count)
+        var new: [Scene.BorrowedMesh] = []
+        for mesh in scene.borrowed {
+            if let name = scene.meshNames[mesh.mesh], let known = options.blocks[name], known.vertexCount == mesh.positions.count,
+               known.indexCount == mesh.indices.count {
+                blocks[mesh.mesh] = known
+            } else {
+                new.append(mesh)
             }
         }
-        meshes = try buffer(scene.meshes, "meshes")
+        var made = [MeshBlock?](repeating: nil, count: new.count)
+        made.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: new.count) { k in
+                out[k] = try? MeshBlock(device: device, name: scene.meshNames[new[k].mesh] ?? "mesh \(new[k].mesh)", mesh: new[k])
+            }
+        }
+        for (k, mesh) in new.enumerated() {
+            guard let block = made[k] else { throw RendererError.resourceCreation("buffer of mesh \(mesh.mesh)") }
+            blocks[mesh.mesh] = block
+        }
+        for (m, block) in blocks.enumerated() {
+            guard let block else { continue }
+            table[m].block = block.geometry.gpuAddress
+            namedBlocks[block.name] = block
+        }
+        self.blocks = blocks
+        meshes = try buffer(table, "meshes")
         materials = try (0..<options.slots).map { try buffer(scene.materials, "materials\($0)") }
         emissive = try buffer(scene.emissiveTriangles, "emissiveTriangles")
 
@@ -265,11 +408,17 @@ struct SceneBuffers {
         for i in new {
             let mesh = scene.meshes[i]
             let geometry = MTLAccelerationStructureTriangleGeometryDescriptor()
-            geometry.vertexBuffer = positions
-            geometry.vertexBufferOffset = Int(mesh.vertexOffset) * MemoryLayout<SIMD3<Float>>.stride
+            if let block = blocks.isEmpty ? nil : blocks[i] {
+                geometry.vertexBuffer = block.geometry
+                geometry.indexBuffer = block.geometry
+                geometry.indexBufferOffset = block.indexOffset
+            } else {
+                geometry.vertexBuffer = positions
+                geometry.vertexBufferOffset = Int(mesh.vertexOffset) * MemoryLayout<SIMD3<Float>>.stride
+                geometry.indexBuffer = indices
+                geometry.indexBufferOffset = Int(mesh.firstIndex) * MemoryLayout<UInt32>.stride
+            }
             geometry.vertexStride = MemoryLayout<SIMD3<Float>>.stride
-            geometry.indexBuffer = indices
-            geometry.indexBufferOffset = Int(mesh.firstIndex) * MemoryLayout<UInt32>.stride
             geometry.indexType = .uint32
             geometry.triangleCount = Int(mesh.indexCount) / 3
             geometry.opaque = true
