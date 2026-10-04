@@ -318,7 +318,7 @@ MeshLightPoint sampleMeshLightPoint(Light light, float2 u, thread const SceneDat
     if (mp.prob <= 0.0f) return mp;
     float su = sqrt(saturate((u.x - prev) / mp.prob));   // u.x rescaled within the pick: uniform again
     mp.b1 = su * (1.0f - u.y); mp.b2 = su * u.y;
-    InstanceData inst = s.instances[as_type<uint>(light.params.w)];
+    InstanceData inst = instanceRecord(s.instances, as_type<uint>(light.params.w));
     placeMeshLightPoint(mp, inst.transform);
     mp.material = inst.materialIndex;
     mp.valid = mp.area2 > 0.0f;
@@ -486,7 +486,7 @@ inline MeshLightPoint triangleLightPoint(thread const SceneData& s, device const
                                          device const TriangleInfo* tris, uint index, float2 uv, bool prev) {
     MeshLightPoint mp;
     mp.tri = s.emissive[index];
-    InstanceData inst = s.instances[as_type<uint>(lights[tris[index].light].params.w)];
+    InstanceData inst = instanceRecord(s.instances, as_type<uint>(lights[tris[index].light].params.w));
     float su = sqrt(uv.x);
     mp.b1 = su * (1.0f - uv.y); mp.b2 = su * uv.y;
     placeMeshLightPoint(mp, prev ? inst.prevTransform : inst.transform);

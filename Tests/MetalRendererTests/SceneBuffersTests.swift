@@ -4,7 +4,8 @@ import simd
 @testable import MetalRenderer
 
 /// A scene on the GPU (SceneBuffers.swift): borrowed meshes in buffers of their own, a still scene's one set of
-/// instances, and the blocks and Metal's per-mesh structures handed on from one scene to the next.
+/// instances, and the blocks (of meshes, of instances) and Metal's per-mesh structures handed on from one scene to
+/// the next.
 final class SceneBuffersTests: XCTestCase {
     private func quad(_ y: Float) -> MeshGeometry {
         ([[0, y, 0], [1, y, 0], [1, y, 1], [0, y, 1]], [SIMD3<Float>](repeating: [0, 1, 0], count: 4), [0, 1, 2, 0, 2, 3])
@@ -153,6 +154,143 @@ final class SceneBuffersTests: XCTestCase {
         XCTAssertFalse(moving.instanceStructures[0] === moving.instanceStructures[1])
         XCTAssertEqual(moving.instanceScratch.count, 3)
         XCTAssertFalse(moving.instanceDescriptors[0] === moving.instanceDescriptors[1])
+    }
+
+    /// Two named meshes with an instance each, and a group of three more instances of them. `made`: called when the
+    /// group's instances are asked for.
+    private func grouped(group: String = "a tile's trees", made: @escaping () -> Void = {}) -> Scene {
+        Scene(SceneSettings(kind: .cornell)) { scene in
+            let material = scene.addMaterial(albedo: [0.5, 0.5, 0.5])
+            let a = scene.addMesh(self.quad(0), name: "quad a"), b = scene.addMesh(self.quad(1), name: "quad b")
+            scene.addInstance(a, material, matrix_identity_float4x4)
+            scene.addInstance(b, material, translate([0, 0, 3]))
+            scene.addGroup(name: group, count: 3) {
+                made()
+                return (0..<3).map { i in
+                    let m = translate([Float(10 + i), 0, 0])
+                    return Scene.Instance(mesh: i == 1 ? b : a, material: material, mask: Scene.maskGeometry, transform: m, prevTransform: m,
+                                          animation: nil, normalMatrix: m.inverse.transpose)
+                }
+            }
+        }
+    }
+
+    /// A group's instances are made once and go from scene to scene in a block. The custom tracer has every record
+    /// in the scene's buffer, the block's copied there, and the block's tree as a part of its own.
+    func testInstanceGroupsGoFromSceneToScene() throws {
+        var makes = 0
+        let scene = grouped { makes += 1 }
+        XCTAssertTrue(scene.hasGroups && scene.isStill)
+        XCTAssertEqual(scene.instances.count, 2, "the group's instances are not the scene's own")
+        XCTAssertEqual(scene.lightTypeMask & 0x0100_0000, 0x0100_0000, "GROUPED")
+        XCTAssertEqual(makes, 0)
+
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        var options = SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3)
+        let first = try SceneBuffers(device: device, queue: queue, scene: scene, options: options)
+        XCTAssertEqual(makes, 1)
+        XCTAssertEqual(first.instanceCount, 5)
+        XCTAssertNil(first.instanceTable)
+        let block = try XCTUnwrap(first.instanceBlocks.first)
+        XCTAssertEqual(block.name, "a tile's trees")
+        XCTAssertEqual(block.count, 3)
+        XCTAssertFalse(block.ownsBuffer)
+        XCTAssertTrue(block.records.buffer === first.instanceData[0])
+        XCTAssertEqual(block.records.offset, 2 * MemoryLayout<GPUInstanceData>.stride, "after the scene's own")
+        func places(_ buffers: SceneBuffers) -> [Float] {
+            (contents(buffers.instanceData[0], 5) as [GPUInstanceData]).map { $0.transform.columns.3.x }
+        }
+        XCTAssertEqual(places(first), [0, 0, 10, 11, 12])
+        XCTAssertEqual((contents(first.instanceData[0], 5) as [GPUInstanceData]).map(\.meshIndex), [0, 1, 0, 1, 0])
+
+        // The next scene with a group of that name: not made again; its records are copied into that scene's buffer,
+        // where the block has them from then on.
+        options.instanceBlocks = first.namedInstanceBlocks
+        XCTAssertEqual(Array(options.instanceBlocks.keys), ["a tile's trees"])
+        let next = try SceneBuffers(device: device, queue: queue, scene: grouped { makes += 1 }, options: options)
+        XCTAssertEqual(makes, 1)
+        XCTAssertTrue(next.instanceBlocks[0] === block)
+        XCTAssertTrue(block.records.buffer === next.instanceData[0])
+        XCTAssertEqual(places(next), [0, 0, 10, 11, 12])
+        XCTAssertEqual(places(first), [0, 0, 10, 11, 12], "the scene being drawn keeps its own")
+        // A group of another name is made, in a block with a number of its own.
+        let other = try SceneBuffers(device: device, queue: queue, scene: grouped(group: "another tile's") { makes += 1 }, options: options)
+        XCTAssertEqual(makes, 2)
+        XCTAssertFalse(other.instanceBlocks[0] === block)
+        XCTAssertNotEqual(other.instanceBlocks[0].number, block.number)
+
+        // The custom tracer's tree over the scene: every instance is a leaf of it, the block's from its own tree,
+        // which is built once and copied in.
+        XCTAssertFalse(block.hasTree)
+        let tracer = try CustomRayTracer(device: device, scene: scene, geometry: first, slots: 3)
+        XCTAssertTrue(block.hasTree)
+        let tree = block.tree { _, _ in AABB(lo: [0, 0, 0], hi: [1, 1, 1]) }
+        XCTAssertEqual(tree.nodes.count, 2)
+        XCTAssertEqual(tree.parts.count, 2, "three instances are one part's worth: the root's two children")
+        let nodes: [BVHNode] = contents(tracer.buffers[0], 5)   // three over the scene's two and the two parts, then the block's two
+        var leaves: [UInt32] = [], open: [UInt32] = [0]
+        while let n = open.popLast() {
+            for child in 0..<2 {
+                let ref = nodes[Int(n)].ref(child)
+                if ref & BVHNode.leafBit != 0 { leaves.append(ref & ~BVHNode.leafBit) } else { open.append(ref) }
+            }
+        }
+        XCTAssertEqual(leaves.sorted(), [0, 1, 2, 3, 4])
+    }
+
+    /// Metal's tracer: a block's records are in a buffer of its own, found through the scene's table; the scene's
+    /// structure is built over every instance's descriptor, which names the instance by its id.
+    func testMetalFindsABlocksRecordsThroughATable() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        try XCTSkipUnless(device.supportsRaytracing, "no ray tracing on this GPU")
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        var makes = 0
+        var options = SceneBuffers.Options(rayTracer: .metal, api: .metal3, slots: 3)
+        let first = try SceneBuffers(device: device, queue: queue, scene: grouped { makes += 1 }, options: options)
+        let block = try XCTUnwrap(first.instanceBlocks.first)
+        XCTAssertTrue(block.ownsBuffer)
+        XCTAssertTrue(first.indirect, "descriptors with ids, under Metal 3 too")
+        XCTAssertEqual(first.instanceCount, 5)
+        XCTAssertEqual(first.instanceStructures.count, 3)
+        let table: [UInt64] = contents(try XCTUnwrap(first.instanceTable), InstanceBlock.capacity)
+        XCTAssertEqual(table[0], first.instanceData[0].gpuAddress)
+        XCTAssertEqual(table[block.number], block.records.buffer.gpuAddress)
+        XCTAssertEqual(table.filter { $0 != 0 }.count, 2)
+        XCTAssertEqual(first.instanceResources.count, 3)
+        XCTAssertTrue(first.buffers.contains { $0 === block.records.buffer })
+        func ids(_ buffers: SceneBuffers) -> [UInt32] {
+            (0..<5).map { buffers.instanceDescriptors[0].contents().load(fromByteOffset: $0 * SceneBuffers.indirectStride + 60, as: UInt32.self) }
+        }
+        XCTAssertEqual(ids(first), [0, 1, block.id(0), block.id(1), block.id(2)])
+        XCTAssertEqual(block.id(2), UInt32(block.number) << 20 | 2)
+
+        // The next scene takes the block, and with the meshes' structures its descriptors as they are.
+        options.instanceBlocks = first.namedInstanceBlocks
+        options.known = first.namedPrimitives
+        let next = try SceneBuffers(device: device, queue: queue, scene: grouped { makes += 1 }, options: options)
+        XCTAssertEqual(makes, 1)
+        XCTAssertTrue(next.instanceBlocks[0] === block)
+        XCTAssertEqual(ids(next), ids(first))
+        func structure(_ buffers: SceneBuffers, _ i: Int) -> MTLResourceID {
+            buffers.instanceDescriptors[0].contents().load(fromByteOffset: i * SceneBuffers.indirectStride + 64, as: MTLResourceID.self)
+        }
+        XCTAssertEqual(structure(next, 3)._impl, next.primitives[1].gpuResourceID._impl)
+        // Without them the meshes are built again, and the block's descriptors name the new structures.
+        options.known = [:]
+        let rebuilt = try SceneBuffers(device: device, queue: queue, scene: grouped { makes += 1 }, options: options)
+        XCTAssertTrue(rebuilt.instanceBlocks[0] === block)
+        XCTAssertEqual(structure(rebuilt, 3)._impl, rebuilt.primitives[1].gpuResourceID._impl)
+        XCTAssertNotEqual(structure(rebuilt, 3)._impl, structure(first, 3)._impl)
+
+        // A block whose records are in a custom tracer's scene isn't Metal's to take: its group is made again.
+        let custom = try SceneBuffers(device: device, queue: queue, scene: grouped { makes += 1 },
+                                      options: SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3))
+        XCTAssertEqual(makes, 2)
+        options.instanceBlocks = custom.namedInstanceBlocks
+        let again = try SceneBuffers(device: device, queue: queue, scene: grouped { makes += 1 }, options: options)
+        XCTAssertEqual(makes, 3)
+        XCTAssertFalse(again.instanceBlocks[0] === custom.instanceBlocks[0])
     }
 
     /// The crowd's pose slots: a structure each for the frames to refit, the size of its character's first pose's

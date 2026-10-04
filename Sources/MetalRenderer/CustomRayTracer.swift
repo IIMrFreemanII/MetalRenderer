@@ -101,6 +101,13 @@ final class CustomRayTracer {
     /// rtPrepKernel writes into their instances' records.
     private let blockTrees: [MTLBuffer]
     private let blockTable: MTLBuffer
+    /// The scene's blocks of instances (InstanceBlock): their trees are parts of the top-level tree, their nodes
+    /// after the static ones; their instances are counted after the scene's own, as their records are in the
+    /// scene's buffer.
+    private let tileNodes: Int
+    private let tileInstances: Int
+    private let firstAssembly: Int                // in the mesh table: where a block's record's assembly is
+    private static let tilePart = 0x2000_0000     // (while the top-level tree is built: a leaf that is a part of a block)
     private var tlasNodes: [MTLBuffer] = []       // per slot: static TLAS nodes, then the dynamic TLAS
     private var instances: [MTLBuffer] = []       // per slot: RTInstance per scene instance
     private var sceneArgs: [MTLBuffer] = []       // per slot: RTScene
@@ -161,11 +168,13 @@ final class CustomRayTracer {
 
     /// Root ref of the dynamic TLAS: its first node when it has 2+ instances, the instance itself when it has one.
     private var dynamicRoot: UInt32 {
-        dynamicIds.isEmpty ? BVHNode.none : dynamicIds.count == 1 ? BVHNode.leafBit | UInt32(dynamicIds[0]) : UInt32(staticNodes.count)
+        dynamicIds.isEmpty ? BVHNode.none : dynamicIds.count == 1 ? BVHNode.leafBit | UInt32(dynamicIds[0]) : UInt32(dynamicNodeBase)
     }
 
+    /// The first node of the dynamic tree: after the static nodes and the blocks'.
+    private var dynamicNodeBase: Int { staticNodes.count + tileNodes }
     /// The first node of this frame's cluster tree (after the static and dynamic trees).
-    private var virtualNodeBase: Int { staticNodes.count + max(dynamicIds.count - 1, 1) }
+    private var virtualNodeBase: Int { dynamicNodeBase + max(dynamicIds.count - 1, 1) }
 
     /// A mesh's root that is not a node of `blasNodes` but, with this bit, the mesh's place among the trees that are
     /// in buffers of their own (RT_BLOCK in Shaders/Intersect.metal); and what an instance of such a mesh has in its
@@ -207,12 +216,12 @@ final class CustomRayTracer {
     /// that is still being drawn (`Scene.update` rewrites the transforms there every frame).
     /// `geometry`: the scene's buffers, which have the blocks of its borrowed meshes (its arrays hold only the
     /// others).
-    init(device: MTLDevice, scene: Scene, instances sceneInstances: [Scene.Instance]? = nil, geometry: SceneBuffers? = nil, slots: Int,
+    init(device: MTLDevice, scene: Scene, instances sceneInstances: [Scene.Instance]? = nil, geometry sceneGeometry: SceneBuffers? = nil, slots: Int,
          poolMB: Int = 768) throws {
         self.device = device
         let sceneInstances = sceneInstances ?? scene.instances
         let start = CACurrentMediaTime()
-        let (blas, geometryHash, cached, blocks, newBlocks) = try CustomRayTracer.trees(of: scene, geometry: geometry, device: device)
+        let (blas, geometryHash, cached, blocks, newBlocks) = try CustomRayTracer.trees(of: scene, geometry: sceneGeometry, device: device)
         blasRoots = blas.roots
         // An instance's box is its mesh's; ground cover's with room to lean as far as the strongest wind takes it, and
         // a pose slot's (its mesh deforms) that of every pose: on the CPU, the GPU keeps the exact ones.
@@ -260,6 +269,21 @@ final class CustomRayTracer {
         func bounds(_ inst: Scene.Instance) -> AABB {
             inst.mesh >= 0 ? instanceBounds[inst.mesh] : inst.assembly >= 0 ? plantBounds[inst.assembly] : scene.virtualMeshes[inst.virtualMesh].bounds
         }
+        // The blocks of instances: each one's tree (built here if this is the first scene to trace it), whose parts
+        // go under the scene's as leaves.
+        guard !scene.hasGroups || sceneGeometry != nil else {
+            throw RendererError.resourceCreation("the trees of a scene with instance groups, without its buffers")
+        }
+        let tiles = sceneGeometry?.instanceBlocks ?? []
+        let newTiles = tiles.reduce(0) { $0 + ($1.hasTree ? 0 : 1) }
+        var builtTiles = [InstanceBlock.Tree?](repeating: nil, count: tiles.count)
+        builtTiles.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: tiles.count) { k in
+                out[k] = tiles[k].tree { mesh, assembly in mesh.map { instanceBounds[$0] } ?? plantBounds[assembly!] }
+            }
+        }
+        let tileTrees = builtTiles.map { $0! }
+        let tileDepth = tileTrees.reduce(0) { max($0, $1.depth) }
         for (i, inst) in sceneInstances.enumerated() {
             if inst.virtualMesh >= 0 { virtualInstances.append((i, inst.virtualMesh)) }
             if inst.virtualMesh >= 0 && CustomRayTracer.clusterMode {
@@ -273,6 +297,15 @@ final class CustomRayTracer {
                 }
             } else {
                 dyn.append(i)
+            }
+        }
+        var tilePartOf: [(tile: Int, ref: UInt32)] = []
+        for (k, tree) in tileTrees.enumerated() {
+            for part in tree.parts {
+                geometry.boxes.append(part.box)
+                geometry.ids.append(CustomRayTracer.tilePart | tilePartOf.count)
+                geometry.masks.append(part.mask)
+                tilePartOf.append((k, part.ref))
             }
         }
         // One tree per group, joined by a root node. Shadow and GI rays (MASK_GEOMETRY) skip the proxies' tree at the
@@ -296,7 +329,7 @@ final class CustomRayTracer {
             root = 0
             staticDepth = depth + 1
         }
-        let staticCount = geometry.ids.count + proxies.ids.count
+        let staticCount = geometry.ids.count + proxies.ids.count - tilePartOf.count
         // The assemblies' trees over their parts: a leaf is a part's record. They sit with the static nodes, so the
         // traversal reads them as it reads the top level, in the plant's space.
         var roots: [UInt32] = [], partDepth = 0, firstPart = 0
@@ -313,8 +346,35 @@ final class CustomRayTracer {
         partPads = pads
         assemblyNodes = firstAssemblyNode..<nodes.count
         slotWind = [Float](repeating: 0, count: slots)
+        // The blocks' trees come after these nodes, one after the other, and their instances after the scene's own:
+        // where a leaf of the top-level tree says a part of a block, that part's node or instance instead.
+        var tileNodeBases: [Int] = [], tileFirsts: [Int] = [], nextNode = nodes.count, nextInstance = sceneInstances.count
+        for (k, tile) in tiles.enumerated() {
+            tileNodeBases.append(nextNode)
+            tileFirsts.append(nextInstance)
+            nextNode += tileTrees[k].nodes.count
+            nextInstance += tile.count
+        }
+        /// A ref of a block's tree, where the tree and its instances are in the scene's.
+        func moved(_ ref: UInt32, tile k: Int) -> UInt32 {
+            ref & BVHNode.leafBit != 0 ? BVHNode.leafBit | ((ref & ~BVHNode.leafBit) + UInt32(tileFirsts[k])) : ref + UInt32(tileNodeBases[k])
+        }
+        func placed(_ ref: UInt32) -> UInt32 {
+            guard ref != BVHNode.none, ref & BVHNode.leafBit != 0, Int(ref) & CustomRayTracer.tilePart != 0 else { return ref }
+            let part = tilePartOf[Int(ref & ~BVHNode.leafBit) & ~CustomRayTracer.tilePart]
+            return moved(part.ref, tile: part.tile)
+        }
+        if !tiles.isEmpty {
+            for n in 0..<firstAssemblyNode {
+                nodes[n].lo0.w = Float(bitPattern: placed(nodes[n].ref(0)))
+                nodes[n].lo1.w = Float(bitPattern: placed(nodes[n].ref(1)))
+            }
+        }
+        tileNodes = nextNode - nodes.count
+        tileInstances = nextInstance - sceneInstances.count
+        firstAssembly = scene.meshes.count + scene.virtualMeshes.count
         staticNodes = nodes
-        staticRoot = root
+        staticRoot = placed(root)
         dynamicIds = dyn
 
         func buffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
@@ -335,19 +395,41 @@ final class CustomRayTracer {
             : try VirtualBLAS(device: device, meshes: scene.virtualMeshes, instances: virtualInstances, slots: slots)
         dummy = try buffer([UInt32](repeating: BVHNode.none, count: 4), "rtDummy")
         stats = try buffer([UInt32](repeating: 0, count: 8), "rtStats")
-        let tlasCapacity = staticNodes.count + max(dynamicIds.count - 1, 1) + (virtualGeometry == nil ? 0 : VirtualGeometry.capacity)
+        let tlasCapacity = staticNodes.count + tileNodes + max(dynamicIds.count - 1, 1) + (virtualGeometry == nil ? 0 : VirtualGeometry.capacity)
+        let nodeStride = MemoryLayout<BVHNode>.stride
         for slot in 0..<slots {
-            let t = try buffer([BVHNode](repeating: BVHNode(), count: tlasCapacity), "tlasNodes\(slot)")
+            guard let t = device.makeBuffer(length: tlasCapacity * nodeStride, options: .storageModeShared),
+                  let records = device.makeBuffer(length: max(nextInstance, 1) * MemoryLayout<RTInstance>.stride, options: .storageModeShared) else {
+                throw RendererError.resourceCreation("the top-level tree's buffers")
+            }
+            (t.label, records.label) = ("tlasNodes\(slot)", "rtInstances\(slot)")
             // (Not `staticNodes.withUnsafeBytes { ... copyMemory ... }`: Swift 6.4 compiles that closure to end in a tail
             // call to memmove with the buffer's address still in the error register, and the optimised init then takes
             // its return for a throw.)
-            if !staticNodes.isEmpty { memcpy(t.contents(), staticNodes, staticNodes.count * MemoryLayout<BVHNode>.stride) }
+            if !staticNodes.isEmpty { memcpy(t.contents(), staticNodes, staticNodes.count * nodeStride) }
+            if slot == 0 {
+                // The blocks' trees, each where it was placed above: its nodes count from there, its leaves' instances
+                // from the block's first.
+                let out = t.contents().bindMemory(to: BVHNode.self, capacity: tlasCapacity)
+                DispatchQueue.concurrentPerform(iterations: tiles.count) { k in
+                    tileTrees[k].nodes.withUnsafeBufferPointer { from in
+                        for n in from.indices {
+                            var node = from[n]
+                            if node.ref(0) != BVHNode.none { node.lo0.w = Float(bitPattern: moved(node.ref(0), tile: k)) }
+                            if node.ref(1) != BVHNode.none { node.lo1.w = Float(bitPattern: moved(node.ref(1), tile: k)) }
+                            out[tileNodeBases[k] + n] = node
+                        }
+                    }
+                }
+            } else if tileNodes > 0 {
+                memcpy(t.contents() + staticNodes.count * nodeStride, tlasNodes[0].contents() + staticNodes.count * nodeStride, tileNodes * nodeStride)
+            }
             tlasNodes.append(t)
-            instances.append(try buffer([RTInstance](repeating: RTInstance(), count: max(sceneInstances.count, 1)), "rtInstances\(slot)"))
+            instances.append(records)
             sceneArgs.append(try buffer([UInt8](repeating: 0, count: CustomRayTracer.argsSize), "rtScene\(slot)"))
         }
 
-        instanceCount = sceneInstances.count
+        instanceCount = nextInstance
         paddedCount = max(2, 1 << Int(ceil(log2(Double(max(dyn.count, 2))))))
         var info: [SIMD4<Float>] = []
         for (m, b) in instanceBounds.enumerated() {
@@ -369,7 +451,7 @@ final class CustomRayTracer {
             print(String(format: "Plant voxels: %d grids, %.1f MB, built in %.1f ms", grids.grids.count,
                          Double(grids.cells.count * 4) / 1e6, (CACurrentMediaTime() - voxelStart) * 1000))
         }
-        var slotOf = [UInt32](repeating: BVHNode.none, count: max(sceneInstances.count, 1))
+        var slotOf = [UInt32](repeating: BVHNode.none, count: max(nextInstance, 1))
         for (k, i) in dyn.enumerated() { slotOf[i] = UInt32(k) }
         meshInfo = try buffer(info, "rtMeshInfo")
         dynSlot = try buffer(slotOf, "rtDynSlot")
@@ -398,10 +480,11 @@ final class CustomRayTracer {
         print(String(format: "Custom BVH: %d BLAS nodes, %d triangles, static TLAS %d instances (%d nodes, depth %d), %d dynamic, built in %.1f ms%@%@",
                      blas.nodes.count, blas.triangles.count / 3, staticCount, staticNodes.count, staticDepth, dynamicIds.count,
                      (CACurrentMediaTime() - start) * 1000, cached ? " (the meshes' trees from the cache)" : "",
-                     blocks.isEmpty ? "" : "; \(blocks.count) meshes with trees of their own (\(newBlocks) new)"))
+                     (blocks.isEmpty ? "" : "; \(blocks.count) meshes with trees of their own (\(newBlocks) new)")
+                         + (tiles.isEmpty ? "" : "; \(tileInstances) instances more in \(tilePartOf.count) parts of \(tiles.count) blocks (\(newTiles) new), \(tileNodes) nodes, depth \(tileDepth)")))
         if !roots.isEmpty {
             // The traversal's stack holds one entry per level it has gone down, all three levels together.
-            let deepest = staticDepth + partDepth + blas.maxDepth + 3
+            let deepest = staticDepth + tileDepth + partDepth + blas.maxDepth + 3
             print("Assemblies: \(roots.count) plants of \(partRecords.count) parts, trees \(partDepth) deep over BLASes \(blas.maxDepth) deep"
                   + (deepest > 64 ? " — \(deepest) LEVELS IN ALL: the traversal's stack (RT_STACK) may overflow" : ""))
         }
@@ -462,9 +545,9 @@ final class CustomRayTracer {
         }
         var nodes: [BVHNode] = []
         _ = BVHBuilder.buildTLAS(boxes: boxes, ids: dynamicIds, masks: dynamicIds.map { scene.instances[$0].mask },
-                                 nodeBase: staticNodes.count, into: &nodes)
+                                 nodeBase: dynamicNodeBase, into: &nodes)
         nodes.withUnsafeBytes {
-            tlasNodes[slot].contents().advanced(by: staticNodes.count * MemoryLayout<BVHNode>.stride)
+            tlasNodes[slot].contents().advanced(by: dynamicNodeBase * MemoryLayout<BVHNode>.stride)
                 .copyMemory(from: $0.baseAddress!, byteCount: $0.count)
         }
     }
@@ -510,9 +593,9 @@ final class CustomRayTracer {
         args.storeBytes(of: wind.wind, toByteOffset: 112, as: SIMD4<Float>.self)
         args.storeBytes(of: SIMD4(wind.time, wind.previousTime, 0, wind.leafFall), toByteOffset: 128, as: SIMD4<Float>.self)
         guard instanceCount > 0, let pipelines else { return }
-        if !CustomRayTracer.cpuBuild {
-            var count = UInt32(instanceCount)
-            enc.setBytes(&count, length: 4, index: 0)
+        if !CustomRayTracer.cpuBuild || tileInstances > 0 {   // (the blocks' records are only written here)
+            var counts = SIMD2(UInt32(instanceCount), UInt32(firstAssembly))
+            enc.setBytes(&counts, length: 8, index: 0)
             enc.setBuffer(instanceData, offset: 0, index: 1)
             enc.setBuffer(meshInfo, offset: 0, index: 2)
             enc.setBuffer(dynSlot, offset: 0, index: 3)
@@ -530,7 +613,7 @@ final class CustomRayTracer {
             if n >= 2 {
                 CustomRayTracer.encodeLBVH(enc, rt: pipelines, counts: .bytes(SIMD2(UInt32(n), UInt32(paddedCount))), capacity: n,
                                            leafBoxes: leafBoxes, keys: keys, values: values, nodes: tlasNodes[slot],
-                                           nodeBase: staticNodes.count, nodeParent: nodeParent, leafParent: leafParent, counters: counters)
+                                           nodeBase: dynamicNodeBase, nodeParent: nodeParent, leafParent: leafParent, counters: counters)
             }
         }
         virtualGeometry?.encode(enc, slot: slot, rt: pipelines, vg: pipelines.vg, instanceData: instanceData, tlasNodes: tlasNodes[slot],

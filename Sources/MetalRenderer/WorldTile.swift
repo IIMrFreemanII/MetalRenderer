@@ -296,9 +296,12 @@ struct WorldTile {
     }
 
     /// What the file was made for: the world's settings and the plants' library too.
-    static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
+    static func key(_ world: World, x: Int, z: Int, level: Int) -> String { "\(place(world, x: x, z: z)) level \(level)" }
+
+    /// The same without the level: what a tile's trees are made for (every level has the same ones).
+    static func place(_ world: World, x: Int, z: Int) -> String {
         "tile v\(World.version) plants v\(Foliage.version) seed \(world.seed) trees \(world.treeDensity) under \(world.undergrowth) "
-            + "cities \(world.cityShare) at \(x) \(z) level \(level)"
+            + "cities \(world.cityShare) at \(x) \(z)"
     }
 
     func write(to url: URL, key: String) throws {

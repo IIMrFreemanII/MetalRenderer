@@ -133,6 +133,197 @@ final class MeshBlock {
     }
 }
 
+/// The instances of a group (`Scene.InstanceGroup`: the plants of an open world's tile) as the renderer keeps them,
+/// which are the same instances in every scene that has a group of its name. The scenes share the block as they share
+/// a mesh's (`MeshBlock`): the next scene takes the blocks of the one being drawn (`SceneBuffers.Options.instanceBlocks`)
+/// and makes only the new ones, and a block goes when the last scene that has it does.
+///
+/// Either tracer keeps one structure over all of a scene's instances, and a block has its part of it ready:
+/// * Metal's is built from every instance's descriptor; a block has its instances' (`descriptors`). (A structure per
+///   block under the scene's traces at half the speed.) The block's records are in a buffer of the block's own; an
+///   instance is named by the block's number and its place in the block (`id`), in every scene, and a hit finds its
+///   record through the scene's table of the blocks' addresses (TILED in the shaders).
+/// * The custom one's tree has each block's tree as a part of it (`tree`). A scene has all its records in one buffer,
+///   as any scene has: the blocks' are copied there from the buffer of the scene before, and the block then has them
+///   there (`move`). (Records in the blocks' own buffers, found through a table, cost that tracer's frame 2 to 5%.)
+final class InstanceBlock {
+    let name: String
+    /// Its number among the blocks alive (1...): the high bits of its instances' ids. 0 is a scene's own instances.
+    let number: Int
+    let count: Int
+    static let shift = 20, capacity = 1 << (32 - shift)
+    static let assembly: UInt32 = 0x8000_0000
+    func id(_ instance: Int) -> UInt32 { UInt32(number << InstanceBlock.shift | instance) }
+
+    /// Where the records are, a GPUInstanceData per instance: in a buffer of the block's own, or in the records of
+    /// the latest scene that took the block. An assembly's has `assembly` and its number where a mesh's has its
+    /// mesh: the meshes' count, which the assemblies are numbered after, differs from scene to scene.
+    private var storage: (buffer: MTLBuffer, offset: Int)
+    private(set) var ownsBuffer: Bool
+    private static var free: [Int] = [], next = 1
+    private static let numbers = NSLock()
+    private let lock = NSLock()
+
+    /// `into`: where to write the records; nil = a buffer of the block's own.
+    init(device: MTLDevice, name: String, instances: [Scene.Instance], into given: (buffer: MTLBuffer, offset: Int)?) throws {
+        let own = given == nil ? device.makeBuffer(length: max(instances.count * MemoryLayout<GPUInstanceData>.stride, 16), options: .storageModeShared) : nil
+        guard !instances.isEmpty, instances.count <= 1 << InstanceBlock.shift, instances.allSatisfy(\.isStatic),
+              let place = given ?? own.map({ ($0, 0) }) else {
+            throw RendererError.resourceCreation("the instances of \(name)")
+        }
+        InstanceBlock.numbers.lock()
+        let taken = InstanceBlock.free.popLast() ?? InstanceBlock.next
+        if taken == InstanceBlock.next { InstanceBlock.next += 1 }
+        InstanceBlock.numbers.unlock()
+        (self.name, number, count, storage, ownsBuffer) = (name, taken, instances.count, place, own != nil)
+        guard taken < InstanceBlock.capacity else { throw RendererError.resourceCreation("more than \(InstanceBlock.capacity) groups of instances") }
+        own?.label = name
+        let out = (place.buffer.contents() + place.offset).bindMemory(to: GPUInstanceData.self, capacity: instances.count)
+        for (i, inst) in instances.enumerated() {
+            out[i] = GPUInstanceData(transform: inst.transform, prevTransform: inst.prevTransform, normalMatrix: inst.normalMatrix,
+                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh) : InstanceBlock.assembly | UInt32(inst.assembly),
+                                     materialIndex: UInt32(inst.material), pad0: inst.mask)
+        }
+    }
+
+    deinit {
+        InstanceBlock.numbers.lock()
+        if number < InstanceBlock.capacity { InstanceBlock.free.append(number) }
+        InstanceBlock.numbers.unlock()
+    }
+
+    /// The buffer the records are in and where (a scene that reads them there keeps the buffer).
+    var records: (buffer: MTLBuffer, offset: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    /// Copies the records to `offset` of `buffer`, which the block has them in from now on (any thread).
+    func move(to buffer: MTLBuffer, offset: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        (buffer.contents() + offset).copyMemory(from: storage.buffer.contents() + storage.offset, byteCount: count * MemoryLayout<GPUInstanceData>.stride)
+        (storage, ownsBuffer) = ((buffer, offset), false)
+    }
+
+    /// (With `lock` held.)
+    private var held: UnsafePointer<GPUInstanceData> {
+        UnsafePointer((storage.buffer.contents() + storage.offset).bindMemory(to: GPUInstanceData.self, capacity: count))
+    }
+
+    private var triangleCount: Int?
+    /// The triangles of its instances in all (the Debug window's count), counted the first time it is asked for.
+    /// `of`: a record's mesh's or assembly's.
+    func triangles(_ of: (_ mesh: Int?, _ assembly: Int?) -> Int) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        if let triangleCount { return triangleCount }
+        let records = held
+        let sum = (0..<count).reduce(0) { sum, i in
+            let mesh = records[i].meshIndex
+            return sum + (mesh & InstanceBlock.assembly != 0 ? of(nil, Int(mesh & ~InstanceBlock.assembly)) : of(Int(mesh), nil))
+        }
+        triangleCount = sum
+        return sum
+    }
+
+    // Metal's tracer: the instances' descriptors as a scene's structure is built from them (indirect ones: they name
+    // their meshes' structures by resource ID, and their instances by `id`), and the structures they name.
+    private var descriptors: (bytes: [UInt8], structures: [Int: MTLAccelerationStructure])?
+
+    /// The descriptors, for a scene whose meshes' structures are `primitives`: made the first time, and again only if
+    /// a mesh has another structure now (any thread).
+    func descriptors(primitives: [MTLAccelerationStructure]) -> [UInt8] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let made = descriptors, made.structures.allSatisfy({ $0.key < primitives.count && primitives[$0.key] === $0.value }) {
+            return made.bytes
+        }
+        let stride = SceneBuffers.indirectStride
+        let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
+        var bytes = [UInt8](repeating: 0, count: count * stride), structures: [Int: MTLAccelerationStructure] = [:]
+        let records = held
+        bytes.withUnsafeMutableBytes { raw in
+            for i in 0..<count {
+                let record = records[i], mesh = Int(record.meshIndex)
+                SceneBuffers.writeDescriptor(raw.baseAddress! + i * stride, transform: record.transform, options: options, mask: record.pad0,
+                                             userID: id(i), structure: primitives[mesh])
+                structures[mesh] = primitives[mesh]
+            }
+        }
+        descriptors = (bytes, structures)
+        return bytes
+    }
+
+    /// The custom tracer's tree over the instances: the root is its first node, a leaf an instance's place in the
+    /// block. A scene's tracer copies it into its top-level nodes and builds its own tree over the scene's own
+    /// instances and the blocks' `parts`: a ray then walks one tree, as if it had been built over all of them.
+    struct Tree {
+        let nodes: [BVHNode]
+        /// The subtrees of at most `partInstances` instances the tree splits into, each by its ref in `nodes` (a
+        /// node, or a leaf) and its box: what a scene's tree is built over.
+        let parts: [(ref: UInt32, box: AABB, mask: UInt32)]
+        let depth: Int          // of the deepest part
+    }
+    /// 16: over the open world's eight benchmark views the rays then visit 12% fewer top-level nodes than in one
+    /// tree built over every instance (a tile's ground and buildings, large boxes, are no longer among its trees
+    /// low in the tree); from the ground the frame is 2 to 6% shorter for it, from the air 1 to 2% longer. Parts of
+    /// 64 and 256 visit as few nodes and trace no faster than the one tree did; whole blocks are entered one after
+    /// the other by a ray across the world. `METALRENDERER_BLOCK_PART` sets it.
+    static let partInstances = Int(ProcessInfo.processInfo.environment["METALRENDERER_BLOCK_PART"] ?? "") ?? 16
+    private var built: Tree?
+    var hasTree: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return built != nil
+    }
+
+    /// The tree, built the first time it is asked for (any thread). `bounds`: a record's mesh's or assembly's box.
+    func tree(bounds: (_ mesh: Int?, _ assembly: Int?) -> AABB) -> Tree {
+        lock.lock()
+        defer { lock.unlock() }
+        if let built { return built }
+        let records = held
+        var boxes: [AABB] = [], masks: [UInt32] = []
+        boxes.reserveCapacity(count)
+        masks.reserveCapacity(count)
+        for i in 0..<count {
+            let record = records[i], assembly = record.meshIndex & InstanceBlock.assembly != 0
+            boxes.append((assembly ? bounds(nil, Int(record.meshIndex & ~InstanceBlock.assembly)) : bounds(Int(record.meshIndex), nil))
+                .transformed(record.transform))
+            masks.append(record.pad0)
+        }
+        let nodes = BVHBuilder.buildGroup(boxes: boxes, masks: masks).nodes
+        // How many instances are under each node, and how deep (a child's nodes come after its parent's).
+        var under = [(instances: Int, depth: Int)](repeating: (0, 0), count: nodes.count)
+        func size(_ ref: UInt32) -> (instances: Int, depth: Int) {
+            ref == BVHNode.none ? (0, 0) : ref & BVHNode.leafBit != 0 ? (1, 0) : under[Int(ref)]
+        }
+        for n in nodes.indices.reversed() {
+            let a = size(nodes[n].ref(0)), b = size(nodes[n].ref(1))
+            under[n] = (a.instances + b.instances, max(a.depth, b.depth) + 1)
+        }
+        var parts: [(ref: UInt32, box: AABB, mask: UInt32)] = [], depth = 0
+        var open = [0]
+        while let n = open.popLast() {
+            for child in 0..<2 {
+                let ref = nodes[n].ref(child), below = size(ref)
+                if ref == BVHNode.none { continue }
+                if below.instances > InstanceBlock.partInstances {
+                    open.append(Int(ref))
+                } else {
+                    parts.append((ref, AABB(lo: nodes[n].lo(child), hi: nodes[n].hi(child)), nodes[n].mask(child)))
+                    depth = max(depth, below.depth)
+                }
+            }
+        }
+        let tree = Tree(nodes: nodes, parts: parts, depth: depth)
+        built = tree
+        return tree
+    }
+}
+
 /// A scene on the GPU: its geometry's buffers, its instances' records, and for Metal's ray tracer its acceleration
 /// structures. Made on any thread: where the scene is prepared (the background, when the app changes scenes), so
 /// that installing a scene between two frames only swaps these in.
@@ -158,6 +349,8 @@ struct SceneBuffers {
         var known: [String: MTLAccelerationStructure] = [:]
         /// Its borrowed meshes' blocks, by their names.
         var blocks: [String: MeshBlock] = [:]
+        /// Its instance groups' blocks, by their names.
+        var instanceBlocks: [String: InstanceBlock] = [:]
     }
 
     /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
@@ -168,6 +361,16 @@ struct SceneBuffers {
     let materials: [MTLBuffer]                              // per slot: light proxies' and leaves' materials change
     let instanceData: [MTLBuffer]                           // per slot (GPUInstanceData)
     let still: Bool                                         // the instances are written, and their structure built
+    /// The scene's groups' blocks, in the groups' order: the instances are counted through, the scene's own first,
+    /// then each block's (Metal's descriptors are in that order, and the custom tracer's records).
+    let instanceBlocks: [InstanceBlock]
+    private(set) var namedInstanceBlocks: [String: InstanceBlock] = [:]
+    let instanceCount: Int
+    /// Metal's tracer, with blocks (TILED): the table a hit finds a record through, the records' addresses by block
+    /// number (the scene's own, `instanceData`, at 0), and what it points at. (The custom tracer's `instanceData`
+    /// has the blocks' records after the scene's own.)
+    let instanceTable: MTLBuffer?
+    let instanceResources: [MTLBuffer]
 
     // Metal's ray tracer only.
     let instanceDescriptors: [MTLBuffer]                    // per slot
@@ -177,7 +380,11 @@ struct SceneBuffers {
     private(set) var instanceStructures: [MTLAccelerationStructure] = []   // per slot
     private(set) var instanceScratch: [MTLBuffer] = []      // per slot; none for a still scene
 
-    static func descriptorStride(_ api: RenderAPI) -> Int { api == .metal4 ? 72 : 64 }
+    static func descriptorStride(_ api: RenderAPI) -> Int { api == .metal4 ? indirectStride : 64 }
+    static let indirectStride = 72
+    /// The descriptors are indirect ones: Metal 4's, and those of a scene with instance blocks under either API (they
+    /// carry the ids a hit names an instance by).
+    let indirect: Bool
     private static let buildBatchBytes = 256 << 20
 
     /// The borrowed meshes' buffers: a hit reads them through the addresses in the mesh table.
@@ -186,7 +393,7 @@ struct SceneBuffers {
     /// Every buffer of the scene a frame reads.
     var buffers: [MTLBuffer] {
         [positions, normals, indices, meshes, uvs, emissive, triangleMaterials] + materials + (still ? [instanceData[0]] : instanceData)
-            + blockBuffers
+            + blockBuffers + instanceResources
     }
 
     /// What the scene takes on the GPU, in megabytes: its geometry, its instances' records, and Metal's structures
@@ -199,7 +406,7 @@ struct SceneBuffers {
         }
         return (mb(([positions, normals, indices, meshes, uvs, emissive, triangleMaterials] + materials + distinct(blockBuffers))
                        .reduce(0) { $0 + $1.length }),
-                mb(distinct(instanceData + instanceDescriptors).reduce(0) { $0 + $1.length }),
+                mb(distinct(instanceData + instanceDescriptors + instanceResources).reduce(0) { $0 + $1.length }),
                 mb(primitives.reduce(0) { $0 + $1.size }),
                 mb(distinct(instanceStructures).reduce(0) { $0 + $1.size } + instanceScratch.reduce(0) { $0 + $1.length }))
     }
@@ -283,22 +490,71 @@ struct SceneBuffers {
 
         still = scene.isStill
         let count = scene.instances.count, sets = still ? 1 : options.slots
-        var data = try (0..<sets).map { try empty(count * MemoryLayout<GPUInstanceData>.stride, "instanceData\($0)") }
+        // The groups: each in the block the scene being drawn has it in, or a new one, made from the group's instances.
+        guard !scene.hasGroups || (!scene.groups.isEmpty && still) else {
+            throw RendererError.resourceCreation("the buffers of a scene that has let go of its instance groups, or in which something moves")
+        }
+        // (The custom tracer's records are all in the scene's buffer; Metal's blocks keep theirs.)
+        let together = options.rayTracer == .custom
+        var known = scene.groups.map { group in
+            options.instanceBlocks[group.name].flatMap { (together || $0.ownsBuffer) && $0.count == group.count ? $0 : nil }
+        }
+        var firsts: [Int] = [], total = count
+        for group in scene.groups {
+            firsts.append(total)
+            total += group.count
+        }
+        instanceCount = total
+        indirect = options.api == .metal4 || scene.hasGroups
+        let recordStride = MemoryLayout<GPUInstanceData>.stride
+        var data = try (0..<sets).map { try empty((together ? total : count) * recordStride, "instanceData\($0)") }
         if still {
             let records = data[0].contents().bindMemory(to: GPUInstanceData.self, capacity: count)
             SceneBuffers.inParts(count) { scene.writeInstanceData(into: records, all: true, range: $0) }
             data = [MTLBuffer](repeating: data[0], count: options.slots)
         }
         instanceData = data
+        // A block the scene being drawn has: its records copied (the custom tracer), or as they are. A new one: made
+        // from its group's instances, which are let go of as soon as their records are written.
+        let all = data[0]
+        known.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: out.count) { g in
+                let place = together ? (all, firsts[g] * recordStride) : nil
+                if let block = out[g] {
+                    if let place { block.move(to: place.0, offset: place.1) }
+                } else {
+                    let group = scene.groups[g], instances = group.make()
+                    if instances.count == group.count {
+                        out[g] = try? InstanceBlock(device: device, name: group.name, instances: instances, into: place)
+                    }
+                }
+            }
+        }
+        guard !known.contains(where: { $0 == nil }) else { throw RendererError.resourceCreation("the instances of a group") }
+        instanceBlocks = known.map { $0! }
+        for block in instanceBlocks { namedInstanceBlocks[block.name] = block }
+        if scene.hasGroups, !together {
+            guard count <= 1 << InstanceBlock.shift else { throw RendererError.resourceCreation("the ids of \(count) instances outside the groups") }
+            let buffers = instanceBlocks.map(\.records.buffer)
+            var addresses = [UInt64](repeating: 0, count: InstanceBlock.capacity)
+            addresses[0] = data[0].gpuAddress
+            for (b, block) in instanceBlocks.enumerated() { addresses[block.number] = buffers[b].gpuAddress }
+            let table = try buffer(addresses, "instanceTable")
+            instanceTable = table
+            instanceResources = [table, data[0]] + buffers
+        } else {
+            instanceTable = nil
+            instanceResources = []
+        }
         guard options.rayTracer == .metal else {
             instanceDescriptors = []
             return
         }
 
         precondition(MemoryLayout<MTLAccelerationStructureInstanceDescriptor>.stride == 64)
-        if #available(macOS 14.0, *) { precondition(MemoryLayout<MTLIndirectAccelerationStructureInstanceDescriptor>.stride == 72) }
-        let stride = SceneBuffers.descriptorStride(options.api)
-        var descriptors = try (0..<sets).map { try empty(count * stride, "instanceDescriptors\($0)") }
+        if #available(macOS 14.0, *) { precondition(MemoryLayout<MTLIndirectAccelerationStructureInstanceDescriptor>.stride == SceneBuffers.indirectStride) }
+        let stride = indirect ? SceneBuffers.indirectStride : 64
+        var descriptors = try (0..<sets).map { try empty(total * stride, "instanceDescriptors\($0)") }
         if still { descriptors = [MTLBuffer](repeating: descriptors[0], count: options.slots) }
         instanceDescriptors = descriptors
         try buildPrimitives(device: device, queue: queue, scene: scene, options: options)
@@ -309,13 +565,13 @@ struct SceneBuffers {
         var usage = options.instanceUsage
         if still { usage.remove([.refit, .preferFastBuild]) }
         func update(_ structure: MTLAccelerationStructure, _ scratch: MTLBuffer, slot: Int) -> TLASUpdate {
-            TLASUpdate(structure: structure, scratch: scratch, refit: false, instanceCount: count, usage: usage,
+            TLASUpdate(structure: structure, scratch: scratch, refit: false, instanceCount: total, usage: usage,
                        instances: descriptors[slot], instanceStride: stride, primitives: primitives)
         }
         let layout = update(placeholder, descriptors[0], slot: 0)
         let sizes: MTLAccelerationStructureSizes
         if still {
-            sizes = device.accelerationStructureSizes(descriptor: layout.descriptor(indirect: options.api == .metal4))
+            sizes = device.accelerationStructureSizes(descriptor: layout.descriptor(indirect: indirect))
         } else if options.api == .metal4, #available(macOS 26.0, *) {
             sizes = device.accelerationStructureSizes(descriptor: layout.descriptor4)
         } else {
@@ -335,11 +591,18 @@ struct SceneBuffers {
         // descriptors name their meshes' structures by resource ID, which Metal 3 builds from too).
         let whole = self   // (a copy for the closure: `self` is being initialised)
         SceneBuffers.inParts(count) { whole.writeInstanceDescriptors(slot: 0, scene: scene, api: options.api, all: true, range: $0) }
+        // The blocks' after the scene's own: each block's as it has them, the new blocks' made here.
+        let groups = instanceBlocks, structures = primitives, into = descriptors[0].contents()
+        DispatchQueue.concurrentPerform(iterations: groups.count) { b in
+            groups[b].descriptors(primitives: structures).withUnsafeBytes {
+                (into + firsts[b] * stride).copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+            }
+        }
         guard let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
             throw RendererError.resourceCreation("acceleration structure command encoder")
         }
         let build = update(instanceStructures[0], instanceScratch[0], slot: 0)
-        encoder.build(accelerationStructure: build.structure, descriptor: build.descriptor(indirect: options.api == .metal4),
+        encoder.build(accelerationStructure: build.structure, descriptor: build.descriptor(indirect: indirect),
                       scratchBuffer: build.scratch, scratchBufferOffset: 0)
         encoder.endEncoding()
         cmd.commit()
@@ -360,32 +623,39 @@ struct SceneBuffers {
     func writeInstanceDescriptors(slot: Int, scene: Scene, api: RenderAPI, all: Bool, range: Range<Int>? = nil) {
         let base = instanceDescriptors[slot].contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
-        let indirect = api == .metal4, stride = SceneBuffers.descriptorStride(api)
+        let stride = indirect ? SceneBuffers.indirectStride : 64
         func write(_ i: Int) {
             let instance = scene.instances[i]
-            let p = base.advanced(by: i * stride)
-            let m = instance.transform
-            var offset = 0
-            for column in 0..<4 {           // packed column-major 4x3 matrix
-                for row in 0..<3 {
-                    p.storeBytes(of: m[column][row], toByteOffset: offset, as: Float.self)
-                    offset += 4
-                }
-            }
-            p.storeBytes(of: options, toByteOffset: 48, as: UInt32.self)
-            p.storeBytes(of: instance.mask, toByteOffset: 52, as: UInt32.self)
-            p.storeBytes(of: UInt32(0), toByteOffset: 56, as: UInt32.self)              // intersection function table offset
-            if indirect {
-                p.storeBytes(of: UInt32(i), toByteOffset: 60, as: UInt32.self)          // user ID (unused)
-                p.storeBytes(of: primitives[instance.mesh].gpuResourceID, toByteOffset: 64, as: MTLResourceID.self)
-            } else {
-                p.storeBytes(of: UInt32(instance.mesh), toByteOffset: 60, as: UInt32.self)  // index into `primitives`
-            }
+            // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
+            SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform, options: options, mask: instance.mask,
+                                         userID: UInt32(i), structure: indirect ? primitives[instance.mesh] : nil, index: instance.mesh)
         }
         if all {
             for i in range ?? scene.instances.indices { write(i) }
         } else {
             for i in scene.movingInstances { write(i) }
+        }
+    }
+
+    /// An instance descriptor at `p`: an indirect one, which names its mesh's `structure` by resource ID and has a
+    /// user ID, or without a structure Metal 3's, which has the mesh's `index` among the structures.
+    static func writeDescriptor(_ p: UnsafeMutableRawPointer, transform m: float4x4, options: UInt32, mask: UInt32, userID: UInt32,
+                                structure: MTLAccelerationStructure?, index: Int = 0) {
+        var offset = 0
+        for column in 0..<4 {           // packed column-major 4x3 matrix
+            for row in 0..<3 {
+                p.storeBytes(of: m[column][row], toByteOffset: offset, as: Float.self)
+                offset += 4
+            }
+        }
+        p.storeBytes(of: options, toByteOffset: 48, as: UInt32.self)
+        p.storeBytes(of: mask, toByteOffset: 52, as: UInt32.self)
+        p.storeBytes(of: UInt32(0), toByteOffset: 56, as: UInt32.self)              // intersection function table offset
+        if let structure {
+            p.storeBytes(of: userID, toByteOffset: 60, as: UInt32.self)
+            p.storeBytes(of: structure.gpuResourceID, toByteOffset: 64, as: MTLResourceID.self)
+        } else {
+            p.storeBytes(of: UInt32(index), toByteOffset: 60, as: UInt32.self)      // index into `primitives`
         }
     }
 

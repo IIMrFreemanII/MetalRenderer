@@ -258,6 +258,10 @@ inline float3 partDirection(RTPart part, float3 v) {   // not unit length
     return part.row0.xyz * v.x + part.row1.xyz * v.y + part.row2.xyz * v.z;
 }
 #endif
+// What a surface keeps of its instance, to tell it from its neighbours' (the trace writes it as a float): TILED, a
+// number of 24 bits, which a float holds exactly, made from its id, which may be any.
+inline uint surfaceInstance(uint id) { return TILED ? pcgHash(id) & 0xFFFFFFu : id; }
+
 inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
     HitVertices v;
     v.i = uint3(0u);
@@ -353,7 +357,8 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.backlit = false;
     if (!res.hit) return sf;
 
-    InstanceData inst = s.instances[res.instance];
+    uint id = res.instance;
+    InstanceData inst = instanceRecord(s.instances, id);
 #if CUSTOM_RT
     if (FOLIAGE && res.part == HIT_VOXEL) {
         // A far plant's voxel: where the ray stopped in it, the voxel's mean normal, and its wood's and leaves'
@@ -375,7 +380,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
             sf.backlit = float(pcgHash(res.primitive ^ as_type<uint>(res.distance)) & 0xFFFFu) * (1.0f / 65536.0f) < leaves.params.w * leaf;
             if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
         }
-        sf.instanceId = res.instance;
+        sf.instanceId = surfaceInstance(id);
         return sf;
     }
 #endif
@@ -400,8 +405,8 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         // frame ago (the motion vector), and its normals now.
         RTPart part = accel.parts[res.part];
         float4 r0 = inst.normalMatrix[0], r1 = inst.normalMatrix[1], r2 = inst.normalMatrix[2];   // world -> plant rows
-        prevObjPos = partWind(part, plantWind(accel.wind, accel.windTime.y, r0, r1, r2, res.instance), accel.wind.z, objPos, true);
-        PlantWind w = plantWind(accel.wind, accel.windTime.x, r0, r1, r2, res.instance);
+        prevObjPos = partWind(part, plantWind(accel.wind, accel.windTime.y, r0, r1, r2, id), accel.wind.z, objPos, true);
+        PlantWind w = plantWind(accel.wind, accel.windTime.x, r0, r1, r2, id);
         objPos = partWind(part, w, accel.wind.z, objPos, true);
         objN = partWind(part, w, accel.wind.z, objN, false);
         objNg = partWind(part, w, accel.wind.z, objNg, false);
@@ -430,13 +435,13 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.metallic = mat.albedo.a;
     sf.roughness = mat.emission.a;
     sf.specular = mat.params.x;
-    sf.instanceId = res.instance;
+    sf.instanceId = surfaceInstance(id);
     sf.lightEmitter = mat.params.z > 0.0f;
     if (mat.params.w > 0.0f) {
         // Translucent (a leaf): the material's share of the leaves shows the light of the far side, the rest that of
         // the near side. Leaf by leaf (two triangles are one), always the same ones: nothing flickers, and a crown
         // as a whole reflects and transmits in the material's proportion.
-        uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (res.instance * 0x85EBCA6Bu);
+        uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (id * 0x85EBCA6Bu);
         sf.backlit = float(pcgHash(leafId) & 0xFFFFu) * (1.0f / 65536.0f) < mat.params.w;
         if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
     }

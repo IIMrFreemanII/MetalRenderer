@@ -214,6 +214,23 @@ final class Scene {
     private(set) var hasMaterialOffsets = false    // some mesh has several materials (set once, by init)
     private(set) var borrowed: [BorrowedMesh] = []
     private(set) var hasBorrowedMeshes = false     // (set once, by init: `borrowed` is let go of with the geometry)
+    /// Instances that stay together from scene to scene: the plants of an open world's tile. They are not among
+    /// `instances`. The renderer keeps a group's records, and the ray tracers what they build over them, for as long
+    /// as some scene has a group of that name (`InstanceBlock` in SceneBuffers.swift), so `make` is only asked of a
+    /// group that is new. They never move, and there are no lights among them.
+    struct InstanceGroup {
+        /// What the group is made from, said in full: a group of the same name in another scene is the same
+        /// instances, of meshes, assemblies and materials with the same numbers.
+        let name: String
+        /// How many instances `make` gives (the renderer makes room for them before it asks).
+        let count: Int
+        let make: () -> [Instance]
+    }
+    private(set) var groups: [InstanceGroup] = []
+    private(set) var hasGroups = false             // (set once, by init: `groups` are let go of with the geometry)
+    func addGroup(name: String, count: Int, make: @escaping () -> [Instance]) {
+        groups.append(InstanceGroup(name: name, count: count, make: make))
+    }
     private(set) var meshes: [GPUMesh] = []
     /// What some meshes are made from, said in full (an open world's tile and chunk, a plant of a library): a mesh
     /// of the same name in another scene is the same triangles in the same order, so what was built for it holds
@@ -297,6 +314,7 @@ final class Scene {
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
         hasBorrowedMeshes = !borrowed.isEmpty
+        hasGroups = !groups.isEmpty
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
         if let place = worldPlace {
@@ -501,10 +519,10 @@ final class Scene {
         // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
-        // buffers of their own. (Shaders/Types.metal.)
+        // buffers of their own. Bit 24: GROUPED, some instances are in groups. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
-            | (hasBorrowedMeshes ? 0x0200_0000 : 0)
+            | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -805,11 +823,12 @@ final class Scene {
         return meshes.count - 1
     }
 
-    /// Lets go of the vertex and index arrays and of the borrowed meshes, once the renderer has them in its buffers
-    /// and the ray tracer has their trees: for a scene that is made again when anything about it changes, never built
-    /// from twice (the open world's). The meshes' table, bounds and names stay.
+    /// Lets go of the vertex and index arrays, of the borrowed meshes and of the instance groups, once the renderer
+    /// has them in its buffers and the ray tracer has their trees: for a scene that is made again when anything about
+    /// it changes, never built from twice (the open world's). The meshes' table, bounds and names stay.
     func releaseGeometry() {
         (positions, normals, uvs, indices, triangleMaterials, borrowed) = ([], [], [], [], [], [])
+        groups = []
         geometryReleased = true
     }
     private(set) var geometryReleased = false
