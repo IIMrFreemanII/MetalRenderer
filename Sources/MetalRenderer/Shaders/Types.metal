@@ -184,6 +184,9 @@ constant bool VOXELS = FOLIAGE;
 #else
 constant bool VOXELS = VOXEL_BOXES;
 #endif
+// Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace: the
+// custom tracer where it meets such an instance, Metal's in its intersection queries' loop (their boxes).
+constant bool SDF_SHAPES = (LIGHT_SPEC & 0x00400000u) != 0;
 constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
 struct InstanceBlockRef { device const InstanceData* records; };
 inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {
@@ -210,6 +213,17 @@ struct FogVolume {
     float4 albedoEdge;      // rgb = single-scattering albedo, w = edge softness (m)
     float4 params;          // x = noise amount, y = height falloff inside (1/m, from the bottom)
 };
+
+// The lens and the finish (Post.metal, Swift: GPUPostParams), passed with setBytes to their kernels.
+struct PostParams {
+    float4 bloom;           // x = strength (0 = none), y = threshold, z = exposure (linear scale), w = levels
+    float4 lens;            // x = aperture: blur radius far behind the focus (output pixels), y = focus distance (m, 0 =
+                            //   autofocus), z = largest blur radius (output pixels), w = autofocus easing per frame
+    float4 finish;          // x = vignette, y = grain, z = chromatic aberration (share of the width at the corners)
+    uint4  size;            // xy = output size, zw = traced size (normalDepth's)
+    uint4  frame;           // x = frame index (the grain), y = bloom level being made (bloomDown / bloomUp)
+};
+static_assert(sizeof(PostParams) == 80, "PostParams: GPUPostParams");
 
 constant uint FOG_MAX_VOLUMES = 8;
 
@@ -251,9 +265,10 @@ constant uint FLAG_RESTIR        = 32768; // direct light from a pass of its own
 constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
 constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (RTScene.wind.z > 0), the plants' parts turn
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
-constant uint FLAG_VIS_BUFFER    = 524288; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
-constant uint FLAG_VSM           = 1048576; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
-constant uint FLAG_GI_RADIANCE   = 2097152; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
+constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
+constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
+constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
+constant uint FLAG_GI_RADIANCE   = 4194304; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;

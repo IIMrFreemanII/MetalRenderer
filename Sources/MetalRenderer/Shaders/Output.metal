@@ -63,6 +63,15 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
         output.write(float4(flat, 1.0f), tid);
         return;
     }
+    if (SDF_SHAPES && res.part == HIT_SDF) {
+        // An SDF shape has no triangles either: shaded by its normal, its materials told apart in the triangles view.
+        InstanceData inst = instanceRecord(s.instances, res.instance);
+        float3 n = normalize((inst.normalMatrix * float4(sdfOctDecode(res.barycentrics), 0.0f)).xyz);
+        float shade = 0.35f + 0.65f * abs(dot(n, dir));
+        float3 c = u.viewMode == VIEW_TRIANGLES ? debugHashColor(res.primitive + pcgHash(res.instance + 0x51ED27u)) : float3(0.45f);
+        output.write(float4(c * shade, 1.0f), tid);
+        return;
+    }
 
     InstanceData inst = instanceRecord(s.instances, res.instance);
     HitVertices hv = fetchHitVertices(res, inst, accel, s);
@@ -303,6 +312,10 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         outSpecularAlbedo.write(float4(guideSpecular, 1.0f), tid);
         outRoughness.write(float4(guideRoughness), tid);
+        return;
+    }
+    if (flagOn(u.flags, FLAG_POST)) {   // the lens effects follow (Post.metal): they want the light as it is
+        output.write(float4(max(c, 0.0f), 1.0f), tid);
         return;
     }
     if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);

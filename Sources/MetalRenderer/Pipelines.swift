@@ -16,6 +16,7 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
+    case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
@@ -293,7 +294,7 @@ struct Pipelines {
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
         options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
                                       "RT_STATS": NSNumber(value: stats ? 1 : 0)]
-        // Fast math is the default (relaxed costs ~0.2 ms a frame in the stress scene and renders the same image);
+        // Fast math is the default (relaxed cost ~0.2 ms a frame in the old stress hall and rendered the same image);
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
         // `safe` also keeps the order of every operation: a kernel's variants then compute bit for bit what its
         // general pipeline computes, which is how to check a variant's flags against the uniforms' (pngdiff.py).

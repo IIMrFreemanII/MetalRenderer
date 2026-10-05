@@ -181,6 +181,19 @@ final class SettingsPanel: NSObject {
             }
             refreshers.append { kinds.selectItem(at: $0.scene.kind.rawValue) }
             return [label(title), kinds]
+        case .showcaseModel:   // a model brings its look: its fog and lens
+            let files = Scene.galleryFiles()
+            let models = popup(files.map(Scene.showcaseName)) { [unowned self] popup in
+                guard files.indices.contains(popup.indexOfSelectedItem) else { return }
+                let name = Scene.showcaseName(files[popup.indexOfSelectedItem]), defaults = self.renderer.defaultSettings
+                self.renderer.update { s in
+                    guard Scene.showcaseFile(s.scene.showcase) != files[popup.indexOfSelectedItem] else { return }
+                    s.scene.showcase = name
+                    s.applySceneDefaults(from: defaults)
+                }
+            }
+            refreshers.append { s in models.selectItem(at: Scene.showcaseFile(s.scene.showcase).flatMap(files.firstIndex) ?? -1) }
+            return [label(title), models]
         case .clearModels:
             let button = NSButton(title: "Clear Added Models", target: nil, action: nil)
             onChange(button) { [unowned self] in self.renderer.update { $0.scene.extraModels = [] } }
