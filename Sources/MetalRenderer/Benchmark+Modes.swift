@@ -14,6 +14,7 @@ extension Benchmark {
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase,
+        "showcasevideo": showcaseVideo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -95,6 +96,17 @@ extension Benchmark {
             out.append(shown("showcase \(first) camera", first).cameraMove())
         }
         return out
+    }
+
+    /// A video of the showcase: every model for 6 s from t = 2 s, the camera orbiting it, every other frame saved
+    /// (`recording`: 180 JPEGs at 30 fps in a folder per model). `METALRENDERER_GALLERY="owl|demon"` picks the models.
+    private static func showcaseVideo() -> [Config] {
+        Scene.galleryFiles().map(Scene.showcaseName).map { name in
+            var c = Config("video \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .showcase, showcase: name))
+                .cameraMove().recording().frames(360)
+            c.startTime = 2
+            return c
+        }
     }
 
     /// Fast smoke tests: the default setting, a camera move, path traced, 0.75x native.
