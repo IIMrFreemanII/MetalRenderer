@@ -187,6 +187,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
+                            texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -256,6 +257,11 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             specular += sa * (tracedAll ? traced : traced + finalIndirect);
         }
     }
+
+    // Lumen's screen traces read this next frame: the diffuse light the surface sends, without specular or fog.
+    // Emitters (mesh lights) send none here: their light reaches GI as a light.
+    if (flagOn(u.flags, FLAG_GI_RADIANCE))
+        giRadiance.write(float4(surfacePos.read(tid).w > 0.0f ? albedo * illumination : float3(0.0f), 1.0f), tid);
 
     // Fog in front of the pixel: rgb = in-scattered light, a = transmittance.
     float4 fogged = float4(0.0f, 0.0f, 0.0f, 1.0f);

@@ -253,6 +253,7 @@ constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowin
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_VIS_BUFFER    = 524288; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
 constant uint FLAG_VSM           = 1048576; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
+constant uint FLAG_GI_RADIANCE   = 2097152; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;

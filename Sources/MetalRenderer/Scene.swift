@@ -575,13 +575,18 @@ final class Scene {
         }
     }
 
+    /// An instance's bounds in its own space: its mesh's, virtual mesh's or assembly's.
+    func localBounds(of inst: Instance) -> (SIMD3<Float>, SIMD3<Float>) {
+        inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
+            : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
+    }
+
     /// Axis-aligned bounds of all geometry at the current animation time (the scene sphere),
     /// from each instance's transformed mesh bounds.
     func bounds() -> (SIMD3<Float>, SIMD3<Float>) {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.isGeometry {
-            let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
-                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
+            let (a, b) = localBounds(of: inst)
             for corner in 0..<8 {
                 let c = SIMD3<Float>(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z)
                 let p = inst.transform * SIMD4<Float>(c, 1)

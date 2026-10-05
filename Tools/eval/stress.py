@@ -19,7 +19,7 @@ for d in runs:
 print(f"\n{'run:GI method':24s}{'static':>9s}{'crop':>9s}{'flicker':>9s}{'moving':>9s}{'camera':>9s}{'indirect':>9s}{'mean':>9s}"
       "    (final image vs 8-bounce reference; indirect: indirect light only, mean: its brightness vs the reference's)")
 for d in runs:
-    for m in ("cascades", "cascades-hq", "pt", "restirgi", "restirgi-q"):
+    for m in ("cascades", "cascades-hq", "pt", "restirgi", "restirgi-q", "lumen"):
         st = capture(d, f"{m}-static-32")
         if st is None: continue
         r = ref("stress", "ref8-final-32")

@@ -299,6 +299,15 @@ final class Renderer: NSObject {
     private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
     private var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
+    private var lumen: Lumen?                         // ...and of the Lumen GI mode
+    private var lumenCards: LumenCards?               // Lumen's surface cache (for the scene it was made for)
+    private weak var lumenCardsScene: Scene?
+    private var lumenScene: LumenScene?               // the meshes' distance fields (for the scene it was made for)
+    private weak var lumenSceneOf: Scene?
+    private var lumenGlobal: LumenGlobalSDF?          // the global distance field (made with lumenScene)
+    /// What Lumen's bakes read of a scene that let go of its arrays (the open world's), kept when it did.
+    private var lumenKeptSource: LumenScene.Source?
+    private weak var lumenKeptScene: Scene?
 
     /// The scene's geometry, its instances' records and Metal's structures over them (SceneBuffers.swift).
     private var sceneBuffers: SceneBuffers!
@@ -738,7 +747,11 @@ final class Renderer: NSObject {
         if let buffers { SceneBuffers.touch(buffers.buffers + (rt?.buffers ?? []), device: device, queue: buildQueue) }
         // The open world's scene is made again for every tile the camera comes to, never built from twice: its vertex
         // arrays, now in the buffers, go.
-        if buffers != nil, newScene.worldPlace != nil, !CustomRayTracer.checked { newScene.releaseGeometry() }
+        if buffers != nil, newScene.worldPlace != nil, !CustomRayTracer.checked {
+            lumenKeptSource = LumenScene.Source(scene: newScene)   // Lumen's bakes still read them
+            lumenKeptScene = newScene
+            newScene.releaseGeometry()
+        }
         return PreparedScene(scene: newScene, rayTracer: rayTracer, api: options.api, textures: textures, streamer: streamer, customRT: rt,
                              buffers: buffers, pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
@@ -1809,6 +1822,7 @@ final class Renderer: NSObject {
         // Lighting
         var giMode = GIMode.pathTraced
         var cascades = false                    // radiance-cascade GI runs
+        var lumen = false                       // Lumen GI runs
         var vsm: VSMTargets?                    // the camera's surfaces' shadows through virtual shadow maps
         var restirGI = false                    // ReSTIR GI runs...
         var restirGIGrid: RestirGITargets?      // ...on these reservoirs (nil if they couldn't be allocated: no stages)...
@@ -1918,10 +1932,12 @@ final class Renderer: NSObject {
         p.lightMaps = usesLightMaps
         p.cascades = settings.giEnabled && p.giMode == .radianceCascades
         p.restirGI = settings.giEnabled && p.giMode == .restirGI
+        p.lumen = settings.giEnabled && p.giMode == .lumen
+        if p.lumen && settings.lumen.screenTraces { p.uniforms.flags |= UniformFlags.giRadiance }
         if p.restirGI { p.restirGIGrid = restirGITargets(width: width, height: height) }
         p.restirGIHistory = restirGIWritten   // read after restirGITargets: new reservoirs hold nothing
         // Only these write t.giDebug: with any other method the "GI debug" view would show what one of them left.
-        if p.cascades || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
+        if p.cascades || p.lumen || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
 
         // Denoising (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
         //   Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
@@ -2185,7 +2201,8 @@ final class Renderer: NSObject {
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
-                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness])
+                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
+                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -2374,6 +2391,7 @@ final class Renderer: NSObject {
     /// the trace (its G-buffer) and before the reflections (they read it).
     private func giStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         if plan.cascades { return radianceCascadeStages(plan, targets: t) }
+        if plan.lumen { return lumenStages(plan, targets: t) }
         if let grid = plan.restirGIGrid { return restirGIStages(plan, grid: grid, targets: t) }
         return []
     }
@@ -2765,7 +2783,7 @@ final class Renderer: NSObject {
         let wanted: Bool
         switch activeGIMode {
         case .pathTraced: wanted = settings.lightMaps
-        case .radianceCascades: wanted = true
+        case .radianceCascades, .lumen: wanted = true
         case .restirGI: wanted = settings.restirGI.lightMaps
         }
         return settings.giEnabled && !accumulating && wanted && !scene.usesLightTable
@@ -2780,6 +2798,7 @@ final class Renderer: NSObject {
         case .pathTraced: return true
         case .radianceCascades: return settings.cascades.denoiseIndirect
         case .restirGI: return settings.restirGI.denoise
+        case .lumen: return settings.lumen.denoiseIndirect
         }
     }
 
@@ -2875,6 +2894,85 @@ final class Renderer: NSObject {
                                         normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)
     }
 
+    /// Lumen's stages for this frame (they write t.indirect and t.giDebug); empty if allocation failed.
+    private func lumenStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        let slot = plan.slot, spacing = LumenSettings.spacingOptions.contains(settings.lumen.probeSpacing) ? settings.lumen.probeSpacing : 8
+        if lumen == nil || lumen!.width != t.width || lumen!.height != t.height || lumen!.spacing != spacing {
+            do {
+                lumen = try Lumen(device: device, width: t.width, height: t.height, spacing: spacing)
+            } catch {
+                print(error)
+                return []
+            }
+        }
+        var cards: LumenCards?
+        if settings.lumen.cards {
+            if lumenCards == nil || lumenCardsScene !== scene {
+                lumenCards = try? LumenCards(device: device, frameSlots: Renderer.maxFramesInFlight)
+                lumenCardsScene = scene
+            }
+            lumenCards?.update(scene: scene, eligible: { $0.isGeometry && !$0.skinned }, camera: camera,
+                               viewportHeight: t.height, slot: slot,
+                               radiosityBudget: LumenSettings.radiosityBudgetRange.clamp(settings.lumen.radiosityBudget) << 10)
+            cards = lumenCards
+        }
+        var sdfScene: LumenScene?
+        var global: (field: LumenGlobalSDF, levels: [GPULumenClipLevel])?
+        var bakeSeconds: Double?    // benchmarks: how long they waited for the bakes
+        if settings.lumen.trace == .sdf || settings.lumen.debug >= 4 {
+            if lumenScene == nil || lumenSceneOf !== scene {
+                lumenScene?.cancel()
+                let large: Set<SceneKind> = [.city, .cityNight, .forest, .valley, .world]
+                let layout = LumenGlobalSDF.layout(bounds: scene.bounds(), large: large.contains(settings.scene.kind),
+                                                   voxel: LumenSettings.globalVoxelRange.clamp(settings.lumen.globalVoxel))
+                lumenGlobal = try? LumenGlobalSDF(device: device, levels: layout.levels, voxel: layout.voxel,
+                                                  frameSlots: Renderer.maxFramesInFlight)
+                if lumenKeptScene == nil { lumenKeptSource = nil }   // the scene it was kept for is gone
+                let kept = lumenKeptScene === scene ? lumenKeptSource : nil
+                lumenScene = try? LumenScene(device: device, scene: scene, fields: lumenSDFFields(), source: kept,
+                                             frameSlots: Renderer.maxFramesInFlight)
+                lumenSceneOf = scene
+                if benchmark != nil {
+                    let start = CACurrentMediaTime()
+                    lumenScene?.waitForBakes()
+                    bakeSeconds = CACurrentMediaTime() - start
+                }
+            }
+            lumenScene?.update(scene: scene, eligible: lumenSDFEligible, slot: slot)
+            if let bakeSeconds, let lumenScene {
+                print(String(format: "Lumen: %d mesh fields in %.2f s; %d MB of fields, %d MB global field, %d MB cards",
+                             lumenScene.toBake, bakeSeconds, lumenScene.megabytes, lumenGlobal?.megabytes ?? 0,
+                             lumenCards?.megabytes ?? 0))
+            }
+            sdfScene = lumenScene
+            if let lumenGlobal, let lumenScene {
+                global = (lumenGlobal, lumenGlobal.update(camera: camera.position, changed: lumenScene.movedBoxes,
+                                                         everything: lumenScene.fieldsChanged, slot: slot))
+            }
+        }
+        return lumen!.stages(pipelines: pipelines.lumen, settings: settings.lumen, uniforms: plan.uniforms,
+                             bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
+                             normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev],
+                             cards: cards, cardInstances: scene.instances.count, scene: sdfScene, global: global, slot: slot,
+                             targets: t)
+    }
+
+    /// Instances traced through a distance field: geometry that doesn't deform (the crowd: screen traces only) or
+    /// sway (ground cover); meshes, virtual meshes and plants' assemblies.
+    private func lumenSDFEligible(_ inst: Scene.Instance) -> Bool {
+        guard inst.isGeometry, !inst.skinned else { return false }
+        guard inst.mesh >= 0 else { return true }
+        let m = scene.meshes[inst.mesh]
+        return m.sways == 0 && m.vertexOffset == 0
+    }
+
+    /// The fields to bake, the most used first.
+    private func lumenSDFFields() -> [Int] {
+        var uses: [Int: Int] = [:]
+        for inst in scene.instances where lumenSDFEligible(inst) { uses[LumenScene.field(of: inst, in: scene), default: 0] += 1 }
+        return uses.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
+    }
+
     /// Drops all temporal GI state (cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
@@ -2884,6 +2982,7 @@ final class Renderer: NSObject {
         skyRefreshed = nil
         fogLastFrame = nil
         radianceCascades?.reset()
+        lumen?.reset()
     }
 
     // MARK: - Benchmark
@@ -3474,8 +3573,8 @@ final class Renderer: NSObject {
             return "History length is the SVGF denoiser's: MetalFX's denoising scaler keeps its own history."
         case 5 where !denoiserOn:
             return "The denoiser is off: no history."
-        case 7 where !settings.giEnabled || ![.radianceCascades, .restirGI].contains(activeGIMode):
-            return "GI debug is drawn by radiance cascades and ReSTIR GI only."
+        case 7 where !settings.giEnabled || ![.radianceCascades, .restirGI, .lumen].contains(activeGIMode):
+            return "GI debug is drawn by radiance cascades, ReSTIR GI and Lumen only."
         case 9...10 where !virtual:
             return "Clusters and groups belong to virtual geometry (custom tracer, glTF meshes of 64K+ triangles: the "
                 + "gallery or added models). Other geometry shows its level of detail, faded."

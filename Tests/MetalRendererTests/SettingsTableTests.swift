@@ -181,6 +181,18 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s, defaults)
     }
 
+    func testLumenIsRead() {
+        var s = defaults
+        SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
+            "METALRENDERER_GI": "mode=lumen",
+            "METALRENDERER_LUMEN": "spacing=4,history=8,filter=0",
+        ])
+        XCTAssertEqual(s.giMode, .lumen)
+        XCTAssertEqual(s.lumen.probeSpacing, 4)
+        XCTAssertEqual(s.lumen.history, 8)
+        XCTAssertFalse(s.lumen.filter)
+    }
+
     func testListsAreRead() {
         var s = defaults
         SettingsEnv.applyAll(to: &s, defaults: defaults, from: [

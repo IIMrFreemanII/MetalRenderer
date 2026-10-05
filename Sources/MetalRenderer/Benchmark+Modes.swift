@@ -13,7 +13,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "vsm": vsm,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "vsm": vsm, "lumen": lumen,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -188,6 +188,7 @@ extension Benchmark {
             Config("cascades-hq", scale: 0.5, gi: .radianceCascades) { $0.cascades.probeSpacing = 4; $0.cascades.firstInterval = 0.25 },
             Config("restirgi", scale: 0.5, gi: .restirGI),
             Config("restirgi-q", scale: 0.5, gi: .restirGI) { $0.restirGI.quarterBudget = true },
+            Config("lumen", scale: 0.5, gi: .lumen),
         ]
         guard let pick = env["METALRENDERER_GI_MODES"] else { return all }
         let tags = Set(pick.split(separator: ",").map(String.init))
@@ -499,6 +500,8 @@ extension Benchmark {
             lit.named("backlit pt").with { $0.giMode = .pathTraced },
             lit.named("backlit cascades"),
             lit.named("backlit restirgi").with { $0.giMode = .restirGI },
+            lit.named("backlit lumen").with { $0.giMode = .lumen },
+            lit.named("backlit lumen triangles").with { $0.giMode = .lumen; $0.lumen.trace = .triangles },
             lit.named("backlit opaque").with { $0.foliage.translucency = 0 },
             // Leaves as cards: the same views as "assemblies" and "backlit cascades", to compare with them.
             still.named("cards").with { $0.scene.leafCards = true },
@@ -538,6 +541,7 @@ extension Benchmark {
             Config("pt", scale: 0.5, scene: hall),
             Config("restirgi", scale: 0.5, gi: .restirGI, scene: hall),
             Config("restirgi-q", scale: 0.5, gi: .restirGI, scene: hall) { $0.restirGI.quarterBudget = true },
+            Config("lumen", scale: 0.5, gi: .lumen, scene: hall),
         ]
         for method in methods {
             let tag = method.name
@@ -699,6 +703,30 @@ extension Benchmark {
             }
         }
         return out
+    }
+
+    /// Lumen GI against the radiance cascades: stills of a few scenes (the final image, indirect light alone), with
+    /// distance fields (the default) and triangles, without screen traces and without the surface cache, and the
+    /// "GI debug" views (Tools/eval/lumen.py scores them); then each method in a camera move at the app's defaults
+    /// (0.5x, upscaled 3x) for the timings (`METALRENDERER_BENCH_ONLY=camera`).
+    private static func lumen() -> [Config] {
+        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()),
+                                                 ("gallery", SceneSettings(kind: .gallery)), ("sun", SceneSettings(kind: .sun)),
+                                                 ("city", SceneSettings(kind: .city)), ("forest", SceneSettings(kind: .forest)),
+                                                 ("crowd", SceneSettings(kind: .crowd)), ("world", SceneSettings(kind: .world))]
+        return scenes.flatMap { tag, scene -> [Config] in
+            let cascades = Config("\(tag) cascades", scale: 0.5, gi: .radianceCascades, scene: scene).still().frames(60)
+            let lumen = Config("\(tag) lumen", scale: 0.5, gi: .lumen, scene: scene).still().frames(60)
+            let triangles = lumen.named("\(tag) lumen triangles").with { $0.lumen.trace = .triangles }
+            let views = ["probes", "trace kinds", "card albedo", "card light", "sdf normals", "sdf depth", "global sdf"]
+            return [cascades, cascades.named("\(tag) cascades indirect").view(6), lumen, lumen.named("\(tag) lumen indirect").view(6),
+                    triangles, triangles.named("\(tag) lumen triangles indirect").view(6),
+                    lumen.named("\(tag) lumen noscreen indirect").view(6).with { $0.lumen.screenTraces = false },
+                    lumen.named("\(tag) lumen nocards indirect").view(6).with { $0.lumen.cards = false }]
+                + views.enumerated().map { i, view in lumen.named("\(tag) lumen \(view)").view(7).with { $0.lumen.debug = i } }
+                + [lumen.named("\(tag) albedo").view(4)]
+                + [GIMode.radianceCascades, .lumen].map { Config("\(tag) \($0 == .lumen ? "lumen" : "cascades") camera", scale: 0.5, upscale: 3, gi: $0, scene: scene).cameraMove() }
+        }
     }
 
     /// Virtual shadow maps against shadow rays (ShadowMethod), stills of the scenes with suns, spots and sphere lights,

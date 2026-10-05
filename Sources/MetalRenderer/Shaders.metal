@@ -37,6 +37,9 @@ using namespace metal::raytracing;
 #include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser
 #include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
+#include "Shaders/LumenSDF.metal"          // Lumen's distance fields: meshes' bricks, the global clipmap, tracing
+#include "Shaders/LumenCards.metal"        // Lumen's surface cache: card capture, lighting, sampling
+#include "Shaders/Lumen.metal"             // the Lumen GI mode: screen probes (uses the cascades' probe weight and SH)
 #include "Shaders/BVHBuild.metal"          // custom ray tracer: the per-frame top-level tree (rt* kernels)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its tree (vg* kernels)
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices, vertices and trees (crowd* kernels)
