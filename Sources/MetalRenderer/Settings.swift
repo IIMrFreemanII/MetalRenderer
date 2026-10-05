@@ -153,47 +153,6 @@ struct RegirSettings: Equatable, Codable {
     }
 }
 
-/// Which temporal upscaler turns the traced resolution into the output resolution (when upscaling is on).
-enum UpscalerKind: Int, CaseIterable, Codable {
-    case metalFX            // MetalFX temporal scaler
-    case metalFXSpatial     // MetalFX spatial scaler: cheaper, but no temporal anti-aliasing (jitter off)
-    case custom             // this project's TAAU pass (taauKernel), the default
-    case metalFXDenoised    // MetalFX denoising scaler: denoises the raw 1-spp light as it upscales, in place of SVGF,
-                            // the shadow denoiser and the upscaler (macOS 26; Capabilities.metalFXDenoiser)
-
-    var title: String {
-        switch self {
-        case .metalFX: return "MetalFX temporal"
-        case .metalFXSpatial: return "MetalFX spatial"
-        case .custom: return "Custom (TAAU)"
-        case .metalFXDenoised: return "MetalFX denoiser"
-        }
-    }
-}
-
-/// Tuning for the custom upscaler.
-struct UpscalerSettings: Equatable, Codable {
-    var maxHistory: Float = 12      // max accumulated sample weight (~frames): higher = smoother, more lag
-    var clipWidth: Float = 1.5      // history colour box, in standard deviations of the 3x3 input neighbourhood
-    var motionCut: Float = 1        // history weight / (1 + motionCut * motion in output pixels), at 3x (scaled for others)
-    var edgeMotionCut: Float = 8    // the same at depth edges, where camera motion uncovers background (parallax)
-    var clipCut: Float = 16         // history weight / (1 + clipCut * how far outside the colour box it was)
-    var kernelSharpness: Float = 4  // sample weight exp(-k d^2), d in output pixels, with a full history: higher = sharper
-    var kernelSharpnessMoving: Float = 2     // the same where the history was cut (motion): wider = fewer gaps
-    var dilationRadius: Float = 1.17   // across depth edges: closest surface among samples this close (input px); 0 = 3x3
-    var lanczosHistory = true       // resample a moving history with Lanczos-3 (much less blur than Catmull-Rom)...
-    var lanczosThreshold: Float = 0.03   // ...where the input neighbourhood's colour deviation exceeds this (edges, detail)
-
-    static let maxHistoryRange: ClosedRange<Float> = 2...32
-    static let clipWidthRange: ClosedRange<Float> = 0.5...4
-    static let motionCutRange: ClosedRange<Float> = 0...8
-    static let edgeMotionCutRange: ClosedRange<Float> = 0...32
-    static let clipCutRange: ClosedRange<Float> = 0...64
-    static let sharpnessRange: ClosedRange<Float> = 0.5...8
-    static let dilationRange: ClosedRange<Float> = 0...2
-    static let lanczosThresholdRange: ClosedRange<Float> = 0...0.2
-}
-
 /// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
 enum ToneMap: Int, CaseIterable, Codable {
     case aces       // Narkowicz's ACES fit: contrasty, saturated highlights shift toward white
@@ -688,9 +647,7 @@ struct FoliageSettings: Equatable, Codable {
 
 struct RenderSettings: Equatable, Codable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
-    var upscaleFactor: CGFloat = 3     // MetalFX output / traced resolution; 0 = off
-    var upscaler = UpscalerKind.custom  // sharper and steadier than MetalFX here, as good in motion at 3x, ~0.6 ms cheaper
-    var taau = UpscalerSettings()
+    var upscaleFactor: CGFloat = 3     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
     var giEnabled = true
     var bounces = 2
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)

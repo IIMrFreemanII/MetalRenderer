@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           Space        pause animation      G               toggle global illumination
           B            toggle blue-noise sampling   M   GI method: path traced, radiance cascades, ReSTIR GI
           N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
-          - / =        lower / raise render resolution   U   MetalFX upscaling: off, 1.5x, 2x, 3x
+          - / =        lower / raise render resolution   U   upscaling (MetalFX denoiser): off, 1.5x, 2x, 3x
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
           R            hot-reload the shaders (edit Shaders/*.metal while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel

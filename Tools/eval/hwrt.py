@@ -1,7 +1,6 @@
 """usage: hwrt.py <run-dir> ... — scores METALRENDERER_BENCH=hwrtq against the supersampled 1920x1200 references in refs/hwrt/.
 
-Each output (SVGF with the custom upscaler or MetalFX's temporal scaler, or MetalFX's denoising scaler) in the Cornell room
-and the stress hall: PSNR of a still frame, its flicker against the frame before, and PSNR with the animation running and
+MetalFX's denoising scaler in the Cornell room and the stress hall: PSNR of a still frame, its flicker against the frame before, and PSNR with the animation running and
 during the camera move."""
 import os, sys
 from evalcommon import *
@@ -13,7 +12,7 @@ print(f"{'run:scene:output':34s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'cam
 for d in runs:
     for s in scenes:
         r = ref("hwrt", f"{s}-ref-final")
-        for k in ("custom", "metalfx", "denoiser"):
+        for k in ("denoiser",):
             st = capture(d, f"{s}-final-static-{k}")
             if st is None: continue
             stp, mv, cam = (capture(d, f"{s}-final-{n}-{k}") for n in ("static-" + k + "-prev", "moving", "camera"))

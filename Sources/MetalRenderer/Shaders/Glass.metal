@@ -8,7 +8,7 @@
 //     and the first pane's reflection is added to the emission. A kernel of its own because traceKernel is short of
 //     registers: with the panes' rays in it, every pixel of a scene with glass traced at a third of the speed, and
 //     with only the ray through the panes in it (one call in a loop) the two kernels together were still slower.
-//     Not here: refraction, tinted shadows, and a filter for the reflection's one light sample (TAAU averages it).
+//     Not here: refraction, tinted shadows, and a filter for the reflection's one light sample (the upscaler averages it).
 // ---------------------------------------------------------------------------------------------
 
 // What a pane reflects along `dir` from `p` on it: the sky, or the surface its mirror ray hits, with that surface's

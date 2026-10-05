@@ -474,8 +474,7 @@ final class Renderer: NSObject {
     private(set) var defaultSettings = RenderSettings()
     /// Resolution, fps and GPU time, refreshed twice a second.
     private(set) var statsLine = ""
-    private var upscaler: Upscaler?           // MetalFX (temporal or spatial)
-    private var customUpscaler: TemporalUpscaler?
+    private var upscaler: Upscaler?           // MetalFX's denoising scaler, while upscaling
     private var upscalerReset = true          // drop the upscaler's history on the next frame
     private var supersampling = false         // benchmark reference: jitter + average the final colour
     private var colorAccum: MTLTexture?
@@ -487,13 +486,13 @@ final class Renderer: NSObject {
     private var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
     private var accumCount: UInt32 = 0
     private var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
-    private(set) lazy var upscaleSupported = Capabilities.current.metalFXUpscaling
+    private(set) lazy var upscaleSupported = Capabilities.current.metalFXDenoiser
     private lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
-    /// MetalFX factors this GPU supports, with 0 meaning off.
+    /// Upscale factors this GPU supports (for MetalFX's denoising scaler), with 0 meaning off.
     var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
     private var historyValid = false
     /// MetalFX's denoising scaler is this frame's upscaler: it denoises, so SVGF and the shadow denoiser stay off.
-    private var neuralDenoise: Bool { upscaler?.denoising ?? false }
+    private var neuralDenoise: Bool { upscaler != nil }
     /// This project's denoisers (SVGF, the shadow denoiser) are on.
     private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
@@ -553,8 +552,8 @@ final class Renderer: NSObject {
             startCompilingShaders()
         }
         if !upscaleSupported {
-            // Without MetalFX, a 0.5x render would just be stretched, so render at 0.75x instead.
-            print("MetalFX temporal upscaling is not supported on this GPU; rendering at 0.75x without it")
+            // Without MetalFX's denoising scaler, a 0.5x render would just be stretched, so render at 0.75x instead.
+            print("The MetalFX denoiser is not supported on this GPU or system; rendering at 0.75x without upscaling")
             defaultSettings.renderScale = 0.75
             defaultSettings.upscaleFactor = 0
             settings = defaultSettings
@@ -1636,41 +1635,22 @@ final class Renderer: NSObject {
         return targets
     }
 
-    /// Makes the upscaler this frame needs (MetalFX or the custom one), if it isn't there at this size. False when it
-    /// couldn't be made: upscaling is then turned off and the frame skipped.
+    /// Makes MetalFX's denoising scaler while upscaling, if it isn't there at this size. False when it couldn't be
+    /// made: upscaling is then turned off (SVGF denoises instead) and the frame skipped.
     private func prepareUpscalers(for size: FrameSize) -> Bool {
         let width = size.width, height = size.height, outWidth = size.outWidth, outHeight = size.outHeight
-        let custom = size.upscaling && settings.upscaler == .custom
-        if !size.upscaling || custom {
+        if !size.upscaling {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
-                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight
-                    || upscaler!.kind != settings.upscaler || upscaler!.metal4 != (builtAPI == .metal4) {
+                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight {
             do {
                 upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height,
-                                        outputWidth: outWidth, outputHeight: outHeight,
-                                        kind: settings.upscaler, synchronous: benchmark != nil, compiler: compiler(for: builtAPI))
+                                        outputWidth: outWidth, outputHeight: outHeight, synchronous: benchmark != nil)
                 upscalerReset = true
                 historyValid = false   // the denoising scaler comes or goes: SVGF's history is not this frame's
             } catch {
                 print(error)
                 upscaler = nil
-                // The denoising scaler couldn't be made: back to the default upscaler, with SVGF. Others: no upscaling.
-                if settings.upscaler == .metalFXDenoised { settings.upscaler = .custom } else { settings.upscaleFactor = 0 }
-                return false
-            }
-        }
-        if !custom {
-            customUpscaler = nil
-        } else if customUpscaler == nil || customUpscaler!.inputWidth != width || customUpscaler!.inputHeight != height
-                    || customUpscaler!.outputWidth != outWidth || customUpscaler!.outputHeight != outHeight {
-            do {
-                customUpscaler = try TemporalUpscaler(device: device, inputWidth: width, inputHeight: height,
-                                                      outputWidth: outWidth, outputHeight: outHeight)
-                upscalerReset = true
-            } catch {
-                print(error)
-                customUpscaler = nil
                 settings.upscaleFactor = 0
                 return false
             }
@@ -1863,11 +1843,11 @@ final class Renderer: NSObject {
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
-        // Temporal upscalers gather jittered samples; supersampled references average 1024 jittered frames.
+        // The denoising scaler gathers jittered samples; supersampled references average 1024 jittered frames.
         if neuralDenoise {
             p.view = Upscaler.View(worldToView: camera.worldToView, viewToClip: camera.viewToClip(aspect: Float(width) / Float(height)))
         }
-        p.jitter = size.upscaling && settings.upscaler != .metalFXSpatial
+        p.jitter = size.upscaling
             ? Upscaler.jitter(frame: frameIndex, scale: Float(size.outWidth) / Float(width))
             : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
@@ -2139,8 +2119,7 @@ final class Renderer: NSObject {
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
         if let drawable, let enc = passes.compute("composite") {
-            let output = size.upscaling ? upscaler?.spatialInput ?? t.upscaleColor
-                : supersampling ? t.upscaleColor : drawable.texture
+            let output = size.upscaling || supersampling ? t.upscaleColor : drawable.texture
             bind(enc, .composite, c.uniforms)
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
@@ -2166,23 +2145,16 @@ final class Renderer: NSObject {
             dispatch(enc, .accumulateColor, width: size.width, height: size.height)
         }
 
-        // 5. Upscale into the drawable: the custom TAAU pass, or MetalFX (copied in; both sRGB formats, so the GPU
-        //    encodes on write).
-        if let drawable, let customUpscaler, let enc = passes.compute("upscale") {
-            if overlap { enc.memoryBarrier(scope: .textures) }   // the composite pass wrote its input
-            customUpscaler.encode(enc, pipeline: pipelines[.taau], targets: t, drawable: drawable.texture, jitter: plan.jitter,
-                                  reset: upscalerReset, settings: settings.taau)
-            upscalerReset = false
-        }
+        // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
         if let drawable, let upscaler {
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
-                                                   reset: upscalerReset), output: drawable.texture, pass: "upscale")
+                                                   reset: upscalerReset), pass: "upscale")
             upscalerReset = false
-            // The denoising scaler leaves linear, unbounded light: the exposure and the tone curve, into the drawable.
-            if let hdr = upscaler.hdrOutput, let enc = passes.compute("upscale") {
+            // It leaves linear, unbounded light: the exposure and the tone curve, into the drawable.
+            if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
-                setTextures(enc, [hdr, drawable.texture])
+                setTextures(enc, [upscaler.hdrOutput, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
@@ -3042,8 +3014,7 @@ final class Renderer: NSObject {
         func withBounces(_ name: String, _ n: Int) -> String { "GI \(name), \(n) bounce\(n == 1 ? "" : "s")" }
         let gi = !s.giEnabled ? "GI off" : s.giMode == .pathTraced ? withBounces("path traced", s.bounces)
             : s.giMode == .restirGI ? withBounces("ReSTIR", s.restirGI.bounces) : "GI \(s.giMode.title.lowercased())"
-        let upscalerName = ["MetalFX", "MetalFX spatial", "TAAU", "MetalFX denoiser"][s.upscaler.rawValue]
-        let res = outWidth > width ? String(format: "%ld×%ld → %@ %ld×%ld", width, height, upscalerName, outWidth, outHeight)
+        let res = outWidth > width ? String(format: "%ld×%ld → MetalFX denoiser %ld×%ld", width, height, outWidth, outHeight)
                                    : String(format: "%ld×%ld", width, height)
         let stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
         var sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
@@ -3297,7 +3268,7 @@ final class Renderer: NSObject {
         case "0": settings.viewMode = 0
         case "l": settings.virtualGeometry.freeze.toggle()
         case "u":
-            guard upscaleSupported else { print("MetalFX temporal upscaling is not supported on this GPU"); break }
+            guard upscaleSupported else { print("The MetalFX denoiser is not supported on this GPU or system"); break }
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r": reloadShaders { if $0 { print("Shaders reloaded") } }

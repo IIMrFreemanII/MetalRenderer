@@ -23,7 +23,7 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Direct light, many lights, ReSTIR DI, the light grid | `stressq`, `shadow`, `lightcheck`, `restircheck` |
 | Fog, sky, clouds | `fogcheck`, `skycheck` |
 | Reflections, specular light | `speccheck` |
-| Upscalers, the output path | `upscale`, `quality`, `hwrtq` |
+| The upscaler (MetalFX denoiser), the output path | `quality`, `hwrtq` |
 | Tracers, acceleration structures | `rt`, `hwrt` (both tracers), and any mode with `-- METALRENDERER_RT=metal` |
 | Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
 | Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery`, with `-- METALRENDERER_ASSETS=<repo>/Assets` (see below) |
@@ -36,18 +36,20 @@ What a mode costs, per run, on an M4 Max under macOS 27.0 without the references
 | Mode | Images | Seconds | | Mode | Images | Seconds |
 |---|---|---|---|---|---|---|
 | `shadow` | 5 | 2 | | `quality` | 8 | 16 |
-| `denoise` | 7 | 4 | | `hwrtq` | 24 | 17-25 |
-| `vgdebug` | 18 | 4 | | `gi` | 42 | 20 |
+| `denoise` | 7 | 4 | | `hwrtq` | 8 | ≈6-8 |
+| `vgdebug` | 18 | 4 | | `gi` | 36 | ≈17 |
 | `lightcheck` | 6 | 6 | | `rt` | 24 | 21 |
-| `quick` | 7 | 7 | | `hwrt` | 24 | 24 |
-| `api` | 14 | 10 | | `skycheck` | 20 | 28 |
+| `quick` | 4 | ≈4 | | `hwrt` | 8 | ≈8 |
+| `api` | 10 | ≈7 | | `skycheck` | 20 | 28 |
 | `speccheck` | 18 | 10 | | `fogcheck` | 12 | 30 |
-| `upscale` | 21 | 11 | | `stressq` | 45 | 42 |
+| | | | | `stressq` | 39 | ≈37 |
 | | | | | `restirgicheck` | 8 | 60 |
 | | | | | `restircheck` | 36 | minutes |
 
+≈: scaled down from the measured time when the other upscalers were removed, not measured again.
+
 Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
-other seventeen together take about five minutes per binary, so ten for a comparison.
+other sixteen together take about five minutes per binary, so ten for a comparison.
 
 `vgdebug` and `gallery` need both binaries to read the same models *and the same caches*: pass
 `METALRENDERER_ASSETS=<repo>/Assets`. Left alone, the baseline builds its own cluster DAGs in its worktree, and two
@@ -57,7 +59,7 @@ When images differ:
 * **Run `same.sh --self <mode> "<filter>"`.** It compares the baseline with itself. A setting that differs there
   differs from run to run and can't prove anything. On the M4 Max every mode in the table repeated bit for bit,
   MetalFX and Metal's hardware tracer included. That isn't a given elsewhere: 9d3e661 saw Metal's tracer differ
-  from itself. For a setting that doesn't repeat, prove the path with the custom tracer or the custom upscaler,
+  from itself. For a setting that doesn't repeat, prove the path with the custom tracer,
   and score the rest (`Tools/eval/hwrt.py` and the other scorers: a refactor leaves the scores within the ±0.2 dB
   that single frames swing by).
 * **Otherwise the change is real.** `python3 Tools/eval/pngdiff.py <a> <b>` gives the size per image in 8-bit levels
@@ -95,7 +97,7 @@ cover the change: `.claude/skills/tests/scripts/related.sh` picks them (the `tes
 * `SettingsTableTests`: env names are unique, every setting and random panel states round-trip, bad input is
   skipped, sliders show what they set.
 * `BenchmarkModesTests`: every mode builds named settings, the modifiers, env overrides, scene presets.
-* `CapabilitiesTests`: fallbacks for each missing capability, the benchmark's skips, upscaler names.
+* `CapabilitiesTests`: fallbacks for each missing capability, the benchmark's skips, API names.
 * `KernelVariantsTests`: the flag values in Swift match the shaders', and the variants compile.
 * `ShaderSourceTests`: every piece in `Shaders/` is included once, and compile errors name the piece.
 * `BVHTests`, `CacheTests`: the parallel BVH build equals the serial one; cache files are written whole.

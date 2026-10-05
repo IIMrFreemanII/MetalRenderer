@@ -39,7 +39,7 @@ final class LayerSurface: RenderSurface {
     init(device: MTLDevice) {
         layer.device = device
         layer.pixelFormat = Renderer.drawableFormat
-        layer.framebufferOnly = false   // the composite kernel or MetalFX writes to the drawable
+        layer.framebufferOnly = false   // the composite or the tone map kernel writes to the drawable
         layer.maximumDrawableCount = Renderer.maxFramesInFlight
         layer.isOpaque = true
         if Benchmark.isEnabled {
@@ -116,7 +116,7 @@ final class OffscreenSurface: RenderSurface {
         if ring.first.map({ $0.width != width || $0.height != height }) ?? true {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Renderer.drawableFormat, width: width, height: height,
                                                              mipmapped: false)
-            d.usage = [.shaderRead, .shaderWrite]   // the composite and TAAU write it, MetalFX and the capture blit
+            d.usage = [.shaderRead, .shaderWrite]   // the composite and the tone map write it, the capture blit
             d.storageMode = .private
             ring = (0..<count).compactMap { _ in device.makeTexture(descriptor: d) }
             guard ring.count == count else { ring = []; return nil }

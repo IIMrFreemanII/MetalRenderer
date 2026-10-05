@@ -7,8 +7,7 @@ import MetalFX
 struct Capabilities: Equatable {
     var metalRayTracing = true      // Metal's acceleration structures and intersector
     var hardwareRayTracing = true   // ... traversed by ray-tracing hardware (Apple9: M3, A17 Pro and later), not in software
-    var metalFXUpscaling = true     // MetalFX temporal and spatial scalers
-    var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26)
+    var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26): the upscaler
     var metal4 = true               // Metal 4's command queue, argument tables and compiler (macOS 26)
     /// Metal 4's acceleration structures, for Metal ray tracing on Metal 4. Metal has no query for it, only a validation
     /// error ("this device does not support Metal 4 ray tracing", M1 Max); the M4 Max, with ray-tracing hardware, has it.
@@ -19,12 +18,11 @@ struct Capabilities: Equatable {
 
     init() {}
 
-    /// `METALRENDERER_CAPS="rt,metalfx"` keeps only the capabilities it names (rt, hwrt, metalfx, denoiser, metal4;
+    /// `METALRENDERER_CAPS="rt,denoiser"` keeps only the capabilities it names (rt, hwrt, denoiser, metal4;
     /// `none` keeps nothing), to try the fallbacks on a GPU that has them all.
     init(device: MTLDevice, env: [String: String] = ProcessInfo.processInfo.environment) {
         metalRayTracing = device.supportsRaytracing
         hardwareRayTracing = metalRayTracing && device.supportsFamily(.apple9)
-        metalFXUpscaling = MTLFXTemporalScalerDescriptor.supportsDevice(device)
         if #available(macOS 26.0, *) {
             metalFXDenoiser = MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
             metal4 = device.supportsFamily(.metal4)
@@ -37,7 +35,6 @@ struct Capabilities: Equatable {
         if let keep = env["METALRENDERER_CAPS"]?.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             metalRayTracing = metalRayTracing && keep.contains("rt")
             hardwareRayTracing = hardwareRayTracing && metalRayTracing && keep.contains("hwrt")
-            metalFXUpscaling = metalFXUpscaling && keep.contains("metalfx")
             metalFXDenoiser = metalFXDenoiser && keep.contains("denoiser")
             metal4 = metal4 && keep.contains("metal4")
             metal4RayTracing = metal4RayTracing && metal4 && hardwareRayTracing
@@ -48,7 +45,7 @@ struct Capabilities: Equatable {
     var summary: String {
         func mark(_ on: Bool) -> String { on ? "yes" : "no" }
         let rt = !metalRayTracing ? "no" : hardwareRayTracing ? "hardware" : "software"
-        return "Metal ray tracing: \(rt), MetalFX upscaling: \(mark(metalFXUpscaling)), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing)))"
+        return "Metal ray tracing: \(rt), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing)))"
     }
 }
 
@@ -57,7 +54,7 @@ extension RenderSettings {
     func missing(in caps: Capabilities) -> String? {
         var needs: [String] = []
         if rayTracer == .metal && !caps.metalRayTracing { needs.append("Metal ray tracing") }
-        if upscaleFactor > 1 && upscaler == .metalFXDenoised && !caps.metalFXDenoiser { needs.append("the MetalFX denoiser") }
+        if upscaleFactor > 1 && !caps.metalFXDenoiser { needs.append("the MetalFX denoiser") }
         if api == .metal4 && !caps.metal4 { needs.append("Metal 4") }
         if rayTracer == .metal && api == .metal4 && caps.metalRayTracing && caps.metal4 && !caps.metal4RayTracing {
             needs.append("Metal 4 ray tracing")
@@ -72,9 +69,9 @@ extension RenderSettings {
             s.rayTracer = .custom
             notes.append("Metal ray tracing is not supported on this GPU: using the custom BVH")
         }
-        if s.upscaler == .metalFXDenoised && !caps.metalFXDenoiser {
-            s.upscaler = .custom
-            notes.append("The MetalFX denoiser is not supported on this GPU or system: using the custom upscaler and SVGF")
+        if s.upscaleFactor > 1 && !caps.metalFXDenoiser {
+            s.upscaleFactor = 0
+            notes.append("The MetalFX denoiser is not supported on this GPU or system: upscaling is off, SVGF denoises")
         }
         if s.api == .metal4 && !caps.metal4 {
             s.api = .metal3

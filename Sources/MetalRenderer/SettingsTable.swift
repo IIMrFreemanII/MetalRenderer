@@ -61,9 +61,6 @@ extension EnvNamed {
 extension GIMode: EnvNamed {
     var envName: String { ["pt", "cascades", "restir"][rawValue] }
 }
-extension UpscalerKind: EnvNamed {
-    var envName: String { ["metalfx", "spatial", "custom", "denoiser"][rawValue] }
-}
 extension ToneMap: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
@@ -246,8 +243,8 @@ struct SettingSpec {
 }
 
 extension RenderSettings {
-    /// MetalFX's denoising scaler is the upscaler: it denoises the raw light, and SVGF and the shadow denoiser are off.
-    var neuralDenoiser: Bool { upscaleFactor > 1 && upscaler == .metalFXDenoised }
+    /// Upscaling, through MetalFX's denoising scaler: it denoises the raw light, and SVGF and the shadow denoiser are off.
+    var neuralDenoiser: Bool { upscaleFactor > 1 }
 
     /// The denoiser's wavelet passes for the selected GI method: the panel's one slider edits whichever count applies.
     var filterPasses: Int {
@@ -423,31 +420,11 @@ enum SettingsTable {
     }()
 
     private static let rendering: Section = {
-        let taau: When = { $0.upscaler == .custom && $0.upscaleFactor > 1 }
-        func tune(_ title: String, _ path: WritableKeyPath<RenderSettings, Float>, _ range: ClosedRange<Float>, step: Double,
-                  _ key: String, _ format: @escaping (Float) -> String) -> SettingSpec {
-            S.slider(title, path, range, step: step, format).env(.gi, key).advanced().when(taau)
-        }
-        return Section(title: "Rendering", rows: [
+        Section(title: "Rendering", rows: [
             S.slider("Render scale", \.renderScale, RenderSettings.renderScaleRange, step: Double(RenderSettings.renderScaleStep),
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
-            S.custom(.upscale, "MetalFX upscaling"),
+            S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
-            S.popup("Upscaler", \.upscaler, titled(\.title)).env(.gi, "upscaler").enabled { $0.upscaleFactor > 1 }
-                .available { UpscalerKind.allCases[$0] != .metalFXDenoised || Capabilities.current.metalFXDenoiser },
-            tune("TAAU history", \.taau.maxHistory, UpscalerSettings.maxHistoryRange, step: 0.5, "taauhistory", fmt("%g fr")),
-            tune("Colour clip", \.taau.clipWidth, UpscalerSettings.clipWidthRange, step: 0.05, "taauclip", fmt("%.2f σ")),
-            tune("Sharpness", \.taau.kernelSharpness, UpscalerSettings.sharpnessRange, step: 0.25, "taaukernel", fmt("%.2f")),
-            tune("Sharpness, moving", \.taau.kernelSharpnessMoving, UpscalerSettings.sharpnessRange, step: 0.25, "taaukernelmv", fmt("%.2f")),
-            tune("Motion cut", \.taau.motionCut, UpscalerSettings.motionCutRange, step: 0.1, "taaumotion", fmt("%.1f")),
-            tune("Edge motion cut", \.taau.edgeMotionCut, UpscalerSettings.edgeMotionCutRange, step: 0.5, "taauedge", fmt("%.1f")),
-            tune("Clip cut", \.taau.clipCut, UpscalerSettings.clipCutRange, step: 1, "taaucut", fmt("%.0f")),
-            tune("Edge dilation", \.taau.dilationRadius, UpscalerSettings.dilationRange, step: 0.01, "taaudilate") {
-                $0 == 0 ? "3×3" : String(format: "%.2f px", $0)
-            },
-            S.check("Lanczos history", \.taau.lanczosHistory).env(.gi, "taaulanczos").advanced().when(taau),
-            S.slider("Lanczos threshold", \.taau.lanczosThreshold, UpscalerSettings.lanczosThresholdRange, step: 0.005, fmt("%.3f"))
-                .env(.gi, "taaulzthresh").advanced().when { taau($0) && $0.taau.lanczosHistory },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
         ])
@@ -559,7 +536,7 @@ enum SettingsTable {
     }()
 
     private static let denoiser: Section = {
-        // With the MetalFX denoiser as the upscaler, it denoises in place of everything here.
+        // While upscaling, the MetalFX denoiser denoises in place of everything here.
         let ours: When = { !$0.neuralDenoiser }
         let on: When = { $0.denoiser.enabled && ours($0) }
         let shadows: When = { on($0) && $0.denoiser.shadowDenoiser }

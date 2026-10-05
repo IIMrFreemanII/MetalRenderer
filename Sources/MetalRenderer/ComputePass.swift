@@ -136,8 +136,8 @@ protocol FrameEncoder: AnyObject {
     func refitPrimitives(_ refit: PrimitiveRefit, pass: String)
     /// Maps and uploads the texture levels last frame's hits asked for, ahead of this frame's work.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
-    /// MetalFX, into `output` (for the denoising scaler: into its own texture, which tonemapKernel then reads).
-    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, output: MTLTexture, pass: String)
+    /// MetalFX's denoising scaler, into its own texture (`Upscaler.hdrOutput`), which tonemapKernel then reads.
+    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String)
     /// Copies `texture` (4 bytes a pixel) into `buffer`, for a benchmark's PNG.
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer)
     /// Presents `drawable` and commits. `completed` runs on another thread once the GPU is done; `wait` blocks until then.
@@ -231,9 +231,9 @@ final class Metal3Frame: FrameEncoder {
         if !work.mappings.isEmpty || !work.uploads.isEmpty { work.encode(into: buffer("textures")) }
     }
 
-    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, output: MTLTexture, pass: String) {
+    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String) {
         endCompute()
-        upscaler.encode(into: buffer(pass), inputs, output: output)
+        upscaler.encode(into: buffer(pass), inputs)
     }
 
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
