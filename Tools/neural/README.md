@@ -79,7 +79,8 @@ the test fails on deliberately broken kernels), the in-app path (`neuralq` runs;
 before), random rooms. Not done: **no trained net yet** (only a one-minute smoke test, 16.7 dB vs MetalFX's 34.6).
 
 Next:
-1. Make the dataset and train (quality first).
+1. Make the dataset, let every reference finish (training and reference rendering would share the GPU), then
+   train (quality first).
 2. Speed: the kernels are the plain first version (~90 ms a frame at 1920×1200); simdgroup_matrix convolutions,
    fused layers, then a smaller net (the `performance` skill).
 3. Use it where MetalFX's denoiser isn't available (today those GPUs fall back to 1× + SVGF): Capabilities.
