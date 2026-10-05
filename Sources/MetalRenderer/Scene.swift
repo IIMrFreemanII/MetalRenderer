@@ -2,8 +2,8 @@ import Foundation
 import ImageIO
 import simd
 
-/// A small Cornell-style room with static objects, animated objects and moving sphere lights, or a stress-test
-/// hall with hundreds of moving objects and tens to hundreds of moving lights (`SceneSettings`).
+/// A small Cornell-style room with static objects, animated objects and moving sphere lights, or one of the other
+/// scenes (`SceneSettings`; the stress building is in Scene+Stress.swift).
 /// All geometry lives in one shared vertex/index buffer; each mesh gets its own
 /// primitive acceleration structure and every object is an instance of a mesh.
 typealias MeshGeometry = (positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32])
@@ -754,110 +754,6 @@ final class Scene {
             [-3.9 + 0.5 * sin(0.7 * t), 0.6, 0.8 + 1.6 * cos(0.45 * t)]
         }
     }
-
-    /// Stress test: a 20 x 6 x 20 hall (open at the front) with 8 pillars, `objectCount` objects (~85% moving, in
-    /// five motion families) and `lightCount` moving sphere lights in four colours. Seeded, so every run is identical.
-    /// The lights' total power doesn't depend on their count, so the image brightness stays about the same.
-    private func buildStress(objects objectCount: Int, lights lightCount: Int) {
-        var rng = SplitMix64(seed: 0x5EED_1234)
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
-        // 320 triangles: the spheres are 10-30 cm, about a pixel off round even up close, and 5-6% faster to
-        // trace than the Cornell room's 1280-triangle sphere (merging static objects into one tree didn't help).
-        let sphere = addMesh(Scene.icosphere(subdivisions: 2))
-        let lightSphere = sphere
-
-        let white = addMaterial(albedo: [0.6, 0.6, 0.6])
-        let warm = addMaterial(albedo: [0.5, 0.45, 0.4])
-        let palette = [[0.80, 0.80, 0.80], [0.65, 0.06, 0.05], [0.12, 0.45, 0.15], [0.85, 0.62, 0.25],
-                       [0.15, 0.30, 0.75], [0.55, 0.20, 0.60], [0.10, 0.55, 0.55], [0.30, 0.30, 0.32]]
-            .map { addMaterial(albedo: SIMD3<Float>($0.map(Float.init))) }
-
-        let w: Float = 20, h: Float = 6, d: Float = 20
-        addInstance(quad, warm, translate([0, 0, 0]) * scale([w, 1, d]))                                          // floor
-        addInstance(quad, white, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d]))                // ceiling
-        addInstance(quad, white, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))   // back
-        addInstance(quad, palette[1], translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-        addInstance(quad, palette[2], translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-        for x: Float in [-6, -2, 2, 6] {
-            for z: Float in [-5, 1] {
-                addInstance(cube, white, translate([x, h / 2, z]) * scale([0.7, h, 0.7]))
-            }
-        }
-
-        // Objects stay inside x, z in [-9, 9] and y in [0, 5.5].
-        for _ in 0..<objectCount {
-            let material = palette[rng.int(palette.count)]
-            let mesh = rng.next() < 0.5 ? cube : sphere
-            let size = rng.range(0.1, 0.3)                       // sphere radius, half a cube's edge
-            let extent = mesh == sphere ? size : 2 * size        // scale for the unit-radius sphere or unit cube
-            let phase = rng.range(0, 2 * .pi)
-            let family = rng.next()
-            if family < 0.15 {
-                // Static clutter on the floor.
-                let p = SIMD3<Float>(rng.range(-9, 9), size, rng.range(-9, 9))
-                addInstance(mesh, material, translate(p) * rotate(rng.range(0, .pi), [0, 1, 0]) * scale(extent))
-            } else if family < 0.45 {
-                // Rings orbiting the hall's centre at several heights.
-                let radius = rng.range(1.5, 8.5), y = rng.range(0.4, 5.0)
-                let speed = rng.range(0.15, 0.5) * (rng.next() < 0.5 ? -1 : 1)
-                addInstance(mesh, material, matrix_identity_float4x4) { t in
-                    let a = phase + speed * t
-                    return translate([radius * cos(a), y, radius * sin(a)]) * rotate(a, [0, 1, 0]) * scale(extent)
-                }
-            } else if family < 0.65 {
-                // Balls bouncing on the floor.
-                let x = rng.range(-9, 9), z = rng.range(-9, 9)
-                let height = rng.range(0.5, 2.5), speed = rng.range(1.5, 3.0)
-                addInstance(sphere, material, matrix_identity_float4x4) { t in
-                    translate([x, size + height * abs(sin(speed * t + phase)), z]) * scale(size)
-                }
-            } else if family < 0.85 {
-                // Tumbling cubes floating in place.
-                let p = SIMD3<Float>(rng.range(-9, 9), rng.range(1.5, 5.0), rng.range(-9, 9))
-                let axis = normalize(SIMD3<Float>(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)) + [0, 0.01, 0])
-                let spin = rng.range(0.5, 2.0), bob = rng.range(0.1, 0.4)
-                addInstance(cube, material, matrix_identity_float4x4) { t in
-                    translate(p + [0, bob * sin(1.1 * t + phase), 0]) * rotate(spin * t + phase, axis) * scale(2 * size)
-                }
-            } else {
-                // Drifters on Lissajous paths.
-                let c = SIMD3<Float>(rng.range(-5, 5), rng.range(1.5, 4.0), rng.range(-5, 5))
-                let a = SIMD3<Float>(rng.range(1, 9 - abs(c.x)), rng.range(0.3, min(c.y - size, 5.5 - c.y)), rng.range(1, 9 - abs(c.z)))
-                let f = SIMD3<Float>(rng.range(0.2, 0.6), rng.range(0.3, 0.9), rng.range(0.2, 0.6))
-                addInstance(mesh, material, matrix_identity_float4x4) { t in
-                    translate(c + a * SIMD3(sin(f.x * t + phase), sin(f.y * t + 2 * phase), cos(f.z * t + phase))) * scale(extent)
-                }
-            }
-        }
-
-        // Lights: four colours (one shadow-denoiser group each), Lissajous paths inside the hall.
-        let colors: [SIMD3<Float>] = [[1.0, 0.85, 0.65], [1.0, 0.45, 0.12], [0.25, 0.60, 1.0], [0.85, 0.25, 0.90]]
-        let totalPower: Float = 60
-        for j in 0..<lightCount {
-            let color = colors[j % colors.count] / dot(colors[j % colors.count], [0.2126, 0.7152, 0.0722])   // unit luminance
-            let radius = rng.range(0.06, 0.12)
-            let c = SIMD3<Float>(rng.range(-6, 6), rng.range(1.2, 4.6), rng.range(-6, 6))
-            let a = SIMD3<Float>(rng.range(1, 9 - abs(c.x)), rng.range(0.2, min(c.y - 0.5, 5.6 - c.y)), rng.range(1, 9 - abs(c.z)))
-            let f = SIMD3<Float>(rng.range(0.1, 0.4), rng.range(0.2, 0.7), rng.range(0.1, 0.4))
-            let phase = rng.range(0, 2 * .pi)
-            // Thousands of lights: smaller bulbs (same draws, so up to 256 lights the scene is unchanged).
-            let r = lightCount > 256 ? radius * pow(256 / Float(lightCount), 1.0 / 3) : radius
-            addLight(color: color * (totalPower / Float(lightCount)), radius: r, sphereMesh: lightSphere) { t in
-                c + a * SIMD3(sin(f.x * t + phase), sin(f.y * t + 3 * phase), cos(f.z * t + phase))
-            }
-        }
-
-        defaultCamera = Scene.stressCamera
-    }
-
-    /// Overview from just outside the hall's open front (objects never come this close).
-    static let stressCamera: Camera = {
-        var c = Camera()
-        c.position = [0, 4.6, 12.5]
-        c.pitch = -0.25
-        return c
-    }()
 
     /// Where each shadow-denoiser group's lights end in `lights` (sorted by group): group g = [end[g-1], end[g]).
     private(set) var lightGroupEnd = SIMD4<UInt32>(repeating: 0)

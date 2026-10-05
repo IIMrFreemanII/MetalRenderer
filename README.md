@@ -5,7 +5,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
 
 * **Dynamic scenes:** objects and lights move every frame. Pick a scene in the settings panel:
   * a small Cornell-style room;
-  * a **stress test** hall with up to 2000 moving objects and 16384 moving lights (see below);
+  * a **stress test** building (a warehouse, a factory floor, a parking garage and an office) with up to 2000 props and 16384 lights (see below);
   * a **Night market** street lit by thousands of festoon bulbs, lanterns, windows and neon signs (see "Many lights" below);
   * the glTF **Gallery**;
   * a **Showcase** for each glTF model: the model alone on a set of its own, with volumetric beams, mist, drifting particles, bloom and depth of field (see "Showcase" below);
@@ -269,8 +269,8 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Setting | Default | Effect |
 |---|---|---|
 | Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's fog and sky defaults (and resets the GI method to radiance cascades). Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
-| Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
-| Lights | 32 | Stress test: moving sphere lights, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 the bulbs also shrink. Night market: festoon bulbs, 4096 by default. |
+| Objects | 400 | Stress test: props in the building, about 60% of them moving at 400 (see "The stress test" below). Applied when you release the slider. |
+| Lights | 32 | Stress test: ceiling fixtures and lights that travel, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 they also shrink. Night market: festoon bulbs, 4096 by default. |
 | Characters | 2048 | Crowd: how many characters stand, walk and run in the square, 1 to 131072. Applied when you release the slider. |
 | Poses | 64 | Crowd: how many poses the GPU animates each frame; every character shows one of them. More poses, fewer characters in step with each other. |
 | Detail level | 3 | Crowd: the mesh the poses are skinned at. 0 is the full mesh (about 50k triangles), each level has half the triangles of the one before (level 3: about 6.5k). |
@@ -293,13 +293,35 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Visibility reuse | Off | ReSTIR: test the initial pick's visibility before reuse. Less noise but about 10% darker, because the target function ignores visibility. |
 | Shadow rays | 1 per group + reuse | Grouped, with more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
 
+#### The stress test
+
+A 40 × 8 × 40 m building in four zones round a cross-shaped aisle: a **warehouse** (pallet racks, an overhead conveyor, forklifts, carts, pickers) and a **factory floor** (two conveyor loops, robot arms, machines, gantry hoists) behind safety barriers at the back; a two-level **parking garage** (a deck on columns, a ramp, parked and circling cars) and an open-plan **office** (desk islands, chairs, people, delivery robots, glass meeting rooms) behind walls at the front. Its front wall has a garage entrance, a door and a window band to the sky. The default camera looks down the aisle from high over its front.
+
+* **Objects** are props, one instance each: cartons in the rack slots, parcels and parts on the conveyors, vehicles, machines, desks, chairs, people and drones. A kind with fixed places (slots, bays, desks, lanes) takes no more than it has, and its share goes to the kinds with room left; drones (in each zone's airspace) always have room. About 60% move up to 400; at 2000 the racks hold 1256 cartons and 355 drones fly, and a third move. 0 leaves the empty building.
+* **Lights** are exactly as many as asked, of the same total power: light j is in zone j mod 4, and every other one of a zone's is a ceiling fixture (high-bay spots, fluorescent tubes, LED panels, a few flickering) and the others travel (forklift and car headlights, cart and robot beacons, hoist spots, weld glows at the arms' grippers), each riding the vehicle, arm or hoist of the same slot. No prop glows, so these are all the scene's lights.
+* Whole-frame GPU ms on an M1 Max (radiance cascades, MetalFX's denoiser 3× from 640×400, custom BVH; `METALRENDERER_BENCH=stress` with `METALRENDERER_BENCH_SPLIT=0`):
+
+  | 400 objects | 1 light | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
+  |---|---|---|---|---|---|---|---|---|
+  | GPU ms | 6.64 | 10.73 | 11.38 | 13.71 | 15.35 | 16.67 | 18.10 | 20.54 |
+
+  | 32 lights | 0 objects | 100 | 400 | 1000 | 2000 | path traced (400) | camera move (400) |
+  |---|---|---|---|---|---|---|---|
+  | GPU ms | 12.24 | 13.88 | 15.35 | 15.89 | 27.35 | 35.41 | 14.18 |
+
+  Quality at 640×400 against the converged references (`METALRENDERER_BENCH=stressq`, `Tools/eval/stress.py`): direct light 29.4–29.5 dB still and moving at 32 lights, 27.4 dB at 128; the final image against an 8-bounce path-traced reference 25.7 dB with radiance cascades, 27.7 dB path traced, 31.0 dB with ReSTIR GI; MetalFX's denoiser at 3× against supersampled frames 29.3 dB (albedo) and 26.9 dB (direct light).
+
+  ReSTIR DI, its light grid and MegaLights, accumulated without reuse, match tracing every light here (mean brightness ratio 1.00, 47–48 dB, `METALRENDERER_BENCH=restircheck`).
+* `METALRENDERER_BENCH=stressdemo` records its demo: a 58 s tour (the overview, down a warehouse aisle, the factory's walkway, the office, the garage's upper deck) along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m stressdemo -o demo.mp4` makes the mp4.
+* Every run builds the same building (seeded). It replaced a 20 × 6 × 20 m hall of floating and bouncing cubes and spheres lit by drifting sphere lights in October 2026: the figures in this README quoted for "the stress hall" or "the stress scene" were measured in that hall, unless a table says otherwise.
+
 ### Light types
 
 Each light demo is procedural, so it loads at once. Each demo scene shows one light type, and every light in it moves, sweeps or flickers.
 
 | Type | Shape and units | Diffuse | Specular | Demo scene |
 |---|---|---|---|---|
-| Sphere | Sphere of radius r; intensity I (power 4πI) | Exact for a sphere above the horizon | Representative point (Karis 2013) | Cornell, stress, gallery |
+| Sphere | Sphere of radius r; intensity I (power 4πI) | Exact for a sphere above the horizon | Representative point (Karis 2013) | Cornell, gallery (the stress test has spheres, spots, tubes and rects) |
 | Spot | A sphere light with a smooth falloff between an inner and an outer cone | As the sphere × cone | As the sphere × cone | **Spot lights**: a stage with six coloured spots sweeping their beams |
 | Sun | Direction and angular radius (0.27°); irradiance E | E cos / π | Reflection vector clamped into the sun's disc | **Sun and sky**: a courtyard and a room lit only through its windows, with a one-minute day cycle that also changes the sky colour |
 | Rect | One-sided panel; radiance L | Exact polygon form factor (Lambert), clamped at the horizon | Representative point on the rect | **Area lights**: softboxes, a ceiling strip and a window panel over a roughness ramp of glossy spheres |
@@ -1063,7 +1085,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `SectionFile.swift` | Cache files of arrays behind a table of sections, and the generated scenes' cache folder (its names, its cap) |
 | `Benchmark.swift` | Benchmark mode (`METALRENDERER_BENCH`): a setting of a run (`Config`), the frame clock, timing table and PNG capture |
 | `Benchmark+Modes.swift` | The benchmark modes: each one's list of settings |
-| `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
+| `Scene.swift` | The Cornell and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
+| `Scene+Stress.swift` | The stress test's building: its zones, props and their paths, fixtures and the lights that ride vehicles, arms and hoists |
 | `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, the Night market, and the light-check scene the `lightcheck` benchmark renders |
 | `Scene+Forest.swift` | Generated plants in a scene (`Flora`: materials, textures, assemblies and their wind bones) and the Forest |
 | `World.swift` | The open world as a function of a seed and a place: ground, cities with their blocks, roads and fields, the roads between cities, where trees and ground cover stand; its day (`Heavens`: the sun, the moon, when the lights come on) |

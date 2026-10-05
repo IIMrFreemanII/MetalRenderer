@@ -211,7 +211,7 @@ struct RestirGISettings: Equatable, Codable {
                                     // ms at 640x400), so off
     var spatialSamples = 2          // neighbours per pass (1 scored as 5)
     var unbiased = true             // spatial reuse: visibility in the targets, two rays per neighbour (without: cheaper,
-                                    // but 8-17% darker in the stress hall, where neighbours see different light)
+                                    // but 8-17% darker in the old stress hall, where neighbours saw different light)
     var radius: Float = 30          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
     var minDistance: Float = 0.02   // floor of the sample distance in the target (m): no spikes from very close samples
     var denoise = true              // SVGF on the result
@@ -245,7 +245,7 @@ struct CascadeSettings: Equatable, Codable {
 /// Which scene is loaded.
 enum SceneKind: Int, CaseIterable, Codable {
     case cornell            // small Cornell-style room: 5 objects (2 moving), 3 moving lights
-    case stress             // stress test: a hall with `objects` (mostly moving) objects and `lights` moving lights
+    case stress             // stress test: a warehouse, factory, garage and office with `objects` props and `lights` lights
     case gallery            // the glTF models in Assets/ on plinths, 8 moving lights
     case spots              // a stage under six sweeping spot lights
     case sun                // a courtyard and a covered room under the sun, with a day cycle
