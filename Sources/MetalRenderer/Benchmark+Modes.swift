@@ -13,7 +13,8 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
+        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -77,6 +78,35 @@ extension Benchmark {
     private static func shot() -> [Config] {
         let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
         return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
+    }
+
+    /// The showcase (Scene+Showcase.swift): every model of Assets/ on its set as the app shows it (cascades, MetalFX 3x
+    /// from 0.5x, the look's lens), paused at t = 5 s. The first model also without the lens effects, at 0.75x without
+    /// MetalFX (the lens on the composite's light), and with the camera moving. `METALRENDERER_GALLERY="owl|demon"`
+    /// picks the models.
+    private static func showcase() -> [Config] {
+        func shown(_ name: String, _ model: String, scale: CGFloat = 0.5, upscale: CGFloat = 3) -> Config {
+            Config(name, scale: scale, upscale: upscale, gi: .radianceCascades, scene: SceneSettings(kind: .showcase, showcase: model))
+        }
+        let names = Scene.galleryFiles().map(Scene.showcaseName)
+        var out = names.map { shown("showcase \($0)", $0).still() }
+        if let first = names.first {
+            out.append(shown("showcase \(first) no lens", first).with { $0.post = PostSettings() }.still())
+            out.append(shown("showcase \(first) native", first, scale: 0.75, upscale: 0).still())
+            out.append(shown("showcase \(first) camera", first).cameraMove())
+        }
+        return out
+    }
+
+    /// A video of the showcase: every model for 6 s from t = 2 s, the camera orbiting it, every other frame saved
+    /// (`recording`: 180 JPEGs at 30 fps in a folder per model). `METALRENDERER_GALLERY="owl|demon"` picks the models.
+    private static func showcaseVideo() -> [Config] {
+        Scene.galleryFiles().map(Scene.showcaseName).map { name in
+            var c = Config("video \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .showcase, showcase: name))
+                .cameraMove().recording().frames(360)
+            c.startTime = 2
+            return c
+        }
     }
 
     /// Fast smoke tests: the default setting, a camera move, path traced, 0.75x native.
@@ -765,6 +795,63 @@ extension Benchmark {
             let reuse = noReuse.named("\(tag) restirgi reuse").with { $0.restirGI.temporal = true; $0.restirGI.spatialPasses = 1 }
             return [pt, noReuse, reuse, reuse.named("\(tag) restirgi quarter").with { $0.restirGI.quarterBudget = true }]
         }
+    }
+
+    /// The SDF shapes scene (Scene+Shapes.swift) on each tracer and API: paused frames to compare between them
+    /// (Tools/eval/pngdiff.py: the tracers march the same shapes), path traced, each direct-light method on the glowing
+    /// shapes (mesh lights), the normals, materials and traversal cost views, then moving frames and a camera move
+    /// for timing.
+    private static func shapes() -> [Config] {
+        let scene = SceneSettings(kind: .shapes)
+        var out: [Config] = []
+        for tracer in tracers {
+            for api in RenderAPI.allCases {
+                let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
+                    $0.rayTracer = tracer.kind
+                    $0.api = api
+                }
+                let tag = "\(tracer.tag) \(api.envName)"
+                out.append(base.named("\(tag) cascades").still())
+                guard api == .metal3 else { continue }
+                out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
+                for mode in [DirectLightMode.restir, .megalights] {
+                    out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
+                }
+                for view in ["Normals", "Triangles", "Traversal cost"] {
+                    out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
+                }
+                out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
+            }
+        }
+        return out
+    }
+
+    /// The SDF shapes scene's demo video: 30 s along a camera track at the app's look (cascades, 3x from 0.5x to
+    /// 1920x1200) with the showcase's lens (`recording`: 900 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh
+    /// -m shapesdemo` makes the mp4).
+    /// A wide view, along the primitives, over to the cuts and blends and the baked knot, the glowing ring and lamp,
+    /// and back out.
+    private static func shapesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 4.2, 6.0], [0, 0.4, -2]),
+            key(5, [-1.0, 2.6, 3.0], [-1.0, 0.5, -1.5]),
+            key(8, [-5.6, 1.0, 1.6], [-3.2, 0.6, -0.6]),
+            key(11, [-0.5, 0.9, 1.6], [0.8, 0.6, -0.6]),
+            key(14, [4.6, 1.0, 1.4], [2.4, 0.6, -0.8]),
+            key(17, [-1.6, 1.7, -1.2], [-2.4, 0.4, -3.0]),
+            key(20, [2.2, 1.2, -1.6], [3.2, 0.6, -3.0]),
+            key(23, [0.8, 1.4, -0.3], [4.0, 1.3, -4.4]),
+            key(26, [-1.0, 1.8, -0.8], [-5.0, 1.2, -5.0]),
+            key(30, [0, 4.0, 5.5], [0, 0.6, -2.5]),
+        ])
+        var demo = Config("shapes demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .shapes)) {
+            $0.post = ShowcaseLook.lens
+        }.track(track).recording()
+        demo.startTime = 2
+        return [demo]
     }
 
     /// Each analytic area light against its emissive-mesh twin (Scene.buildLightCheck), converged direct light.

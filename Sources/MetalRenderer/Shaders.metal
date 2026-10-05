@@ -19,6 +19,7 @@ using namespace metal::raytracing;
 #include "Shaders/Types.metal"             // structs shared with GPUTypes.swift, flags, flagOn / passOn
 #include "Shaders/Sampling.metal"          // hashes, Rng, Sampler (blue noise), hemisphere sampling
 #include "Shaders/Foliage.metal"           // generated plants: the wind that turns their parts
+#include "Shaders/SDF.metal"               // SDF shapes: their distance fields and the march through them
 #include "Shaders/Intersect.metal"         // Ray, Hit and the ray queries: Metal's intersector or the custom BVH traversal
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
@@ -34,6 +35,7 @@ using namespace metal::raytracing;
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
 #include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser
 #include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
+#include "Shaders/Post.metal"              // the lens and the finish: depth of field, bloom, vignette, grain
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
 #include "Shaders/BVHBuild.metal"          // custom ray tracer: the per-frame top-level tree (rt* kernels)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its tree (vg* kernels)

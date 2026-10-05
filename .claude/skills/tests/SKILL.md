@@ -52,12 +52,15 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `FBXReader` | FBXTests |
 | `Foliage*.swift`, `Scene+Forest`, `Shaders/Foliage.metal` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`) |
 | `VoxelGrids`, `VoxelLOD` | FoliageRuntimeTests, SceneBuffersTests |
+| `SDF*.swift`, `Scene+Shapes`, `Shaders/SDF.metal` | SDFTests, SceneBuffersTests (the shader: SDFTests + the shader pair) |
 | `GLTFLoader` | GLTFLoaderTests |
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
 | `LightTree.swift` | LightTreeTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
+| `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
+| `VirtualGeometryBuilder` (its cache file) | CacheTests |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |
 | `Package.swift`, a shared test helper | all suites: the one case where the full run is right |
 

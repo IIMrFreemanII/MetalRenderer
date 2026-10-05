@@ -43,6 +43,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/BVHBuild.metal) add BVHTests CacheTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Foliage.metal) add FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
@@ -59,12 +60,15 @@ if [[ $suites == " " ]]; then
           FBXReader.swift) add FBXTests ;;
           Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
+          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
+          Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
+          VirtualGeometryBuilder.swift) add CacheTests ;;
           *) uncovered+=("$f") ;;
         esac ;;
       Package.swift) add MetalRendererTests ;;
