@@ -4,7 +4,7 @@
 #
 #   video.sh -m mode -o out.mp4 [-k] [KEY=VALUE …]
 #
-#   -m  a mode whose settings record (e.g. shapesdemo, showcasevideo; see Benchmark+Modes.swift)
+#   -m  a mode whose settings record (e.g. shapesdemo, stressdemo, showcasevideo; see Benchmark+Modes.swift)
 #   -o  the mp4 to write; a mode of several recording settings writes one per setting, <out>-<setting>.mp4. The frames
 #       go into <out>.frames/ next to it (deleted afterwards unless -k)
 #   -k  keep the frames

@@ -14,7 +14,7 @@ extension Benchmark {
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
-        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo,
+        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -848,6 +848,39 @@ extension Benchmark {
             key(30, [0, 4.0, 5.5], [0, 0.6, -2.5]),
         ])
         var demo = Config("shapes demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .shapes)) {
+            $0.post = ShowcaseLook.lens
+        }.track(track).recording()
+        demo.startTime = 2
+        return [demo]
+    }
+
+    /// The stress building's demo video: a 58 s tour along a camera track at the app's look (cascades, 3x from 0.5x to
+    /// 1920x1200, 400 objects, 32 lights) with the showcase's lens (`recording`: 1740 JPEGs at 30 fps;
+    /// `.claude/skills/offscreen/scripts/video.sh -m stressdemo` makes the mp4).
+    /// From the overview down into a warehouse aisle, across to the factory's walkway between the conveyors and arms,
+    /// over into the office, up to the garage's upper deck, and back out. The track keeps above the forklifts' masts
+    /// and the arms, over the partitions and under the overhead conveyor (Scene+Stress.swift's `Hall`).
+    private static func stressDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 6.8, 19.3], [0, 1.5, 0]),
+            key(5, [0, 3.2, 3.0], [-11.5, 1.5, -10]),
+            key(10, [-11.5, 3.0, -3.0], [-11.5, 1.6, -15]),
+            key(15, [-11.5, 3.0, -11], [-11.5, 2.0, -19]),
+            key(19, [-8, 5.2, -5], [6, 1.5, -11]),
+            key(24, [3, 2.6, -11], [12, 1.0, -11]),
+            key(29, [9.5, 2.6, -11], [18, 1.2, -11]),
+            key(33, [8, 5.0, -3], [8, 1.0, 10]),
+            key(37, [12, 4.4, 4.5], [12, 0.8, 12]),
+            key(41, [4.5, 2.2, 11.4], [15, 1.4, 11.4]),
+            key(44, [3.2, 4.5, 11.5], [-10, 3.5, 12]),
+            key(47, [0, 6.0, 12], [-10, 3.5, 12]),
+            key(52, [-9.5, 5.4, 18.6], [-9.5, 3.5, 4]),
+            key(58, [0, 6.8, 19.3], [0, 1.5, 0]),
+        ])
+        var demo = Config("stress demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .stress)) {
             $0.post = ShowcaseLook.lens
         }.track(track).recording()
         demo.startTime = 2
