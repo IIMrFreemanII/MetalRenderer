@@ -241,7 +241,7 @@ kernel void lumenTraceKernel(constant Uniforms&               u           [[buff
             h.position = sh.position;
             h.prevPosition = (inst.prevTransform * float4(sh.local, 1.0f)).xyz;
             h.normal = h.geomNormal = sh.normal;
-            h.albedo = lumenMaterialAlbedo(s.materials, s.textures, inst.materialIndex);
+            h.albedo = lumenFieldAlbedo(sdfMeshes[inst.meshIndex], s.materials, s.textures, inst.materialIndex);
             h.emission = h.f0 = float3(0.0f);
             h.metallic = h.specular = 0.0f;
             h.roughness = 1.0f;
@@ -275,7 +275,9 @@ kernel void lumenTraceKernel(constant Uniforms&               u           [[buff
                                                         cardFinal, cached);
         if (!fromCard)
             light = giLightIllum(lights, u, lightMap, hp, hns, hng, pcgHash(gid + pcgHash(u.frameIndex * 7919u)), accel, s);
-        if (p.tuning.x > 0.0f && !(fromCard && p.options.w != 0)) {
+        // (Not on leaves: in a canopy, last frame's light on screen near the hit is often another leaf's.)
+        bool foliage = p.options.z > 0 && h.instanceId < p.options.z && (cardTable[h.instanceId * 8u + 6u] & 1u) != 0;
+        if (p.tuning.x > 0.0f && !(fromCard && p.options.w != 0) && !foliage) {
             // Multi-bounce, as the cascades: last frame's indirect light where the hit was on screen, else its mean.
             uint2 q;
             bool found = lastFramePixel(u, h.prevPosition, hns, prevND, q);

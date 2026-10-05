@@ -11,6 +11,7 @@ struct LumenMeshSDF {
                      // side (x = 0: not baked)
     float4 info;     // x = 1 if two-sided, y = its coarse grid's or heights' first value (a uint's bits), z = 1 for
                      // heights (a flat mesh: terrain, a ground, a quad), w = their slope factor
+    float4 plant;    // x = a plant's leaf share (its colour mixes its wood's and its leaves'), -1: not a plant
 };
 
 struct LumenSDFInstance {
@@ -249,6 +250,14 @@ inline float3 lumenMaterialAlbedo(device const Material* materials, device const
     return c;
 }
 
+// The colour of a hit on field `m` of an instance whose material is `index`: the material's (with its texture's mean),
+// or a plant's wood (`index`) and leaves (`index + 1`) mixed by its leaf share, as a far plant's voxels mix them.
+inline float3 lumenFieldAlbedo(LumenMeshSDF m, device const Material* materials, device const MaterialTexture* textures,
+                               uint index) {
+    if (m.plant.x < 0.0f) return lumenMaterialAlbedo(materials, textures, index);
+    return mix(lumenMaterialAlbedo(materials, textures, index), lumenMaterialAlbedo(materials, textures, index + 1u), m.plant.x);
+}
+
 // A global hit as a surface: on its owner's own surface (the clipmap's is up to half its voxel off: two steps down the
 // owner's mesh field), with the owner's colour, so the cards and the light see the point where it is. Without an
 // owner: grey, where the trace stopped.
@@ -267,9 +276,9 @@ inline Surface lumenGlobalSurface(LumenGlobalHit gh, device const InstanceData* 
     h.lightEmitter = h.backlit = false;
     if (gh.owner == ~0u) return h;
     InstanceData inst = instanceRecord(instances, gh.owner);
-    h.albedo = lumenMaterialAlbedo(materials, textures, inst.materialIndex);
-    float3 local = (float4(gh.position, 1.0f) * inst.normalMatrix).xyz;
     LumenMeshSDF m = meshes[inst.meshIndex];
+    h.albedo = lumenFieldAlbedo(m, materials, textures, inst.materialIndex);
+    float3 local = (float4(gh.position, 1.0f) * inst.normalMatrix).xyz;
     if (m.bricks.x > 0) {
         float3 g = float3(0.0f);
         for (int k = 0; k < 2; ++k) {

@@ -3026,7 +3026,7 @@ final class Renderer: NSObject {
                 lumenCards = try? LumenCards(device: device, frameSlots: Renderer.maxFramesInFlight)
                 lumenCardsScene = scene
             }
-            lumenCards?.update(scene: scene, eligible: { $0.isGeometry && !$0.skinned }, camera: camera,
+            lumenCards?.update(scene: scene, eligible: lumenCardEligible, foliage: lumenFoliage, camera: camera,
                                viewportHeight: t.height, slot: slot,
                                radiosityBudget: LumenSettings.radiosityBudgetRange.clamp(settings.lumen.radiosityBudget) << 10)
             cards = lumenCards
@@ -3070,6 +3070,22 @@ final class Renderer: NSObject {
                              normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev],
                              cards: cards, cardInstances: scene.instances.count, scene: sdfScene, global: global, slot: slot,
                              targets: t)
+    }
+
+    /// Instances with cards in the surface cache: geometry that doesn't deform, and not plants (assemblies, leaf cards,
+    /// ground cover). A card sees a canopy's outer, sunlit leaves, and the hits inside it read them: the backlit forest
+    /// was 2% too bright with them. Plants' hits are lit where they are.
+    private func lumenCardEligible(_ inst: Scene.Instance) -> Bool {
+        inst.isGeometry && !inst.skinned && !lumenFoliage(inst)
+    }
+
+    /// Plants: assemblies, leaf cards, ground cover.
+    private func lumenFoliage(_ inst: Scene.Instance) -> Bool {
+        guard inst.isGeometry else { return false }
+        if inst.assembly >= 0 { return true }
+        guard inst.mesh >= 0 else { return false }
+        let m = scene.meshes[inst.mesh]
+        return m.cutout != 0 || m.sways != 0
     }
 
     /// Instances traced through a distance field: geometry that doesn't deform (the crowd: screen traces only) or

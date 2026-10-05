@@ -10,6 +10,7 @@ struct GPULumenMeshSDF {
                                 // heights: x = samples a side; (x = 0: not baked)
     var info: SIMD4<Float>      // x = 1 if two-sided, y = its coarse grid's or heights' first value (a UInt32's bits),
                                 // z = 1 for heights, w = their slope factor
+    var plant = SIMD4<Float>(-1, 0, 0, 0)   // x = a plant's leaf share (its colour mixes wood and leaves), -1: not a plant
 }
 
 /// Matches `LumenSDFInstance` in Shaders/LumenSDF.metal: an instance traced through its mesh's distance field.
@@ -36,6 +37,7 @@ final class LumenScene {
     private(set) var atlas: MTLTexture             // r8Snorm, 8³ texels a brick
     private var usedBricks = 0
     private var meshRecords: [GPULumenMeshSDF]     // per mesh of the scene
+    private let leafShares: [Float]                // per field: a plant's (LumenScene.leafShare), -1 for the rest
     private var brickTable: [UInt32] = []
     private var coarseData: [Float] = []           // the meshes' coarse grids (MeshSDF.coarse), one after another
     private(set) var baked = 0
@@ -80,6 +82,11 @@ final class LumenScene {
         let fieldCount = scene.meshes.count + scene.virtualMeshes.count + scene.assemblies.count
         meshRecords = Array(repeating: GPULumenMeshSDF(lo: .zero, bricks: .zero, info: .zero), count: fieldCount)
         fieldBounds = Array(repeating: AABB(), count: fieldCount)
+        let source = kept ?? Source(scene: scene)
+        leafShares = (0..<fieldCount).map { f in
+            let a = f - scene.meshes.count - scene.virtualMeshes.count
+            return a >= 0 ? LumenScene.leafShare(of: source.assemblies[a], in: source) : -1
+        }
         atlas = try LumenScene.makeAtlas(device: device, layers: 4)
         func buffers(_ label: String) throws -> [MTLBuffer] {
             try (0..<frameSlots).map { i in
@@ -96,7 +103,6 @@ final class LumenScene {
         toBake = fields.count
 
         // The job keeps what it reads (copy on write: the scene's arrays stay as they are).
-        let source = kept ?? Source(scene: scene)
         LumenScene.queue.async { [weak self] in
             for f in fields {
                 guard let self, !self.isCancelled else { return }
@@ -160,6 +166,35 @@ final class LumenScene {
             }
             return indices.isEmpty ? nil : (positions, indices)
         }
+    }
+
+    /// How much of a plant shows as leaves: the square root of its leaves' share of its parts' area (leaves hide most of
+    /// the wood they hang on, as a far plant's voxels count them: traceSurface).
+    static func leafShare(of plant: Scene.Assembly, in source: Source) -> Float {
+        var areas: [SIMD3<UInt32>: SIMD2<Float>] = [:]   // (mesh, first leaf, leaves): its (wood, leaf) area
+        var wood: Float = 0, leaves: Float = 0
+        for part in plant.parts {
+            let key = SIMD3(UInt32(part.mesh), part.firstLeaf, part.leafCount)
+            let area: SIMD2<Float>
+            if let known = areas[key] { area = known } else {
+                var sum = SIMD2<Float>(0, 0)
+                if let m = source.mesh(part.mesh) {
+                    let end = part.leafCount == 0 ? UInt32.max : part.firstLeaf &+ part.leafCount
+                    for t in 0..<m.indices.count / 3 {
+                        let a = m.positions[Int(m.indices[3 * t])], b = m.positions[Int(m.indices[3 * t + 1])]
+                        let c = m.positions[Int(m.indices[3 * t + 2])]
+                        let s = length(cross(b - a, c - a)) / 2
+                        if UInt32(t) >= part.firstLeaf && UInt32(t) < end { sum.y += s } else { sum.x += s }
+                    }
+                }
+                areas[key] = sum
+                area = sum
+            }
+            let scale = length(SIMD3(part.transform.columns.0.x, part.transform.columns.0.y, part.transform.columns.0.z))
+            wood += area.x * scale * scale
+            leaves += area.y * scale * scale
+        }
+        return wood + leaves > 0 ? (leaves / (wood + leaves)).squareRoot() : 0
     }
 
     /// A virtual mesh as triangles: the cut of its cluster DAG at about half the voxel its field will have (a cluster
@@ -289,7 +324,8 @@ final class LumenScene {
                 coarseData += field.heights
                 meshRecords[m] = GPULumenMeshSDF(lo: SIMD4(field.lo.x, 0, field.lo.y, field.cell),
                                                  bricks: SIMD4(UInt32(field.side), UInt32(field.side), 0, 0),
-                                                 info: SIMD4(0, Float(bitPattern: first), 1, field.slope))
+                                                 info: SIMD4(0, Float(bitPattern: first), 1, field.slope),
+                                                 plant: SIMD4(leafShares[m], 0, 0, 0))
                 // Its box: a few cells below (solid) and above (the hits' reach), not the flat mesh's own.
                 var box = field.bounds
                 let pad = max(4 * field.cell, 0.02 * (box.hi - box.lo).max())
@@ -343,7 +379,8 @@ final class LumenScene {
             coarseData += sdf.coarse
             meshRecords[m] = GPULumenMeshSDF(lo: SIMD4(sdf.lo, sdf.voxel),
                                              bricks: SIMD4(UInt32(sdf.bricks.x), UInt32(sdf.bricks.y), UInt32(sdf.bricks.z), UInt32(first)),
-                                             info: SIMD4(sdf.twoSided ? 1 : 0, Float(bitPattern: coarseFirst), 0, 0))
+                                             info: SIMD4(sdf.twoSided ? 1 : 0, Float(bitPattern: coarseFirst), 0, 0),
+                                             plant: SIMD4(leafShares[m], 0, 0, 0))
             fieldBounds[m] = AABB(lo: sdf.lo, hi: sdf.hi)
         }
     }

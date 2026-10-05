@@ -122,8 +122,10 @@ final class LumenCards {
     /// Sizes, allocates and schedules the cards for this frame, and writes slot `slot`'s buffers: the cards, the
     /// instances' card table, the capture tiles (cards new this frame), the lighting tiles (the new cards, then
     /// round robin up to `lightBudget` texels), then the radiosity tiles (alike, up to `radiosityBudget`).
-    /// `eligible`: which of the scene's instances get cards.
-    func update(scene: Scene, eligible: (Scene.Instance) -> Bool, camera: Camera, viewportHeight: Int, slot: Int,
+    /// `eligible`: which of the scene's instances get cards. `foliage`: which are leaves (their hits take no multi-bounce
+    /// feedback: in a canopy, last frame's light on screen near a hit is often another leaf's), table slot 6, bit 0.
+    func update(scene: Scene, eligible: (Scene.Instance) -> Bool, foliage: (Scene.Instance) -> Bool, camera: Camera,
+                viewportHeight: Int, slot: Int,
                 captureBudget: Int = 1 << 19, lightBudget: Int = 1 << 20, radiosityBudget: Int = 1 << 20) {
         let instances = scene.instances
         if cards.count != instances.count {
@@ -181,6 +183,7 @@ final class LumenCards {
         var index: [SIMD2<Int>: Int] = [:]
         texelsInUse = 0
         for (i, list) in cards.enumerated() {
+            table[i * 8 + 6] = foliage(instances[i]) ? 1 : 0
             guard list.contains(where: { $0 != nil }) else { continue }
             let (lo, hi) = scene.localBounds(of: instances[i])
             for (face, card) in list.enumerated() {
