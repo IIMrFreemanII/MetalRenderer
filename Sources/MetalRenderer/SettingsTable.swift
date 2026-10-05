@@ -65,6 +65,7 @@ extension ToneMap: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
+extension PrimaryVisibility: EnvNamed {}
 extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
@@ -74,6 +75,7 @@ extension CityStyle: EnvNamed {}
 enum EnvVariable: String, CaseIterable {
     // One value each.
     case direct = "METALRENDERER_DIRECT", rt = "METALRENDERER_RT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
+    case primary = "METALRENDERER_PRIMARY"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
@@ -338,6 +340,7 @@ enum SettingsTable {
                 .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)
                 .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
+            S.popup("Primary visibility", \.primary, titled(\.title)).env(.primary),
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),

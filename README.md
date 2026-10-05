@@ -941,7 +941,10 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
                        luminance toward the cell, from this frame's lights (ReSTIR DI's, GI's, the reflections' and
                        the fog's light samples draw from it)
     1b lightMapKernel  per-light distance maps (radiance cascades, path tracer with light maps)
-    2  traceKernel     primary ray -> G-buffer (normal, depth, albedo, emission, motion, world position)
+    1c raster          METALRENDERER_PRIMARY=raster: the visibility buffer (Nanite-style, see below): cull instances
+                       (last frame's visible) -> cull 128-triangle chunks -> 1 indirect draw of instance + triangle
+                       ids and depth -> depth pyramid -> cull the rest against it -> 2nd draw
+    2  traceKernel     primary ray (with the visibility buffer: met with the triangle it drew) -> G-buffer (normal, depth, albedo, emission, motion, world position)
                        direct (up to 4 lights): 1 shadow ray per light (+ per-light visibility and penumbra width)
                        indirect (path traced): cosine-sampled path, NEE at every bounce
                        (lighting is stored without albedo so the denoiser can blur it freely)
@@ -976,6 +979,8 @@ GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton ke
     6  upscale         MetalFX's denoising scaler (in place of 3-4), then tonemapKernel into the drawable
 ```
 
+**Raster visibility buffer** (`METALRENDERER_PRIMARY=raster`, the panel's "Primary visibility"; `RasterScene.swift`, `Shaders/Raster.metal`). The first step of an Unreal Engine 5-style pipeline: the camera's triangles come from the hardware rasterizer, GPU driven, instead of one traced ray per pixel. Meshes are drawn in chunks of 128 consecutive triangles (a cluster in all but the mesh's own order). Each frame, a compute pass keeps the instances in view that were visible last frame, another culls their chunks against the view (bounds worked out on the GPU once per scene), and one indirect draw writes each pixel's instance id and triangle into an `rg32Uint` target over reversed-Z depth (the cull leaves each drawn instance a 64-byte record, its object-to-clip rows and where its indices and positions are, so a vertex reads that, an index and a position). A hierarchical-Z pyramid of that depth then tests every other instance and chunk, as Nanite's two-pass occlusion does; what passes is drawn on top, and every instance's verdict is what the next frame starts from. `traceKernel` meets its unchanged primary ray with the drawn triangle (a ray–triangle test, not the depth), so the distance, barycentrics, motion vectors and everything after them are the ones a traced ray gives, bar a few pixels on triangle edges. What isn't drawn has its bounding box drawn instead, and the pixels where the box is in front trace their primary ray: an assembly's parts, leaf cards (alpha tested), swaying ground cover (the custom tracer bends it), virtual geometry in the cluster tree's mode, and an instance of more than 4096 triangles with more than 4 per pixel its bounds cover (there is no level of detail to draw it at: a far crowd, Metal's tracer's baked plants; past that the traced pixels cost less than the triangles). A box that reaches the camera is drawn in front of everything. Only when the draw lists are full does every primary ray trace as well. Far plants as Metal's voxel boxes keep traced primary rays. The view "Visibility buffer" shows the chunks in colours, magenta where the primary rays traced what wasn't drawn; `METALRENDERER_BENCH=raster` renders each scene both ways, and that view. On an M1 Max (custom tracer, whole frame, `METALRENDERER_BENCH=shot METALRENDERER_BENCH_SPLIT=0`, three alternating rounds) a frame takes, traced → raster: stress 10.93 → 10.57 ms, gallery 13.54 → 13.35, crowd 10.96 → 10.19, city 7.71 → 7.35, world 13.74 → 13.36; the Cornell box's runs swing between 5.0 and 7.0 ms either way.
+
 With radiance cascades, 2b and 3–4 don't depend on each other. The frame then uses one concurrent compute encoder and runs them in lock step, with a barrier after each step: light map + trace + probes, then temporal + the top cascade, each à-trous pass + the next cascade down, and so on. Small dispatches on M1 leave the GPU partly idle, so this overlap saves about 0.2 ms. The path tracer runs in order.
 
 | File | What it holds |
@@ -992,6 +997,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUProfiler.swift` | The Debug window's GPU pass timings (timestamp counters at encoder boundaries) |
 | `DebugPanel.swift` | The Debug window: frame graph, pass timings, scene, virtual geometry, textures, memory, traversal counters |
 | `Upscaler.swift` | MetalFX's denoising scaler and the sub-pixel jitter sequence |
+| `RasterScene.swift` | The raster visibility buffer's view of a scene (per-mesh records, chunks, instance ids, visibility) and its targets (depth pyramid, draw lists) |
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator, and the tile's cache file |
 | `CacheFile.swift` | Where the app keeps what it derives (`~/Library/Caches/MetalRenderer`) and how it writes it; the launch timer |
@@ -1399,4 +1405,10 @@ What didn't help:
 6. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
 7. **Virtual geometry:** a GPU-built (or treelet-optimized) BLAS over the cut would let the cut update every frame; LOD cross-fades would hide the rare pop; the Metal tracer could build BLASes over the cut too.
 8. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.
-9. **Rasterized G-buffer:** generate primary visibility with a raster pass to save one ray per pixel.
+9. **Unreal Engine 5-style rendering**, after the raster visibility buffer (`METALRENDERER_PRIMARY=raster`), in this order:
+   * **The visibility buffer, further.** Plants are still traced alongside it (that ray traverses the whole scene, up to the drawn triangle): an instance-mask bit for what the raster doesn't draw would let it skip the rest, and drawing assemblies and leaf cards (alpha tested in the fragment) would drop it. The crowd draws every triangle of every character in view (no chunk bounds, as they deform): chunk bounds refitted after the skinning would cull them.
+   * **Virtual Shadow Maps:** 16k² shadow maps in 128² pages per light (clipmaps for the sun), pages marked by the visible pixels, allocated from a pool, cached until something moving touches them, and drawn through the same chunk pipeline, in place of the shadow rays for suns and spots.
+   * **Lumen-style GI:** a signed distance field per mesh (baked into the models' cache), a global distance field in clipmaps around the camera, a surface cache of each mesh's cards lit every frame; rays traced against the depth pyramid first, then the mesh fields, the global field and the sky; screen probes and a world-space radiance cache, as a GI method next to the cascades.
+   * **Nanite's clusters:** draw the virtual geometry's DAG cut (VirtualGeometryBuilder) as chunks with real cluster bounds, picked on the GPU, with streaming feedback.
+   * **A software rasterizer** for pixel-sized triangles, through 64-bit atomics (Apple8 and later, M2 on: not this M1 Max).
+   * Upscaling stays MetalFX's denoising scaler: it is the role Unreal's TSR plays.

@@ -21,6 +21,7 @@ using namespace metal::raytracing;
 #include "Shaders/Foliage.metal"           // generated plants: the wind that turns their parts
 #include "Shaders/Intersect.metal"         // Ray, Hit and the ray queries: Metal's intersector or the custom BVH traversal
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
+#include "Shaders/Raster.metal"            // the raster visibility buffer: culling, the pyramid, the draw, visibilityHit
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
 #include "Shaders/Regir.metal"             // the light grid (ReGIR) and regirBuildKernel
 #include "Shaders/LightSampling.metal"     // light samples and RIS, octahedral mapping, light-visibility maps, view directions

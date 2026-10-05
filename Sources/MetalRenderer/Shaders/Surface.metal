@@ -343,9 +343,9 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     return v;
 }
 
-Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
-    Hit res = intersectClosest(r, mask, accel);
-
+// The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures. The
+// hit comes from the tracer (traceSurface) or from the raster visibility buffer (visibilityHit, Raster.metal).
+Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record) {
     Surface sf;
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
@@ -489,4 +489,8 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         sf.albedo *= 1.0f - sf.metallic;
     }
     return sf;
+}
+
+Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
+    return surfaceFromHit(intersectClosest(r, mask, accel), r, accel, s, spread, record);
 }

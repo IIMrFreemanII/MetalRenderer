@@ -20,6 +20,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         device const Light*              lights     [[buffer(8)]],
                         device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
                         constant RegirParams&       regir     [[buffer(12)]],
+                        device RasterCounters*      rasterCounters [[buffer(13)]],  // with FLAG_VIS_BUFFER: RasterTraced
                         texture2d<float, access::write>  outNormalDepth [[texture(0)]],
                         texture2d<float, access::write>  outAlbedo      [[texture(1)]],
                         texture2d<float, access::write>  outEmission    [[texture(2)]],
@@ -35,6 +36,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outVisibility  [[texture(12)]],  // per light group: visibility
                         texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
                         texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
+                        texture2d<uint, access::read>    visBuffer      [[texture(15)]],  // with FLAG_VIS_BUFFER: instance, triangle
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -45,15 +47,25 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 
     Sampler rng = makeSampler(blueNoise, u, tid, 0, pixelSeed(tid, u.frameIndex, SEED_TRACE));
 
-    // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
+    // Primary ray: traced, or with FLAG_VIS_BUFFER met with the triangle the raster drew at this pixel (Raster.metal),
+    // and traced as well, up to that triangle, when something in view wasn't drawn (RasterTraced: the lists were full).
     float2 size = float2(u.width, u.height);
     float3 dir = primaryDirection(u, tid);
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
     // Window glass isn't met here: glassKernel adds it over the surface behind it.
-    Surface sf = traceSurface(primary, GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height),
-                              recordTextures);   // pixel angle
+    uint primaryMask = GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL;
+    Hit hit;
+    if (!flagOn(u.flags, FLAG_VIS_BUFFER) || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
+        hit = intersectClosest(primary, primaryMask, accel);
+    } else if (atomic_load_explicit(rasterTraced(rasterCounters), memory_order_relaxed) != 0u) {
+        Ray nearer = primary;
+        nearer.tmax = hit.distance;
+        Hit traced = intersectClosest(nearer, primaryMask, accel);
+        if (traced.hit) hit = traced;
+    }
+    Surface sf = surfaceFromHit(hit, primary, accel, s, 2.0f * u.camUp.w / float(u.height), recordTextures);   // pixel angle
 
     bool upscale = flagOn(u.flags, FLAG_UPSCALE);
     if (!sf.hit) {

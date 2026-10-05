@@ -416,6 +416,14 @@ final class Renderer: NSObject {
     private var megaLightsWritten = false           // last frame's MegaLights pass left its tiles' visible-light hashes
     private var restirGIGrid: RestirGITargets?
     private var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
+    private var rasterScene: RasterScene?           // the raster visibility buffer's view of the scene (RasterScene.swift)
+    private var rasterTargets: RasterTargets?
+    private lazy var rasterDepthState: MTLDepthStencilState? = {
+        let d = MTLDepthStencilDescriptor()
+        d.depthCompareFunction = .greater   // reversed Z
+        d.isDepthWriteEnabled = true
+        return device.makeDepthStencilState(descriptor: d)
+    }()
     private var instanceAS: [MTLAccelerationStructure] {
         sceneBuffers.voxelLOD.map { [MTLAccelerationStructure](repeating: $0.current, count: Renderer.maxFramesInFlight) }
             ?? sceneBuffers.instanceStructures
@@ -1562,6 +1570,7 @@ final class Renderer: NSObject {
         stages.denoise += svgfStages(plan, targets: t, composite: &composite)
         stages.fog = fogStages(plan, targets: t, composite: &composite)
 
+        if let raster = plan.raster { encodeRaster(plan, raster, passes: passes) }
         encode(stages, plan: plan, passes: passes)
         let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: passes)
         commit(plan, passes: passes, profile: profile, output: output.output, encodeStart: encodeStart + output.wait)
@@ -1802,6 +1811,7 @@ final class Renderer: NSObject {
         var lightTree: (buffer: MTLBuffer, nodes: Int)?   // its far field, this frame's
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
         var lightMaps = false
+        var raster: (scene: RasterScene, targets: RasterTargets)?   // primary hits from the raster visibility buffer
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
@@ -1873,6 +1883,14 @@ final class Renderer: NSObject {
         p.fogParams = makeFogParams(grid: p.fog?.grid, historyValid: fogHistory)
         p.fogSamples = accumCount
         if accumulating, p.fog != nil { p.fogReference = fogReferenceTexture(width: width, height: height) }
+
+        // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
+        // (Metal's tracer swaps them in instance by instance, which the raster doesn't follow).
+        if settings.primary == .raster, !scene.hasVoxelBoxes, let rs = currentRasterScene(),
+           let rt = rasterTargets(width: width, height: height, scene: rs) {
+            p.raster = (rs, rt)
+            p.uniforms.flags |= UniformFlags.visBuffer
+        }
 
         // GI. Light-visibility maps serve the GI techniques and the path tracer's light-map variant.
         p.lightMaps = usesLightMaps
@@ -2107,6 +2125,17 @@ final class Renderer: NSObject {
             if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
         }
 
+        // The visibility buffer's view: its own pass too (black with the primary visibility traced).
+        if settings.viewMode == RenderSettings.visibilityBufferView, let enc = passes.compute("geometry debug") {
+            bind(enc, .rasterDebug, c.uniforms)
+            enc.setTexture(plan.raster?.targets.visibility, index: 0)
+            enc.setBuffer(plan.raster?.targets.counters, offset: 0, index: 13)
+            enc.setTexture(t.normalDepth[cur], index: 1)
+            enc.setTexture(t.geometryDebug, index: 2)
+            dispatch(enc, .rasterDebug, width: size.width, height: size.height)
+            if overlap { enc.memoryBarrier(scope: [.textures]) }
+        }
+
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
         let compositeIndirect = plan.accumulating || (plan.svgf && plan.separate && plan.denoiseIndirect)
             ? c.illumination.last! : t.indirect
@@ -2278,7 +2307,7 @@ final class Renderer: NSObject {
     /// 1b. Light-visibility maps. 2. Ray trace: primary visibility (G-buffer), direct light with shadow rays,
     /// path-traced indirect light.
     private func headStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
-        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size, raster = plan.raster
         var stages: [ComputeStage] = []
         if plan.lightMaps {
             stages.append(ComputeStage(pass: "lightmap") { [self] enc in
@@ -2293,6 +2322,10 @@ final class Renderer: NSObject {
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
                               t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
                               t.visibility, t.blocker, t.material])
+            if let raster {
+                enc.setTexture(raster.targets.visibility, index: 15)
+                enc.setBuffer(raster.targets.counters, offset: 0, index: 13)
+            }
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
         if plan.glass {
@@ -2940,6 +2973,127 @@ final class Renderer: NSObject {
         }
         return (buffer, tree.nodes.count)
     }
+    // MARK: - Raster visibility buffer
+
+    /// The raster's view of the scene being drawn: made on the first raster frame of a scene's buffers.
+    private func currentRasterScene() -> RasterScene? {
+        if let r = rasterScene, r.source === sceneBuffers.meshes { return r }
+        rasterScene = nil
+        do {
+            rasterScene = try RasterScene(device: device, scene: scene, buffers: sceneBuffers, customTracer: builtRayTracer == .custom,
+                                          virtualBLAS: customRT?.virtualBLAS != nil)
+        } catch {
+            print("Raster visibility buffer: \(error); the primary rays are traced")
+        }
+        return rasterScene
+    }
+
+    private func rasterTargets(width: Int, height: Int, scene rs: RasterScene) -> RasterTargets? {
+        if let r = rasterTargets, r.width == width, r.height == height, r.maxGroups >= rs.instanceCount + r.maxDraws / 64 + 1,
+           r.maxDraws >= min(rs.chunkCount, 1 << 22) {
+            return r
+        }
+        rasterTargets = nil   // (the old ones go first: a size change can be large)
+        rasterTargets = try? RasterTargets(device: device, width: width, height: height, chunks: rs.chunkCount, instances: rs.instanceCount)
+        return rasterTargets
+    }
+
+    /// What the raster's vertices and culling reach through addresses: the borrowed meshes' buffers, the instance
+    /// blocks' records and the cut's BLASes.
+    private func rasterResources(slot: Int) -> [MTLResource] {
+        sceneBuffers.blockBuffers + sceneBuffers.instanceResources + (customRT?.virtualBLAS?.resources(slot: slot) ?? [])
+    }
+
+    /// 1c. The raster visibility buffer (Shaders/Raster.metal), ahead of the trace that reads it. The chunks' bounds the
+    /// first time; then two culling passes (what was visible last frame, then the rest against the depth pyramid of the
+    /// first), each with its draw, and the pyramid between them.
+    private func encodeRaster(_ plan: FramePlan, _ raster: (scene: RasterScene, targets: RasterTargets), passes: FrameEncoder) {
+        let rs = raster.scene, rt = raster.targets, slot = plan.slot
+        guard let depthState = rasterDepthState else { return }
+        var u = plan.uniforms
+        var params = GPURasterParams(instanceCount: UInt32(rs.instanceCount), meshCount: UInt32(rs.meshCount),
+                                     chunkCount: UInt32(rs.chunkCount),
+                                     flags: (rs.ids != nil ? GPURasterParams.ids : 0) | GPURasterParams.hzb,
+                                     maxDraws: UInt32(rt.maxDraws), maxGroups: UInt32(rt.maxGroups), hzbLevels: UInt32(rt.hzb.mipmapLevelCount),
+                                     pass: 0, hzbSize: SIMD2(UInt32(rt.hzb.width), UInt32(rt.hzb.height)),
+                                     firstAssembly: UInt32(rs.firstAssembly))
+        let instances = sceneBuffers.instanceTable ?? instanceDataBuffers[slot]
+        let vgTable = customRT?.virtualBLAS?.table(slot: slot) ?? rs.meshes   // (a stand-in nothing reads)
+        let resources = rasterResources(slot: slot)
+        let group = MTLSize(width: 64, height: 1, depth: 1)
+
+        /// The buffers every raster kernel reads at the indices Raster.metal gives them, for `pass`.
+        func bind(_ enc: ComputePass, pass: Int) {
+            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.setBuffer(positionBuffer, offset: 0, index: 2)
+            enc.setBuffer(indexBuffer, offset: 0, index: 4)
+            enc.setBuffer(meshBuffer, offset: 0, index: 5)
+            enc.setBuffer(instances, offset: 0, index: 6)
+            params.pass = UInt32(pass)
+            enc.setBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+            enc.setBuffer(rs.ids ?? rs.meshes, offset: 0, index: 10)
+            enc.setBuffer(rs.visible, offset: 0, index: 11)
+            enc.setBuffer(rt.groups, offset: pass * rt.maxGroups * 16, index: 12)
+            enc.setBuffer(rt.counters, offset: 0, index: 13)
+            enc.setBuffer(rs.meshes, offset: 0, index: 14)
+            enc.setBuffer(rs.chunkBounds, offset: 0, index: 15)
+            enc.setBuffer(vgTable, offset: 0, index: 16)
+            enc.setBuffer(rt.draws, offset: pass * rt.maxDraws * 16, index: 17)
+            enc.setBuffer(rs.chunkMeshes, offset: 0, index: 18)
+            enc.setBuffer(rt.records, offset: pass * rt.maxGroups * RasterTargets.recordSize, index: 19)
+            enc.setTexture(rt.hzb, index: 0)
+        }
+
+        for pass in 0..<2 {
+            guard let enc = passes.compute("raster cull", serial: true) else { return }
+            enc.useResources(resources, usage: .read)
+            bind(enc, pass: pass)
+            if pass == 0 {
+                if !rs.boundsReady && rs.chunkCount > 0 {
+                    enc.setComputePipelineState(pipelines[.rasterBounds])
+                    enc.dispatchThreads(MTLSize(width: rs.chunkCount, height: 1, depth: 1), threadsPerThreadgroup: group)
+                    rs.boundsReady = true
+                }
+                enc.setComputePipelineState(pipelines[.rasterReset])
+                enc.dispatchThreads(MTLSize(width: 2, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 2, height: 1, depth: 1))
+            }
+            enc.setComputePipelineState(pipelines[.rasterCull])
+            enc.dispatchThreads(MTLSize(width: max(rs.instanceCount, 1), height: 1, depth: 1), threadsPerThreadgroup: group)
+            enc.setComputePipelineState(pipelines[.rasterChunks])
+            enc.dispatchThreadgroups(indirectBuffer: rt.counters, indirectBufferOffset: pass * RasterTargets.countersStride + 16,
+                                     threadsPerThreadgroup: group)
+            passes.endCompute()
+
+            let clear = MTLClearColor(red: Double(UInt32.max), green: Double(UInt32.max), blue: 0, alpha: 0)
+            passes.render("raster", RenderAttachments(color: rt.visibility, depth: rt.depth, clear: pass == 0, clearColor: clear)) { [self] r in
+                r.setRenderPipelineState(pipelines.visibility)
+                r.setDepthStencilState(depthState)
+                // (the records' corners and indices point into these)
+                r.useResources(resources + [positionBuffer, indexBuffer, rs.meshes])
+                r.setBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+                r.setBuffer(rt.draws, offset: pass * rt.maxDraws * 16, index: 17)
+                r.setBuffer(rt.records, offset: pass * rt.maxGroups * RasterTargets.recordSize, index: 19)
+                r.drawTriangles(indirectBuffer: rt.counters, indirectBufferOffset: pass * RasterTargets.countersStride)
+            }
+
+            // The pyramid of pass 1's depth, which pass 2 tests against.
+            if pass == 0, let enc = passes.compute("hzb", serial: true) {
+                enc.setComputePipelineState(pipelines[.hzbInit])
+                enc.setTexture(rt.depth, index: 0)
+                enc.setTexture(rt.hzb, index: 1)
+                dispatch(enc, .hzbInit, width: rt.hzb.width, height: rt.hzb.height)
+                enc.setComputePipelineState(pipelines[.hzbReduce])
+                enc.setTexture(rt.hzb, index: 0)
+                for level in 1..<rt.hzb.mipmapLevelCount {
+                    var l = UInt32(level)
+                    enc.setBytes(&l, length: 4, index: 0)
+                    dispatch(enc, .hzbReduce, width: max(rt.hzb.width >> level, 1), height: max(rt.hzb.height >> level, 1))
+                }
+                passes.endCompute()
+            }
+        }
+    }
+
     private func megaLightsTargets(width: Int, height: Int, capacity: Int) -> MegaLightsTargets? {
         if let m = megaLightsGrid, m.width == width, m.height == height, m.capacity == capacity { return m }
         megaLightsGrid = try? MegaLightsTargets(device: device, width: width, height: height, capacity: capacity)

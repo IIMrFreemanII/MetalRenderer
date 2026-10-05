@@ -28,8 +28,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private let constants: [MTLBuffer]                      // per frame slot: what Metal 3's setBytes copies
     private static let constantsLength = 1 << 20
     private static let stages: MTLStages = [.dispatch, .blit, .accelerationStructure]
-    /// What a new encoder waits for: the work committed before it, and the queue's mapping updates.
-    private static let queueStages: MTLStages = stages.union(.resourceState)
+    /// What a new encoder waits for: the work committed before it (the visibility buffer's draws too, `render`), and
+    /// the queue's mapping updates.
+    private static let queueStages: MTLStages = stages.union([.resourceState, .vertex, .fragment])
 
     // Residency: every resource a frame binds, added the first time and dropped once unused for a while.
     private let residency: MTLResidencySet
@@ -112,7 +113,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     // MARK: - Residency
 
-    private func keep(_ allocation: MTLAllocation) {
+    fileprivate func keep(_ allocation: MTLAllocation) {
         let id = ObjectIdentifier(allocation)
         if resident.updateValue((allocation, frameCount), forKey: id) == nil {
             residency.addAllocation(allocation)
@@ -215,6 +216,37 @@ final class Metal4Frame: FrameEncoder, ComputePass {
             guard let blit = cb.makeBlitCommandEncoder() else { return }
             for texture in textures { blit.generateMipmaps(for: texture) }
             blit.endEncoding()
+        }
+    }
+
+    /// A render encoder of its own, which waits for everything before it as a new compute encoder does; the bindings
+    /// go through the same argument table, to the vertex stage.
+    func render(_ name: String, _ attachments: RenderAttachments, encode: (RenderPass) -> Void) {
+        endCompute()
+        let d = MTL4RenderPassDescriptor()
+        attachments.apply(color: d.colorAttachments[0], depth: d.depthAttachment)
+        keep(attachments.color)
+        keep(attachments.depth)
+        guard let enc = buffer(name).makeRenderCommandEncoder(descriptor: d) else { return }
+        enc.label = name
+        enc.barrier(afterQueueStages: Metal4Frame.queueStages, beforeStages: [.vertex, .fragment], visibilityOptions: .device)
+        enc.setArgumentTable(table, stages: .vertex)
+        encode(RenderPass4(frame: self, enc: enc))
+        enc.endEncoding()
+    }
+
+    private struct RenderPass4: RenderPass {
+        unowned let frame: Metal4Frame
+        let enc: MTL4RenderCommandEncoder
+
+        func setRenderPipelineState(_ state: MTLRenderPipelineState) { enc.setRenderPipelineState(state) }
+        func setDepthStencilState(_ state: MTLDepthStencilState) { enc.setDepthStencilState(state) }
+        func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { frame.setBytes(bytes, length: length, index: index) }
+        func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { frame.setBuffer(buffer, offset: offset, index: index) }
+        func useResources(_ resources: [MTLResource]) { frame.useResources(resources, usage: .read) }
+        func drawTriangles(indirectBuffer: MTLBuffer, indirectBufferOffset: Int) {
+            frame.keep(indirectBuffer)
+            enc.drawPrimitives(primitiveType: .triangle, indirectBuffer: indirectBuffer.gpuAddress + UInt64(indirectBufferOffset))
         }
     }
 
@@ -414,6 +446,13 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
         order(.dispatch)
         enc?.dispatchThreadgroups(threadgroupsPerGrid: threadgroupsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+    }
+
+    func dispatchThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threadsPerThreadgroup: MTLSize) {
+        keep(indirectBuffer)
+        order(.dispatch)
+        enc?.dispatchThreadgroups(indirectBuffer: indirectBuffer.gpuAddress + UInt64(indirectBufferOffset),
+                                  threadsPerThreadgroup: threadsPerThreadgroup)
     }
 }
 

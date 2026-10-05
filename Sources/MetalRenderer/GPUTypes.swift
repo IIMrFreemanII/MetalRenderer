@@ -54,6 +54,7 @@ enum UniformFlags {
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
     static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
+    static let visBuffer: UInt32 = 524288    // traceKernel takes its primary hits from the raster visibility buffer
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).
@@ -76,6 +77,31 @@ struct GPUMegaLightsParams {
     static let guideValid: UInt32 = 1   // last frame's visible-light hashes can steer the picks
     static let partition: UInt32 = 2    // the list owns its lights in reach, the tree the others (else MIS)
     static let tile = 16                // pixels across a tile (ML_TILE)
+}
+
+/// The raster visibility buffer's culling and drawing parameters (MSL RasterParams, Shaders/Raster.metal).
+struct GPURasterParams {
+    var instanceCount: UInt32 = 0     // the instances' records, counted through
+    var meshCount: UInt32 = 0         // GPURasterMesh records
+    var chunkCount: UInt32 = 0        // chunks with bounds
+    var flags: UInt32 = 0
+    var maxDraws: UInt32 = 0          // per pass
+    var maxGroups: UInt32 = 0         // per pass
+    var hzbLevels: UInt32 = 0
+    var pass: UInt32 = 0              // 0 = visible last frame, 1 = tested against this frame's pyramid
+    var hzbSize = SIMD2<UInt32>()     // level 0
+    var firstAssembly: UInt32 = 0     // RasterScene.firstAssembly
+    var pad: UInt32 = 0
+
+    static let ids: UInt32 = 1        // an instance's id comes from RasterScene.ids (Metal's tracer with blocks)
+    static let hzb: UInt32 = 2        // pass 2 tests against the pyramid
+}
+
+/// A mesh index's record for the raster visibility buffer (MSL RasterMesh): its object-space bounds, with its first
+/// chunk's place among the chunks' bounds in lo.w and its RasterScene kind and flags in hi.w (both bit patterns).
+struct GPURasterMesh {
+    var lo = SIMD4<Float>()
+    var hi = SIMD4<Float>()
 }
 
 /// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
@@ -298,6 +324,8 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPURestirParams>.stride == 32, "GPURestirParams layout mismatch")
     precondition(MemoryLayout<GPUMegaLightsParams>.stride == 48, "GPUMegaLightsParams layout mismatch")
     precondition(MemoryLayout<GPULightTreeNode>.stride == 64, "GPULightTreeNode layout mismatch")
+    precondition(MemoryLayout<GPURasterParams>.stride == 48, "GPURasterParams layout mismatch")
+    precondition(MemoryLayout<GPURasterMesh>.stride == 32, "GPURasterMesh layout mismatch")
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")

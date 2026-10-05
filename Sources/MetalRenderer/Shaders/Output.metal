@@ -152,7 +152,7 @@ inline float3 agxFilm(float3 c) {
 
 /// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
 inline bool viewIsHDR(uint mode) {
-    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13));
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || mode == 15);
 }
 
 /// Exposure, then the selected curve (RenderSettings.toneMap).
@@ -287,6 +287,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
+        case 15: c = geometryDebug.read(tid).rgb; break;          // the visibility buffer (rasterDebugKernel)
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
     if (flagOn(u.flags, FLAG_HDR_OUTPUT)) {

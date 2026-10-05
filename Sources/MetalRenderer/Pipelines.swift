@@ -14,6 +14,8 @@ enum Kernel: Int, CaseIterable {
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
+    case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
     case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit
@@ -31,6 +33,7 @@ enum Kernel: Int, CaseIterable {
         switch self {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
         case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
+            | F.visBuffer
         case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
         case .restirSpatial, .megaLightsSample: return F.specular
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
@@ -139,6 +142,12 @@ struct Pipelines {
     private let states: [MTLComputePipelineState?]
     let variants: KernelVariants
 
+    /// The raster visibility buffer's draw (rasterVertex, rasterFragment): instance and triangle ids into an rg32Uint
+    /// target, over a depth32Float one.
+    let visibility: MTLRenderPipelineState
+    static let visibilityFormat = MTLPixelFormat.rg32Uint
+    static let depthFormat = MTLPixelFormat.depth32Float
+
     subscript(_ kernel: Kernel) -> MTLComputePipelineState { states[kernel.rawValue]! }
 
     /// The pipeline for a dispatch of `kernel` whose uniforms carry `flags` and whose own flags are `pass`: the
@@ -187,6 +196,7 @@ struct Pipelines {
             }
         }
         if let failure { throw failure }
+        visibility = try Pipelines.makeVisibilityState(device: device, library: library, compiler: compiler, lightTypes: lightTypes)
         self.kind = kind
         self.api = api
         self.lightTypes = lightTypes
@@ -216,6 +226,39 @@ struct Pipelines {
         }
         let function = try library.makeFunction(name: kernel.function, constantValues: constants)
         return try device.makeComputePipelineState(function: function)
+    }
+
+    /// The visibility buffer's render pipeline, specialised for the light types (whose feature bits it reads: TILED).
+    private static func makeVisibilityState(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?,
+                                            lightTypes: UInt32) throws -> MTLRenderPipelineState {
+        let constants = MTLFunctionConstantValues()
+        var types = lightTypes
+        constants.setConstantValue(&types, type: .uint, index: 0)
+        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+            func function(_ name: String) -> MTL4SpecializedFunctionDescriptor {
+                let f = MTL4LibraryFunctionDescriptor()
+                f.library = library
+                f.name = name
+                let specialized = MTL4SpecializedFunctionDescriptor()
+                specialized.functionDescriptor = f
+                specialized.constantValues = constants
+                return specialized
+            }
+            let d = MTL4RenderPipelineDescriptor()
+            d.vertexFunctionDescriptor = function("rasterVertex")
+            d.fragmentFunctionDescriptor = function("rasterFragment")
+            d.colorAttachments[0].pixelFormat = visibilityFormat
+            d.inputPrimitiveTopology = .triangle
+            return try compiler.makeRenderPipelineState(descriptor: d)
+        }
+        let d = MTLRenderPipelineDescriptor()
+        d.label = "visibility"
+        d.vertexFunction = try library.makeFunction(name: "rasterVertex", constantValues: constants)
+        d.fragmentFunction = try library.makeFunction(name: "rasterFragment", constantValues: constants)
+        d.colorAttachments[0].pixelFormat = visibilityFormat
+        d.depthAttachmentPixelFormat = depthFormat
+        d.inputPrimitiveTopology = .triangle
+        return try device.makeRenderPipelineState(descriptor: d)
     }
 
     private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,

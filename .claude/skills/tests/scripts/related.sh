@@ -62,6 +62,7 @@ if [[ $suites == " " ]]; then
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
+          RasterScene.swift) add RasterSceneTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
           *) uncovered+=("$f") ;;

@@ -13,7 +13,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -670,6 +670,32 @@ extension Benchmark {
                         $0.api = api
                     }
                 }
+            }
+        }
+        return out
+    }
+
+    /// The raster visibility buffer against traced primary rays (PrimaryVisibility), scene by scene at the default
+    /// settings (cascades, MetalFX denoiser 3x from 0.5x): a still of each (pngdiff.py compares the pairs), its
+    /// "Visibility buffer" view (chunks in colours, magenta where the primary rays traced what it didn't draw), and the camera moving through
+    /// the stress hall and the city (the two culling passes as things come into view). The tracer is METALRENDERER_RT's.
+    private static func raster() -> [Config] {
+        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()), ("gallery", SceneSettings(kind: .gallery)),
+                                                 ("crowd", SceneSettings(kind: .crowd)), ("city", SceneSettings(kind: .city)),
+                                                 ("forest", SceneSettings(kind: .forest)), ("world", SceneSettings(kind: .world))]
+        var out: [Config] = []
+        for (tag, scene) in scenes {
+            for primary in PrimaryVisibility.allCases {
+                out.append(Config("\(tag) \(primary)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = primary }
+                    .still().frames(30))
+            }
+            out.append(Config("\(tag) visibility buffer", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = .raster }
+                .view(RenderSettings.visibilityBufferView).still().frames(8))
+        }
+        for (tag, scene) in [("stress", stressHall()), ("city", SceneSettings(kind: .city))] {
+            for primary in PrimaryVisibility.allCases {
+                out.append(Config("\(tag) camera \(primary)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = primary }
+                    .cameraMove())
             }
         }
         return out

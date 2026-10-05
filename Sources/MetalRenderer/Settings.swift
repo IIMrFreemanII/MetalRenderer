@@ -353,6 +353,19 @@ enum RayTracerKind: Int, CaseIterable, Codable {
     static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALRENDERER_RT"] == "metal" ? .metal : .custom
 }
 
+/// Where the camera's surfaces come from: one traced ray per pixel, or a raster visibility buffer (Shaders/Raster.metal,
+/// in the manner of Unreal's Nanite: GPU-driven, culled by chunks of 128 triangles against the view and a depth pyramid),
+/// whose triangles the primary rays then only meet. The rest of the frame is the same.
+enum PrimaryVisibility: Int, CaseIterable, Codable {
+    case traced
+    case raster
+
+    var title: String { self == .traced ? "Traced" : "Raster (visibility buffer)" }
+
+    /// `METALRENDERER_PRIMARY=raster|traced` picks the starting one (benchmarks: for every setting).
+    static let initial: PrimaryVisibility = ProcessInfo.processInfo.environment["METALRENDERER_PRIMARY"] == "raster" ? .raster : .traced
+}
+
 /// A glTF model the user opened or dropped into the scene.
 struct ExtraModel: Equatable, Codable {
     var path: String
@@ -667,6 +680,7 @@ struct RenderSettings: Equatable, Codable {
     var scene = SceneSettings()
     var rayTracer = RayTracerKind.initial
     var api = RenderAPI.initial
+    var primary = PrimaryVisibility.initial
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
@@ -705,7 +719,9 @@ struct RenderSettings: Equatable, Codable {
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering"]
+                            "Fog scattering", "Visibility buffer"]
+    /// The raster visibility buffer's chunks (rasterDebugKernel), with the primary visibility on raster.
+    static let visibilityBufferView = 15
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13
