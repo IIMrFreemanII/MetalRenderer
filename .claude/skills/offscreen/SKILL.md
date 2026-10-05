@@ -47,6 +47,8 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
 * It prints the timing table, the log path and the new PNG paths. Override typos are printed too ("unknown key"); a
   typo doesn't stop the run.
 * `-q` prints only the PNG paths. `-b <binary>` runs another build, from its own folder, with its own shaders.
+* A setting with `.recording()` (Benchmark.swift) also saves every other measured frame as a JPEG in a folder of its
+  own: a 30 fps sequence for ffmpeg. `-m showcasevideo` records every showcase model orbited for 6 s.
 
 Not settable from the environment:
 * the camera pose: each scene's default camera is used, or a `Config.camera` / `.cameraMove()` in a mode;
