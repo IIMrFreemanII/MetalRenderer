@@ -19,9 +19,10 @@ extension Benchmark {
     struct DatasetSpec {
         // Not the stress hall: its references take far longer than any other scene's.
         var scenes: [SceneKind] = [.cornell, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog, .valley, .market,
-                                   .forest, .randomRoom]
+                                   .forest, .randomRoom, .showcase]
         var clips = 4           // per scene, each with its own seed, start time and camera track
         var rooms = 24          // ...but this many random rooms (Scene+Training.swift): each clip is another room
+                                // (and the showcase has a clip per model of Assets/, each on its own set)
         var frames = 32         // saved per clip, after the warm-up
         var spp = 1024          // frames averaged per reference
         var seed = 1
@@ -50,16 +51,20 @@ extension Benchmark {
             }
         }
 
-        /// The clips, scene by scene: a seed for the scene, a start time and a camera track each.
+        /// The clips, scene by scene: a seed for the scene, a start time and a camera drift each.
         var clipList: [DatasetClip] {
-            scenes.flatMap { kind in
-                (0..<(kind == .randomRoom ? rooms : clips)).map { c in
+            let models = Scene.galleryFiles().map(Scene.showcaseName)
+            return scenes.flatMap { kind in
+                (0..<(kind == .randomRoom ? rooms : kind == .showcase ? models.count : clips)).map { c in
                     var rng = BlueNoise.SplitMix64(seed: UInt64(seed) &* 0x1_0000 &+ UInt64(kind.rawValue) &* 0x100 &+ UInt64(c))
                     var scene = SceneSettings(kind: kind)
                     if kind == .market { scene.lights = SceneSettings.marketLights }
+                    if kind == .showcase { scene.showcase = models[c] }
                     scene.seed = seed * 100 + c
                     let start = Float.random(in: 0..<(kind.dayCycle ?? 20), using: &rng)
-                    let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: kind == .cornell ? 0.3 : 1, using: &rng)
+                    // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model.
+                    let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : 1
+                    let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
                     return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, drift: drift)
                 }
             }
@@ -73,10 +78,13 @@ extension Benchmark {
         var startTime: Float
         var drift: CameraDrift
 
-        /// Settings both of its runs share: a room's glTF models at full detail and with every texture level, so
-        /// the references don't get finer meshes or mips than the noisy frames had (as the gallery's references).
+        /// Settings both of its runs share. glTF models (random rooms, the gallery, the showcase) at full detail and
+        /// with every texture level, so the references don't get finer meshes or mips than the noisy frames had (as the
+        /// gallery's references). And no lens (the showcase's bloom, depth of field and grain): the arrays are taken
+        /// before it anyway, and it would only change the saved MetalFX picture and cost time.
         func shared(_ s: inout RenderSettings) {
-            guard scene.kind == .randomRoom else { return }
+            s.post = PostSettings()
+            guard [.randomRoom, .gallery, .showcase].contains(scene.kind) else { return }
             s.virtualGeometry.enabled = false
             s.textureBudgetMB = 4096
         }

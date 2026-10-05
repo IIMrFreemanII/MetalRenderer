@@ -46,6 +46,28 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertEqual(Benchmark.datasetReferences().map(\.startTime), [4], "frame 0 has its reference")
     }
 
+    /// The showcase gives the dataset a clip per model, each on its own set; the model scenes' clips trace full-detail
+    /// meshes and have no lens, in both runs.
+    func testDatasetShowcaseClips() {
+        defer { unsetenv("METALRENDERER_DATASET"); unsetenv("METALRENDERER_GALLERY") }
+        setenv("METALRENDERER_DATASET", "scenes=showcase|randomroom|cornell,clips=1,rooms=1,frames=1", 1)
+        setenv("METALRENDERER_GALLERY", "owl|demon", 1)
+        let clips = Benchmark.DatasetSpec().clipList
+        let showcase = clips.filter { $0.scene.kind == .showcase }
+        XCTAssertEqual(showcase.map(\.scene.showcase), Scene.galleryFiles().map(Scene.showcaseName))
+        XCTAssertEqual(showcase.count, 2)
+        for clip in clips {
+            var s = RenderSettings()
+            s.post.bloom = 0.5
+            clip.shared(&s)
+            XCTAssertFalse(s.post.isOn, clip.name)
+            XCTAssertEqual(s.virtualGeometry.enabled, clip.scene.kind == .cornell ? RenderSettings().virtualGeometry.enabled : false, clip.name)
+        }
+        let noisy = Benchmark.dataset().filter { $0.settings.scene.kind == .showcase }
+        XCTAssertEqual(noisy.map(\.settings.scene.showcase), showcase.map(\.scene.showcase))
+        XCTAssertTrue(noisy.allSatisfy { !$0.settings.post.isOn && !$0.settings.virtualGeometry.enabled })
+    }
+
     /// A camera track goes through its keys, looking at their targets, and holds its first and last poses.
     func testCameraTrack() {
         let track = CameraTrack([CameraTrack.Key(time: 0, position: [0, 1, 5], target: [0, 1, 0]),

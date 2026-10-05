@@ -27,9 +27,11 @@ uv pip install -p Tools/neural/.venv -r Tools/neural/requirements.txt
 nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.log
 ```
 Renders offscreen (no window). First every clip's noisy frames (minutes), then a path-traced reference for every
-frame (the long part: ~70 s each on an M1 Max, ~1,300 of them). Stop it any time; run it again to carry on. The clip
-list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips and 24 random rooms, 20 frames, 512 spp; keys
-in `Benchmark.DatasetSpec`). The stress hall is left out: its references are far slower than any other scene's.
+frame (the long part: ~70 s each on an M1 Max, ~1,500 of them). Stop it any time; run it again to carry on. The clip
+list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, 24 random rooms and the showcase's 11 models,
+each on its own set; 20 frames, 512 spp; keys in `Benchmark.DatasetSpec`). The stress hall is left out: its
+references are far slower than any other scene's. Scenes with glTF models trace them at full detail and every clip
+runs without the lens (bloom, depth of field), in both runs (`DatasetClip.shared`).
 
 On a Mac with hardware ray tracing (M3 and later), first time one reference with the Metal tracer, which may be much
 faster: `METALRENDERER_DATASET="scenes=cornell,clips=1,frames=1,spp=512" METALRENDERER_RT=metal Tools/neural/make-dataset.sh -d /tmp/try`
