@@ -54,6 +54,7 @@ if [[ $suites == " " ]]; then
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;
           Building*.swift|MeshBuilder.swift) add BuildingTests CityTests ;;
           CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
+          Scene+Stress.swift) add StressSceneTests ;;
           Crowd*.swift|SkinnedCharacter.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
           FBXReader.swift) add FBXTests ;;
           Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;

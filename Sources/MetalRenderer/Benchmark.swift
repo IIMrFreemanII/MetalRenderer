@@ -128,11 +128,11 @@ final class Benchmark {
             start.yaw = -0.7
             start.pitch = -0.05
         } else if scene == .stress {
-            // Low over the floor on the right, sweeping up to the overview.
+            // Low in the central aisle, turned toward the office, rising and backing up to the overview.
             c = Scene.stressCamera
-            start.position = SIMD3<Float>(7.0, 2.2, 12.0)
-            start.yaw = -0.6
-            start.pitch = -0.1
+            start.position = SIMD3<Float>(0, 2.4, 12.0)
+            start.yaw = 0.35
+            start.pitch = -0.05
         } else if let demo = Scene.demoCamera(scene) ?? (scene.cameraFromScene ? sceneCamera : nil) {
             // A step to the side and back, turning toward the default view.
             c = demo
