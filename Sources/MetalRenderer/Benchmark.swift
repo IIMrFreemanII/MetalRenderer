@@ -29,6 +29,7 @@ final class Benchmark {
         var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
         var camera: Camera? = nil           // a fixed camera instead of the scene's default
         var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
+        var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
@@ -68,6 +69,13 @@ final class Benchmark {
         /// Saves every other measured frame (30 fps of the 60 Hz clock) for a video: `<NN-name>/f0001.jpg` and on.
         func recording() -> Config { var c = self; c.record = true; return c }
         func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
+        /// The camera follows `track`, the warm-up holding its first pose; the setting runs as long as the track.
+        func track(_ track: CameraTrack) -> Config {
+            var c = self
+            c.track = track
+            c.frames = Int((track.duration * 60).rounded()) + 1
+            return c
+        }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
         func still(at time: Float = 5, previous: Bool = false) -> Config {
@@ -165,6 +173,9 @@ final class Benchmark {
         c.pitch = start.pitch + (c.pitch - start.pitch) * p
         return c
     }
+
+    /// Where the current setting's track is: seconds since its first measured frame (0 while it warms up).
+    var trackTime: Float { Float(max(frameInConfig - warmupFrames, 0)) * fixedDt }
 
     /// Progress through the current setting, 0 at its first frame and 1 at its last.
     var progressInConfig: Float {
@@ -341,5 +352,49 @@ final class Benchmark {
             CGImageDestinationAddImage(dest, image, type == .jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary : nil)
             CGImageDestinationFinalize(dest)
         })
+    }
+}
+
+/// A camera's way through a scene for a benchmark setting (`Config.track`): keys of where it is and what it looks at,
+/// at times in seconds, joined by Catmull-Rom curves and eased in and out at each key's time. Before the first key it
+/// holds the first pose, after the last the last.
+struct CameraTrack {
+    struct Key {
+        var time: Float
+        var position: SIMD3<Float>
+        var target: SIMD3<Float>
+    }
+    var keys: [Key]
+
+    init(_ keys: [Key]) {
+        precondition(!keys.isEmpty && zip(keys, keys.dropFirst()).allSatisfy { $0.time < $1.time }, "a track's keys in time")
+        self.keys = keys
+    }
+
+    var duration: Float { keys.last!.time }
+
+    /// Where the camera is and what it looks at, at `t` seconds.
+    func pose(at t: Float) -> (position: SIMD3<Float>, target: SIMD3<Float>) {
+        guard let next = keys.firstIndex(where: { $0.time > t }) else { return (keys.last!.position, keys.last!.target) }
+        guard next > 0 else { return (keys[0].position, keys[0].target) }
+        let a = keys[next - 1], b = keys[next]
+        let u = (t - a.time) / (b.time - a.time), s = u * u * (3 - 2 * u)
+        let before = keys[max(next - 2, 0)], after = keys[min(next + 1, keys.count - 1)]
+        func curve(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>) -> SIMD3<Float> {
+            let s2 = s * s, s3 = s2 * s
+            return 0.5 * ((2 * p1) + (p2 - p0) * s + (2 * p0 - 5 * p1 + 4 * p2 - p3) * s2 + (3 * p1 - p0 - 3 * p2 + p3) * s3)
+        }
+        return (curve(before.position, a.position, b.position, after.position), curve(before.target, a.target, b.target, after.target))
+    }
+
+    /// The camera at `t` (Camera.forward: yaw 0 looks down -z, a positive yaw toward +x).
+    func camera(at t: Float) -> Camera {
+        let (position, target) = pose(at: t)
+        let d = simd_normalize(target - position)
+        var c = Camera()
+        c.position = position
+        c.yaw = atan2(d.x, -d.z)
+        c.pitch = asin(max(-1, min(1, d.y)))
+        return c
     }
 }

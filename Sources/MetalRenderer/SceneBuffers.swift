@@ -398,6 +398,8 @@ struct SceneBuffers {
     private(set) var namedBlocks: [String: MeshBlock] = [:]
     let materials: [MTLBuffer]                              // per slot: light proxies' and leaves' materials change
     let instanceData: [MTLBuffer]                           // per slot (GPUInstanceData)
+    /// The SDF shapes (both tracers), and on Metal's their boxes, which come after the meshes' structures in `primitives`.
+    let sdf: SDFBuffers
     let still: Bool                                         // the instances are written, and their structure built
     /// The scene's groups' blocks, in the groups' order: the instances are counted through, the scene's own first,
     /// then each block's (Metal's descriptors are in that order, and the custom tracer's records).
@@ -434,7 +436,7 @@ struct SceneBuffers {
     /// Every buffer of the scene a frame reads.
     var buffers: [MTLBuffer] {
         [positions, normals, indices, meshes, uvs, emissive, triangleMaterials] + materials + (still ? [instanceData[0]] : instanceData)
-            + blockBuffers + instanceResources
+            + blockBuffers + instanceResources + sdf.buffers
     }
 
     /// What the scene takes on the GPU, in megabytes: its geometry, its instances' records, and Metal's structures
@@ -488,6 +490,7 @@ struct SceneBuffers {
             return made
         }
         positions = try buffer(scene.positions, "positions")
+        sdf = try SDFBuffers(device: device, scene: scene)
         normals = try buffer(scene.normals, "normals")
         indices = try buffer(scene.indices, "indices")
         uvs = try buffer(scene.uvs, "uvs")
@@ -600,6 +603,9 @@ struct SceneBuffers {
         if still { descriptors = [MTLBuffer](repeating: descriptors[0], count: options.slots) }
         instanceDescriptors = descriptors
         try buildPrimitives(device: device, queue: queue, scene: scene, options: options)
+        // The SDF shapes' boxes after the meshes' structures (an SDF instance's descriptor names its shape's there).
+        try sdf.buildBoxes(device: device, queue: queue, scene: scene)
+        primitives += sdf.boxes
         // Far baked plants: their grids' boxes after the meshes' structures (VoxelLOD names them from there).
         let voxelGrids = still && scene.hasVoxelBoxes
             ? try options.voxelGrids.flatMap { $0.key == VoxelGrids.key(scene.voxelPlants) ? $0 : nil }
@@ -698,12 +704,17 @@ struct SceneBuffers {
     func writeInstanceDescriptors(slot: Int, scene: Scene, api: RenderAPI, all: Bool, range: Range<Int>? = nil) {
         let base = instanceDescriptors[slot].contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
+        // An SDF shape's box: the ray queries' loop is handed it (it isn't opaque) and marches the shape.
+        let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
         let stride = indirect ? SceneBuffers.indirectStride : 64
+        let meshCount = scene.meshes.count
         func write(_ i: Int) {
             let instance = scene.instances[i]
+            let index = instance.sdf >= 0 ? meshCount + instance.sdf : instance.mesh
             // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
-            SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform, options: options, mask: instance.mask,
-                                         userID: UInt32(i), structure: indirect ? primitives[instance.mesh] : nil, index: instance.mesh)
+            SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform,
+                                         options: instance.sdf >= 0 ? boxOptions : options, mask: instance.mask,
+                                         userID: UInt32(i), structure: indirect ? primitives[index] : nil, index: index)
         }
         if all {
             for i in range ?? scene.instances.indices { write(i) }
