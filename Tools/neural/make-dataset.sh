@@ -6,10 +6,10 @@
 #
 #   -d  the dataset folder (default: <repo>/dataset, gitignored); the log is <dir>/run.log
 #   METALRENDERER_DATASET in the environment replaces the default list (11 scenes x 4 clips, 24 random rooms and a
-#   showcase clip per Assets/ model, 20 frames each, 512 spp); any other METALRENDERER_* variable is passed on
+#   showcase clip per Assets/ model; 20 frames, the showcase's 8; 512 spp); any other METALRENDERER_* variable is passed on
 #   (for example METALRENDERER_RT=metal).
 #
-# Long: about 70 s a reference on an M1 Max (~1,500 references). Run it detached:
+# Long: about 70 s a reference on an M1 Max, 6-9 min for the showcase's (~1,400 references). Run it detached:
 #   nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &
 set -u
 

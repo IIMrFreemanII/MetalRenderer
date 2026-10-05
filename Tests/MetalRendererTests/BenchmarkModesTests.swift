@@ -66,6 +66,8 @@ final class BenchmarkModesTests: XCTestCase {
         let noisy = Benchmark.dataset().filter { $0.settings.scene.kind == .showcase }
         XCTAssertEqual(noisy.map(\.settings.scene.showcase), showcase.map(\.scene.showcase))
         XCTAssertTrue(noisy.allSatisfy { !$0.settings.post.isOn && !$0.settings.virtualGeometry.enabled })
+        XCTAssertTrue(showcase.allSatisfy { $0.frames == 8 }, "the showcase's clips are short")
+        XCTAssertEqual(clips.first { $0.scene.kind == .cornell }?.frames, 1)
     }
 
     /// A camera track goes through its keys, looking at their targets, and holds its first and last poses.

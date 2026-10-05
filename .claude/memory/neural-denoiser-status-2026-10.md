@@ -15,7 +15,8 @@ Built and verified on the M1 Max:
   JSON row per frame) then `datasetref` (supersampled path-traced linear references at 1920×1200, resumable,
   clip-major order). Runner: `Tools/neural/make-dataset.sh`. References line up (MetalFX ~33 dB vs them in Cornell).
 - Random training rooms (`Scene+Training.swift`, `SceneKind.randomRoom`), seeded, with the gallery's models.
-- The showcase (main's scene) is in the dataset too: one clip per Assets/ model (`scene.showcase`), smaller drift.
+- The showcase (main's scene) is in the dataset too: one clip per Assets/ model (`scene.showcase`), smaller drift,
+  8 frames a clip (user's choice): its references took 6–9 min each on the M1 Max (fog volumes, full-detail models).
   `DatasetClip.shared` gives model scenes (rooms, gallery, showcase) full-detail meshes and a 4 GB texture budget, and
   turns the lens off, in both runs. SDF shapes were offered and declined by the user.
 - Training pipeline `Tools/neural` (model.py recurrent U-Net, ~274k params; train/infer/export/view). Learns.

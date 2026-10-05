@@ -24,6 +24,7 @@ extension Benchmark {
         var rooms = 24          // ...but this many random rooms (Scene+Training.swift): each clip is another room
                                 // (and the showcase has a clip per model of Assets/, each on its own set)
         var frames = 32         // saved per clip, after the warm-up
+        var showcaseFrames = 8  // ...but fewer of the showcase's: its references take 5-8 times as long (fog, full-detail models)
         var spp = 1024          // frames averaged per reference
         var seed = 1
         var bounces = 4         // the references' path length
@@ -41,6 +42,7 @@ extension Benchmark {
                 case "clips": clips = Int(kv[1]) ?? clips
                 case "rooms": rooms = Int(kv[1]) ?? rooms
                 case "frames": frames = Int(kv[1]) ?? frames
+                case "showcaseframes": showcaseFrames = Int(kv[1]) ?? showcaseFrames
                 case "spp": spp = Int(kv[1]) ?? spp
                 case "seed": seed = Int(kv[1]) ?? seed
                 case "bounces": bounces = Int(kv[1]) ?? bounces
@@ -65,7 +67,8 @@ extension Benchmark {
                     // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model.
                     let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : 1
                     let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
-                    return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, drift: drift)
+                    return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, drift: drift,
+                                       frames: kind == .showcase ? showcaseFrames : frames)
                 }
             }
         }
@@ -77,6 +80,7 @@ extension Benchmark {
         var scene: SceneSettings
         var startTime: Float
         var drift: CameraDrift
+        var frames: Int         // saved, after the warm-up
 
         /// Settings both of its runs share. glTF models (random rooms, the gallery, the showcase) at full detail and
         /// with every texture level, so the references don't get finer meshes or mips than the noisy frames had (as the
@@ -121,12 +125,12 @@ extension Benchmark {
         let spec = DatasetSpec()
         let clips = spec.clipList.filter { clip in
             !FileManager.default.fileExists(atPath: spec.directory.appendingPathComponent(clip.name)
-                .appendingPathComponent(datasetFileName(frame: spec.frames - 1, buffer: nil)).path)
+                .appendingPathComponent(datasetFileName(frame: clip.frames - 1, buffer: nil)).path)
         }
         print("dataset: \(clips.count) of \(spec.clipList.count) clips to render")
         return clips.map { clip in
             var c = Config(clip.name, scale: spec.scale, upscale: spec.factor, gi: RenderSettings().giMode, scene: clip.scene,
-                           clip.shared).drifting(clip.drift).frames(spec.frames)
+                           clip.shared).drifting(clip.drift).frames(clip.frames)
             c.startTime = clip.startTime
             c.dataset = .inputs(clip: spec.directory.appendingPathComponent(clip.name))
             return c
@@ -141,7 +145,7 @@ extension Benchmark {
         var list: [Config] = [], missing = 0
         for clip in spec.clipList.enumerated().sorted(by: { ($0.element.index, $0.offset) < ($1.element.index, $1.offset) }).map(\.element) {
             let dir = spec.directory.appendingPathComponent(clip.name)
-            for f in 0..<spec.frames {
+            for f in 0..<clip.frames {
                 let row = dir.appendingPathComponent(datasetFileName(frame: f, buffer: nil))
                 guard let data = try? Data(contentsOf: row), let frame = try? decoder.decode(DatasetFrame.self, from: data) else {
                     missing += 1
