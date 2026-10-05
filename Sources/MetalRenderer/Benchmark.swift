@@ -42,9 +42,10 @@ final class Benchmark {
             s.giEnabled = gi != nil
             s.giMode = gi ?? .pathTraced
             s.scene = scene
-            s.fog = FogSettings.preset(for: scene.kind)
+            s.fog = FogSettings.preset(for: scene)
             s.sky = SkySettings.preset(for: scene.kind)
             s.foliage = FoliageSettings.preset(for: scene.kind)
+            s.post = PostSettings.preset(for: scene)
             change(&s)
             self.name = name
             settings = s
@@ -95,10 +96,11 @@ final class Benchmark {
             var s = settings
             SettingsEnv.apply(.scene, to: &s, from: env)
             // The fog and sky of the scene the run ends up with, unless this config set its own.
-            if !ownFog { s.fog = FogSettings.preset(for: s.scene.kind) }
+            if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
             if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
-            for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise] { SettingsEnv.apply(variable, to: &s, from: env) }
+            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase { s.post = PostSettings.preset(for: s.scene) }
+            for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
             for variable in [EnvVariable.restir, .restirGI, .megaLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }

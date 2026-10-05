@@ -297,6 +297,10 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         outRoughness.write(float4(guideRoughness), tid);
         return;
     }
+    if (flagOn(u.flags, FLAG_POST)) {   // the lens effects follow (Post.metal): they want the light as it is
+        output.write(float4(max(c, 0.0f), 1.0f), tid);
+        return;
+    }
     if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
     output.write(float4(saturate(c), 1.0f), tid);
