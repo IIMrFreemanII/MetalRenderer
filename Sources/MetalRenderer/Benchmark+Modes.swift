@@ -13,8 +13,8 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "neuralq": neuralq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
-        "dataset": dataset, "datasetref": datasetReferences,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase,
+        "showcasevideo": showcaseVideo, "dataset": dataset, "datasetref": datasetReferences,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -78,6 +78,35 @@ extension Benchmark {
     private static func shot() -> [Config] {
         let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
         return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
+    }
+
+    /// The showcase (Scene+Showcase.swift): every model of Assets/ on its set as the app shows it (cascades, MetalFX 3x
+    /// from 0.5x, the look's lens), paused at t = 5 s. The first model also without the lens effects, at 0.75x without
+    /// MetalFX (the lens on the composite's light), and with the camera moving. `METALRENDERER_GALLERY="owl|demon"`
+    /// picks the models.
+    private static func showcase() -> [Config] {
+        func shown(_ name: String, _ model: String, scale: CGFloat = 0.5, upscale: CGFloat = 3) -> Config {
+            Config(name, scale: scale, upscale: upscale, gi: .radianceCascades, scene: SceneSettings(kind: .showcase, showcase: model))
+        }
+        let names = Scene.galleryFiles().map(Scene.showcaseName)
+        var out = names.map { shown("showcase \($0)", $0).still() }
+        if let first = names.first {
+            out.append(shown("showcase \(first) no lens", first).with { $0.post = PostSettings() }.still())
+            out.append(shown("showcase \(first) native", first, scale: 0.75, upscale: 0).still())
+            out.append(shown("showcase \(first) camera", first).cameraMove())
+        }
+        return out
+    }
+
+    /// A video of the showcase: every model for 6 s from t = 2 s, the camera orbiting it, every other frame saved
+    /// (`recording`: 180 JPEGs at 30 fps in a folder per model). `METALRENDERER_GALLERY="owl|demon"` picks the models.
+    private static func showcaseVideo() -> [Config] {
+        Scene.galleryFiles().map(Scene.showcaseName).map { name in
+            var c = Config("video \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .showcase, showcase: name))
+                .cameraMove().recording().frames(360)
+            c.startTime = 2
+            return c
+        }
     }
 
     /// Fast smoke tests: the default setting, a camera move, path traced, 0.75x native.

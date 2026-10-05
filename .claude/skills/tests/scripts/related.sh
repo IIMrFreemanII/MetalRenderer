@@ -64,6 +64,8 @@ if [[ $suites == " " ]]; then
           LightTree.swift) add LightTreeTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
+          Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
+          VirtualGeometryBuilder.swift) add CacheTests ;;
           *) uncovered+=("$f") ;;
         esac ;;
       Package.swift) add MetalRendererTests ;;

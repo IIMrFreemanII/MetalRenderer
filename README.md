@@ -8,6 +8,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * a **stress test** hall with up to 2000 moving objects and 16384 moving lights (see below);
   * a **Night market** street lit by thousands of festoon bulbs, lanterns, windows and neon signs (see "Many lights" below);
   * the glTF **Gallery**;
+  * a **Showcase** for each glTF model: the model alone on a set of its own, with volumetric beams, mist, drifting particles, bloom and depth of field (see "Showcase" below);
   * six light demos (see "Light types" below);
   * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
   * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
@@ -887,6 +888,32 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 * Outside the fields the ground changes material in cells: 1 m next to the camera, 16 m at the edge of sight.
 * GI sees no sun shadows beyond 384 m of the camera.
 
+### Showcase
+
+One model of `Assets/` on a set made for it, seen through a lens. Pick the scene "Showcase (one model)", then the model in the Model popup under it; each model brings its own fog and lens settings, as a scene does.
+
+| Set | Models | What is in it |
+|---|---|---|
+| Crypt | golem, harpy | A stone hall; a low sun (or moon) through three tall windows lays shafts across ground mist and through the model |
+| Forge | demon, steampunk warrior | Dark brick, a glowing pit with a flickering light, embers rising into a column of smoke |
+| Underwater | submarine | Dense blue-green water, five swaying shafts from the surface, sand, rocks, kelp, bubbles; the model drifts and bobs |
+| Neon | battle maiden, cat robot | A glossy black floor between coloured light panels, tube strips, a scanner beam sweeping the model, haze |
+| Workshop | owl, lab bench | A room at dusk: the sun's shaft through a window, a desk lamp, glowing jars on shelves, a stuttering tube light, dust in the air |
+| Sanctum | sorceress, fantasy character | A round dais under one beam from high above, a ring of columns, a glowing cloud, runes circling the model |
+| Studio | any other model | A dark cyclorama |
+
+* Every set has the same rig round the model: a polished plinth with a glowing ring, a key spot from high in front, whose beam shows in the fog (the model's shadow cuts a dark shaft behind it), and two spots high behind it for its outline, their beams meeting at it in the fog. Most models turn slowly on the plinth.
+* Particles (embers, bubbles, dust, runes) are small emissive shapes only camera rays meet (`maskLights`): they glow and bloom, but cast no shadows and light nothing, so they cost no light samples.
+* The camera frames the model from its bounds: three-quarters from the front, slightly below its middle, the model filling about 70% of the frame's height.
+* A model is found by a part of its file name, without regard to case. A model with no look of its own (any `.glb` you add to `Assets/`) gets the studio. The looks are a table in `Showcase.swift`: a new model is one row.
+
+**The lens and the finish** (`Shaders/Post.metal`, the "Lens and finish" settings) work in any scene, but are on only in the showcase by default, so every other scene draws what it drew. They run on the frame's light at the output resolution, after the composite or after MetalFX's denoising scaler, before and after the tone curve:
+* **Depth of field:** each pixel's blur circle grows with its distance from the focus (`aperture` is its radius in output pixels far behind it, at most 24). A gather of up to 64 taps on a golden-angle disc, each tap counted where its own circle reaches the pixel and spread over its circle's area, so bright points become discs; a tap behind a pixel can't blur over it, so a sharp model keeps its edge against a blurred background. Focus 0 is autofocus: the median depth of a patch at the centre of the frame, eased in over about ten frames.
+* **Bloom:** six halvings from half the output size (13 taps; the first with a soft threshold and Karis's average, so a lone bright pixel doesn't flicker into a blob), then back up with a tent filter, mixed in before the tone curve.
+* **Chromatic aberration**, **vignette** and **film grain** (luminance-weighted, new every frame) finish the image.
+
+`METALRENDERER_SCENE="showcase,showcase=owl"` starts in the showcase (`showcase=` takes a part of a file name; without it, the first model). `METALRENDERER_POST="bloom=0.08,threshold=1,aperture=6,focus=0,vignette=0.35,grain=0.015,ca=0.0015"` sets the lens in any scene. `METALRENDERER_BENCH=showcase` renders every model on its set as the app shows it, paused at t = 5 s; then the first model without the lens, at 0.75× without MetalFX (the lens on the composite's light) and with the camera moving. `METALRENDERER_BENCH=showcasevideo` records a video's frames instead: each model for 6 s, the camera orbiting it, every other frame of the 60 Hz clock saved as a JPEG (`<setting>/f0001.jpg` and on, 30 fps) for ffmpeg to join. `METALRENDERER_GALLERY="owl|demon"` picks the models.
+
 ### Glass
 
 Window glass is thin and clear, or tinted: the camera sees through it and sees its mirror reflection, and to light it isn't there.
@@ -1028,6 +1055,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `BuildingStyle.swift` | The five styles: proportions, pieces and palettes a building draws from |
 | `MeshBuilder.swift` | Quads, boxes, prisms, cylinders and balls with texture coordinates in metres, for generated meshes |
 | `ProceduralTextures.swift` | The city's generated tiling textures and their cache files |
+| `Showcase.swift` | The showcase's looks: per model of `Assets/`, its set, colours, particles, fog and lens; finding a model by name |
+| `Scene+Showcase.swift` | The showcase scene: the model on its plinth, the rig, the seven sets, the particles, the camera framed from the model |
 | `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |
@@ -1039,7 +1068,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind), `Crowd` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind), `Crowd` |
 
 ## Notes for M1 / M2 Macs
 

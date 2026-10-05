@@ -377,7 +377,7 @@ enum VirtualGeometryBuilder {
         // Page data goes after all headers; offsets are patched in once the header size is known.
         var headerSize = 16
         for (_, m) in meshes {
-            headerSize += 48 + m.groups.count * MemoryLayout<VirtualMesh.Group>.stride
+            headerSize += 56 + m.groups.count * MemoryLayout<VirtualMesh.Group>.stride   // the six UInt32s, UInt64 and six Floats below
                 + m.clusters.count * MemoryLayout<VGCluster>.stride + m.parents.count * 4
         }
         headerSize = (headerSize + 4095) & ~4095

@@ -402,6 +402,7 @@ final class Scene {
         case .city: buildCity(settings.city, seed: settings.seed, night: false)
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
         case .world: buildWorld()
+        case .showcase: buildShowcase()
         case .randomRoom: buildRandomRoom(seed: settings.seed)
         }
         }

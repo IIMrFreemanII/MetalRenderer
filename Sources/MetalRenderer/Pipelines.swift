@@ -13,6 +13,7 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
+    case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case neuralWarp, neuralPrepare, neuralConv, neuralPool, neuralFinish   // our own denoising upscaler (NeuralUpscaler)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
