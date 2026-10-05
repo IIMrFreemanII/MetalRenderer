@@ -28,6 +28,8 @@ final class Scene {
         var skinned = false
         /// ...that walks: `Scene.update` moves it along its lane.
         var travels = false
+        /// >= 0: an SDF shape's instance, index into `sdfShapes` (then `mesh` is -1 and `material` is its nodes' first).
+        var sdf = -1
 
         /// Never moves or deforms: its transform is the one it was added with (the ray tracers' static trees).
         var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
@@ -236,6 +238,9 @@ final class Scene {
     static let maskGlass: UInt32 = 4
     /// A far plant as its voxels (Metal's tracer: VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
+    /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0; the
+    /// custom tracer's RT_SDF). No ray's mask has it, so no ray tests it as one.
+    static let instanceSDF: UInt32 = 0x2000_0000
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
@@ -299,6 +304,12 @@ final class Scene {
         groups.append(InstanceGroup(name: name, count: count, make: make))
     }
     private(set) var meshes: [GPUMesh] = []
+    /// Shapes given by signed distance fields (SDFShapes.swift), the baked grids their nodes may be, and each shape's box.
+    private(set) var sdfShapes: [SDFShape] = []
+    private(set) var sdfVolumes: [SDFVolume] = []
+    private(set) var sdfBounds: [AABB] = []
+    /// Some instance is an SDF shape's (set once, by init): the shaders are compiled with SDF_SHAPES.
+    private(set) var hasSDFShapes = false
     /// What some meshes are made from, said in full (an open world's tile and chunk, a plant of a library): a mesh
     /// of the same name in another scene is the same triangles in the same order, so what was built for it holds
     /// there too (Metal's per-mesh structures: SceneBuffers).
@@ -403,6 +414,7 @@ final class Scene {
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
         case .world: buildWorld()
         case .showcase: buildShowcase()
+        case .shapes: buildShapes()
         case .randomRoom: buildRandomRoom(seed: settings.seed)
         }
         }
@@ -410,6 +422,8 @@ final class Scene {
         finishCrowd()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
+        hasSDFShapes = instances.contains { $0.sdf >= 0 }
+        precondition(!hasSDFShapes || !hasGroups, "SDF shapes in a scene with instance groups (SceneBuffers.InstanceBlock has no SDF instances)")
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
         if let place = worldPlace {
@@ -568,7 +582,8 @@ final class Scene {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.mask == Scene.maskGeometry {
             let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
-                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
+                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi)
+                : inst.sdf >= 0 ? (sdfBounds[inst.sdf].lo, sdfBounds[inst.sdf].hi) : meshBounds[inst.mesh]
             for corner in 0..<8 {
                 let c = SIMD3<Float>(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z)
                 let p = inst.transform * SIMD4<Float>(c, 1)
@@ -583,7 +598,8 @@ final class Scene {
 
     /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
     /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
-    /// Assembly instances: meshIndex points past those too (the table then lists the assemblies).
+    /// Assembly instances: meshIndex points past those too (the table then lists the assemblies), and SDF shapes'
+    /// instances past those (the shapes), with `Scene.instanceSDF` in pad0.
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
     /// only the ones that move, the rest being unchanged.
     /// `range`: of all the instances, these (a part of them, for a caller that writes the parts side by side).
@@ -595,9 +611,10 @@ final class Scene {
                                      normalMatrix: inst.normalMatrix,
                                      meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh)
                                          : inst.assembly >= 0 ? UInt32(meshes.count + virtualMeshes.count + inst.assembly)
+                                         : inst.sdf >= 0 ? UInt32(meshes.count + virtualMeshes.count + assemblies.count + inst.sdf)
                                          : UInt32(meshes.count + inst.virtualMesh),
                                      materialIndex: UInt32(inst.material),
-                                     pad0: inst.mask,
+                                     pad0: inst.mask | (inst.sdf >= 0 ? Scene.instanceSDF : 0),
                                      pad1: virtualRank[i])
         }
         if !all, let animated {
@@ -623,10 +640,11 @@ final class Scene {
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
-        // voxel boxes on Metal's tracer. (Shaders/Types.metal.)
+        // voxel boxes on Metal's tracer. Bit 22: SDF_SHAPES, some instances are SDF shapes. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
+            | (hasSDFShapes ? 0x0040_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1080,6 +1098,28 @@ final class Scene {
         return instances.count - 1
     }
 
+    /// An SDF shape for instances to place (`addInstance(sdf:)`).
+    func addSDFShape(_ shape: SDFShape) -> Int {
+        sdfShapes.append(shape)
+        sdfBounds.append(shape.bounds(volumes: sdfVolumes))
+        return sdfShapes.count - 1
+    }
+
+    /// A baked distance grid for SDF shapes' `.volume` nodes (added before the shapes that use it).
+    func addSDFVolume(_ volume: SDFVolume) -> Int {
+        sdfVolumes.append(volume)
+        return sdfVolumes.count - 1
+    }
+
+    /// An instance of SDF shape `sdf`: `material` is its nodes' with offset 0, the others' after it.
+    @discardableResult
+    func addInstance(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry,
+                     animation: ((Float) -> float4x4)? = nil) -> Int {
+        instances.append(Instance(mesh: -1, material: material, mask: mask, transform: transform, prevTransform: transform,
+                                  animation: animation, normalMatrix: transform.inverse.transpose, sdf: sdf))
+        return instances.count - 1
+    }
+
     /// Generated plants were placed (Flora): see `hasPlants`.
     func notePlants() { hasPlants = true }
 
@@ -1312,7 +1352,32 @@ final class Scene {
         }
         var flagged = Set<Int>()
         let lent = Set(borrowed.map(\.mesh))   // their lights come with them (`addMeshLight`)
+        var sdfLights: [Int: (positions: [SIMD3<Float>], indices: [UInt32], materials: [Int])] = [:]
         for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry && !inst.skinned {
+            if inst.sdf >= 0 {
+                // An SDF shape: a light per material of its that emits, its triangles those of the shape's surface
+                // (made once per shape, just outside it: SDFShape.triangles) where that material is.
+                let shape = sdfShapes[inst.sdf]
+                for offset in 0..<shape.materialCount {
+                    let e = materials[inst.material + offset].emission
+                    let le = SIMD3(e.x, e.y, e.z)
+                    guard le.max() > 0 else { continue }
+                    if sdfLights[inst.sdf] == nil { sdfLights[inst.sdf] = shape.triangles(volumes: sdfVolumes) }
+                    let mesh = sdfLights[inst.sdf]!
+                    var draft = MeshLightDraft()
+                    for t in mesh.materials.indices where mesh.materials[t] == offset {
+                        draft.add(mesh.positions[Int(mesh.indices[3 * t])], mesh.positions[Int(mesh.indices[3 * t + 1])],
+                                  mesh.positions[Int(mesh.indices[3 * t + 2])], emission: le)
+                    }
+                    guard var light = draft.finish(instance: i, firstTriangle: emissiveTriangles.count) else { continue }
+                    light.materialOffset = offset
+                    emissiveTriangles += draft.triangles
+                    meshLights.append(light)
+                    lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
+                    flagged.insert(inst.material + offset)
+                }
+                continue
+            }
             let material = materials[inst.material]
             let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
             guard factor.max() > 0 else { continue }

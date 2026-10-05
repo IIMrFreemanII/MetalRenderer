@@ -104,4 +104,15 @@ final class KernelVariantsTests: XCTestCase {
         XCTAssertEqual(pipelines.variants.count, expected)
         XCTAssertTrue(pipelines.state(.composite, flags: ~0, wait: true) === pipelines[.composite], "composite has no variants")
     }
+
+    /// A scene's features compile on both tracers: SDF shapes (bit 22) with far plants' voxels (bit 23) and the
+    /// plants (bit 30), which share Metal's query loop and the custom tracer's instance branch.
+    func testSceneFeaturesCompile() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
+        let features: UInt32 = 0x3F | 0x0040_0000 | 0x0080_0000 | 0x4000_0000
+        for kind in [RayTracerKind.custom, .metal] where kind == .custom || device.supportsRaytracing {
+            XCTAssertNoThrow(try Pipelines(device: device, source: shaders, kind: kind, lightTypes: features, stats: false), "\(kind)")
+            XCTAssertNoThrow(try Pipelines(device: device, source: shaders, kind: kind, lightTypes: 0x3F | 0x0040_0000, stats: false), "\(kind)")
+        }
+    }
 }

@@ -264,6 +264,7 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // its day goes through dusk into a night of lit windows, street lamps and the moon
     case showcase           // one model of Assets/ (`SceneSettings.showcase`) staged on a set of its own (ShowcaseLook):
                             // volumetric beams, mist, accent lights, particles, with bloom and depth of field
+    case shapes             // SDF shapes (SDFShapes.swift): primitives, cuts and blends, a baked mesh, glowing shapes as lights
     case randomRoom         // training data for the neural denoiser: a room made at random from `seed` (Scene+Training.swift)
 
     var title: String {
@@ -286,6 +287,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .cityNight: return "City at night"
         case .world: return "Open world"
         case .showcase: return "Showcase (one model)"
+        case .shapes: return "SDF shapes"
         case .randomRoom: return "Random room (training)"
         }
     }
@@ -498,7 +500,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .randomRoom:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .randomRoom:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -596,7 +598,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .randomRoom:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .randomRoom:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

@@ -59,8 +59,8 @@ extension Benchmark {
                     if kind == .market { scene.lights = SceneSettings.marketLights }
                     scene.seed = seed * 100 + c
                     let start = Float.random(in: 0..<(kind.dayCycle ?? 20), using: &rng)
-                    let track = CameraTrack(style: (c + kind.rawValue) % CameraTrack.styles, reach: kind == .cornell ? 0.3 : 1, using: &rng)
-                    return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, track: track)
+                    let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: kind == .cornell ? 0.3 : 1, using: &rng)
+                    return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, drift: drift)
                 }
             }
         }
@@ -71,7 +71,7 @@ extension Benchmark {
         var index: Int          // its number within its scene
         var scene: SceneSettings
         var startTime: Float
-        var track: CameraTrack
+        var drift: CameraDrift
 
         /// Settings both of its runs share: a room's glTF models at full detail and with every texture level, so
         /// the references don't get finer meshes or mips than the noisy frames had (as the gallery's references).
@@ -118,7 +118,7 @@ extension Benchmark {
         print("dataset: \(clips.count) of \(spec.clipList.count) clips to render")
         return clips.map { clip in
             var c = Config(clip.name, scale: spec.scale, upscale: spec.factor, gi: RenderSettings().giMode, scene: clip.scene,
-                           clip.shared).tracking(clip.track).frames(spec.frames)
+                           clip.shared).drifting(clip.drift).frames(spec.frames)
             c.startTime = clip.startTime
             c.dataset = .inputs(clip: spec.directory.appendingPathComponent(clip.name))
             return c
@@ -214,10 +214,10 @@ extension Benchmark {
     }
 }
 
-/// A smooth, seeded camera move for a dataset clip, as offsets from the clip's start pose in the camera's own frame:
+/// A smooth, seeded camera move for a dataset clip (unlike CameraTrack's keys, relative to wherever the scene puts its camera), as offsets from the clip's start pose in the camera's own frame:
 /// a drift at constant speed and turn rate, plus wobble (sums of sines). `style` picks what dominates, so the clips
 /// cover a still camera, pans, dollies and a shaky hand with fast turns (disocclusions).
-struct CameraTrack {
+struct CameraDrift {
     static let styles = 4
     var velocity = SIMD3<Float>()       // m/s: right, up, forward
     var yawRate: Float = 0              // rad/s

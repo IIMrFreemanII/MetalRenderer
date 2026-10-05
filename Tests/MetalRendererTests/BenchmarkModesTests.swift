@@ -1,4 +1,5 @@
 import XCTest
+import simd
 @testable import MetalRenderer
 
 /// The benchmark modes (Benchmark+Modes.swift) and the `Benchmark.Config` modifiers they are built with.
@@ -43,6 +44,43 @@ final class BenchmarkModesTests: XCTestCase {
 
         try Data().write(to: clip.appendingPathComponent(Benchmark.datasetFileName(frame: 0, buffer: "reference")))
         XCTAssertEqual(Benchmark.datasetReferences().map(\.startTime), [4], "frame 0 has its reference")
+    }
+
+    /// A camera track goes through its keys, looking at their targets, and holds its first and last poses.
+    func testCameraTrack() {
+        let track = CameraTrack([CameraTrack.Key(time: 0, position: [0, 1, 5], target: [0, 1, 0]),
+                                 CameraTrack.Key(time: 2, position: [4, 2, 4], target: [4, 2, 0]),
+                                 CameraTrack.Key(time: 5, position: [5, 1, 0], target: [10, 1, 0])])
+        XCTAssertEqual(track.duration, 5)
+        for (t, position) in [(Float(-1), SIMD3<Float>(0, 1, 5)), (0, [0, 1, 5]), (2, [4, 2, 4]), (5, [5, 1, 0]), (9, [5, 1, 0])] {
+            XCTAssertLessThan(simd_distance(track.camera(at: t).position, position), 1e-5, "t = \(t)")
+        }
+        let start = track.camera(at: 0), end = track.camera(at: 5)
+        XCTAssertEqual(start.yaw, 0, accuracy: 1e-5, "looking down -z")
+        XCTAssertEqual(start.pitch, 0, accuracy: 1e-5)
+        XCTAssertEqual(end.yaw, .pi / 2, accuracy: 1e-5, "looking down +x")
+        XCTAssertLessThan(simd_distance(track.camera(at: 2).forward, [0, 0, -1]), 1e-5)
+        // Smooth: no jump anywhere along it.
+        var last = track.camera(at: 0).position
+        for i in 1...500 {
+            let p = track.camera(at: Float(i) * 0.01).position
+            XCTAssertLessThan(simd_distance(p, last), 0.1)
+            last = p
+        }
+    }
+
+    func testTrackedRecording() {
+        let track = CameraTrack([CameraTrack.Key(time: 0, position: [0, 1, 5], target: .zero),
+                                 CameraTrack.Key(time: 2.5, position: [1, 1, 5], target: .zero)])
+        let c = Benchmark.Config("r").track(track).recording()
+        XCTAssertTrue(c.record)
+        XCTAssertEqual(c.frames, 151, "every 1/60 s of the track, both ends")
+        let demo = Benchmark.configs(for: "shapesdemo")
+        XCTAssertEqual(demo.count, 1)
+        XCTAssertTrue(demo[0].record)
+        XCTAssertFalse(demo[0].settings.paused)
+        XCTAssertEqual(demo[0].settings.scene.kind, .shapes)
+        XCTAssertNotNil(demo[0].track)
     }
 
     func testBenchmarkDefaultsDifferFromTheApps() {
