@@ -228,7 +228,7 @@ struct Pipelines {
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
         options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
                                       "RT_STATS": NSNumber(value: stats ? 1 : 0)]
-        // Fast math is the default (relaxed costs ~0.2 ms a frame in the stress scene and renders the same image);
+        // Fast math is the default (relaxed cost ~0.2 ms a frame in the old stress hall and rendered the same image);
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
         // `safe` also keeps the order of every operation: a kernel's variants then compute bit for bit what its
         // general pipeline computes, which is how to check a variant's flags against the uniforms' (pngdiff.py).

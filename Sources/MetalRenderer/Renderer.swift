@@ -2099,7 +2099,7 @@ final class Renderer: NSObject {
         }
         // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
-        //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
+        //    it was built: in the old stress hall (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
         //    A still scene's was built with its buffers, and stays.
         if builtRayTracer == .metal, !sceneBuffers.still {

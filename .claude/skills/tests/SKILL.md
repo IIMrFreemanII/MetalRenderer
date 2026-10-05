@@ -5,7 +5,7 @@ description: Run MetalRenderer's unit tests the fast way - only the suites that 
 
 # Related tests only
 
-The suite has about a hundred XCTest tests in 17 suites (`Tests/MetalRendererTests`). A full `swift test` takes about 40 s,
+The suite has about a hundred XCTest tests in 18 suites (`Tests/MetalRendererTests`). A full `swift test` takes about 40 s,
 mostly in `KernelVariantsTests`, which compiles the kernel variants on the GPU. Running it after every step slows
 development down, so run only the suites that cover what you changed.
 
@@ -47,6 +47,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `CacheFile`, `SectionFile`, `BlueNoise` | CacheTests |
 | `Building*.swift`, `MeshBuilder` | BuildingTests, CityTests |
 | `CityPlan`, `Scene+City` | CityTests, BuildingTests |
+| `Scene+Stress` | StressSceneTests |
 | `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests |
 | `FBXReader` | FBXTests |
 | `Foliage*.swift`, `Scene+Forest`, `Shaders/Foliage.metal` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`) |
