@@ -56,6 +56,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
 | `LightTree.swift` | LightTreeTests |
 | `RasterScene.swift` | RasterSceneTests |
+| `VSM.swift` | VSMTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |

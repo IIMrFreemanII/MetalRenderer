@@ -66,6 +66,9 @@ extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
+extension ShadowMethod: EnvNamed {
+    var envName: String { ["rays", "vsm"][rawValue] }
+}
 extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
@@ -75,7 +78,7 @@ extension CityStyle: EnvNamed {}
 enum EnvVariable: String, CaseIterable {
     // One value each.
     case direct = "METALRENDERER_DIRECT", rt = "METALRENDERER_RT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
-    case primary = "METALRENDERER_PRIMARY"
+    case primary = "METALRENDERER_PRIMARY", shadowMethod = "METALRENDERER_SHADOW_METHOD"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
@@ -83,7 +86,7 @@ enum EnvVariable: String, CaseIterable {
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
     case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI", megaLights = "METALRENDERER_MEGALIGHTS"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
-    case foliage = "METALRENDERER_FOLIAGE"
+    case foliage = "METALRENDERER_FOLIAGE", vsm = "METALRENDERER_VSM"
 
     var isList: Bool { self.index >= EnvVariable.scene.index }
     private var index: Int { EnvVariable.allCases.firstIndex(of: self)! }
@@ -368,9 +371,19 @@ enum SettingsTable {
         let spatial: When = { restir($0) && $0.restir.spatialPasses > 0 }
         let grid: When = { restir($0) && $0.restir.grid.enabled }
         let megaLights: When = { $0.directLight == .megalights }
+        let vsm: When = { $0.shadowMethod == .virtualMaps }
         let passes = [("Off", 0), ("1 pass", 1), ("2 passes", 2)]
         return Section(title: "Direct light", rows: [
             S.popup("Method", \.directLight, titled { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }).env(.direct),
+            S.popup("Shadows", \.shadowMethod, titled(\.title)).env(.shadowMethod),
+            S.popup("Page pool", \.vsm.pool, counts: VSMSettings.poolOptions) { "\($0) pages (\($0 / 16) MB)" }
+                .env(.vsm, "pool").advanced().when(vsm),
+            S.slider("Pages a frame", \.vsm.budget, VSMSettings.budgetRange).env(.vsm, "budget").advanced().when(vsm),
+            S.slider("Sun levels", \.vsm.levels, VSMSettings.levelRange) { "\($0) (\(16 << ($0 - 1)) m)" }
+                .env(.vsm, "levels").advanced().when(vsm),
+            S.slider("Mapped lights", \.vsm.maxLights, VSMSettings.maxLightRange).env(.vsm, "lights").advanced().when(vsm),
+            S.slider("March steps", \.vsm.steps, VSMSettings.stepRange).env(.vsm, "steps").advanced().when(vsm),
+            S.slider("Depth bias", \.vsm.bias, VSMSettings.biasRange, step: 0.25, fmt("%.2f texels")).env(.vsm, "bias").advanced().when(vsm),
             S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
             S.value(\.manyLightRays).env(.gi, "lightrays"),
             S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }

@@ -100,7 +100,7 @@ final class Benchmark {
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.restir, .restirGI, .megaLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.restir, .restirGI, .megaLights, .vsm, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }

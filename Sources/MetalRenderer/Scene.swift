@@ -33,6 +33,8 @@ final class Scene {
         var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
         /// Its transform changes from frame to frame.
         var moves: Bool { animation != nil || poseAnimated || travels }
+        /// Solid geometry, which shadow and GI rays meet (with `maskShadowTraced` or not).
+        var isGeometry: Bool { mask & ~Scene.maskShadowTraced == Scene.maskGeometry }
     }
 
     /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
@@ -236,6 +238,17 @@ final class Scene {
     static let maskGlass: UInt32 = 4
     /// A far plant as its voxels (Metal's tracer: VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
+    /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
+    /// sways), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
+    /// trace a ray that meets only this (MASK_SHADOW_TRACED). Always with `geometry`.
+    static let maskShadowTraced: UInt32 = 16
+
+    /// An instance's mask: `mask`, with `shadowTraced` on geometry the raster can't draw.
+    func instanceMask(_ mask: UInt32, mesh: Int, assembly: Bool) -> UInt32 {
+        guard mask == Scene.maskGeometry else { return mask }
+        let skipped = assembly || (mesh >= 0 && (meshes[mesh].cutout != 0 || meshes[mesh].sways != 0))
+        return skipped ? mask | Scene.maskShadowTraced : mask
+    }
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
@@ -270,6 +283,8 @@ final class Scene {
     let usesCards: Bool
     /// Something the wind moves and the shaders' FOLIAGE paths trace: assemblies, or ground cover that leans.
     var hasFoliage: Bool { !assemblies.isEmpty || hasSwayingMeshes }
+    /// Some instances may have `maskShadowTraced` (the plants, leaf cards: what the raster can't draw; the crowd).
+    var hasShadowTraced: Bool { hasFoliage || usesCards || hasSkinned }
     private var leafMaterials: [LeafMaterial] = []
     private var leafState = SIMD2<Float>(-1, -1)   // the season and translucency they are set to
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
@@ -564,7 +579,7 @@ final class Scene {
     /// from each instance's transformed mesh bounds.
     func bounds() -> (SIMD3<Float>, SIMD3<Float>) {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
-        for inst in instances where inst.mask == Scene.maskGeometry {
+        for inst in instances where inst.isGeometry {
             let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
                 : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
             for corner in 0..<8 {
@@ -984,7 +999,11 @@ final class Scene {
     func setSkinned(_ i: Int, travels: Bool) {
         instances[i].skinned = true
         instances[i].travels = travels
+        // Virtual shadow maps would draw it again every frame wherever it casts a shadow: its shadows are traced.
+        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+        hasSkinned = true
     }
+    private(set) var hasSkinned = false
 
     /// Once every mesh is in: the pose slots' vertices go after them (each slot's current positions and normals,
     /// then every slot's previous positions), skinned on the CPU to the pose at time 0. The GPU rewrites them every
@@ -1073,7 +1092,8 @@ final class Scene {
     /// An instance of an assembly: `material` is its wood's, and the next material its leaves'.
     @discardableResult
     func addInstance(assembly: Int, _ material: Int, _ transform: float4x4) -> Int {
-        instances.append(Instance(mesh: -1, material: material, mask: Scene.maskGeometry, transform: transform, prevTransform: transform,
+        instances.append(Instance(mesh: -1, material: material, mask: instanceMask(Scene.maskGeometry, mesh: -1, assembly: true),
+                                  transform: transform, prevTransform: transform,
                                   animation: nil, assembly: assembly, normalMatrix: transform.inverse.transpose))
         return instances.count - 1
     }
@@ -1237,7 +1257,7 @@ final class Scene {
     func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
                              mask: UInt32 = Scene.maskGeometry,
                              animation: ((Float) -> float4x4)? = nil) -> Int {
-        instances.append(Instance(mesh: mesh, material: material, mask: mask,
+        instances.append(Instance(mesh: mesh, material: material, mask: instanceMask(mask, mesh: mesh, assembly: false),
                                   transform: transform, prevTransform: transform, animation: animation,
                                   normalMatrix: transform.inverse.transpose))
         return instances.count - 1
@@ -1310,7 +1330,7 @@ final class Scene {
         }
         var flagged = Set<Int>()
         let lent = Set(borrowed.map(\.mesh))   // their lights come with them (`addMeshLight`)
-        for (i, inst) in instances.enumerated() where inst.mask == Scene.maskGeometry && !inst.skinned {
+        for (i, inst) in instances.enumerated() where inst.isGeometry && !inst.skinned {
             let material = materials[inst.material]
             let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
             guard factor.max() > 0 else { continue }

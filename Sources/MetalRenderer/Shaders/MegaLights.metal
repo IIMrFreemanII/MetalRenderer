@@ -308,11 +308,14 @@ struct MegaLightsShade {
 // One light sample, divided by its MIS-combined density `pdf` (0: nothing): one shadow ray, if it brings any light.
 inline void megaLightsShade(uint element, float2 uv, float pdf, uint light, thread const ShadingPoint& sp,
                             thread const SceneData& s, device const Light* lights, device const TriangleInfo* tris,
-                            SCENE_ACCEL accel, thread MegaLightsShade& out) {
+                            SCENE_ACCEL accel, uint flags, thread MegaLightsShade& out) {
     if (!(pdf > 0.0f)) return;
     LightSampleEval e = evalLightSample(element, uv, sp, s, lights, tris, false, true);
     if (all(e.diffuse <= 0.0f) && all(e.specular <= 0.0f)) return;
-    if (!isVisible(sp.p, e.target, accel)) return;
+    float b;
+    uint li = element & ELEMENT_INDEX;
+    if ((element & ELEMENT_TYPE) != ELEMENT_TRIANGLE ? !shadowVisible(flags, s.vsm, li, lights[li], sp.p, sp.ng, e.target, accel, b)
+                                                      : !isVisible(sp.p, e.target, accel)) return;
     float inv = 1.0f / pdf;
     out.diffuse += e.diffuse * inv;
     out.specular += e.specular * inv;
@@ -406,7 +409,7 @@ kernel void megaLightsSampleKernel(constant Uniforms&               u          [
             element = ELEMENT_TRIANGLE | tri;
         }
         float pTree = nTree > 0.0f && !partition ? lightTreePdf(tree, nodes, l, sp, lights, none) : 0.0f;
-        megaLightsShade(element, uv, (nList * (lw[k] / total) + nTree * pTree) * prob, l, sp, s, lights, tris, accel, shade);
+        megaLightsShade(element, uv, (nList * (lw[k] / total) + nTree * pTree) * prob, l, sp, s, lights, tris, accel, u.flags, shade);
     }
     for (uint k = 0; k < ML_MAX_SAMPLES; ++k) {
         // The tree samples, and their probability under the list strategy (0 if the light isn't listed or out of reach).
@@ -427,11 +430,11 @@ kernel void megaLightsSampleKernel(constant Uniforms&               u          [
         float pList = 0.0f;
         if (nList > 0.0f && !partition && megaLightsListed(list, count, l))
             pList = megaLightWeight(l, sp, s, lights, tris, cutoff, guided, seen, guideWeight) / total;
-        megaLightsShade(element, uv, (nList * pList + nTree * pTree) * prob, l, sp, s, lights, tris, accel, shade);
+        megaLightsShade(element, uv, (nList * pList + nTree * pTree) * prob, l, sp, s, lights, tris, accel, u.flags, shade);
     }
     for (uint k = 0; k < u.lightTable.y; ++k) {   // each sun once
         uint l = k == 0 ? u.lightTable.z : u.lightTable.w;
-        megaLightsShade(ELEMENT_SUN | l, rng.next2(), 1.0f, l, sp, s, lights, tris, accel, shade);
+        megaLightsShade(ELEMENT_SUN | l, rng.next2(), 1.0f, l, sp, s, lights, tris, accel, u.flags, shade);
     }
 
     // The lights found visible, into the tile's hash: one atomic per word and SIMD-group (a threadgroup lies in one tile).

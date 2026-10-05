@@ -396,9 +396,10 @@ final class Renderer: NSObject {
     private var skyRefreshed: (sky: SkySettings, scene: ObjectIdentifier)?   // what the sky texture was fully drawn for
     private var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
-    /// (16-byte aligned).
+    /// (16-byte aligned), the virtual shadow maps' VSMScene.
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
-    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 272: the shader asserts it
+    private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
+    private static let shadingArgsLength = shadingVSMOffset + 16   // 288: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
@@ -421,6 +422,15 @@ final class Renderer: NSObject {
     private lazy var rasterDepthState: MTLDepthStencilState? = {
         let d = MTLDepthStencilDescriptor()
         d.depthCompareFunction = .greater   // reversed Z
+        d.isDepthWriteEnabled = true
+        return device.makeDepthStencilState(descriptor: d)
+    }()
+    private var vsmTargets: VSMTargets?             // the virtual shadow maps (VSM.swift)
+    private weak var vsmSource: MTLBuffer?          // ...made for the scene buffers with this mesh table
+    private var vsmFrame: VSMTargets?               // this frame's (bindScene declares what its samples reach)
+    private lazy var vsmClearState: MTLDepthStencilState? = {
+        let d = MTLDepthStencilDescriptor()
+        d.depthCompareFunction = .always    // a page's clear: the far end over whatever it held
         d.isDepthWriteEnabled = true
         return device.makeDepthStencilState(descriptor: d)
     }()
@@ -1553,6 +1563,8 @@ final class Renderer: NSObject {
         }
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
         if skyActive { encodeSky(passes) }
+        writeVSMArgument(plan)
+        if let vsm = plan.vsm { encodeVSM(plan, vsm, passes: passes) }
 
         // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
         // before it set).
@@ -1797,6 +1809,7 @@ final class Renderer: NSObject {
         // Lighting
         var giMode = GIMode.pathTraced
         var cascades = false                    // radiance-cascade GI runs
+        var vsm: VSMTargets?                    // the camera's surfaces' shadows through virtual shadow maps
         var restirGI = false                    // ReSTIR GI runs...
         var restirGIGrid: RestirGITargets?      // ...on these reservoirs (nil if they couldn't be allocated: no stages)...
         var restirGIHistory = false             // ...which the last frame filled
@@ -1891,6 +1904,15 @@ final class Renderer: NSObject {
             p.raster = (rs, rt)
             p.uniforms.flags |= UniformFlags.visBuffer
         }
+
+        // Virtual shadow maps for the suns, spots and sphere lights. Not with the cluster tree, whose geometry neither
+        // the raster nor the rays that meet what it doesn't draw reach.
+        if settings.shadowMethod == .virtualMaps, !CustomRayTracer.clusterMode, currentRasterScene() != nil,
+           let vsm = vsmTargets(slot: slot, analytic: Int(u.lightGroupEnd.w)) {
+            p.vsm = vsm
+            p.uniforms.flags |= UniformFlags.vsm
+        }
+        vsmFrame = p.vsm
 
         // GI. Light-visibility maps serve the GI techniques and the path tracer's light-map variant.
         p.lightMaps = usesLightMaps
@@ -2133,6 +2155,16 @@ final class Renderer: NSObject {
             enc.setTexture(t.normalDepth[cur], index: 1)
             enc.setTexture(t.geometryDebug, index: 2)
             dispatch(enc, .rasterDebug, width: size.width, height: size.height)
+            if overlap { enc.memoryBarrier(scope: [.textures]) }
+        }
+
+        // The virtual shadow maps' pages: their own pass too (black with shadow rays).
+        if settings.viewMode == RenderSettings.shadowPagesView, let enc = passes.compute("geometry debug") {
+            bind(enc, .vsmDebug, c.uniforms, sceneSlot: plan.slot)
+            enc.setTexture(t.surfacePos, index: 0)
+            enc.setTexture(t.normalDepth[cur], index: 1)
+            enc.setTexture(t.geometryDebug, index: 2)
+            dispatch(enc, .vsmDebug, width: size.width, height: size.height)
             if overlap { enc.memoryBarrier(scope: [.textures]) }
         }
 
@@ -2712,6 +2744,10 @@ final class Renderer: NSObject {
         sceneDeclaredIn = enc.declarationScope
         enc.useResources(shadingResources, usage: .read)
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
+        if let vsm = vsmFrame {
+            enc.useResources([vsm.pool, vsm.table, vsm.tags, vsm.lightTable, vsm.views[slot], vsm.sceneArgs[slot]], usage: .read)
+            enc.useResource(vsm.requests, usage: [.read, .write])
+        }
         if let textureStreamer {
             enc.useHeap(textureStreamer.heap)
             enc.useResource(textureStreamer.minLodBuffer(slot: slot), usage: .read)
@@ -3091,6 +3127,140 @@ final class Renderer: NSObject {
                 }
                 passes.endCompute()
             }
+        }
+    }
+
+    // MARK: - Virtual shadow maps
+
+    /// Drawn pages are kept until their light or something over them moves; `METALRENDERER_VSM_CACHE=0` draws every page
+    /// a sample asks for every frame (an A/B of the cache).
+    private static let vsmCache = ProcessInfo.processInfo.environment["METALRENDERER_VSM_CACHE"] != "0"
+
+    /// The scene's virtual shadow maps for this frame's lights (the first `analytic` of the slot's light buffer, as
+    /// writeFrameData left them): made again for other buffers, other mapped lights or other pool or level settings.
+    private func vsmTargets(slot: Int, analytic: Int) -> VSMTargets? {
+        let lights = Array(UnsafeBufferPointer(start: lightBuffers[slot].contents().bindMemory(to: GPULight.self, capacity: analytic),
+                                               count: analytic))
+        let s = settings.vsm
+        if let v = vsmTargets, vsmSource === sceneBuffers.meshes, v.settings.pool == s.pool, v.settings.levels == s.levels,
+           v.settings.maxLights == s.maxLights, v.lights == VSMTargets.mapped(lights, settings: s) {
+            return v
+        }
+        vsmTargets = nil   // (the old pool goes first)
+        vsmTargets = VSMTargets(device: device, lights: lights, settings: s, frameSlots: Renderer.maxFramesInFlight)
+        vsmSource = sceneBuffers.meshes
+        return vsmTargets
+    }
+
+    /// SceneShading.vsm: this frame's VSMScene, or none.
+    private func writeVSMArgument(_ plan: FramePlan) {
+        let slot = plan.slot
+        guard slot < shadingArgs.count else { return }
+        var address: UInt64 = 0
+        if let vsm = plan.vsm {
+            let analytic = Int(plan.uniforms.lightGroupEnd.w)
+            let lights = Array(UnsafeBufferPointer(start: lightBuffers[slot].contents().bindMemory(to: GPULight.self, capacity: analytic),
+                                                   count: analytic))
+            let u = plan.uniforms
+            vsm.writeViews(slot: slot, lights: lights, camera: SIMD3(u.camPos.x, u.camPos.y, u.camPos.z))
+            vsm.writeScene(slot: slot, lightCount: analytic, traced: scene.hasShadowTraced, settings: settings.vsm, uniforms: u)
+            address = vsm.sceneArgs[slot].gpuAddress
+        }
+        shadingArgs[slot].contents().storeBytes(of: address, toByteOffset: Renderer.shadingVSMOffset, as: UInt64.self)
+    }
+
+    /// 1b. The virtual shadow maps' pages (Shaders/VSM.metal), ahead of the trace whose shadow samples read them: the
+    /// pages last frame's samples asked for get physical pages and, if not drawn, their turn; the instances and chunks
+    /// in front of those are culled into a draw list; one render pass clears and draws the pages.
+    private func encodeVSM(_ plan: FramePlan, _ vsm: VSMTargets, passes: FrameEncoder) {
+        guard let rs = currentRasterScene(), let depthState = rasterDepthState, let clearState = vsmClearState else { return }
+        let slot = plan.slot
+        let instances = sceneBuffers.instanceTable ?? instanceDataBuffers[slot]
+        let vgTable = customRT?.virtualBLAS?.table(slot: slot) ?? rs.meshes   // (a stand-in nothing reads)
+        let resources = rasterResources(slot: slot)
+        var params = GPUVSMParams(entries: UInt32(vsm.entries), pool: UInt32(vsm.poolPages),
+                                  budget: UInt32(min(settings.vsm.budget, VSMSettings.budgetRange.upperBound)),
+                                  frame: plan.uniforms.frameIndex, keep: 30, instanceCount: UInt32(rs.instanceCount),
+                                  meshCount: UInt32(rs.meshCount), maxDraws: UInt32(VSMTargets.maxDraws),
+                                  maxGroups: UInt32(VSMTargets.maxGroups),
+                                  flags: (rs.ids != nil ? GPUVSMParams.ids : 0) | (Renderer.vsmCache ? GPUVSMParams.cache : 0),
+                                  views: UInt32(vsm.viewCount), moving: UInt32(rs.movingCount))
+        let group = MTLSize(width: 64, height: 1, depth: 1), one = MTLSize(width: 1, height: 1, depth: 1)
+        guard let enc = passes.compute("vsm", serial: true) else { return }
+        enc.useResources(resources, usage: .read)
+        if !rs.boundsReady && rs.chunkCount > 0 {   // the chunks' bounds, once a scene (as encodeRaster)
+            var rp = GPURasterParams(instanceCount: 0, meshCount: UInt32(rs.meshCount), chunkCount: UInt32(rs.chunkCount))
+            enc.setBytes(&rp, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+            enc.setBuffer(positionBuffer, offset: 0, index: 2)
+            enc.setBuffer(indexBuffer, offset: 0, index: 4)
+            enc.setBuffer(meshBuffer, offset: 0, index: 5)
+            enc.setBuffer(rs.meshes, offset: 0, index: 14)
+            enc.setBuffer(rs.chunkBounds, offset: 0, index: 15)
+            enc.setBuffer(rs.chunkMeshes, offset: 0, index: 18)
+            enc.setComputePipelineState(pipelines[.rasterBounds])
+            enc.dispatchThreads(MTLSize(width: rs.chunkCount, height: 1, depth: 1), threadsPerThreadgroup: group)
+            rs.boundsReady = true
+        }
+        enc.setBuffer(positionBuffer, offset: 0, index: 2)
+        enc.setBuffer(indexBuffer, offset: 0, index: 4)
+        enc.setBuffer(meshBuffer, offset: 0, index: 5)
+        enc.setBuffer(instances, offset: 0, index: 6)
+        enc.setBytes(&params, length: MemoryLayout<GPUVSMParams>.stride, index: 9)
+        enc.setBuffer(rs.ids ?? rs.meshes, offset: 0, index: 10)
+        enc.setBuffer(rs.moving, offset: 0, index: 11)
+        enc.setBuffer(vsm.groups, offset: 0, index: 12)
+        enc.setBuffer(vsm.counters, offset: 0, index: 13)
+        enc.setBuffer(rs.meshes, offset: 0, index: 14)
+        enc.setBuffer(rs.chunkBounds, offset: 0, index: 15)
+        enc.setBuffer(vgTable, offset: 0, index: 16)
+        enc.setBuffer(vsm.records, offset: 0, index: 17)
+        enc.setBuffer(vsm.draws, offset: 0, index: 18)
+        enc.setBuffer(vsm.activeViews, offset: 0, index: 19)
+        enc.setBuffer(vsm.rects, offset: 0, index: 20)
+        enc.setBuffer(vsm.active, offset: 0, index: 21)
+        enc.setBuffer(vsm.views[slot], offset: 0, index: 22)
+        enc.setBuffer(vsm.entryView, offset: 0, index: 23)
+        enc.setBuffer(vsm.table, offset: 0, index: 24)
+        enc.setBuffer(vsm.tags, offset: 0, index: 25)
+        enc.setBuffer(vsm.pages, offset: 0, index: 26)
+        enc.setBuffer(vsm.freeList, offset: 0, index: 27)
+        enc.setBuffer(vsm.requests, offset: 0, index: 28)
+        enc.setBuffer(vsm.slots, offset: 0, index: 29)
+        enc.setBuffer(vsm.renderList, offset: 0, index: 30)
+        let entries = MTLSize(width: vsm.entries, height: 1, depth: 1)
+        enc.setComputePipelineState(pipelines[.vsmReset])
+        enc.dispatchThreads(one, threadsPerThreadgroup: one)
+        enc.setComputePipelineState(pipelines[.vsmViewReset])
+        enc.dispatchThreads(MTLSize(width: vsm.viewCount, height: 1, depth: 1), threadsPerThreadgroup: group)
+        enc.setComputePipelineState(pipelines[.vsmFree])
+        enc.dispatchThreads(entries, threadsPerThreadgroup: group)
+        if Renderer.vsmCache && rs.movingCount > 0 {
+            enc.setComputePipelineState(pipelines[.vsmInvalidate])
+            enc.dispatchThreads(MTLSize(width: rs.movingCount, height: vsm.viewCount, depth: 1), threadsPerThreadgroup: group)
+        }
+        enc.setComputePipelineState(pipelines[.vsmAlloc])
+        enc.dispatchThreads(entries, threadsPerThreadgroup: group)
+        enc.setComputePipelineState(pipelines[.vsmSettle])
+        enc.dispatchThreads(one, threadsPerThreadgroup: one)
+        enc.setComputePipelineState(pipelines[.vsmCull])
+        enc.dispatchThreadgroups(indirectBuffer: vsm.counters, indirectBufferOffset: 48, threadsPerThreadgroup: group)
+        enc.setComputePipelineState(pipelines[.vsmChunks])
+        enc.dispatchThreadgroups(indirectBuffer: vsm.counters, indirectBufferOffset: 16, threadsPerThreadgroup: group)
+        passes.endCompute()
+
+        passes.render("vsm draw", RenderAttachments(color: nil, depth: vsm.pool, clear: false, layers: vsm.poolPages)) { [self] r in
+            r.useResources(resources + [positionBuffer, indexBuffer, rs.meshes])   // (the records point into these)
+            r.setBytes(&params, length: MemoryLayout<GPUVSMParams>.stride, index: 9)
+            r.setBuffer(vsm.records, offset: 0, index: 17)
+            r.setBuffer(vsm.draws, offset: 0, index: 18)
+            r.setBuffer(vsm.renderList, offset: 0, index: 30)
+            r.setRenderPipelineState(pipelines.vsmClear)
+            r.setDepthStencilState(clearState)
+            r.drawTriangles(indirectBuffer: vsm.counters, indirectBufferOffset: 32)
+            r.setRenderPipelineState(pipelines.vsm)
+            r.setDepthStencilState(depthState)
+            r.clampDepth()
+            r.drawTriangles(indirectBuffer: vsm.counters, indirectBufferOffset: 0)
         }
     }
 

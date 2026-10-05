@@ -18,6 +18,7 @@ enum SettingsEnv {
         d.rayTracer = .custom
         d.api = .metal3
         d.primary = .traced
+        d.shadowMethod = .rays
         d.specular = true
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true

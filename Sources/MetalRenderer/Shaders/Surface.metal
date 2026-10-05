@@ -19,6 +19,7 @@ struct SceneData {
     texture2d_array<float>     sky;
     texture2d<float>           cloudShadow;
     constant SkyParams*        skyParams;
+    device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -32,6 +33,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.sky = shading.sky;
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
+    s.vsm = shading.vsm;
 }
 
 // A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that

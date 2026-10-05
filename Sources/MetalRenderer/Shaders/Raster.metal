@@ -140,6 +140,16 @@ inline float3 rasterCorner(uint kind, MeshData mesh, uint prim, uint k, device c
     return positions[indices[mesh.firstIndex + prim * 3u + k] + mesh.vertexOffset];
 }
 
+// Corner `corner` of triangle `prim` of a drawn mesh, object space: its index and position (arrays, block), or v0 + e1
+// / e2 (virtual geometry's BLAS triangles; `corners` is then its float4s).
+inline float3 rasterTriangleCorner(uint kind, device const float3* corners, device const uint* indices, uint prim, uint corner) {
+    if ((kind & RASTER_KIND) == RASTER_VIRTUAL) {
+        device const float4* tris = (device const float4*)corners;
+        return tris[3u * prim].xyz + (corner == 0u ? float3(0.0f) : tris[3u * prim + corner].xyz);
+    }
+    return corners[indices[prim * 3u + corner]];
+}
+
 // Whether a box (object space, `r` to clip) may show: false when it is outside the view, or (with `hzb`) behind
 // what the pyramid holds at every pixel it covers. `pixels`: how many its screen rectangle covers (infinite when it
 // crosses the near plane).
@@ -402,12 +412,7 @@ vertex RasterVertex rasterVertex(constant RasterParams&          rp      [[buffe
         p = select(box[0].xyz, box[1].xyz, bool3((c & 1u) != 0u, (c & 2u) != 0u, (c & 4u) != 0u));
         out.ids = uint2(RASTER_TRACE_ID, 0u);
     } else {
-        if ((kind & RASTER_KIND) == RASTER_VIRTUAL) {
-            device const float4* tris = (device const float4*)r.corners;
-            p = tris[3u * prim].xyz + (corner == 0u ? float3(0.0f) : tris[3u * prim + corner].xyz);
-        } else {
-            p = r.corners[r.indices[prim * 3u + corner]];
-        }
+        p = rasterTriangleCorner(kind, r.corners, r.indices, prim, corner);
         out.ids = uint2(draw.w, prim);
     }
     out.position = rasterClip(p, r);

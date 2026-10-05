@@ -225,7 +225,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         endCompute()
         let d = MTL4RenderPassDescriptor()
         attachments.apply(color: d.colorAttachments[0], depth: d.depthAttachment)
-        keep(attachments.color)
+        d.renderTargetArrayLength = attachments.layers
+        if let color = attachments.color { keep(color) }
         keep(attachments.depth)
         guard let enc = buffer(name).makeRenderCommandEncoder(descriptor: d) else { return }
         enc.label = name
@@ -241,6 +242,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
         func setRenderPipelineState(_ state: MTLRenderPipelineState) { enc.setRenderPipelineState(state) }
         func setDepthStencilState(_ state: MTLDepthStencilState) { enc.setDepthStencilState(state) }
+        func clampDepth() { enc.setDepthClipMode(.clamp) }
         func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { frame.setBytes(bytes, length: length, index: index) }
         func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { frame.setBuffer(buffer, offset: offset, index: index) }
         func useResources(_ resources: [MTLResource]) { frame.useResources(resources, usage: .read) }

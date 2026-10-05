@@ -57,6 +57,8 @@ struct Metal3Pass: ComputePass {
 protocol RenderPass {
     func setRenderPipelineState(_ state: MTLRenderPipelineState)
     func setDepthStencilState(_ state: MTLDepthStencilState)
+    /// Depth beyond the near and far planes clamped rather than clipped (a shadow caster outside a light's range).
+    func clampDepth()
     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int)
     func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int)
     /// What the vertices reach through addresses (the meshes' own buffers, the instance blocks', the cut's BLASes).
@@ -70,6 +72,7 @@ struct Metal3RenderPass: RenderPass {
 
     func setRenderPipelineState(_ state: MTLRenderPipelineState) { enc.setRenderPipelineState(state) }
     func setDepthStencilState(_ state: MTLDepthStencilState) { enc.setDepthStencilState(state) }
+    func clampDepth() { enc.setDepthClipMode(.clamp) }
     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { enc.setVertexBytes(bytes, length: length, index: index) }
     func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { enc.setVertexBuffer(buffer, offset: offset, index: index) }
     func useResources(_ resources: [MTLResource]) {
@@ -80,19 +83,23 @@ struct Metal3RenderPass: RenderPass {
     }
 }
 
-/// A render pass's attachments: a colour target and a depth target, cleared (the colour to `clearColor`, the depth to 0,
-/// the far end of reversed Z) or loaded as an earlier pass left them.
+/// A render pass's attachments: a colour target (or none) and a depth target, cleared (the colour to `clearColor`, the
+/// depth to 0, the far end of reversed Z) or loaded as an earlier pass left them. `layers`: a layered pass's slices
+/// (the vertices pick theirs), 0 for one.
 struct RenderAttachments {
-    let color: MTLTexture
+    let color: MTLTexture?
     let depth: MTLTexture
     let clear: Bool
-    let clearColor: MTLClearColor
+    var clearColor = MTLClearColor()
+    var layers = 0
 
     func apply(color c: MTLRenderPassColorAttachmentDescriptor, depth d: MTLRenderPassDepthAttachmentDescriptor) {
-        c.texture = color
-        c.loadAction = clear ? .clear : .load
-        c.storeAction = .store
-        c.clearColor = clearColor
+        if let color {
+            c.texture = color
+            c.loadAction = clear ? .clear : .load
+            c.storeAction = .store
+            c.clearColor = clearColor
+        }
         d.texture = depth
         d.loadAction = clear ? .clear : .load
         d.storeAction = .store
@@ -265,6 +272,7 @@ final class Metal3Frame: FrameEncoder {
         endCompute()
         let d = MTLRenderPassDescriptor()
         attachments.apply(color: d.colorAttachments[0], depth: d.depthAttachment)
+        d.renderTargetArrayLength = attachments.layers
         guard let enc = profile?.render(cmd, name, d) ?? buffer(name).makeRenderCommandEncoder(descriptor: d) else { return }
         enc.label = name
         encode(Metal3RenderPass(enc: enc))

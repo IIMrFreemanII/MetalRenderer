@@ -159,7 +159,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 unshadowed = lightUnshadowed(lights[i], p, n, ng);
             if (all(unshadowed <= 0.0f)) continue;   // light behind the surface: it shadows itself
             float b;
-            float v = isVisibleBlocker(p, lightShadowTarget(lights[i], p, r), accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
+            float v = shadowVisible(u.flags, s.vsm, i, lights[i], p, ng, lightShadowTarget(lights[i], p, r), accel, b)
+                    ? sunVisibilityScale(lights[i], p, s) : 0.0f;
             direct += unshadowed * v;
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
@@ -293,7 +294,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
             if (pick >= end) continue;
             Light light = lights[pick];
             float b;
-            bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
+            bool visible = shadowVisible(u.flags, shading.vsm, pick, light, p, ng, lightShadowTarget(light, p, r), accel, b);
             float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
             visibility += channel * (cloud / float(rays));
             if (b > 0.0f) { blocker += channel * penumbraWidth(light, p, b); blockerCount += channel; }
@@ -406,7 +407,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         float W = weightSum / (M * targetY);
         Light light = lights[y];
         float b;
-        bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
+        bool visible = shadowVisible(u.flags, shading.vsm, y, light, p, ng, lightShadowTarget(light, p, r), accel, b);
         float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
         visibility = select(visibility, float4(visible && pick.total > 0.0f ? saturate(cloud * targetY * W / pick.total) : 0.0f), here);

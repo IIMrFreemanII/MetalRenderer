@@ -27,6 +27,10 @@ final class RasterScene {
     let chunkBounds: MTLBuffer     // per chunk: lo, hi (float4 each), from rasterBoundsKernel
     let ids: MTLBuffer?            // per instance: its id (Metal's tracer with blocks), else nil (the id is the place)
     let visible: MTLBuffer         // per instance: 1 = drawn last frame (MSL RASTER_VISIBLE; RASTER_IN_VIEW between the passes)
+    /// The scene's own instances that move or deform, or whose virtual geometry's cut may change (places): what
+    /// invalidates the virtual shadow maps' pages it covers (vsmInvalidateKernel). The blocks' never move.
+    let moving: MTLBuffer
+    let movingCount: Int
     let instanceCount: Int
     /// rasterBoundsKernel has filled `chunkBounds` (the renderer sets it once it has encoded that).
     var boundsReady = false
@@ -100,6 +104,12 @@ final class RasterScene {
         } else {
             ids = nil
         }
+        let movers = scene.instances.indices.filter {
+            let inst = scene.instances[$0]
+            return inst.moves || inst.skinned || inst.virtualMesh >= 0
+        }.map { UInt32($0) }
+        movingCount = movers.count
+        moving = try shared(movers, "raster moving instances")
         guard let visible = device.makeBuffer(length: max(instanceCount, 1) * 4, options: .storageModeShared) else {
             throw RendererError.resourceCreation("buffer raster visibility")
         }
@@ -110,7 +120,7 @@ final class RasterScene {
 
     /// Bytes on the GPU (the Debug window's memory line).
     var megabytes: Double {
-        Double(meshes.length + chunkMeshes.length + chunkBounds.length + (ids?.length ?? 0) + visible.length) / 1_048_576
+        Double(meshes.length + chunkMeshes.length + chunkBounds.length + (ids?.length ?? 0) + visible.length + moving.length) / 1_048_576
     }
 }
 

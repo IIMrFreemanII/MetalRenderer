@@ -291,7 +291,7 @@ final class CustomRayTracer {
                 continue   // in the cluster tree, not the instance trees
             } else if inst.isStatic {
                 let box = bounds(inst).transformed(inst.transform)
-                if inst.mask == Scene.maskGeometry {
+                if inst.isGeometry {
                     geometry.boxes.append(box); geometry.ids.append(i); geometry.masks.append(inst.mask)
                 } else {
                     proxies.boxes.append(box); proxies.ids.append(i); proxies.masks.append(inst.mask)
@@ -332,12 +332,14 @@ final class CustomRayTracer {
         }
         let staticCount = geometry.ids.count + proxies.ids.count - tilePartOf.count
         // The assemblies' trees over their parts: a leaf is a part's record. They sit with the static nodes, so the
-        // traversal reads them as it reads the top level, in the plant's space.
+        // traversal reads them as it reads the top level, in the plant's space (masks too: a part is geometry the raster
+        // doesn't draw, Scene.maskShadowTraced).
         var roots: [UInt32] = [], partDepth = 0, firstPart = 0
         let firstAssemblyNode = nodes.count
         for boxes in partBoxes {
             let tree = BVHBuilder.buildTLAS(boxes: boxes, ids: Array(firstPart..<firstPart + boxes.count),
-                                            masks: [UInt32](repeating: Scene.maskGeometry, count: boxes.count), nodeBase: 0, into: &nodes)
+                                            masks: [UInt32](repeating: Scene.maskGeometry | Scene.maskShadowTraced, count: boxes.count),
+                                            nodeBase: 0, into: &nodes)
             roots.append(tree.root)
             partDepth = max(partDepth, tree.depth)
             firstPart += boxes.count
@@ -576,7 +578,7 @@ final class CustomRayTracer {
                     box.grow(child.lo(0)); box.grow(child.hi(0))
                     if child.ref(1) != BVHNode.none { box.grow(child.lo(1)); box.grow(child.hi(1)) }
                 }
-                fittedNodes[i].setChild(k, lo: box.lo, hi: box.hi, ref: ref, mask: Scene.maskGeometry)
+                fittedNodes[i].setChild(k, lo: box.lo, hi: box.hi, ref: ref, mask: Scene.maskGeometry | Scene.maskShadowTraced)
             }
         }
     }
