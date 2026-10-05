@@ -48,7 +48,7 @@ if [[ $suites == " " ]]; then
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;
           Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
-          Capabilities.swift|Upscaler.swift|TemporalUpscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
+          Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
           ShaderSource.swift|Pipelines.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
           BVH.swift) add BVHTests CacheTests ;;
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;

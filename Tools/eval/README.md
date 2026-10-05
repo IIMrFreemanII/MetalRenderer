@@ -13,12 +13,11 @@ python3 Tools/eval/shadow.py /tmp/run
 |---|---|---|
 | `shadow.py` | `shadow`: Cornell direct light, static / moving / camera move | `refs/shadow/` (4096 frames) |
 | `gi.py` | `gi`: every GI method on Cornell (plus `mean`, the indirect light's brightness vs the reference) | `refs/gi/` (8-bounce path traced) |
-| `upscale.py` | `upscale`: the upscalers, albedo and direct light | `refs/upscale/` (supersampled 1920×1200) |
-| `stress.py` | `stressq`: stress scene, direct light at 32 / 128 lights, each GI method's final image and indirect light, upscalers | `refs/stress/` |
+| `stress.py` | `stressq`: stress scene, direct light at 32 / 128 lights, each GI method's final image and indirect light, the MetalFX denoiser at 3× | `refs/stress/` |
 | `restir.py` | `restirq`: stress-scene direct light at 32 / 128 / 1024 / 4096 lights, each direct-light method; `restircheck`: ReSTIR without reuse vs every light traced, per light type (within the run) | `refs/restir/` (every light traced up to 1024; ReSTIR without reuse at 4096) |
 | `restirgi.py` | `restirgicheck`: accumulated ReSTIR GI (no reuse, reuse, quarter budget) vs accumulated path tracing, indirect light, Cornell and stress hall (within the run) | — |
 | `noise.py` | `denoise` (references from `noise`) | `refs/noise/` (render once, see below) |
-| `hwrt.py` | `hwrtq`: each output (SVGF + custom upscaler, SVGF + MetalFX temporal, MetalFX's denoising scaler), final image, Cornell and stress hall | `refs/hwrt/` (supersampled 1920×1200, path traced) |
+| `hwrt.py` | `hwrtq`: MetalFX's denoising scaler at 3×, final image, Cornell and stress hall | `refs/hwrt/` (supersampled 1920×1200, path traced) |
 | `pngdiff.py` | any two runs: per-image differences (did a refactor change the frames?) | — |
 | `columns.py` | pipe a benchmark table in to pull out named columns | — |
 

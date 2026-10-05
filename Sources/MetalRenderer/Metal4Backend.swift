@@ -19,7 +19,7 @@ import QuartzCore
 @available(macOS 26.0, *)
 final class Metal4Frame: FrameEncoder, ComputePass {
     let queue: MTL4CommandQueue
-    /// Compiles the pipelines (Pipelines) and MetalFX's Metal 4 scalers (Upscaler).
+    /// Compiles the pipelines (Pipelines).
     let compiler: MTL4Compiler
     private let device: MTLDevice
     private let allocators: [MTL4CommandAllocator]          // per frame slot
@@ -45,7 +45,6 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private let metal3Queue: MTLCommandQueue
     private let event: MTLSharedEvent
     private var eventValue: UInt64 = 0
-    private let fence: MTLFence                              // orders MetalFX's passes against the frame's
 
     // The frame being encoded.
     private var slot = 0
@@ -68,7 +67,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     init?(device: MTLDevice, streamQueue: MTLCommandQueue, framesInFlight: Int, layer: CAMetalLayer?) {
         guard let queue = device.makeMTL4CommandQueue(),
               let compiler = try? device.makeCompiler(descriptor: MTL4CompilerDescriptor()),
-              let event = device.makeSharedEvent(), let fence = device.makeFence() else { return nil }
+              let event = device.makeSharedEvent() else { return nil }
         let td = MTL4ArgumentTableDescriptor()
         td.maxBufferBindCount = 31
         td.maxTextureBindCount = 64
@@ -89,7 +88,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         if let layer { queue.addResidencySet(layer.residencySet) }   // the drawables
         (self.device, self.queue, self.compiler, self.table, self.residency) = (device, queue, compiler, table, residency)
         (self.allocators, self.pool, self.constants) = (allocators, pool, constants)
-        (self.metal3Queue, self.event, self.fence) = (streamQueue, event, fence)
+        (self.metal3Queue, self.event) = (streamQueue, event)
     }
 
     /// Starts a frame in `slot`, whose last frame is done (the renderer's frame semaphore). `split`: a command buffer per
@@ -204,7 +203,6 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     func endCompute() {
         guard let enc else { return }
-        enc.updateFence(fence, afterEncoderStages: Metal4Frame.stages)
         enc.endEncoding()
         self.enc = nil
     }
@@ -273,22 +271,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
-    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, output: MTLTexture, pass: String) {
-        if upscaler.bridged {
-            interlude(pass) { upscaler.encode(into: $0, inputs, output: output) }
-            return
-        }
-        endCompute()
-        let cb = buffer(pass)
-        let used = upscaler.encode(into: cb, inputs, fence: fence)
-        used.forEach(keep)
-        // The denoising scaler's result stays where it is, for tonemapKernel; the others' is copied out.
-        if let result = used.last, upscaler.hdrOutput == nil, let enc = encoder(pass) {
-            keep(output)
-            enc.waitForFence(fence, beforeEncoderStages: Metal4Frame.stages)
-            order(.blit)
-            enc.copy(sourceTexture: result, destinationTexture: output)
-        }
+    /// Always the Metal 3 scaler, between two of the frame's command buffers (see Upscaler.init).
+    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String) {
+        interlude(pass) { upscaler.encode(into: $0, inputs) }
     }
 
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {

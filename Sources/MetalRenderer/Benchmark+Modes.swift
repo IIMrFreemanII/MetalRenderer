@@ -8,7 +8,7 @@ extension Benchmark {
     static let modes: [String: () -> [Config]] = [
         "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
-        "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow, "upscale": upscale,
+        "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
@@ -62,40 +62,36 @@ extension Benchmark {
         Config("scale 1.0x", scale: 1.0),
         Config("scale 1.5x", scale: 1.5),
         Config("scale 2.0x (Retina native)", scale: 2.0),
-        Config("MetalFX 2x from 0.75x", upscale: 2) { $0.upscaler = .metalFX },
+        Config("MetalFX 2x from 0.75x", upscale: 2),
         Config("default: 3x from 0.5x", scale: 0.5, upscale: 3, gi: .radianceCascades),
         Config("path traced, 3x from 0.5x", scale: 0.5, upscale: 3),
         Config("path traced + white noise", scale: 0.5, upscale: 3) { $0.blueNoise = false },
         Config("0.75x no MetalFX + blue noise"),
-        Config("MetalFX 2x from 1.0x", scale: 1.0, upscale: 2) { $0.upscaler = .metalFX },
-        Config("MetalFX 3x from 0.67x", scale: 2.0 / 3.0, upscale: 3) { $0.upscaler = .metalFX },
+        Config("MetalFX 2x from 1.0x", scale: 1.0, upscale: 2),
+        Config("MetalFX 3x from 0.67x", scale: 2.0 / 3.0, upscale: 3),
     ] }
 
-    /// One picture of the app's default look (cascades, TAAU 3x from 0.5x), paused at t = 5 s, to check what a change
-    /// does: the METALRENDERER_* lists pick anything else (scene, GI, view, ...). Its 60 warm-up frames, then
+    /// One picture of the app's default look (cascades, MetalFX denoiser 3x from 0.5x), paused at t = 5 s, to check
+    /// what a change does: the METALRENDERER_* lists pick anything else (scene, GI, view, ...). Its 60 warm-up frames, then
     /// `METALRENDERER_SHOT_FRAMES` (default 30).
     private static func shot() -> [Config] {
         let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
         return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
     }
 
-    /// Fast smoke tests: the default setting, MetalFX temporal and spatial, camera moves, path traced, 0.75x native.
+    /// Fast smoke tests: the default setting, a camera move, path traced, 0.75x native.
     private static func quick() -> [Config] {
         let shown = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades)
-        let metalFX = shown.with { $0.upscaler = .metalFX }
         return [
             shown.named("default: 3x from 0.5x"),
-            metalFX.named("default, MetalFX temporal"),
-            shown.named("default, MetalFX spatial").with { $0.upscaler = .metalFXSpatial },
             shown.named("camera move").cameraMove(),
-            metalFX.named("camera move, MetalFX temporal").cameraMove(),
             Config("path traced, 3x from 0.5x", scale: 0.5, upscale: 3),
             Config("0.75x, no MetalFX"),
         ]
     }
 
-    /// The stress scene at the default settings (cascades, TAAU 3x from 0.5x): frame time against light count, object
-    /// count and GI method. `METALRENDERER_BENCH_SPLIT=0` for whole-frame times.
+    /// The stress scene at the default settings (cascades, MetalFX denoiser 3x from 0.5x): frame time against light
+    /// count, object count and GI method. `METALRENDERER_BENCH_SPLIT=0` for whole-frame times.
     private static func stress() -> [Config] {
         func hall(_ name: String, objects: Int = 400, lights: Int = 32, gi: GIMode = .radianceCascades) -> Config {
             Config(name, scale: 0.5, upscale: 3, gi: gi, scene: stressHall(objects: objects, lights: lights))
@@ -107,7 +103,8 @@ extension Benchmark {
     }
 
     /// Frame time against light count for each direct-light method, the stress scene at the default settings
-    /// (cascades, TAAU 3x from 0.5x), 1 to 16384 lights (exact up to 256, grouped up to 4096); then the night market.
+    /// (cascades, MetalFX denoiser 3x from 0.5x), 1 to 16384 lights (exact up to 256, grouped up to 4096); then the
+    /// night market.
     /// `METALRENDERER_BENCH_SPLIT=0` for whole-frame times.
     private static func restir() -> [Config] {
         func shown(_ name: String, _ scene: SceneSettings, _ mode: DirectLightMode) -> Config {
@@ -207,7 +204,7 @@ extension Benchmark {
             var list = scored(method) { "\(tag) \($0)" }
             list.insert(method.named("\(tag) static indirect").view(6).still(), at: 1)
             let shown = method.named("\(tag) default moving").with { $0.upscaleFactor = 3 }
-            return list + [shown, shown.named("\(tag) spatial moving").with { $0.upscaler = .metalFXSpatial }]
+            return list + [shown]
         }
     }
 
@@ -524,7 +521,7 @@ extension Benchmark {
     /// Tools/eval/stress.py):
     /// * direct light only (640x400) at 32 and 128 lights;
     /// * the GI methods (640x400, no upscaling) against an 8-bounce path-traced reference;
-    /// * the upscalers (3x from 640x400) on albedo and direct light against supersampled 1920x1200 references.
+    /// * MetalFX's denoising scaler (3x from 640x400) on albedo and direct light against supersampled 1920x1200 references.
     /// Run again with `METALRENDERER_LIGHTS=all` for the brute-force baseline, `METALRENDERER_DENOISE=shadows=0` for SVGF.
     private static func stressq() -> [Config] {
         let direct = [32, 128].flatMap { lights -> [Config] in
@@ -552,12 +549,10 @@ extension Benchmark {
         let big = Config("", scale: 1.5, scene: hall)
         var up = references([big.named("ref albedo 1.5x").view(4).reference(frames: 512, supersample: true),
                              big.named("ref direct 1.5x").with { $0.giEnabled = false }.reference(frames: 512, supersample: true)])
-        for (tag, kind) in [("custom", UpscalerKind.custom), ("metalfx", .metalFX)] {
-            let shown = Config("", scale: 0.5, upscale: 3, scene: hall) { $0.upscaler = kind }
-            let direct = shown.with { $0.giEnabled = false }
-            up += scored(shown.view(4)) { "albedo \($0) \(tag)" }
-            up += [direct.named("direct static \(tag)").still(), direct.named("direct moving \(tag)")]
-        }
+        let shown = Config("", scale: 0.5, upscale: 3, scene: hall)
+        let upDirect = shown.with { $0.giEnabled = false }
+        up += scored(shown.view(4)) { "albedo \($0) denoiser" }
+        up += [upDirect.named("direct static denoiser").still(), upDirect.named("direct moving denoiser")]
         return direct + gi + up
     }
 
@@ -623,54 +618,41 @@ extension Benchmark {
             + [Config("default moving", scale: 0.5, upscale: 3, gi: .radianceCascades)]
     }
 
-    /// What turns the traced frame into the output, for `hwrt` and `hwrtq`: this project's denoisers (SVGF and the shadow
-    /// denoiser) with the custom upscaler or MetalFX's temporal scaler, or MetalFX's denoising scaler in place of all
-    /// three. `METALRENDERER_UPSCALERS="custom,denoiser"` picks among them.
-    private static var outputs: [(tag: String, kind: UpscalerKind)] {
-        let all: [(String, UpscalerKind)] = [("custom", .custom), ("metalfx", .metalFX), ("denoiser", .metalFXDenoised)]
-        let pick = env["METALRENDERER_UPSCALERS"].map { Set($0.split(separator: ",").map(String.init)) }
-        return all.filter { pick?.contains($0.0) ?? true }
-    }
     private static let tracers: [(tag: String, kind: RayTracerKind)] = [("custom", .custom), ("metal", .metal)]
 
-    /// Hardware ray tracing and MetalFX's denoising scaler against what they replace: each ray tracer (the custom BVH,
-    /// Metal's acceleration structures) with each output (`outputs`), moving frames at 3x from 640x400, path traced and
-    /// with radiance cascades, in the Cornell room and the stress hall. The tracers alternate, so heat affects them
+    /// Hardware ray tracing against the custom BVH: each ray tracer (the custom BVH, Metal's acceleration structures),
+    /// moving frames at 3x from 640x400 through MetalFX's denoising scaler, path traced and with radiance cascades, in
+    /// the Cornell room and the stress hall. The tracers alternate, so heat affects them
     /// alike. Settings this GPU can't run are skipped (Capabilities).
     private static func hwrt() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
             for (giTag, gi) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
-                for output in outputs {
-                    for tracer in tracers {
-                        out.append(Config("\(sceneTag) \(giTag), \(output.tag), \(tracer.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                            $0.upscaler = output.kind
-                            $0.rayTracer = tracer.kind
-                        })
-                    }
+                for tracer in tracers {
+                    out.append(Config("\(sceneTag) \(giTag), \(tracer.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
+                        $0.rayTracer = tracer.kind
+                    })
                 }
             }
         }
         return out
     }
 
-    /// The same outputs' images, path traced at 3x from 640x400, against supersampled native 1920x1200 references at
-    /// t = 5 s (2 bounces, as the outputs trace): a still with the frame before it (flicker), the animation running and
+    /// MetalFX's denoising scaler's images, path traced at 3x from 640x400, against supersampled native 1920x1200 references at
+    /// t = 5 s (2 bounces, as the frames trace): a still with the frame before it (flicker), the animation running and
     /// the camera move (Tools/eval/hwrt.py). The tracer is METALRENDERER_RT's.
     private static func hwrtq() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
             out += references([Config("\(sceneTag) ref final", scale: 1.5, scene: scene).reference(frames: 1024, supersample: true)])
-            for output in outputs {
-                let shown = Config("", scale: 0.5, upscale: 3, scene: scene) { $0.upscaler = output.kind }
-                out += scored(shown) { "\(sceneTag) final \($0) \(output.tag)" }
-            }
+            let shown = Config("", scale: 0.5, upscale: 3, scene: scene)
+            out += scored(shown) { "\(sceneTag) final \($0) denoiser" }
         }
         return out
     }
 
     /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API and METALRENDERER_RT's
-    /// tracer, each output once (run once per API and compare the PNGs with Tools/eval/pngdiff.py; frame indices must
+    /// tracer (run once per API and compare the PNGs with Tools/eval/pngdiff.py; frame indices must
     /// match, so not in one run), then the same frames through each command model with each ray tracer, moving at 3x
     /// from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
     /// the command model can change.
@@ -678,10 +660,7 @@ extension Benchmark {
         let scenes = [("cornell cascades", SceneSettings(), GIMode.radianceCascades), ("stress pt", stressHall(), .pathTraced)]
         var out: [Config] = []
         for (sceneTag, scene, gi) in scenes {
-            out += outputs.map { output in
-                Config("\(sceneTag) static, \(output.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) { $0.upscaler = output.kind }
-                    .still().frames(30)
-            }
+            out.append(Config("\(sceneTag) static", scale: 0.5, upscale: 3, gi: gi, scene: scene).still().frames(30))
         }
         for (sceneTag, scene, gi) in scenes {
             for tracer in tracers {
@@ -694,26 +673,6 @@ extension Benchmark {
             }
         }
         return out
-    }
-
-    /// Upscalers against supersampled native 1920x1200 references at t = 5 s: the albedo view isolates edges and
-    /// anti-aliasing, direct light adds shading (Tools/eval/upscale.py). `METALRENDERER_UPSCALERS="metalfx,custom,spatial"`
-    /// picks the upscalers.
-    private static func upscale() -> [Config] {
-        let refs = [Config("ref albedo", scale: 1.5).view(4).reference(frames: 512, supersample: true),
-                    Config("ref direct", scale: 1.5, gi: nil).reference(frames: 1024, supersample: true)]
-        let kinds: [(String, UpscalerKind)] = [("metalfx", .metalFX), ("custom", .custom), ("spatial", .metalFXSpatial)]
-        let pick = env["METALRENDERER_UPSCALERS"].map { Set($0.split(separator: ",").map(String.init)) }
-        return references(refs) + kinds.filter { pick?.contains($0.0) ?? true }.flatMap { tag, kind -> [Config] in
-            let shown = Config("", scale: 0.5, upscale: 3) { $0.upscaler = kind }
-            let albedo = shown.view(4), direct = shown.with { $0.giEnabled = false }
-            return scored(albedo) { "albedo \($0) \(tag)" } + [
-                // The same camera move over the frozen scene: camera motion alone, no moving objects.
-                albedo.named("albedo pan \(tag)").still().cameraMove(),
-                direct.named("direct static \(tag)").still(),
-                direct.named("direct moving \(tag)"),
-            ]
-        }
     }
 
     /// White- and blue-noise sampling next to converged references, all at t = 5 s (Tools/eval/noise.py). "moving" runs
@@ -759,8 +718,8 @@ extension Benchmark {
             [
                 Config("\(tag) native 1.5x", scale: 1.5),
                 Config("\(tag) native 0.75x"),
-                Config("\(tag) MetalFX 0.75x x2", upscale: 2) { $0.upscaler = .metalFX },
-                Config("\(tag) MetalFX 0.5x x3", scale: 0.5, upscale: 3) { $0.upscaler = .metalFX },
+                Config("\(tag) MetalFX 0.75x x2", upscale: 2),
+                Config("\(tag) MetalFX 0.5x x3", scale: 0.5, upscale: 3),
             ].map { tag == "albedo" ? $0.view(4) : $0 }
         }
     }
@@ -931,10 +890,9 @@ extension Benchmark {
         return out
     }
 
-    /// Every view mode, as the app draws it (radiance cascades, TAAU 3x from 0.5x), on each ray tracer in the scenes with
-    /// levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the open world's
-    /// tiles. Then the views that depend on the GI method with each method, and a few with MetalFX's denoising scaler
-    /// (skipped where the GPU has none).
+    /// Every view mode, as the app draws it (radiance cascades, MetalFX denoiser 3x from 0.5x), on each ray tracer in
+    /// the scenes with levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the
+    /// open world's tiles. Then the views that depend on the GI method with each method.
     private static func debugViews() -> [Config] {
         var out: [Config] = []
         let views = RenderSettings.viewModes.indices
@@ -964,10 +922,6 @@ extension Benchmark {
                 out.append(Config("\(tag) cornell \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3, gi: gi)
                     .view(mode).still().frames(8))
             }
-        }
-        for mode in [0, 3, 5, 8, 11] {
-            out.append(Config("denoiser gallery \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
-                              scene: SceneSettings(kind: .gallery)) { $0.upscaler = .metalFXDenoised }.view(mode).still().frames(8))
         }
         return out
     }

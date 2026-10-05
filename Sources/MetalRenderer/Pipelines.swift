@@ -12,7 +12,7 @@ enum Kernel: Int, CaseIterable {
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
-    case composite, accumulateColor, taau, tonemap
+    case composite, accumulateColor, tonemap
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit

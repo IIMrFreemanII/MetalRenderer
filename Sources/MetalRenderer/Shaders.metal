@@ -33,7 +33,7 @@ using namespace metal::raytracing;
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
 #include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser
-#include "Shaders/Output.metal"            // geometry debug views, composite, accumulate, TAAU
+#include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
 #include "Shaders/BVHBuild.metal"          // custom ray tracer: the per-frame top-level tree (rt* kernels)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its tree (vg* kernels)

@@ -33,7 +33,7 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
 .claude/skills/offscreen/scripts/render.sh -o "$SCRATCH/shot" METALRENDERER_SCENE=sun
 ```
 * `-m <mode>` picks the benchmark mode. The default is `shot`: one picture of the app's default look (radiance
-  cascades, TAAU 3× from 640×400 to 1920×1200), paused at t = 5 s, after 60 warm-up frames and 30 more
+  cascades, MetalFX denoiser 3× from 640×400 to 1920×1200), paused at t = 5 s, after 60 warm-up frames and 30 more
   (`METALRENDERER_SHOT_FRAMES=<n>`). It takes about 1–2 s.
 * `KEY=VALUE` arguments are any `METALRENDERER_*` overrides (the list is in the performance skill's
   `references/measuring.md`, "Narrowing and overriding"):

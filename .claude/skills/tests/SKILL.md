@@ -41,7 +41,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 |---|---|
 | `Settings*.swift` | SettingsTableTests, BenchmarkModesTests |
 | `Benchmark*.swift` | BenchmarkModesTests, CapabilitiesTests |
-| `Capabilities`, `Upscaler`, `TemporalUpscaler`, `Metal4Backend` | CapabilitiesTests |
+| `Capabilities`, `Upscaler`, `Metal4Backend` | CapabilitiesTests |
 | `ShaderSource`, `Pipelines`, `GPUTypes`, `Shaders.metal`, any `Shaders/*.metal` | ShaderSourceTests, KernelVariantsTests |
 | `BVH.swift`, `Shaders/BVHBuild.metal` | BVHTests, CacheTests (+ the shader pair) |
 | `CacheFile`, `SectionFile`, `BlueNoise` | CacheTests |

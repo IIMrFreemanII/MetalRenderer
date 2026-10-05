@@ -32,7 +32,7 @@ for d in runs:
 
 print(f"\n{'run:upscaler':24s}{'alb st':>9s}{'flicker':>9s}{'alb mv':>9s}{'alb cam':>9s}{'dir st':>9s}{'dir mv':>9s}    (3x vs supersampled 1920x1200)")
 for d in runs:
-    for k in ("custom", "metalfx"):
+    for k in ("denoiser",):
         st = capture(d, f"albedo-static-{k}")
         if st is None: continue
         ra, rd = ref("stress", "ref-albedo-1.5x"), ref("stress", "ref-direct-1.5x")
