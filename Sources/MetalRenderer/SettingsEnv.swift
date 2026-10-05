@@ -24,8 +24,9 @@ enum SettingsEnv {
         d.virtualGeometry.poolMB = 768
         d.scene = SceneSettings()
         d.scene.kind = s.scene.kind
+        d.scene.showcase = s.scene.showcase   // the model's look: its fog and lens
         d.scene.emissiveLights = true
-        d.applySceneDefaults(from: defaults)   // the scene's GI method, light count, fog and sky
+        d.applySceneDefaults(from: defaults)   // the scene's GI method, light count, fog, sky and lens
 
         var vars: [String] = []
         for variable in EnvVariable.allCases {
@@ -83,7 +84,8 @@ enum SettingsEnv {
     }
 
     /// `METALRENDERER_SCENE`'s items that aren't settings of the table: the scene's kind as a bare word (cornell,
-    /// stress, gallery, spots, sun, area, tubes, emissive, mixed, fog, valley, market, forest, crowd, city, citynight),
+    /// stress, gallery, spots, sun, area, tubes, emissive, mixed, fog, valley, market, forest, crowd, city, citynight, world,
+/// showcase),
     /// `check=<light>` for the light-check scene (Scene.buildLightCheck; "empty" = just the floor) and `model=<path>`,
     /// which adds a glTF model as File > Open does, in front of the default camera.
     private static func applySceneItem(_ kv: [String], to s: inout SceneSettings) -> Bool {
