@@ -112,24 +112,36 @@ extension Scene {
             for lo in Hall.rackFaces { addInstance(rack.mesh, rack.material, translate([lo, 0, 0])) }
         }
 
-        /// A conveyor's bed round a loop, with legs down to the floor or hangers up to the ceiling.
+        /// A conveyor's bed round a loop, with legs down to the floor or hangers up to the ceiling. The bed and its
+        /// side rails are swept along the loop: one piece per straight, eight per round corner, so the curves are smooth.
         func conveyor(_ loop: Loop, width: Float, hung: Bool) -> MeshBuilder {
             var b = MeshBuilder()
-            let n = Int((loop.length / 0.5).rounded(.up))
-            for i in 0..<n {
-                let s0 = loop.length * Float(i) / Float(n), s1 = loop.length * Float(i + 1) / Float(n)
-                let (p0, _) = loop.at(s0), (p1, _) = loop.at(s1)
-                let mid = (p0 + p1) / 2, d = p1 - p0, half = length(d) / 2 + 0.02
-                b.frame = Hall.placed(mid, facing: d)
-                b.box([-half, -0.15, -width / 2], [half, 0, width / 2])
-                b.box([-half, 0, -width / 2 - 0.04], [half, 0.07, -width / 2])
-                b.box([-half, 0, width / 2], [half, 0.07, width / 2 + 0.04])
-                if i % 3 == 0 {
-                    for side: Float in [-1, 1] {
-                        let z = side * (width / 2 - 0.05)
-                        if hung { b.box([-0.02, 0, z - 0.02], [0.02, Hall.height - loop.y, z + 0.02]) }
-                        else { b.box([-0.03, -loop.y, z - 0.03], [0.03, -0.15, z + 0.03]) }
+            let w = width / 2
+            // Cross-sections (lateral, height), corners in an order that makes the faces face out.
+            let profiles: [[SIMD2<Float>]] = [[[w, 0], [-w, 0], [-w, -0.15], [w, -0.15]],
+                                              [[w + 0.04, 0.07], [w, 0.07], [w, 0], [w + 0.04, 0]],
+                                              [[-w, 0.07], [-w - 0.04, 0.07], [-w - 0.04, 0], [-w, 0]]]
+            let frames = loop.samples(perCorner: 8).map { s -> (SIMD3<Float>, SIMD3<Float>) in
+                let (p, h) = loop.at(s)
+                return (p, SIMD3(-h.z, 0, h.x))   // where, and the lateral axis (heading x up)
+            }
+            func at(_ f: (SIMD3<Float>, SIMD3<Float>), _ q: SIMD2<Float>) -> SIMD3<Float> { f.0 + f.1 * q.x + [0, q.y, 0] }
+            for i in frames.indices.dropLast() {
+                let f0 = frames[i], f1 = frames[i + 1]
+                for profile in profiles {
+                    for j in profile.indices {
+                        let a = profile[j], c = profile[(j + 1) % profile.count]
+                        b.quad(at(f0, a), at(f1, a), at(f1, c), at(f0, c))
                     }
+                }
+            }
+            for k in 0..<Int(loop.length / 1.5) {
+                let (p, heading) = loop.at(1.5 * Float(k))
+                b.frame = Hall.placed(p, facing: heading)
+                for side: Float in [-1, 1] {
+                    let z = side * (w - 0.05)
+                    if hung { b.box([-0.02, 0, z - 0.02], [0.02, Hall.height - loop.y, z + 0.02]) }
+                    else { b.box([-0.03, -loop.y, z - 0.03], [0.03, -0.15, z + 0.03]) }
                 }
             }
             b.frame = matrix_identity_float4x4
@@ -435,6 +447,20 @@ private struct Loop {
     let center: SIMD2<Float>, half: SIMD2<Float>, radius: Float, y: Float
     var length: Float { 4 * (half.x - radius) + 4 * (half.y - radius) + 2 * .pi * radius }
 
+    /// Distances round the loop that trace it: each straight's ends and `perCorner` steps round each corner, back to
+    /// the start.
+    func samples(perCorner n: Int) -> [Float] {
+        var out: [Float] = [], s: Float = 0
+        let arc = 0.5 * Float.pi * radius
+        for i in 0..<4 {
+            out.append(s)
+            s += 2 * (i % 2 == 0 ? half.x - radius : half.y - radius)
+            for k in 0..<n { out.append(s + arc * Float(k) / Float(n)) }
+            s += arc
+        }
+        return out + [length]
+    }
+
     /// Where something `s` metres round the loop is, and which way it faces.
     func at(_ s: Float) -> (position: SIMD3<Float>, heading: SIMD3<Float>) {
         var s = s.truncatingRemainder(dividingBy: length)
@@ -588,11 +614,11 @@ private enum Hall {
     // MARK: Garage
 
     static let garageLevels: [Float] = [0, deck]
-    /// Bays: two rows on each level, cars nose in or out.
+    /// Bays: two rows on each level, cars nose in or out, 15 cm clear of the cars driving past and of the walls.
     static let parkingBays: [(position: SIMD3<Float>, facing: SIMD3<Float>)] = {
         var out: [(SIMD3<Float>, SIMD3<Float>)] = []
         for (i, y) in garageLevels.enumerated() {
-            for x: Float in [-14.55, -4.45] {
+            for x: Float in [-14.7, -4.3] {
                 for b in 0..<7 {
                     let z = 3.75 + 2.5 * Float(b)
                     out.append(([x, y, z], [(b + i) % 3 == 0 ? -1 : 1, 0, 0]))
