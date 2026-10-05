@@ -31,5 +31,5 @@ fallback for GPUs without MetalFX's denoiser.
 **Why:** the user wants a denoiser trained on their own scenes that they control.
 **How to apply:** next steps in order: make the dataset (`make-dataset.sh`, detached) and let **all** references
 finish (the user's choice, 2026-10-05: training shares the GPU and would slow both) → train
-(`train.py dataset --val market,forest --exclude stress`) → export → `neuralq` → speed work (performance skill).
-Ping the user when training starts ([[feedback-ping-training]]). Keep the stress hall out ([[feedback-no-stress-references]]).
+(`train.py dataset --val market,forest`) → export → `neuralq` → speed work (performance skill).
+Ping the user when training starts ([[feedback-ping-training]]). The stress building is in, 4 zones × 8 frames ([[feedback-no-stress-references]]).

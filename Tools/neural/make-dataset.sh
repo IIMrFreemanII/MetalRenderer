@@ -5,11 +5,12 @@
 #   make-dataset.sh [-d <dir>]
 #
 #   -d  the dataset folder (default: <repo>/dataset, gitignored); the log is <dir>/run.log
-#   METALRENDERER_DATASET in the environment replaces the default list (11 scenes x 4 clips, 24 random rooms and a
-#   showcase clip per Assets/ model; 20 frames, the showcase's 8; 512 spp); any other METALRENDERER_* variable is passed on
+#   METALRENDERER_DATASET in the environment replaces the default list (11 scenes x 4 clips, the stress building's 4
+#   zones, 24 random rooms and a showcase clip per Assets/ model; 20 frames, the stress building's and the showcase's 8;
+#   512 spp); any other METALRENDERER_* variable is passed on
 #   (for example METALRENDERER_RT=metal).
 #
-# Long: about 70 s a reference on an M1 Max, 6-9 min for the showcase's (~1,400 references). Run it detached:
+# Long: about 70 s a reference on an M1 Max, 6-9 min for the showcase's and the stress building's (~1,500). Run it detached:
 #   nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &
 set -u
 
@@ -18,12 +19,12 @@ dir="$repo/dataset"
 while getopts "d:h" opt; do
   case $opt in
     d) dir=$(mkdir -p "$OPTARG" && cd "$OPTARG" && pwd) ;;
-    *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   esac
 done
 mkdir -p "$dir"
 log="$dir/run.log"
-spec=${METALRENDERER_DATASET:-"scenes=cornell|spots|sun|area|tubes|emissive|mixed|fog|valley|market|forest|randomroom|showcase,clips=4,rooms=24,frames=20,spp=512"}
+spec=${METALRENDERER_DATASET:-"scenes=cornell|stress|spots|sun|area|tubes|emissive|mixed|fog|valley|market|forest|randomroom|showcase,clips=4,rooms=24,frames=20,spp=512"}
 render="$repo/.claude/skills/offscreen/scripts/render.sh"
 runs="$dir/.runs"   # render.sh's logs and PNGs
 

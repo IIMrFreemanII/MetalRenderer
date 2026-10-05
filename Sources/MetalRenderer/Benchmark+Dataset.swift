@@ -17,14 +17,14 @@ import simd
 /// (default `dataset`): `<clip>/clip.json`, `<clip>/fNNNN.json`, `<clip>/fNNNN-<buffer>.npy`.
 extension Benchmark {
     struct DatasetSpec {
-        // Not the stress hall: its references take far longer than any other scene's.
-        var scenes: [SceneKind] = [.cornell, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog, .valley, .market,
-                                   .forest, .randomRoom, .showcase]
+        var scenes: [SceneKind] = [.cornell, .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog, .valley,
+                                   .market, .forest, .randomRoom, .showcase]
         var clips = 4           // per scene, each with its own seed, start time and camera track
         var rooms = 24          // ...but this many random rooms (Scene+Training.swift): each clip is another room
                                 // (and the showcase has a clip per model of Assets/, each on its own set)
         var frames = 32         // saved per clip, after the warm-up
         var showcaseFrames = 8  // ...but fewer of the showcase's: its references take 5-8 times as long (fog, full-detail models)
+        var stressFrames = 8    // ...and of the stress building's (32 lights, each traced at every bounce)
         var spp = 1024          // frames averaged per reference
         var seed = 1
         var bounces = 4         // the references' path length
@@ -43,6 +43,7 @@ extension Benchmark {
                 case "rooms": rooms = Int(kv[1]) ?? rooms
                 case "frames": frames = Int(kv[1]) ?? frames
                 case "showcaseframes": showcaseFrames = Int(kv[1]) ?? showcaseFrames
+                case "stressframes": stressFrames = Int(kv[1]) ?? stressFrames
                 case "spp": spp = Int(kv[1]) ?? spp
                 case "seed": seed = Int(kv[1]) ?? seed
                 case "bounces": bounces = Int(kv[1]) ?? bounces
@@ -51,6 +52,17 @@ extension Benchmark {
                 default: print("METALRENDERER_DATASET: unknown key \(kv[0])")
                 }
             }
+        }
+
+        /// The stress building's clips start in its four zones (Scene+Stress.swift: the aisle's cross at the middle,
+        /// partitions at x, z = ±2), each about 6 m in and looking toward the zone's far corner, instead of all from the
+        /// building's one camera high over the aisle.
+        static let stressViews: [Camera] = [(-1, -1), (1, -1), (-1, 1), (1, 1)].map { (sx: Float, sz: Float) in   // warehouse, factory, garage, office
+            var c = Camera()
+            c.position = [6 * sx, 1.7, 6 * sz]
+            c.yaw = atan2(sx, -sz)   // toward (16 sx, 1, 16 sz)
+            c.pitch = -0.05
+            return c
         }
 
         /// The clips, scene by scene: a seed for the scene, a start time and a camera drift each.
@@ -64,11 +76,13 @@ extension Benchmark {
                     if kind == .showcase { scene.showcase = models[c] }
                     scene.seed = seed * 100 + c
                     let start = Float.random(in: 0..<(kind.dayCycle ?? 20), using: &rng)
-                    // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model.
-                    let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : 1
+                    // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model; the stress
+                    // building's clips start inside a zone, a few metres from its partitions.
+                    let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : kind == .stress ? 0.6 : 1
                     let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
                     return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, drift: drift,
-                                       frames: kind == .showcase ? showcaseFrames : frames)
+                                       frames: kind == .showcase ? showcaseFrames : kind == .stress ? stressFrames : frames,
+                                       camera: kind == .stress ? DatasetSpec.stressViews[c % DatasetSpec.stressViews.count] : nil)
                 }
             }
         }
@@ -81,6 +95,7 @@ extension Benchmark {
         var startTime: Float
         var drift: CameraDrift
         var frames: Int         // saved, after the warm-up
+        var camera: Camera?     // where it starts, if not the scene's own camera
 
         /// Settings both of its runs share. glTF models (random rooms, the gallery, the showcase) at full detail and
         /// with every texture level, so the references don't get finer meshes or mips than the noisy frames had (as the
@@ -132,6 +147,7 @@ extension Benchmark {
             var c = Config(clip.name, scale: spec.scale, upscale: spec.factor, gi: RenderSettings().giMode, scene: clip.scene,
                            clip.shared).drifting(clip.drift).frames(clip.frames)
             c.startTime = clip.startTime
+            c.camera = clip.camera
             c.dataset = .inputs(clip: spec.directory.appendingPathComponent(clip.name))
             return c
         }

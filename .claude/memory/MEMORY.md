@@ -1,6 +1,6 @@
 - [Neural denoiser status, Oct 2026](neural-denoiser-status-2026-10.md) — our own denoising upscaler: built, verified, next steps; how-to in Tools/neural/README.md
 - [Dev Macs: M1 Max and M4 Max](dev-macs.md) — M1 Max has no hardware RT (Metal 4 RT untestable); M4 Max from Oct 2026, check its capability line
-- [No stress-hall references](feedback-no-stress-references.md) — keep the stress hall out of the dataset; train with --exclude stress
+- [Stress scene in the dataset](feedback-no-stress-references.md) — old hall out; new stress building in (4 zones x 8 frames); time new scenes first
 - [Ping when training starts](feedback-ping-training.md) — push notification when a long training run starts or a waited-on job ends
 - [Disk: count purgeable space](feedback-disk-purgeable.md) — df understates free space; check Finder's important-usage figure
 - [Audit backlog, Oct 2026](audit-backlog-2026-10.md) — what the codebase audit fixed and what is still open; findings in plans/audit-backlog.md

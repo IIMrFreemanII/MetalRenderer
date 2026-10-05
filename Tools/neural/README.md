@@ -27,10 +27,10 @@ uv pip install -p Tools/neural/.venv -r Tools/neural/requirements.txt
 nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.log
 ```
 Renders offscreen (no window). First every clip's noisy frames (minutes), then a path-traced reference for every
-frame (the long part: ~70 s each on an M1 Max, 6–9 min for the showcase's; ~1,400 of them). Stop it any time; run it again to carry on. The clip
-list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, 24 random rooms and the showcase's 11 models,
-each on its own set; 20 frames a clip, 8 for the showcase; 512 spp; keys in `Benchmark.DatasetSpec`). The stress hall is left out: its
-references are far slower than any other scene's. Scenes with glTF models trace them at full detail and every clip
+frame (the long part: ~70 s each on an M1 Max, 6–9 min for the showcase's and the stress building's; ~1,500 of them). Stop it any time; run it again to carry on. The clip
+list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, the stress building's 4 zones, 24 random rooms
+and the showcase's 11 models, each on its own set; 20 frames a clip, 8 for the stress building and the showcase; 512
+spp; keys in `Benchmark.DatasetSpec`). Scenes with glTF models trace them at full detail and every clip
 runs without the lens (bloom, depth of field), in both runs (`DatasetClip.shared`).
 
 On a Mac with hardware ray tracing (M3 and later), first time one reference with the Metal tracer, which may be much
@@ -50,7 +50,7 @@ input, MetalFX, reference on top; albedo, normals, motion below.
 
 ```bash
 cd Tools/neural
-.venv/bin/python train.py ../../dataset --val market,forest --exclude stress --out runs/first
+.venv/bin/python train.py ../../dataset --val market,forest --out runs/first
 ```
 Market and forest are held out, so validation measures how the net does on scenes it never saw. Each epoch prints
 the net's PSNR and flicker next to MetalFX's on the same frames. Checkpoints: `runs/first/best.pt`, `last.pt`

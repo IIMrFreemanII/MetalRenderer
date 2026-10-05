@@ -70,6 +70,26 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertEqual(clips.first { $0.scene.kind == .cornell }?.frames, 1)
     }
 
+    /// The stress building's clips start in its four zones, one each, and are short.
+    func testDatasetStressClips() {
+        defer { unsetenv("METALRENDERER_DATASET") }
+        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20", 1)
+        let clips = Benchmark.DatasetSpec().clipList
+        let stress = clips.filter { $0.scene.kind == .stress }
+        XCTAssertEqual(stress.count, 4)
+        XCTAssertEqual(Set(stress.compactMap { $0.camera.map { "\($0.position)" } }).count, 4, "one zone each")
+        for clip in stress {
+            let p = clip.camera!.position, f = clip.camera!.forward
+            XCTAssertGreaterThan(min(abs(p.x), abs(p.z)), 2, "inside a zone, past its partitions")
+            XCTAssertGreaterThan(p.x * f.x, 0, "looking further into the zone")
+            XCTAssertGreaterThan(p.z * f.z, 0)
+            XCTAssertEqual(clip.frames, 8)
+        }
+        XCTAssertTrue(clips.filter { $0.scene.kind == .cornell }.allSatisfy { $0.camera == nil && $0.frames == 20 })
+        let noisy = Benchmark.dataset().filter { $0.settings.scene.kind == .stress }
+        XCTAssertEqual(noisy.compactMap { $0.camera?.position }, stress.map { $0.camera!.position })
+    }
+
     /// A camera track goes through its keys, looking at their targets, and holds its first and last poses.
     func testCameraTrack() {
         let track = CameraTrack([CameraTrack.Key(time: 0, position: [0, 1, 5], target: [0, 1, 0]),
