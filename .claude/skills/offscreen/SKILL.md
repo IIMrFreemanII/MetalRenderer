@@ -78,6 +78,14 @@ python3 Tools/eval/stress.py "$SCRATCH/q"
 ```
 The mode-to-scorer table is in measuring.md. Narrow long modes with `METALRENDERER_BENCH_ONLY="name|other"`.
 
+**Make a video.** A mode whose setting records (`Config.track(...).recording()`: a camera track, every frame saved
+as `NN-<name>-0000.png`) becomes an mp4 with `scripts/video.sh`, which runs `render.sh` and then ffmpeg:
+```bash
+.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
+```
+It takes minutes (a frame and its PNG every 1/60 s of the track), so run it with `run_in_background`. To tune a
+track, look along it first: `METALRENDERER_RECORD_STEP=90` keeps every 90th frame (render.sh, then Read the PNGs).
+
 **Time it.** Timings belong to the `performance` skill (`ab.sh`, alternating rounds). Its runs are headless too.
 
 ## What headless changes, and what it doesn't

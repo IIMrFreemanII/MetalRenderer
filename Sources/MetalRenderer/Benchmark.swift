@@ -3,6 +3,7 @@ import Metal
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
+import simd
 
 /// Headless-ish benchmark mode, enabled with `METALRENDERER_BENCH=1 swift run -c release`.
 ///
@@ -27,6 +28,8 @@ final class Benchmark {
         var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
         var camera: Camera? = nil           // a fixed camera instead of the scene's default
         var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
+        var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
+        var recordsFrames = false           // every measured frame is saved, numbered (a video's frames: `recording`)
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
@@ -64,6 +67,16 @@ final class Benchmark {
         func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
         func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
         func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
+        func track(_ track: CameraTrack) -> Config { var c = self; c.track = track; return c }
+        /// Every frame of its track saved as `NN-<name>-0000.png` ... (the frames of a video: the offscreen skill's
+        /// video.sh), the animation running. The warm-up holds the track's first pose, so the frames start settled.
+        func recording() -> Config {
+            var c = self
+            c.settings.paused = false
+            c.recordsFrames = true
+            c.frames = Int(((track?.duration ?? 4) * 60).rounded()) + 1
+            return c
+        }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
         func still(at time: Float = 5, previous: Bool = false) -> Config {
@@ -153,6 +166,9 @@ final class Benchmark {
         return c
     }
 
+    /// Where the current setting's track is: seconds since its first measured frame (0 while it warms up).
+    var trackTime: Float { Float(max(frameInConfig - warmupFrames, 0)) * fixedDt }
+
     /// Progress through the current setting, 0 at its first frame and 1 at its last.
     var progressInConfig: Float {
         let total = warmupFrames + (current.frames ?? measuredFrames)
@@ -233,7 +249,12 @@ final class Benchmark {
     func noteSwap() {
         if let k = Benchmark.swapShot, cut == nil { cut = min(frameInConfig + max(k, 0) + 1, framesInConfig) }
     }
-    var shouldCapture: Bool { framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2) }
+    var shouldCapture: Bool {
+        if current.recordsFrames && isMeasuring { return (frameInConfig - warmupFrames) % Benchmark.recordStep == 0 }
+        return framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2)
+    }
+    /// `METALRENDERER_RECORD_STEP=<n>`: a recording keeps every nth frame only (a quick look along its track).
+    static let recordStep = max(Int(ProcessInfo.processInfo.environment["METALRENDERER_RECORD_STEP"] ?? "") ?? 1, 1)
 
     func noteDraw(resolution: String) {
         resolutions[configIndex] = resolution
@@ -305,7 +326,8 @@ final class Benchmark {
         guard let buffer = device.makeBuffer(length: rowBytes * h, options: .storageModeShared) else { return nil }
         let fileName = String(format: "%02d-", configIndex) + current.name
             .replacingOccurrences(of: "[^A-Za-z0-9.]+", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-")) + (framesLeftInConfig == 2 ? "-prev" : "") + ".png"
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            + (current.recordsFrames ? String(format: "-%04d", frameInConfig - warmupFrames) : framesLeftInConfig == 2 ? "-prev" : "") + ".png"
         let url = dir.appendingPathComponent(fileName)
         return (buffer, {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -318,5 +340,49 @@ final class Benchmark {
             CGImageDestinationAddImage(dest, image, nil)
             CGImageDestinationFinalize(dest)
         })
+    }
+}
+
+/// A camera's way through a scene for a benchmark setting (`Config.track`): keys of where it is and what it looks at,
+/// at times in seconds, joined by Catmull-Rom curves and eased in and out at each key's time. Before the first key it
+/// holds the first pose, after the last the last.
+struct CameraTrack {
+    struct Key {
+        var time: Float
+        var position: SIMD3<Float>
+        var target: SIMD3<Float>
+    }
+    var keys: [Key]
+
+    init(_ keys: [Key]) {
+        precondition(!keys.isEmpty && zip(keys, keys.dropFirst()).allSatisfy { $0.time < $1.time }, "a track's keys in time")
+        self.keys = keys
+    }
+
+    var duration: Float { keys.last!.time }
+
+    /// Where the camera is and what it looks at, at `t` seconds.
+    func pose(at t: Float) -> (position: SIMD3<Float>, target: SIMD3<Float>) {
+        guard let next = keys.firstIndex(where: { $0.time > t }) else { return (keys.last!.position, keys.last!.target) }
+        guard next > 0 else { return (keys[0].position, keys[0].target) }
+        let a = keys[next - 1], b = keys[next]
+        let u = (t - a.time) / (b.time - a.time), s = u * u * (3 - 2 * u)
+        let before = keys[max(next - 2, 0)], after = keys[min(next + 1, keys.count - 1)]
+        func curve(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>) -> SIMD3<Float> {
+            let s2 = s * s, s3 = s2 * s
+            return 0.5 * ((2 * p1) + (p2 - p0) * s + (2 * p0 - 5 * p1 + 4 * p2 - p3) * s2 + (3 * p1 - p0 - 3 * p2 + p3) * s3)
+        }
+        return (curve(before.position, a.position, b.position, after.position), curve(before.target, a.target, b.target, after.target))
+    }
+
+    /// The camera at `t` (Camera.forward: yaw 0 looks down -z, a positive yaw toward +x).
+    func camera(at t: Float) -> Camera {
+        let (position, target) = pose(at: t)
+        let d = simd_normalize(target - position)
+        var c = Camera()
+        c.position = position
+        c.yaw = atan2(d.x, -d.z)
+        c.pitch = asin(max(-1, min(1, d.y)))
+        return c
     }
 }

@@ -1714,6 +1714,7 @@ final class Renderer: NSObject {
             if benchmark.current.cameraPath {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
+            if let track = benchmark.current.track { camera = track.camera(at: benchmark.trackTime) }
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
             if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
@@ -2940,7 +2941,8 @@ final class Renderer: NSObject {
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             rebuildScene(resetCamera: false)
         }
-        camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera
+        camera = c.track?.camera(at: 0)
+            ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         prevCamera = camera
         accumulating = c.accumulate
         referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil

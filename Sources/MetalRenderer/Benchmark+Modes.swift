@@ -14,6 +14,7 @@ extension Benchmark {
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
+        "shapesdemo": shapesDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -812,6 +813,33 @@ extension Benchmark {
             }
         }
         return out
+    }
+
+    /// The SDF shapes scene's demo video: 30 s along a camera track at the app's look (cascades, 3x from 0.5x to
+    /// 1920x1200) with the showcase's lens, every frame saved (`.claude/skills/offscreen/scripts/video.sh -m shapesdemo`).
+    /// A wide view, along the primitives, over to the cuts and blends and the baked knot, the glowing ring and lamp,
+    /// and back out.
+    private static func shapesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 4.2, 6.0], [0, 0.4, -2]),
+            key(5, [-1.0, 2.6, 3.0], [-1.0, 0.5, -1.5]),
+            key(8, [-5.6, 1.0, 1.6], [-3.2, 0.6, -0.6]),
+            key(11, [-0.5, 0.9, 1.6], [0.8, 0.6, -0.6]),
+            key(14, [4.6, 1.0, 1.4], [2.4, 0.6, -0.8]),
+            key(17, [-1.6, 1.7, -1.2], [-2.4, 0.4, -3.0]),
+            key(20, [2.2, 1.2, -1.6], [3.2, 0.6, -3.0]),
+            key(23, [0.8, 1.4, -0.3], [4.0, 1.3, -4.4]),
+            key(26, [-1.0, 1.8, -0.8], [-5.0, 1.2, -5.0]),
+            key(30, [0, 4.0, 5.5], [0, 0.6, -2.5]),
+        ])
+        var demo = Config("shapes demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .shapes)) {
+            $0.post = ShowcaseLook.lens
+        }.track(track).recording()
+        demo.startTime = 2
+        return [demo]
     }
 
     /// Each analytic area light against its emissive-mesh twin (Scene.buildLightCheck), converged direct light.
