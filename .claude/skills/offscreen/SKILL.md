@@ -47,6 +47,8 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
 * It prints the timing table, the log path and the new PNG paths. Override typos are printed too ("unknown key"); a
   typo doesn't stop the run.
 * `-q` prints only the PNG paths. `-b <binary>` runs another build, from its own folder, with its own shaders.
+* A setting with `.recording()` (Benchmark.swift) also saves every other measured frame as a JPEG in a folder of its
+  own: a 30 fps sequence for ffmpeg. `-m showcasevideo` records every showcase model orbited for 6 s.
 
 Not settable from the environment:
 * the camera pose: each scene's default camera is used, or a `Config.camera` / `.cameraMove()` in a mode;
@@ -78,13 +80,14 @@ python3 Tools/eval/stress.py "$SCRATCH/q"
 ```
 The mode-to-scorer table is in measuring.md. Narrow long modes with `METALRENDERER_BENCH_ONLY="name|other"`.
 
-**Make a video.** A mode whose setting records (`Config.track(...).recording()`: a camera track, every frame saved
-as `NN-<name>-0000.png`) becomes an mp4 with `scripts/video.sh`, which runs `render.sh` and then ffmpeg:
+**Make a video.** A mode whose settings record (`.recording()`, see the note above; `.track(...)` gives a setting a
+camera track of its own) becomes an mp4 with `scripts/video.sh`, which runs `render.sh` and then ffmpeg on each
+setting's frames:
 ```bash
 .claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
 ```
-It takes minutes (a frame and its PNG every 1/60 s of the track), so run it with `run_in_background`. To tune a
-track, look along it first: `METALRENDERER_RECORD_STEP=90` keeps every 90th frame (render.sh, then Read the PNGs).
+It takes minutes (every frame of the track is rendered), so run it with `run_in_background`. To tune a track, look
+along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 
 **Time it.** Timings belong to the `performance` skill (`ab.sh`, alternating rounds). Its runs are headless too.
 

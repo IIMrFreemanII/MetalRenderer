@@ -14,7 +14,7 @@ extension Benchmark {
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
-        "shapesdemo": shapesDemo,
+        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -96,6 +96,17 @@ extension Benchmark {
             out.append(shown("showcase \(first) camera", first).cameraMove())
         }
         return out
+    }
+
+    /// A video of the showcase: every model for 6 s from t = 2 s, the camera orbiting it, every other frame saved
+    /// (`recording`: 180 JPEGs at 30 fps in a folder per model). `METALRENDERER_GALLERY="owl|demon"` picks the models.
+    private static func showcaseVideo() -> [Config] {
+        Scene.galleryFiles().map(Scene.showcaseName).map { name in
+            var c = Config("video \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .showcase, showcase: name))
+                .cameraMove().recording().frames(360)
+            c.startTime = 2
+            return c
+        }
     }
 
     /// Fast smoke tests: the default setting, a camera move, path traced, 0.75x native.
@@ -816,7 +827,8 @@ extension Benchmark {
     }
 
     /// The SDF shapes scene's demo video: 30 s along a camera track at the app's look (cascades, 3x from 0.5x to
-    /// 1920x1200) with the showcase's lens, every frame saved (`.claude/skills/offscreen/scripts/video.sh -m shapesdemo`).
+    /// 1920x1200) with the showcase's lens (`recording`: 900 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh
+    /// -m shapesdemo` makes the mp4).
     /// A wide view, along the primitives, over to the cuts and blends and the baked knot, the glowing ring and lamp,
     /// and back out.
     private static func shapesDemo() -> [Config] {

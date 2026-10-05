@@ -40,16 +40,16 @@ final class BenchmarkModesTests: XCTestCase {
         }
     }
 
-    func testRecording() {
+    func testTrackedRecording() {
         let track = CameraTrack([CameraTrack.Key(time: 0, position: [0, 1, 5], target: .zero),
                                  CameraTrack.Key(time: 2.5, position: [1, 1, 5], target: .zero)])
-        let c = Benchmark.Config("r").still().track(track).recording()
-        XCTAssertTrue(c.recordsFrames)
-        XCTAssertFalse(c.settings.paused, "it records the animation")
+        let c = Benchmark.Config("r").track(track).recording()
+        XCTAssertTrue(c.record)
         XCTAssertEqual(c.frames, 151, "every 1/60 s of the track, both ends")
         let demo = Benchmark.configs(for: "shapesdemo")
         XCTAssertEqual(demo.count, 1)
-        XCTAssertTrue(demo[0].recordsFrames)
+        XCTAssertTrue(demo[0].record)
+        XCTAssertFalse(demo[0].settings.paused)
         XCTAssertEqual(demo[0].settings.scene.kind, .shapes)
         XCTAssertNotNil(demo[0].track)
     }

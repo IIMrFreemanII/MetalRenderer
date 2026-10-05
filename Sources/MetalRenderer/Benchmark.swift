@@ -1,9 +1,9 @@
 import Foundation
 import Metal
+import simd
 import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
-import simd
 
 /// Headless-ish benchmark mode, enabled with `METALRENDERER_BENCH=1 swift run -c release`.
 ///
@@ -25,11 +25,11 @@ final class Benchmark {
         var accumulateTechnique = false     // with accumulate: average the GI method's frames instead of path tracing (restirgicheck)
         var supersample = false             // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
         var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
+        var record = false                  // also save every other measured frame (30 fps), as JPEGs in a folder of its own
         var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
         var camera: Camera? = nil           // a fixed camera instead of the scene's default
         var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
         var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
-        var recordsFrames = false           // every measured frame is saved, numbered (a video's frames: `recording`)
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
@@ -66,15 +66,14 @@ final class Benchmark {
         func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
         func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
         func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
+        /// Saves every other measured frame (30 fps of the 60 Hz clock) for a video: `<NN-name>/f0001.jpg` and on.
+        func recording() -> Config { var c = self; c.record = true; return c }
         func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
-        func track(_ track: CameraTrack) -> Config { var c = self; c.track = track; return c }
-        /// Every frame of its track saved as `NN-<name>-0000.png` ... (the frames of a video: the offscreen skill's
-        /// video.sh), the animation running. The warm-up holds the track's first pose, so the frames start settled.
-        func recording() -> Config {
+        /// The camera follows `track`, the warm-up holding its first pose; the setting runs as long as the track.
+        func track(_ track: CameraTrack) -> Config {
             var c = self
-            c.settings.paused = false
-            c.recordsFrames = true
-            c.frames = Int(((track?.duration ?? 4) * 60).rounded()) + 1
+            c.track = track
+            c.frames = Int((track.duration * 60).rounded()) + 1
             return c
         }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
@@ -148,6 +147,15 @@ final class Benchmark {
             start.position = SIMD3<Float>(7.0, 2.2, 12.0)
             start.yaw = -0.6
             start.pitch = -0.1
+        } else if scene == .showcase, let sceneCamera {
+            // An orbit round the model (it stands on the vertical axis): from 40 degrees round to the default view.
+            let a = -40 * (1 - p) * .pi / 180
+            let turn = simd_quatf(angle: a, axis: [0, 1, 0])
+            let f = turn.act(sceneCamera.forward)
+            c = sceneCamera
+            c.position = turn.act(sceneCamera.position)
+            c.yaw = atan2(f.x, -f.z)
+            return c
         } else if let demo = Scene.demoCamera(scene) ?? (scene.cameraFromScene ? sceneCamera : nil) {
             // A step to the side and back, turning toward the default view.
             c = demo
@@ -249,12 +257,9 @@ final class Benchmark {
     func noteSwap() {
         if let k = Benchmark.swapShot, cut == nil { cut = min(frameInConfig + max(k, 0) + 1, framesInConfig) }
     }
-    var shouldCapture: Bool {
-        if current.recordsFrames && isMeasuring { return (frameInConfig - warmupFrames) % Benchmark.recordStep == 0 }
-        return framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2)
-    }
-    /// `METALRENDERER_RECORD_STEP=<n>`: a recording keeps every nth frame only (a quick look along its track).
-    static let recordStep = max(Int(ProcessInfo.processInfo.environment["METALRENDERER_RECORD_STEP"] ?? "") ?? 1, 1)
+    var shouldCapture: Bool { framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2) }
+    /// A recording setting's frame to save: every other measured one.
+    var shouldRecord: Bool { current.record && isMeasuring && (frameInConfig - warmupFrames) % 2 == 0 }
 
     func noteDraw(resolution: String) {
         resolutions[configIndex] = resolution
@@ -319,15 +324,22 @@ final class Benchmark {
     // MARK: - Frame capture
 
     /// A buffer for a copy of `texture` (bgra8Unorm_srgb: the bytes are already sRGB-encoded; the frame encodes the
-    /// copy, FrameEncoder.capture) and a closure that writes it as PNG.
-    func capture(of texture: MTLTexture, device: MTLDevice) -> (buffer: MTLBuffer, write: () -> Void)? {
-        guard let dir = captureDir else { return nil }
+    /// copy, FrameEncoder.capture) and a closure that writes it as PNG, or (`sequence`: a recording's frame) as a JPEG
+    /// numbered in the setting's own folder.
+    func capture(of texture: MTLTexture, device: MTLDevice, sequence: Bool = false) -> (buffer: MTLBuffer, write: () -> Void)? {
+        guard var dir = captureDir else { return nil }
         let w = texture.width, h = texture.height, rowBytes = w * 4
         guard let buffer = device.makeBuffer(length: rowBytes * h, options: .storageModeShared) else { return nil }
-        let fileName = String(format: "%02d-", configIndex) + current.name
+        let name = String(format: "%02d-", configIndex) + current.name
             .replacingOccurrences(of: "[^A-Za-z0-9.]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-            + (current.recordsFrames ? String(format: "-%04d", frameInConfig - warmupFrames) : framesLeftInConfig == 2 ? "-prev" : "") + ".png"
+        let fileName: String, type: UTType
+        if sequence {
+            dir.appendPathComponent(name)
+            (fileName, type) = (String(format: "f%04d.jpg", (frameInConfig - warmupFrames) / 2 + 1), .jpeg)
+        } else {
+            (fileName, type) = (name + (framesLeftInConfig == 2 ? "-prev" : "") + ".png", .png)
+        }
         let url = dir.appendingPathComponent(fileName)
         return (buffer, {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -336,8 +348,8 @@ final class Benchmark {
                                       bytesPerRow: rowBytes, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: bitmapInfo),
                   let image = ctx.makeImage(),
-                  let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
-            CGImageDestinationAddImage(dest, image, nil)
+                  let dest = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(dest, image, type == .jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary : nil)
             CGImageDestinationFinalize(dest)
         })
     }

@@ -2300,7 +2300,8 @@ final class Renderer: NSObject {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
             if benchmark.shouldCapture { print("  " + customRT.takeStats().description) } else { _ = customRT.takeStats() }
         }
-        if let benchmark, let output, benchmark.shouldCapture, let capture = benchmark.capture(of: output.texture, device: device) {
+        if let benchmark, let output, benchmark.shouldCapture || benchmark.shouldRecord,
+           let capture = benchmark.capture(of: output.texture, device: device, sequence: !benchmark.shouldCapture) {
             passes.capture(output.texture, into: capture.buffer)
             writeCapture = capture.write
         }
