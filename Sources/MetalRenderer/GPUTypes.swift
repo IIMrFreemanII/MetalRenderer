@@ -54,6 +54,17 @@ enum UniformFlags {
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
     static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
+    static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
+}
+
+/// The lens and the finish (MSL PostParams), passed with setBytes to the kernels of Shaders/Post.metal.
+struct GPUPostParams {
+    var bloom = SIMD4<Float>()     // x = strength (0 = none), y = threshold, z = exposure (linear scale), w = levels
+    var lens = SIMD4<Float>()      // x = aperture (output pixels), y = focus distance (m, 0 = auto), z = largest blur
+                                   // radius (output pixels), w = autofocus easing per frame
+    var finish = SIMD4<Float>()    // x = vignette, y = grain, z = chromatic aberration
+    var size = SIMD4<UInt32>()     // xy = output size, zw = traced size
+    var frame = SIMD4<UInt32>()    // x = frame index, y = bloom level being made
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).
@@ -301,6 +312,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
+    precondition(MemoryLayout<GPUPostParams>.stride == 80, "GPUPostParams layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
     precondition(MemoryLayout<GPUSkyParams>.stride == 192, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
