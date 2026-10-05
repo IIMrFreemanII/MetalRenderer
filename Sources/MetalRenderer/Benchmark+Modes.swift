@@ -13,7 +13,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "shapes": shapes,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -765,6 +765,35 @@ extension Benchmark {
             let reuse = noReuse.named("\(tag) restirgi reuse").with { $0.restirGI.temporal = true; $0.restirGI.spatialPasses = 1 }
             return [pt, noReuse, reuse, reuse.named("\(tag) restirgi quarter").with { $0.restirGI.quarterBudget = true }]
         }
+    }
+
+    /// The SDF shapes scene (Scene+Shapes.swift) on each tracer and API: paused frames to compare between them
+    /// (Tools/eval/pngdiff.py: the tracers march the same shapes), path traced, each direct-light method on the glowing
+    /// shapes (mesh lights), the normals, materials and traversal cost views, then moving frames and a camera move
+    /// for timing.
+    private static func shapes() -> [Config] {
+        let scene = SceneSettings(kind: .shapes)
+        var out: [Config] = []
+        for tracer in tracers {
+            for api in RenderAPI.allCases {
+                let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
+                    $0.rayTracer = tracer.kind
+                    $0.api = api
+                }
+                let tag = "\(tracer.tag) \(api.envName)"
+                out.append(base.named("\(tag) cascades").still())
+                guard api == .metal3 else { continue }
+                out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
+                for mode in [DirectLightMode.restir, .megalights] {
+                    out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
+                }
+                for view in ["Normals", "Triangles", "Traversal cost"] {
+                    out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
+                }
+                out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
+            }
+        }
+        return out
     }
 
     /// Each analytic area light against its emissive-mesh twin (Scene.buildLightCheck), converged direct light.

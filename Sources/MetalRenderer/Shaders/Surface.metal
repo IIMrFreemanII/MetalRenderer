@@ -343,6 +343,24 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     return v;
 }
 
+// A hit's material, as it is before its textures.
+inline void surfaceMaterial(thread Surface& sf, Material mat) {
+    sf.albedo = mat.albedo.rgb;
+    sf.emission = mat.emission.rgb;
+    sf.metallic = mat.albedo.a;
+    sf.roughness = mat.emission.a;
+    sf.specular = mat.params.x;
+    sf.lightEmitter = mat.params.z > 0.0f;
+}
+
+// Metallic-roughness, once the textures are in: metals reflect their base colour, dielectrics 4% (x weight).
+inline void surfaceSpecular(thread Surface& sf) {
+    if (sf.specular > 0.0f) {
+        sf.f0 = mix(float3(0.04f * sf.specular), sf.albedo, sf.metallic);
+        sf.albedo *= 1.0f - sf.metallic;
+    }
+}
+
 Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
     Hit res = intersectClosest(r, mask, accel);
 
@@ -380,6 +398,43 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
             if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
         }
         sf.instanceId = surfaceInstance(id);
+        return sf;
+    }
+    if (SDF_SHAPES && res.part == HIT_SDF) {
+        // An SDF shape: the march gave the normal (the instance's space) and the material offset there. It moves
+        // rigidly with its instance: where the point was a frame ago is where the instance's last transform put it.
+        float4 world = float4(r.origin + r.direction * res.distance, 1.0f);
+        float3 objPos = float3(dot(inst.normalMatrix[0], world), dot(inst.normalMatrix[1], world), dot(inst.normalMatrix[2], world));
+        sf.hit = true;
+        sf.position = world.xyz;
+        sf.prevPosition = (inst.prevTransform * float4(objPos, 1.0f)).xyz;
+        float3 objN = sdfOctDecode(res.barycentrics);
+        sf.normal = sf.geomNormal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
+        Material mat = s.materials[inst.materialIndex + res.primitive];
+        surfaceMaterial(sf, mat);
+        sf.instanceId = surfaceInstance(id);
+        if (any(mat.textures.xyw != uint3(NO_TEXTURE))) {
+            // No UVs: the textures are projected along the instance's three axes (once per unit), each weighed by
+            // how squarely the surface faces it. Their level from the ray's footprint, as below. (No normal maps.)
+            float3 w = objN * objN;
+            w *= w;
+            w /= w.x + w.y + w.z;
+            float cosTheta = max(abs(dot(normalize(r.direction), sf.geomNormal)), 0.2f);
+            float objPerWorld = length(inst.normalMatrix[0].xyz);
+            float lodBase = log2(max(res.distance * length(r.direction) * spread / cosTheta * objPerWorld, 1e-8f));
+            float2 uvs[3] = {objPos.zy, objPos.xz, objPos.xy};
+            float4 albedo = 0.0f, mr = 0.0f, emission = 0.0f;
+            for (uint a = 0; a < 3; ++a) {
+                if (w[a] < 0.01f) continue;
+                if (mat.textures.x != NO_TEXTURE) albedo += w[a] * sampleMaterial(s, mat.textures.x, uvs[a], lodBase, record);
+                if (mat.textures.y != NO_TEXTURE) mr += w[a] * sampleMaterial(s, mat.textures.y, uvs[a], lodBase, record);
+                if (mat.textures.w != NO_TEXTURE) emission += w[a] * sampleMaterial(s, mat.textures.w, uvs[a], lodBase, record);
+            }
+            if (mat.textures.x != NO_TEXTURE) sf.albedo *= albedo.rgb;
+            if (mat.textures.y != NO_TEXTURE) { sf.roughness *= mr.g; sf.metallic *= mr.b; }
+            if (mat.textures.w != NO_TEXTURE) sf.emission *= emission.rgb;
+        }
+        surfaceSpecular(sf);
         return sf;
     }
     float2 bc = res.barycentrics;
@@ -428,13 +483,8 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.prevPosition = (inst.prevTransform * float4(prevObjPos, 1.0f)).xyz;
     sf.normal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
-    sf.albedo = mat.albedo.rgb;
-    sf.emission = mat.emission.rgb;
-    sf.metallic = mat.albedo.a;
-    sf.roughness = mat.emission.a;
-    sf.specular = mat.params.x;
+    surfaceMaterial(sf, mat);
     sf.instanceId = surfaceInstance(id);
-    sf.lightEmitter = mat.params.z > 0.0f;
     if (mat.params.w > 0.0f) {
         // Translucent (a leaf): the material's share of the leaves shows the light of the far side, the rest that of
         // the near side. Leaf by leaf (two triangles are one), always the same ones: nothing flickers, and a crown
@@ -484,9 +534,6 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
             }
         }
     }
-    if (sf.specular > 0.0f) {   // metallic-roughness: metals reflect their base colour, dielectrics 4% (x weight)
-        sf.f0 = mix(float3(0.04f * sf.specular), sf.albedo, sf.metallic);
-        sf.albedo *= 1.0f - sf.metallic;
-    }
+    surfaceSpecular(sf);
     return sf;
 }

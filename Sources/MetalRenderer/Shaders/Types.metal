@@ -181,6 +181,9 @@ constant bool VOXELS = FOLIAGE;
 #else
 constant bool VOXELS = VOXEL_BOXES;
 #endif
+// Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace: the
+// custom tracer where it meets such an instance, Metal's in its intersection queries' loop (their boxes).
+constant bool SDF_SHAPES = (LIGHT_SPEC & 0x00400000u) != 0;
 constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
 struct InstanceBlockRef { device const InstanceData* records; };
 inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {

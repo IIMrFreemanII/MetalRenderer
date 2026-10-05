@@ -21,6 +21,10 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
 * **Emissive meshes are lights:** any glowing surface (a neon sign, a screen, a glTF emissive texture) is sampled for direct light with shadow rays, one triangle at a time.
 * **glTF lights:** `KHR_lights_punctual` point, spot and directional lights load with their models.
+* **SDF shapes:** geometry given by signed distance fields, sphere-traced by both ray tracers.
+  * Primitives (sphere, rounded box, torus, capsule, cylinder, cone), cut, intersected and smoothly blended into one another, a material per node.
+  * Meshes baked into distance grids that can be used like any primitive.
+  * Glowing shapes are lights, sampled like emissive meshes.
 * **Sky and clouds:** a physically based atmosphere, or an HDR environment image, with the sun.
   * The atmosphere has Rayleigh, Mie and ozone, with multiple scattering. It gives blue skies, bright horizons and red sunsets, and the sun light's colour follows it.
   * An image's sun is found and cut out, and the sun light takes its place.
@@ -195,6 +199,7 @@ For the plants:
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
 * `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest, and `lit` the share of lit windows at night. Its day starts in mid-morning: `METALRENDERER_VIEW=tod=0.6` starts it at midnight (`tod=0.41` as the sun sets). `METALRENDERER_BENCH=worldnight` renders the night from a street, a street corner, above the first city and 2 km from it, then drives 600 m down a street; `METALRENDERER_BENCH=worlddusk` renders the first city from above and from a street at eleven times from afternoon to the next morning, then lets 20 s of dusk go by in each view; `METALRENDERER_BENCH=worldground` renders the first city's ground: a junction of two streets from above and from its corner, a courtyard, the last street and the fields beyond it, the roads from over the city and from 2 km, and the junction at night; `METALRENDERER_BENCH=worldroads` renders the road from the first city to the next one: from the junction it leaves by, from the fields, before its deepest cutting and its highest bank, in the woods, from above, all of it from over the city, from short of the other city and at night, then flies 600 m along it; with `METALRENDERER_SHOT_SWAP=<k>` a setting ends, and its picture is taken, `k` frames after its scene is first made again (around another tile, or with the cities' lights). `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles, and renders the start with the scene's origin elsewhere and a place 50 km out. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits. `METALRENDERER_WORLD_GROUPS=0` makes every tile's trees again with every scene, as the scene's own instances (for comparing with the groups they are in otherwise), and `METALRENDERER_BLOCK_PART=<n>` sets how many instances of a group the custom tracer's top-level tree takes as one leaf (16).
+* `METALRENDERER_SCENE=shapes` starts in the SDF shapes scene. `METALRENDERER_BENCH=shapes` renders it paused on each tracer and API, with path tracing, ReSTIR and MegaLights on its glowing shapes, and in the normals, triangles (here: the shapes' materials) and traversal cost views; then it times moving frames and a camera move.
 * `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, its meshes' trees, the plants' voxels) instead of taking it from `~/Library/Caches/MetalRenderer/generated`; `=1` caches the trees and voxels in an optimised build too. `METALRENDERER_CACHE_MB=4096` caps that folder.
 
@@ -899,6 +904,39 @@ Window glass is thin and clear, or tinted: the camera sees through it and sees i
 * **Cost:** 0.2 to 1.9 ms by day (the table above), more at night, when the mirror ray's hit draws its light from the light table.
 * **Limits:** no refraction; glass doesn't tint or dim the light that passes it; the reflection's one light sample is filtered only by the upscaler (among many lights it is held low, so a dark pane doesn't sparkle); reflections off other surfaces see the room, not the pane.
 
+### SDF shapes
+
+A shape is a list of up to 32 nodes, joined one after the other: `((n0 op1 n1) op2 n2) …` (`SDFShapes.swift`). An instance places a shape the way an instance places a mesh, with any transform, and it can move. The **SDF shapes** scene (`METALRENDERER_SCENE=shapes`, `Scene+Shapes.swift`) has a row of primitives, a row of cut and blended shapes, a baked torus knot, and two glowing shapes that light the room.
+
+* **Nodes.**
+  * A node is a primitive: sphere, box (rounded), torus, capsule, cylinder (rounded), capped cone, or a baked grid.
+  * It is placed by a rotation, a translation and a uniform scale, so its distances stay distances.
+  * Its op is union, subtract or intersect. With a blend radius `k` the join is smooth: a polynomial smooth minimum, never more than k/4 below the sharp one.
+  * Its material is an offset from the instance's. A union's surface takes the nearer node's material, and a cut face takes the cutter's.
+* **Tracing.** Both tracers sphere-trace a shape inside its box, in the instance's space, with the shared marcher `sdfMarch` (`Shaders/SDF.metal`):
+  * The march stops within 0.1 mm, plus 0.1 mm per metre along the ray, well inside the 1 mm that a ray leaving a surface starts off it.
+  * A ray that starts inside a shape meets the inside surface, as rays meet both faces of triangles.
+  * Shapes with blends or grids step at 0.8 of the distance; exact ones at the full distance. A ray gives up after 128 steps.
+  * The custom tracer marches a shape where its traversal reaches the instance (`RT_SDF` in the instance's mask).
+  * Metal's tracer gives each shape a structure of one box, as with far plants' voxels. Its intersection queries hand the boxes to the shader, which marches them and never commits the hit.
+  * The march returns the hit's normal (a tetrahedral gradient) and its material. Everything after the hit (`traceSurface`, every pass) needs nothing more from the shape: no buffers, no second march.
+* **Baked grids** (`SDFVolume.swift`). A mesh is sampled about 64 times along its longest side, with two cells of room around it, and stored as `half`s.
+  * The distance is exact, to the nearest triangle.
+  * The sign is a vote of three. A sample is inside if an odd number of faces is crossed counting along x, y and z, in at least two of the three. A mesh with a few holes or doubled faces still has its inside right.
+  * Outside the grid the distance is a bound: the distance to the grid plus the least of its face samples.
+  * Grids are cached by a hash of the mesh (`GeneratedCache`).
+* **Glowing shapes are lights.**
+  * A shape whose material emits is turned into triangles: surface nets, each vertex moved onto the surface and then 0.15 of a cell outward. These triangles become an ordinary mesh light, so ReSTIR, MegaLights, the light tree, the light table and the fog sample it unchanged.
+  * Because the triangles lie just outside the surface, a shadow ray to a point on them never meets the shape first.
+  * A shape of several materials gets a light per material that emits.
+* **Textures.** An SDF hit has no UVs. Base colour, metallic-roughness and emissive textures are projected along the instance's three axes, once per unit, and blended by the normal (triplanar). There are no normal maps.
+* **Compiled in only where used.** A scene without SDF shapes compiles none of this (bit 22 of the light-type constant) and traces what it traced before. In a scene with shapes, Metal's tracer runs every ray as an intersection query, as it does with far plants' voxels.
+* **Limits:**
+  * Shapes can't be in instance groups.
+  * A node's scale is uniform.
+  * A shape's nodes don't animate; its instance does.
+  * Thin features under about 2 mm can be skipped by the 1 mm offset of a ray that leaves a surface.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -1010,6 +1048,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
 | `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
 | `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail, made from the library's plants for both tracers |
+| `SDFShapes.swift`, `SDFVolume.swift`, `SDFBuffers.swift`, `Scene+Shapes.swift` | SDF shapes: their nodes, distances, boxes and surface triangles; meshes baked into distance grids; the shapes on the GPU (and Metal's one-box structures); the SDF shapes scene |
 | `VoxelGrids.swift`, `VoxelLOD.swift` | Metal's tracer: the grids as one-box structures per level, and far plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |

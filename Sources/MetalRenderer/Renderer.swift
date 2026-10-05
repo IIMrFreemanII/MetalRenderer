@@ -926,11 +926,13 @@ final class Renderer: NSObject {
         // The textures too, unless they are a sparse heap's (Metal 3's streamer: `bindScene` declares the heap).
         // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
         // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
-        // And the borrowed meshes' buffers, which a hit reaches through the mesh table, and the instance blocks'
-        // records, which it reaches through theirs.
+        // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
+        // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through RTScene or
+        // their boxes' data.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
         shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? [])
+            + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
