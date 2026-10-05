@@ -11,3 +11,12 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Memory from earlier sessions
+
+`.claude/memory/MEMORY.md` indexes what earlier sessions learned (on other Macs): project status (the neural
+denoiser, MegaLights, the audit backlog), the user's working preferences, and the dev Macs. On a machine whose own
+Claude memory folder (`~/.claude/projects/<project>/memory/`) doesn't have these files yet, read the index at the
+start of the session and copy the files there, so they load by themselves from then on. Keep both in step when a
+memory changes.
+

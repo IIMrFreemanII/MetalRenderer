@@ -97,7 +97,7 @@ enum BlueNoise {
         return values
     }
 
-    private struct SplitMix64 {
+    struct SplitMix64: RandomNumberGenerator {   // also the dataset's camera tracks
         var state: UInt64
         init(seed: UInt64) { state = seed }
         mutating func next() -> UInt64 {

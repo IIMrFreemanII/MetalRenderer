@@ -15,3 +15,8 @@ __pycache__/
 # graphify knowledge graph (regenerate with: graphify update .)
 /graphify-out/
 .idea
+# the training scripts' local environment and checkpoints (Tools/neural)
+/Tools/neural/.venv/
+/Tools/neural/runs/
+# training data (METALRENDERER_BENCH=dataset; Tools/neural/view.py makes pictures of it)
+/dataset/

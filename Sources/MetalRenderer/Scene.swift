@@ -402,6 +402,7 @@ final class Scene {
         case .city: buildCity(settings.city, seed: settings.seed, night: false)
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
         case .world: buildWorld()
+        case .randomRoom: buildRandomRoom(seed: settings.seed)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -1409,7 +1410,7 @@ final class Scene {
 
     /// Model-space bounds of the loaded models' parts, scaled so the largest side is `size`, standing on y = 0 and
     /// centred on x = z = 0.
-    private static func placement(_ model: GLTFModel, size: Float) -> float4x4 {
+    static func placement(_ model: GLTFModel, size: Float) -> float4x4 {
         let b = model.bounds
         guard !b.isEmpty else { return matrix_identity_float4x4 }
         let s = size / max((b.hi - b.lo).max(), 1e-6)

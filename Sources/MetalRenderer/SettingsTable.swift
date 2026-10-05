@@ -62,6 +62,9 @@ extension GIMode: EnvNamed {
     var envName: String { ["pt", "cascades", "restir"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
+extension UpscalerKind: EnvNamed {
+    var envName: String { self == .metalFX ? "metalfx" : "neural" }
+}
 extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
@@ -327,6 +330,7 @@ enum SettingsTable {
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
+            S.slider("Room seed", \.scene.seed, SceneSettings.seedRange, live: false).when { $0.scene.kind == .randomRoom },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
@@ -423,8 +427,9 @@ enum SettingsTable {
         Section(title: "Rendering", rows: [
             S.slider("Render scale", \.renderScale, RenderSettings.renderScaleRange, step: Double(RenderSettings.renderScaleStep),
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
-            S.custom(.upscale, "Upscale (MetalFX denoiser)"),
+            S.custom(.upscale, "Upscale (denoising)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
+            S.popup("Upscaler", \.upscaler, titled(\.title)).env(.gi, "upscaler").enabled { $0.upscaleFactor > 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
         ])

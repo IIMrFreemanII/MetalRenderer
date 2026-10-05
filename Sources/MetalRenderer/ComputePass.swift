@@ -138,7 +138,7 @@ protocol FrameEncoder: AnyObject {
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
     /// MetalFX's denoising scaler, into its own texture (`Upscaler.hdrOutput`), which tonemapKernel then reads.
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String)
-    /// Copies `texture` (4 bytes a pixel) into `buffer`, for a benchmark's PNG.
+    /// Copies `texture` into `buffer`, rows packed (`Benchmark.bytesPerPixel`), for a benchmark's PNG or float capture.
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer)
     /// Presents `drawable` and commits. `completed` runs on another thread once the GPU is done; `wait` blocks until then.
     func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void)
@@ -239,10 +239,10 @@ final class Metal3Frame: FrameEncoder {
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
         endCompute()
         guard let blit = cmd.makeBlitCommandEncoder() else { return }
-        let w = texture.width, h = texture.height
+        let w = texture.width, h = texture.height, rowBytes = w * Benchmark.bytesPerPixel(texture.pixelFormat)
         blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
                   sourceSize: MTLSize(width: w, height: h, depth: 1),
-                  to: buffer, destinationOffset: 0, destinationBytesPerRow: w * 4, destinationBytesPerImage: w * 4 * h)
+                  to: buffer, destinationOffset: 0, destinationBytesPerRow: rowBytes, destinationBytesPerImage: rowBytes * h)
         blit.endEncoding()
     }
 

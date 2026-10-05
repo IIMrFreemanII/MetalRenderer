@@ -13,6 +13,7 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
+    case neuralWarp, neuralPrepare, neuralConv, neuralPool, neuralFinish   // our own denoising upscaler (NeuralUpscaler)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
@@ -151,6 +152,10 @@ struct Pipelines {
     var rc: RCPipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
+    }
+    var neural: NeuralPipelines {
+        NeuralPipelines(warp: self[.neuralWarp], prepare: self[.neuralPrepare], conv: self[.neuralConv], pool: self[.neuralPool],
+                        finish: self[.neuralFinish])
     }
     /// The kernels that build the custom tracer's trees (nil for the Metal tracer).
     var rt: RTPipelines? {

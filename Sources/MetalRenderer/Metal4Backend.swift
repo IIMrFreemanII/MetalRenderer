@@ -280,11 +280,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         guard let enc = encoder("capture", newBuffer: true) else { return }
         keep(texture)
         keep(buffer)
-        let w = texture.width, h = texture.height
+        let w = texture.width, h = texture.height, rowBytes = w * Benchmark.bytesPerPixel(texture.pixelFormat)
         order(.blit)
         enc.copy(sourceTexture: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
                  sourceSize: MTLSize(width: w, height: h, depth: 1), destinationBuffer: buffer, destinationOffset: 0,
-                 destinationBytesPerRow: w * 4, destinationBytesPerImage: w * 4 * h)
+                 destinationBytesPerRow: rowBytes, destinationBytesPerImage: rowBytes * h)
     }
 
     func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void) {

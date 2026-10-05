@@ -17,7 +17,7 @@ python3 Tools/eval/shadow.py /tmp/run
 | `restir.py` | `restirq`: stress-scene direct light at 32 / 128 / 1024 / 4096 lights, each direct-light method; `restircheck`: ReSTIR without reuse vs every light traced, per light type (within the run) | `refs/restir/` (every light traced up to 1024; ReSTIR without reuse at 4096) |
 | `restirgi.py` | `restirgicheck`: accumulated ReSTIR GI (no reuse, reuse, quarter budget) vs accumulated path tracing, indirect light, Cornell and stress hall (within the run) | — |
 | `noise.py` | `denoise` (references from `noise`) | `refs/noise/` (render once, see below) |
-| `hwrt.py` | `hwrtq`: MetalFX's denoising scaler at 3×, final image, Cornell and stress hall | `refs/hwrt/` (supersampled 1920×1200, path traced) |
+| `hwrt.py` | `hwrtq`: MetalFX's denoising scaler at 3×, final image, Cornell and stress hall; `neuralq`: the same and ours (`neural`, Tools/neural) | `refs/hwrt/` (supersampled 1920×1200, path traced) |
 | `pngdiff.py` | any two runs: per-image differences (did a refactor change the frames?) | — |
 | `columns.py` | pipe a benchmark table in to pull out named columns | — |
 

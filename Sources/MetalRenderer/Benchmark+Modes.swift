@@ -10,10 +10,11 @@ extension Benchmark {
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality,
-        "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
+        "hwrt": hwrt, "hwrtq": hwrtq, "neuralq": neuralq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
+        "dataset": dataset, "datasetref": datasetReferences,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -649,6 +650,15 @@ extension Benchmark {
             out += scored(shown) { "\(sceneTag) final \($0) denoiser" }
         }
         return out
+    }
+
+    /// Our denoising upscaler (NeuralUpscaler) against MetalFX's: hwrtq's frames and references, and the same frames
+    /// upscaled by ours (Tools/eval/hwrt.py scores both). Ours needs weights (Assets/Neural/denoiser.nnw or
+    /// METALRENDERER_NEURAL); without them MetalFX renders its frames too.
+    private static func neuralq() -> [Config] {
+        hwrtq() + [("cornell", SceneSettings()), ("stress", stressHall())].flatMap { sceneTag, scene in
+            scored(Config("", scale: 0.5, upscale: 3, scene: scene) { $0.upscaler = .neural }) { "\(sceneTag) final \($0) neural" }
+        }
     }
 
     /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API and METALRENDERER_RT's

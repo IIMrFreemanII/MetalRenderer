@@ -15,7 +15,8 @@ let package = Package(
         .testTarget(
             name: "MetalRendererTests",
             dependencies: ["MetalRenderer"],
-            path: "Tests/MetalRendererTests"
+            path: "Tests/MetalRendererTests",
+            exclude: ["Neural"]   // the neural upscaler's golden vector, read from its path (NeuralUpscalerTests)
         )
     ]
 )

@@ -154,6 +154,14 @@ struct RegirSettings: Equatable, Codable {
 }
 
 /// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
+/// Which denoising upscaler upscales, with `upscaleFactor` > 1.
+enum UpscalerKind: Int, CaseIterable, Codable {
+    case metalFX    // MetalFX's denoising scaler
+    case neural     // our own (NeuralUpscaler, the net Tools/neural trains), at its weights' factor; MetalFX without them
+
+    var title: String { self == .metalFX ? "MetalFX" : "Neural (ours)" }
+}
+
 enum ToneMap: Int, CaseIterable, Codable {
     case aces       // Narkowicz's ACES fit: contrasty, saturated highlights shift toward white
     case agx        // AgX (Troy Sobotka), polynomial fit: softer, keeps bright saturated lights from going flat
@@ -254,6 +262,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
     case world              // the open world (World.swift): hills, forest and cities without end, made around the camera;
                             // its day goes through dusk into a night of lit windows, street lamps and the moon
+    case randomRoom         // training data for the neural denoiser: a room made at random from `seed` (Scene+Training.swift)
 
     var title: String {
         switch self {
@@ -274,6 +283,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .city: return "City"
         case .cityNight: return "City at night"
         case .world: return "Open world"
+        case .randomRoom: return "Random room (training)"
         }
     }
 
@@ -483,7 +493,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .randomRoom:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -571,7 +581,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .randomRoom:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -648,6 +658,7 @@ struct FoliageSettings: Equatable, Codable {
 struct RenderSettings: Equatable, Codable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
     var upscaleFactor: CGFloat = 3     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
+    var upscaler = UpscalerKind.metalFX
     var giEnabled = true
     var bounces = 2
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)

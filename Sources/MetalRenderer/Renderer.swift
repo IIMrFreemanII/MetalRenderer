@@ -475,11 +475,15 @@ final class Renderer: NSObject {
     /// Resolution, fps and GPU time, refreshed twice a second.
     private(set) var statsLine = ""
     private var upscaler: Upscaler?           // MetalFX's denoising scaler, while upscaling
+    private var neuralUpscaler: NeuralUpscaler?   // ...or ours (RenderSettings.upscaler)
+    private lazy var neuralWeights = NeuralWeights.load(device: device)
+    private var neuralMissingNoted = false
     private var upscalerReset = true          // drop the upscaler's history on the next frame
     private var supersampling = false         // benchmark reference: jitter + average the final colour
     private var colorAccum: MTLTexture?
     private var colorAccumCount: UInt32 = 0
     private var prevJitter = SIMD2<Float>(repeating: 0)
+    private var trackStart = Camera()   // a benchmark's camera track starts here (Benchmark.Config.cameraTrack)
     // Benchmark reference: average raw frames of a paused scene instead of denoising.
     private var accumulating = false
     private var referenceGIMode: GIMode?                // benchmark references: accumulate this GI method instead of paths
@@ -491,8 +495,17 @@ final class Renderer: NSObject {
     /// Upscale factors this GPU supports (for MetalFX's denoising scaler), with 0 meaning off.
     var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
     private var historyValid = false
-    /// MetalFX's denoising scaler is this frame's upscaler: it denoises, so SVGF and the shadow denoiser stay off.
-    private var neuralDenoise: Bool { upscaler != nil }
+    /// A denoising upscaler (MetalFX's or ours) is this frame's: it denoises, so SVGF and the shadow denoiser stay off.
+    private var neuralDenoise: Bool { upscaler != nil || neuralUpscaler != nil }
+    /// Our upscaler's weights, when it is the one chosen and they are there.
+    private var neuralChosen: NeuralWeights? {
+        guard settings.upscaler == .neural else { return nil }
+        if neuralWeights == nil && !neuralMissingNoted {
+            neuralMissingNoted = true
+            print("Neural upscaler: no weights (Assets/Neural/denoiser.nnw or METALRENDERER_NEURAL; Tools/neural/export.py), MetalFX upscales")
+        }
+        return neuralWeights
+    }
     /// This project's denoisers (SVGF, the shadow denoiser) are on.
     private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
@@ -1612,7 +1625,8 @@ final class Renderer: NSObject {
         if settings.upscaleFactor > 1 && upscaleSupported {
             let backing = surface.backingScale
             let maxWidth = points.width * backing, maxHeight = points.height * backing
-            let factor = min(settings.upscaleFactor, maxUpscale, maxWidth / CGFloat(width), maxHeight / CGFloat(height))
+            let wanted = neuralChosen.map { CGFloat($0.factor) } ?? settings.upscaleFactor   // ours: its weights' factor
+            let factor = min(wanted, maxUpscale, maxWidth / CGFloat(width), maxHeight / CGFloat(height))
             if factor > 1.01 {
                 outWidth = Int((CGFloat(width) * factor).rounded())
                 outHeight = Int((CGFloat(height) * factor).rounded())
@@ -1641,9 +1655,25 @@ final class Renderer: NSObject {
         let width = size.width, height = size.height, outWidth = size.outWidth, outHeight = size.outHeight
         if !size.upscaling {
             upscaler = nil
+            neuralUpscaler = nil
+        } else if let weights = neuralChosen, size.outWidth == width * weights.factor, size.outHeight == height * weights.factor {
+            upscaler = nil
+            if neuralUpscaler == nil || neuralUpscaler!.inputWidth != width || neuralUpscaler!.inputHeight != height {
+                do {
+                    neuralUpscaler = try NeuralUpscaler(device: device, weights: weights, inputWidth: width, inputHeight: height)
+                    upscalerReset = true
+                    historyValid = false
+                } catch {
+                    print(error)
+                    neuralUpscaler = nil
+                    settings.upscaler = .metalFX
+                    return false
+                }
+            }
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
                     || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight {
             do {
+                neuralUpscaler = nil
                 upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height,
                                         outputWidth: outWidth, outputHeight: outHeight, synchronous: benchmark != nil)
                 upscalerReset = true
@@ -1669,6 +1699,9 @@ final class Renderer: NSObject {
             dt = benchmark.fixedDt   // deterministic animation so every setting renders the same frames
             if benchmark.current.cameraPath {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
+            }
+            if let track = benchmark.current.cameraTrack {
+                camera = track.pose(at: Float(benchmark.frameInConfig) * dt, from: trackStart)
             }
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
@@ -1852,7 +1885,7 @@ final class Renderer: NSObject {
             : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
-        if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
+        if neuralDenoise || linearReference { u.flags |= UniformFlags.hdrOutput }
         if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
         p.uniforms = u
 
@@ -2143,18 +2176,34 @@ final class Renderer: NSObject {
             enc.setBytes(&params, length: MemoryLayout<SIMD2<UInt32>>.stride, index: 0)
             setTextures(enc, [t.upscaleColor, accum, drawable.texture])
             dispatch(enc, .accumulateColor, width: size.width, height: size.height)
+            if linearReference {   // it averaged linear light: the exposure and the tone curve, into the drawable
+                if overlap { enc.memoryBarrier(scope: .textures) }
+                bind(enc, .tonemap, c.uniforms)
+                setTextures(enc, [accum, drawable.texture])
+                dispatch(enc, .tonemap, width: size.width, height: size.height)
+            }
         }
 
-        // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
+        // 5. Upscale: a denoising scaler (MetalFX's or ours) denoises the raw light as it upscales.
         passes.endCompute()
-        if let drawable, let upscaler {
+        var upscaled: (hdr: MTLTexture, pass: String)?
+        if drawable != nil, let upscaler {
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
                                                    reset: upscalerReset), pass: "upscale")
+            upscaled = (upscaler.hdrOutput, "upscale")
+        } else if drawable != nil, let neural = neuralUpscaler {
+            passes.run(neural.stages(pipelines.neural, NeuralInputs(
+                color: t.upscaleColor, albedo: t.albedo, specular: t.specularAlbedo, normalDepth: t.normalDepth[cur],
+                roughness: t.roughness, motion: t.pixelMotion, jitter: plan.jitter, exposure: plan.uniforms.post.x,
+                reset: upscalerReset)))
+            upscaled = (neural.hdrOutput, "neural")
+        }
+        if let drawable, let upscaled {
             upscalerReset = false
             // It leaves linear, unbounded light: the exposure and the tone curve, into the drawable.
-            if let enc = passes.compute("upscale") {
+            if let enc = passes.compute(upscaled.pass) {
                 bind(enc, .tonemap, c.uniforms)
-                setTextures(enc, [upscaler.hdrOutput, drawable.texture])
+                setTextures(enc, [upscaled.hdr, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
@@ -2189,6 +2238,10 @@ final class Renderer: NSObject {
         if let benchmark, let output, benchmark.shouldCapture, let capture = benchmark.capture(of: output.texture, device: device) {
             passes.capture(output.texture, into: capture.buffer)
             writeCapture = capture.write
+        }
+        if let benchmark, output != nil, let dataset = benchmark.current.dataset,
+           let writeArrays = datasetCapture(dataset, plan: plan, benchmark: benchmark, passes: passes) {
+            writeCapture = { [writeCapture] in writeCapture?(); writeArrays() }
         }
         let checkCrowd = benchmark?.shouldCapture == true && CrowdSkinner.checked && !CrowdSkinner.frozen
         let semaphore = frameSemaphore
@@ -2828,6 +2881,7 @@ final class Renderer: NSObject {
             rebuildScene(resetCamera: false)
         }
         camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera
+        trackStart = camera
         prevCamera = camera
         accumulating = c.accumulate
         referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil
@@ -2839,6 +2893,48 @@ final class Renderer: NSObject {
         upscalerReset = true
         streaming = Streaming()
         print("benchmark: \(c.name)")
+    }
+
+    /// A dataset reference (METALRENDERER_BENCH=datasetref) averages linear light, as the denoising scaler's output is
+    /// before its tone curve.
+    private var linearReference: Bool { supersampling && benchmark?.current.dataset != nil }
+
+    /// METALRENDERER_BENCH=dataset / datasetref (Benchmark+Dataset.swift): copies this frame's arrays (a clip's frame:
+    /// the denoising scaler's inputs and output; a reference: the averaged light) and returns what writes them, and the
+    /// frame's row, once the frame is done.
+    private func datasetCapture(_ dataset: Benchmark.DatasetCapture, plan: FramePlan, benchmark: Benchmark,
+                                passes: FrameEncoder) -> (() -> Void)? {
+        let dir: URL, frame: Int, arrays: [(texture: MTLTexture, keep: Int, name: String)]
+        var row: Data?
+        switch dataset {
+        case .inputs(let clip):
+            guard benchmark.isMeasuring, let t = targets, let upscaler else { return nil }
+            (dir, frame) = (clip, benchmark.frameInConfig - benchmark.warmupFrames)
+            arrays = [(t.upscaleColor, 3, "color"), (t.albedo, 3, "albedo"), (t.specularAlbedo, 3, "specular"),
+                      (t.normalDepth[plan.cur], 4, "normal"), (t.deviceDepth, 1, "depth"), (t.pixelMotion, 2, "motion"),
+                      (t.roughness, 1, "roughness"), (upscaler.hdrOutput, 3, "metalfx")]
+            let u = plan.uniforms, size = plan.size
+            row = try? JSONEncoder().encode(Benchmark.DatasetFrame(
+                frame: frame, time: animTime,
+                camera: [camera.position.x, camera.position.y, camera.position.z, camera.yaw, camera.pitch, camera.fovY],
+                jitter: [u.jitter.x, u.jitter.y], prevJitter: [u.jitter.z, u.jitter.w], exposure: u.post.x,
+                size: [size.width, size.height], outSize: [size.outWidth, size.outHeight]))
+        case .reference(let clip, let f):
+            guard benchmark.shouldCapture, let accum = colorAccum else { return nil }
+            (dir, frame) = (clip, f)
+            arrays = [(accum, 3, "reference")]
+        }
+        let writes = arrays.compactMap { a -> (() -> Void)? in
+            let url = dir.appendingPathComponent(Benchmark.datasetFileName(frame: frame, buffer: a.name))
+            guard let c = Benchmark.floatCapture(of: a.texture, keep: a.keep, to: url, device: device) else { return nil }
+            passes.capture(a.texture, into: c.buffer)
+            return c.write
+        }
+        let rowURL = dir.appendingPathComponent(Benchmark.datasetFileName(frame: frame, buffer: nil))
+        return {
+            writes.forEach { $0() }
+            if let row { Benchmark.datasetWrite(row, to: rowURL) }   // last: a frame with a row has all its arrays
+        }
     }
 
     private func advanceBenchmark(_ benchmark: Benchmark) {
