@@ -45,7 +45,7 @@ final class GPUProfiler {
         calibration = (now.cpu, now.gpu)
     }
 
-    /// One frame's timed encoders, in encoding order. Make them through `compute`, `blit` and `accelerationStructure`.
+    /// One frame's timed encoders, in encoding order. Make them through `compute`, `blit`, `accelerationStructure` and `render`.
     final class Frame {
         fileprivate let profiler: GPUProfiler
         fileprivate let base: Int
@@ -101,12 +101,26 @@ final class GPUProfiler {
             return enc
         }
 
-        /// Ends an encoder made by `compute`, `blit` or `accelerationStructure`, letting the next one start after it.
+        func render(_ cb: MTLCommandBuffer, _ name: String, _ desc: MTLRenderPassDescriptor) -> MTLRenderCommandEncoder? {
+            if let i = next(name), let a = desc.sampleBufferAttachments[0] {
+                a.sampleBuffer = profiler.samples
+                a.startOfVertexSampleIndex = i.start
+                a.endOfVertexSampleIndex = MTLCounterDontSample
+                a.startOfFragmentSampleIndex = MTLCounterDontSample
+                a.endOfFragmentSampleIndex = i.end
+            }
+            let enc = cb.makeRenderCommandEncoder(descriptor: desc)
+            enc?.waitForFence(profiler.fence, before: .vertex)
+            return enc
+        }
+
+        /// Ends an encoder made by `compute`, `blit`, `accelerationStructure` or `render`, letting the next one start after it.
         func end(_ enc: MTLCommandEncoder) {
             switch enc {
             case let e as MTLComputeCommandEncoder: e.updateFence(profiler.fence)
             case let e as MTLBlitCommandEncoder: e.updateFence(profiler.fence)
             case let e as MTLAccelerationStructureCommandEncoder: e.updateFence(profiler.fence)
+            case let e as MTLRenderCommandEncoder: e.updateFence(profiler.fence, after: .fragment)
             default: break
             }
             enc.endEncoding()

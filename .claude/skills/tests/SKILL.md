@@ -57,10 +57,16 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
 | `LightTree.swift` | LightTreeTests |
+| `RasterScene.swift` | RasterSceneTests |
+| `VSM.swift` | VSMTests |
+| `MeshSDFBuilder.swift`, `LumenScene.swift` | MeshSDFBuilderTests |
+| `LumenGlobalSDF.swift` | GlobalSDFTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
-| `VirtualGeometryBuilder` (its cache file) | CacheTests |
+| `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
+| `VGStreamer`, `VirtualGeometry`, `RasterClusters` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |
+| `VirtualBLAS` (its cut, the reference), `Shaders/RasterClusters.metal`, `Shaders/Raster.metal`, `Shaders/VirtualGeometry.metal` | VGCutTests (the shaders: plus the shader pair) |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |
 | `Package.swift`, a shared test helper | all suites: the one case where the full run is right |
 

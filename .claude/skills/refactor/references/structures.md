@@ -55,6 +55,7 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
 
 * **What it is.** `Kernel` has a case per compute function in Shaders/*.metal (`trace` ↔ `traceKernel`). `Pipelines` is the whole set
   as one value, compiled in the background for one tracer and one set of light types and swapped in between frames.
+  Render pipelines are properties of the same value, made in its init from the same library (`visibility`).
 * **Plugging in.** One `Kernel` case named after the MSL function. Kernels that exist only for the custom tracer go
   after `rtPrep`. A compile-time variant is a macro set in `Pipelines.compile` or a function constant set where
   `Pipelines.init` makes each pipeline.
@@ -84,7 +85,12 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
   by `Metal3Frame` and `Metal4Frame`.
 * **Plugging in.** A new pass binds and dispatches through `ComputePass` only, so both back ends get it. Something
   one API can't do yet is said in one place, with the reason and the OS version (as for mipmaps and the denoising
-  scaler under Metal 4).
+  scaler under Metal 4). A draw goes through `FrameEncoder.render` and the `RenderPass` protocol (the raster
+  visibility buffer's): Metal 4's render encoder waits for the queue's work before it, and its compute encoders wait
+  for the vertex and fragment stages (`Metal4Frame.queueStages`).
+* **Metal 4 and textures.** A dispatch that writes a texture through a view and the next one that reads the texture
+  through another view (or the texture itself) raced on Metal 4 despite the barrier between them (the depth pyramid's
+  levels, macOS 27.0): read and write mip levels of one texture instead (`read(coord, lod)`, `write(value, coord, lod)`).
 * **Where the frame ends up** is a `RenderSurface` (RenderSurface.swift): the window's `LayerSurface` (its view's
   CAMetalLayer), or the `OffscreenSurface` every benchmark run draws into. The renderer asks it for the output texture
   and never for a view.

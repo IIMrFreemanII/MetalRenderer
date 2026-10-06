@@ -194,7 +194,8 @@ final class SDFTests: XCTestCase {
                                                                   meshIndex: 0, materialIndex: 0), count: scene.instances.count)
         records.withUnsafeMutableBufferPointer { scene.writeInstanceData(into: $0.baseAddress!, all: true) }
         XCTAssertEqual(records[glowing].meshIndex, UInt32(scene.meshes.count), "past the meshes (none virtual, no assemblies)")
-        XCTAssertEqual(records[glowing].pad0, Scene.maskGeometry | Scene.instanceSDF)
+        XCTAssertEqual(records[glowing].pad0, Scene.maskGeometry | Scene.maskShadowTraced | Scene.instanceSDF,
+                       "the raster can't draw a shape: virtual shadow maps trace it")
         XCTAssertEqual(records[0].pad0, Scene.maskGeometry)
 
         // Each instance's glowing ball is a mesh light of its own, on the material it glows with.

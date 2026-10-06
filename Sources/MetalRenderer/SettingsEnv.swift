@@ -17,11 +17,15 @@ enum SettingsEnv {
         d.directLight = .auto
         d.rayTracer = .custom
         d.api = .metal3
+        d.primary = .traced
+        d.shadowMethod = .rays
         d.specular = true
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true
         d.virtualGeometry.pixelError = 1
         d.virtualGeometry.poolMB = 768
+        d.virtualGeometry.raster = .blas
+        d.virtualGeometry.rasterPoolMB = 512
         d.scene = SceneSettings()
         d.scene.kind = s.scene.kind
         d.scene.showcase = s.scene.showcase   // the model's look: its fog and lens
