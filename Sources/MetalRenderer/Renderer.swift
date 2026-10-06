@@ -176,6 +176,41 @@ final class FogTargets {
     }
 }
 
+/// The lens and the finish (Shaders/Post.metal), at the output resolution.
+final class PostTargets {
+    let width: Int, height: Int
+    let color: MTLTexture       // the composite's light, when MetalFX doesn't upscale it (FLAG_POST)
+    let dof: MTLTexture         // after the depth of field
+    let down: [MTLTexture]      // bloom's halvings, from half the output size...
+    let up: [MTLTexture]        // ...and the way back up: up[i] = down[i] + up[i + 1] filtered (one fewer)
+    let focus: MTLBuffer        // the autofocus distance, eased from frame to frame (0 = none yet)
+
+    init(device: MTLDevice, width: Int, height: Int) throws {
+        self.width = width
+        self.height = height
+        func make(_ label: String, _ w: Int, _ h: Int) throws -> MTLTexture {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+            t.label = label
+            return t
+        }
+        color = try make("post color", width, height)
+        dof = try make("post dof", width, height)
+        var down: [MTLTexture] = [], (w, h) = (width, height)
+        while down.count < PostSettings.bloomLevels && min(w, h) >= 16 {
+            (w, h) = ((w + 1) / 2, (h + 1) / 2)
+            down.append(try make("bloom down\(down.count)", w, h))
+        }
+        self.down = down
+        up = try down.dropLast().enumerated().map { try make("bloom up\($0.offset)", $0.element.width, $0.element.height) }
+        guard let focus = device.makeBuffer(length: 16, options: .storageModeShared) else { throw RendererError.resourceCreation("focus buffer") }
+        memset(focus.contents(), 0, 16)
+        self.focus = focus
+    }
+}
+
 /// ReSTIR DI's per-pixel state (Shaders/RestirDI.metal).
 final class RestirTargets {
     let width: Int, height: Int, chains: Int
@@ -374,6 +409,7 @@ final class Renderer: NSObject {
     private var fogNoisePending = false         // being generated in the background
     private var fogGrid: FogTargets?            // froxel grid at the current render resolution
     private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
+    private var postTargetsCache: PostTargets?   // the lens and the finish, at the current output resolution
     private var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
     private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
@@ -944,11 +980,13 @@ final class Renderer: NSObject {
         // The textures too, unless they are a sparse heap's (Metal 3's streamer: `bindScene` declares the heap).
         // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
         // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
-        // And the borrowed meshes' buffers, which a hit reaches through the mesh table, and the instance blocks'
-        // records, which it reaches through theirs.
+        // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
+        // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through RTScene or
+        // their boxes' data.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
         shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? [])
+            + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
@@ -1058,6 +1096,12 @@ final class Renderer: NSObject {
         fogGrid = try? FogTargets(device: device, renderWidth: width, renderHeight: height, slices: FogSettings.slices)
         fogLastFrame = nil
         return fogGrid
+    }
+
+    private func postTargets(width: Int, height: Int) -> PostTargets? {
+        if let t = postTargetsCache, t.width == width, t.height == height { return t }
+        postTargetsCache = try? PostTargets(device: device, width: width, height: height)
+        return postTargetsCache
     }
 
     private func fogReferenceTexture(width: Int, height: Int) -> MTLTexture? {
@@ -1691,6 +1735,7 @@ final class Renderer: NSObject {
             if benchmark.current.cameraPath {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
+            if let track = benchmark.current.track { camera = track.camera(at: benchmark.trackTime) }
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
             if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
@@ -1850,6 +1895,10 @@ final class Renderer: NSObject {
         var fogParams = GPUFogParams()
         var fogReference: MTLTexture?           // references: every camera ray is marched instead
         var fogSamples: UInt32 = 0              // ...and this many frames are averaged so far
+
+        // The lens and the finish (not in references, nor in the views that aren't light)
+        var post: PostTargets?
+        var postParams = GPUPostParams()
     }
 
     /// Resolves this frame's modes and allocates what they need that isn't there yet.
@@ -1981,6 +2030,20 @@ final class Renderer: NSObject {
 
         if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
         p.accumCount = accumCount             // read after accumulationTextures: new textures start a new average
+
+        // The lens and the finish, on the output: the composite's light, or the denoising scaler's.
+        let lens = settings.post
+        if lens.isOn && RenderSettings.showsLight(settings.viewMode) && !accumulating && !supersampling {
+            p.post = postTargets(width: size.outWidth, height: size.outHeight)
+        }
+        if let post = p.post {
+            p.postParams = GPUPostParams(
+                bloom: SIMD4(PostSettings.bloomRange.clamp(lens.bloom), lens.bloomThreshold, u.post.x, Float(post.down.count)),
+                lens: SIMD4(PostSettings.apertureRange.clamp(lens.aperture), lens.focus, PostSettings.maxBlur, 0.1),
+                finish: SIMD4(lens.vignette, lens.grain, lens.aberration, 0),
+                size: SIMD4(UInt32(size.outWidth), UInt32(size.outHeight), UInt32(width), UInt32(height)),
+                frame: SIMD4(frameIndex, 0, 0, 0))
+        }
         return p
     }
 
@@ -2076,7 +2139,7 @@ final class Renderer: NSObject {
         }
         // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
-        //    it was built: in the stress scene (400 moving objects) rays got 35% slower after 256 refits. A rebuild
+        //    it was built: in the old stress hall (400 moving objects) rays got 35% slower after 256 refits. A rebuild
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
         //    A still scene's was built with its buffers, and stays.
         if builtRayTracer == .metal, !sceneBuffers.still {
@@ -2180,8 +2243,10 @@ final class Renderer: NSObject {
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
         if let drawable, let enc = passes.compute("composite") {
-            let output = size.upscaling || supersampling ? t.upscaleColor : drawable.texture
-            bind(enc, .composite, c.uniforms)
+            let output = size.upscaling || supersampling ? t.upscaleColor : plan.post?.color ?? drawable.texture
+            var uniforms = c.uniforms
+            if plan.post != nil && !size.upscaling { uniforms.flags |= UniformFlags.post }
+            bind(enc, .composite, uniforms)
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
@@ -2208,12 +2273,20 @@ final class Renderer: NSObject {
 
         // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
+        if let drawable, let post = plan.post, !size.upscaling {
+            encodePost(plan, post: post, input: post.color, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                       output: drawable.texture, passes: passes)
+        }
         if let drawable, let upscaler {
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
                                                    reset: upscalerReset), pass: "upscale")
             upscalerReset = false
-            // It leaves linear, unbounded light: the exposure and the tone curve, into the drawable.
-            if let enc = passes.compute("upscale") {
+            // It leaves linear, unbounded light: the lens and the finish, or only the exposure and the tone curve, into
+            // the drawable.
+            if let post = plan.post {
+                encodePost(plan, post: post, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                           output: drawable.texture, passes: passes)
+            } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
                 setTextures(enc, [upscaler.hdrOutput, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
@@ -2221,6 +2294,47 @@ final class Renderer: NSObject {
             }
         }
         return (drawable, drawableWait)
+    }
+
+    /// 6. The lens and the finish (Shaders/Post.metal): `input`, the frame's linear light at the output size, through the
+    /// depth of field and the glow, then exposed, tone mapped, vignetted and grained into `output`. In order, in one
+    /// serial pass.
+    private func encodePost(_ plan: FramePlan, post: PostTargets, input: MTLTexture, normalDepth: MTLTexture, uniforms: Uniforms,
+                            output: MTLTexture, passes: FrameEncoder) {
+        guard let enc = passes.compute("post", serial: true) else { return }
+        var params = plan.postParams
+        func start(_ kernel: Kernel) {
+            bind(enc, kernel, uniforms)
+            enc.setBytes(&params, length: MemoryLayout<GPUPostParams>.stride, index: 1)
+            enc.setBuffer(post.focus, offset: 0, index: 2)
+        }
+        var light = input
+        if params.lens.x > 0 {
+            start(.focus)
+            enc.setTexture(normalDepth, index: 0)
+            dispatch(enc, .focus, width: 1, height: 1)
+            start(.dof)
+            setTextures(enc, [light, normalDepth, post.dof])
+            dispatch(enc, .dof, width: post.width, height: post.height)
+            light = post.dof
+        }
+        if params.bloom.x > 0, !post.down.isEmpty {
+            for (i, level) in post.down.enumerated() {
+                params.frame.y = UInt32(i)
+                start(.bloomDown)
+                setTextures(enc, [i == 0 ? light : post.down[i - 1], level])
+                dispatch(enc, .bloomDown, width: level.width, height: level.height)
+            }
+            for i in post.up.indices.reversed() {
+                start(.bloomUp)
+                setTextures(enc, [i == post.up.count - 1 ? post.down[i + 1] : post.up[i + 1], post.down[i], post.up[i]])
+                dispatch(enc, .bloomUp, width: post.up[i].width, height: post.up[i].height)
+            }
+        }
+        start(.finish)
+        setTextures(enc, [light, post.up.first ?? post.down.first ?? light, output])
+        dispatch(enc, .finish, width: output.width, height: output.height)
+        passes.endCompute()
     }
 
     /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
@@ -2247,7 +2361,8 @@ final class Renderer: NSObject {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
             if benchmark.shouldCapture { print("  " + customRT.takeStats().description) } else { _ = customRT.takeStats() }
         }
-        if let benchmark, let output, benchmark.shouldCapture, let capture = benchmark.capture(of: output.texture, device: device) {
+        if let benchmark, let output, benchmark.shouldCapture || benchmark.shouldRecord,
+           let capture = benchmark.capture(of: output.texture, device: device, sequence: !benchmark.shouldCapture) {
             passes.capture(output.texture, into: capture.buffer)
             writeCapture = capture.write
         }
@@ -2896,7 +3011,8 @@ final class Renderer: NSObject {
         if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
             rebuildScene(resetCamera: false)
         }
-        camera = c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera
+        camera = c.track?.camera(at: 0)
+            ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         prevCamera = camera
         accumulating = c.accumulate
         referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil
@@ -3299,6 +3415,7 @@ final class Renderer: NSObject {
         sizes[Kernel.atrous.rawValue] = MTLSize(width: 16, height: 16, depth: 1)
         sizes[Kernel.regirBuild.rawValue] = MTLSize(width: 64, height: 1, depth: 1)
         sizes[Kernel.megaLightsCull.rawValue] = MTLSize(width: 16, height: 16, depth: 1)   // its tile: leave it
+        sizes[Kernel.focus.rawValue] = MTLSize(width: 1, height: 1, depth: 1)   // one thread
         for item in (ProcessInfo.processInfo.environment["METALRENDERER_TG"] ?? "").split(separator: ",") {
             let kv = item.split(separator: "="), wh = kv.count == 2 ? kv[1].split(separator: "x").compactMap { Int($0) } : []
             let name = (kv.first ?? "").lowercased().filter { $0 != " " }

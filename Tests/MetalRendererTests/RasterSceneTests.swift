@@ -73,6 +73,27 @@ final class RasterSceneTests: XCTestCase {
         XCTAssertEqual(chunkMeshes, [0, 0, 1, 2])
     }
 
+    /// SDF shapes are traced: each has a record past the assemblies (as GPUInstanceData.meshIndex counts them), with
+    /// its bounds, so its box is drawn where it is instead of every primary ray tracing as well.
+    func testShapesHaveBoxRecords() throws {
+        let scene = Scene(SceneSettings(kind: .cornell)) { scene in
+            let material = scene.addMaterial(albedo: [0.5, 0.5, 0.5])
+            scene.addInstance(scene.addMesh(self.grid(2)), material, matrix_identity_float4x4)
+            let shape = scene.addSDFShape(SDFShape([SDFShape.Node(.sphere(radius: 0.5))]))
+            scene.addInstance(sdf: shape, material, translate([3, 1, 0]))
+        }
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3))
+        let raster = try RasterScene(device: device, scene: scene, buffers: buffers, customTracer: true, virtualBLAS: false)
+        XCTAssertEqual(raster.meshCount, 2, "the mesh, then the shape")
+        let records = Array(UnsafeBufferPointer(start: raster.meshes.contents().bindMemory(to: GPURasterMesh.self, capacity: 2), count: 2))
+        XCTAssertEqual(records[1].hi.w.bitPattern, RasterScene.Kind.skip.rawValue)
+        XCTAssertEqual(records[1].lo.x, -0.5, accuracy: 0.05)
+        XCTAssertEqual(records[1].hi.x, 0.5, accuracy: 0.05)
+        XCTAssertNotEqual(scene.instances[1].mask & Scene.maskShadowTraced, 0, "virtual shadow maps trace it")
+    }
+
     func testDeformingMeshesHaveNoChunkBounds() {
         let r = RasterScene.record(lo: [-1, 0, -1], hi: [1, 2, 1], kind: .arrays, deforms: true, firstChunk: 7)
         XCTAssertEqual(r.hi.w.bitPattern, RasterScene.Kind.arrays.rawValue | RasterScene.deforms)

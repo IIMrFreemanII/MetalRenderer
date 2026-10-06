@@ -2,8 +2,8 @@ import Foundation
 import ImageIO
 import simd
 
-/// A small Cornell-style room with static objects, animated objects and moving sphere lights, or a stress-test
-/// hall with hundreds of moving objects and tens to hundreds of moving lights (`SceneSettings`).
+/// A small Cornell-style room with static objects, animated objects and moving sphere lights, or one of the other
+/// scenes (`SceneSettings`; the stress building is in Scene+Stress.swift).
 /// All geometry lives in one shared vertex/index buffer; each mesh gets its own
 /// primitive acceleration structure and every object is an instance of a mesh.
 typealias MeshGeometry = (positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32])
@@ -28,6 +28,8 @@ final class Scene {
         var skinned = false
         /// ...that walks: `Scene.update` moves it along its lane.
         var travels = false
+        /// >= 0: an SDF shape's instance, index into `sdfShapes` (then `mesh` is -1 and `material` is its nodes' first).
+        var sdf = -1
 
         /// Never moves or deforms: its transform is the one it was added with (the ray tracers' static trees).
         var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
@@ -239,7 +241,7 @@ final class Scene {
     /// A far plant as its voxels (Metal's tracer: VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
     /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
-    /// sways), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
+    /// sways, SDF shapes), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
     /// trace a ray that meets only this (MASK_SHADOW_TRACED). Always with `geometry`.
     static let maskShadowTraced: UInt32 = 16
 
@@ -249,6 +251,10 @@ final class Scene {
         let skipped = assembly || (mesh >= 0 && (meshes[mesh].cutout != 0 || meshes[mesh].sways != 0))
         return skipped ? mask | Scene.maskShadowTraced : mask
     }
+
+    /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0; the
+    /// custom tracer's RT_SDF). No ray's mask has it, so no ray tests it as one.
+    static let instanceSDF: UInt32 = 0x2000_0000
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
@@ -314,6 +320,12 @@ final class Scene {
         groups.append(InstanceGroup(name: name, count: count, make: make))
     }
     private(set) var meshes: [GPUMesh] = []
+    /// Shapes given by signed distance fields (SDFShapes.swift), the baked grids their nodes may be, and each shape's box.
+    private(set) var sdfShapes: [SDFShape] = []
+    private(set) var sdfVolumes: [SDFVolume] = []
+    private(set) var sdfBounds: [AABB] = []
+    /// Some instance is an SDF shape's (set once, by init): the shaders are compiled with SDF_SHAPES.
+    private(set) var hasSDFShapes = false
     /// What some meshes are made from, said in full (an open world's tile and chunk, a plant of a library): a mesh
     /// of the same name in another scene is the same triangles in the same order, so what was built for it holds
     /// there too (Metal's per-mesh structures: SceneBuffers).
@@ -417,12 +429,16 @@ final class Scene {
         case .city: buildCity(settings.city, seed: settings.seed, night: false)
         case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
         case .world: buildWorld()
+        case .showcase: buildShowcase()
+        case .shapes: buildShapes()
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
+        hasSDFShapes = instances.contains { $0.sdf >= 0 }
+        precondition(!hasSDFShapes || !hasGroups, "SDF shapes in a scene with instance groups (SceneBuffers.InstanceBlock has no SDF instances)")
         assignLightGroups()
         if settings.emissiveLights { buildMeshLights() }
         if let place = worldPlace {
@@ -581,7 +597,8 @@ final class Scene {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.isGeometry {
             let (a, b) = inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
-                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi) : meshBounds[inst.mesh]
+                : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi)
+                : inst.sdf >= 0 ? (sdfBounds[inst.sdf].lo, sdfBounds[inst.sdf].hi) : meshBounds[inst.mesh]
             for corner in 0..<8 {
                 let c = SIMD3<Float>(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z)
                 let p = inst.transform * SIMD4<Float>(c, 1)
@@ -596,7 +613,8 @@ final class Scene {
 
     /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
     /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
-    /// Assembly instances: meshIndex points past those too (the table then lists the assemblies).
+    /// Assembly instances: meshIndex points past those too (the table then lists the assemblies), and SDF shapes'
+    /// instances past those (the shapes), with `Scene.instanceSDF` in pad0.
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
     /// only the ones that move, the rest being unchanged.
     /// `range`: of all the instances, these (a part of them, for a caller that writes the parts side by side).
@@ -608,9 +626,10 @@ final class Scene {
                                      normalMatrix: inst.normalMatrix,
                                      meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh)
                                          : inst.assembly >= 0 ? UInt32(meshes.count + virtualMeshes.count + inst.assembly)
+                                         : inst.sdf >= 0 ? UInt32(meshes.count + virtualMeshes.count + assemblies.count + inst.sdf)
                                          : UInt32(meshes.count + inst.virtualMesh),
                                      materialIndex: UInt32(inst.material),
-                                     pad0: inst.mask,
+                                     pad0: inst.mask | (inst.sdf >= 0 ? Scene.instanceSDF : 0),
                                      pad1: virtualRank[i])
         }
         if !all, let animated {
@@ -636,10 +655,11 @@ final class Scene {
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
-        // voxel boxes on Metal's tracer. (Shaders/Types.metal.)
+        // voxel boxes on Metal's tracer. Bit 22: SDF_SHAPES, some instances are SDF shapes. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
+            | (hasSDFShapes ? 0x0040_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -749,110 +769,6 @@ final class Scene {
             [-3.9 + 0.5 * sin(0.7 * t), 0.6, 0.8 + 1.6 * cos(0.45 * t)]
         }
     }
-
-    /// Stress test: a 20 x 6 x 20 hall (open at the front) with 8 pillars, `objectCount` objects (~85% moving, in
-    /// five motion families) and `lightCount` moving sphere lights in four colours. Seeded, so every run is identical.
-    /// The lights' total power doesn't depend on their count, so the image brightness stays about the same.
-    private func buildStress(objects objectCount: Int, lights lightCount: Int) {
-        var rng = SplitMix64(seed: 0x5EED_1234)
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
-        // 320 triangles: the spheres are 10-30 cm, about a pixel off round even up close, and 5-6% faster to
-        // trace than the Cornell room's 1280-triangle sphere (merging static objects into one tree didn't help).
-        let sphere = addMesh(Scene.icosphere(subdivisions: 2))
-        let lightSphere = sphere
-
-        let white = addMaterial(albedo: [0.6, 0.6, 0.6])
-        let warm = addMaterial(albedo: [0.5, 0.45, 0.4])
-        let palette = [[0.80, 0.80, 0.80], [0.65, 0.06, 0.05], [0.12, 0.45, 0.15], [0.85, 0.62, 0.25],
-                       [0.15, 0.30, 0.75], [0.55, 0.20, 0.60], [0.10, 0.55, 0.55], [0.30, 0.30, 0.32]]
-            .map { addMaterial(albedo: SIMD3<Float>($0.map(Float.init))) }
-
-        let w: Float = 20, h: Float = 6, d: Float = 20
-        addInstance(quad, warm, translate([0, 0, 0]) * scale([w, 1, d]))                                          // floor
-        addInstance(quad, white, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d]))                // ceiling
-        addInstance(quad, white, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))   // back
-        addInstance(quad, palette[1], translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-        addInstance(quad, palette[2], translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-        for x: Float in [-6, -2, 2, 6] {
-            for z: Float in [-5, 1] {
-                addInstance(cube, white, translate([x, h / 2, z]) * scale([0.7, h, 0.7]))
-            }
-        }
-
-        // Objects stay inside x, z in [-9, 9] and y in [0, 5.5].
-        for _ in 0..<objectCount {
-            let material = palette[rng.int(palette.count)]
-            let mesh = rng.next() < 0.5 ? cube : sphere
-            let size = rng.range(0.1, 0.3)                       // sphere radius, half a cube's edge
-            let extent = mesh == sphere ? size : 2 * size        // scale for the unit-radius sphere or unit cube
-            let phase = rng.range(0, 2 * .pi)
-            let family = rng.next()
-            if family < 0.15 {
-                // Static clutter on the floor.
-                let p = SIMD3<Float>(rng.range(-9, 9), size, rng.range(-9, 9))
-                addInstance(mesh, material, translate(p) * rotate(rng.range(0, .pi), [0, 1, 0]) * scale(extent))
-            } else if family < 0.45 {
-                // Rings orbiting the hall's centre at several heights.
-                let radius = rng.range(1.5, 8.5), y = rng.range(0.4, 5.0)
-                let speed = rng.range(0.15, 0.5) * (rng.next() < 0.5 ? -1 : 1)
-                addInstance(mesh, material, matrix_identity_float4x4) { t in
-                    let a = phase + speed * t
-                    return translate([radius * cos(a), y, radius * sin(a)]) * rotate(a, [0, 1, 0]) * scale(extent)
-                }
-            } else if family < 0.65 {
-                // Balls bouncing on the floor.
-                let x = rng.range(-9, 9), z = rng.range(-9, 9)
-                let height = rng.range(0.5, 2.5), speed = rng.range(1.5, 3.0)
-                addInstance(sphere, material, matrix_identity_float4x4) { t in
-                    translate([x, size + height * abs(sin(speed * t + phase)), z]) * scale(size)
-                }
-            } else if family < 0.85 {
-                // Tumbling cubes floating in place.
-                let p = SIMD3<Float>(rng.range(-9, 9), rng.range(1.5, 5.0), rng.range(-9, 9))
-                let axis = normalize(SIMD3<Float>(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)) + [0, 0.01, 0])
-                let spin = rng.range(0.5, 2.0), bob = rng.range(0.1, 0.4)
-                addInstance(cube, material, matrix_identity_float4x4) { t in
-                    translate(p + [0, bob * sin(1.1 * t + phase), 0]) * rotate(spin * t + phase, axis) * scale(2 * size)
-                }
-            } else {
-                // Drifters on Lissajous paths.
-                let c = SIMD3<Float>(rng.range(-5, 5), rng.range(1.5, 4.0), rng.range(-5, 5))
-                let a = SIMD3<Float>(rng.range(1, 9 - abs(c.x)), rng.range(0.3, min(c.y - size, 5.5 - c.y)), rng.range(1, 9 - abs(c.z)))
-                let f = SIMD3<Float>(rng.range(0.2, 0.6), rng.range(0.3, 0.9), rng.range(0.2, 0.6))
-                addInstance(mesh, material, matrix_identity_float4x4) { t in
-                    translate(c + a * SIMD3(sin(f.x * t + phase), sin(f.y * t + 2 * phase), cos(f.z * t + phase))) * scale(extent)
-                }
-            }
-        }
-
-        // Lights: four colours (one shadow-denoiser group each), Lissajous paths inside the hall.
-        let colors: [SIMD3<Float>] = [[1.0, 0.85, 0.65], [1.0, 0.45, 0.12], [0.25, 0.60, 1.0], [0.85, 0.25, 0.90]]
-        let totalPower: Float = 60
-        for j in 0..<lightCount {
-            let color = colors[j % colors.count] / dot(colors[j % colors.count], [0.2126, 0.7152, 0.0722])   // unit luminance
-            let radius = rng.range(0.06, 0.12)
-            let c = SIMD3<Float>(rng.range(-6, 6), rng.range(1.2, 4.6), rng.range(-6, 6))
-            let a = SIMD3<Float>(rng.range(1, 9 - abs(c.x)), rng.range(0.2, min(c.y - 0.5, 5.6 - c.y)), rng.range(1, 9 - abs(c.z)))
-            let f = SIMD3<Float>(rng.range(0.1, 0.4), rng.range(0.2, 0.7), rng.range(0.1, 0.4))
-            let phase = rng.range(0, 2 * .pi)
-            // Thousands of lights: smaller bulbs (same draws, so up to 256 lights the scene is unchanged).
-            let r = lightCount > 256 ? radius * pow(256 / Float(lightCount), 1.0 / 3) : radius
-            addLight(color: color * (totalPower / Float(lightCount)), radius: r, sphereMesh: lightSphere) { t in
-                c + a * SIMD3(sin(f.x * t + phase), sin(f.y * t + 3 * phase), cos(f.z * t + phase))
-            }
-        }
-
-        defaultCamera = Scene.stressCamera
-    }
-
-    /// Overview from just outside the hall's open front (objects never come this close).
-    static let stressCamera: Camera = {
-        var c = Camera()
-        c.position = [0, 4.6, 12.5]
-        c.pitch = -0.25
-        return c
-    }()
 
     /// Where each shadow-denoiser group's lights end in `lights` (sorted by group): group g = [end[g-1], end[g]).
     private(set) var lightGroupEnd = SIMD4<UInt32>(repeating: 0)
@@ -1098,6 +1014,30 @@ final class Scene {
         return instances.count - 1
     }
 
+    /// An SDF shape for instances to place (`addInstance(sdf:)`).
+    func addSDFShape(_ shape: SDFShape) -> Int {
+        sdfShapes.append(shape)
+        sdfBounds.append(shape.bounds(volumes: sdfVolumes))
+        return sdfShapes.count - 1
+    }
+
+    /// A baked distance grid for SDF shapes' `.volume` nodes (added before the shapes that use it).
+    func addSDFVolume(_ volume: SDFVolume) -> Int {
+        sdfVolumes.append(volume)
+        return sdfVolumes.count - 1
+    }
+
+    /// An instance of SDF shape `sdf`: `material` is its nodes' with offset 0, the others' after it.
+    @discardableResult
+    func addInstance(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry,
+                     animation: ((Float) -> float4x4)? = nil) -> Int {
+        // (The raster can't draw a shape: virtual shadow maps trace it.)
+        instances.append(Instance(mesh: -1, material: material, mask: instanceMask(mask, mesh: -1, assembly: true),
+                                  transform: transform, prevTransform: transform, animation: animation,
+                                  normalMatrix: transform.inverse.transpose, sdf: sdf))
+        return instances.count - 1
+    }
+
     /// Generated plants were placed (Flora): see `hasPlants`.
     func notePlants() { hasPlants = true }
 
@@ -1330,7 +1270,32 @@ final class Scene {
         }
         var flagged = Set<Int>()
         let lent = Set(borrowed.map(\.mesh))   // their lights come with them (`addMeshLight`)
+        var sdfLights: [Int: (positions: [SIMD3<Float>], indices: [UInt32], materials: [Int])] = [:]
         for (i, inst) in instances.enumerated() where inst.isGeometry && !inst.skinned {
+            if inst.sdf >= 0 {
+                // An SDF shape: a light per material of its that emits, its triangles those of the shape's surface
+                // (made once per shape, just outside it: SDFShape.triangles) where that material is.
+                let shape = sdfShapes[inst.sdf]
+                for offset in 0..<shape.materialCount {
+                    let e = materials[inst.material + offset].emission
+                    let le = SIMD3(e.x, e.y, e.z)
+                    guard le.max() > 0 else { continue }
+                    if sdfLights[inst.sdf] == nil { sdfLights[inst.sdf] = shape.triangles(volumes: sdfVolumes) }
+                    let mesh = sdfLights[inst.sdf]!
+                    var draft = MeshLightDraft()
+                    for t in mesh.materials.indices where mesh.materials[t] == offset {
+                        draft.add(mesh.positions[Int(mesh.indices[3 * t])], mesh.positions[Int(mesh.indices[3 * t + 1])],
+                                  mesh.positions[Int(mesh.indices[3 * t + 2])], emission: le)
+                    }
+                    guard var light = draft.finish(instance: i, firstTriangle: emissiveTriangles.count) else { continue }
+                    light.materialOffset = offset
+                    emissiveTriangles += draft.triangles
+                    meshLights.append(light)
+                    lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
+                    flagged.insert(inst.material + offset)
+                }
+                continue
+            }
             let material = materials[inst.material]
             let factor = SIMD3(material.emission.x, material.emission.y, material.emission.z)
             guard factor.max() > 0 else { continue }
@@ -1429,7 +1394,7 @@ final class Scene {
 
     /// Model-space bounds of the loaded models' parts, scaled so the largest side is `size`, standing on y = 0 and
     /// centred on x = z = 0.
-    private static func placement(_ model: GLTFModel, size: Float) -> float4x4 {
+    static func placement(_ model: GLTFModel, size: Float) -> float4x4 {
         let b = model.bounds
         guard !b.isEmpty else { return matrix_identity_float4x4 }
         let s = size / max((b.hi - b.lo).max(), 1e-6)

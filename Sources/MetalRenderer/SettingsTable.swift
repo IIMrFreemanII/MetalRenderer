@@ -37,6 +37,10 @@ extension Bool: EnvValue {
         self.init(v != 0)
     }
 }
+extension String: EnvValue {   // a word or a name: no commas (they part a list's items)
+    var envText: String { self }
+    init?(envText: String) { self = envText }
+}
 extension SIMD3: EnvValue where Scalar == Float {
     var envText: String { "\(x.envText):\(y.envText):\(z.envText)" }
     init?(envText: String) {
@@ -86,7 +90,7 @@ enum EnvVariable: String, CaseIterable {
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
     case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI", megaLights = "METALRENDERER_MEGALIGHTS"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
-    case foliage = "METALRENDERER_FOLIAGE", vsm = "METALRENDERER_VSM"
+    case foliage = "METALRENDERER_FOLIAGE", vsm = "METALRENDERER_VSM", post = "METALRENDERER_POST"
 
     var isList: Bool { self.index >= EnvVariable.scene.index }
     private var index: Int { EnvVariable.allCases.firstIndex(of: self)! }
@@ -113,7 +117,7 @@ struct SettingSpec {
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
     enum Custom {
-        case scene, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption
+        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption
     }
     /// The setting as text in an environment variable.
     struct Env {
@@ -283,7 +287,7 @@ enum SettingsTable {
     private static func fmt<T: CVarArg>(_ format: String) -> (T) -> String { { String(format: format, $0) } }
     private static func titled<T: CaseIterable>(_ title: (T) -> String) -> [(String, T)] { T.allCases.map { (title($0), $0) } }
 
-    static let sections: [Section] = [scene, camera, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
+    static let sections: [Section] = [scene, camera, post, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }
@@ -308,6 +312,8 @@ enum SettingsTable {
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
+            S.custom(.showcaseModel, "Model").when { $0.scene.kind == .showcase },   // the model brings its look
+            S.value(\.scene.showcase).env(.scene, "showcase"),
             // Scene sizes rebuild the scene, so they apply when the slider is released.
             S.slider("Objects", \.scene.objects, SceneSettings.objectRange, step: 50, live: false)
                 .env(.scene, "objects").when { $0.scene.kind == .stress },
@@ -352,6 +358,22 @@ enum SettingsTable {
             S.check("Specular (glTF PBR)", \.specular).env(.specular),
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
             S.custom(.clearModels).when { !$0.scene.extraModels.isEmpty },
+        ])
+    }()
+
+    private static let post: Section = {
+        let bloom: When = { $0.post.bloom > 0 }, focus: When = { $0.post.aperture > 0 }
+        return Section(title: "Lens and finish", rows: [
+            S.slider("Bloom", \.post.bloom, PostSettings.bloomRange, step: 0.01, fmt("%.2f")).env(.post, "bloom"),
+            S.slider("Bloom threshold", \.post.bloomThreshold, PostSettings.thresholdRange, step: 0.1, fmt("%.1f"))
+                .env(.post, "threshold").enabled(bloom).advanced(),
+            S.slider("Depth of field", \.post.aperture, PostSettings.apertureRange, step: 0.5, fmt("%.1f px")).env(.post, "aperture"),
+            S.slider("Focus distance", \.post.focus, PostSettings.focusRange, step: 0.1) { $0 == 0 ? "Auto" : String(format: "%.1f m", $0) }
+                .env(.post, "focus").enabled(focus),
+            S.slider("Vignette", \.post.vignette, PostSettings.vignetteRange, step: 0.05, fmt("%.2f")).env(.post, "vignette"),
+            S.slider("Film grain", \.post.grain, PostSettings.grainRange, step: 0.005, fmt("%.3f")).env(.post, "grain"),
+            S.slider("Chromatic aberration", \.post.aberration, PostSettings.aberrationRange, step: 0.0005) { String(format: "%.2f%%", $0 * 100) }
+                .env(.post, "ca"),
         ])
     }()
 

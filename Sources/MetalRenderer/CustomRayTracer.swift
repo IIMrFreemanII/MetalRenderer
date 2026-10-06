@@ -136,7 +136,10 @@ final class CustomRayTracer {
     private let voxels: MTLBuffer
     /// The leaf cards' alpha layers, one after another (Scene.cutouts): a byte a texel.
     private let cutouts: MTLBuffer
-    /// The RTScene record: its fields end at 168 bytes (176 with its alignment) (Shaders/Intersect.metal asserts it); the rest is spare.
+    /// The SDF shapes (RTScene.sdf: the traversal marches them), and their boxes (shape space).
+    private let sdf: SDFBuffers
+    private let sdfBounds: [AABB]
+    /// The RTScene record: its fields end at 176 bytes (Shaders/Intersect.metal asserts it); the rest is spare.
     private static let argsSize = 256
     private let cpu: (blas: BVHBuilder.BLASResult, tris: [SIMD4<Float>])?  // kept for the self-test, where there is one
     // GPU build inputs and scratch (shared by the frame slots: Metal orders the passes that use them).
@@ -268,7 +271,8 @@ final class CustomRayTracer {
         precondition(MemoryLayout<RTPart>.stride == 128, "RTPart: Shaders/Intersect.metal")
         assemblyBounds = plantBounds
         func bounds(_ inst: Scene.Instance) -> AABB {
-            inst.mesh >= 0 ? instanceBounds[inst.mesh] : inst.assembly >= 0 ? plantBounds[inst.assembly] : scene.virtualMeshes[inst.virtualMesh].bounds
+            inst.mesh >= 0 ? instanceBounds[inst.mesh] : inst.assembly >= 0 ? plantBounds[inst.assembly]
+                : inst.sdf >= 0 ? scene.sdfBounds[inst.sdf] : scene.virtualMeshes[inst.virtualMesh].bounds
         }
         // The blocks of instances: each one's tree (built here if this is the first scene to trace it), whose parts
         // go under the scene's as leaves.
@@ -444,6 +448,11 @@ final class CustomRayTracer {
         for (a, b) in plantBounds.enumerated() {   // then the assemblies: the root of the tree over its parts, and its number + 1
             info += [SIMD4(b.lo, Float(bitPattern: roots[a])), SIMD4(b.hi, Float(bitPattern: UInt32(a + 1)))]
         }
+        for (s, b) in scene.sdfBounds.enumerated() {   // then the SDF shapes: the shape (RT_SDF is in their instances' masks)
+            info += [SIMD4(b.lo, Float(bitPattern: UInt32(s))), SIMD4(b.hi, 0)]
+        }
+        sdf = try sceneGeometry?.sdf ?? SDFBuffers(device: device, scene: scene)
+        sdfBounds = scene.sdfBounds
         parts = try buffer(partRecords, "rtParts")
         let voxelStart = CACurrentMediaTime()
         let grids = FoliageVoxels.cached(scene.voxelPlants)
@@ -516,9 +525,11 @@ final class CustomRayTracer {
         p.storeBytes(of: voxelGrids.gpuAddress, toByteOffset: 144, as: UInt64.self)
         p.storeBytes(of: voxels.gpuAddress, toByteOffset: 152, as: UInt64.self)
         p.storeBytes(of: cutouts.gpuAddress, toByteOffset: 160, as: UInt64.self)
+        p.storeBytes(of: sdf.scene.gpuAddress, toByteOffset: 168, as: UInt64.self)
     }
 
-    /// `blasRoot`: the mesh's, or for an assembly the root of the tree over its parts (`pad1` is then its number + 1).
+    /// `blasRoot`: the mesh's, or for an assembly the root of the tree over its parts (`pad1` is then its number + 1), or
+    /// for an SDF shape's instance its shape.
     /// `tree`: for a mesh whose tree is in a buffer of its own, that buffer's address.
     static func rtInstance(_ inst: Scene.Instance, blasRoot: UInt32, sways: Bool = false, tree: UInt64? = nil) -> RTInstance {
         let inv = inst.transform.inverse
@@ -526,7 +537,7 @@ final class CustomRayTracer {
                           row1: SIMD4(inv[0][1], inv[1][1], inv[2][1], inv[3][1]),
                           row2: SIMD4(inv[0][2], inv[1][2], inv[2][2], inv[3][2]),
                           blasRoot: tree.map { UInt32(truncatingIfNeeded: $0) } ?? blasRoot, pad0: tree.map { UInt32($0 >> 32) } ?? 0,
-                          mask: inst.mask | (tree == nil ? 0 : ownTree),
+                          mask: inst.mask | (tree == nil ? 0 : ownTree) | (inst.sdf >= 0 ? Scene.instanceSDF : 0),
                           pad1: UInt32(inst.assembly + 1) | (sways ? CustomRayTracer.sways : 0))
     }
 
@@ -535,7 +546,7 @@ final class CustomRayTracer {
         guard CustomRayTracer.cpuBuild else { return }
         let inst = instances[slot].contents().bindMemory(to: RTInstance.self, capacity: scene.instances.count)
         for (i, s) in scene.instances.enumerated() {
-            let root = s.mesh >= 0 ? blasRoots[s.mesh] : s.assembly >= 0 ? assemblyRoots[s.assembly] : 0
+            let root = s.mesh >= 0 ? blasRoots[s.mesh] : s.assembly >= 0 ? assemblyRoots[s.assembly] : s.sdf >= 0 ? UInt32(s.sdf) : 0
             let own = s.mesh >= 0 && root != BVHNode.none && root & CustomRayTracer.blockRoot != 0
             inst[i] = CustomRayTracer.rtInstance(s, blasRoot: root, sways: s.mesh >= 0 && swayingMeshes[s.mesh],
                                                  tree: own ? blockTrees[Int(root & ~CustomRayTracer.blockRoot)].gpuAddress : nil)
@@ -544,7 +555,7 @@ final class CustomRayTracer {
         let boxes = dynamicIds.map { i -> AABB in
             let inst = scene.instances[i]
             return (inst.mesh >= 0 ? meshBounds[inst.mesh] : inst.assembly >= 0 ? assemblyBounds[inst.assembly]
-                    : scene.virtualMeshes[inst.virtualMesh].bounds).transformed(inst.transform)
+                    : inst.sdf >= 0 ? sdfBounds[inst.sdf] : scene.virtualMeshes[inst.virtualMesh].bounds).transformed(inst.transform)
         }
         var nodes: [BVHNode] = []
         _ = BVHBuilder.buildTLAS(boxes: boxes, ids: dynamicIds, masks: dynamicIds.map { scene.instances[$0].mask },
@@ -783,7 +794,7 @@ final class CustomRayTracer {
 
     /// Binds the scene's argument buffer; with `declare` (the first bind in an encoder) also declares what it points at.
     /// The buffers a frame of a scene without virtual geometry reads (SceneBuffers.touch).
-    var buffers: [MTLBuffer] { tlasNodes + instances + [blasNodes, triangles, parts, voxelGrids, voxels, cutouts] + blockTrees }
+    var buffers: [MTLBuffer] { tlasNodes + instances + [blasNodes, triangles, parts, voxelGrids, voxels, cutouts] + blockTrees + sdf.buffers }
 
     func bind(_ enc: ComputePass, slot: Int, declare: Bool = true) {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
@@ -791,6 +802,7 @@ final class CustomRayTracer {
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot], parts, voxelGrids, voxels, cutouts] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
                          + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
         if !blockTrees.isEmpty { enc.useResources(blockTrees, usage: .read) }
+        if sdf.shapeCount > 0 { enc.useResources(sdf.buffers, usage: .read) }
         enc.useResource(stats, usage: [.read, .write])
     }
 
