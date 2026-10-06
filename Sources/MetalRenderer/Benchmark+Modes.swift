@@ -242,11 +242,12 @@ extension Benchmark {
 
     /// The app's Reference pictures (README "Reference rendering"), paused at t = 5 with the default camera: "Path
     /// traced" and "Accumulated passes" side by side in scenes with glossy materials, every light type, emissive
-    /// meshes and window glass; then the path tracer with the clock running and with the camera moving, where every
-    /// frame starts over (one path per pixel). `METALRENDERER_PATHREF_FRAMES` sets the stills' frames (512).
+    /// meshes, window glass, fog and thousands of lights; then the path tracer with the clock running and with the
+    /// camera moving, where every frame starts over (one path per pixel). `METALRENDERER_PATHREF_FRAMES` sets the
+    /// stills' frames (512).
     private static func pathref() -> [Config] {
         let frames = Int(env["METALRENDERER_PATHREF_FRAMES"] ?? "") ?? 512
-        let kinds: [SceneKind] = [.cornell, .gallery, .area, .mixed, .emissive, .stress]
+        let kinds: [SceneKind] = [.cornell, .gallery, .area, .mixed, .emissive, .stress, .fog, .market]
         let stills = kinds.flatMap { kind -> [Config] in
             let scene = kind == .stress ? stressHall() : SceneSettings(kind: kind)
             let pt = Config("\(kind) pt", scale: 0.5, scene: scene) { $0.reference.mode = .pathTraced }.still().frames(frames)

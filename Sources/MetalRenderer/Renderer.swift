@@ -561,6 +561,8 @@ final class Renderer: NSObject {
     private var pathTraceAccum: MTLTexture?
     private var pathTraceCount: UInt32 = 0
     private var referenceView: [SIMD4<Float>] = []
+    private var lightProxies: MTLBuffer?        // makeLightProxies
+    private var lightProxyCount = 0
     private(set) lazy var upscaleSupported = Capabilities.current.metalFXDenoiser
     private lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
     /// Upscale factors this GPU supports (for MetalFX's denoising scaler), with 0 meaning off.
@@ -864,6 +866,7 @@ final class Renderer: NSObject {
                                                                                    blocks: namedBlocks,
                                                                                    instanceBlocks: namedInstanceBlocks))
         sceneBuffers = buffers
+        makeLightProxies()
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
@@ -1139,20 +1142,21 @@ final class Renderer: NSObject {
     }
 
     /// This frame's fog parameters for the shaders (flags 0 while fog is off).
-    private func makeFogParams(grid: FogTargets?, historyValid: Bool) -> GPUFogParams {
+    /// `requireGrid`: none without the froxel grid (the frame's fog); the path tracer reads the medium alone.
+    private func makeFogParams(grid: FogTargets?, historyValid: Bool, requireGrid: Bool = true) -> GPUFogParams {
         var p = GPUFogParams()
         let f = settings.fog
-        guard f.enabled, let grid else { return p }
+        guard f.enabled, grid != nil || !requireGrid else { return p }
         let near: Float = 0.2, far = max(f.maxDistance, 1)
         p.medium = SIMD4(FogSettings.densityRange.clamp(f.density) * (f.density > 0 ? 1 : 0), max(f.heightFalloff, 0),
                          f.baseHeight, FogSettings.anisotropyRange.clamp(f.anisotropy))
         p.albedo = SIMD4(f.albedo, max(f.ambient, 0))
         p.noise = SIMD4(f.noise, max(f.noiseScale, 0.1), animTime, 0.1)
         p.wind = SIMD4(f.wind, FogSettings.hazeRange.clamp(f.haze))
-        p.grid = SIMD4(near, far, log(far / near), Float(grid.slices))
+        p.grid = SIMD4(near, far, log(far / near), Float(grid?.slices ?? 0))
         let volumes = f.volumes ? Array(scene.fogVolumes.prefix(GPUFogParams.maxVolumes)) : []
         for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
-        p.counts = SIMD4(UInt32(grid.columns), UInt32(grid.rows), UInt32(volumes.count),
+        p.counts = SIMD4(UInt32(grid?.columns ?? 0), UInt32(grid?.rows ?? 0), UInt32(volumes.count),
                          GPUFogParams.enabled | (historyValid ? GPUFogParams.historyValid : 0)
                          | (f.reflections ? GPUFogParams.reflections : 0) | (f.lights ? 0 : GPUFogParams.skyLight))
         return p
@@ -1924,9 +1928,10 @@ final class Renderer: NSObject {
         var accumulation: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?   // references
         var accumCount: UInt32 = 0              // frames averaged so far
         var accumFull = false                   // ...as many as Reference's max samples: shown, not added to
-        // Reference "Path traced": pathTraceKernel adds `adding` paths per pixel to the mean of `count` in `accum`
-        // (0 once it has max samples), and the frame is that mean tone mapped. Nothing else runs.
-        var pathTrace: (accum: MTLTexture, count: UInt32, adding: UInt32, bounces: UInt32)?
+        // A reference frame made without what the picture needs yet (the fog's noise, made in the background): it
+        // replaces the average instead of joining it.
+        var provisional = false
+        var pathTrace: PathTracePlan?           // Reference "Path traced": nothing else runs
 
         // Volumetric fog
         var fog: (grid: FogTargets, noise: MTLTexture)?
@@ -1937,6 +1942,16 @@ final class Renderer: NSObject {
         // The lens and the finish (not in references, nor in the views that aren't light)
         var post: PostTargets?
         var postParams = GPUPostParams()
+    }
+
+    /// Reference "Path traced": pathTraceKernel adds `params.samples.y` paths per pixel to the mean of `samples.x` in
+    /// `accum` (none once it has max samples), and the frame is that mean tone mapped.
+    private struct PathTracePlan {
+        let accum: MTLTexture
+        var params = GPUPathTraceParams()
+        var fog = GPUFogParams()
+        var fogNoise: MTLTexture?
+        var lightTree: MTLBuffer?               // with more than PT_LIGHT_HITS lights
     }
 
     /// Resolves this frame's modes and allocates what they need that isn't there yet.
@@ -1969,10 +1984,28 @@ final class Renderer: NSObject {
 
         // Reference "Path traced": pathTraceKernel and the tone curve, nothing else.
         if referenceMode == .pathTraced, let accum = pathTraceTexture(width: width, height: height) {
-            let r = settings.reference, count = pathTraceCount   // read after pathTraceTexture: a new one starts over
+            let r = settings.reference
+            var pt = PathTracePlan(accum: accum)
+            var flags = Renderer.pathTraceSobol ? GPUPathTraceParams.sobol : 0
+            // The fog's medium, everywhere (no froxel grid). Until its noise is made, the frames don't count.
+            if settings.fog.enabled {
+                pt.fog = makeFogParams(grid: nil, historyValid: false, requireGrid: false)
+                pt.fogNoise = fogNoise()
+                if pt.fogNoise != nil { flags |= GPUPathTraceParams.fog } else { p.provisional = true }
+            }
+            // Many lights: drawn from the light tree, and met by the bounce rays at their proxies.
+            var nodes: UInt32 = 0
+            if scene.lights.count > Renderer.pathTraceLightHits, let tree = lightTreeBuffer(slot: slot) {
+                pt.lightTree = tree.buffer
+                nodes = UInt32(tree.nodes)
+            }
+            let count = p.provisional ? 0 : pathTraceCount   // read after pathTraceTexture: a new one starts over
             let left = r.maxSamples > 0 ? UInt32(r.maxSamples) - min(count, UInt32(r.maxSamples)) : UInt32.max
-            p.pathTrace = (accum, count, min(UInt32(ReferenceSettings.samplesPerFrameRange.clamp(r.samplesPerFrame)), left),
-                           UInt32(ReferenceSettings.bounceRange.clamp(r.bounces)))
+            pt.params.samples = SIMD4(count, min(UInt32(ReferenceSettings.samplesPerFrameRange.clamp(r.samplesPerFrame)), left),
+                                      UInt32(ReferenceSettings.bounceRange.clamp(r.bounces)), nodes)
+            pt.params.config = SIMD4(flags, UInt32(lightProxyCount), 0, 0)
+            pt.params.bounds = scene.sceneSphere
+            p.pathTrace = pt
             p.uniforms.viewMode = 0   // the light, tone mapped
             p.splitPasses = benchmark != nil && Benchmark.splitPasses
             vsmFrame = nil
@@ -1994,6 +2027,9 @@ final class Renderer: NSObject {
         if settings.fog.enabled, let grid = fogTargets(width: width, height: height), let noise = fogNoise() { p.fog = (grid, noise) }
         let fogHistory = p.fog != nil && fogLastFrame == frameIndex &- 1 && fogLastFar == settings.fog.maxDistance
         p.fogParams = makeFogParams(grid: p.fog?.grid, historyValid: fogHistory)
+        // Reference "Accumulated passes" in the app: until the fog's noise is made, frames without the fog don't count.
+        // (Benchmarks make it before their first frame.)
+        p.provisional = accumulating && !benchmarkAccumulating && settings.fog.enabled && p.fog == nil
         p.fogSamples = accumCount
         if accumulating, p.fog != nil { p.fogReference = fogReferenceTexture(width: width, height: height) }
 
@@ -2083,7 +2119,7 @@ final class Renderer: NSObject {
         p.megaLightsHistory = megaLightsWritten   // read after megaLightsTargets: new hashes hold nothing
 
         if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
-        p.accumCount = accumCount             // read after accumulationTextures: new textures start a new average
+        p.accumCount = p.provisional ? 0 : accumCount   // read after accumulationTextures: new textures start a new average
         let maxSamples = settings.reference.maxSamples
         p.accumFull = !benchmarkAccumulating && maxSamples > 0 && accumCount >= UInt32(maxSamples)
 
@@ -2134,8 +2170,8 @@ final class Renderer: NSObject {
         restirWritten = plan.restirGrid != nil
         megaLightsWritten = plan.megaLightsGrid != nil
         reservoirsWritten = plan.lightReuse
-        if plan.accumulation != nil && !plan.accumFull { accumCount += 1 }
-        if let pt = plan.pathTrace { pathTraceCount += pt.adding }
+        if plan.accumulation != nil && !plan.accumFull && !plan.provisional { accumCount += 1 }
+        if let pt = plan.pathTrace, !plan.provisional { pathTraceCount += pt.params.samples.y }
         if plan.fog != nil && plan.fogReference == nil {   // the froxel grid was written
             fogLastFrame = frameIndex
             fogLastFar = settings.fog.maxDistance
@@ -2775,13 +2811,16 @@ final class Renderer: NSObject {
     /// Reference "Path traced": this frame's paths join the running mean (Shaders/PathTrace.metal), which encodeOutput
     /// tone maps. Nothing to add once it has max samples.
     private func pathTraceStages(_ plan: FramePlan) -> [ComputeStage] {
-        guard let pt = plan.pathTrace, pt.adding > 0 else { return [] }
+        guard let pt = plan.pathTrace, pt.params.samples.y > 0 else { return [] }
         let uniforms = plan.uniforms, size = plan.size, slot = plan.slot
         return [ComputeStage(pass: "path trace") { [self] enc in
-            var params = SIMD4<UInt32>(pt.count, pt.adding, pt.bounces, 0)
+            var params = pt.params, fog = pt.fog
             bind(enc, .pathTrace, uniforms, sceneSlot: slot)
-            enc.setBytes(&params, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 13)
-            enc.setTexture(pt.accum, index: 0)
+            enc.setBytes(&fog, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            enc.setBytes(&params, length: MemoryLayout<GPUPathTraceParams>.stride, index: 13)
+            enc.setBuffer(lightProxies ?? lightBuffers[slot], offset: 0, index: 14)
+            enc.setBuffer(pt.lightTree ?? lightBuffers[slot], offset: 0, index: 15)   // (unread without the tree)
+            setTextures(enc, [pt.accum, pt.fogNoise ?? dummy3D])
             dispatch(enc, .pathTrace, width: size.width, height: size.height)
         }]
     }
@@ -2899,6 +2938,7 @@ final class Renderer: NSObject {
         if let ref = plan.fogReference {
             composite.fogReference = ref
             composite.uniforms.flags |= UniformFlags.fog | UniformFlags.fogReference
+            if plan.accumFull { return [] }   // Reference's max samples: the march's average as it is
             return [ComputeStage(pass: "fog") { [self] enc in
                 var fp = fogParams, count = samples
                 bind(enc, .fogReference, uniforms, sceneSlot: slot)
@@ -3251,6 +3291,20 @@ final class Renderer: NSObject {
         colorAccum = device.makeTexture(descriptor: d)
         colorAccumCount = 0
         return colorAccum
+    }
+
+    /// Reference "Path traced": for each of the scene's own instances, the light it is the visible shape of (its
+    /// index in the lights), ~1 for the other camera-only shapes (maskLights: the motes), ~0 for geometry. A bounce
+    /// ray that meets a light's shape asks this which light it met, and passes through the motes.
+    private func makeLightProxies() {
+        var map = scene.instances.map { $0.mask & Scene.maskLights != 0 ? UInt32.max - 1 : UInt32.max }
+        if map.isEmpty { map = [.max] }
+        for (i, light) in scene.lights.enumerated() where map.indices.contains(light.proxyInstance) {
+            map[light.proxyInstance] = UInt32(i)
+        }
+        lightProxies = device.makeBuffer(bytes: map, length: map.count * MemoryLayout<UInt32>.stride, options: .storageModeShared)
+        lightProxies?.label = "light proxies"
+        lightProxyCount = scene.instances.count
     }
 
     /// The reference picture starts over: no frame or path of it is kept.
@@ -3718,6 +3772,11 @@ final class Renderer: NSObject {
         return megaLightsGrid
     }
     private static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
+    /// Reference "Path traced": METALRENDERER_PT_SOBOL=0 draws white noise instead of Owen-scrambled Sobol (A/B).
+    private static let pathTraceSobol = ProcessInfo.processInfo.environment["METALRENDERER_PT_SOBOL"] != "0"
+    /// Reference "Path traced": up to this many lights (PT_LIGHT_HITS in PathTrace.metal), each is weighed at every
+    /// point and bounce rays test them one by one; above, the light tree draws them and rays meet their proxies.
+    static let pathTraceLightHits = 32
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
     private static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
     /// The Metal TLAS is refit most frames (see encodeSceneUpdate), so it is built for a fast build. A quality build
