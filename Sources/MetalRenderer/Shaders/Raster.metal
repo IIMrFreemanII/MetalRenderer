@@ -23,6 +23,12 @@ constant uint RASTER_CHUNK_VERTICES = 3 * RASTER_CHUNK;
 constant uint RASTER_GROUP = 64;               // chunks a group (rasterChunksKernel's threadgroup)
 constant uint RASTER_NO_ID = 0xFFFFFFFFu;      // the visibility buffer's clear value: nothing drawn
 constant uint RASTER_TRACE_ID = 0xFFFFFFFEu;   // a box around what isn't drawn: trace the primary ray here
+// The visibility buffer's y for a cluster's triangle: this | its entry in the frame's cluster list << 7 | the triangle
+// (a cluster has at most 128).
+constant uint RASTER_CLUSTER_ID = 0x80000000u;
+// RasterClusters' per-frame state (uints): RVG_HEADER words of counters, then per virtual instance its RasterInstance
+// (16 words) as rasterCullKernel left it, then per virtual instance 1 if it is in view.
+constant uint RVG_HEADER = 16;
 // A heavy instance (more than RASTER_HEAVY triangles) with more than RASTER_MAX_DENSITY of them per pixel its bounds
 // cover is traced, not drawn: there's no level of detail to draw it at (a far crowd, Metal's tracer's baked plants),
 // and past that the box's traced pixels cost less than the triangles (the crowd: 16 a pixel 13.2 ms a frame, 4 12.2,
@@ -36,6 +42,7 @@ constant uint RASTER_ARRAYS  = 1;              // the scene's arrays (MeshData.f
 constant uint RASTER_BLOCK   = 2;              // a mesh in a buffer of its own (MeshData.block)
 constant uint RASTER_VIRTUAL = 3;              // virtual geometry: its instance's BLAS over this frame's cut (VGBlas)
 constant uint RASTER_BOX     = 4;              // (a draw's) the instance's bounding box, as 12 triangles, RASTER_TRACE_ID
+constant uint RASTER_CLUSTERS = 5;             // virtual geometry as clusters (RasterClusters.metal): a draw is one cluster
 constant uint RASTER_KIND    = 0xFu;
 constant uint RASTER_DEFORMS = 16;             // a crowd's pose slot: no chunk bounds (they move), loose instance bounds
 constant uint RASTER_NEAR    = 32;             // (a box's draw) it reaches the camera: drawn in front of everything
@@ -59,7 +66,7 @@ struct RasterParams {
     uint pass;            // 0 or 1
     uint2 hzbSize;        // level 0: half the frame's size, rounded up to a power of two
     uint firstAssembly;   // the assemblies' first RasterMesh
-    uint pad;
+    uint virtualCount;    // virtual instances drawn as clusters (their state's places), else 0
 };
 static_assert(sizeof(RasterParams) == 48, "RasterParams: GPURasterParams");
 
@@ -119,6 +126,22 @@ inline RasterInstance rasterProjection(float4x4 m, constant Uniforms& u) {
     float3 b = u.camUp.xyz / u.camUp.w + 2.0f * u.jitter.y / float(u.height) * f;
     RasterInstance r;
     r.x = float4(a, 0.0f) * rel;     // (transpose(rel) * a: a's dot with the camera-relative world point)
+    r.y = float4(b, 0.0f) * rel;
+    r.w = float4(f, 0.0f) * rel;
+    r.corners = nullptr;
+    r.indices = nullptr;
+    return r;
+}
+
+// The same rows for the last frame: its transform, camera and jitter (what the last frame's depth pyramid saw).
+inline RasterInstance rasterProjectionPrev(float4x4 m, constant Uniforms& u) {
+    float4x4 rel = m;
+    rel[3].xyz -= u.prevCamPos.xyz;
+    float3 f = u.prevCamForward.xyz;
+    float3 a = u.prevCamRight.xyz / u.prevCamRight.w - 2.0f * u.jitter.z / float(u.width) * f;
+    float3 b = u.prevCamUp.xyz / u.prevCamUp.w + 2.0f * u.jitter.w / float(u.height) * f;
+    RasterInstance r;
+    r.x = float4(a, 0.0f) * rel;
     r.y = float4(b, 0.0f) * rel;
     r.w = float4(f, 0.0f) * rel;
     r.corners = nullptr;
@@ -207,6 +230,7 @@ kernel void rasterCullKernel(constant Uniforms&            u         [[buffer(0)
                              device const RasterMesh*      rmeshes   [[buffer(14)]],
                              device const VGBlasEntry*     vgTable   [[buffer(16)]],
                              device RasterInstance*        records   [[buffer(19)]],
+                             device uint*                  vgState   [[buffer(26)]],   // RasterClusters' (RVG_PLACES on)
                              texture2d<float, access::read> hzb      [[texture(0)]],
                              uint i [[thread_position_in_grid]])
 {
@@ -224,7 +248,9 @@ kernel void rasterCullKernel(constant Uniforms&            u         [[buffer(0)
     }
     RasterMesh rm = rmeshes[meshIndex];
     uint kind = as_type<uint>(rm.hi.w);
-    uint triangles = (kind & RASTER_KIND) == RASTER_SKIP ? 12u
+    bool clusters = (kind & RASTER_KIND) == RASTER_CLUSTERS;   // (its cut picks what it draws: rasterVGCutKernel)
+
+    uint triangles = (kind & RASTER_KIND) == RASTER_SKIP ? 12u : clusters ? 1u
                    : (kind & RASTER_KIND) == RASTER_VIRTUAL ? vgTable[inst.pad1 - 1u].triangles : meshes[meshIndex].indexCount / 3u;
     if (triangles == 0u) return;
     RasterInstance r = rasterProjection(inst.transform, u);
@@ -235,17 +261,27 @@ kernel void rasterCullKernel(constant Uniforms&            u         [[buffer(0)
         bool inView = rasterBoxVisible(rm.lo.xyz, rm.hi.xyz, r, u, rp, hzb, false, pixels);
         visible[i] = inView ? was | RASTER_IN_VIEW : 0u;
         draw = inView && before;
+        // Virtual geometry as clusters: in view is enough, its cut tests each cluster (rasterVGCutKernel), against
+        // the last frame's pyramid, and pass 2 tests again what that hid (rasterVGRetestKernel).
+        if (clusters) {
+            if (inView) {
+                device RasterInstance* vgRecords = (device RasterInstance*)(vgState + RVG_HEADER);
+                vgRecords[inst.pad1 - 1u] = r;
+                vgState[RVG_HEADER + 16u * rp.virtualCount + inst.pad1 - 1u] = 1u;
+            }
+            return;
+        }
     } else {
         bool now = rasterBoxVisible(rm.lo.xyz, rm.hi.xyz, r, u, rp, hzb, (rp.flags & RASTER_P_HZB) != 0u, pixels);
         visible[i] = now ? RASTER_VISIBLE : 0u;
-        draw = now && !before;   // (what pass 1 drew is in the depth already)
+        draw = now && !before && !clusters;   // (what pass 1 drew is in the depth already)
     }
     if (!draw) return;
     // Not drawn: a kind the raster skips, or finer than the pixels (not virtual geometry: its cut is already about a
     // triangle a pixel). Its box instead; in front of everything when it reaches the camera, as its far side would
     // hide what is in front of the instance (every pixel the box covers sees the box, the inside of it too).
     if ((kind & RASTER_KIND) == RASTER_SKIP
-        || ((kind & RASTER_KIND) != RASTER_VIRTUAL && triangles > RASTER_HEAVY && float(triangles) > RASTER_MAX_DENSITY * pixels)) {
+        || ((kind & RASTER_KIND) != RASTER_VIRTUAL && !clusters && triangles > RASTER_HEAVY && float(triangles) > RASTER_MAX_DENSITY * pixels)) {
         kind = RASTER_BOX | (isinf(pixels) ? RASTER_NEAR : 0u);
         triangles = 12u;
     }
@@ -308,7 +344,12 @@ kernel void rasterChunksKernel(constant Uniforms&            u         [[buffer(
 }
 
 // Both passes' counters, ahead of the frame's pass 1.
-kernel void rasterResetKernel(device RasterCounters* counters [[buffer(13)]], uint i [[thread_position_in_grid]]) {
+kernel void rasterResetKernel(constant RasterParams&  rp       [[buffer(9)]],
+                              device RasterCounters* counters [[buffer(13)]],
+                              device uint*           vgState  [[buffer(26)]],   // RasterClusters': counters, places
+                              uint i [[thread_position_in_grid]]) {
+    if (i < RVG_HEADER) vgState[i] = 0u;
+    if (i < rp.virtualCount) vgState[RVG_HEADER + 16u * rp.virtualCount + i] = 0u;   // (in view)
     if (i >= 2u) return;
     if (i == 0u) atomic_store_explicit(rasterTraced(counters), 0u, memory_order_relaxed);
     atomic_store_explicit(&counters[i].vertexCount, 0u, memory_order_relaxed);
@@ -392,6 +433,9 @@ struct RasterVertex {
 vertex RasterVertex rasterVertex(constant RasterParams&          rp      [[buffer(9)]],
                                  device const uint4*             draws   [[buffer(17)]],
                                  device const RasterInstance*    records [[buffer(19)]],
+                                 device const float4*            vgPool  [[buffer(20)]],   // the raster clusters' pool,
+                                 device const uint*              vgState [[buffer(26)]],   // their instances' records,
+                                 device const uint2*             vgList  [[buffer(27)]],   // and the frame's cluster list
                                  uint vid [[vertex_id]])
 {
     RasterVertex out;
@@ -404,13 +448,22 @@ vertex RasterVertex rasterVertex(constant RasterParams&          rp      [[buffe
         return out;
     }
     uint prim = draw.y + t;
-    RasterInstance r = records[draw.x];
+    RasterInstance r = (kind & RASTER_KIND) == RASTER_CLUSTERS   // (x: a cluster's virtual instance)
+        ? ((device const RasterInstance*)(vgState + RVG_HEADER))[draw.x] : records[draw.x];
     float3 p;
     if ((kind & RASTER_KIND) == RASTER_BOX) {
         device const float4* box = (device const float4*)r.corners;   // lo, hi
         uint c = RASTER_BOX_CORNERS[3u * prim + corner];
         p = select(box[0].xyz, box[1].xyz, bool3((c & 1u) != 0u, (c & 2u) != 0u, (c & 4u) != 0u));
         out.ids = uint2(RASTER_TRACE_ID, 0u);
+    } else if ((kind & RASTER_KIND) == RASTER_CLUSTERS) {
+        // A cluster's triangle t: its corner's 8-bit index into the cluster's positions (vgClusterView's layout).
+        device const float4* blob = vgPool + vgList[draw.y].y;
+        uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
+        device const uchar* base = (device const uchar*)blob;
+        uint packed = ((device const uint*)(base + offsets.w))[t];
+        p = ((device const float4*)(base + offsets.y))[(packed >> (8u * corner)) & 0xFFu].xyz;
+        out.ids = uint2(draw.w, RASTER_CLUSTER_ID | draw.y << 7 | t);
     } else {
         p = rasterTriangleCorner(kind, r.corners, r.indices, prim, corner);
         out.ids = uint2(draw.w, prim);
@@ -436,6 +489,10 @@ inline bool visibilityHit(uint2 ids, Ray r, SCENE_ACCEL accel, thread const Scen
     h.barycentrics = float2(0.0f);
     if (ids.x == RASTER_NO_ID) return true;
     if (ids.x == RASTER_TRACE_ID) return false;
+    if ((ids.y & RASTER_CLUSTER_ID) != 0u) {   // a raster cluster's triangle: the trace's selected cluster (RasterClusters)
+        h.cluster = (ids.y >> 7) & 0xFFFFFFu;
+        h.primitive = ids.y & 0x7Fu;
+    }
     InstanceData inst = instanceRecord(s.instances, ids.x);
     HitVertices v = fetchHitVertices(h, inst, accel, s);
     float3 a = (inst.transform * float4(v.p[0], 1.0f)).xyz;

@@ -503,6 +503,15 @@ final class CustomRayTracer {
         if CustomRayTracer.checked, !scene.hasBorrowedMeshes { selfTest(scene: scene) }   // (it reads the scene's arrays)
     }
 
+    /// The raster's clusters (per-instance BLAS mode): their list and pool stand in the selected clusters' fields, which
+    /// nothing else uses there, so a primary hit on a drawn cluster reads its triangle as the cluster tree's would.
+    weak var rasterClusters: RasterClusters? {
+        didSet {
+            guard virtualGeometry == nil, rasterClusters !== oldValue else { return }
+            for slot in 0..<sceneArgs.count { writeArgs(slot: slot) }
+        }
+    }
+
     /// RTScene (160 bytes, asserted in Shaders/Intersect.metal): 10 GPU addresses, then the static and dynamic root refs and the
     /// cluster tree's first node, then the assemblies' parts and their voxels; the wind is written every frame (`encodeBuild`).
     private func writeArgs(slot: Int) {
@@ -512,8 +521,8 @@ final class CustomRayTracer {
         p.storeBytes(of: blasNodes.gpuAddress, toByteOffset: 8, as: UInt64.self)
         p.storeBytes(of: triangles.gpuAddress, toByteOffset: 16, as: UInt64.self)
         p.storeBytes(of: instances[slot].gpuAddress, toByteOffset: 24, as: UInt64.self)
-        p.storeBytes(of: (vg?.selectedBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
-        p.storeBytes(of: (vg?.pool ?? dummy).gpuAddress, toByteOffset: 40, as: UInt64.self)
+        p.storeBytes(of: (vg?.selectedBuffers[slot] ?? rasterClusters?.listBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
+        p.storeBytes(of: (vg?.pool ?? rasterClusters?.streamer.pool ?? dummy).gpuAddress, toByteOffset: 40, as: UInt64.self)
         p.storeBytes(of: (vg?.rootsBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 48, as: UInt64.self)
         p.storeBytes(of: (vg?.nodeInstanceBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 56, as: UInt64.self)
         p.storeBytes(of: stats.gpuAddress, toByteOffset: 64, as: UInt64.self)
@@ -800,7 +809,7 @@ final class CustomRayTracer {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
         guard declare else { return }
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot], parts, voxelGrids, voxels, cutouts] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
-                         + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
+                         + (virtualBLAS?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? []), usage: .read)
         if !blockTrees.isEmpty { enc.useResources(blockTrees, usage: .read) }
         if sdf.shapeCount > 0 { enc.useResources(sdf.buffers, usage: .read) }
         enc.useResource(stats, usage: [.read, .write])

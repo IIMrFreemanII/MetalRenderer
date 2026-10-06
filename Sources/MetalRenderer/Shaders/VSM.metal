@@ -237,6 +237,27 @@ struct VSMInstance {
 };
 static_assert(sizeof(VSMInstance) == 112, "VSMInstance: VSMTargets.recordSize");
 
+// Virtual geometry drawn as the raster's clusters (RasterClusters.shadowArgs; all null without them): vsmCullKernel
+// leaves each (active view, virtual instance) a record, vsmVGCutKernel (RasterClusters.metal) picks and culls the
+// clusters for its pages at a level of detail of the view's texels, and vsmVertex reads their vertices in the pool.
+struct VSMClusterArgs {
+    device VSMInstance*  records;       // per (active view, virtual instance): meshIndex = the frame + 1 it is from
+    device const uint*   changed;       // per virtual instance: its mesh got groups this frame (its pages go stale)
+    device atomic_uint*  requests;      // a count, 3 words, then (group, priority) pairs
+    device const float4* pool;
+    device const uint4*  vinstances;    // VGRasterInstance
+    device const float4* groups;        // VGGroupRecord
+    device const float4* clusters;      // VGCluster
+    device const uint*   groupPage;
+    device atomic_uint*  requestStamp;
+    device uint*         lastUsed;
+    uint  instanceCount;                // virtual instances
+    uint  workCount;                    // (virtual instance, group) pairs
+    uint  requestCapacity;
+    float tau;                          // allowed projected error, in the view's texels
+};
+static_assert(sizeof(VSMClusterArgs) == 96, "VSMClusterArgs: RasterClusters.shadowArgs");
+
 // The pages to draw this frame (VSMTargets.renderList): x = page-table entry, y = physical page, z = window page
 // (x | y << 16), w = its view's pages a side.
 
@@ -393,6 +414,7 @@ kernel void vsmAllocKernel(constant VSMParams&      vp         [[buffer(9)]],
 // One thread per moving instance and view (with the cache): the drawn pages its box covers where it was a frame ago
 // and where it is now are drawn again, when asked for. (A view whose light moved is drawn again whole: vsmFreeKernel.)
 kernel void vsmInvalidateKernel(device const InstanceData*    instances [[buffer(6)]],
+                                constant VSMClusterArgs&      vg        [[buffer(7)]],
                                 constant VSMParams&           vp        [[buffer(9)]],
                                 device const uint*            ids       [[buffer(10)]],
                                 device const uint*            moving    [[buffer(11)]],
@@ -411,10 +433,12 @@ kernel void vsmInvalidateKernel(device const InstanceData*    instances [[buffer
     RasterMesh rm = rmeshes[inst.meshIndex];
     uint kind = as_type<uint>(rm.hi.w) & RASTER_KIND;
     if (kind == RASTER_SKIP) return;
-    // Still this frame (paused, or between its moves): nothing to draw again; but a virtual instance's cut may change.
+    // Still this frame (paused, or between its moves): nothing to draw again; but a virtual instance's BLAS may have
+    // a new cut, and its clusters finer groups (their cut doesn't follow the camera: vsmVGCutKernel).
     bool moved = false;
     for (uint c = 0; c < 4u; ++c) moved = moved || any(inst.transform[c] != inst.prevTransform[c]);
-    if (!moved && kind != RASTER_VIRTUAL) return;
+    bool recut = kind == RASTER_VIRTUAL || (kind == RASTER_CLUSTERS && vg.changed != nullptr && vg.changed[inst.pad1 - 1u] != 0u);
+    if (!moved && !recut) return;
     for (uint k = 0; k < 2u; ++k) {
         VSMInstance r = vsmProjection(k == 0u ? inst.prevTransform : inst.transform, v);
         uint4 rect;
@@ -448,8 +472,11 @@ kernel void vsmSettleKernel(constant VSMParams& vp       [[buffer(9)]],
 }
 
 // Every frame's start: the draw's and the chunks' counters, and the activity (vsmSettleKernel sets the rest).
-kernel void vsmResetKernel(device VSMCounters* counters [[buffer(13)]], uint i [[thread_position_in_grid]]) {
+kernel void vsmResetKernel(constant VSMClusterArgs& vg       [[buffer(7)]],
+                           device VSMCounters*      counters [[buffer(13)]],
+                           uint i [[thread_position_in_grid]]) {
     if (i != 0u) return;
+    if (vg.requests != nullptr) atomic_store_explicit(vg.requests, 0u, memory_order_relaxed);
     atomic_store_explicit(&counters->vertexCount, 0u, memory_order_relaxed);
     counters->instanceCount = 1u;
     counters->vertexStart = 0u;
@@ -465,6 +492,7 @@ kernel void vsmResetKernel(device VSMCounters* counters [[buffer(13)]], uint i [
 // One thread per instance and active view: an instance in front of the view's pages to draw is appended as groups of
 // RASTER_GROUP chunks (x = id, y = first chunk, z = triangles, w = kind), its VSMInstance at its first group's place.
 kernel void vsmCullKernel(device const float3*          positions  [[buffer(2)]],
+                          constant VSMClusterArgs&      vg         [[buffer(7)]],
                           device const uint*            indices    [[buffer(4)]],
                           device const MeshData*        meshes     [[buffer(5)]],
                           device const InstanceData*    instances  [[buffer(6)]],
@@ -491,8 +519,10 @@ kernel void vsmCullKernel(device const float3*          positions  [[buffer(2)]]
     if (meshIndex >= vp.meshCount) return;
     RasterMesh rm = rmeshes[meshIndex];
     uint kind = as_type<uint>(rm.hi.w);
-    if ((kind & RASTER_KIND) == RASTER_SKIP) return;
-    uint triangles = (kind & RASTER_KIND) == RASTER_VIRTUAL ? vgTable[inst.pad1 - 1u].triangles : meshes[meshIndex].indexCount / 3u;
+    bool clusters = (kind & RASTER_KIND) == RASTER_CLUSTERS;   // (its own cut: vsmVGCutKernel)
+    if ((kind & RASTER_KIND) == RASTER_SKIP || (clusters && vg.records == nullptr)) return;
+    uint triangles = clusters ? 1u
+                   : (kind & RASTER_KIND) == RASTER_VIRTUAL ? vgTable[inst.pad1 - 1u].triangles : meshes[meshIndex].indexCount / 3u;
     if (triangles == 0u) return;
     VSMView v = views[vi];
     VSMInstance r = vsmProjection(inst.transform, v);
@@ -501,6 +531,13 @@ kernel void vsmCullKernel(device const float3*          positions  [[buffer(2)]]
     uint4 dirty = rects[vi];
     rect = uint4(max(rect.xy, dirty.xy), min(rect.zw, dirty.zw));
     if (any(rect.xy > rect.zw)) return;
+    if (clusters) {   // the record its clusters' cut reads, stamped with the frame
+        r.view = vi;
+        r.meshIndex = vp.frame + 1u;
+        r.pages = rect;
+        vg.records[tid.y * vg.instanceCount + inst.pad1 - 1u] = r;
+        return;
+    }
     uint chunks = (triangles + RASTER_CHUNK - 1u) / RASTER_CHUNK, n = (chunks + RASTER_GROUP - 1u) / RASTER_GROUP;
     uint first = atomic_fetch_add_explicit(&counters->groups, n, memory_order_relaxed);
     uint end = min(first + n, vp.maxGroups);
@@ -581,7 +618,8 @@ inline float4 vsmPageClip(float4 c, uint2 page, uint pages) {
 }
 
 // The draw list's vertex (as rasterVertex): chunk k's triangle t, into the page its draw names.
-vertex VSMVertex vsmVertex(constant VSMParams&         vp         [[buffer(9)]],
+vertex VSMVertex vsmVertex(constant VSMClusterArgs&    vg         [[buffer(7)]],
+                           constant VSMParams&         vp         [[buffer(9)]],
                            device const VSMInstance*   records    [[buffer(17)]],
                            device const uint4*         draws      [[buffer(18)]],
                            device const uint4*         renderList [[buffer(30)]],
@@ -596,8 +634,19 @@ vertex VSMVertex vsmVertex(constant VSMParams&         vp         [[buffer(9)]],
         out.position = float4(0.0f, 0.0f, 0.0f, 1.0f);
         return out;
     }
-    VSMInstance r = records[draw.x];
-    float3 p = rasterTriangleCorner(kind, r.corners, r.indices, draw.y + t, corner);
+    VSMInstance r;
+    float3 p;
+    if ((kind & RASTER_KIND) == RASTER_CLUSTERS) {   // x: its (view, virtual instance) record, y: its pool offset
+        r = vg.records[draw.x];
+        device const float4* blob = vg.pool + draw.y;
+        uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
+        device const uchar* base = (device const uchar*)blob;
+        uint packed = ((device const uint*)(base + offsets.w))[t];
+        p = ((device const float4*)(base + offsets.y))[(packed >> (8u * corner)) & 0xFFu].xyz;
+    } else {
+        r = records[draw.x];
+        p = rasterTriangleCorner(kind, r.corners, r.indices, draw.y + t, corner);
+    }
     uint4 page = renderList[draw.w];
     out.position = vsmPageClip(vsmClipLocal(p, r), uint2(page.z & 0xFFFFu, page.z >> 16), page.w);
     out.layer = page.y;

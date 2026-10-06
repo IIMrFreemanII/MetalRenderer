@@ -72,7 +72,8 @@ if [[ $suites == " " ]]; then
           TextureStreamer.swift) add TextureStreamerTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
-          VirtualGeometryBuilder.swift) add CacheTests ;;
+          VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
+          VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests ;;
           *) uncovered+=("$f") ;;
         esac ;;
       Package.swift) add MetalRendererTests ;;

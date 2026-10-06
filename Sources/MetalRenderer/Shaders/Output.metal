@@ -36,6 +36,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 device const InstanceData*       instances  [[buffer(6)]],
                                 constant SceneShading&           shading    [[buffer(7)]],
                                 texture2d<float, access::write>  output     [[texture(0)]],
+                                texture2d<uint, access::read>    visBuffer  [[texture(1)]],   // with FLAG_VIS_BUFFER
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -54,6 +55,9 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
     float3 costColor = float3(1.0f, 0.0f, 1.0f);   // Metal's traversal can't be counted
 #endif
     if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
+    // With the raster visibility buffer, what it drew (virtual geometry: its own cut of clusters), as the frame sees it.
+    Hit drawn;
+    if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, r, accel, s, drawn)) res = drawn;
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
     if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level

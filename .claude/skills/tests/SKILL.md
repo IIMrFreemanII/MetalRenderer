@@ -64,7 +64,8 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `TextureStreamer` | TextureStreamerTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
-| `VirtualGeometryBuilder` (its cache file) | CacheTests |
+| `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
+| `VGStreamer`, `VirtualGeometry`, `RasterClusters` (streaming, the DAG's group records) | VGStreamerTests |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |
 | `Package.swift`, a shared test helper | all suites: the one case where the full run is right |
 

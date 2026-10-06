@@ -8,7 +8,7 @@ struct Uniforms {
     var camPos = SIMD4<Float>()          // xyz = camera position
     var camRight = SIMD4<Float>()        // xyz = right vector,   w = tan(fovX / 2)
     var camUp = SIMD4<Float>()           // xyz = up vector,      w = tan(fovY / 2)
-    var camForward = SIMD4<Float>()      // xyz = forward vector
+    var camForward = SIMD4<Float>()      // xyz = forward vector, w = RasterClusters.bias where the raster draws clusters
     var prevCamPos = SIMD4<Float>()      // previous frame's camera (for motion vectors)
     var prevCamRight = SIMD4<Float>()
     var prevCamUp = SIMD4<Float>()
@@ -104,7 +104,7 @@ struct GPURasterParams {
     var pass: UInt32 = 0              // 0 = visible last frame, 1 = tested against this frame's pyramid
     var hzbSize = SIMD2<UInt32>()     // level 0
     var firstAssembly: UInt32 = 0     // RasterScene.firstAssembly
-    var pad: UInt32 = 0
+    var virtualCount: UInt32 = 0      // virtual instances drawn as clusters (RasterClusters), else 0
 
     static let ids: UInt32 = 1        // an instance's id comes from RasterScene.ids (Metal's tracer with blocks)
     static let hzb: UInt32 = 2        // pass 2 tests against the pyramid
