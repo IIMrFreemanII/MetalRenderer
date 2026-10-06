@@ -22,6 +22,7 @@ extension PhysicsWorld {
             integrate(p)
             integrateParticles(p)
             solveCloth(p)
+            solveTets(p)
             solveParticles(p)   // against the bodies where this substep moved them, before they are pushed apart
             solvePositions(p)
             solveVelocities(p)
@@ -649,7 +650,7 @@ extension PhysicsWorld {
                     for dx: Int32 in -1...1 {
                         for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i {
                             let o = particles[j]
-                            if (q.info.y | o.info.y) & PhysicsWorld.clothBit != 0 { continue }   // cloths only meet colliders
+                            if !PhysicsWorld.meets(q, o) { continue }   // cloths only meet colliders, a soft body not itself
                             let reach = r + PhysicsWorld.particleReach(o, p)
                             let d2 = length_squared(PhysicsMath.xyz(o.position) - x)
                             if d2 < reach * reach { found.append((d2, UInt32(j))) }
@@ -677,7 +678,8 @@ extension PhysicsWorld {
         for i in particles.indices where particles[i].prevPosition.w > 0 {   // (a pinned cloth vertex stays)
             var q = particles[i]
             q.prevPosition = SIMD4(PhysicsMath.xyz(q.position), q.prevPosition.w)
-            let drag: Float = q.info.y & PhysicsWorld.clothBit != 0 ? max(1 - p.particleGrid.z * h, 0) : 1
+            let rate = q.info.y & PhysicsWorld.clothBit != 0 ? p.particleGrid.z : q.info.y & PhysicsWorld.softBit != 0 ? p.softDamping.x : 0
+            let drag = max(1 - rate * h, 0)
             var v = PhysicsMath.xyz(q.velocity) * drag + PhysicsMath.xyz(p.gravity) * h
             let speed = length(v)
             if speed > p.grid.z { v *= p.grid.z / speed }
@@ -700,23 +702,27 @@ extension PhysicsWorld {
     /// Whether a particle that went `moved` this substep stays put (PhysicsCPU.solveParticles).
     @inline(__always) static func rests(_ q: GPUPhysicsParticle, touching: Bool, shoved: Bool, moved: SIMD3<Float>,
                                         _ p: GPUPhysicsParams) -> Bool {
-        touching && !shoved && q.info.y & clothBit == 0 && length(moved) < p.particleGrid.w * p.gravity.w
+        touching && !shoved && q.info.y & (clothBit | softBit) == 0 && length(moved) < p.particleGrid.w * p.gravity.w
     }
 
     /// Each particle's pushes (Jacobi): its neighbours' overlaps, shared by mass and averaged, and the colliders' in
-    /// full (they don't give), averaged too; then its velocity from how far it went.
+    /// full (they don't give), averaged too; then its velocity from how far it went. A soft body's particle takes both
+    /// summed, and faster (`softPushSpeed`): its links hold it among its own, and averaged pushes let a body shove it
+    /// in, or a jelly on top sink into it.
     private func solveParticles(_ p: GPUPhysicsParams) {
         let h = p.gravity.w, k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
         let before = particles
         for i in before.indices where before[i].prevPosition.w > 0 {
             let q = before[i]
             let x = PhysicsMath.xyz(q.position), moved = x - PhysicsMath.xyz(q.prevPosition), w = q.prevPosition.w
+            let soft = q.info.y & PhysicsWorld.softBit != 0
+            let cap = (soft ? PhysicsWorld.softPushSpeed : PhysicsWorld.pushSpeed) * h
             var shared = SIMD3<Float>(), sharedCount: Float = 0
             for n in 0..<Int(neighbourCounts[i]) {
                 let o = before[Int(neighbours[i * k + n])]
                 let d = x - PhysicsMath.xyz(o.position)
                 let dist = length(d)
-                let overlap = min(q.position.w + o.position.w - dist, PhysicsWorld.pushSpeed * h)
+                let overlap = min(q.position.w + o.position.w - dist, cap)
                 guard overlap > 0, dist > 1e-6 else { continue }
                 let share = w / (w + o.prevPosition.w)
                 let slide = moved - (PhysicsMath.xyz(o.position) - PhysicsMath.xyz(o.prevPosition))
@@ -732,17 +738,18 @@ extension PhysicsWorld {
                 guard depth < 0 else { continue }
                 let normal = pose.direction(gradient(shape: shape, local))
                 let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), x - pose.position)
-                held += PhysicsWorld.particlePush(normal, min(-depth, PhysicsWorld.pushSpeed * h), moved - surface * h,
+                held += PhysicsWorld.particlePush(normal, min(-depth, cap), moved - surface * h,
                                                   sqrt(q.velocity.w * b.velocity.w))
                 heldCount += 1
                 shoved = shoved || PhysicsWorld.moves(b)
             }
             var out = q
             var y = x
-            if sharedCount > 0 { y += shared / sharedCount }
-            if heldCount > 0 { y += held / heldCount }
-            // At rest: a particle in a heap (no body shoving it, not a cloth's) that went slower than the rest speed
-            // stays where it was (Macklin et al. 2014's sleeping); the averaged pushes otherwise keep a heap fizzing.
+            if sharedCount > 0 { y += soft ? shared : shared / sharedCount }
+            if heldCount > 0 { y += soft ? held : held / heldCount }
+            // At rest: a particle in a heap (no body shoving it, not a cloth's or a soft body's) that went slower than
+            // the rest speed stays where it was (Macklin et al. 2014's sleeping); the averaged pushes otherwise keep a
+            // heap fizzing.
             if PhysicsWorld.rests(q, touching: sharedCount + heldCount > 0, shoved: shoved, moved: y - PhysicsMath.xyz(q.prevPosition), p) {
                 y = PhysicsMath.xyz(q.prevPosition)
             }
@@ -752,8 +759,9 @@ extension PhysicsWorld {
         }
     }
 
-    /// The cloths' constraints, a colour at a time (Gauss-Seidel: each sees what the colours before it moved), each an
-    /// XPBD distance constraint (one iteration a substep, so its lambda starts at 0).
+    /// The cloths' and soft bodies' links, a colour at a time (Gauss-Seidel: each sees what the colours before it
+    /// moved), each an XPBD distance constraint (one iteration a substep, so its lambda starts at 0); a soft body's
+    /// with Macklin et al. 2016's damping of what moves along it.
     private func solveCloth(_ p: GPUPhysicsParams) {
         let h = p.gravity.w
         for c in 0..<(colourStarts.count - 1) {
@@ -765,8 +773,12 @@ extension PhysicsWorld {
                 let d = PhysicsMath.xyz(particles[a].position) - PhysicsMath.xyz(particles[b].position)
                 let l = length(d)
                 guard l > 1e-9 else { continue }
-                let lambda = -(l - con.rest) / (wa + wb + con.compliance / (h * h))
-                let push = d / l * lambda
+                let n = d / l
+                let gamma = particles[a].info.y & PhysicsWorld.softBit != 0 ? con.compliance * p.softDamping.y / h : 0
+                let moved = dot(n, PhysicsMath.xyz(particles[a].position - particles[a].prevPosition)
+                                   - PhysicsMath.xyz(particles[b].position - particles[b].prevPosition))
+                let lambda = (-(l - con.rest) - gamma * moved) / ((1 + gamma) * (wa + wb) + con.compliance / (h * h))
+                let push = n * lambda
                 particles[a].position += SIMD4(push * wa, 0)
                 particles[b].position -= SIMD4(push * wb, 0)
             }

@@ -28,6 +28,7 @@ final class PhysicsWorld {
     /// info.y flags: a body's, and a particle's.
     static let asleep: UInt32 = 1
     static let clothBit: UInt32 = 1
+    static let softBit: UInt32 = 2
     /// How many pairs a body may be in (more are dropped: statics and the lowest bodies stay) and contacts a pair may have.
     static let maxPairs = 16
     static let maxContacts = PhysicsManifold.capacity
@@ -135,7 +136,7 @@ final class PhysicsWorld {
             [SIMD4(UInt32(c.first), UInt32(c.columns), UInt32(c.rows), UInt32(c.vertexBase)), SIMD4(prev, 0, 0, 0)]
         }
     }
-    private var unsortedConstraints: [GPUPhysicsConstraint] = []
+    var unsortedConstraints: [GPUPhysicsConstraint] = []
 
     /// The joints by colour (no two of a colour share a body), and where each colour starts (`colours + 1` entries).
     private(set) var joints: [GPUPhysicsJoint] = []
@@ -143,6 +144,18 @@ final class PhysicsWorld {
     private var unsortedJoints: [GPUPhysicsJoint] = []
     /// Each ragdoll's bodies (first, count): they sleep and wake together.
     private(set) var ragdolls: [SIMD2<UInt32>] = []
+
+    /// Soft bodies (PhysicsSoft.swift): their tets by colour (no two of a colour share a particle) and where each
+    /// colour starts (`colours + 1` entries), their drawn vertices, where each is in the tets it follows, and the
+    /// triangles around each (SoftModel.rings, by their places in the scene's vertex buffer), and each body's particles
+    /// (first, count). Their particles are among `particles`, their links among `constraints`.
+    private(set) var tets: [GPUPhysicsTet] = []
+    private(set) var tetStarts: [UInt32] = [0]
+    var unsortedTets: [GPUPhysicsTet] = []
+    var softVertices: [GPUSoftVertex] = []
+    var softEmbeds: [GPUSoftEmbed] = []
+    var softRings: [SIMD2<UInt32>] = []
+    var softBodies: [SIMD2<UInt32>] = []
 
     /// Hair (PhysicsHair.swift): the guide strands and their vertices (and the vertices' start), the groups of strands
     /// drawn around them, and the breeze.
@@ -378,6 +391,7 @@ final class PhysicsWorld {
     func finish() {
         colourConstraints()
         colourJoints()
+        (tets, tetStarts) = PhysicsWorld.colourTets(unsortedTets)
         pairs = [GPUPhysicsPair](repeating: GPUPhysicsPair(), count: bodies.count * PhysicsWorld.maxPairs)
         pairCounts = [UInt32](repeating: 0, count: bodies.count)
         contacts = [GPUPhysicsContact](repeating: GPUPhysicsContact(), count: pairs.count * PhysicsWorld.maxContacts)
@@ -426,7 +440,9 @@ final class PhysicsWorld {
                          particleGrid: SIMD4(particleCellSize, PhysicsWorld.particleSpeed, PhysicsWorld.clothDrag, PhysicsWorld.particleRest),
                          cloth: SIMD4(UInt32(constraints.count), UInt32(colourStarts.count - 1), UInt32(jointStarts.count - 1),
                                       UInt32(ragdolls.count)),
-                         rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, PhysicsWorld.wakeTurn))
+                         rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, PhysicsWorld.wakeTurn),
+                         soft: SIMD4(UInt32(tets.count), UInt32(tetStarts.count - 1), UInt32(softVertices.count), UInt32(softBodies.count)),
+                         softDamping: SIMD4(PhysicsWorld.softDrag, PhysicsWorld.softLinkDamping, 0, 0))
     }
 
     // MARK: - Time

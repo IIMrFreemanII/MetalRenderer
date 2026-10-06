@@ -15,6 +15,7 @@ constant uint PHYS_SDF = 0, PHYS_SPHERE = 1, PHYS_CAPSULE = 2, PHYS_BOX = 3, PHY
 constant uint PHYS_REFINE_STEPS = 6;
 constant float PHYS_GRADIENT_STEP = 1e-3f;
 constant float PHYS_PUSH_SPEED = 3.0f;              // PhysicsWorld.pushSpeed
+constant float PHYS_SOFT_PUSH_SPEED = 10.0f;        // PhysicsWorld.softPushSpeed
 constant float PHYS_GYRATION = 0.15f;               // PhysicsWorld.gyration
 
 struct PhysicsBody {
@@ -75,10 +76,38 @@ struct PhysicsParams {
     float4 particleGrid;   // their cell size, the speed their reach allows for, a cloth's air drag, rest speed
     uint4  cloth;          // constraints, their colours, the joints' colours, ragdolls
     float4 rolling;        // rolling resistance, spinning resistance, wake speed, wake turn rate
+    uint4  soft;           // soft bodies' tets, their colours, drawn vertices, soft bodies
+    float4 softDamping;    // their air drag, their links' damping (s)
 };
-static_assert(sizeof(PhysicsParams) == 128, "PhysicsParams: GPUPhysicsParams");
+static_assert(sizeof(PhysicsParams) == 160, "PhysicsParams: GPUPhysicsParams");
 
 constant uint PHYS_CLOTH = 1u;   // PhysicsParticle.info.y: a cloth's vertex (PhysicsWorld.clothBit)
+constant uint PHYS_SOFT = 2u;    // ...a soft body's particle (PhysicsWorld.softBit)
+
+// A soft body's tet: GPUPhysicsTet (PhysicsSoft.swift).
+struct PhysicsTet {
+    uint4 ids;
+    float rest;         // six times its volume at rest
+    float compliance;
+    float damping;
+    float pad;
+};
+static_assert(sizeof(PhysicsTet) == 32, "PhysicsTet: GPUPhysicsTet");
+
+// A soft body's drawn vertex: GPUSoftVertex.
+struct PhysicsSoftVertex {
+    uint4 info;      // x = its place in the vertex buffer, y = its mesh's prevOffset, z = its soft body,
+                     // w = its ring's start << 5 | its triangles
+    uint4 embeds;    // x = its first PhysicsSoftEmbed, y = how many
+};
+static_assert(sizeof(PhysicsSoftVertex) == 32, "PhysicsSoftVertex: GPUSoftVertex");
+
+// Where a drawn vertex is in one of the tets it follows: GPUSoftEmbed.
+struct PhysicsSoftEmbed {
+    float4 bary;     // weights of the tet's last three particles; w = this tet's share
+    uint4  ids;      // the tet's particles
+};
+static_assert(sizeof(PhysicsSoftEmbed) == 32, "PhysicsSoftEmbed: GPUSoftEmbed");
 
 struct PhysicsConstraint {
     uint  a, b;
@@ -512,6 +541,11 @@ inline PhysicsBody physPartner(uint code, device const PhysicsBody* bodies, devi
 
 constant uint PHYS_NEIGHBOURS = 16, PHYS_COLLIDERS = 8;   // PhysicsWorld.maxNeighbours, maxColliders
 
+// PhysicsWorld.meets: not a cloth's, nor two of one soft body's.
+inline bool physMeets(PhysicsParticle q, PhysicsParticle o) {
+    return ((q.info.y | o.info.y) & PHYS_CLOTH) == 0 && !((q.info.y & o.info.y & PHYS_SOFT) != 0 && q.info.w == o.info.w);
+}
+
 inline float physParticleReach(PhysicsParticle q, constant PhysicsParams& p) {
     return q.position.w + min(length(q.velocity.xyz), p.particleGrid.y) * p.grid.w + p.grid.y;
 }
@@ -559,7 +593,7 @@ kernel void physicsParticleNeighboursKernel(constant PhysicsParams&       p     
                 for (uint j = heads[physHash(c + int3(dx, dy, dz), p.particles.y)]; j != PHYS_NONE; j = next[j]) {
                     if (j == i) continue;
                     PhysicsParticle o = particles[j];
-                    if (((q.info.y | o.info.y) & PHYS_CLOTH) != 0) continue;   // cloths only meet colliders
+                    if (!physMeets(q, o)) continue;   // cloths only meet colliders, a soft body not itself
                     float reach = r + physParticleReach(o, p);
                     float d2 = length_squared(o.position.xyz - x);
                     if (!(d2 < reach * reach)) continue;
@@ -1090,7 +1124,8 @@ inline void physIntegrateParticle(constant PhysicsParams& p, device PhysicsParti
     if (!(q.prevPosition.w > 0.0f)) return;   // a pinned cloth vertex stays
     float h = p.gravity.w;
     q.prevPosition = float4(q.position.xyz, q.prevPosition.w);
-    float drag = (q.info.y & PHYS_CLOTH) != 0 ? max(1.0f - p.particleGrid.z * h, 0.0f) : 1.0f;
+    float rate = (q.info.y & PHYS_CLOTH) != 0 ? p.particleGrid.z : (q.info.y & PHYS_SOFT) != 0 ? p.softDamping.x : 0.0f;
+    float drag = max(1.0f - rate * h, 0.0f);
     float3 v = q.velocity.xyz * drag + p.gravity.xyz * h;
     float speed = length(v);
     if (speed > p.grid.z) v *= p.grid.z / speed;
@@ -1118,13 +1153,15 @@ inline void physSolveParticle(constant PhysicsParams& p, PhysicsShapes w, device
     if (!(q.prevPosition.w > 0.0f)) { dst[i] = q; return; }
     float3 x = q.position.xyz, moved = x - q.prevPosition.xyz;
     float wq = q.prevPosition.w;
+    bool soft = (q.info.y & PHYS_SOFT) != 0;
+    float cap = (soft ? PHYS_SOFT_PUSH_SPEED : PHYS_PUSH_SPEED) * h;
     float3 shared = float3(0.0f);
     float sharedCount = 0.0f;
     for (uint n = 0; n < counts[i]; ++n) {
         PhysicsParticle o = src[neighbours[i * PHYS_NEIGHBOURS + n]];
         float3 d = x - o.position.xyz;
         float dist = length(d);
-        float overlap = min(q.position.w + o.position.w - dist, PHYS_PUSH_SPEED * h);
+        float overlap = min(q.position.w + o.position.w - dist, cap);
         if (!(overlap > 0.0f) || !(dist > 1e-6f)) continue;
         float share = wq / (wq + o.prevPosition.w);
         float3 slide = moved - (o.position.xyz - o.prevPosition.xyz);
@@ -1143,15 +1180,15 @@ inline void physSolveParticle(constant PhysicsParams& p, PhysicsShapes w, device
         if (!(depth < 0.0f)) continue;
         float3 normal = pose.direction(physGradient(w, shape, local));
         float3 surface = b.velocity.xyz + cross(b.angular.xyz, x - pose.position);
-        held += physParticlePush(normal, min(-depth, PHYS_PUSH_SPEED * h), moved - surface * h, sqrt(q.velocity.w * b.velocity.w));
+        held += physParticlePush(normal, min(-depth, cap), moved - surface * h, sqrt(q.velocity.w * b.velocity.w));
         heldCount += 1.0f;
         shoved = shoved || physMoves(b);
     }
     float3 y = x;
-    if (sharedCount > 0.0f) y += shared / sharedCount;
-    if (heldCount > 0.0f) y += held / heldCount;
+    if (sharedCount > 0.0f) y += soft ? shared : shared / sharedCount;
+    if (heldCount > 0.0f) y += soft ? held : held / heldCount;
     // PhysicsCPU.rests.
-    if (sharedCount + heldCount > 0.0f && !shoved && (q.info.y & PHYS_CLOTH) == 0 && length(y - q.prevPosition.xyz) < p.particleGrid.w * h) {
+    if (sharedCount + heldCount > 0.0f && !shoved && (q.info.y & (PHYS_CLOTH | PHYS_SOFT)) == 0 && length(y - q.prevPosition.xyz) < p.particleGrid.w * h) {
         y = q.prevPosition.xyz;
     }
     q.position = float4(y, q.position.w);
@@ -1159,17 +1196,44 @@ inline void physSolveParticle(constant PhysicsParams& p, PhysicsShapes w, device
     dst[i] = q;
 }
 
-// PhysicsCPU.solveCloth for one constraint: an XPBD distance constraint, in place (its colour's others share no vertex).
-inline void physSolveConstraint(device PhysicsParticle* particles, PhysicsConstraint k, float h) {
-    float wa = particles[k.a].prevPosition.w, wb = particles[k.b].prevPosition.w;
+// PhysicsCPU.solveCloth for one constraint: an XPBD distance constraint, in place (its colour's others share no vertex),
+// a soft body's damped along it.
+inline void physSolveConstraint(device PhysicsParticle* particles, PhysicsConstraint k, constant PhysicsParams& p) {
+    float h = p.gravity.w;
+    PhysicsParticle a = particles[k.a], b = particles[k.b];
+    float wa = a.prevPosition.w, wb = b.prevPosition.w;
     if (!(wa + wb > 0.0f)) return;
-    float3 d = particles[k.a].position.xyz - particles[k.b].position.xyz;
+    float3 d = a.position.xyz - b.position.xyz;
     float l = length(d);
     if (!(l > 1e-9f)) return;
-    float lambda = -(l - k.rest) / (wa + wb + k.compliance / (h * h));
-    float3 push = d / l * lambda;
+    float3 n = d / l;
+    float gamma = (a.info.y & PHYS_SOFT) != 0 ? k.compliance * p.softDamping.y / h : 0.0f;
+    float moved = dot(n, (a.position.xyz - a.prevPosition.xyz) - (b.position.xyz - b.prevPosition.xyz));
+    float lambda = (-(l - k.rest) - gamma * moved) / ((1.0f + gamma) * (wa + wb) + k.compliance / (h * h));
+    float3 push = n * lambda;
     particles[k.a].position.xyz += push * wa;
     particles[k.b].position.xyz -= push * wb;
+}
+
+// PhysicsWorld.solveTet: a tet's volume (six times it, (a x b) . c), in place, damped along its gradient.
+inline void physSolveTet(device PhysicsParticle* particles, PhysicsTet t, float h) {
+    uint id[4] = {t.ids.x, t.ids.y, t.ids.z, t.ids.w};
+    float3 x[4];
+    float w[4];
+    for (uint k = 0; k < 4; ++k) { x[k] = particles[id[k]].position.xyz; w[k] = particles[id[k]].prevPosition.w; }
+    float3 a = x[1] - x[0], b = x[2] - x[0], c = x[3] - x[0];
+    float3 g1 = cross(b, c), g2 = cross(c, a), g3 = cross(a, b);
+    float3 g[4] = {-(g1 + g2 + g3), g1, g2, g3};
+    float alpha = t.compliance / (h * h), gamma = t.compliance * t.damping / h;
+    float sum = 0.0f, moved = 0.0f;
+    for (uint k = 0; k < 4; ++k) {
+        sum += w[k] * length_squared(g[k]);
+        moved += dot(g[k], x[k] - particles[id[k]].prevPosition.xyz);
+    }
+    float denominator = (1.0f + gamma) * sum + alpha;
+    if (!(denominator > 1e-12f)) return;
+    float lambda = (-(dot(g3, c) - t.rest) - gamma * moved) / denominator;
+    for (uint k = 0; k < 4; ++k) particles[id[k]].position.xyz += g[k] * (lambda * w[k]);
 }
 
 // A run of substeps, then (the step's last) the settling, in one threadgroup: its threads take the bodies, the
@@ -1205,6 +1269,8 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
                                   device const PhysicsJoint* joints [[buffer(25)]],
                                   device const uint*        jointStarts [[buffer(26)]],
                                   device const uint2*       ragdolls [[buffer(27)]],   // first body, count
+                                  device const PhysicsTet*  tets [[buffer(28)]],
+                                  device const uint*        tetStarts [[buffer(29)]],
                                   uint t [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]])
 {
@@ -1245,7 +1311,12 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         threadgroup_barrier(mem_flags::mem_device);
         // The cloths' constraints, a colour at a time (PhysicsCPU.solveCloth).
         for (uint c = 0; c < p.cloth.y; ++c) {
-            for (uint k = colourStarts[c] + t; k < colourStarts[c + 1]; k += width) physSolveConstraint(particles, constraints[k], p.gravity.w);
+            for (uint k = colourStarts[c] + t; k < colourStarts[c + 1]; k += width) physSolveConstraint(particles, constraints[k], p);
+            threadgroup_barrier(mem_flags::mem_device);
+        }
+        // The soft bodies' tets, a colour at a time (PhysicsWorld.solveTets).
+        for (uint c = 0; c < p.soft.y; ++c) {
+            for (uint k = tetStarts[c] + t; k < tetStarts[c + 1]; k += width) physSolveTet(particles, tets[k], p.gravity.w);
             threadgroup_barrier(mem_flags::mem_device);
         }
         for (uint i = t; i < np; i += width) {
@@ -1441,6 +1512,46 @@ kernel void physicsClothMeshKernel(constant uint&                count     [[buf
     positions[at + cloth.previous.x] = positions[at];
     positions[at] = q.position.xyz;
     normals[at] = physDirection(cross(down - up, right - left));
+}
+
+// Every soft body's drawn vertex into the scene's vertex buffer (PhysicsWorld.drawnSoftVertex): last frame's place
+// first (motion vectors), then this frame's, where its tets put it, averaged. The normals follow, then the refits.
+kernel void physicsSoftMeshKernel(constant uint&                  count     [[buffer(0)]],
+                                  device const PhysicsParticle*   particles [[buffer(1)]],
+                                  device const PhysicsSoftVertex* vertices  [[buffer(2)]],
+                                  device float3*                  positions [[buffer(3)]],
+                                  device const PhysicsSoftEmbed*  embeds    [[buffer(4)]],
+                                  uint i [[thread_position_in_grid]])
+{
+    if (i >= count) return;
+    PhysicsSoftVertex s = vertices[i];
+    float3 p = float3(0.0f);
+    for (uint k = s.embeds.x, end = k + s.embeds.y; k < end; ++k) {
+        PhysicsSoftEmbed e = embeds[k];
+        float3 x0 = particles[e.ids.x].position.xyz;
+        float3 e1 = particles[e.ids.y].position.xyz - x0, e2 = particles[e.ids.z].position.xyz - x0, e3 = particles[e.ids.w].position.xyz - x0;
+        p += (x0 + e1 * e.bary.x + e2 * e.bary.y + e3 * e.bary.z) * e.bary.w;
+    }
+    uint at = s.info.x;
+    positions[at + s.info.y] = positions[at];
+    positions[at] = p;
+}
+
+// ...and each one's normal across the triangles around it (PhysicsWorld.drawnSoftNormal).
+kernel void physicsSoftNormalsKernel(constant uint&                  count     [[buffer(0)]],
+                                     device const PhysicsSoftVertex* vertices  [[buffer(1)]],
+                                     device const uint2*             rings     [[buffer(2)]],
+                                     device const float3*            positions [[buffer(3)]],
+                                     device float3*                  normals   [[buffer(4)]],
+                                     uint i [[thread_position_in_grid]])
+{
+    if (i >= count) return;
+    PhysicsSoftVertex s = vertices[i];
+    float3 p = positions[s.info.x], n = float3(0.0f);
+    for (uint k = s.info.w >> 5, end = k + (s.info.w & 31u); k < end; ++k) {
+        n += cross(positions[rings[k].x] - p, positions[rings[k].y] - p);
+    }
+    normals[s.info.x] = length_squared(n) > 1e-20f ? normalize(n) : float3(0, 1, 0);
 }
 
 // MARK: - Hair (PhysicsHair.swift)

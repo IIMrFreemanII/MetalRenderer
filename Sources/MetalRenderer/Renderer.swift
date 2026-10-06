@@ -834,10 +834,11 @@ final class Renderer: NSObject {
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
             crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
         }
-        // The physics on the GPU, or only its cloths' meshes when the CPU steps it (they are drawn from the GPU's buffers).
+        // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
+        // from the GPU's buffers).
         if let physics = scene.physics {
             let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count)
-            if onGPU || !physics.cloths.isEmpty || !physics.hairGroups.isEmpty {
+            if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
                                             clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
@@ -2126,8 +2127,9 @@ final class Renderer: NSObject {
                                       descriptorStride: instanceDescriptorStride)
             }
             physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
-            deformed = physicsGPU.hasCloth || physicsGPU.hasHair
+            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair
             passes.endCompute()
         }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')

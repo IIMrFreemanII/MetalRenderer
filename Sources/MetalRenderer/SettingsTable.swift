@@ -342,6 +342,10 @@ enum SettingsTable {
                 .env(.scene, "hair").when { $0.scene.kind == .hair },
             S.slider("Furry bodies", \.scene.physics.furBodies, PhysicsSettings.furBodyRange, live: false)
                 .env(.scene, "fur").when { $0.scene.kind == .hair },
+            S.slider("Soft bodies", \.scene.physics.softBodies, PhysicsSettings.softBodyRange, live: false)
+                .env(.scene, "soft").when { $0.scene.kind == .softBodies },
+            S.slider("Lattice cells", \.scene.physics.softCells, PhysicsSettings.softCellRange, live: false)
+                .env(.scene, "cells").when { $0.scene.kind == .softBodies },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },

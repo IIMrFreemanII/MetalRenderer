@@ -427,12 +427,14 @@ final class Scene {
         case .physics: buildPhysics(settings.physics)
         case .ragdolls: buildRagdolls(settings.physics)
         case .hair: buildHair(settings.physics)
+        case .softBodies: buildSoftBodies(settings.physics)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
         finishDeforming()
         finishHair()
+        finishSoftBodies()
         physics?.finish()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
@@ -1210,6 +1212,33 @@ final class Scene {
         clothMeshes.append(mesh)
         physicsWorld().addCloth(origin: origin, across: across, down: down, columns: columns, rows: rows, pinned: pinned,
                                 thickness: thickness, friction: friction, vertexBase: deforming.last!.first)
+    }
+
+    /// The soft bodies' meshes, in the physics' order.
+    private(set) var softMeshes: [Int] = []
+
+    /// A soft body made of `model` (PhysicsSoft.swift), placed by `transform` (a rotation and a translation): the
+    /// physics moves its lattice, the GPU writes its surface every frame. `edge` and `volume`: its links' and tets'
+    /// compliance; `bounds`: where it can get to (the mesh's box whatever it does).
+    func addSoftBody(_ model: SoftModel, _ material: Int, _ transform: float4x4, bounds: AABB, velocity: SIMD3<Float> = .zero,
+                     density: Float = 1000, edge: Float = 1e-3, volume: Float = 1e-9, damping: Float = PhysicsWorld.softLinkDamping,
+                     friction: Float = 0.6) {
+        let rotation = simd_float3x3(columns: (PhysicsMath.xyz(transform.columns.0), PhysicsMath.xyz(transform.columns.1),
+                                               PhysicsMath.xyz(transform.columns.2)))
+        let positions = model.surface.positions.map { PhysicsMath.xyz(transform * SIMD4($0, 1)) }
+        let mesh = addDeformingMesh((positions, model.surface.normals.map { rotation * $0 }, model.surface.indices), bounds: bounds)
+        addDeformingInstance(mesh, material)
+        softMeshes.append(mesh)
+        physicsWorld().addSoftBody(model, transform: transform, vertexBase: deforming.last!.first, velocity: velocity, density: density,
+                                   edge: edge, volume: volume, damping: damping, friction: friction)
+    }
+
+    /// The soft bodies' drawn vertices: where their meshes' last-frame vertices are (once `finishDeforming` put them).
+    private func finishSoftBodies() {
+        guard let physics, !softMeshes.isEmpty else { return }
+        for v in physics.softVertices.indices {
+            physics.softVertices[v].info.y = meshes[softMeshes[Int(physics.softVertices[v].info.z)]].prevOffset
+        }
     }
 
     /// Particles: balls of `radius` at `positions` that the physics moves (each an instance of one sphere shape).

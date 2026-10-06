@@ -261,6 +261,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case ragdolls           // `ragdolls` ragdolls (jointed bodies, Physics.swift) dropped down a staircase
     case hair               // hair and fur (PhysicsHair.swift): furry bodies rolling down a ramp, a long-haired head
                             // swinging, in a breeze; strands drawn as curves (Metal's ray tracer)
+    case softBodies         // `softBodies` soft bodies (PhysicsSoft.swift): jellies dropped onto steps, pegs and a bowl
 
     var title: String {
         switch self {
@@ -286,11 +287,12 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .physics: return "Physics"
         case .ragdolls: return "Ragdolls"
         case .hair: return "Hair and fur"
+        case .softBodies: return "Soft bodies"
         }
     }
 
     /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
-    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair }
+    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair || self == .softBodies }
     /// Scenes whose strands are curves, which only Metal's ray tracer draws: they switch to it where it has them.
     var drawsCurves: Bool { self == .hair }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
@@ -398,6 +400,9 @@ struct PhysicsSettings: Equatable, Codable {
     /// The hair scene: strands drawn around each simulated one (guide), and furry bodies dropped down its ramp.
     var hair = 12
     var furBodies = 6
+    /// The soft body scene: soft bodies dropped in, and their lattices' cubes along each one's longest side.
+    var softBodies = 16
+    var softCells = 6
 
     static let substepRange = 1...32
     static let bodyRange = 0...4096
@@ -406,6 +411,8 @@ struct PhysicsSettings: Equatable, Codable {
     static let ragdollRange = 1...256
     static let hairRange = 1...32
     static let furBodyRange = 0...32
+    static let softBodyRange = 1...128
+    static let softCellRange = 3...12
     static let gpuFrom = 64
 
     /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
@@ -539,7 +546,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -637,7 +644,8 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
+             .softBodies:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

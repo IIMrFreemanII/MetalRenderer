@@ -432,8 +432,9 @@ struct GPUPhysicsParticle {
     var position = SIMD4<Float>()            // w = radius
     var velocity = SIMD4<Float>()            // w = friction
     var prevPosition = SIMD4<Float>()        // at the substep's start; w = inverse mass
-    var info = SIMD4<UInt32>()               // x = its instance (none: a cloth's vertex), y = flags (PhysicsWorld.clothBit),
-                                             // z = a cloth vertex's place in the scene's vertex buffer, w = its cloth
+    var info = SIMD4<UInt32>()               // x = its instance (none: a cloth's or a soft body's vertex), y = flags
+                                             // (PhysicsWorld.clothBit, softBit), z = a cloth vertex's place in the scene's
+                                             // vertex buffer, w = its cloth or soft body
 }
 
 /// A cloth's distance constraint between two of its vertices (particles): MSL PhysicsConstraint.
@@ -459,6 +460,34 @@ struct GPUPhysicsParams {
     var rolling = SIMD4<Float>()             // x = rolling resistance (m), y = spinning resistance (m), z = a body moving
                                              // faster than this wakes what it touches, w = ...or turning its mass faster
                                              // than this (m/s, PhysicsWorld.wakeTurn)
+    var soft = SIMD4<UInt32>()               // soft bodies (PhysicsSoft.swift): x = tets, y = their colours, z = drawn
+                                             // vertices, w = soft bodies
+    var softDamping = SIMD4<Float>()         // x = their air drag (1/s), y = their links' damping (s), z = w = 0
+}
+
+/// A soft body's tetrahedron (PhysicsSoft.swift): its four particles and its rest volume, which an XPBD constraint
+/// keeps. MSL PhysicsTet.
+struct GPUPhysicsTet {
+    var ids = SIMD4<UInt32>()                // its particles, wound so that its volume is positive
+    var rest: Float = 0                      // six times its volume at rest (m^3)
+    var compliance: Float = 0                // m^3/N: 0 keeps its volume
+    var damping: Float = 0                   // s (XPBD's beta)
+    var pad: Float = 0
+}
+
+/// A soft body's drawn vertex (PhysicsSoft.swift): MSL PhysicsSoftVertex.
+struct GPUSoftVertex {
+    var info = SIMD4<UInt32>()               // x = its place in the scene's vertex buffer, y = its mesh's last-frame offset
+                                             // (GPUMesh.prevOffset), z = its soft body, w = its ring of triangles: where it
+                                             // starts in PhysicsWorld.softRings << 5 | how many
+    var embeds = SIMD4<UInt32>()             // x = its first place in its tets (PhysicsWorld.softEmbeds), y = how many
+}
+
+/// Where a soft body's drawn vertex is in one of the tets it follows (PhysicsSoft.swift): MSL PhysicsSoftEmbed.
+struct GPUSoftEmbed {
+    var bary = SIMD4<Float>()                // its weights for the tet's last three particles (the first's is 1 - their
+                                             // sum); w = this tet's share of where it goes
+    var ids = SIMD4<UInt32>()                // the tet's particles
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
@@ -498,7 +527,10 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsShape>.stride == 64, "GPUPhysicsShape layout mismatch")
     precondition(MemoryLayout<GPUPhysicsPair>.stride == 16, "GPUPhysicsPair layout mismatch")
     precondition(MemoryLayout<GPUPhysicsContact>.stride == 64, "GPUPhysicsContact layout mismatch")
-    precondition(MemoryLayout<GPUPhysicsParams>.stride == 128, "GPUPhysicsParams layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsParams>.stride == 160, "GPUPhysicsParams layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsTet>.stride == 32, "GPUPhysicsTet layout mismatch")
+    precondition(MemoryLayout<GPUSoftVertex>.stride == 32, "GPUSoftVertex layout mismatch")
+    precondition(MemoryLayout<GPUSoftEmbed>.stride == 32, "GPUSoftEmbed layout mismatch")
     precondition(MemoryLayout<GPUPhysicsConstraint>.stride == 16, "GPUPhysicsConstraint layout mismatch")
     precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
     precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")

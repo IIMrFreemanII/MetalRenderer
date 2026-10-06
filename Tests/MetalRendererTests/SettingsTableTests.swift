@@ -219,6 +219,14 @@ final class SettingsTableTests: XCTestCase {
         hair.scene.kind = .physics
         hair.applySceneDefaults(from: defaults)
         XCTAssertEqual(hair.rayTracer, defaults.rayTracer)
+        // The soft body scene shares the look; its counts are scene keys.
+        var soft = defaults
+        SettingsEnv.applyAll(to: &soft, defaults: defaults, from: ["METALRENDERER_SCENE": "softbodies,soft=8,cells=5"])
+        XCTAssertEqual(soft.scene.kind, .softBodies)
+        XCTAssertEqual(soft.scene.physics.softBodies, 8)
+        XCTAssertEqual(soft.scene.physics.softCells, 5)
+        XCTAssertFalse(soft.giEnabled)
+        XCTAssertEqual(soft.renderScale, RenderSettings.physicsScale)
     }
 
     func testBadInputIsSkipped() {

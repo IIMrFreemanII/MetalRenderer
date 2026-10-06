@@ -16,7 +16,7 @@ extension Benchmark {
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
         "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo, "physics": physics,
         "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
-        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews,
+        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -974,6 +974,57 @@ extension Benchmark {
         fur.camera = Scene.camera([2.0, 0.8, 3.6], yaw: -0.55, pitch: -0.35)
         return [base.named("final").still(), head, fur, base.named("direct").view(1).still(), base.named("albedo").view(4).still(),
                 base.named("normals").view(3).still()]
+    }
+
+    /// The soft body scene (Scene+Soft.swift) at the physics look: paused at 1.5, 3 and 5 s on the custom tracer, at 5 s
+    /// on each tracer and API, the CPU's steps there too, its normals and direct light, then the first 5 s moving for
+    /// timing at a few soft body counts on the GPU, a finer lattice, and on the CPU where it keeps up.
+    private static func soft() -> [Config] {
+        let scene = SceneSettings(kind: .softBodies)
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        var out: [Config] = []
+        for time: Float in [1.5, 3] { out.append(base.named(String(format: "custom %.1fs", time)).still(at: time)) }
+        for tracer in tracers {
+            for api in RenderAPI.allCases {
+                out.append(base.named("\(tracer.tag) \(api.envName)").with { $0.rayTracer = tracer.kind; $0.api = api }.still())
+            }
+        }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        out.append(base.named("normals").view(3).still())
+        out.append(base.named("direct").view(1).still())
+        for bodies in [16, 48, 128] {
+            out.append(base.named("gpu \(bodies) moving").with { $0.scene.physics.softBodies = bodies; $0.scene.physics.backend = .gpu })
+        }
+        out.append(base.named("gpu 16 cells 10 moving").with { $0.scene.physics.softCells = 10; $0.scene.physics.backend = .gpu })
+        for bodies in [16, 48] {
+            out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.softBodies = bodies; $0.scene.physics.backend = .cpu })
+        }
+        return out
+    }
+
+    /// The soft body scene's demo video: its first 20 s along a camera track at the physics look with the showcase's
+    /// lens but no depth of field (`recording`: 600 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m
+    /// softdemo` makes the mp4). Wide as the jellies drop onto the landing, down to the steps as they flop down them,
+    /// round to the pegs and the ring as they squeeze through, and back out over the pile. The clock starts at -1 s, as
+    /// the physics demo's does.
+    private static func softDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 2.6, 4.2], [0, 1.0, -4]),
+            key(4, [2.4, 2.4, 1.2], [0, 1.0, -4.2]),
+            key(8, [-2.6, 1.4, 0.6], [0, 0.5, -2.4]),
+            key(12, [-2.2, 1.2, 3.6], [0, 0.2, 0.2]),
+            key(16, [2.0, 2.2, 3.8], [0, 0.3, -1.0]),
+            key(20, [0, 2.6, 4.2], [0, 0.6, -2]),
+        ])
+        var demo = Config("soft demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .softBodies)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
     }
 
     /// The ragdoll scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens

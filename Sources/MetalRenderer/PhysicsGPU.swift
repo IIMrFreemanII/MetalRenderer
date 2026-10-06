@@ -73,6 +73,13 @@ final class PhysicsGPU {
     private let joints: MTLBuffer
     private let jointStarts: MTLBuffer
     private let ragdolls: MTLBuffer
+    /// The soft bodies' tets by colour, where each colour starts, their drawn vertices (MSL PhysicsSoftVertex), where
+    /// each is in its tets, and the triangles around each.
+    private let tets: MTLBuffer
+    private let tetStarts: MTLBuffer
+    private let softVertices: MTLBuffer
+    private let softRings: MTLBuffer
+    private let softEmbeds: MTLBuffer
     /// The cloths' meshes (MSL PhysicsCloth), if there are any; and when the CPU steps them, the particles as it left
     /// them, a buffer per frame slot (`upload`).
     private let clothTable: MTLBuffer?
@@ -92,12 +99,13 @@ final class PhysicsGPU {
     let simulates: Bool
     var hasCloth: Bool { clothTable != nil }
     var hasHair: Bool { !world.hairGroups.isEmpty }
+    var hasSoftBodies: Bool { !world.softVertices.isEmpty }
     /// The scene's SDF shapes (SDFBuffers.scene) and what it points at, for the narrow phase.
     private let sdfScene: MTLBuffer
     private let sdfResources: [MTLBuffer]
     private let count: Int
 
-    /// `simulates`: it steps the world; otherwise the CPU does and this only draws its cloths. `clothPrevOffsets`: per
+    /// `simulates`: it steps the world; otherwise the CPU does and this only draws its cloths, soft bodies and hair. `clothPrevOffsets`: per
     /// cloth, its mesh's last-frame offset (GPUMesh.prevOffset).
     init(device: MTLDevice, world: PhysicsWorld, sdfScene: MTLBuffer, sdfResources: [MTLBuffer], slots: Int, simulates: Bool = true,
          clothPrevOffsets: [UInt32] = []) throws {
@@ -154,12 +162,18 @@ final class PhysicsGPU {
         colliders = try buffer([UInt32](), "physicsColliders", length: np * PhysicsWorld.maxColliders * 4)
         colliderCounts = try buffer([UInt32](repeating: 0, count: np), "physicsColliderCounts")
         clothTable = world.cloths.isEmpty ? nil : try buffer(world.clothTable(prevOffsets: clothPrevOffsets), "physicsCloths")
-        uploads = simulates || world.cloths.isEmpty ? [] : try (0..<slots).map { try buffer(world.initialParticles, "physicsUpload\($0)") }
+        uploads = simulates || world.cloths.isEmpty && world.softVertices.isEmpty ? []
+            : try (0..<slots).map { try buffer(world.initialParticles, "physicsUpload\($0)") }
         constraints = try buffer(world.constraints, "physicsConstraints")
         colourStarts = try buffer(world.colourStarts, "physicsColourStarts")
         joints = try buffer(world.joints, "physicsJoints")
         jointStarts = try buffer(world.jointStarts, "physicsJointStarts")
         ragdolls = try buffer(world.ragdolls, "physicsRagdolls")
+        tets = try buffer(world.tets, "physicsTets")
+        tetStarts = try buffer(world.tetStarts, "physicsTetStarts")
+        softVertices = try buffer(world.softVertices, "physicsSoftVertices")
+        softRings = try buffer(world.softRings, "physicsSoftRings")
+        softEmbeds = try buffer(world.softEmbeds, "physicsSoftEmbeds")
         lastParticle = try buffer(world.initialParticles.map { SIMD4(PhysicsMath.xyz($0.position), 0) }, "physicsLastParticle")
         strandCount = world.hairStrands.count
         hairStrands = try buffer(world.hairStrands, "physicsHairStrands")
@@ -369,6 +383,8 @@ final class PhysicsGPU {
         enc.setBuffer(joints, offset: 0, index: 25)
         enc.setBuffer(jointStarts, offset: 0, index: 26)
         enc.setBuffer(ragdolls, offset: 0, index: 27)
+        enc.setBuffer(tets, offset: 0, index: 28)
+        enc.setBuffer(tetStarts, offset: 0, index: 29)
         let lanes = substeps.threadExecutionWidth
         let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
         enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
@@ -423,6 +439,24 @@ final class PhysicsGPU {
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(normals, offset: 0, index: 4)
         dispatch(enc, pipelines[.physicsClothMesh], particleCount)
+    }
+
+    /// The soft bodies' drawn vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.
+    func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
+        guard hasSoftBodies else { return }
+        var n = UInt32(world.softVertices.count)
+        enc.setComputePipelineState(pipelines[.physicsSoftMesh])
+        enc.setBytes(&n, length: 4, index: 0)
+        enc.setBuffer(simulates ? particles[0] : uploads[slot], offset: 0, index: 1)
+        enc.setBuffer(softVertices, offset: 0, index: 2)
+        enc.setBuffer(positions, offset: 0, index: 3)
+        enc.setBuffer(softEmbeds, offset: 0, index: 4)
+        dispatch(enc, pipelines[.physicsSoftMesh], Int(n))
+        enc.setComputePipelineState(pipelines[.physicsSoftNormals])
+        enc.setBuffer(softVertices, offset: 0, index: 1)
+        enc.setBuffer(softRings, offset: 0, index: 2)
+        enc.setBuffer(normals, offset: 0, index: 4)
+        dispatch(enc, pipelines[.physicsSoftNormals], Int(n))
     }
 
     /// The particles as the GPU has them (tests).

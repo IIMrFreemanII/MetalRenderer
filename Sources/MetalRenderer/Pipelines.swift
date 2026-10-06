@@ -18,7 +18,7 @@ enum Kernel: Int, CaseIterable {
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
     case physicsParticleInsert, physicsParticleNeighbours
-    case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh
+    case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
