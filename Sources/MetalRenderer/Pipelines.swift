@@ -323,8 +323,8 @@ struct Pipelines {
         return try device.makeRenderPipelineState(descriptor: d, options: []).0
     }
 
-    private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
-                                compiler: AnyObject?) throws -> MTLLibrary {
+    static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
+                        compiler: AnyObject?) throws -> MTLLibrary {
         let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
         let options = MTLCompileOptions()
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep

@@ -3,9 +3,10 @@
 // the raster's passes, rasterCullKernel leaves every virtual instance it draws a RasterInstance and notes its place in
 // the state (per pass and virtual instance); rasterVGCutKernel then walks those instances' cluster groups, picks the cut
 // (vgCutKernel's rule, against the raster clusters' own pool), culls each picked cluster's box against the view (and in
-// the second pass the depth pyramid), and appends it to the pass's draw list as a RASTER_CLUSTERS draw: y = its entry
-// in the frame's cluster list, which holds its pool offset for the vertices (rasterVertex) and the trace
-// (fetchHitVertices reads the list as the selected clusters).
+// the second pass the depth pyramid), and appends it to the pass's draw list as a RASTER_CLUSTERS draw: where its
+// positions and triangles are in the pool, so a vertex reads them as directly as a BLAS triangle's (rasterVertex), and
+// y = its entry in the frame's cluster list, which holds its pool offset for the trace (fetchHitVertices reads the list
+// as the selected clusters).
 // ---------------------------------------------------------------------------------------------
 #if CUSTOM_RT
 
@@ -49,8 +50,8 @@ constant uint RVG_P_MESH = 2;   // drawn by rasterClusterMesh (a threadgroup an 
 // (MTLDispatchThreadgroupsIndirectArguments) at RVG_MESH_ARGS + 3 x pass.
 constant uint RVG_MESH_BASE = 8, RVG_MESH_ARGS = 9;
 
-// Mesh shaders: after the list's entries, each entry's virtual instance.
-inline device uint* rvgOwners(device uint2* list, constant RasterVGParams& p) { return (device uint*)(list + p.capacity); }
+// After the list's entries, each entry's virtual instance and scene instance (rasterVertex: RasterClusters.ownersOffset).
+inline device uint2* rvgOwners(device uint2* list, constant RasterVGParams& p) { return list + p.capacity; }
 
 inline device RasterInstance* rvgRecords(device atomic_uint* state) { return (device RasterInstance*)(state + RVG_HEADER); }
 // After the requests: the clusters pass 1 held back for pass 2 (virtual instance, cluster, page, own error | wants finer).
@@ -61,7 +62,7 @@ inline device uint4* rvgRetests(device uint2* requests, constant RasterVGParams&
 // Appends a picked, visible cluster to the frame's list and the pass's draws, asking for its finer group if it wants it.
 inline void rvgDraw(VGCluster cl, uint page, uint vi, uint instance, float own, bool wantFiner, constant RasterVGParams& p,
                     constant RasterParams& rp, device RasterCounters* counters, device uint4* draws, device atomic_uint* state,
-                    device uint2* list, device uint2* requests, device atomic_uint* requestStamp) {
+                    device const float4* pool, device uint2* list, device uint2* requests, device atomic_uint* requestStamp) {
     if (wantFiner && atomic_exchange_explicit(&requestStamp[cl.childGroup], p.frame, memory_order_relaxed) != p.frame) {
         uint q = atomic_fetch_add_explicit(&state[RVG_REQUESTS], 1u, memory_order_relaxed);
         if (q < p.requestCapacity) requests[q] = uint2(cl.childGroup, as_type<uint>(own));
@@ -73,10 +74,14 @@ inline void rvgDraw(VGCluster cl, uint page, uint vi, uint instance, float own, 
         return;
     }
     atomic_fetch_add_explicit(&state[RVG_TRIANGLES], cl.triangles, memory_order_relaxed);
-    list[k] = uint2(as_type<uint>(cl.lo.w), page + cl.pageOffset / 16u);   // (its error: traceKernel's offset)
-    if ((p.flags & RVG_P_MESH) != 0u) { rvgOwners(list, p)[k] = vi; return; }
+    uint at = page + cl.pageOffset / 16u;
+    list[k] = uint2(as_type<uint>(cl.lo.w), at);   // (its error: traceKernel's offset)
+    rvgOwners(list, p)[k] = uint2(vi, instance);
+    if ((p.flags & RVG_P_MESH) != 0u) return;
+    // Its positions (float4s) and its packed triangles (uints) in the pool (vgClusterView's offsets, bytes).
+    uint4 offsets = ((device const uint4*)(pool + at))[1];
     uint d = atomic_fetch_add_explicit(&counters[rp.pass].vertexCount, RASTER_CHUNK_VERTICES, memory_order_relaxed) / RASTER_CHUNK_VERTICES;
-    if (d < rp.maxDraws) draws[d] = uint4(vi, k, cl.triangles | RASTER_CLUSTERS << 16, instance);
+    if (d < rp.maxDraws) draws[d] = uint4(at + offsets.y / 16u, k, cl.triangles | RASTER_CLUSTERS << 16, 4u * at + offsets.w / 4u);
     else atomic_store_explicit(rasterTraced(counters), 1u, memory_order_relaxed);
 }
 
@@ -87,6 +92,7 @@ kernel void rasterVGCutKernel(constant Uniforms&             u            [[buff
                               constant RasterParams&         rp           [[buffer(9)]],
                               device RasterCounters*         counters     [[buffer(13)]],
                               device uint4*                  draws        [[buffer(17)]],
+                              device const float4*           vgPool       [[buffer(20)]],
                               constant RasterVGParams&       p            [[buffer(21)]],
                               device const VGRasterInstance* vinstances   [[buffer(22)]],
                               device const VGGroupRecord*    groups       [[buffer(23)]],
@@ -148,7 +154,7 @@ kernel void rasterVGCutKernel(constant Uniforms&             u            [[buff
                 continue;
             }
         }
-        rvgDraw(cl, page, lo, vi.instance, own, wantFiner, p, rp, counters, draws, state, list, requests, requestStamp);
+        rvgDraw(cl, page, lo, vi.instance, own, wantFiner, p, rp, counters, draws, state, vgPool, list, requests, requestStamp);
     }
     if (used) lastUsed[g] = p.frame;
 }
@@ -159,6 +165,7 @@ kernel void rasterVGRetestKernel(constant Uniforms&             u            [[b
                                  constant RasterParams&         rp           [[buffer(9)]],
                                  device RasterCounters*         counters     [[buffer(13)]],
                                  device uint4*                  draws        [[buffer(17)]],
+                                 device const float4*           vgPool       [[buffer(20)]],
                                  constant RasterVGParams&       p            [[buffer(21)]],
                                  device const VGRasterInstance* vinstances   [[buffer(22)]],
                                  device const VGCluster*        clusters     [[buffer(24)]],
@@ -176,7 +183,7 @@ kernel void rasterVGRetestKernel(constant Uniforms&             u            [[b
     float pixels;
     if (!rasterBoxVisible(cl.lo.xyz, cl.hi.xyz, r, u, rp, hzb, (rp.flags & RASTER_P_HZB) != 0u, pixels)) return;
     rvgDraw(cl, e.z, e.x, vinstances[e.x].instance, as_type<float>(e.w & ~1u), (e.w & 1u) != 0u, p, rp, counters, draws, state,
-            list, requests, requestStamp);
+            vgPool, list, requests, requestStamp);
 }
 
 // Mesh shaders: the pass's threadgroups, one an entry it appended to the list (pass 1's start where pass 2's begin).
@@ -207,7 +214,6 @@ using RasterClusterMeshOut = metal::mesh<RasterMeshVertex, RasterMeshPrimitive, 
                                 constant RasterParams&              rp         [[buffer(9)]],
                                 device const float4*                vgPool     [[buffer(20)]],
                                 constant RasterVGParams&            p          [[buffer(21)]],
-                                device const VGRasterInstance*      vinstances [[buffer(22)]],
                                 device uint*                        state      [[buffer(26)]],
                                 device uint2*                       list       [[buffer(27)]],
                                 uint tg [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]])
@@ -217,8 +223,8 @@ using RasterClusterMeshOut = metal::mesh<RasterMeshVertex, RasterMeshPrimitive, 
     uint4 header = ((device const uint4*)blob)[0];    // nodes, vertices, triangles
     uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
     device const uchar* base = (device const uchar*)blob;
-    uint vi = rvgOwners(list, p)[k];
-    RasterInstance r = ((device const RasterInstance*)(state + RVG_HEADER))[vi];
+    uint2 owner = rvgOwners(list, p)[k];   // virtual instance, scene instance
+    RasterInstance r = ((device const RasterInstance*)(state + RVG_HEADER))[owner.x];
     device const float4* positions = (device const float4*)(base + offsets.y);
     for (uint v = lane; v < header.y; v += RASTER_CHUNK) {
         RasterMeshVertex o;
@@ -231,7 +237,7 @@ using RasterClusterMeshOut = metal::mesh<RasterMeshVertex, RasterMeshPrimitive, 
         out.set_index(3u * lane + 1u, (packed >> 8) & 0xFFu);
         out.set_index(3u * lane + 2u, (packed >> 16) & 0xFFu);
         RasterMeshPrimitive prim;
-        prim.ids = uint2(vinstances[vi].instance, RASTER_CLUSTER_ID | k << 7 | lane);
+        prim.ids = uint2(owner.y, RASTER_CLUSTER_ID | k << 7 | lane);
         out.set_primitive(lane, prim);
     }
     if (lane == 0u) out.set_primitive_count(header.z);

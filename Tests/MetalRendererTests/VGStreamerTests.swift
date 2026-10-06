@@ -5,8 +5,8 @@ import simd
 
 /// Virtual geometry's streaming (VGStreamer) and what the raster clusters' cut assumes of the DAG.
 final class VGStreamerTests: XCTestCase {
-    /// A bumpy grid of `n` x `n` quads, made into a cluster DAG of a few levels.
-    private static let mesh: VirtualMesh = {
+    /// A bumpy grid of `n` x `n` quads, made into a cluster DAG of a few levels (also VGCutTests').
+    static let mesh: VirtualMesh = {
         let n = 96
         var positions: [SIMD3<Float>] = [], indices: [UInt32] = []
         for z in 0...n {

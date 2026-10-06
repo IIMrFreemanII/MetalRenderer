@@ -433,9 +433,9 @@ struct RasterVertex {
 vertex RasterVertex rasterVertex(constant RasterParams&          rp      [[buffer(9)]],
                                  device const uint4*             draws   [[buffer(17)]],
                                  device const RasterInstance*    records [[buffer(19)]],
-                                 device const float4*            vgPool  [[buffer(20)]],   // the raster clusters' pool,
-                                 device const uint*              vgState [[buffer(26)]],   // their instances' records,
-                                 device const uint2*             vgList  [[buffer(27)]],   // and the frame's cluster list
+                                 device const float4*            vgPool   [[buffer(20)]],   // the raster clusters' pool,
+                                 device const uint*              vgState  [[buffer(26)]],   // their instances' records,
+                                 device const uint2*             vgOwners [[buffer(27)]],   // and each entry's instances
                                  uint vid [[vertex_id]])
 {
     RasterVertex out;
@@ -448,22 +448,25 @@ vertex RasterVertex rasterVertex(constant RasterParams&          rp      [[buffe
         return out;
     }
     uint prim = draw.y + t;
-    RasterInstance r = (kind & RASTER_KIND) == RASTER_CLUSTERS   // (x: a cluster's virtual instance)
-        ? ((device const RasterInstance*)(vgState + RVG_HEADER))[draw.x] : records[draw.x];
+    RasterInstance r;
     float3 p;
+    if ((kind & RASTER_KIND) == RASTER_CLUSTERS) {
+        // A cluster's triangle t: its corner's 8-bit index into the cluster's positions, both where the draw says
+        // (x: positions, w: triangles), its instances by its entry (y) in the frame's list.
+        uint2 owner = vgOwners[draw.y];   // virtual instance, scene instance
+        r = ((device const RasterInstance*)(vgState + RVG_HEADER))[owner.x];
+        uint packed = ((device const uint*)vgPool)[draw.w + t];
+        p = vgPool[draw.x + ((packed >> (8u * corner)) & 0xFFu)].xyz;
+        out.ids = uint2(owner.y, RASTER_CLUSTER_ID | draw.y << 7 | t);
+        out.position = rasterClip(p, r);
+        return out;
+    }
+    r = records[draw.x];
     if ((kind & RASTER_KIND) == RASTER_BOX) {
         device const float4* box = (device const float4*)r.corners;   // lo, hi
         uint c = RASTER_BOX_CORNERS[3u * prim + corner];
         p = select(box[0].xyz, box[1].xyz, bool3((c & 1u) != 0u, (c & 2u) != 0u, (c & 4u) != 0u));
         out.ids = uint2(RASTER_TRACE_ID, 0u);
-    } else if ((kind & RASTER_KIND) == RASTER_CLUSTERS) {
-        // A cluster's triangle t: its corner's 8-bit index into the cluster's positions (vgClusterView's layout).
-        device const float4* blob = vgPool + vgList[draw.y].y;
-        uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
-        device const uchar* base = (device const uchar*)blob;
-        uint packed = ((device const uint*)(base + offsets.w))[t];
-        p = ((device const float4*)(base + offsets.y))[(packed >> (8u * corner)) & 0xFFu].xyz;
-        out.ids = uint2(draw.w, RASTER_CLUSTER_ID | draw.y << 7 | t);
     } else {
         p = rasterTriangleCorner(kind, r.corners, r.indices, prim, corner);
         out.ids = uint2(draw.w, prim);

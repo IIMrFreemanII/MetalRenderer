@@ -15,6 +15,8 @@ import simd
 final class RasterClusters {
     static let capacity = 1 << 17         // clusters drawn a frame, both passes (the list's entries)
     static let requestCapacity = 4096
+    /// Where the list's owners start (after its entries): each entry's virtual instance and scene instance (uint2).
+    static let ownersOffset = capacity * 8
     static let flag: UInt32 = 0x8000_0000  // visibility buffer y: a cluster's triangle (entry << 7 | triangle)
     /// Rays from a drawn cluster leave this many times its simplification error in front of it (traceKernel), in case
     /// the BLAS they meet lies in front of the drawn cut: `METALRENDERER_RASTER_VG_BIAS`. Off (0) by default: in the
@@ -98,8 +100,8 @@ final class RasterClusters {
             counterBuffers.append(try buffer(64 + 68 * instances.count, "rasterVGState\(slot)"))
             // Requests, then the clusters the first pass holds back for the second (uint4 each).
             requestBuffers.append(try buffer(RasterClusters.requestCapacity * 8 + RasterClusters.capacity * 16, "rasterVGRequests\(slot)"))
-            // The entries (selfError, pool offset), then for mesh shaders each entry's virtual instance.
-            listBuffers.append(try buffer(RasterClusters.capacity * 12, "rasterVGList\(slot)"))
+            // The entries (selfError, pool offset), then each entry's virtual instance and scene instance.
+            listBuffers.append(try buffer(RasterClusters.capacity * 16, "rasterVGList\(slot)"))
             changedBuffers.append(try buffer(4 * instances.count, "rasterVGChanged\(slot)"))
             vsmRequestBuffers.append(try buffer(16 + RasterClusters.requestCapacity * 8, "rasterVGShadowRequests\(slot)"))
             vsmRecordBuffers.append(nil)

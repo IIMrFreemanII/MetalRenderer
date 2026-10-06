@@ -3431,10 +3431,10 @@ final class Renderer: NSObject {
                 r.setBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
                 r.setBuffer(rt.draws, offset: pass * rt.maxDraws * 16, index: 17)
                 r.setBuffer(rt.records, offset: pass * rt.maxGroups * RasterTargets.recordSize, index: 19)
-                if let clusters {   // a cluster's vertices: its instance's record, its triangles and positions in the pool
+                if let clusters {   // a cluster's vertices: its triangles and positions in the pool, its instances' records
                     r.setBuffer(clusters.streamer.pool, offset: 0, index: 20)
                     r.setBuffer(clusters.state(slot: slot), offset: 0, index: 26)
-                    r.setBuffer(clusters.listBuffers[slot], offset: 0, index: 27)
+                    r.setBuffer(clusters.listBuffers[slot], offset: RasterClusters.ownersOffset, index: 27)
                 }
                 r.drawTriangles(indirectBuffer: rt.counters, indirectBufferOffset: pass * RasterTargets.countersStride)
                 if let meshPipeline, let clusters, var p = vgParams {   // the pass's clusters, a threadgroup each
@@ -3442,7 +3442,6 @@ final class Renderer: NSObject {
                     r.setMeshBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
                     r.setMeshBuffer(clusters.streamer.pool, offset: 0, index: 20)
                     r.setMeshBytes(&p, length: MemoryLayout<RasterClusters.Params>.stride, index: 21)
-                    r.setMeshBuffer(clusters.vinstances, offset: 0, index: 22)
                     r.setMeshBuffer(clusters.state(slot: slot), offset: 0, index: 26)
                     r.setMeshBuffer(clusters.listBuffers[slot], offset: 0, index: 27)
                     r.drawMeshThreadgroups(indirectBuffer: clusters.state(slot: slot), indirectBufferOffset: RasterClusters.meshArgsOffset(pass: pass),
