@@ -9,13 +9,16 @@ struct RTPart {
     var row1 = SIMD4<Float>()
     var row2 = SIMD4<Float>()
     var mesh: UInt32 = 0
-    var pad: UInt32 = 0
+    var pad: UInt32 = 0             // RTPart.rigid: a building's part (no wind)
     var firstLeaf: UInt32 = 0
     var leafCount: UInt32 = 0       // the mesh's leaf triangles, which autumn drops (0 = evergreen)
     var limb = SIMD4<Float>()       // the wind's bones: pivot and largest turn, axis and phase (Scene.Assembly.Bone)
     var limbAxis = SIMD4<Float>()
     var bough = SIMD4<Float>()
     var boughAxis = SIMD4<Float>()
+
+    /// `pad`: the part is a rigid assembly's (Scene.Assembly.rigid, MSL RT_PART_RIGID).
+    static let rigid: UInt32 = 1
 }
 
 /// The wind's math on the CPU, as Shaders/Foliage.metal has it: what a plant's instance and a patch of ground cover's
@@ -108,6 +111,8 @@ final class PlantTracing {
     private let partBase: [Int]
     private let partCount: [Int]
     private let keeps: [Int]                     // per assembly: 1, or keepLevels.count for one that drops its leaves
+    private let phases: [Int]                    // per assembly: Wind.phases, or 1 for a rigid one (a building)
+    private let rigid: [Bool]                    // per assembly: Scene.Assembly.rigid
     private let variantBase: [Int]               // per assembly: its first variant
     private let descriptorBase: [Int]            // per variant: its first descriptor
     let variantCount: Int
@@ -155,7 +160,7 @@ final class PlantTracing {
         for assembly in scene.assemblies {
             bases.append(records.count)
             counts.append(assembly.parts.count)
-            keeps.append(!assembly.evergreen && assembly.parts.contains { $0.leafCount > 0 } ? PlantTracing.keepLevels.count : 1)
+            keeps.append(!assembly.rigid && !assembly.evergreen && assembly.parts.contains { $0.leafCount > 0 } ? PlantTracing.keepLevels.count : 1)
             for part in assembly.parts {
                 let inv = part.transform.inverse
                 records.append(RTPart(row0: SIMD4(inv[0][0], inv[1][0], inv[2][0], inv[3][0]),
@@ -164,6 +169,7 @@ final class PlantTracing {
                                       mesh: UInt32(part.mesh), firstLeaf: part.firstLeaf, leafCount: part.leafCount,
                                       limb: SIMD4(part.limb.pivot, part.limb.angle), limbAxis: SIMD4(part.limb.axis, part.limb.phase),
                                       bough: SIMD4(part.bough.pivot, part.bough.angle), boughAxis: SIMD4(part.bough.axis, part.bough.phase)))
+            if assembly.rigid { records[records.count - 1].pad = RTPart.rigid }
             }
         }
         precondition(MemoryLayout<RTPart>.stride == 128, "RTPart: Shaders/Foliage.metal")
@@ -174,7 +180,8 @@ final class PlantTracing {
             b.label = "plantParts"
             return b
         }
-        (partBase, partCount, self.keeps) = (bases, counts, keeps)
+        let rigid = scene.assemblies.map(\.rigid), phases = rigid.map { $0 ? 1 : Wind.phases }
+        (partBase, partCount, self.keeps, self.phases, self.rigid) = (bases, counts, keeps, phases, rigid)
 
         // The leafy meshes' prefixes: a structure over the wood and the first share of the leaves, for each share.
         var prefixes: [SIMD2<Int>: MTLAccelerationStructure] = [:]
@@ -240,10 +247,10 @@ final class PlantTracing {
         var variant = 0
         for (a, assembly) in scene.assemblies.enumerated() {
             variantBase.append(variant)
-            for _ in 0..<(Wind.phases * keeps[a]) {
+            for _ in 0..<(phases[a] * keeps[a]) {
                 descriptorBase.append(workItems.count)
                 variant += 1
-                let phase = UInt32((variant - 1 - variantBase[a]) % Wind.phases)
+                let phase = UInt32((variant - 1 - variantBase[a]) % phases[a])
                 for p in assembly.parts.indices { workItems.append(SIMD2(UInt32(partBase[a] + p), phase)) }
                 for _ in 0..<PlantTracing.pads { workItems.append(SIMD2(.max, 0)) }
             }
@@ -258,8 +265,8 @@ final class PlantTracing {
         }
         var perVariant: [[MTLAccelerationStructure]] = []
         for (a, assembly) in scene.assemblies.enumerated() {
-            for v in 0..<(Wind.phases * keeps[a]) {
-                let keep = PlantTracing.keepLevels[keeps[a] == 1 ? PlantTracing.keepLevels.count - 1 : v / Wind.phases]
+            for v in 0..<(phases[a] * keeps[a]) {
+                let keep = PlantTracing.keepLevels[keeps[a] == 1 ? PlantTracing.keepLevels.count - 1 : v / phases[a]]
                 var mine: [ObjectIdentifier: MTLAccelerationStructure] = [ObjectIdentifier(pad): pad]
                 for part in assembly.parts {
                     let count = Int(part.firstLeaf) + Int(Float(part.leafCount) * keep)
@@ -295,8 +302,8 @@ final class PlantTracing {
             let descriptors = try buffer(descriptorCount * stride, "plantVariants")
             let base = descriptors.contents()
             for (a, assembly) in scene.assemblies.enumerated() {
-                for v in 0..<(Wind.phases * keeps[a]) {
-                    let keep = PlantTracing.keepLevels[keeps[a] == 1 ? PlantTracing.keepLevels.count - 1 : v / Wind.phases]
+                for v in 0..<(phases[a] * keeps[a]) {
+                    let keep = PlantTracing.keepLevels[keeps[a] == 1 ? PlantTracing.keepLevels.count - 1 : v / phases[a]]
                     var d = descriptorBase[variantBase[a] + v]
                     for (p, part) in assembly.parts.enumerated() {
                         let count = Int(part.firstLeaf) + Int(Float(part.leafCount) * keep)
@@ -369,6 +376,7 @@ final class PlantTracing {
 
     /// The variant a plant of `assembly` named `id` traces when `fall` of the leaves are down.
     func variant(assembly: Int, id: UInt32, fall: Float) -> Int {
+        if rigid[assembly] { return variantBase[assembly] }
         var v = Wind.bucket(id)
         if keeps[assembly] > 1 {
             let keep = Wind.keep(fall: fall, id: id)
@@ -397,7 +405,10 @@ final class PlantTracing {
             DispatchQueue.concurrentPerform(iterations: (instances.count + part - 1) / part) { k in
                 for i in (k * part)..<min((k + 1) * part, instances.count) {
                     let inst = instances[i]
-                    if inst.assembly >= 0 {
+                    if inst.assembly >= 0, rigid[inst.assembly] {   // a building: still, never refitted
+                        SceneBuffers.writeDescriptor(base + i * stride, transform: inst.transform, options: options, mask: inst.mask,
+                                                     userID: UInt32(i), structure: variants[variantBase[inst.assembly]])
+                    } else if inst.assembly >= 0 {
                         let id = UInt32(i), transform = Wind.plant(inst.transform, wind: wind.wind, time: wind.time, id: id)
                         var level: UInt8 = 0
                         if let voxels, let view, let camera {

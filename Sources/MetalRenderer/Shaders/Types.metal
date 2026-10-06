@@ -151,6 +151,11 @@ constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 // the wind turns) or ground cover that leans. Without it the queries and the shading compile to what they were
 // before assemblies.
 constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
+// Bit 19 = RIGID_ASSEMBLIES: some assemblies are buildings of window modules (Scene.Assembly.rigid). ASSEMBLIES: the
+// queries walk three levels and a hit names its part (FOLIAGE's plants or these); the wind, the leaves and the voxels
+// stay FOLIAGE's, so a city of modules doesn't trace the plants' code.
+constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
+constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).

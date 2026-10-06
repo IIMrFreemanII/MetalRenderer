@@ -58,6 +58,54 @@ extension Scene {
         }
         func builder(_ m: SurfaceMaterial) -> MeshBuilder { MeshBuilder(uvScale: m.uvScale) }
 
+        /// The modules' meshes, by what they are (Building.Module.key): a window's shell is one mesh in the whole city.
+        var moduleMeshes: [Data: (mesh: Int, bounds: AABB)] = [:]
+        var moduleTriangles = 0, placed = 0
+        /// A building of modules: an assembly (Scene.Assembly.rigid) of its own mesh (the walls, roofs,
+        /// blinds, rooms: everything opaque that is its alone) and its modules where they are, so that a ray walks the
+        /// tree over its parts and then a part's mesh; its glass and its lights are instances of their own, as without
+        /// modules. A triangle's material is its slot's: the building's materials are its slots' in their order.
+        func addBuilding(_ building: Building, at transform: float4x4) {
+            func opaque(_ m: SurfaceMaterial) -> Bool { !m.glass && m.emission == .zero }
+            for (_, m, mesh) in building.parts where !opaque(m) {
+                triangles += mesh.triangleCount
+                addInstance(addMesh(mesh.geometry, uvs: mesh.uvs), sharedMaterial(m), transform, mask: m.glass ? Scene.maskGlass : Scene.maskGeometry)
+            }
+            let first = Building.Slot.allCases.map { addMaterial(gpuMaterial(building.materials[$0.rawValue] ?? SurfaceMaterial(color: .one))) }[0]
+            func merged(_ meshes: [MeshBuilder]) -> (mesh: MeshBuilder, offsets: [UInt8]) {
+                var merged = MeshBuilder(), offsets: [UInt8] = []
+                for slot in Building.Slot.allCases where !meshes[slot.rawValue].isEmpty && building.materials[slot.rawValue].map(opaque) ?? false {
+                    offsets += [UInt8](repeating: UInt8(slot.rawValue), count: meshes[slot.rawValue].triangleCount)
+                    merged.append(meshes[slot.rawValue])
+                }
+                return (merged, offsets)
+            }
+            func box(_ m: MeshBuilder) -> AABB { let b = m.bounds; return AABB(lo: b.lo, hi: b.hi) }
+            var parts: [Scene.Assembly.Part] = [], bounds = AABB()
+            let own = merged(building.meshes)
+            if !own.mesh.isEmpty {
+                triangles += own.mesh.triangleCount
+                parts.append(Scene.Assembly.Part(mesh: addMesh(own.mesh.geometry, uvs: own.mesh.uvs, materials: own.offsets), transform: matrix_identity_float4x4,
+                                                 firstLeaf: .max, bone: 0, bounds: box(own.mesh)))
+            }
+            for (module, placement) in building.placements {
+                let m = building.modules[module]
+                let made = moduleMeshes[m.key] ?? {
+                    let shell = merged(m.meshes)
+                    moduleTriangles += shell.mesh.triangleCount
+                    let made = (addMesh(shell.mesh.geometry, uvs: shell.mesh.uvs, materials: shell.offsets), box(shell.mesh))
+                    moduleMeshes[m.key] = made
+                    return made
+                }()
+                parts.append(Scene.Assembly.Part(mesh: made.mesh, transform: placement, firstLeaf: .max, bone: 0,
+                                                 bounds: made.bounds.transformed(placement)))
+                placed += 1
+            }
+            for part in parts { bounds.grow(part.bounds) }
+            guard !parts.isEmpty else { return }
+            addInstance(assembly: addAssembly(Scene.Assembly(parts: parts, bounds: bounds, rigid: true)), first, transform)
+        }
+
         // The ground: the roads' asphalt under everything, open ground around the city.
         let asphalt = SurfaceMaterial(color: [0.1, 0.1, 0.11], surface: .asphalt)
         let paving = SurfaceMaterial(color: [0.52, 0.5, 0.47], surface: .paving)
@@ -129,7 +177,12 @@ extension Scene {
 
         // The buildings: generated in parallel a batch at a time (each lot has its own seed, so the order they are
         // made in doesn't matter), then added in the lots' order.
-        let specs = plan.lots.map { BuildingSpec(lot: $0, city: city, night: night) }
+        // With modules, each building is an assembly of its windows' shells and the rest of it.
+        let specs = plan.lots.map { lot in
+            var spec = BuildingSpec(lot: lot, city: city, night: night)
+            spec.modules = city.modules
+            return spec
+        }
         let batch = 96
         var tallest: Float = 0, windows = 0, rooms = 0
         for first in stride(from: 0, to: specs.count, by: batch) {
@@ -141,7 +194,11 @@ extension Scene {
             for (i, building) in built.enumerated() {
                 guard let building else { continue }
                 tallest = max(tallest, building.height)
-                add(building.parts.map { ($0.material, $0.mesh) }, at: plan.lots[first + i].transform)
+                if building.placements.isEmpty {
+                    add(building.parts.map { ($0.material, $0.mesh) }, at: plan.lots[first + i].transform)
+                } else {
+                    addBuilding(building, at: plan.lots[first + i].transform)
+                }
                 windows += building.windows
                 rooms += building.rooms
             }
@@ -169,6 +226,7 @@ extension Scene {
 
         print(String(format: "City: %d x %d blocks, %d buildings up to %.0f m, %d windows (%d with rooms), %d triangles in %d instances, "
                      + "%d materials, built in %.2f s", city.blocks, city.blocks, specs.count, tallest, windows, rooms, triangles,
-                     instances.count, materials.count, CFAbsoluteTimeGetCurrent() - start))
+                     instances.count, materials.count, CFAbsoluteTimeGetCurrent() - start)
+              + (placed > 0 ? String(format: "; %d modules of %d triangles placed %d times", moduleMeshes.count, moduleTriangles, placed) : ""))
     }
 }

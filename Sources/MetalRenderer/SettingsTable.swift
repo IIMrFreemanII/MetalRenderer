@@ -340,6 +340,7 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
             S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
                 .env(.scene, "bodies").when { $0.scene.kind == .physics },
             S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)

@@ -135,7 +135,7 @@ struct TraceScene {
     device const uint2*           clusters;   // this frame's selected virtual-geometry clusters: (instance, pool
                                               // offset), the cut's (VG_CLUSTERS) or the raster clusters'
     device const float4*          pool;       // streamed virtual-geometry pages (VGStreamer.swift)
-    device const struct RTPart*   parts;      // every assembly's parts (FOLIAGE): a part instance's user id names it
+    device const struct RTPart*   parts;      // every assembly's parts (ASSEMBLIES): a part instance's user id names it
     device const MeshData*        meshes;     // the mesh table, and the arrays below: what a leaf card's alpha test
                                               // reads (ALPHA_TEST)
     float4                        wind;       // xy = where the wind blows to (world x, z; unit), z = strength (0 =
@@ -413,9 +413,10 @@ inline intersection_params queryParams(bool any) {
     return p;
 }
 
-// The queries' types and what a hit names, by how deep the instances go. FOLIAGE scenes have three levels (multi-level
-// instancing, PlantTracing.swift): a plant's instance names one of its assembly's variants, an instance structure
-// whose instances are the plant's parts, each with the part's number as its user id. Every other scene has two.
+// The queries' types and what a hit names, by how deep the instances go. ASSEMBLIES scenes have three levels (multi-level
+// instancing, PlantTracing.swift): a plant's (or a building's of modules) instance names one of its assembly's variants,
+// an instance structure whose instances are its parts, each with the part's number as its user id. Every other scene
+// has two.
 // A hit's instance is always the top level's (TILED: its user id).
 template <bool PLANTS> struct Levels;
 template <> struct Levels<false> {
@@ -586,9 +587,9 @@ Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidat
     uint2 n;
     Hit h;
 #if HAS_CURVES
-    if (HAIR_CURVES && !FOLIAGE) h = countedQuery<false, false, true, CurveLevels>(r, mask, sc, n); else
+    if (HAIR_CURVES && !ASSEMBLIES) h = countedQuery<false, false, true, CurveLevels>(r, mask, sc, n); else
 #endif
-    h = FOLIAGE ? countedQuery<true, false>(r, mask, sc, n) : countedQuery<false, false>(r, mask, sc, n);
+    h = ASSEMBLIES ? countedQuery<true, false>(r, mask, sc, n) : countedQuery<false, false>(r, mask, sc, n);
     candidates = n.x + n.y;
     return h;
 }
@@ -599,9 +600,9 @@ inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
     uint2 n;
     Hit h;
 #if HAS_CURVES
-    if (HAIR_CURVES && !FOLIAGE) h = countedQuery<false, ANY, true, CurveLevels>(r, mask, sc, n); else
+    if (HAIR_CURVES && !ASSEMBLIES) h = countedQuery<false, ANY, true, CurveLevels>(r, mask, sc, n); else
 #endif
-    h = FOLIAGE ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
+    h = ASSEMBLIES ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
     uint c = 4u * min(rayClass(mask), RAY_CLASSES - 1u);   // the ray's class's counters
     atomic_fetch_add_explicit(&sc.stats[c], 1u, memory_order_relaxed);
     atomic_fetch_add_explicit(&sc.stats[c + 1u], n.x, memory_order_relaxed);
@@ -641,9 +642,9 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     return countedHit<false>(r, mask, sc);
 #endif
 #if HAS_CURVES
-    if (HAIR_CURVES && !FOLIAGE) return closestHit<false, true, CurveLevels>(r, mask, sc);
+    if (HAIR_CURVES && !ASSEMBLIES) return closestHit<false, true, CurveLevels>(r, mask, sc);
 #endif
-    return FOLIAGE ? closestHit<true>(r, mask, sc) : closestHit<false>(r, mask, sc);
+    return ASSEMBLIES ? closestHit<true>(r, mask, sc) : closestHit<false>(r, mask, sc);
 }
 
 template <bool PLANTS, bool CURVES = false, typename L = Levels<PLANTS>>
@@ -671,9 +672,9 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL sc) {
     return h.hit ? h.distance : INFINITY;
 #endif
 #if HAS_CURVES
-    if (HAIR_CURVES && !FOLIAGE) return closestDistance<false, true, CurveLevels>(r, mask, sc);
+    if (HAIR_CURVES && !ASSEMBLIES) return closestDistance<false, true, CurveLevels>(r, mask, sc);
 #endif
-    return FOLIAGE ? closestDistance<true>(r, mask, sc) : closestDistance<false>(r, mask, sc);
+    return ASSEMBLIES ? closestDistance<true>(r, mask, sc) : closestDistance<false>(r, mask, sc);
 }
 
 template <bool PLANTS, bool CURVES = false, typename L = Levels<PLANTS>>
@@ -710,7 +711,7 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     return h.hit;
 #endif
 #if HAS_CURVES
-    if (HAIR_CURVES && !FOLIAGE) return anyHit<false, true, CurveLevels>(r, mask, sc, t);
+    if (HAIR_CURVES && !ASSEMBLIES) return anyHit<false, true, CurveLevels>(r, mask, sc, t);
 #endif
-    return FOLIAGE ? anyHit<true>(r, mask, sc, t) : anyHit<false>(r, mask, sc, t);
+    return ASSEMBLIES ? anyHit<true>(r, mask, sc, t) : anyHit<false>(r, mask, sc, t);
 }

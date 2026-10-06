@@ -45,6 +45,30 @@ final class PlantTracingTests: XCTestCase {
         XCTAssertTrue(Scene(baked, assemblies: true).assemblies.isEmpty)
     }
 
+    /// A city of window modules: its buildings are rigid assemblies, which keep the scene still and compile in
+    /// RIGID_ASSEMBLIES but not FOLIAGE; each has one variant, whatever a building's id or the season.
+    func testBuildingsOfModulesAreRigidAssemblies() throws {
+        var settings = SceneSettings(kind: .city)
+        settings.city.blocks = 1
+        settings.city.modules = true
+        let scene = Scene(settings)
+        XCTAssertFalse(scene.assemblies.isEmpty)
+        XCTAssertTrue(scene.assemblies.allSatisfy(\.rigid))
+        XCTAssertTrue(scene.isStill)
+        XCTAssertFalse(scene.hasFoliage)
+        XCTAssertNotEqual(scene.lightTypeMask & 0x0008_0000, 0, "RIGID_ASSEMBLIES")
+        XCTAssertEqual(scene.lightTypeMask & 0x4000_0000, 0, "FOLIAGE")
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        try XCTSkipUnless(device.supportsRaytracing, "no ray tracing on this GPU")
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 1))
+        let plants = try XCTUnwrap(buffers.plants)
+        XCTAssertEqual(plants.variantCount, scene.assemblies.count)
+        for a in scene.assemblies.indices.prefix(8) {
+            XCTAssertEqual(Set((UInt32(0)..<50).map { plants.variant(assembly: a, id: $0, fall: Float($0 % 2)) }).count, 1)
+        }
+    }
+
     /// Plants of a bucket share their variant; a deciduous plant's share of leaves picks its prefix, an evergreen keeps
     /// them all; with no leaves down every plant names its bucket's full variant.
     func testVariantsByBucketAndShare() throws {

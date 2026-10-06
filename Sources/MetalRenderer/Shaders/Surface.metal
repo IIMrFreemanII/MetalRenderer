@@ -304,7 +304,7 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         return v;
     }
     // An assembly's part: its mesh's triangle, brought into the plant's space (the instance's object space).
-    bool inPart = FOLIAGE && res.part != HIT_NO_PART;
+    bool inPart = ASSEMBLIES && res.part != HIT_NO_PART;
     RTPart part;
     if (inPart) {
         part = accel.parts[res.part];
@@ -499,7 +499,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
                    + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
     }
-    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
+    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f) && accel.parts[res.part].pad != RT_PART_RIGID) {
         // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
         // frame ago (the motion vector), and its normals now.
         RTPart part = accel.parts[res.part];
