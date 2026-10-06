@@ -12,6 +12,7 @@ enum Kernel: Int, CaseIterable {
          lumenCardRadiosity, lumenCardCombine, lumenCull,
          lumenGlobalBin, lumenGlobalCompose
     case reflection
+    case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
