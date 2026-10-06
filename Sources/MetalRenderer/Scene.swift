@@ -19,8 +19,8 @@ final class Scene {
         var virtualMesh = -1                  // >= 0: index into `virtualMeshes` (then `mesh` is -1)
         var assembly = -1                     // >= 0: index into `assemblies` (then `mesh` is -1 and `material` is its
                                               // wood's, with its leaves' right after it)
-        /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; the custom ray
-        /// tracer reads its rows as the world -> object matrix).
+        /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; its columns are
+        /// the rows of the world -> object matrix, which the shading reads them as).
         var normalMatrix = matrix_identity_float4x4
         /// A light's proxy whose light moves (`LightMotion.animated`): `Scene.update` re-poses it every frame.
         var poseAnimated = false
@@ -31,7 +31,7 @@ final class Scene {
         /// >= 0: an SDF shape's instance, index into `sdfShapes` (then `mesh` is -1 and `material` is its nodes' first).
         var sdf = -1
 
-        /// Never moves or deforms: its transform is the one it was added with (the ray tracers' static trees).
+        /// Never moves or deforms: its transform is the one it was added with (a still scene's structure is built once).
         var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
         /// Its transform changes from frame to frame.
         var moves: Bool { animation != nil || poseAnimated || travels }
@@ -238,7 +238,7 @@ final class Scene {
     /// Window glass: only camera rays meet it (they pass through it and take its reflection, traceKernel); to shadow
     /// and GI rays it isn't there, so light goes through windows.
     static let maskGlass: UInt32 = 4
-    /// A far plant as its voxels (Metal's tracer: VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
+    /// A far plant as its voxels (VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
     /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
     /// sways, SDF shapes), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
@@ -252,23 +252,23 @@ final class Scene {
         return skipped ? mask | Scene.maskShadowTraced : mask
     }
 
-    /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0; the
-    /// custom tracer's RT_SDF). No ray's mask has it, so no ray tests it as one.
+    /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0). No ray's
+    /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
     private(set) var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
     private(set) var textures: [TextureSource] = []
-    /// Large glTF meshes as streamed, level-of-detail cluster DAGs (custom ray tracer only; see VirtualGeometry).
+    /// Large glTF meshes as streamed, level-of-detail cluster DAGs (VirtualTracing: VirtualBLAS, VirtualGeometry).
     private(set) var virtualMeshes: [VirtualMesh] = []
     private(set) var virtualMeshNames: [String] = []
     let usesVirtualGeometry: Bool
+    /// Virtual geometry is traced as this frame's cut of clusters (VirtualGeometry), not a BLAS per instance.
+    var tracesClusters: Bool { !virtualMeshes.isEmpty && VirtualGeometry.clusterMode }
     /// Generated plants as assemblies of shared parts (custom ray tracer only); otherwise each is baked into meshes of its own.
     private(set) var assemblies: [Assembly] = []
     let usesAssemblies: Bool
-    /// The custom tracer traces the scene: the meshes it borrows come with their trees (an open world's tiles).
-    let borrowsTrees: Bool
     /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
     private(set) var hasPlants = false
     /// The plants that are voxels when far (FoliageVoxels): on the custom tracer one per assembly, in its order; on
@@ -401,13 +401,12 @@ final class Scene {
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
     /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
-    /// `voxelBoxes`: Metal's tracer traces far baked plants as their voxels (VoxelLOD).
+    /// `voxelBoxes`: far baked plants are traced as their voxels (VoxelLOD).
     init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
          building: ((Scene) -> Void)? = nil) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
-        self.borrowsTrees = assemblies
         self.usesCards = assemblies && settings.leafCards
         self.usesVoxelBoxes = voxelBoxes && !assemblies
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
@@ -476,7 +475,8 @@ final class Scene {
         animated = (instances: instances.indices.filter { instances[$0].moves },
                     lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
                     scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
-        isStill = instances.allSatisfy(\.isStatic)
+        // (Virtual geometry's cuts change the structure under its instances: the frames update it.)
+        isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -616,8 +616,8 @@ final class Scene {
 
     // MARK: - GPU data
 
-    /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
-    /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
+    /// Virtual instances: meshIndex points past the ordinary meshes (the raster's mesh table lists the virtual meshes'
+    /// bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
     /// Assembly instances: meshIndex points past those too (the table then lists the assemblies), and SDF shapes'
     /// instances past those (the shapes), with `Scene.instanceSDF` in pad0.
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
@@ -660,11 +660,12 @@ final class Scene {
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
-        // voxel boxes on Metal's tracer. Bit 22: SDF_SHAPES, some instances are SDF shapes. (Shaders/Types.metal.)
+        // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
+        // traced as its cut of clusters (VirtualGeometry.clusterMode). (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
-            | (hasSDFShapes ? 0x0040_0000 : 0)
+            | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -842,21 +843,7 @@ final class Scene {
         var uvs: Stored<SIMD2<Float>>
         var indices: Stored<UInt32>             // into its own vertices
         var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
-        var tree: BorrowedTree? = nil           // the custom tracer's, where it is built already (a tile's file has it)
         var mesh = 0                            // in `meshes`
-    }
-
-    /// A borrowed mesh's tree as the custom tracer reads it (`BVHBuilder.buildBLAS(...storage:)`, of a mesh without a
-    /// cutout): `nodeCount` nodes, the root first, then three vectors for each of the mesh's triangles; in vectors.
-    struct BorrowedTree {
-        var memory: Stored<SIMD4<Float>>
-        var nodeCount: Int
-        var depth: Int
-        var bounds: AABB
-
-        static let vectorsPerNode = MemoryLayout<BVHNode>.stride / MemoryLayout<SIMD4<Float>>.stride
-        /// Whether it is as long as the tree of a mesh of `indexCount` indices is.
-        func fits(indexCount: Int) -> Bool { nodeCount % 3 == 0 && memory.count == nodeCount * BorrowedTree.vectorsPerNode + indexCount }
     }
 
     /// Adds a borrowed mesh, with its bounds as they are known. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s,
@@ -876,7 +863,7 @@ final class Scene {
     }
 
     /// Lets go of the vertex and index arrays, of the borrowed meshes and of the instance groups, once the renderer
-    /// has them in its buffers and the ray tracer has their trees: for a scene that is made again when anything about
+    /// has them in its buffers and their structures: for a scene that is made again when anything about
     /// it changes, never built from twice (the open world's). The meshes' table, bounds and names stay.
     func releaseGeometry() {
         (positions, normals, uvs, indices, triangleMaterials, borrowed) = ([], [], [], [], [], [])

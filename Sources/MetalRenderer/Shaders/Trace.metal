@@ -138,7 +138,6 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         outBlocker.write(float4(0.0f), tid);
         return;
     }
-#if CUSTOM_RT
     // A raster cluster's triangle (RasterClusters) is from the raster's cut, not the BLAS the rays meet. With
     // METALRENDERER_RASTER_VG_BIAS (camForward.w; off by default) every ray from here, this kernel's and the later
     // passes' (they start at surfacePos), leaves that many times the cluster's simplification error in front of it.
@@ -147,7 +146,6 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         float scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
         sf.position += ng * (u.camForward.w * scale * as_type<float>(accel.clusters[hit.cluster].x));
     }
-#endif
     outSurfacePos.write(float4(sf.position, float(sf.instanceId + 1)), tid);
 
     float3 p = sf.position + ng * RAY_EPSILON;   // offset along the true normal so the origin is never below the triangle

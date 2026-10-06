@@ -200,7 +200,7 @@ final class SettingsTableTests: XCTestCase {
             "METALRENDERER_GI": "mode=restir, bounces = 3.7,scale=0.75",
             "METALRENDERER_FOG_SET": "on=0,wind=1:0:2",
             "METALRENDERER_VIEW": "tonemap=AgX,paused=1",
-            "METALRENDERER_RT": "metal",
+            "METALRENDERER_API": "metal4",
         ])
         XCTAssertEqual(s.scene.kind, .market)
         XCTAssertEqual(s.scene.lights, SceneSettings.marketLights)
@@ -212,7 +212,7 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.fog.wind, SIMD3<Float>(1, 0, 2))
         XCTAssertEqual(s.toneMap, .agx)
         XCTAssertTrue(s.paused)
-        XCTAssertEqual(s.rayTracer, .metal)
+        XCTAssertEqual(s.api, .metal4)
         // Benchmarks choose the view and the pause themselves.
         var b = defaults
         SettingsEnv.apply(.view, to: &b, from: ["METALRENDERER_VIEW": "paused=1,view=3,fov=70"])
@@ -221,7 +221,7 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(b.fovDegrees, 70)
     }
 
-    /// Metal's tracer traces far plants as their triangles unless asked for their voxels, which are slower wherever
+    /// Far plants are traced as their triangles unless asked for their voxels, which are slower wherever
     /// they were measured.
     func testFarPlantsAreTrianglesUnlessAskedFor() {
         XCTAssertFalse(defaults.scene.voxelBoxes)

@@ -284,7 +284,6 @@ final class FoliageRuntimeTests: XCTestCase {
         XCTAssertEqual(try constant("WIND_COVER_LEAN", in: "Foliage.metal"), Scene.coverLean)
         XCTAssertEqual(try constant("VOXEL_DEPTH", in: "Intersect.metal"), FoliageVoxels.depth)
         XCTAssertEqual(try constant("VOXEL_LEVELS", in: "Intersect.metal"), Float(FoliageVoxels.levels))
-        XCTAssertEqual(MemoryLayout<RTPart>.size, 128)             // RTPart's static_assert
         XCTAssertEqual(MemoryLayout<FoliageVoxels.Grid>.size, 48)  // RTVoxels
     }
 
@@ -374,7 +373,7 @@ final class FoliageRuntimeTests: XCTestCase {
         XCTAssertEqual(VoxelLOD.pcgHash(0), 129708002)   // Shaders/Sampling.metal's
     }
 
-    /// On Metal's tracer a far plant's wood instance names its grid's box at its level, and its leaves are masked out;
+    /// A far plant's wood instance names its grid's box at its level, and its leaves are masked out;
     /// back at triangles, both descriptors are as they were.
     func testFarBakedPlantsAreVoxelBoxes() throws {
         let scene = forest(trees: 60, assemblies: false)
@@ -382,7 +381,7 @@ final class FoliageRuntimeTests: XCTestCase {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .metal, api: .metal3, slots: 3))
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 3))
         let voxels = try XCTUnwrap(buffers.voxelLOD)
         XCTAssertEqual(buffers.primitives.count, scene.meshes.count + VoxelGrids.levels * scene.voxelPlants.count)
         let base = buffers.instanceDescriptors[0].contents()
@@ -479,15 +478,6 @@ final class FoliageRuntimeTests: XCTestCase {
             XCTAssertTrue(sheet.coverage > 0.08 && sheet.coverage < 0.7, "\(species): \(sheet.coverage)")
             XCTAssertEqual(Float(sheet.alpha.reduce(0) { $0 + ($1 != 0 ? 1 : 0) }) / Float(sheet.alpha.count), sheet.coverage, accuracy: 1e-5)
         }
-        // The packed UVs, read back as rtCutout does: each corner to within a texel of the sheet.
-        let corners: [SIMD2<Float>] = [[0, 0.5], [0.5, 1], [1, 0.25]]
-        let (a, b) = BVHBuilder.cutoutBits(corners[0], corners[1], corners[2], layer: 13)
-        XCTAssertEqual((a >> 30) | (b >> 30) << 2, 13)
-        let read = [SIMD2(Float(a & 1023), Float((a >> 10) & 1023)), SIMD2(Float((a >> 20) & 1023), Float(b & 1023)),
-                    SIMD2(Float((b >> 10) & 1023), Float((b >> 20) & 1023))].map { $0 / 1024 }
-        for (r, c) in zip(read, corners) { XCTAssertLessThan(simd_reduce_max(abs(r - c)), 1.5 / 1024) }
-        XCTAssertTrue(BVHBuilder.cutoutBits(.zero, .zero, .zero, layer: 0) == (0, 0))
-
         var settings = SceneSettings(kind: .forest)
         settings.trees = 60
         settings.undergrowth = 25
@@ -503,12 +493,6 @@ final class FoliageRuntimeTests: XCTestCase {
             XCTAssertLessThanOrEqual(Int(mesh.cutout >> 24), cards.cutouts.count)
             XCTAssertLessThan(Int(mesh.cutout & 0xFF_FFFF), Int(mesh.indexCount) / 3)
         }
-        let blas = BVHBuilder.buildBLAS(positions: cards.positions, indices: cards.indices, meshes: cards.meshes, uvs: cards.uvs)
-        let marked = stride(from: 0, to: blas.triangles.count, by: 3).filter { blas.triangles[$0 + 1].w.bitPattern >> 30 != 0 || blas.triangles[$0 + 2].w.bitPattern >> 30 != 0 }.count
-        XCTAssertEqual(marked, cut.reduce(0) { $0 + Int($1.indexCount) / 3 - Int($1.cutout & 0xFF_FFFF) })
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders/Intersect.metal")
-        XCTAssertTrue(try String(contentsOf: folder, encoding: .utf8).contains("constant uint CUTOUT_SIZE = \(FoliageTextures.cardSheetSize);"))
     }
 
     /// Autumn recolours the leaves of the species that turn and nothing else; summer brings the colours back.

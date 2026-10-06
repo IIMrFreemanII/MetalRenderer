@@ -277,12 +277,12 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
-    /// Through the Metal 3 queue: the per-mesh structures are built there (once per scene), and the ones that deform
-    /// are refitted where they were built.
-    func refitPrimitives(_ refit: PrimitiveRefit, pass: String) {
+    /// Through the Metal 3 queue: the per-mesh structures are built there (once per scene), and the ones a frame
+    /// builds or refits are too.
+    func updatePrimitives(_ work: PrimitiveWork, pass: String) {
         interlude(pass) { cb in
             guard let enc = cb.makeAccelerationStructureCommandEncoder() else { return }
-            refit.encode(into: enc)
+            work.encode(into: enc)
             enc.endEncoding()
         }
     }

@@ -95,17 +95,6 @@ struct RasterCounters {
 static_assert(sizeof(RasterCounters) == 32, "RasterCounters: Renderer.rasterCountersStride");
 inline device atomic_uint* rasterTraced(device RasterCounters* counters) { return (device atomic_uint*)(counters + 2); }
 
-// A virtual instance's BLAS over its current cut (VirtualBLAS.Entry; the custom tracer's VGBlas): its triangles as
-// v0, e1, e2. Bound on either tracer (Metal's has no virtual instances).
-struct VGBlasEntry {
-    ulong                 nodes;
-    device const float4*  tris;
-    device const uint*    attrs;
-    uint                  triangles;
-    uint                  pad;
-};
-static_assert(sizeof(VGBlasEntry) == 32, "VGBlasEntry: VirtualBLAS.Entry");
-
 // A drawn instance, as its pass's rasterCullKernel wrote it (at the place of its first group): all its vertices need,
 // so a vertex reads this, an index and a position rather than the instance's and its mesh's records.
 struct RasterInstance {
@@ -163,13 +152,10 @@ inline float3 rasterCorner(uint kind, MeshData mesh, uint prim, uint k, device c
     return positions[indices[mesh.firstIndex + prim * 3u + k] + mesh.vertexOffset];
 }
 
-// Corner `corner` of triangle `prim` of a drawn mesh, object space: its index and position (arrays, block), or v0 + e1
-// / e2 (virtual geometry's BLAS triangles; `corners` is then its float4s).
+// Corner `corner` of triangle `prim` of a drawn mesh, object space: its index and position (arrays, block), or the
+// corner itself (virtual geometry's BLAS triangles, VGBlas.tris; `corners` is then its float4s).
 inline float3 rasterTriangleCorner(uint kind, device const float3* corners, device const uint* indices, uint prim, uint corner) {
-    if ((kind & RASTER_KIND) == RASTER_VIRTUAL) {
-        device const float4* tris = (device const float4*)corners;
-        return tris[3u * prim].xyz + (corner == 0u ? float3(0.0f) : tris[3u * prim + corner].xyz);
-    }
+    if ((kind & RASTER_KIND) == RASTER_VIRTUAL) return ((device const float4*)corners)[3u * prim + corner].xyz;
     return corners[indices[prim * 3u + corner]];
 }
 
@@ -228,7 +214,7 @@ kernel void rasterCullKernel(constant Uniforms&            u         [[buffer(0)
                              device uint4*                 groups    [[buffer(12)]],
                              device RasterCounters*        counters  [[buffer(13)]],
                              device const RasterMesh*      rmeshes   [[buffer(14)]],
-                             device const VGBlasEntry*     vgTable   [[buffer(16)]],
+                             device const VGBlas*          vgTable   [[buffer(16)]],
                              device RasterInstance*        records   [[buffer(19)]],
                              device uint*                  vgState   [[buffer(26)]],   // RasterClusters' (RVG_PLACES on)
                              texture2d<float, access::read> hzb      [[texture(0)]],

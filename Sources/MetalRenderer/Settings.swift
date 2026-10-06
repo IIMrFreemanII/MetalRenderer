@@ -389,22 +389,6 @@ struct CitySettings: Equatable, Codable {
     static let roomRange: ClosedRange<Float> = 0...0.5
 }
 
-/// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
-enum RayTracerKind: Int, CaseIterable, Codable {
-    case custom             // this project's BVHs: per-mesh BLAS + static TLAS (CPU, once) + dynamic TLAS (every frame)
-    case metal              // Metal's acceleration structures and intersector
-
-    var title: String {
-        switch self {
-        case .custom: return "Custom BVH"
-        case .metal: return Capabilities.current.hardwareRayTracing ? "Metal (hardware)" : "Metal (software)"
-        }
-    }
-
-    /// `METALRENDERER_RT=metal|custom` picks the starting tracer (benchmarks: for every setting).
-    static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALRENDERER_RT"] == "metal" ? .metal : .custom
-}
-
 /// Where the camera's surfaces come from: one traced ray per pixel, or a raster visibility buffer (Shaders/Raster.metal,
 /// in the manner of Unreal's Nanite: GPU-driven, culled by chunks of 128 triangles against the view and a depth pyramid),
 /// whose triangles the primary rays then only meet. The rest of the frame is the same.
@@ -496,14 +480,14 @@ struct SceneSettings: Equatable, Codable {
     /// ...and whether its cities' lights are the scene's lights: the renderer's to set too, with the time of day
     /// (`World.lightsReady`). By day nothing samples them, and they are off.
     var worldLit = false
-    /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
-    /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
+    /// Plants baked into meshes of their own instead of assemblies: no wind or leaf fall, and eight times the
+    /// triangles (METALRENDERER_BENCH=forestcheck compares the two).
     var bakedPlants = false
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
-    /// by an alpha mask the custom tracer tests. Off: every leaf is a mesh of its own.
+    /// by an alpha mask the ray queries test. Off: every leaf is a mesh of its own.
     var leafCards = false
-    /// Metal's tracer: far plants as their voxel grids (VoxelLOD), as on the custom tracer, instead of their
-    /// triangles. Off: it is slower wherever it was measured. In software (M1 Max) the ray queries a voxel box needs
+    /// Far baked plants as their voxel grids (VoxelLOD) instead of their triangles. Off: it is slower wherever it was
+    /// measured. In software (M1 Max) the ray queries a voxel box needs
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
     /// forest takes 1.3 to 2.1 times as long, the open world 3 times.
     var voxelBoxes = false
@@ -527,7 +511,7 @@ struct SceneSettings: Equatable, Codable {
     }
 }
 
-/// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
+/// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
 struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
@@ -767,7 +751,7 @@ struct PostSettings: Equatable, Codable {
     }
 }
 
-/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures, like the tracer.
+/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures.
 enum RenderAPI: Int, CaseIterable, Codable {
     case metal3             // MTLCommandQueue, one compute encoder per frame
     case metal4             // Metal 4: MTL4CommandQueue, argument tables, residency sets (macOS 26; Capabilities.metal4)
@@ -779,8 +763,8 @@ enum RenderAPI: Int, CaseIterable, Codable {
 }
 
 /// Everything the settings panel and the keyboard shortcuts can change.
-/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (custom ray
-/// tracer: plants as assemblies; Metal's traces them baked and still).
+/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (plants as
+/// assemblies; baked plants stand still).
 struct FoliageSettings: Equatable, Codable {
     var wind: Float = 0                 // 0 = still ... 1 = a strong wind
     var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
@@ -829,7 +813,6 @@ struct RenderSettings: Equatable, Codable {
     var cascades = CascadeSettings()
     var lumen = LumenSettings()
     var scene = SceneSettings()
-    var rayTracer = RayTracerKind.initial
     var api = RenderAPI.initial
     var primary = PrimaryVisibility.initial
     var shadowMethod = ShadowMethod.initial

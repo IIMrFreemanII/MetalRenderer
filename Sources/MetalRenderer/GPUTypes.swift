@@ -290,7 +290,7 @@ struct GPUInstanceData {
     var normalMatrix: simd_float4x4    // inverse-transpose of transform
     var meshIndex: UInt32
     var materialIndex: UInt32
-    var pad0: UInt32 = 0               // instance mask (Scene.maskGeometry / maskLights), read by the custom ray tracer
+    var pad0: UInt32 = 0               // instance mask (Scene.maskGeometry / maskLights), read by the raster and the cut
     var pad1: UInt32 = 0
 }
 
@@ -426,7 +426,6 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
     precondition(MemoryLayout<GPUSkyParams>.stride == 192, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
-    precondition(MemoryLayout<RTInstance>.stride == 64, "RTInstance layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")
     precondition(MemoryLayout<GPURegirParams>.stride == 96, "GPURegirParams layout mismatch")
     precondition(MemoryLayout<GPURegirReservoir>.stride == 16, "GPURegirReservoir layout mismatch")

@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------------------------
-// Foliage: the wind (FOLIAGE scenes, custom ray tracer)
+// Foliage: the wind (FOLIAGE scenes)
 // ---------------------------------------------------------------------------------------------
 
 // A plant in the wind is rigid pieces turning about bones: the whole plant about its foot (the root), a limb about
 // where it leaves the trunk, a bough about where it hangs on its limb. A turn is a function of the time, the wind
-// and the piece, nothing else: the traversal undoes the turns on the ray as it enters a plant and a part, the
-// shading redoes them on the hit point (at this frame's time and the last one's, for the motion vector), and
-// nothing is rebuilt. The boxes of the parts and plants are padded by the largest turn (Scene.Flora).
+// and the piece, nothing else: every frame plantWindKernel turns each part's instance in the top-level structure to
+// where the wind has it, and the shading turns the hit point the same way (at this frame's time and the last one's,
+// for the motion vector). The parts' meshes are never rebuilt.
 
 constant float WIND_ROOT_SWAY = 0.022f;    // radians at full wind: the trunk's lean plus its swing
 constant float WIND_COVER_LEAN = 0.2f;     // how far grass and ferns lean at full wind, per unit of their height
@@ -83,4 +83,38 @@ inline float3 coverLean(float4 wind, float time, float4 row0, float4 row1, float
     float lean = wind.z * WIND_COVER_LEAN * windGust(wind, origin, time) * swing;
     downwind *= lean / max(length(downwind), 1e-6f);
     return float3(downwind.x, 0.0f, downwind.y);
+}
+
+// A part of an assembly (a generated plant): a placed mesh in the plant's space, with the bones it turns about.
+struct RTPart {
+    float4 row0;  // plant -> part rows
+    float4 row1;
+    float4 row2;
+    uint mesh;        // the part's mesh
+    uint pad;
+    uint firstLeaf;   // its triangles from here on take the instance's leaf material (the one after its wood's)
+    uint leafCount;   // how many they are, in a shuffled order: autumn drops them from the end (0 = evergreen)
+    float4 limb;      // the wind's bones: xyz = pivot (plant space), w = its largest turn, 0 = none
+    float4 limbAxis;  // xyz = the turn's axis, w = phase
+    float4 bough;     // the bone on the limb (the part itself, if it hangs on one)
+    float4 boughAxis;
+};
+static_assert(sizeof(RTPart) == 128, "RTPart: Scene.Assembly.gpuParts");
+
+// A part's point (or direction) in the wind: from where it is at rest in its plant's space to where it is now.
+inline float3 partWind(RTPart part, PlantWind w, float strength, float3 p, bool point) {
+    if (part.bough.w != 0.0f) {
+        float a = boneAngle(part.bough, part.boughAxis, w.gust, w.phase, w.time, strength, WIND_BOUGH_SPEED);
+        p = point ? windTurn(p, part.bough.xyz, part.boughAxis.xyz, a) : windTurn(p, part.boughAxis.xyz, a);
+    }
+    if (part.limb.w != 0.0f) {
+        float a = boneAngle(part.limb, part.limbAxis, w.gust, w.phase, w.time, strength, WIND_LIMB_SPEED);
+        p = point ? windTurn(p, part.limb.xyz, part.limbAxis.xyz, a) : windTurn(p, part.limbAxis.xyz, a);
+    }
+    return windTurn(p, w.axis, w.angle);   // the root: about the plant's origin
+}
+
+// The share of its leaves a deciduous plant still has when `fall` of all leaves are down: each plant in its own time.
+inline float plantKeep(float fall, uint instance) {
+    return 1.0f - saturate(fall * 1.6f - 0.6f * float(pcgHash(instance + 0xFA11u) & 0xFFu) * (1.0f / 255.0f));
 }

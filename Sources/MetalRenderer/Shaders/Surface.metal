@@ -249,7 +249,6 @@ struct HitVertices {
     bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
 
-#if CUSTOM_RT
 // A part's point and direction in its plant's space. The part's rows are the inverse (plant -> part) of a rotation,
 // a uniform scale and a translation, so its transpose over the squared scale is the way back.
 inline float3 partPoint(RTPart part, float3 p) {
@@ -259,7 +258,6 @@ inline float3 partPoint(RTPart part, float3 p) {
 inline float3 partDirection(RTPart part, float3 v) {   // not unit length
     return part.row0.xyz * v.x + part.row1.xyz * v.y + part.row2.xyz * v.z;
 }
-#endif
 // What a surface keeps of its instance, to tell it from its neighbours' (the trace writes it as a float): TILED, a
 // number of 24 bits, which a float holds exactly, made from its id, which may be any.
 inline uint surfaceInstance(uint id) { return TILED ? pcgHash(id) & 0xFFFFFFu : id; }
@@ -272,7 +270,6 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     v.triangle = ~0u;
     v.leaf = v.sways = false;
     uint meshIndex = inst.meshIndex;
-#if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         // Virtual geometry: the hit cluster's vertices, in the streaming pool.
         VGClusterView view = vgClusterView(accel.pool + accel.clusters[res.cluster].y);
@@ -289,8 +286,7 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     if (inst.pad1 != 0) {
         // Virtual geometry, per-instance BLAS over the cut: positions from its triangles, attributes alongside.
         VGBlas e = accel.vgBlas[inst.pad1 - 1];
-        float4 v0 = e.tris[3 * res.primitive], e1 = e.tris[3 * res.primitive + 1], e2 = e.tris[3 * res.primitive + 2];
-        v.p[0] = v0.xyz; v.p[1] = v0.xyz + e1.xyz; v.p[2] = v0.xyz + e2.xyz;
+        for (uint k = 0; k < 3; ++k) v.p[k] = e.tris[3 * res.primitive + k].xyz;
         device const uint* a = e.attrs + 6 * res.primitive;
         for (uint k = 0; k < 3; ++k) {
             v.n[k] = octDecode(a[k]);
@@ -306,7 +302,6 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         meshIndex = part.mesh;
         v.leaf = res.primitive >= part.firstLeaf;
     }
-#endif
     MeshData mesh = s.meshes[meshIndex];
     v.sways = mesh.sways != 0;
     if (STREAMED && mesh.block != nullptr) {
@@ -334,14 +329,12 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         }
         if (DEFORMING_MESHES) v.prevOffset = mesh.prevOffset;
     }
-#if CUSTOM_RT
     if (inPart) {
         for (uint k = 0; k < 3; ++k) {
             v.p[k] = partPoint(part, v.p[k]);
             v.n[k] = partDirection(part, v.n[k]);
         }
     }
-#endif
     return v;
 }
 
@@ -454,7 +447,6 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
                    + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
     }
-#if CUSTOM_RT
     if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
         // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
         // frame ago (the motion vector), and its normals now.
@@ -475,7 +467,6 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         objN.y -= dot(lean, objN);
         objNg.y -= dot(lean, objNg);
     }
-#endif
     uint materialIndex = inst.materialIndex + (hv.leaf ? 1u : 0u);
     if (MULTI_MATERIAL && hv.triangle != ~0u) materialIndex += s.triangleMaterials[hv.triangle];
     if (STREAMED) materialIndex += hv.material;

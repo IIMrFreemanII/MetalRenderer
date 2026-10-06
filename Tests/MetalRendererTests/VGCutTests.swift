@@ -11,13 +11,17 @@ final class VGCutTests: XCTestCase {
         .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
     private static let maxDraws = 8192
 
-    /// The cut's pipeline, from one compile of the custom tracer's shaders.
+    /// The cut's pipeline, from one compile of the shaders.
     private static let pipeline: Result<(MTLDevice, MTLComputePipelineState), Error>? = {
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
         return Result {
-            let library = try Pipelines.compile(device: device, source: shaders, kind: .custom, stats: false, compiler: nil)
+            let library = try Pipelines.compile(device: device, source: shaders, stats: false, compiler: nil)
+            // The light types alone (function constant 0): without it every feature is on, instance blocks (TILED) too.
+            let constants = MTLFunctionConstantValues()
+            var types: UInt32 = 0x3F
+            constants.setConstantValue(&types, type: .uint, index: 0)
             return (device, try Pipelines.makeState(device: device, library: library, compiler: nil, kernel: .rasterVGCut,
-                                                     constants: MTLFunctionConstantValues()))
+                                                     constants: constants))
         }
     }()
 

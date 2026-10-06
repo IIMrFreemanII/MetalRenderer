@@ -5,7 +5,7 @@ import MetalFX
 /// options that need something missing, `RenderSettings.clamped(to:)` swaps them for ones that work, and the
 /// benchmark skips the settings that need them.
 struct Capabilities: Equatable {
-    var metalRayTracing = true      // Metal's acceleration structures and intersector
+    var metalRayTracing = true      // Metal's acceleration structures and intersector: the renderer needs them
     var hardwareRayTracing = true   // ... traversed by ray-tracing hardware (Apple9: M3, A17 Pro and later), not in software
     var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26): the upscaler
     var metal4 = true               // Metal 4's command queue, argument tables and compiler (macOS 26)
@@ -53,22 +53,19 @@ extension RenderSettings {
     /// What these settings need that `caps` lacks, as text ("MetalFX denoiser"); nil when they can run as they are.
     func missing(in caps: Capabilities) -> String? {
         var needs: [String] = []
-        if rayTracer == .metal && !caps.metalRayTracing { needs.append("Metal ray tracing") }
+        if !caps.metalRayTracing { needs.append("Metal ray tracing") }
         if upscaleFactor > 1 && !caps.metalFXDenoiser { needs.append("the MetalFX denoiser") }
         if api == .metal4 && !caps.metal4 { needs.append("Metal 4") }
-        if rayTracer == .metal && api == .metal4 && caps.metalRayTracing && caps.metal4 && !caps.metal4RayTracing {
+        if api == .metal4 && caps.metalRayTracing && caps.metal4 && !caps.metal4RayTracing {
             needs.append("Metal 4 ray tracing")
         }
         return needs.isEmpty ? nil : needs.joined(separator: " and ")
     }
 
-    /// The settings with every option that `caps` lacks swapped for the default one, and what was swapped.
+    /// The settings with every option that `caps` lacks swapped for the default one, and what was swapped. (Metal ray
+    /// tracing has no stand-in: the renderer refuses a GPU without it.)
     func clamped(to caps: Capabilities) -> (settings: RenderSettings, notes: [String]) {
         var s = self, notes: [String] = []
-        if s.rayTracer == .metal && !caps.metalRayTracing {
-            s.rayTracer = .custom
-            notes.append("Metal ray tracing is not supported on this GPU: using the custom BVH")
-        }
         if s.upscaleFactor > 1 && !caps.metalFXDenoiser {
             s.upscaleFactor = 0
             notes.append("The MetalFX denoiser is not supported on this GPU or system: upscaling is off, SVGF denoises")
@@ -77,7 +74,7 @@ extension RenderSettings {
             s.api = .metal3
             notes.append("Metal 4 is not supported on this GPU or system: using Metal 3")
         }
-        if s.rayTracer == .metal && s.api == .metal4 && !caps.metal4RayTracing {
+        if s.api == .metal4 && !caps.metal4RayTracing {
             s.api = .metal3
             notes.append("Metal 4 ray tracing is not supported on this GPU: using Metal 3 with Metal ray tracing")
         }

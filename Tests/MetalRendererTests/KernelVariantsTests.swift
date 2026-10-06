@@ -90,7 +90,8 @@ final class KernelVariantsTests: XCTestCase {
     func testVariantsCompile() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
         guard KernelVariants.enabled else { throw XCTSkip("METALRENDERER_VARIANTS=0") }
-        let pipelines = try Pipelines(device: device, source: shaders, kind: .custom, lightTypes: 0x3F, stats: false)
+        guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
+        let pipelines = try Pipelines(device: device, source: shaders, lightTypes: 0x3F, stats: false)
         var expected = 0
         for kernel in Kernel.allCases where kernel.fixedFlags | kernel.fixedPassFlags != 0 {
             let off = pipelines.state(kernel, flags: 0, pass: 0, wait: true)
@@ -105,14 +106,14 @@ final class KernelVariantsTests: XCTestCase {
         XCTAssertTrue(pipelines.state(.composite, flags: ~0, wait: true) === pipelines[.composite], "composite has no variants")
     }
 
-    /// A scene's features compile on both tracers: SDF shapes (bit 22) with far plants' voxels (bit 23) and the
-    /// plants (bit 30), which share Metal's query loop and the custom tracer's instance branch.
+    /// A scene's features compile, together and with the ray queries' counters: SDF shapes (bit 22), far plants'
+    /// voxels (bit 23) and virtual geometry's clusters (bit 21), which share the queries' loop, and the plants (bit 30).
     func testSceneFeaturesCompile() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
-        let features: UInt32 = 0x3F | 0x0040_0000 | 0x0080_0000 | 0x4000_0000
-        for kind in [RayTracerKind.custom, .metal] where kind == .custom || device.supportsRaytracing {
-            XCTAssertNoThrow(try Pipelines(device: device, source: shaders, kind: kind, lightTypes: features, stats: false), "\(kind)")
-            XCTAssertNoThrow(try Pipelines(device: device, source: shaders, kind: kind, lightTypes: 0x3F | 0x0040_0000, stats: false), "\(kind)")
-        }
+        guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
+        let features: UInt32 = 0x3F | 0x0020_0000 | 0x0040_0000 | 0x0080_0000 | 0x4000_0000
+        XCTAssertNoThrow(try Pipelines(device: device, source: shaders, lightTypes: features, stats: false))
+        XCTAssertNoThrow(try Pipelines(device: device, source: shaders, lightTypes: 0x3F | 0x0040_0000, stats: false))
+        XCTAssertNoThrow(try Pipelines(device: device, source: shaders, lightTypes: features, stats: true), "RT_STATS")
     }
 }

@@ -430,19 +430,6 @@ extension Foliage {
         print(String(format: "  stored as assemblies: %d triangles; baked flat: %d triangles (%.1f ms to bake)", stored, flatTriangles,
                      flattenTime))
 
-        // The bottom-level trees the custom tracer would build over the flat meshes: their time and depth.
-        var positions: [SIMD3<Float>] = [], indices: [UInt32] = [], meshes: [GPUMesh] = []
-        for flat in flats {
-            for m in [flat.wood, flat.leaves] where !m.indices.isEmpty {
-                let base = UInt32(positions.count)
-                meshes.append(GPUMesh(firstIndex: UInt32(indices.count), indexCount: UInt32(m.indices.count)))
-                positions += m.positions
-                indices += m.indices.map { $0 + base }
-            }
-        }
-        var depth = 0
-        let blas = ms { depth = BVHBuilder.buildBLAS(positions: positions, indices: indices, meshes: meshes).maxDepth }
-        print(String(format: "  BLAS over the flat meshes: %.1f ms, deepest tree %d levels", blas, depth))
         print(problemCount == 0 ? "  checks: ok" : "  checks: \(problemCount) PROBLEMS")
     }
 }

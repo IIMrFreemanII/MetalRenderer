@@ -3,10 +3,10 @@ import QuartzCore
 import simd
 
 /// The scene's SDF shapes on the GPU (MSL SDFScene in Shaders/SDF.metal): the shapes, their nodes, the baked grids and
-/// their samples, and a record of the four addresses that both tracers march them by (the custom one through
-/// RTScene.sdf, Metal's through the boxes' primitive data). For Metal's tracer also a structure of one box per shape,
-/// the shape's, whose primitive data names it (MSL `SDFBox`); an SDF shape's instance points at its shape's box, as
-/// a mesh's instance at its mesh's structure, and the ray queries march what their loop is handed (Intersect.metal).
+/// their samples, and a record of the four addresses the ray queries march them by (through the boxes' primitive
+/// data); and a structure of one box per shape, the shape's, whose primitive data names it (MSL `SDFBox`): an SDF
+/// shape's instance points at its shape's box, as a mesh's instance at its mesh's structure, and the ray queries march
+/// what their loop is handed (Intersect.metal).
 final class SDFBuffers {
     /// MSL `SDFBox`: laid out as VoxelGrids.BoxData, `tag` where that has its level.
     struct BoxData {
@@ -24,7 +24,7 @@ final class SDFBuffers {
     let cells: MTLBuffer
     let scene: MTLBuffer
     let shapeCount: Int
-    /// Metal's tracer: shape s's box is `boxes[s]` (`buildBoxes`).
+    /// Shape s's box is `boxes[s]` (`buildBoxes`).
     private(set) var boxes: [MTLAccelerationStructure] = []
     private var boxBuffers: [MTLBuffer] = []
 
