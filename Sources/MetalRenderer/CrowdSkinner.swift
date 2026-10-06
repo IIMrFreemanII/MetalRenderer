@@ -4,7 +4,7 @@ import simd
 
 /// The crowd's per-frame GPU work (Shaders/Crowd.metal): every pose slot's skinning matrices from the clips' keys,
 /// then every slot's vertices from its bind-pose mesh, written into the slot's range of the scene's position and
-/// normal buffers. The acceleration structures follow (the renderer refits Metal's, CustomRayTracer its own).
+/// normal buffers. The acceleration structures follow (the renderer refits the slots' structures).
 ///
 /// The key tables, joints and skin weights are uploaded once. Per frame the CPU writes 32 bytes per slot (what each
 /// plays, `Crowd.pose`); everything per joint and per vertex happens on the GPU.

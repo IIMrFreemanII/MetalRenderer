@@ -21,8 +21,8 @@ in the `performance` skill ([cpu-swift.md](../../performance/references/cpu-swif
 * **Guard.** `SettingsTableTests`: every setting round-trips through Copy as Env, names are unique.
 
 Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted pattern, not a bypass:
-* A single-value variable that picks a default has a `static let initial` on its type (`RayTracerKind.initial`,
-  `RenderAPI.initial` in Settings.swift), next to its `.env(…)` line in the table. Benchmarks rely on it.
+* A single-value variable that picks a default has a `static let initial` on its type (`RenderAPI.initial` in
+  Settings.swift), next to its `.env(…)` line in the table. Benchmarks rely on it.
 * Run controls are not settings (`METALRENDERER_BENCH*`, `_CAPS`, `_TG`, `_RT_STATS`, `_DUMP_SETTINGS`). They are
   read where they are used.
 
@@ -54,11 +54,12 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
 ## Pipelines: `Pipelines.swift`
 
 * **What it is.** `Kernel` has a case per compute function in Shaders/*.metal (`trace` ↔ `traceKernel`). `Pipelines` is the whole set
-  as one value, compiled in the background for one tracer and one set of light types and swapped in between frames.
+  as one value, compiled in the background (one compile of the shaders, with or without the `RT_STATS` counters) for
+  one API and one set of light types, and swapped in between frames.
   Render pipelines are properties of the same value, made in its init from the same library (`visibility`).
-* **Plugging in.** One `Kernel` case named after the MSL function. Kernels that exist only for the custom tracer go
-  after `rtPrep`. A compile-time variant is a macro set in `Pipelines.compile` or a function constant set where
-  `Pipelines.init` makes each pipeline.
+* **Plugging in.** One `Kernel` case named after the MSL function; every kernel exists in every compile (the custom
+  tracer's kernels, which only its compile had, are gone). A compile-time variant is a macro set in
+  `Pipelines.compile` or a function constant set where `Pipelines.init` makes each pipeline.
 * **Flags a configuration fixes.** A big kernel's variants have them compiled in (`KernelVariants`): a new bit of
   `Uniforms.flags` or of a kernel's own flags that stays the same from frame to frame joins `Kernel.fixedFlags` or
   `fixedPassFlags`, and the shader reads it with `flagOn` / `passOn` (Shaders/Types.metal).
@@ -74,7 +75,8 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
   `Benchmark.supported` skips the settings.
 * **Plugging in.** A flag in `Capabilities` (with its `METALRENDERER_CAPS` key). When a setting can ask for it, also
   a clause in `missing` and in `clamped` and `.available` on the popup. A flag that only informs
-  (`hardwareRayTracing` changes a title) needs none.
+  (`hardwareRayTracing`, in the launch log's line) needs none. Metal ray tracing itself has no fallback: a GPU
+  without it is refused at launch (`RendererError.unsupported`).
 * **Signs it was bypassed.** `#available`, `supportsFamily` or `supportsDevice` outside `Capabilities.init`, beyond
   what the compiler demands at a call to a newer API; a feature that fails at use instead of falling back at launch.
 * **Guard.** `CapabilitiesTests`: each missing capability falls back; the benchmark skips what can't run.

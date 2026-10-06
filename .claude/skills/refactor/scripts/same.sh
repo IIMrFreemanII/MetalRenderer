@@ -12,7 +12,7 @@
 #
 # Example:
 #   same.sh quick
-#   same.sh stressq "32 lights" -- METALRENDERER_RT=custom
+#   same.sh stressq "32 lights" -- METALRENDERER_DIRECT=restir
 set -euo pipefail
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
