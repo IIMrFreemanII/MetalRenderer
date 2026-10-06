@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Distance level of detail for generated plants (both tracers: VoxelLOD.swift on Metal's): each plant as a grid of voxels
+/// Distance level of detail for generated plants (VoxelLOD.swift, PlantTracing.swift): each plant as a grid of voxels
 /// holding how much leaf and wood is in them. Once a plant is far enough that a voxel is smaller than a pixel, rays
 /// march its grid instead of walking its parts' triangles, and stop in a voxel with the probability that a ray
 /// through it would have hit something (`rtVoxels` in Shaders/Intersect.metal). On average a far crown then covers
@@ -31,8 +31,8 @@ enum FoliageVoxels {
         return SIMD3(max((d.x + r) >> level, 1), max((d.y + r) >> level, 1), max((d.z + r) >> level, 1))
     }
 
-    /// What a plant's grid is made of: its meshes, placed in its space. The same on both tracers: an assembly's parts
-    /// (custom tracer), or the parts a baked plant was flattened from (Metal's).
+    /// What a plant's grid is made of: its meshes, placed in its space: an assembly's parts, or the parts a baked plant
+    /// was flattened from.
     struct Piece {
         var mesh: Foliage.Mesh
         var transform: float4x4         // into plant space

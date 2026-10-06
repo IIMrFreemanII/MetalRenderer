@@ -249,15 +249,6 @@ struct HitVertices {
     bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
 
-// A part's point and direction in its plant's space. The part's rows are the inverse (plant -> part) of a rotation,
-// a uniform scale and a translation, so its transpose over the squared scale is the way back.
-inline float3 partPoint(RTPart part, float3 p) {
-    float3 q = p - float3(part.row0.w, part.row1.w, part.row2.w);
-    return (part.row0.xyz * q.x + part.row1.xyz * q.y + part.row2.xyz * q.z) / dot(part.row0.xyz, part.row0.xyz);
-}
-inline float3 partDirection(RTPart part, float3 v) {   // not unit length
-    return part.row0.xyz * v.x + part.row1.xyz * v.y + part.row2.xyz * v.z;
-}
 // What a surface keeps of its instance, to tell it from its neighbours' (the trace writes it as a float): TILED, a
 // number of 24 bits, which a float holds exactly, made from its id, which may be any.
 inline uint surfaceInstance(uint id) { return TILED ? pcgHash(id) & 0xFFFFFFu : id; }

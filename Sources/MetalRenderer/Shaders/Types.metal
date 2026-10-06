@@ -166,7 +166,7 @@ constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
 constant bool STREAMED = (LIGHT_SPEC & 0x02000000u) != 0;
 // Bit 24 = GROUPED: some instances are in blocks of their own (InstanceBlock in SceneBuffers.swift; the plants of an
 // open world's tiles), which the scenes that have them share.
-// TILED: on Metal's tracer each block's records are in a buffer of the block's. An instance's id is then its block's
+// TILED: each block's records are in a buffer of the block's. An instance's id is then its block's
 // number and its place in the block (the scene's own instances are block 0), the same in every scene; a hit names
 // its instance by it, and what is bound as the instances' records is a table of the blocks' addresses.
 constant bool GROUPED = (LIGHT_SPEC & 0x01000000u) != 0;

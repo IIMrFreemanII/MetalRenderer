@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------------------------
 // 3c. Geometry debug views (view modes 8-13), a pass of their own that runs only while one is shown: re-traces the
 //     primary rays and colours each pixel by what it hit. Virtual triangles carry their cluster, group, DAG level and
-//     index within the cluster (VirtualBLAS packs them into the free w components of e1 / e2; in cluster mode the
-//     cluster's pool header holds group and level, VirtualGeometry.upload). Other geometry with levels of detail
-//     carries its level in its mesh record (GPUMesh.lod), on both tracers.
+//     index within the cluster (VirtualBLAS packs them into the free w components of its triangles' second and third
+//     corners; in cluster mode the cluster's pool header holds group and level). Other geometry with levels of detail
+//     carries its level in its mesh record (GPUMesh.lod).
 // ---------------------------------------------------------------------------------------------
 
 constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;

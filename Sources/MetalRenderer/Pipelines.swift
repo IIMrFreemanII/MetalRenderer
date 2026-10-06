@@ -18,6 +18,7 @@ enum Kernel: Int, CaseIterable {
     case composite, accumulateColor, tonemap
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    case plantWind              // the plants' variants in the wind (PlantTracing)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
     // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.

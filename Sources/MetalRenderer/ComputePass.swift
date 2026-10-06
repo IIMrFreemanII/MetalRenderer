@@ -166,7 +166,14 @@ struct TLASUpdate {
 /// Per-mesh structures a frame builds or refits, in an acceleration-structure encoder of their own (Metal 4: on the
 /// Metal 3 queue, between the frame's command buffers).
 protocol PrimitiveWork {
-    func encode(into enc: MTLAccelerationStructureCommandEncoder)
+    /// How many encoders it takes: Metal's driver doesn't refit several instance structures in one encoder (M1 Max:
+    /// the encoding crashes), so the plants' variants take one each.
+    var encoderCount: Int { get }
+    /// Encodes part `part` (0..<encoderCount) of the work.
+    func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int)
+}
+extension PrimitiveWork {
+    var encoderCount: Int { 1 }
 }
 
 /// This frame's refit of the per-mesh structures that deform (the crowd's pose slots): each keeps its tree and takes
@@ -177,7 +184,7 @@ struct PrimitiveRefit: PrimitiveWork {
     let scratch: MTLBuffer
     let scratchOffsets: [Int]
 
-    func encode(into enc: MTLAccelerationStructureCommandEncoder) {
+    func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
         for (i, structure) in structures.enumerated() {
             enc.refit(sourceAccelerationStructure: structure, descriptor: descriptors[i], destinationAccelerationStructure: structure,
                       scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
@@ -316,9 +323,12 @@ final class Metal3Frame: FrameEncoder {
 
     func updatePrimitives(_ work: PrimitiveWork, pass: String) {
         endCompute()
-        guard let enc = profile?.accelerationStructure(cmd, pass) ?? buffer(pass).makeAccelerationStructureCommandEncoder() else { return }
-        work.encode(into: enc)
-        profile.end(enc)
+        let cb = profile == nil ? buffer(pass) : cmd
+        for part in 0..<work.encoderCount {
+            guard let enc = (part == 0 ? profile?.accelerationStructure(cmd, pass) : nil) ?? cb.makeAccelerationStructureCommandEncoder() else { return }
+            work.encode(into: enc, part: part)
+            if part == 0 { profile.end(enc) } else { enc.endEncoding() }
+        }
     }
 
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {

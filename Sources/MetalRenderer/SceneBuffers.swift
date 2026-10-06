@@ -122,32 +122,43 @@ final class InstanceBlock {
     private var descriptors: (bytes: [UInt8], structures: [Int: MTLAccelerationStructure])?
 
     /// The descriptors, for a scene whose meshes' structures are `primitives`: made the first time, and again only if
-    /// a mesh has another structure now (any thread).
-    func descriptors(primitives: [MTLAccelerationStructure]) -> [UInt8] {
+    /// a mesh has another structure now (any thread). A plant (an assembly's record) names its variant in `plants`
+    /// for the season's `fall`; those are the scene's own, and not kept.
+    func descriptors(primitives: [MTLAccelerationStructure], plants: PlantTracing? = nil, fall: Float = 0) -> [UInt8] {
         lock.lock()
         defer { lock.unlock() }
-        if let made = descriptors, made.structures.allSatisfy({ $0.key < primitives.count && primitives[$0.key] === $0.value }) {
+        if plants == nil, let made = descriptors, made.structures.allSatisfy({ $0.key < primitives.count && primitives[$0.key] === $0.value }) {
             return made.bytes
         }
         let stride = SceneBuffers.indirectStride
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
         var bytes = [UInt8](repeating: 0, count: count * stride), structures: [Int: MTLAccelerationStructure] = [:]
         let records = held
+        var hasPlants = false
         bytes.withUnsafeMutableBytes { raw in
             for i in 0..<count {
                 let record = records[i], mesh = Int(record.meshIndex)
+                if record.meshIndex & InstanceBlock.assembly != 0, let plants {
+                    hasPlants = true
+                    let assembly = Int(record.meshIndex & ~InstanceBlock.assembly)
+                    SceneBuffers.writeDescriptor(raw.baseAddress! + i * stride, transform: record.transform, options: plants.instanceOptions,
+                                                 mask: record.pad0, userID: id(i),
+                                                 structure: plants.structure(set: 0, assembly: assembly, id: id(i), fall: fall))
+                    continue
+                }
                 SceneBuffers.writeDescriptor(raw.baseAddress! + i * stride, transform: record.transform, options: options, mask: record.pad0,
                                              userID: id(i), structure: primitives[mesh])
                 structures[mesh] = primitives[mesh]
             }
         }
-        descriptors = (bytes, structures)
+        if !hasPlants { descriptors = (bytes, structures) }
         return bytes
     }
 }
 
-/// A scene on the GPU: its geometry's buffers, its instances' records, and its acceleration structures. Made on any thread: where the scene is prepared (the background, when the app changes scenes), so
-/// that installing a scene between two frames only swaps these in.
+/// A scene on the GPU: its geometry's buffers, its instances' records, and its acceleration structures. Made on any
+/// thread: where the scene is prepared (the background, when the app changes scenes), so that installing a scene
+/// between two frames only swaps these in.
 ///
 /// A still scene (nothing in it moves or deforms: `Scene.isStill`) has one set of instance records and one
 /// top-level structure for every frame slot, written and built here, once. Any other has a set per slot, which the
@@ -176,6 +187,8 @@ struct SceneBuffers {
         /// Instances the top-level structure has after the scene's (virtual geometry's cut of clusters: VirtualTracing),
         /// whose descriptors their owner writes.
         var extraInstances = 0
+        /// The share of the leaves that have fallen (Scene.leafFall): which variants a still scene's plants name.
+        var leafFall: Float = 0
     }
 
     /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
@@ -188,6 +201,10 @@ struct SceneBuffers {
     /// The SDF shapes, and their boxes, which come after the meshes' structures in `primitives`.
     let sdf: SDFBuffers
     let still: Bool                                         // the instances are written, and their structure built
+    /// The plants' structures (assemblies, by multi-level instancing), if the scene has any.
+    private(set) var plants: PlantTracing?
+    /// What `plants`' variants were chosen for in a still scene (a moving one's frames choose theirs).
+    let leafFall: Float
     /// The scene's groups' blocks, in the groups' order: the instances are counted through, the scene's own first,
     /// then each block's (the descriptors are in that order).
     let instanceBlocks: [InstanceBlock]
@@ -334,7 +351,8 @@ struct SceneBuffers {
         }
         instanceCount = total
         structureInstances = total + options.extraInstances
-        indirect = options.api == .metal4 || scene.hasGroups || scene.usesVirtualGeometry
+        indirect = options.api == .metal4 || scene.hasGroups || scene.usesVirtualGeometry || !scene.assemblies.isEmpty
+        leafFall = options.leafFall
         let recordStride = MemoryLayout<GPUInstanceData>.stride
         var data = try (0..<sets).map { try empty(count * recordStride, "instanceData\($0)") }
         if still {
@@ -376,16 +394,22 @@ struct SceneBuffers {
         if still { descriptors = [MTLBuffer](repeating: descriptors[0], count: options.slots) }
         instanceDescriptors = descriptors
         try buildPrimitives(device: device, queue: queue, scene: scene, options: options)
+        if !scene.assemblies.isEmpty {
+            plants = try PlantTracing(device: device, queue: queue, scene: scene, meshStructures: primitives, positions: positions,
+                                      indices: indices, sets: still ? 1 : options.slots)
+        }
         // The SDF shapes' boxes after the meshes' structures (an SDF instance's descriptor names its shape's there).
         try sdf.buildBoxes(device: device, queue: queue, scene: scene)
         primitives += sdf.boxes
-        // Far baked plants: their grids' boxes after the meshes' structures (VoxelLOD names them from there).
-        let voxelGrids = still && scene.hasVoxelBoxes
+        // Far plants: their grids' boxes after the meshes' structures (VoxelLOD names them from there; PlantTracing
+        // names the assemblies' by their grids).
+        let voxelGrids = scene.hasVoxelBoxes
             ? try options.voxelGrids.flatMap { $0.key == VoxelGrids.key(scene.voxelPlants) ? $0 : nil }
                 ?? VoxelGrids(device: device, queue: queue, plants: scene.voxelPlants)
             : nil
         let meshStructures = primitives.count
         if let voxelGrids { primitives += voxelGrids.boxes }
+        if !still { plants?.voxels = voxelGrids }
         guard let placeholder = primitives.first else { return }
 
         // The instances' structures, sized from the descriptor a build uses (the structure and its scratch buffer
@@ -420,9 +444,9 @@ struct SceneBuffers {
         let whole = self   // (a copy for the closure: `self` is being initialised)
         SceneBuffers.inParts(count) { whole.writeInstanceDescriptors(slot: 0, scene: scene, api: options.api, all: true, range: $0) }
         // The blocks' after the scene's own: each block's as it has them, the new blocks' made here.
-        let groups = instanceBlocks, structures = primitives, into = descriptors[0].contents()
+        let groups = instanceBlocks, structures = primitives, into = descriptors[0].contents(), plants = plants, fall = leafFall
         DispatchQueue.concurrentPerform(iterations: groups.count) { b in
-            groups[b].descriptors(primitives: structures).withUnsafeBytes {
+            groups[b].descriptors(primitives: structures, plants: plants, fall: fall).withUnsafeBytes {
                 (into + firsts[b] * stride).copyMemory(from: $0.baseAddress!, byteCount: $0.count)
             }
         }
@@ -432,7 +456,7 @@ struct SceneBuffers {
         let build = update(instanceStructures[0], instanceScratch[0], slot: 0)
         // Indirect descriptors name the meshes' structures by ID: the build reads them, so they must be resident (a
         // structure the GPU has let go of reads as empty, and its instances aren't in the tree).
-        if indirect { encoder.useResources(primitives, usage: .read) }
+        if indirect { encoder.useResources(primitives + (plants?.structures(slot: 0) ?? []), usage: .read) }
         encoder.build(accelerationStructure: build.structure, descriptor: build.descriptor(indirect: indirect),
                       scratchBuffer: build.scratch, scratchBufferOffset: 0)
         encoder.endEncoding()
@@ -481,9 +505,16 @@ struct SceneBuffers {
         let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
         let stride = indirect ? SceneBuffers.indirectStride : 64
         let meshCount = scene.meshes.count
+        let plants = plants, set = plants?.set(slot: slot) ?? 0
         func write(_ i: Int) {
             let instance = scene.instances[i]
             guard instance.virtualMesh < 0 else { return }   // its cut's structure: VirtualTracing writes it
+            if instance.assembly >= 0, let plants {   // a plant: its assembly's variant (in the wind, PlantTracing writes it again)
+                SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform, options: plants.instanceOptions,
+                                             mask: instance.mask, userID: UInt32(i),
+                                             structure: plants.structure(set: set, assembly: instance.assembly, id: UInt32(i), fall: leafFall))
+                return
+            }
             let index = instance.sdf >= 0 ? meshCount + instance.sdf : instance.mesh
             // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
             SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform,
@@ -551,7 +582,7 @@ struct SceneBuffers {
             geometry.vertexStride = MemoryLayout<SIMD3<Float>>.stride
             geometry.indexType = .uint32
             geometry.triangleCount = Int(mesh.indexCount) / 3
-            geometry.opaque = true
+            geometry.opaque = mesh.cutout == 0   // leaf cards: the queries' loop cuts them out (Intersect.metal, rtCutout)
 
             let descriptor = MTLPrimitiveAccelerationStructureDescriptor()
             descriptor.geometryDescriptors = [geometry]

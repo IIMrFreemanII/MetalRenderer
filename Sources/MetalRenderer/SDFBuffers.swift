@@ -64,7 +64,7 @@ final class SDFBuffers {
         }
     }
 
-    /// Metal's tracer: one structure per shape, each a single box, built side by side on `queue` (a Metal 3 one,
+    /// One structure per shape, each a single box, built side by side on `queue` (a Metal 3 one,
     /// whatever the frames are encoded with), and waited for.
     func buildBoxes(device: MTLDevice, queue: MTLCommandQueue, scene sdf: Scene) throws {
         guard shapeCount > 0, boxes.isEmpty else { return }

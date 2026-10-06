@@ -42,7 +42,7 @@ struct TraversalStats {
 /// top-level structure and what a hit reads besides the instance records. One per frame slot, written every frame
 /// (`write`), as its top-level structure and its virtual geometry's tables are the slot's own.
 final class TraceSceneArgs {
-    static let size = 112
+    static let size = 128
     /// The ray queries' counters (RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which recompiles
     /// the shaders): see TraversalStats.
     static var statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
@@ -72,19 +72,21 @@ final class TraceSceneArgs {
         (buffers, self.stats, self.dummy) = (made, stats, dummy)
     }
 
-    /// What `slot`'s frame reads besides the structures: (the cut's clusters or the raster's, its pool), the plants'
-    /// parts and the table from part instances to them, the leaf cards' alpha layers.
+    /// What `slot`'s frame reads besides the structures: virtual geometry's tables (the cut's clusters or the
+    /// raster's, their pool), the plants' parts, the wind, and what a leaf card's alpha test reads (the mesh table and
+    /// the arrays, the alpha layers).
     struct Content {
         var tlas: MTLAccelerationStructure
         var vgTable: MTLBuffer?
         var clusters: MTLBuffer?
         var pool: MTLBuffer?
         var parts: MTLBuffer?
-        var partOf: MTLBuffer?
+        var meshes: MTLBuffer?
+        var indices: MTLBuffer?
+        var uvs: MTLBuffer?
         var wind = WindFrame()
         var cutouts: MTLBuffer?
         var clusterInstance = UInt32.max
-        var partBase = UInt32.max
     }
 
     /// Writes `slot`'s scene (the CPU writes a slot only once the GPU is done with its last frame).
@@ -96,13 +98,14 @@ final class TraceSceneArgs {
         p.storeBytes(of: address(c.clusters), toByteOffset: 16, as: UInt64.self)
         p.storeBytes(of: address(c.pool), toByteOffset: 24, as: UInt64.self)
         p.storeBytes(of: address(c.parts), toByteOffset: 32, as: UInt64.self)
-        p.storeBytes(of: address(c.partOf), toByteOffset: 40, as: UInt64.self)
+        p.storeBytes(of: address(c.meshes), toByteOffset: 40, as: UInt64.self)
         p.storeBytes(of: c.wind.wind, toByteOffset: 48, as: SIMD4<Float>.self)
         p.storeBytes(of: SIMD4(c.wind.time, c.wind.previousTime, 0, c.wind.leafFall), toByteOffset: 64, as: SIMD4<Float>.self)
         p.storeBytes(of: address(c.cutouts), toByteOffset: 80, as: UInt64.self)
         p.storeBytes(of: c.clusterInstance, toByteOffset: 88, as: UInt32.self)
-        p.storeBytes(of: c.partBase, toByteOffset: 92, as: UInt32.self)
         p.storeBytes(of: stats.gpuAddress, toByteOffset: 96, as: UInt64.self)
+        p.storeBytes(of: address(c.indices), toByteOffset: 104, as: UInt64.self)
+        p.storeBytes(of: address(c.uvs), toByteOffset: 112, as: UInt64.self)
     }
 
     /// What the frames finished since the last read added (in-flight ones in part): read while frames run.

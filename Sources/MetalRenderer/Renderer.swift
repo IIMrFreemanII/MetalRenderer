@@ -389,6 +389,8 @@ final class Renderer: NSObject {
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
     private var virtualTracing: VirtualTracing?
+    /// Per slot: the wind's strength and the leaf fall its plants' descriptors were last written for.
+    private var plantsWritten = [SIMD2<Float>?](repeating: nil, count: Renderer.maxFramesInFlight)
     /// What the ray-tracing kernels get at buffer 1 (MSL TraceScene), per slot.
     private var traceScene: TraceSceneArgs!
     /// The API the frames go through, the pipelines were compiled for and the TLAS's instance descriptors are written for.
@@ -487,6 +489,9 @@ final class Renderer: NSObject {
     }
     private var instanceScratch: [MTLBuffer] { sceneBuffers.instanceScratch }
     private var instanceASBuilt = Set<Int>()
+    /// Per slot: its instances' descriptors changed this frame (something moved, a cut, the wind), so its top-level
+    /// structure is updated. One that stays as it is isn't refitted for nothing (a forest without wind).
+    private var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
     private let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
 
     private var targets: RenderTargets?
@@ -701,6 +706,13 @@ final class Renderer: NSObject {
         return hasModels && (scene.usesVirtualGeometry != settings.virtualGeometry.enabled || poolChanged)
     }
 
+    /// A still scene's plants (the open world's) name the variants of the season they were built for: another season
+    /// is another scene.
+    private var plantSeasonChanged: Bool {
+        guard let buffers = sceneBuffers, buffers.still, buffers.plants != nil else { return false }
+        return buffers.leafFall != Scene.leafFall(season: settings.foliage.season)
+    }
+
     /// What a scene load reads from the renderer, copied on the render thread: `prepareScene` runs in the background while
     /// the panel and the keyboard keep changing `settings` and a shader reload may replace the pipelines.
     private struct LoadOptions {
@@ -716,6 +728,7 @@ final class Renderer: NSObject {
         var blocks: [String: MeshBlock]                      // its borrowed meshes' buffers
         var instanceBlocks: [String: InstanceBlock]          // its instance groups' blocks
         var voxelGrids: VoxelGrids?                          // its plants' voxel grids
+        var leafFall: Float                                  // the season's (a still scene's plants are built for it)
         /// The open world's next scene (`settings.scene`, if it is that) is drawn with the textures this one has: they
         /// stay as they are streamed. By the sources' identities.
         var worldTextures: (identities: [String], textures: [MTLTexture], streamer: TextureStreamer?)?
@@ -726,17 +739,18 @@ final class Renderer: NSObject {
                     traversalStats: TraceSceneArgs.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
                     primitives: builtAPI == settings.api ? namedPrimitives : [:], blocks: namedBlocks,
                     instanceBlocks: namedInstanceBlocks,
-                    voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids : nil,
+                    voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels : nil,
+                    leafFall: Scene.leafFall(season: settings.foliage.season),
                     worldTextures: settings.scene.isSameWorld(as: scene.settings) && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
     private func bufferOptions(api: RenderAPI, known: [String: MTLAccelerationStructure], blocks: [String: MeshBlock],
                                instanceBlocks: [String: InstanceBlock], voxelGrids: VoxelGrids? = nil,
-                               extraInstances: Int = 0) -> SceneBuffers.Options {
+                               extraInstances: Int = 0, leafFall: Float) -> SceneBuffers.Options {
         SceneBuffers.Options(api: api, slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
                              compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known, blocks: blocks,
-                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, extraInstances: extraInstances)
+                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, extraInstances: extraInstances, leafFall: leafFall)
     }
 
     /// The pipelines for `api`, `stats` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
@@ -759,9 +773,9 @@ final class Renderer: NSObject {
     private func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
                               options: LoadOptions) throws -> PreparedScene {
         let virtual = options.virtualGeometry
-        // Generated plants are baked meshes (assemblies: none yet); far ones are voxels if asked for
+        // Generated plants are assemblies (unless SceneSettings.bakedPlants); baked ones far away are voxels if asked for
         // (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
-        let assemblies = false
+        let assemblies = true
         let voxelBoxes = sceneSettings.voxelBoxes
         let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual
             && (!$0.hasPlants || ($0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants) && $0.usesVoxelBoxes == voxelBoxes)) ? $0 : nil }
@@ -777,7 +791,7 @@ final class Renderer: NSObject {
             try SceneBuffers(device: device, queue: buildQueue, scene: newScene,
                              options: bufferOptions(api: options.api, known: options.primitives, blocks: options.blocks,
                                                     instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids,
-                                                    extraInstances: newScene.tracesClusters ? 1 : 0))
+                                                    extraInstances: newScene.tracesClusters ? 1 : 0, leafFall: options.leafFall))
         }
         let virtualTracing = buffers == nil ? nil : try makeVirtualTracing(newScene, poolMB: options.poolMB)
         // The shaders too, when the API changes (a recompile) or the new scene has other light types.
@@ -836,6 +850,7 @@ final class Renderer: NSObject {
     private func createSceneResources(_ prepared: PreparedScene? = nil) throws {
         builtAPI = prepared?.api ?? settings.api
         virtualTracing = nil
+        plantsWritten = [SIMD2<Float>?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
@@ -850,7 +865,8 @@ final class Renderer: NSObject {
         let buffers = try prepared?.buffers ?? SceneBuffers(device: device, queue: buildQueue, scene: scene,
                                                             options: bufferOptions(api: builtAPI, known: namedPrimitives, blocks: namedBlocks,
                                                                                    instanceBlocks: namedInstanceBlocks,
-                                                                                   extraInstances: scene.tracesClusters ? 1 : 0))
+                                                                                   extraInstances: scene.tracesClusters ? 1 : 0,
+                                                                                   leafFall: Scene.leafFall(season: settings.foliage.season)))
         sceneBuffers = buffers
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
@@ -987,11 +1003,11 @@ final class Renderer: NSObject {
         // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
         // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
         // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
-        // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through RTScene or
-        // their boxes' data.
+        // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through their boxes'
+        // data.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
-        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? [])
+        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? [])
             + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
     }
 
@@ -1411,16 +1427,32 @@ final class Renderer: NSObject {
 
     // MARK: - Per-frame CPU work
 
-    private func writeFrameData(slot: Int) {
+    private func writeFrameData(slot: Int, lod: VGView) {
         // Instances: a slot's first frame of a scene writes every record, straight into its buffers; after that only
         // the ones that move, the rest being as they were (a crowd is tens of thousands of records).
         // (A still scene's were written with its buffers.)
         let first = !frameDataWritten[slot], still = sceneBuffers.still
         if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
+        instanceASStale[slot] = first || !scene.movingInstances.isEmpty || virtualTracing != nil
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
                                                                first: sceneBuffers.instanceCount, scene: scene) {
             instanceASBuilt.remove(slot)
+        }
+        // The plants and the ground cover in the wind, and the plants' variants for the season: every frame it blows.
+        if let plants = sceneBuffers.plants, !still {
+            let wind = windFrame, state = SIMD2(wind.wind.z, wind.leafFall)
+            // Far plants as voxels: their levels follow the view the virtual geometry is cut for (Freeze LOD holds it).
+            let voxels = plants.voxels != nil && settings.foliage.lod > 0
+            if first || wind.wind.z > 0 || voxels || plantsWritten[slot] != state {
+                let view = voxels ? SIMD4(lod.camPos, settings.foliage.lod / max(lod.pixelScale, 1e-6)) : nil
+                if plants.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride, scene: scene,
+                                           wind: wind, view: view) {
+                    instanceASBuilt.remove(slot)   // other variants or levels: a build
+                }
+                instanceASStale[slot] = true
+                plantsWritten[slot] = state
+            }
         }
         writeTraceScene(slot: slot)
         crowdSkinner?.write(slot: slot)
@@ -1582,7 +1614,7 @@ final class Renderer: NSObject {
         }
         if scene.worldPlace != nil { scene.follow(camera.position) }
         setWorldLights()
-        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged {
+        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
             let streamed = settings.scene.isSameWorld(as: scene.settings) && settings.api == builtAPI
@@ -1602,7 +1634,7 @@ final class Renderer: NSObject {
         updateVoxelLOD(lod)
         currentRasterClusters()?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight)
         virtualTracing?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, view: lod, scene: scene)
-        writeFrameData(slot: slot)
+        writeFrameData(slot: slot, lod: lod)
         // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
         // (Metal 3: the profiler times encoders, and a Metal 4 frame is a single one.)
         let profile = profilePasses && benchmark == nil && builtAPI == .metal3 ? profiler?.beginFrame(slot: slot) : nil
@@ -1955,7 +1987,7 @@ final class Renderer: NSObject {
         if accumulating, p.fog != nil { p.fogReference = fogReferenceTexture(width: width, height: height) }
 
         // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
-        // (Metal's tracer swaps them in instance by instance, which the raster doesn't follow).
+        // (the frames swap them in instance by instance, which the raster doesn't follow).
         if settings.primary == .raster, !scene.hasVoxelBoxes, let rs = currentRasterScene(),
            let rt = rasterTargets(width: width, height: height, scene: rs) {
             p.raster = (rs, rt)
@@ -2144,6 +2176,14 @@ final class Renderer: NSObject {
             }
             if let primitiveRefit { passes.updatePrimitives(primitiveRefit, pass: "blas") }
         }
+        // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
+        if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, strength: windFrame.wind.z) {
+            if let enc = passes.compute("wind", serial: true) {
+                plants.encodeWind(enc, slot: slot, pipeline: pipelines[.plantWind], wind: windFrame)
+                passes.endCompute()
+            }
+            passes.updatePrimitives(plants.refit(slot: slot), pass: "wind")
+        }
         // Virtual geometry as clusters: this frame's cut and its boxes, then the structure over them.
         if let clusters = virtualTracing?.clusters {
             if let enc = passes.compute("vg", serial: true) {
@@ -2159,14 +2199,15 @@ final class Renderer: NSObject {
         //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost. A new cut of
         //    virtual geometry (another BLAS under an instance) is a rebuild too.
         //    A still scene's was built with its buffers, and stays.
-        if !sceneBuffers.still {
+        if !sceneBuffers.still, instanceASStale[slot] || !instanceASBuilt.contains(slot) {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
             if virtualTracing?.clusters != nil { instanceASBuilt.remove(slot) }   // its boxes' structure is new every frame
             let refit = instanceASBuilt.contains(slot)
             passes.updateTLAS(TLASUpdate(structure: instanceAS[slot], scratch: instanceScratch[slot], refit: refit,
                                          instanceCount: sceneBuffers.structureInstances, usage: Renderer.tlasUsage,
                                          instances: instanceDescBuffers[slot], instanceStride: instanceDescriptorStride,
-                                         primitives: primitiveAS + (virtualTracing?.structures(slot: slot) ?? []),
+                                         primitives: primitiveAS + (virtualTracing?.structures(slot: slot) ?? [])
+                                            + (sceneBuffers.plants?.structures(slot: slot) ?? []),
                                          indirect: sceneBuffers.indirect), pass: "tlas")
             instanceASBuilt.insert(slot)
         }
@@ -2893,15 +2934,18 @@ final class Renderer: NSObject {
     /// the raster's: a raster cluster's hit reads its pool offset there), the wind.
     private func writeTraceScene(slot: Int) {
         let clusters = virtualTracing?.selected(slot: slot) ?? rasterClusters?.listBuffers[slot]
+        let plants = sceneBuffers.plants
         traceScene.write(slot: slot, TraceSceneArgs.Content(
             tlas: instanceAS[slot], vgTable: virtualTracing?.vgTable(slot), clusters: clusters,
-            pool: virtualTracing?.pool ?? rasterClusters?.streamer.pool, wind: windFrame,
+            pool: virtualTracing?.pool ?? rasterClusters?.streamer.pool, parts: plants?.parts, meshes: sceneBuffers.meshes,
+            indices: sceneBuffers.indices, uvs: sceneBuffers.uvs, wind: windFrame, cutouts: plants?.cutouts,
             clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max))
     }
 
     /// What `slot`'s TraceScene points at besides the structures.
     private func traceSceneResources(slot: Int) -> [MTLResource] {
         (virtualTracing?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? [])
+            + (sceneBuffers.plants?.resources(slot: slot) ?? [])
     }
 
     /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
@@ -3140,7 +3184,7 @@ final class Renderer: NSObject {
         animTime = c.startTime
         previousAnimTime = c.startTime
         setWorldLights()   // the scene it starts with is the one its time of day asks for
-        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged {
+        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }
         camera = c.track?.camera(at: 0)

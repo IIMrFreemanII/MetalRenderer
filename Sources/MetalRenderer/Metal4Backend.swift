@@ -281,9 +281,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     /// builds or refits are too.
     func updatePrimitives(_ work: PrimitiveWork, pass: String) {
         interlude(pass) { cb in
-            guard let enc = cb.makeAccelerationStructureCommandEncoder() else { return }
-            work.encode(into: enc)
-            enc.endEncoding()
+            for part in 0..<work.encoderCount {
+                guard let enc = cb.makeAccelerationStructureCommandEncoder() else { return }
+                work.encode(into: enc, part: part)
+                enc.endEncoding()
+            }
         }
     }
 

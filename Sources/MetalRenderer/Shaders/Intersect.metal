@@ -133,18 +133,21 @@ struct TraceScene {
     device const uint2*           clusters;   // this frame's selected virtual-geometry clusters: (instance, pool
                                               // offset), the cut's (VG_CLUSTERS) or the raster clusters'
     device const float4*          pool;       // streamed virtual-geometry pages (VGStreamer.swift)
-    device const struct RTPart*   parts;      // every assembly's parts (FOLIAGE)
-    device const uint2*           partOf;     // FOLIAGE: per instance from partBase on, (scene instance, part)
+    device const struct RTPart*   parts;      // every assembly's parts (FOLIAGE): a part instance's user id names it
+    device const MeshData*        meshes;     // the mesh table, and the arrays below: what a leaf card's alpha test
+                                              // reads (ALPHA_TEST)
     float4                        wind;       // xy = where the wind blows to (world x, z; unit), z = strength (0 =
                                               // still), w = gustiness
     float4                        windTime;   // x = this frame's time (s), y = the last frame's, w = the share of the
                                               // leaves that have fallen (the season)
     device const uchar*           cutouts;    // leaf cards' alpha layers, CUTOUT_SIZE squared each (ALPHA_TEST)
     uint                          clusterInstance;   // VG_CLUSTERS: the instance whose boxes are the cut's clusters
-    uint                          partBase;   // FOLIAGE: the instances from here on are parts of plants
+    uint                          pad;
     device atomic_uint*           stats;      // RT_STATS builds: rays, triangle candidates, box candidates
+    device const uint*            indices;
+    device const float2*          uvs;
 };
-static_assert(sizeof(TraceScene) == 112 && __builtin_offsetof(TraceScene, stats) == 96,
+static_assert(sizeof(TraceScene) == 128 && __builtin_offsetof(TraceScene, stats) == 96 && __builtin_offsetof(TraceScene, uvs) == 112,
               "TraceScene: TraceSceneArgs.write writes these offsets");
 
 // RT_STATS (Pipelines.compile, the Debug window's counters): every query counts its ray and the candidates Metal's
@@ -299,9 +302,9 @@ struct ClusterBox {
 };
 static_assert(sizeof(ClusterBox) == 64, "ClusterBox: VirtualGeometry.boxDataStride");
 
-// The scene has boxes (far plants' voxels, SDF shapes, the cut's clusters): the ray queries are intersection queries,
-// whose loop gets them.
-constant bool QUERY_LOOP = VOXEL_BOXES || SDF_SHAPES || VG_CLUSTERS;
+// The scene has boxes (far plants' voxels, SDF shapes, the cut's clusters) or leaf cards: the ray queries are
+// intersection queries, whose loop gets them.
+constant bool QUERY_LOOP = VOXEL_BOXES || SDF_SHAPES || VG_CLUSTERS || ALPHA_TEST;
 
 // Rays that meet the scene's geometry meet the voxel boxes too.
 inline uint voxelMask(uint mask) { return VOXEL_BOXES && (mask & MASK_GEOMETRY) != 0 ? mask | MASK_VOXELS : mask; }
@@ -321,14 +324,83 @@ inline Hit voxelMiss(Ray r) {
     return v;
 }
 
+constant uint CUTOUT_SIZE = 512;   // a leaf-card alpha layer's side (FoliageTextures.cardSheetSize)
+
+// A leaf card is there only where its picture is: triangle `prim` of `mesh` at barycentrics `bc` against the mesh's
+// alpha layer (MeshData.cutout: the layer + 1 in the top byte, the first card triangle below it; the ones before it
+// are wood).
+inline bool rtCutout(SCENE_ACCEL sc, uint mesh, uint prim, float2 bc) {
+    MeshData m = sc.meshes[mesh];
+    uint layer = m.cutout >> 24;
+    if (layer == 0u || prim < (m.cutout & 0xFFFFFFu)) return true;
+    float2 uv = float2(0.0f);
+    float w[3] = {1.0f - bc.x - bc.y, bc.x, bc.y};
+    for (uint k = 0; k < 3; ++k) {
+        float2 t;
+        if (STREAMED && m.block != nullptr) {   // a mesh in a buffer of its own: positions, normals, UVs, indices
+            device const float2* uvs = (device const float2*)(m.block + 2u * m.vertexCount);
+            device const uint* indices = (device const uint*)(uvs + m.vertexCount);
+            t = uvs[indices[prim * 3u + k]];
+        } else {
+            t = sc.uvs[sc.indices[m.firstIndex + prim * 3u + k]];
+        }
+        uv += t * w[k];
+    }
+    uint2 texel = min(uint2(max(uv, 0.0f) * float(CUTOUT_SIZE)), uint2(CUTOUT_SIZE - 1u));
+    return sc.cutouts[((layer - 1u) * CUTOUT_SIZE + texel.y) * CUTOUT_SIZE + texel.x] != 0;
+}
+
+// The queries' types and what a hit names, by how deep the instances go. FOLIAGE scenes have three levels (multi-level
+// instancing, PlantTracing.swift): a plant's instance names one of its assembly's variants, an instance structure
+// whose instances are the plant's parts, each with the part's number as its user id. Every other scene has two.
+// A hit's instance is always the top level's (TILED: its user id).
+template <bool PLANTS> struct Levels;
+template <> struct Levels<false> {
+    typedef intersection_query<triangle_data, instancing> Closest;
+    typedef intersection_query<instancing> Plain;
+    typedef intersector<triangle_data, instancing> ClosestIntersector;
+    typedef intersector<instancing> PlainIntersector;
+    template <typename Q> static uint candidate(thread Q& q) { return TILED ? q.get_candidate_user_instance_id() : q.get_candidate_instance_id(); }
+    template <typename Q> static uint candidateIndex(thread Q& q) { return q.get_candidate_instance_id(); }
+    template <typename Q> static uint candidatePart(thread Q& q) { return HIT_NO_PART; }
+    template <typename Q> static uint committed(thread Q& q) { return TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id(); }
+    template <typename Q> static uint committedPart(thread Q& q) { return HIT_NO_PART; }
+    template <typename R> static uint instance(thread const R& r) { return TILED ? r.user_instance_id : r.instance_id; }
+    template <typename R> static uint part(thread const R& r) { return HIT_NO_PART; }
+    template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) { return true; }   // (no plants, no cards)
+};
+template <> struct Levels<true> {
+    typedef intersection_query<triangle_data, instancing, max_levels<3>> Closest;
+    typedef Closest Plain;   // (the cards' alpha test reads the candidate's barycentrics)
+    typedef intersector<triangle_data, instancing, max_levels<3>> ClosestIntersector;
+    typedef intersector<instancing, max_levels<3>> PlainIntersector;
+    template <typename Q> static uint candidate(thread Q& q) { return TILED ? q.get_candidate_user_instance_id(0) : q.get_candidate_instance_id(0); }
+    template <typename Q> static uint candidateIndex(thread Q& q) { return q.get_candidate_instance_id(0); }
+    template <typename Q> static uint candidatePart(thread Q& q) {
+        return q.get_candidate_instance_count() > 1 ? q.get_candidate_user_instance_id(1) : HIT_NO_PART;
+    }
+    template <typename Q> static uint committed(thread Q& q) { return TILED ? q.get_committed_user_instance_id(0) : q.get_committed_instance_id(0); }
+    template <typename Q> static uint committedPart(thread Q& q) {
+        return q.get_committed_instance_count() > 1 ? q.get_committed_user_instance_id(1) : HIT_NO_PART;
+    }
+    template <typename R> static uint instance(thread const R& r) { return TILED ? r.user_instance_id[0] : r.instance_id[0]; }
+    template <typename R> static uint part(thread const R& r) { return r.instance_count > 1 ? r.user_instance_id[1] : HIT_NO_PART; }
+    // The candidate triangle (only leaf cards' aren't opaque): true if the ray meets it there.
+    template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) {
+        uint part = candidatePart(q);
+        if (part == HIT_NO_PART) return true;
+        return rtCutout(sc, sc.parts[part].mesh, q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord());
+    }
+};
+
 // The query's candidate box: marched (or walked) as far as the nearest hit so far, `v`'s or the triangle the query
 // has committed. True if the ray stops in it: `v` is then that hit (its distance, instance, and a voxel's cell and
 // level, a shape's material and, with `normal`, normal, or a cluster's triangle).
-template <typename Q>
+template <bool PLANTS, typename Q>
 inline bool boxCandidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL sc, thread Hit& v) {
     float3 o = q.get_candidate_ray_origin(), d = q.get_candidate_ray_direction();
     float tmax = q.get_committed_intersection_type() == intersection_type::none ? v.distance : min(v.distance, q.get_committed_distance());
-    if (VG_CLUSTERS && q.get_candidate_instance_id() == sc.clusterInstance) {
+    if (VG_CLUSTERS && Levels<PLANTS>::candidateIndex(q) == sc.clusterInstance) {
         device const ClusterBox& box = *(device const ClusterBox*)q.get_candidate_primitive_data();
         if ((box.mask & mask) == 0) return false;
         uint2 rc = sc.clusters[box.index];
@@ -346,7 +418,7 @@ inline bool boxCandidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL
         return true;
     }
     device const VoxelBox& box = *(device const VoxelBox*)q.get_candidate_primitive_data();
-    uint id = TILED ? q.get_candidate_user_instance_id() : q.get_candidate_instance_id();
+    uint id = Levels<PLANTS>::candidate(q);
     if (SDF_SHAPES && box.level == SDF_BOX_TAG) {
         device const SDFBox& shape = *(device const SDFBox*)&box;
         float t;
@@ -367,14 +439,29 @@ inline bool boxCandidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL
     Hit c;
     c.hit = false;
     c.distance = tmax;
-    if (!rtVoxels(box.cells, *box.grid, box.level, o, d, inv, -o * inv, r.tmin, voxelSeed(r, id), 1.0f, c)) return false;
+    // An assembly's grid in autumn: the share of its leaves the plant still has (its triangles' variant has as many).
+    float keep = FOLIAGE && sc.windTime.w > 0.0f ? plantKeep(sc.windTime.w, id) : 1.0f;
+    if (!rtVoxels(box.cells, *box.grid, box.level, o, d, inv, -o * inv, r.tmin, voxelSeed(r, id), keep, c)) return false;
     v = c;
     v.instance = id;
     return true;
 }
 
+// One candidate of a query's loop: a leaf card's triangle (committed where its picture is) or a box. True if the
+// query may stop (ANY: a hit).
+template <bool PLANTS, bool ANY, typename Q>
+inline bool candidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL sc, thread Hit& v) {
+    if (ALPHA_TEST && q.get_candidate_intersection_type() == intersection_type::triangle) {
+        if (!Levels<PLANTS>::card(q, sc)) return false;
+        if (q.get_committed_intersection_type() == intersection_type::none
+            || q.get_candidate_triangle_distance() < q.get_committed_distance()) q.commit_triangle_intersection();
+        return ANY;
+    }
+    return boxCandidate<PLANTS>(q, r, mask, normal, sc, v) && ANY;
+}
+
 // The query's committed triangle, or the box loop's nearer hit `v`.
-template <typename Q>
+template <bool PLANTS, typename Q>
 inline Hit queryHit(thread Q& q, Hit v) {
     // The nearer of the box's hit and the query's triangle (a box's is only ever kept in front of the triangle
     // committed by then, but a nearer triangle may have come after it).
@@ -384,19 +471,19 @@ inline Hit queryHit(thread Q& q, Hit v) {
     h.hit = triangle;
     h.distance = triangle ? q.get_committed_distance() : INFINITY;
     h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(0.0f);
-    h.instance = TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id();
+    h.instance = Levels<PLANTS>::committed(q);
     h.primitive = q.get_committed_primitive_id();
     h.cluster = HIT_NO_CLUSTER;
-    h.part = HIT_NO_PART;
+    h.part = triangle ? Levels<PLANTS>::committedPart(q) : HIT_NO_PART;
     return h;
 }
 
 // A query that counts what Metal's traversal hands it (`n`: triangles, boxes), every triangle made non-opaque for it
 // so that it does: the "Traversal cost" view and RT_STATS builds. The same hit as the queries below (the nearest
-// candidate is committed; ANY: the first).
-template <bool ANY>
+// candidate is committed, a leaf card's where its picture is; ANY: the first).
+template <bool PLANTS, bool ANY>
 inline Hit countedQuery(Ray r, uint mask, SCENE_ACCEL sc, thread uint2& n) {
-    intersection_query<triangle_data, instancing> q;
+    typename Levels<PLANTS>::Closest q;
     intersection_params p = voxelParams(ANY);
     p.force_opacity(forced_opacity::non_opaque);
     q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), p);
@@ -405,21 +492,22 @@ inline Hit countedQuery(Ray r, uint mask, SCENE_ACCEL sc, thread uint2& n) {
     while (q.next()) {
         if (q.get_candidate_intersection_type() == intersection_type::triangle) {
             ++n.x;
+            if (ALPHA_TEST && !Levels<PLANTS>::card(q, sc)) continue;
             if (q.get_committed_intersection_type() == intersection_type::none
                 || q.get_candidate_triangle_distance() < q.get_committed_distance()) q.commit_triangle_intersection();
             if (ANY) break;
         } else {
             ++n.y;
-            if (boxCandidate(q, r, mask, !ANY, sc, v) && ANY) break;
+            if (boxCandidate<PLANTS>(q, r, mask, !ANY, sc, v) && ANY) break;
         }
     }
-    return queryHit(q, v);
+    return queryHit<PLANTS>(q, v);
 }
 
 // Closest hit, counting the candidates on the way (`countedQuery`): the "Traversal cost" view only.
 Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidates) {
     uint2 n;
-    Hit h = countedQuery<false>(r, mask, sc, n);
+    Hit h = FOLIAGE ? countedQuery<true, false>(r, mask, sc, n) : countedQuery<false, false>(r, mask, sc, n);
     candidates = n.x + n.y;
     return h;
 }
@@ -428,7 +516,7 @@ Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidat
 template <bool ANY>
 inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
     uint2 n;
-    Hit h = countedQuery<ANY>(r, mask, sc, n);
+    Hit h = FOLIAGE ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
     atomic_fetch_add_explicit(&sc.stats[0], 1u, memory_order_relaxed);
     atomic_fetch_add_explicit(&sc.stats[1], n.x, memory_order_relaxed);
     atomic_fetch_add_explicit(&sc.stats[2], n.y, memory_order_relaxed);
@@ -436,18 +524,16 @@ inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
 }
 #endif
 
-Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
-#if RT_STATS
-    return countedHit<false>(r, mask, sc);
-#endif
+template <bool PLANTS>
+inline Hit closestHit(Ray r, uint mask, SCENE_ACCEL sc) {
     if (QUERY_LOOP) {
-        intersection_query<triangle_data, instancing> q;
+        typename Levels<PLANTS>::Closest q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(false));
         Hit v = voxelMiss(r);
-        while (q.next()) boxCandidate(q, r, mask, true, sc, v);
-        return queryHit(q, v);
+        while (q.next()) candidate<PLANTS, false>(q, r, mask, true, sc, v);
+        return queryHit<PLANTS>(q, v);
     }
-    intersector<triangle_data, instancing> isect;
+    typename Levels<PLANTS>::ClosestIntersector isect;
     isect.assume_geometry_type(geometry_type::triangle);
     isect.force_opacity(forced_opacity::opaque);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
@@ -455,11 +541,35 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     h.hit = res.type == intersection_type::triangle;
     h.distance = res.distance;
     h.barycentrics = res.triangle_barycentric_coord;
-    h.instance = TILED ? res.user_instance_id : res.instance_id;   // TILED: its id (SceneBuffers' descriptors)
+    h.instance = Levels<PLANTS>::instance(res);   // TILED: its id (SceneBuffers' descriptors)
     h.primitive = res.primitive_id;
     h.cluster = HIT_NO_CLUSTER;
-    h.part = HIT_NO_PART;
+    h.part = h.hit ? Levels<PLANTS>::part(res) : HIT_NO_PART;
     return h;
+}
+
+Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
+#if RT_STATS
+    return countedHit<false>(r, mask, sc);
+#endif
+    return FOLIAGE ? closestHit<true>(r, mask, sc) : closestHit<false>(r, mask, sc);
+}
+
+template <bool PLANTS>
+inline float closestDistance(Ray r, uint mask, SCENE_ACCEL sc) {
+    if (QUERY_LOOP) {
+        typename Levels<PLANTS>::Plain q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(false));
+        Hit v = voxelMiss(r);
+        while (q.next()) candidate<PLANTS, false>(q, r, mask, false, sc, v);
+        float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
+        return v.hit ? min(v.distance, t) : t;
+    }
+    typename Levels<PLANTS>::PlainIntersector isect;   // no triangle_data: barycentrics aren't needed
+    isect.assume_geometry_type(geometry_type::triangle);
+    isect.force_opacity(forced_opacity::opaque);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
+    return res.type == intersection_type::none ? INFINITY : res.distance;
 }
 
 // Closest hit distance only (INFINITY if none).
@@ -468,19 +578,32 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL sc) {
     Hit h = countedHit<false>(r, mask, sc);
     return h.hit ? h.distance : INFINITY;
 #endif
+    return FOLIAGE ? closestDistance<true>(r, mask, sc) : closestDistance<false>(r, mask, sc);
+}
+
+template <bool PLANTS>
+inline bool anyHit(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     if (QUERY_LOOP) {
-        intersection_query<instancing> q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(false));
+        typename Levels<PLANTS>::Plain q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(true));
         Hit v = voxelMiss(r);
-        while (q.next()) boxCandidate(q, r, mask, false, sc, v);
-        float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
-        return v.hit ? min(v.distance, t) : t;
+        while (q.next()) {
+            if (candidate<PLANTS, true>(q, r, mask, false, sc, v)) {   // any hit will do
+                if (v.hit) { t = v.distance; return true; }
+                break;
+            }
+        }
+        bool hit = q.get_committed_intersection_type() != intersection_type::none;
+        t = hit ? q.get_committed_distance() : r.tmax;
+        return hit;
     }
-    intersector<instancing> isect;   // no triangle_data: barycentrics aren't needed
+    typename Levels<PLANTS>::PlainIntersector isect;
     isect.assume_geometry_type(geometry_type::triangle);
     isect.force_opacity(forced_opacity::opaque);
+    isect.accept_any_intersection(true);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
-    return res.type == intersection_type::none ? INFINITY : res.distance;
+    t = res.distance;
+    return res.type != intersection_type::none;
 }
 
 // Any hit (shadow rays): true if something is in the way; `t` = its distance.
@@ -490,22 +613,5 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     t = h.hit ? h.distance : r.tmax;
     return h.hit;
 #endif
-    if (QUERY_LOOP) {
-        intersection_query<instancing> q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(true));
-        Hit v = voxelMiss(r);
-        while (q.next()) {
-            if (boxCandidate(q, r, mask, false, sc, v)) { t = v.distance; return true; }   // any hit will do
-        }
-        bool hit = q.get_committed_intersection_type() != intersection_type::none;
-        t = hit ? q.get_committed_distance() : r.tmax;
-        return hit;
-    }
-    intersector<instancing> isect;
-    isect.assume_geometry_type(geometry_type::triangle);
-    isect.force_opacity(forced_opacity::opaque);
-    isect.accept_any_intersection(true);
-    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
-    t = res.distance;
-    return res.type != intersection_type::none;
+    return FOLIAGE ? anyHit<true>(r, mask, sc, t) : anyHit<false>(r, mask, sc, t);
 }

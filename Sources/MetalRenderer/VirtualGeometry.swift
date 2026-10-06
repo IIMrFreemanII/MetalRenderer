@@ -168,7 +168,7 @@ final class VirtualGeometry {
         let descriptor: MTLPrimitiveAccelerationStructureDescriptor
         let scratch: MTLBuffer
 
-        func encode(into enc: MTLAccelerationStructureCommandEncoder) {
+        func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
             enc.build(accelerationStructure: structure, descriptor: descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
         }
     }

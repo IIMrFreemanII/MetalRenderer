@@ -40,7 +40,7 @@ final class Scene {
     }
 
     /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
-    /// (the species' boughs). Every instance of the plant shares it; the custom ray tracer walks a tree over the parts.
+    /// (the species' boughs). Every instance of the plant shares it, through the structures over its parts (PlantTracing).
     struct Assembly {
         /// What a part turns about in the wind (Shaders/Foliage.metal). `angle`: its largest turn, at full wind; 0 = it doesn't.
         struct Bone {
@@ -266,26 +266,28 @@ final class Scene {
     let usesVirtualGeometry: Bool
     /// Virtual geometry is traced as this frame's cut of clusters (VirtualGeometry), not a BLAS per instance.
     var tracesClusters: Bool { !virtualMeshes.isEmpty && VirtualGeometry.clusterMode }
-    /// Generated plants as assemblies of shared parts (custom ray tracer only); otherwise each is baked into meshes of its own.
+    /// Generated plants as assemblies of shared parts (PlantTracing), unless baked into meshes of their own (bakedPlants).
     private(set) var assemblies: [Assembly] = []
     let usesAssemblies: Bool
-    /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
+    /// The scene has generated plants: it is built differently with assemblies and without.
     private(set) var hasPlants = false
-    /// The plants that are voxels when far (FoliageVoxels): on the custom tracer one per assembly, in its order; on
-    /// Metal's, one per baked plant with boughs, its wood and leaf meshes in `meshVoxels`.
+    /// The plants that are voxels when far (FoliageVoxels): one per assembly, in its order; or one per baked plant
+    /// with boughs, its wood and leaf meshes in `meshVoxels`.
     private(set) var voxelPlants: [FoliageVoxels.Plant] = []
-    /// Metal's tracer: a baked plant's mesh -> its voxel plant (`voxelPlants`), | `meshVoxelsLeaves` for its leaves.
+    /// A baked plant's mesh -> its voxel plant (`voxelPlants`), | `meshVoxelsLeaves` for its leaves.
     private(set) var meshVoxels: [Int: UInt32] = [:]
     static let meshVoxelsLeaves: UInt32 = 0x8000_0000
-    /// Metal's tracer, with far baked plants as their voxels (SceneSettings.voxelBoxes): the plants have grids.
+    /// Far plants as their voxels (SceneSettings.voxelBoxes): the plants have grids.
     let usesVoxelBoxes: Bool
-    /// ...and it does: a still scene with such plants (VoxelLOD rebuilds a still scene's structure).
-    var hasVoxelBoxes: Bool { usesVoxelBoxes && isStill && !meshVoxels.isEmpty }
+    /// ...and it does: a still scene with baked plants that have them (VoxelLOD rebuilds a still scene's structure),
+    /// or a moving one with assemblies (their instances name a grid's level when far: PlantTracing). (Not the open
+    /// world's assemblies: a still scene's plants stay as they were built.)
+    var hasVoxelBoxes: Bool { usesVoxelBoxes && (isStill ? !meshVoxels.isEmpty : !assemblies.isEmpty) }
     private(set) var hasSwayingMeshes = false
-    /// Leaf cards' alpha layers (FoliageTextures.CardSheet), each FoliageTextures.cardSheetSize squared: the custom
-    /// tracer tests a card's hits against its layer. `coverage`: the share of a card that is there.
+    /// Leaf cards' alpha layers (FoliageTextures.CardSheet), each FoliageTextures.cardSheetSize squared: the ray
+    /// queries test a card's hits against its layer (rtCutout). `coverage`: the share of a card that is there.
     private(set) var cutouts: [(alpha: [UInt8], coverage: Float)] = []
-    /// Plants' leaves as cards (`settings.leafCards`, where the tracer cuts them out: the custom one).
+    /// Plants' leaves as cards (`settings.leafCards`, with assemblies).
     let usesCards: Bool
     /// Something the wind moves and the shaders' FOLIAGE paths trace: assemblies, or ground cover that leans.
     var hasFoliage: Bool { !assemblies.isEmpty || hasSwayingMeshes }
@@ -408,7 +410,7 @@ final class Scene {
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
         self.usesCards = assemblies && settings.leafCards
-        self.usesVoxelBoxes = voxelBoxes && !assemblies
+        self.usesVoxelBoxes = voxelBoxes
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
@@ -475,8 +477,10 @@ final class Scene {
         animated = (instances: instances.indices.filter { instances[$0].moves },
                     lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
                     scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
-        // (Virtual geometry's cuts change the structure under its instances: the frames update it.)
-        isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty
+        // (Virtual geometry's cuts change the structure under its instances, and the wind the plants' and the ground
+        // cover's: the frames update it. Not the open world's, whose instance blocks need a still scene: its plants
+        // stand still.)
+        isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty && (!hasFoliage || hasGroups)
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -955,7 +959,7 @@ final class Scene {
     static let coverLean: Float = 0.2
 
     /// A generated mesh (Foliage, Terrain): its arrays appended whole, its bounds as it counted them. `sways`: ground
-    /// cover standing along +y, which the custom tracer leans in the wind (every instance of it).
+    /// cover standing along +y, which leans in the wind (every instance of it: its transform, PlantTracing).
     /// `cutout`: the alpha layer (`addCutout`) that cuts out its leaves, if they are cards.
     /// `name`: see `meshNames`.
     func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil, name: String? = nil) -> Int {
@@ -991,7 +995,7 @@ final class Scene {
         return voxelPlants.count - 1
     }
 
-    /// Mesh `mesh` is voxel plant `plant`'s wood, or its leaves (Metal's tracer: VoxelLOD).
+    /// Mesh `mesh` is voxel plant `plant`'s wood, or its leaves (VoxelLOD).
     func setMeshVoxels(_ mesh: Int, plant: Int, leaves: Bool) {
         guard mesh >= 0 else { return }
         meshVoxels[mesh] = UInt32(plant) | (leaves ? Scene.meshVoxelsLeaves : 0)
@@ -1106,7 +1110,7 @@ final class Scene {
         return UInt32(textures.count - 1)
     }
 
-    /// The share of the deciduous plants' leaves that have fallen at `season` (the custom ray tracer drops them).
+    /// The share of the deciduous plants' leaves that have fallen at `season` (the plants' variants drop them).
     static func leafFall(season: Float) -> Float {
         let t = min(max((season - 0.62) / 0.33, 0), 1)
         return t * t * (3 - 2 * t)

@@ -30,7 +30,7 @@ constant uint RASTER_CLUSTER_ID = 0x80000000u;
 // (16 words) as rasterCullKernel left it, then per virtual instance 1 if it is in view.
 constant uint RVG_HEADER = 16;
 // A heavy instance (more than RASTER_HEAVY triangles) with more than RASTER_MAX_DENSITY of them per pixel its bounds
-// cover is traced, not drawn: there's no level of detail to draw it at (a far crowd, Metal's tracer's baked plants),
+// cover is traced, not drawn: there's no level of detail to draw it at (a far crowd, baked plants),
 // and past that the box's traced pixels cost less than the triangles (the crowd: 16 a pixel 13.2 ms a frame, 4 12.2,
 // 1 12.4, on an M1 Max in split mode).
 constant uint RASTER_HEAVY = 4096;
@@ -70,7 +70,7 @@ struct RasterParams {
 };
 static_assert(sizeof(RasterParams) == 48, "RasterParams: GPURasterParams");
 
-constant uint RASTER_P_IDS = 1;        // a table maps an instance's place to its id (Metal's tracer with blocks: TILED)
+constant uint RASTER_P_IDS = 1;        // a table maps an instance's place to its id (a scene with blocks: TILED)
 constant uint RASTER_P_HZB = 2;        // pass 2 tests against the pyramid (off on a target's first frame)
 
 constant uint RASTER_ASSEMBLY = 0x80000000u;   // a block's record's meshIndex: this | its assembly (InstanceBlock.assembly)
