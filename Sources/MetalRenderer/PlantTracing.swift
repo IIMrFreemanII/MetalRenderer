@@ -484,13 +484,37 @@ final class PlantTracing {
         let scratch: MTLBuffer
         let offsets: [Int]
 
-        // (Two to an encoder are no faster, four crash.)
+        // Metal 3: one encoder each (M1 Max: two to an encoder are no faster, four crash; M4 Max: any number, no faster).
         var encoderCount: Int { used.count }
         func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
             let v = used[part]
             enc.useResources(blases[v], usage: .read)
             enc.refit(sourceAccelerationStructure: structures[v], descriptor: descriptors[v], destinationAccelerationStructure: structures[v],
                       scratchBuffer: scratch, scratchBufferOffset: offsets[v])
+        }
+
+        /// Metal 4: every refit in `enc`, with no barrier between them (each has its own scratch range, so the GPU may
+        /// run them side by side). `keep` makes what they touch resident.
+        @available(macOS 26.0, *)
+        func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
+            keep(scratch)
+            for v in used {
+                let d3 = descriptors[v]
+                guard let instances = d3.instanceDescriptorBuffer else { continue }
+                keep(instances)
+                keep(structures[v])
+                blases[v].forEach(keep)
+                let d = MTL4InstanceAccelerationStructureDescriptor()
+                d.instanceDescriptorBuffer = MTL4BufferRange(bufferAddress: instances.gpuAddress + UInt64(d3.instanceDescriptorBufferOffset),
+                                                             length: UInt64(d3.instanceCount * d3.instanceDescriptorStride))
+                d.instanceDescriptorStride = d3.instanceDescriptorStride
+                d.instanceCount = d3.instanceCount
+                d.instanceDescriptorType = d3.instanceDescriptorType
+                d.usage = d3.usage
+                let end = v + 1 < offsets.count ? offsets[v + 1] : scratch.length
+                enc.refit(sourceAccelerationStructure: structures[v], descriptor: d, destinationAccelerationStructure: structures[v],
+                          scratchBuffer: MTL4BufferRange(bufferAddress: scratch.gpuAddress + UInt64(offsets[v]), length: UInt64(end - offsets[v])))
+            }
         }
     }
     func refit(slot: Int) -> Refit {

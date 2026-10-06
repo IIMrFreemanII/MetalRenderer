@@ -278,8 +278,16 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     }
 
     /// Through the Metal 3 queue: the per-mesh structures are built there (once per scene), and the ones a frame
-    /// builds or refits are too.
+    /// builds or refits are too, except the plants' variants. Those are refitted in the frame's own encoder, side by
+    /// side: through the Metal 3 queue the forest's 231 refits ran one after another (11 ms on an M4 Max, 0.13 here).
     func updatePrimitives(_ work: PrimitiveWork, pass: String) {
+        if let refit = work as? PlantTracing.Refit {
+            guard let enc = encoder(pass, newBuffer: true) else { return }
+            serial = true
+            order(.accelerationStructure)
+            refit.encode4(into: enc, keep: keep)
+            return
+        }
         interlude(pass) { cb in
             for part in 0..<work.encoderCount {
                 guard let enc = cb.makeAccelerationStructureCommandEncoder() else { return }

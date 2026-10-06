@@ -654,15 +654,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ComputePass.swift": {
-    "mtime": 1791323916.1288338,
-    "seen": 1791327036.517612,
-    "ast_hash": "0a6df54a79c7fcb68c784df0fab7249c",
+    "mtime": 1791327458.6919918,
+    "seen": 1791327596.346727,
+    "ast_hash": "d1ef3108eead8184ffdc82d7830e62ee",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1791323916.1485164,
-    "seen": 1791327036.517626,
-    "ast_hash": "666580a3deb710b6efe4290e6c7f48b5",
+    "mtime": 1791327448.5530531,
+    "seen": 1791327596.346742,
+    "ast_hash": "d5ce72f53a8c50288bc8fe3ac108d120",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
@@ -1062,9 +1062,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantTracing.swift": {
-    "mtime": 1791327016.636396,
-    "seen": 1791327036.517631,
-    "ast_hash": "0c6100e7b7bc50d730c75bfc726e70ae",
+    "mtime": 1791327453.0099683,
+    "seen": 1791327596.3467462,
+    "ast_hash": "4680dd0cb435903481c448fb97e8b933",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RasterClusters.swift": {
@@ -1338,9 +1338,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/metal-tracer-handoff.md": {
-    "mtime": 1791327016.635122,
-    "seen": 1791327036.517697,
-    "ast_hash": "19d3ed57fad0536b3d61fbbeafba14f5",
+    "mtime": 1791327591.963201,
+    "seen": 1791327596.346816,
+    "ast_hash": "053696ea21cf1d900a83f3898b2dbdb0",
     "semantic_hash": ""
   },
   ".claude/skills/code-graph/SKILL.md": {

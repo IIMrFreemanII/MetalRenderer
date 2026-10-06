@@ -63,6 +63,12 @@ Capability line: `Metal ray tracing: hardware, MetalFX denoiser: yes, Metal 4: y
   - Forest: the `wind` pass (posing + refits) is **11.1–11.3 ms of a ~16 ms frame** on the M4 too (M1: 11.6), and it
     costs that in the default forest `shot` as well, not only with `wind=0.4`. Hardware RT doesn't make refits cheaper:
     this is the forest's cost.
+    **Done for Metal 4 (2026-10-07):** the plants' refits (231 variants, 28,605 instances) moved from the Metal 3
+    interlude into the frame's Metal 4 encoder with no barriers between them (`PlantTracing.Refit.encode4`): wind
+    pass 11.1 → 0.13 ms, forest moving in wind 0.4 16.40 → 5.08 ms (5 rounds, whole frame), image identical, 1000
+    frames without faults. Through Metal 3 the refits run one after another whatever the batching (1, 2, 16 or all
+    231 to an encoder: ~11 ms; building instead of refitting: the same); Metal 3 still costs 11.7 ms. Left for
+    Metal 3: refit fewer variants a frame, or fewer phases.
   - Leaf cards: 2.6× the assemblies (11.3 vs 4.4 ms), about the M1's ratio.
   - Clusters mode: ~90× the BLAS mode in the gallery (M1: ~6×). Split: lightmap 37 ms, trace 47, many lights 97,
     mesh lights 15, cascades 27 + 47, reflections 54; the per-frame box structure (`vg`) only 1.7 ms. The cost is the
