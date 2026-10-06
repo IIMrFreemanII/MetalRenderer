@@ -8,6 +8,9 @@ enum Kernel: Int, CaseIterable {
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
+    case lumenProbe, lumenTrace, lumenFilter, lumenSH, lumenResolve, lumenHZB, lumenCardCapture, lumenCardLight,
+         lumenCardRadiosity, lumenCardCombine, lumenCull,
+         lumenGlobalBin, lumenGlobalCompose
     case reflection
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
     case fogInject, fogIntegrate, fogReference
@@ -23,6 +26,8 @@ enum Kernel: Int, CaseIterable {
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
     case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit
     case crowdRefit             // ...and their bottom-level trees
+    case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
+    case vsmVGCut               // ...in the shadow maps
 
     var function: String { "\(self)Kernel" }
     /// Exists only in the custom tracer's variant of the shaders (CUSTOM_RT).
@@ -148,6 +153,8 @@ struct Pipelines {
     /// The raster visibility buffer's draw (rasterVertex, rasterFragment): instance and triangle ids into an rg32Uint
     /// target, over a depth32Float one.
     let visibility: MTLRenderPipelineState
+    /// The raster clusters' draw by mesh shaders (rasterClusterMesh, rasterFragment), custom tracer only.
+    let clusterMesh: MTLRenderPipelineState?
     static let visibilityFormat = MTLPixelFormat.rg32Uint
     static let depthFormat = MTLPixelFormat.depth32Float
     /// The virtual shadow maps' draws (vsmVertex; vsmClearVertex, the pages' clear): depth only, each triangle into its
@@ -167,6 +174,14 @@ struct Pipelines {
     var rc: RCPipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
+    }
+    var lumen: LumenPipelines {
+        LumenPipelines(probe: self[.lumenProbe], trace: self[.lumenTrace], filter: self[.lumenFilter], sh: self[.lumenSH],
+                       clearAmbient: self[.rcClearAmbient], resolve: self[.lumenResolve],
+                       hzb: self[.lumenHZB], hzbReduce: self[.hzbReduce], cardCapture: self[.lumenCardCapture],
+                       cardLight: self[.lumenCardLight], cardRadiosity: self[.lumenCardRadiosity],
+                       cardCombine: self[.lumenCardCombine], cull: self[.lumenCull], globalBin: self[.lumenGlobalBin],
+                       globalCompose: self[.lumenGlobalCompose])
     }
     /// The kernels that build the custom tracer's trees (nil for the Metal tracer).
     var rt: RTPipelines? {
@@ -205,6 +220,9 @@ struct Pipelines {
         if let failure { throw failure }
         visibility = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                    vertex: "rasterVertex", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
+        clusterMesh = kind != .custom ? nil
+            : try Pipelines.makeMeshState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                          mesh: "rasterClusterMesh", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
         vsm = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                             vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
         vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
@@ -274,8 +292,39 @@ struct Pipelines {
         return try device.makeRenderPipelineState(descriptor: d)
     }
 
-    private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
-                                compiler: AnyObject?) throws -> MTLLibrary {
+    /// A mesh-shader pipeline (no object stage): `mesh`'s threadgroups make the triangles `fragment` shades.
+    private static func makeMeshState(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, lightTypes: UInt32,
+                                      mesh: String, fragment: String, color: MTLPixelFormat) throws -> MTLRenderPipelineState {
+        let constants = MTLFunctionConstantValues()
+        var types = lightTypes
+        constants.setConstantValue(&types, type: .uint, index: 0)
+        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+            func function(_ name: String) -> MTL4SpecializedFunctionDescriptor {
+                let f = MTL4LibraryFunctionDescriptor()
+                f.library = library
+                f.name = name
+                let specialized = MTL4SpecializedFunctionDescriptor()
+                specialized.functionDescriptor = f
+                specialized.constantValues = constants
+                return specialized
+            }
+            let d = MTL4MeshRenderPipelineDescriptor()
+            d.meshFunctionDescriptor = function(mesh)
+            d.fragmentFunctionDescriptor = function(fragment)
+            d.colorAttachments[0].pixelFormat = color
+            return try compiler.makeRenderPipelineState(descriptor: d)
+        }
+        let d = MTLMeshRenderPipelineDescriptor()
+        d.label = mesh
+        d.meshFunction = try library.makeFunction(name: mesh, constantValues: constants)
+        d.fragmentFunction = try library.makeFunction(name: fragment, constantValues: constants)
+        d.colorAttachments[0].pixelFormat = color
+        d.depthAttachmentPixelFormat = depthFormat
+        return try device.makeRenderPipelineState(descriptor: d, options: []).0
+    }
+
+    static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
+                        compiler: AnyObject?) throws -> MTLLibrary {
         let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
         let options = MTLCompileOptions()
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep

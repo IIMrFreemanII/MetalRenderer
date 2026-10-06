@@ -44,6 +44,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Foliage.metal) add FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
@@ -67,10 +68,14 @@ if [[ $suites == " " ]]; then
           LightTree.swift) add LightTreeTests ;;
           RasterScene.swift) add RasterSceneTests ;;
           VSM.swift) add VSMTests ;;
+          MeshSDFBuilder.swift|LumenScene.swift) add MeshSDFBuilderTests ;;
+          LumenGlobalSDF.swift) add GlobalSDFTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
-          VirtualGeometryBuilder.swift) add CacheTests ;;
+          VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
+          VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests VGCutTests ;;
+          VirtualBLAS.swift) add VGCutTests ;;
           *) uncovered+=("$f") ;;
         esac ;;
       Package.swift) add MetalRendererTests ;;

@@ -36,6 +36,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 device const InstanceData*       instances  [[buffer(6)]],
                                 constant SceneShading&           shading    [[buffer(7)]],
                                 texture2d<float, access::write>  output     [[texture(0)]],
+                                texture2d<uint, access::read>    visBuffer  [[texture(1)]],   // with FLAG_VIS_BUFFER
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -54,6 +55,9 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
     float3 costColor = float3(1.0f, 0.0f, 1.0f);   // Metal's traversal can't be counted
 #endif
     if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
+    // With the raster visibility buffer, what it drew (virtual geometry: its own cut of clusters), as the frame sees it.
+    Hit drawn;
+    if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, r, accel, s, drawn)) res = drawn;
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
     if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level
@@ -196,6 +200,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
+                            texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -265,6 +270,11 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             specular += sa * (tracedAll ? traced : traced + finalIndirect);
         }
     }
+
+    // Lumen's screen traces read this next frame: the diffuse light the surface sends, without specular or fog.
+    // Emitters (mesh lights) send none here: their light reaches GI as a light.
+    if (flagOn(u.flags, FLAG_GI_RADIANCE))
+        giRadiance.write(float4(surfacePos.read(tid).w > 0.0f ? albedo * illumination : float3(0.0f), 1.0f), tid);
 
     // Fog in front of the pixel: rgb = in-scattered light, a = transmittance.
     float4 fogged = float4(0.0f, 0.0f, 0.0f, 1.0f);
