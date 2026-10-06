@@ -12,6 +12,9 @@ struct Capabilities: Equatable {
     /// Metal 4's acceleration structures, for Metal ray tracing on Metal 4. Metal has no query for it, only a validation
     /// error ("this device does not support Metal 4 ray tracing", M1 Max); the M4 Max, with ray-tracing hardware, has it.
     var metal4RayTracing = true
+    /// Curves in Metal's acceleration structures, which the shaders reach with MSL 3.1 or later (they compile as 3.2
+    /// on macOS 15): what draws the hair scene's strands (HAIR_CURVES). The custom tracer draws none.
+    var curves = true
 
     /// The running device's. Everything until `main` sets it: tests have no device.
     static var current = Capabilities()
@@ -22,6 +25,7 @@ struct Capabilities: Equatable {
     /// `none` keeps nothing), to try the fallbacks on a GPU that has them all.
     init(device: MTLDevice, env: [String: String] = ProcessInfo.processInfo.environment) {
         metalRayTracing = device.supportsRaytracing
+        if #available(macOS 15.0, *) { curves = metalRayTracing } else { curves = false }
         hardwareRayTracing = metalRayTracing && device.supportsFamily(.apple9)
         if #available(macOS 26.0, *) {
             metalFXDenoiser = MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
@@ -34,6 +38,7 @@ struct Capabilities: Equatable {
         }
         if let keep = env["METALRENDERER_CAPS"]?.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) {
             metalRayTracing = metalRayTracing && keep.contains("rt")
+            curves = curves && metalRayTracing
             hardwareRayTracing = hardwareRayTracing && metalRayTracing && keep.contains("hwrt")
             metalFXDenoiser = metalFXDenoiser && keep.contains("denoiser")
             metal4 = metal4 && keep.contains("metal4")

@@ -226,7 +226,8 @@ struct GPUMaterial {
     var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
     var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
-                                            // z = 1: an emissive-mesh light's (buildMeshLights)
+                                            // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
+                                            // w = a leaf's translucency
     var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
 }
@@ -335,7 +336,8 @@ struct GPUPhysicsBody {
     var prevPosition = SIMD4<Float>()        // at the substep's start; w = how long it has been still (s)
     var prevRotation = SIMD4<Float>(0, 0, 0, 1)
     var invInertia = SIMD4<Float>()          // inverse principal moments; w = bounding radius about the centre of mass
-    var info = SIMD4<UInt32>()               // x = shape, y = flags (PhysicsWorld.asleep), z = the instance it moves, w = 0
+    var info = SIMD4<UInt32>()               // x = shape, y = flags (PhysicsWorld.asleep), z = the instance it moves,
+                                             // w = the body a joint hangs it from + 1 (0: none): the two never collide
 }
 
 /// A collision shape: MSL PhysicsShape. `samples`: its surface points (and their count), in body space.
@@ -373,6 +375,57 @@ struct GPUPhysicsGrab {
     var pad2: UInt32 = 0
 }
 
+/// A joint between two bodies (a ragdoll's): their anchors meet, and they turn about each other within limits. Its
+/// axis and reference (a direction across it) are in each body's space, the same in the world when it was made: then
+/// its angles are 0. A ball joint keeps the axes within a cone (`swing`) and their twist about them within
+/// [lo, hi]; a hinge keeps the axes together and the turn about them within [lo, hi]. MSL PhysicsJoint.
+struct GPUPhysicsJoint {
+    var anchorA = SIMD4<Float>()             // A's space; w = 0
+    var anchorB = SIMD4<Float>()             // B's space; w = 0
+    var axisA = SIMD4<Float>()               // A's space; w = lo (rad)
+    var axisB = SIMD4<Float>()               // B's space; w = hi (rad)
+    var referenceA = SIMD4<Float>()          // A's space, across the axis; w = swing (rad, a ball joint's)
+    var referenceB = SIMD4<Float>()          // B's space; w = damping (1/s): how fast the two's relative turning fades
+    var info = SIMD4<UInt32>()               // x = A, y = B, z = kind (PhysicsJointKind), w = 0
+}
+
+/// A guide strand of hair (PhysicsHair.swift): a chain of vertices from a root held by a body (or the world). MSL
+/// PhysicsStrand.
+struct GPUHairStrand {
+    var info = SIMD4<UInt32>()               // x = its body (PhysicsWorld.none: the world's), y = first vertex, z = vertices,
+                                             // w = 1 while it lies still on a sleeping body
+    var stiffness = SIMD4<Float>()           // x = global shape at the root, y = at the tip, z = local shape (each a substep's
+                                             // share of the way back to its rest), w = DFTL's damping (0...1)
+    var across = SIMD4<Float>()              // its body's space: a direction across it at the root (the drawn strands'
+                                             // frame); w = its length
+    var pad = SIMD4<Float>()
+}
+
+/// A guide strand's vertex. MSL PhysicsHairVertex.
+struct GPUHairVertex {
+    var position = SIMD4<Float>()            // w = collision radius
+    var previous = SIMD4<Float>()            // at the substep's start; w = the rest length of the segment before it
+    var velocity = SIMD4<Float>()            // w = friction
+    var rest = SIMD4<Float>()                // in its root's body's space (the world's for a static root); w = global stiffness
+}
+
+/// What the hair kernel is told (per step; MSL PhysicsHairParams).
+struct GPUHairParams {
+    var gravity = SIMD4<Float>()             // w = substep length (s)
+    var wind = SIMD4<Float>()                // xyz = the breeze's velocity (m/s), w = gustiness (0...1)
+    var counts = SIMD4<UInt32>()             // x = strands, y = bodies, z = statics, w = substeps
+    var air = SIMD4<Float>()                 // x = drag (1/s), y = rest speed (m/s), z = the step's time (s), w = 0
+}
+
+/// A group of drawn strands around their guides (PhysicsWorld.HairGroup): MSL PhysicsHairGroup.
+struct GPUHairGroup {
+    var counts = SIMD4<UInt32>()             // x = first guide, y = guides, z = drawn per guide, w = a guide's vertices
+    var mesh = SIMD4<UInt32>()               // x = its curve mesh's first control point, y = last frame's offset, z = seed
+    var shape = SIMD4<Float>()               // x = spread (m: how far from its guide a drawn strand's root may be),
+                                             // y = clumping (0...1: how far toward the guide at the tip), z = curl (m), w = 0
+    var pad = SIMD4<Float>()
+}
+
 /// A particle (Physics.swift): a small ball that the bodies and the static colliders push about, and that piles up
 /// against the others. MSL PhysicsParticle.
 struct GPUPhysicsParticle {
@@ -396,14 +449,16 @@ struct GPUPhysicsParams {
     var gravity = SIMD4<Float>()             // w = the substep's length (s)
     var counts = SIMD4<UInt32>()             // x = bodies, y = static colliders, z = pairs a body may have, w = hash buckets
     var grid = SIMD4<Float>()                // x = cell size, y = contact margin, z = top speed, w = the step's length
-    var sleep = SIMD4<Float>()               // x = still below this speed, y = ...and turn rate, z = asleep after (s),
+    var sleep = SIMD4<Float>()               // x = still below this speed, y = ...and its turning moving its mass
+                                             // slower than this (m/s, PhysicsWorld.sleepTurn), z = asleep after (s),
                                              // w = the speed a body's sphere reaches by (PhysicsWorld.cellSpeed)
     var particles = SIMD4<UInt32>()          // x = particles, y = their hash buckets, z = neighbours each, w = colliders each
     var particleGrid = SIMD4<Float>()        // x = their cell size, y = the speed a particle's reach allows for,
                                              // z = a cloth's air drag (1/s), w = a particle at rest goes slower (m/s)
-    var cloth = SIMD4<UInt32>()              // x = constraints, y = their colours, zw = 0
+    var cloth = SIMD4<UInt32>()              // x = constraints, y = their colours, z = the joints' colours, w = ragdolls
     var rolling = SIMD4<Float>()             // x = rolling resistance (m), y = spinning resistance (m), z = a body moving
-                                             // faster than this wakes what it touches, w = ...or turning faster than this
+                                             // faster than this wakes what it touches, w = ...or turning its mass faster
+                                             // than this (m/s, PhysicsWorld.wakeTurn)
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
@@ -447,5 +502,10 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsConstraint>.stride == 16, "GPUPhysicsConstraint layout mismatch")
     precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
     precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsJoint>.stride == 112, "GPUPhysicsJoint layout mismatch")
+    precondition(MemoryLayout<GPUHairStrand>.stride == 64, "GPUHairStrand layout mismatch")
+    precondition(MemoryLayout<GPUHairVertex>.stride == 64, "GPUHairVertex layout mismatch")
+    precondition(MemoryLayout<GPUHairParams>.stride == 64, "GPUHairParams layout mismatch")
+    precondition(MemoryLayout<GPUHairGroup>.stride == 64, "GPUHairGroup layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

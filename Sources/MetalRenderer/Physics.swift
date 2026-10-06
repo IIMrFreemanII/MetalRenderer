@@ -15,6 +15,10 @@ import simd
 /// gets the same numbers. Nothing adds floats atomically, so a run is the same every time. Bodies that have barely
 /// moved for half a second, and whose neighbours have settled too, sleep until something moving touches them.
 ///
+/// Joints (a ragdoll's) hold two bodies' anchors together and keep how they turn about each other within limits, a
+/// colour of joints at a time after the contacts (Müller et al. 2020's positional and angular constraints). Two bodies
+/// a joint joins don't collide, and a ragdoll's bodies sleep and wake together.
+///
 /// Time: `advance(to:)` takes the scene's animation time (so Pause and Time scale apply) and steps until the
 /// simulation is no more than a step behind it. Going back in time replays from the start, so any time's state is
 /// the same however it was reached (a benchmark's stills start at 5 s).
@@ -59,6 +63,18 @@ final class PhysicsWorld {
     /// the spot (m): what brings a ball, a cone or a lying cylinder to a stop (without them they roll on for ever).
     static let rollingResistance: Float = 0.004
     static let spinningResistance: Float = 0.02
+    /// A body is still while its turning moves its mass slower than this (m/s: its turn rate x its radius of gyration
+    /// about the turn, at most `gyration`): 0.13 rad/s for a body 15 cm or more about it, more for a thin limb turning
+    /// about its length (a ragdoll's forearm jittered at 0.27 rad/s about it, 1 cm/s at its surface, and never slept;
+    /// at 0.08 rad/s, 1.2 cm/s, a pile of 24 ragdolls took 48 s to sleep).
+    static let sleepTurn: Float = 0.02
+    /// ...and a body wakes what it touches while its turning moves its mass faster than this (0.27 rad/s at 15 cm).
+    static let wakeTurn: Float = 0.04
+    static let gyration: Float = 0.15
+    /// The most colours a body's joints can take (a body in more joints than this is refused).
+    static let maxJointColours = 16
+    /// Passes over the joints a substep: one leaves a whipping chain's anchors 2.5 mm apart, two 0.55 mm.
+    static let jointIterations = 2
 
     var gravity = SIMD3<Float>(0, -9.81, 0)
     let substeps: Int
@@ -120,6 +136,21 @@ final class PhysicsWorld {
         }
     }
     private var unsortedConstraints: [GPUPhysicsConstraint] = []
+
+    /// The joints by colour (no two of a colour share a body), and where each colour starts (`colours + 1` entries).
+    private(set) var joints: [GPUPhysicsJoint] = []
+    private(set) var jointStarts: [UInt32] = [0]
+    private var unsortedJoints: [GPUPhysicsJoint] = []
+    /// Each ragdoll's bodies (first, count): they sleep and wake together.
+    private(set) var ragdolls: [SIMD2<UInt32>] = []
+
+    /// Hair (PhysicsHair.swift): the guide strands and their vertices (and the vertices' start), the groups of strands
+    /// drawn around them, and the breeze.
+    var hairStrands: [GPUHairStrand] = []
+    var hairVertices: [GPUHairVertex] = []
+    private(set) var initialHairVertices: [GPUHairVertex] = []
+    var hairGroups: [GPUHairGroup] = []
+    var wind = SIMD4<Float>()
 
     /// How far the simulation has gone (whole steps).
     var stepIndex = 0
@@ -267,6 +298,61 @@ final class PhysicsWorld {
         cloths.append(Cloth(first: first, columns: columns, rows: rows, vertexBase: vertexBase))
     }
 
+    /// A joint between bodies `a` and `b` at `point` (world), with `axis` (unit: along `b`, say a limb) and `reference`
+    /// (a direction across it) as they are now: its angles are 0 in the pose the bodies have now. A ball joint's cone
+    /// is about `cone` (unit, world; `axis` if nil), which `axis` must be inside: a shoulder's points out and forward
+    /// from an arm hanging down. With a cone, the reference is across both. `b` hangs from `a`: the two never
+    /// collide, and `b` can hang from one body only (a ragdoll is a tree).
+    func addJoint(_ a: Int, _ b: Int, at point: SIMD3<Float>, axis: SIMD3<Float>, reference: SIMD3<Float>, _ kind: PhysicsJoint,
+                  cone: SIMD3<Float>? = nil, damping: Float = PhysicsJoint.damping) {
+        precondition(a != b && bodies[b].info.w == 0, "body \(b) already hangs from a joint")
+        func local(_ i: Int, _ v: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(PhysicsMath.qconj(bodies[i].rotation), v) }
+        let centre = cone ?? axis, both = cross(axis, centre)
+        precondition(kind.kind == .ball || cone == nil, "a hinge has no cone")
+        precondition(acos(min(dot(axis, centre), 1)) <= kind.swing + 1e-4 || kind.kind == .hinge, "the joint starts outside its cone")
+        let ref = length(both) > 1e-3 ? normalize(both) : normalize(reference - axis * dot(reference, axis))
+        var j = GPUPhysicsJoint()
+        j.anchorA = SIMD4(local(a, point - PhysicsMath.xyz(bodies[a].position)), 0)
+        j.anchorB = SIMD4(local(b, point - PhysicsMath.xyz(bodies[b].position)), 0)
+        j.axisA = SIMD4(local(a, centre), kind.lo)
+        j.axisB = SIMD4(local(b, axis), kind.hi)
+        j.referenceA = SIMD4(local(a, ref), kind.swing)
+        j.referenceB = SIMD4(local(b, ref), damping)
+        j.info = SIMD4(UInt32(a), UInt32(b), kind.kind.rawValue, 0)
+        unsortedJoints.append(j)
+        bodies[b].info.w = UInt32(a) + 1
+    }
+
+    /// Bodies `range` are one ragdoll: they sleep and wake together.
+    func addRagdoll(_ range: Range<Int>) {
+        ragdolls.append(SIMD2(UInt32(range.lowerBound), UInt32(range.count)))
+    }
+
+    /// Whether a joint joins bodies `i` and `j` (then they don't collide).
+    @inline(__always) static func joined(_ a: GPUPhysicsBody, _ i: Int, _ b: GPUPhysicsBody, _ j: Int) -> Bool {
+        a.info.w == UInt32(j) + 1 || b.info.w == UInt32(i) + 1
+    }
+
+    /// The joints in colours, as the cloth's constraints are.
+    private func colourJoints() {
+        var used: [Int: UInt64] = [:]
+        var colour = [Int](repeating: 0, count: unsortedJoints.count)
+        for (i, j) in unsortedJoints.enumerated() {
+            let a = Int(j.info.x), b = Int(j.info.y)
+            let c = (~((used[a] ?? 0) | (used[b] ?? 0))).trailingZeroBitCount
+            precondition(c < PhysicsWorld.maxJointColours, "a body in more than \(PhysicsWorld.maxJointColours - 1) joints")
+            colour[i] = c
+            used[a, default: 0] |= 1 << c
+            used[b, default: 0] |= 1 << c
+        }
+        joints = []
+        jointStarts = [0]
+        for c in 0..<((colour.max() ?? -1) + 1) {
+            joints += unsortedJoints.indices.filter { colour[$0] == c }.map { unsortedJoints[$0] }
+            jointStarts.append(UInt32(joints.count))
+        }
+    }
+
     /// The constraints in colours: each takes the first colour none of its vertices' constraints has (greedy).
     private func colourConstraints() {
         var used: [Int: UInt64] = [:]   // per vertex, the colours its constraints have
@@ -291,6 +377,7 @@ final class PhysicsWorld {
     /// Once everything is in: the arrays the steps use, and the start to replay from.
     func finish() {
         colourConstraints()
+        colourJoints()
         pairs = [GPUPhysicsPair](repeating: GPUPhysicsPair(), count: bodies.count * PhysicsWorld.maxPairs)
         pairCounts = [UInt32](repeating: 0, count: bodies.count)
         contacts = [GPUPhysicsContact](repeating: GPUPhysicsContact(), count: pairs.count * PhysicsWorld.maxContacts)
@@ -300,12 +387,15 @@ final class PhysicsWorld {
         colliderCounts = [UInt32](repeating: 0, count: particles.count)
         initialBodies = bodies
         initialParticles = particles
+        initialHairVertices = hairVertices
     }
 
     /// Back to the start.
     func reset() {
         bodies = initialBodies
         particles = initialParticles
+        hairVertices = initialHairVertices
+        for i in hairStrands.indices { hairStrands[i].info.w = 0 }
         stepIndex = 0
     }
 
@@ -330,12 +420,13 @@ final class PhysicsWorld {
         GPUPhysicsParams(gravity: SIMD4(gravity, PhysicsWorld.stepLength / Float(substeps)),
                          counts: SIMD4(UInt32(bodies.count), UInt32(statics.count), UInt32(PhysicsWorld.maxPairs), UInt32(buckets)),
                          grid: SIMD4(cellSize, PhysicsWorld.margin, PhysicsWorld.topSpeed, PhysicsWorld.stepLength),
-                         sleep: SIMD4(0.05, 0.08, 0.5, PhysicsWorld.cellSpeed),
+                         sleep: SIMD4(0.05, PhysicsWorld.sleepTurn, 0.5, PhysicsWorld.cellSpeed),
                          particles: SIMD4(UInt32(particles.count), UInt32(particleBuckets), UInt32(PhysicsWorld.maxNeighbours),
                                           UInt32(PhysicsWorld.maxColliders)),
                          particleGrid: SIMD4(particleCellSize, PhysicsWorld.particleSpeed, PhysicsWorld.clothDrag, PhysicsWorld.particleRest),
-                         cloth: SIMD4(UInt32(constraints.count), UInt32(colourStarts.count - 1), 0, 0),
-                         rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, 0.16))
+                         cloth: SIMD4(UInt32(constraints.count), UInt32(colourStarts.count - 1), UInt32(jointStarts.count - 1),
+                                      UInt32(ragdolls.count)),
+                         rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, PhysicsWorld.wakeTurn))
     }
 
     // MARK: - Time
@@ -409,5 +500,29 @@ final class PhysicsWorld {
         let shape = shapes[Int(bodies[i].info.x)]
         let q = PhysicsMath.qmul(rotation, PhysicsMath.qconj(shape.comRotation))
         return translate(position) * float4x4(PhysicsMath.simdQuat(q)) * translate(-PhysicsMath.xyz(shape.comPosition))
+    }
+}
+
+/// What a joint keeps (PhysicsWorld.addJoint): GPUPhysicsJoint.info.z.
+enum PhysicsJointKind: UInt32 {
+    case ball = 0, hinge
+}
+
+/// A joint's kind and limits (radians): a ball joint's swing cone (the most its two axes part) and its twist about
+/// them; a hinge's turn about its axis.
+struct PhysicsJoint {
+    var kind: PhysicsJointKind
+    var lo: Float
+    var hi: Float
+    var swing: Float = 0
+    /// How fast two joined bodies' relative turning fades by default (1/s): a ragdoll's limbs don't flail on for ever,
+    /// and a pile of them settles (24 ragdolls slept by 15 s at 6/s, by 27 s at 2/s).
+    static let damping: Float = 6
+
+    static func ball(swing: Float, twist: ClosedRange<Float>) -> PhysicsJoint {
+        PhysicsJoint(kind: .ball, lo: twist.lowerBound, hi: twist.upperBound, swing: swing)
+    }
+    static func hinge(_ range: ClosedRange<Float>) -> PhysicsJoint {
+        PhysicsJoint(kind: .hinge, lo: range.lowerBound, hi: range.upperBound)
     }
 }

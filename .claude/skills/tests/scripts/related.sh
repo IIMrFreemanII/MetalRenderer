@@ -44,7 +44,8 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Foliage.metal) add FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests PhysicsTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
@@ -62,7 +63,8 @@ if [[ $suites == " " ]]; then
           Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
           SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
-          Physics*.swift|Scene+Physics.swift) add PhysicsTests ;;
+          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift) add PhysicsTests RagdollTests HairTests ;;
+          HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;

@@ -23,6 +23,7 @@ using namespace metal::raytracing;
 #include "Shaders/Intersect.metal"         // Ray, Hit and the ray queries: Metal's intersector or the custom BVH traversal
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
+#include "Shaders/Hair.metal"              // strands: the hair BSDF (Chiang et al. 2016) and its lights
 #include "Shaders/Regir.metal"             // the light grid (ReGIR) and regirBuildKernel
 #include "Shaders/LightSampling.metal"     // light samples and RIS, octahedral mapping, light-visibility maps, view directions
 #include "Shaders/Fog.metal"               // volumetric fog: fogInject / fogIntegrate / fogReference

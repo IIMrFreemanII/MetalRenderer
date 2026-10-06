@@ -425,11 +425,14 @@ final class Scene {
         case .showcase: buildShowcase()
         case .shapes: buildShapes()
         case .physics: buildPhysics(settings.physics)
+        case .ragdolls: buildRagdolls(settings.physics)
+        case .hair: buildHair(settings.physics)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
         finishDeforming()
+        finishHair()
         physics?.finish()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
@@ -694,11 +697,12 @@ final class Scene {
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots, cloths). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
-        // voxel boxes on Metal's tracer. Bit 22: SDF_SHAPES, some instances are SDF shapes. (Shaders/Types.metal.)
+        // voxel boxes on Metal's tracer. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: HAIR_CURVES, some
+        // meshes are curves (Metal's tracer). (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
-            | (hasSDFShapes ? 0x0040_0000 : 0)
+            | (hasSDFShapes ? 0x0040_0000 : 0) | (hasCurves ? 0x0020_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -973,6 +977,54 @@ final class Scene {
         return i
     }
 
+    /// A curve mesh's segments and its control points' radii (`curveRadii`).
+    struct CurveMesh {
+        var segments: Int
+        var radii: Range<Int>
+    }
+    /// The meshes that are strands (hair), drawn as round Catmull-Rom curves by Metal's ray tracer. The custom one has
+    /// no curves and draws none of them: to everything that reads triangles they are meshes with none.
+    private(set) var curveMeshes: [Int: CurveMesh] = [:]
+    private(set) var curveRadii: [Float] = []
+    var hasCurves: Bool { !curveMeshes.isEmpty }
+    /// The hair's groups of drawn strands and their curve meshes (Scene+Hair.swift): once the meshes are done, each
+    /// group is told where its mesh's control points are (`finishHair`).
+    var hairMeshes: [(group: Int, mesh: Int)] = []
+    func hasCurveMesh(_ m: Int) -> Bool { curveMeshes[m] != nil }
+
+    /// Strands as curves: `points` control points, `perStrand` of them a strand (a Catmull-Rom curve passes through
+    /// all but its first and last), each with its radius (`radii`). The GPU rewrites them every frame (hair:
+    /// PhysicsGPU), within `bounds` whatever they do; `finishDeforming` puts last frame's after everything else. The
+    /// mesh's vertices start at its `vertexOffset`; its indices, from `firstIndex`, are each segment's first point
+    /// counted from there (`indexCount` stays 0: it has no triangles).
+    func addCurves(points: [SIMD3<Float>], perStrand: Int, radii: [Float], bounds: AABB) -> Int {
+        precondition(perStrand >= 4 && points.count % perStrand == 0 && radii.count == points.count, "whole strands of 4 points or more")
+        let first = positions.count
+        let firstIndex = indices.count
+        positions += points
+        normals += [SIMD3<Float>](repeating: SIMD3(0, 1, 0), count: points.count)
+        uvs += [SIMD2<Float>](repeating: .zero, count: points.count)
+        for s in 0..<(points.count / perStrand) {
+            for k in 0..<(perStrand - 3) { indices.append(UInt32(s * perStrand + k)) }
+        }
+        meshes.append(GPUMesh(firstIndex: UInt32(firstIndex), indexCount: 0, vertexOffset: UInt32(first)))
+        meshBounds.append((bounds.lo, bounds.hi))
+        let m = meshes.count - 1
+        curveMeshes[m] = CurveMesh(segments: indices.count - firstIndex, radii: curveRadii.count..<(curveRadii.count + radii.count))
+        curveRadii += radii
+        deforming.append((mesh: m, first: first, count: points.count))
+        return m
+    }
+
+    /// The hair's groups: where their meshes' control points are, and last frame's.
+    private func finishHair() {
+        guard let physics else { return }
+        for (g, m) in hairMeshes {
+            physics.hairGroups[g].mesh.x = meshes[m].vertexOffset
+            physics.hairGroups[g].mesh.y = meshes[m].prevOffset
+        }
+    }
+
     /// Once every mesh is in (after the crowd's): the deforming meshes' last-frame vertices, after everything, as the
     /// first frame's (the same as the current ones).
     private func finishDeforming() {
@@ -1230,6 +1282,13 @@ final class Scene {
     func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero, translucency: Float = 0, texture: UInt32 = .max) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1), params: SIMD4(0, 1, 0, translucency),
                                      textures: SIMD4(texture, .max, .max, .max)))
+        return materials.count - 1
+    }
+
+    /// A strand's (Hair.metal): its colour, the one it is seen to have (the pigment's absorption is fitted to it).
+    /// Marked by params.z < 0 (an emissive-mesh light's is > 0).
+    func addHairMaterial(color: SIMD3<Float>) -> Int {
+        materials.append(GPUMaterial(albedo: SIMD4<Float>(color, 0), emission: SIMD4<Float>(.zero, 1), params: SIMD4(0, 1, -1, 0)))
         return materials.count - 1
     }
 

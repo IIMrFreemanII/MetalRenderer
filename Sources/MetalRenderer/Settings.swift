@@ -258,6 +258,9 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // volumetric beams, mist, accent lights, particles, with bloom and depth of field
     case shapes             // SDF shapes (SDFShapes.swift): primitives, cuts and blends, a baked mesh, glowing shapes as lights
     case physics            // rigid SDF shapes (Physics.swift) poured into an arena: a ramp, a pile, a tower knocked over
+    case ragdolls           // `ragdolls` ragdolls (jointed bodies, Physics.swift) dropped down a staircase
+    case hair               // hair and fur (PhysicsHair.swift): furry bodies rolling down a ramp, a long-haired head
+                            // swinging, in a breeze; strands drawn as curves (Metal's ray tracer)
 
     var title: String {
         switch self {
@@ -281,9 +284,15 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .showcase: return "Showcase (one model)"
         case .shapes: return "SDF shapes"
         case .physics: return "Physics"
+        case .ragdolls: return "Ragdolls"
+        case .hair: return "Hair and fur"
         }
     }
 
+    /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
+    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair }
+    /// Scenes whose strands are curves, which only Metal's ray tracer draws: they switch to it where it has them.
+    var drawsCurves: Bool { self == .hair }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -384,11 +393,19 @@ struct PhysicsSettings: Equatable, Codable {
     var particles = 2048
     /// The cloth's vertices along a side (0: no cloth).
     var cloth = 36
+    /// Ragdolls dropped down the ragdoll scene's stairs (11 bodies each).
+    var ragdolls = 24
+    /// The hair scene: strands drawn around each simulated one (guide), and furry bodies dropped down its ramp.
+    var hair = 12
+    var furBodies = 6
 
     static let substepRange = 1...32
     static let bodyRange = 0...4096
     static let particleRange = 0...16384
     static let clothRange = 0...96
+    static let ragdollRange = 1...256
+    static let hairRange = 1...32
+    static let furBodyRange = 0...32
     static let gpuFrom = 64
 
     /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
@@ -522,7 +539,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -620,7 +637,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -780,7 +797,9 @@ struct RenderSettings: Equatable, Codable {
     /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
-        if scene.kind == .physics {
+        // The strands' scene traces with Metal's ray tracer where it has curves (the custom one draws none).
+        rayTracer = scene.kind.drawsCurves && Capabilities.current.curves ? .metal : defaults.rayTracer
+        if scene.kind.simulates {
             usePhysicsLook()
         } else if !giEnabled && !specular && renderScale == RenderSettings.physicsScale {
             giEnabled = defaults.giEnabled

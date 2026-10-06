@@ -4,7 +4,7 @@ import simd
 /// The CPU's step: the reference the GPU's (Shaders/Physics.metal) is checked against, and the backend for scenes with
 /// few bodies, where a GPU dispatch costs more than the work. Each stage is what a kernel does, over every body, in
 /// the same order. Contacts are solved a colour at a time (Gauss-Seidel): no two pairs of a colour share a body, so
-/// the GPU solves a colour's pairs at once and gets the same numbers.
+/// the GPU solves a colour's pairs at once and gets the same numbers. So are the joints, after the contacts.
 extension PhysicsWorld {
     func step() {
         let p = params
@@ -27,6 +27,7 @@ extension PhysicsWorld {
             solveVelocities(p)
         }
         settle(p, start)
+        stepHair(start)
         stepIndex += 1
     }
 
@@ -62,7 +63,7 @@ extension PhysicsWorld {
 
     /// Every body's partners: the static colliders it meets, then the bodies in the 27 cells around it whose spheres
     /// meet its own, nearest first (the lower first of equals), `maxPairs` at most: a crowded body drops its farthest
-    /// bodies, never what holds it up. (Keeping the lowest-numbered instead, a tower's middle blocks dropped a body
+    /// bodies, never what holds it up. Two bodies a joint joins aren't partners (they overlap where it is). (Keeping the lowest-numbered instead, a tower's middle blocks dropped a body
     /// dragged into them, which went through.)
     private func broadPhase(_ p: GPUPhysicsParams) {
         let size = p.grid.x
@@ -76,7 +77,7 @@ extension PhysicsWorld {
             for dz: Int32 in -1...1 {
                 for dy: Int32 in -1...1 {
                     for dx: Int32 in -1...1 {
-                        for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i {
+                        for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i && !PhysicsWorld.joined(b, i, bodies[j], j) {
                             let o = bodies[j]
                             let reach = r + PhysicsWorld.reach(o, p)
                             let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
@@ -92,10 +93,16 @@ extension PhysicsWorld {
         }
     }
 
-    /// A sleeping body wakes when something it touches moves faster than the wake speed or turn rate (above the
-    /// sleep ones: a neighbour settling down beside it doesn't).
+    /// A sleeping body wakes when something it touches moves faster than the wake speed, or turns its mass faster than
+    /// the wake turn (its turn rate x its radius of gyration about the turn, at most `gyration`), above the sleep ones: a neighbour settling
+    /// down beside it doesn't, nor a thin limb jittering about its length.
     @inline(__always) static func stirs(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Bool {
-        moves(b) && (length(PhysicsMath.xyz(b.velocity)) > p.rolling.z || length(PhysicsMath.xyz(b.angular)) > p.rolling.w)
+        guard moves(b) else { return false }
+        if length(PhysicsMath.xyz(b.velocity)) > p.rolling.z { return true }
+        let omega = PhysicsMath.xyz(b.angular), rate = length(omega)
+        guard rate > 1e-9 else { return false }
+        let w = turnWeight(b, omega / rate)
+        return w > 0 && rate * min(sqrt(b.position.w / w), gyration) > p.rolling.w
     }
 
     private func wake(_ p: GPUPhysicsParams) {
@@ -110,17 +117,33 @@ extension PhysicsWorld {
                 break
             }
         }
+        // A ragdoll wakes whole: if any of its bodies is awake (or held), the rest wake.
+        for r in ragdolls {
+            let range = Int(r.x)..<Int(r.x + r.y)
+            guard range.contains(where: { PhysicsWorld.moves(bodies[$0]) || grab.target.w > 0 && grab.body == UInt32($0) }) else { continue }
+            for i in range where bodies[i].info.y & PhysicsWorld.asleep != 0 {
+                bodies[i].info.y &= ~PhysicsWorld.asleep
+                bodies[i].prevPosition.w = 0
+            }
+        }
     }
 
     /// Each entry's owner: the lower body of two, or the body against a static. Another body's entry points at the
-    /// owner's (none if the owner dropped it: then neither has the pair).
+    /// owner's. A pair one of the two dropped (a crowded body keeps its nearest) neither has: the colours see a pair
+    /// only through both bodies' lists, and one the higher body didn't list took a colour beside its other pairs, and
+    /// two GPU threads moved that body at once (a dense pile's runs differed after a second).
     private func link() {
         let k = PhysicsWorld.maxPairs
         for i in bodies.indices {
             for n in 0..<Int(pairCounts[i]) {
                 let e = i * k + n, partner = pairs[e].partner
-                if partner & PhysicsWorld.staticBit != 0 || Int(partner) > i {
+                if partner & PhysicsWorld.staticBit != 0 {
                     pairs[e].link = UInt32(e)
+                    continue
+                }
+                if Int(partner) > i {
+                    let o = Int(partner)
+                    pairs[e].link = (0..<Int(pairCounts[o])).contains { pairs[o * k + $0].partner == UInt32(i) } ? UInt32(e) : PhysicsWorld.none
                     continue
                 }
                 let o = Int(partner)
@@ -351,9 +374,23 @@ extension PhysicsWorld {
         if dynamic { bodies[Int(code)] = b }
     }
 
-    /// The contacts' pushes, a colour of pairs at a time, then every moving body's velocities from how far it went.
+    /// The joints, then the contacts' pushes, a colour at a time, then every moving body's velocities from how far it went.
     private func solvePositions(_ p: GPUPhysicsParams) {
         let h = p.gravity.w
+        // The joints first, a colour at a time (twice: PhysicsWorld.jointIterations), then the contacts: static
+        // friction undoes what the substep slid a contact, the joints' pushes included. (Joints after the contacts
+        // slid a resting ragdoll's chest a little every substep, out of friction's reach: it crept and never slept.)
+        for _ in 0..<PhysicsWorld.jointIterations {
+            for c in 0..<(jointStarts.count - 1) {
+                for k in Int(jointStarts[c])..<Int(jointStarts[c + 1]) {
+                    let j = joints[k], ia = Int(j.info.x), ib = Int(j.info.y)
+                    var a = bodies[ia], b = bodies[ib]
+                    PhysicsWorld.solveJoint(j, &a, &b)
+                    bodies[ia] = a
+                    bodies[ib] = b
+                }
+            }
+        }
         for e in pairOrder {
             solvePair(Int(e)) { a, b, contact, ci in
                 let push = PhysicsWorld.contactPush(contact, a, b, h: h)
@@ -435,16 +472,128 @@ extension PhysicsWorld {
                 PhysicsWorld.kick(&b, -kick.impulse, kick.rb, -kick.twist)
             }
         }
+        for c in 0..<(jointStarts.count - 1) {
+            for k in Int(jointStarts[c])..<Int(jointStarts[c + 1]) {
+                let j = joints[k], ia = Int(j.info.x), ib = Int(j.info.y)
+                var a = bodies[ia], b = bodies[ib]
+                PhysicsWorld.dampJoint(j, &a, &b, h: p.gravity.w)
+                bodies[ia] = a
+                bodies[ib] = b
+            }
+        }
     }
 
-    /// Whether body `b` went slower than the sleep speed and turn rate this step, from `position` and `rotation` (where
-    /// its velocities say little: at rest on a few contacts they are what the last substep's kicks left, which the next
-    /// substep's pushes take back).
+    // MARK: Joints
+
+    /// Turns `a` by `correction` (an angle times an axis) and `b` by its opposite, shared by their inverse inertia
+    /// about the axis (an XPBD angular constraint of no compliance).
+    @inline(__always) static func swivel(_ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody, _ correction: SIMD3<Float>) {
+        let angle = length(correction)
+        guard angle > 1e-7 else { return }
+        let k = correction / angle
+        let w = turnWeight(a, k) + turnWeight(b, k)
+        guard w > 0 else { return }
+        let impulse = k * (angle / w)
+        if moves(a) { a.rotation = PhysicsMath.qturn(a.rotation, PhysicsMath.applyInvInertia(a.rotation, PhysicsMath.xyz(a.invInertia), impulse)) }
+        if moves(b) { b.rotation = PhysicsMath.qturn(b.rotation, -PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), impulse)) }
+    }
+
+    /// The turn of A about `n` that brings the angle from `n1` (A's) to `n2` (B's) about `n` back within [lo, hi].
+    @inline(__always) static func limitAngle(_ n: SIMD3<Float>, _ n1: SIMD3<Float>, _ n2: SIMD3<Float>, _ lo: Float, _ hi: Float) -> SIMD3<Float> {
+        let phi = atan2(dot(cross(n1, n2), n), dot(n1, n2))
+        return n * (phi - min(max(phi, lo), hi))
+    }
+
+    /// `v` less its part along unit `n`, as a unit vector (0 if nothing is left).
+    @inline(__always) static func across(_ v: SIMD3<Float>, _ n: SIMD3<Float>) -> SIMD3<Float> {
+        let u = v - n * dot(v, n)
+        let l = length(u)
+        return l > 1e-6 ? u / l : .zero
+    }
+
+    /// Joint `j` between `a` and `b` (Müller et al. 2020): the turn limits (a ball joint's swing cone and twist; a
+    /// hinge's axes together and its angle), then the anchors together.
+    @inline(__always) static func solveJoint(_ j: GPUPhysicsJoint, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody) {
+        guard moves(a) || moves(b) else { return }
+        let lo = j.axisA.w, hi = j.axisB.w
+        var axisA = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.axisA)), axisB = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.axisB))
+        let bend = cross(axisA, axisB), sine = length(bend)
+        if j.info.z == PhysicsJointKind.hinge.rawValue {
+            if sine > 1e-6 { swivel(&a, &b, bend / sine * atan2(sine, dot(axisA, axisB))) }
+            axisA = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.axisA))
+            let n1 = across(PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.referenceA)), axisA)
+            let n2 = across(PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.referenceB)), axisA)
+            swivel(&a, &b, limitAngle(axisA, n1, n2, lo, hi))
+        } else {
+            let swing = atan2(sine, dot(axisA, axisB))
+            if sine > 1e-6 && swing > j.referenceA.w { swivel(&a, &b, bend / sine * (swing - j.referenceA.w)) }
+            axisA = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.axisA))
+            axisB = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.axisB))
+            let mid = axisA + axisB, l = length(mid)
+            if l > 1e-6 {
+                let n = mid / l
+                let n1 = across(PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.referenceA)), n)
+                let n2 = across(PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.referenceB)), n)
+                swivel(&a, &b, limitAngle(n, n1, n2, lo, hi))
+            }
+        }
+        let ra = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.anchorA)), rb = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.anchorB))
+        let gap = (PhysicsMath.xyz(b.position) + rb) - (PhysicsMath.xyz(a.position) + ra)
+        let l = length(gap)
+        guard l > 1e-7 else { return }
+        let n = gap / l
+        let w = weight(a, ra, n) + weight(b, rb, n)
+        guard w > 0 else { return }
+        shove(&a, n * (l / w), ra)
+        shove(&b, -n * (l / w), rb)
+    }
+
+    /// Body `b`'s inverse inertia about axis `k` through the point at lever arm `r` (from its centre): what turning
+    /// it about a joint's anchor takes, its mass going round the anchor included (0 for one that doesn't move).
+    @inline(__always) static func anchorTurnWeight(_ b: GPUPhysicsBody, _ k: SIMD3<Float>, _ r: SIMD3<Float>) -> Float {
+        let w = turnWeight(b, k)
+        guard w > 0 else { return 0 }
+        return 1 / (1 / w + length_squared(cross(k, r)) / b.position.w)
+    }
+
+    /// Joint `j`'s damping: the two bodies' relative turning fades at its rate, each turned about the anchor (its
+    /// velocity with it) by an angular impulse shared by their inertia about it. (Slowing only their turning about
+    /// their centres hardly slowed a head swinging on its neck: the joint gave the turning back from how its centre
+    /// still went round the anchor.)
+    @inline(__always) static func dampJoint(_ j: GPUPhysicsJoint, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody, h: Float) {
+        let relative = PhysicsMath.xyz(b.angular) - PhysicsMath.xyz(a.angular)
+        let speed = length(relative)
+        guard speed > 1e-6 else { return }
+        let k = relative / speed
+        let ra = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.anchorA)), rb = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.anchorB))
+        let wa = anchorTurnWeight(a, k, ra), wb = anchorTurnWeight(b, k, rb)
+        guard wa + wb > 0 else { return }
+        let impulse = speed * min(j.referenceB.w * h, 1) / (wa + wb)
+        if wa > 0 {
+            let turn = k * (impulse * wa)
+            a.angular = SIMD4(PhysicsMath.xyz(a.angular) + turn, a.angular.w)
+            a.velocity = SIMD4(PhysicsMath.xyz(a.velocity) - cross(turn, ra), a.velocity.w)
+        }
+        if wb > 0 {
+            let turn = -k * (impulse * wb)
+            b.angular = SIMD4(PhysicsMath.xyz(b.angular) + turn, b.angular.w)
+            b.velocity = SIMD4(PhysicsMath.xyz(b.velocity) - cross(turn, rb), b.velocity.w)
+        }
+    }
+
+    /// Whether body `b` went slower than the sleep speed this step, and turned its mass slower than the sleep turn (its
+    /// turn x its radius of gyration about the turn's axis, at most `gyration`), from `position` and `rotation` (where its velocities say
+    /// little: at rest on a few contacts they are what the last substep's kicks left, which the next substep's pushes
+    /// take back).
     @inline(__always) static func still(_ b: GPUPhysicsBody, _ position: SIMD4<Float>, _ rotation: SIMD4<Float>,
                                         _ p: GPUPhysicsParams) -> Bool {
         let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(position))
-        let turned = 2 * length(PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(rotation))))
-        return moved < p.sleep.x * p.grid.w && turned < p.sleep.y * p.grid.w
+        let turn = PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(rotation)))
+        let sine = length(turn)
+        guard moved < p.sleep.x * p.grid.w else { return false }
+        guard sine > 1e-9 else { return true }
+        let w = turnWeight(b, turn / sine)
+        return w <= 0 || 2 * sine * min(sqrt(b.position.w / w), gyration) < p.sleep.y * p.grid.w
     }
 
     /// After the substeps: a body that has been slow for long enough falls asleep, once the bodies it touches (has
@@ -455,6 +604,7 @@ extension PhysicsWorld {
             bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
         }
         let k = PhysicsWorld.maxPairs, timers = bodies
+        var sleeps = [Bool](repeating: false, count: bodies.count)
         for i in bodies.indices where PhysicsWorld.moves(timers[i]) && timers[i].prevPosition.w > p.sleep.z {
             var settled = true
             for n in 0..<Int(pairCounts[i]) {
@@ -463,7 +613,14 @@ extension PhysicsWorld {
                 let o = timers[Int(partner)]
                 if PhysicsWorld.moves(o) && o.prevPosition.w <= p.sleep.z / 2 { settled = false; break }
             }
-            guard settled else { continue }
+            sleeps[i] = settled
+        }
+        // A ragdoll sleeps whole: while any of its moving bodies can't, none does (one asleep would hold its joints).
+        for r in ragdolls {
+            let range = Int(r.x)..<Int(r.x + r.y)
+            if range.contains(where: { PhysicsWorld.moves(timers[$0]) && !sleeps[$0] }) { for i in range { sleeps[i] = false } }
+        }
+        for i in bodies.indices where sleeps[i] {
             bodies[i].info.y |= PhysicsWorld.asleep
             bodies[i].velocity = SIMD4(.zero, timers[i].velocity.w)
             bodies[i].angular = SIMD4(.zero, timers[i].angular.w)

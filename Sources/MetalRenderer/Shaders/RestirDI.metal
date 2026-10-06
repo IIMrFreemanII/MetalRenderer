@@ -56,10 +56,13 @@ inline bool restirSurface(uint2 q, constant Uniforms& u, texture2d<float, access
     float4 nd = normalDepth.read(q);
     sp.n = nd.xyz;
     depth = nd.w;
-    sp.ng = geoNormal.read(q).xyz;
+    float4 g = geoNormal.read(q);
+    sp.ng = g.xyz;
     sp.p = pos.xyz + sp.ng * RAY_EPSILON;
     sp.v = normalize(u.camPos.xyz - pos.xyz);
-    sp.albedo = max(albedo.read(q).rgb, float3(0.05f));
+    float4 a = albedo.read(q);
+    sp.albedo = max(a.rgb, float3(0.05f));
+    sp.hair = hairFromGBuffer(a, g.w, sp.n, sp.v);
     sp.f0 = float3(0.0f);
     sp.roughness = 1.0f;
     sp.specular = false;
@@ -152,7 +155,7 @@ kernel void restirTemporalKernel(constant Uniforms&               u          [[b
         r.M = 1.0f;
         r.W = target > 0.0f ? wSum / target : 0.0f;
         if (r.element != ELEMENT_NONE && passOn(rp.config.z, RESTIR_VISIBILITY)) {
-            if (isVisible(sp.p, point, accel)) r.visible = true; else r.W = 0.0f;
+            if (isVisible(shadowOrigin(sp, point), point, accel)) r.visible = true; else r.W = 0.0f;
         }
         if (q.x >= 0) {
             Reservoir h = unpackReservoir(history.read(uint2(q), chain));
@@ -282,7 +285,7 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
             if (r.element != ELEMENT_NONE && r.W > 0.0f) {
                 LightSampleEval e = evalLightSample(r.element, r.uv, sp, s, lights, tris, false, true);
                 float b = 0.0f;
-                float v = r.visible || isVisibleBlocker(sp.p, e.target, accel, b) ? 1.0f : 0.0f;
+                float v = r.visible || isVisibleBlocker(shadowOrigin(sp, e.target), e.target, accel, b) ? 1.0f : 0.0f;
                 if (b > 0.0f) {
                     penumbra += (r.element & ELEMENT_TYPE) != ELEMENT_TRIANGLE ? penumbraWidth(lights[r.element & ELEMENT_INDEX], sp.p, b)
                                                                                : max(0.1f * b, 1e-4f);

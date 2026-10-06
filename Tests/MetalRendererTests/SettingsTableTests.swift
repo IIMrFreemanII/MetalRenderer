@@ -197,6 +197,28 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(started.scene.kind, .physics)
         XCTAssertFalse(started.giEnabled)
         XCTAssertEqual(started.renderScale, RenderSettings.physicsScale)
+        // The ragdoll scene shares it, and its count is a scene key.
+        var ragdolls = defaults
+        SettingsEnv.applyAll(to: &ragdolls, defaults: defaults, from: ["METALRENDERER_SCENE": "ragdolls,ragdolls=40"])
+        XCTAssertEqual(ragdolls.scene.kind, .ragdolls)
+        XCTAssertEqual(ragdolls.scene.physics.ragdolls, 40)
+        XCTAssertFalse(ragdolls.specular)
+        XCTAssertEqual(ragdolls.renderScale, RenderSettings.physicsScale)
+        // The hair scene too, and it traces with Metal's ray tracer (the custom one draws no curves), which
+        // METALRENDERER_RT can still change; leaving it, the default tracer is back.
+        var hair = defaults
+        SettingsEnv.applyAll(to: &hair, defaults: defaults, from: ["METALRENDERER_SCENE": "hair,hair=6,fur=3"])
+        XCTAssertEqual(hair.scene.kind, .hair)
+        XCTAssertEqual(hair.scene.physics.hair, 6)
+        XCTAssertEqual(hair.scene.physics.furBodies, 3)
+        XCTAssertEqual(hair.rayTracer, .metal)
+        XCTAssertEqual(hair.renderScale, RenderSettings.physicsScale)
+        var custom = defaults
+        SettingsEnv.applyAll(to: &custom, defaults: defaults, from: ["METALRENDERER_SCENE": "hair", "METALRENDERER_RT": "custom"])
+        XCTAssertEqual(custom.rayTracer, .custom)
+        hair.scene.kind = .physics
+        hair.applySceneDefaults(from: defaults)
+        XCTAssertEqual(hair.rayTracer, defaults.rayTracer)
     }
 
     func testBadInputIsSkipped() {

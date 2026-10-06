@@ -69,13 +69,29 @@ final class PhysicsGPU {
     /// The cloths' constraints by colour, and where each colour starts.
     private let constraints: MTLBuffer
     private let colourStarts: MTLBuffer
+    /// The joints by colour, where each colour starts, and each ragdoll's bodies (first, count).
+    private let joints: MTLBuffer
+    private let jointStarts: MTLBuffer
+    private let ragdolls: MTLBuffer
     /// The cloths' meshes (MSL PhysicsCloth), if there are any; and when the CPU steps them, the particles as it left
     /// them, a buffer per frame slot (`upload`).
     private let clothTable: MTLBuffer?
     private let uploads: [MTLBuffer]
-    /// It steps the world; otherwise it only draws the CPU's cloths.
+    /// The hair (PhysicsHair.swift): its strands, their vertices and their start, what its kernel is told, its groups
+    /// of drawn strands (one MSL PhysicsHairGroup each, bound at its offset), its clock; and when the CPU steps it, its
+    /// vertices and the bodies as the CPU left them, per frame slot (what the drawn strands are made from).
+    private let hairStrands: MTLBuffer
+    private let hairVertices: MTLBuffer
+    private let initialHairVertices: MTLBuffer
+    private let hairParams: MTLBuffer
+    private let hairGroups: MTLBuffer
+    private let hairClock: MTLBuffer
+    private let hairUploads: [(vertices: MTLBuffer, bodies: MTLBuffer)]
+    private let strandCount: Int
+    /// It steps the world; otherwise it only draws the CPU's cloths and hair.
     let simulates: Bool
     var hasCloth: Bool { clothTable != nil }
+    var hasHair: Bool { !world.hairGroups.isEmpty }
     /// The scene's SDF shapes (SDFBuffers.scene) and what it points at, for the narrow phase.
     private let sdfScene: MTLBuffer
     private let sdfResources: [MTLBuffer]
@@ -141,7 +157,20 @@ final class PhysicsGPU {
         uploads = simulates || world.cloths.isEmpty ? [] : try (0..<slots).map { try buffer(world.initialParticles, "physicsUpload\($0)") }
         constraints = try buffer(world.constraints, "physicsConstraints")
         colourStarts = try buffer(world.colourStarts, "physicsColourStarts")
+        joints = try buffer(world.joints, "physicsJoints")
+        jointStarts = try buffer(world.jointStarts, "physicsJointStarts")
+        ragdolls = try buffer(world.ragdolls, "physicsRagdolls")
         lastParticle = try buffer(world.initialParticles.map { SIMD4(PhysicsMath.xyz($0.position), 0) }, "physicsLastParticle")
+        strandCount = world.hairStrands.count
+        hairStrands = try buffer(world.hairStrands, "physicsHairStrands")
+        hairVertices = try buffer(world.initialHairVertices, "physicsHairVertices")
+        initialHairVertices = try buffer(world.initialHairVertices, "physicsInitialHairVertices")
+        hairParams = try buffer([world.hairParams], "physicsHairParams")
+        hairGroups = try buffer(world.hairGroups, "physicsHairGroups")
+        hairClock = try buffer([Float(0)], "physicsHairClock")
+        hairUploads = simulates || world.hairGroups.isEmpty ? [] : try (0..<slots).map {
+            (try buffer(world.initialHairVertices, "physicsHairUpload\($0)"), try buffer(world.initialBodies, "physicsBodyUpload\($0)"))
+        }
         self.sdfScene = sdfScene
         self.sdfResources = sdfResources
     }
@@ -169,6 +198,16 @@ final class PhysicsGPU {
         enc.setBuffer(particles[0], offset: 0, index: 6)
         enc.setBuffer(lastParticle, offset: 0, index: 7)
         dispatch(enc, pipelines[.physicsReset], max(count, particleCount))
+        guard strandCount > 0 else { return }
+        var vertexCount = UInt32(world.initialHairVertices.count)
+        enc.setComputePipelineState(pipelines[.physicsHairReset])
+        enc.setBuffer(hairParams, offset: 0, index: 0)
+        enc.setBuffer(initialHairVertices, offset: 0, index: 1)
+        enc.setBuffer(hairVertices, offset: 0, index: 2)
+        enc.setBuffer(hairStrands, offset: 0, index: 3)
+        enc.setBuffer(hairClock, offset: 0, index: 4)
+        enc.setBytes(&vertexCount, length: 4, index: 5)
+        dispatch(enc, pipelines[.physicsHairReset], max(Int(vertexCount), strandCount))
     }
 
     /// The body held for slot `slot`'s steps (the world's `grab`), written once the slot's last frame is done.
@@ -232,7 +271,52 @@ final class PhysicsGPU {
                 encodeNarrow(enc, pipelines: pipelines, group: g)
                 encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
             }
+            encodeHair(enc, pipelines: pipelines)
         }
+    }
+
+    /// The strands' step, after the bodies' (a thread a strand), then the clock a step on.
+    private func encodeHair(_ enc: ComputePass, pipelines: Pipelines) {
+        guard strandCount > 0 else { return }
+        enc.setComputePipelineState(pipelines[.physicsHair])
+        enc.setBuffer(params, offset: 0, index: 0)
+        enc.setBuffer(hairParams, offset: 0, index: 1)
+        enc.setBuffer(hairStrands, offset: 0, index: 2)
+        enc.setBuffer(hairVertices, offset: 0, index: 3)
+        enc.setBuffer(bodies, offset: 0, index: 4)
+        enc.setBuffer(start, offset: 0, index: 5)
+        enc.setBuffer(statics, offset: 0, index: 6)
+        enc.setBuffer(staticBounds, offset: 0, index: 7)
+        enc.setBuffer(shapes, offset: 0, index: 8)
+        enc.setBuffer(samples, offset: 0, index: 9)
+        enc.setBuffer(sdfScene, offset: 0, index: 10)
+        enc.setBuffer(hairClock, offset: 0, index: 11)
+        dispatch(enc, pipelines[.physicsHair], strandCount)
+        enc.setComputePipelineState(pipelines[.physicsHairTick])
+        enc.setBuffer(hairParams, offset: 0, index: 0)
+        enc.setBuffer(hairClock, offset: 0, index: 1)
+        dispatch(enc, pipelines[.physicsHairTick], 1)
+        enc.setBuffer(params, offset: 0, index: 0)
+    }
+
+    /// The drawn strands' control points (and last frame's) into the scene's vertex buffer, ahead of the refits.
+    func encodeHairCurves(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer) {
+        guard hasHair else { return }
+        enc.setComputePipelineState(pipelines[.physicsHairCurves])
+        enc.setBuffer(hairStrands, offset: 0, index: 1)
+        enc.setBuffer(simulates ? hairVertices : hairUploads[slot].vertices, offset: 0, index: 2)
+        enc.setBuffer(simulates ? bodies : hairUploads[slot].bodies, offset: 0, index: 3)
+        enc.setBuffer(positions, offset: 0, index: 4)
+        for (g, group) in world.hairGroups.enumerated() {
+            enc.setBuffer(hairGroups, offset: g * MemoryLayout<GPUHairGroup>.stride, index: 0)
+            dispatch(enc, pipelines[.physicsHairCurves], Int(group.counts.y * group.counts.z))
+        }
+    }
+
+    /// The hair's vertices as the GPU has them (tests).
+    func readHairVertices() -> [GPUHairVertex] {
+        let n = world.initialHairVertices.count
+        return Array(UnsafeBufferPointer(start: hairVertices.contents().bindMemory(to: GPUHairVertex.self, capacity: n), count: n))
     }
 
     /// Every owned entry's contacts, where the bodies are now (before `group`; after the first, those of pairs that
@@ -282,6 +366,9 @@ final class PhysicsGPU {
         enc.setBuffer(sdfScene, offset: 0, index: 20)
         enc.setBuffer(constraints, offset: 0, index: 21)
         enc.setBuffer(colourStarts, offset: 0, index: 22)
+        enc.setBuffer(joints, offset: 0, index: 25)
+        enc.setBuffer(jointStarts, offset: 0, index: 26)
+        enc.setBuffer(ragdolls, offset: 0, index: 27)
         let lanes = substeps.threadExecutionWidth
         let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
         enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
@@ -314,8 +401,15 @@ final class PhysicsGPU {
 
     /// The CPU's particles for slot `slot`'s frame (when the CPU steps them): what the cloths are drawn from.
     func upload(slot: Int) {
-        guard !uploads.isEmpty else { return }
-        world.particles.withUnsafeBytes { uploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        if !uploads.isEmpty {
+            world.particles.withUnsafeBytes { uploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        }
+        if !hairUploads.isEmpty {
+            world.hairVertices.withUnsafeBytes { hairUploads[slot].vertices.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            world.bodies.withUnsafeBytes {
+                if !$0.isEmpty { hairUploads[slot].bodies.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+        }
     }
 
     /// The cloths' vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.

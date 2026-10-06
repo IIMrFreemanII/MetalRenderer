@@ -25,6 +25,8 @@ constant uint HIT_VOXEL   = 0xFFFFFFFEu;   // Hit.part: a voxel of a far plant's
 constant uint HIT_SDF     = 0xFFFFFFFDu;   // Hit.part: an SDF shape (sdfMarch); `primitive` is then the material
                                            // offset there, barycentrics the normal (instance space, sdfOctEncode;
                                            // intersectClosest only)
+constant uint HIT_CURVE   = 0xFFFFFFFCu;   // Hit.part: a strand's curve (HAIR_CURVES); `primitive` is then its segment,
+                                           // barycentrics.x the curve's parameter along it
 
 struct Hit {
     bool   hit;
@@ -200,78 +202,174 @@ inline bool boxCandidate(thread Q& q, Ray r, bool normal, thread Hit& v) {
     return true;
 }
 
-Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
-    if (QUERY_LOOP) {
-        intersection_query<triangle_data, instancing> q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
-        Hit v = voxelMiss(r);
-        while (q.next()) boxCandidate(q, r, true, v);
-        // The nearer of the box's hit and the query's triangle (a box's is only ever kept in front of the triangle
-        // committed by then, but a nearer triangle may have come after it).
-        bool triangle = q.get_committed_intersection_type() == intersection_type::triangle;
-        if (v.hit && !(triangle && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL or HIT_SDF
-        Hit h;
-        h.hit = triangle;
-        h.distance = triangle ? q.get_committed_distance() : INFINITY;
-        h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(0.0f);
-        h.instance = TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id();
-        h.primitive = q.get_committed_primitive_id();
-        h.cluster = HIT_NO_CLUSTER;
-        h.part = HIT_NO_PART;
-        return h;
-    }
-    intersector<triangle_data, instancing> isect;
-    isect.assume_geometry_type(geometry_type::triangle);
-    isect.force_opacity(forced_opacity::opaque);
-    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
+// HAIR_CURVES: the queries meet the strands' curves too (round Catmull-Rom segments of 4 control points, opaque),
+// which only queries with curve_data may. A curve's hit is HIT_CURVE with the curve's parameter in barycentrics.x
+// (traceSurface finds the point there). The overloads pick out the queries that have them.
+#if HAS_CURVES
+inline bool isCurveHit(intersection_type t) { return t == intersection_type::curve; }
+template <typename Q> inline float committedCurve(thread Q& q) { return 0.0f; }
+inline float committedCurve(thread intersection_query<triangle_data, curve_data, instancing>& q) { return q.get_committed_curve_parameter(); }
+template <typename R> inline float resultCurve(thread const R& res) { return 0.0f; }
+inline float resultCurve(thread const intersection_result<triangle_data, curve_data, instancing>& res) { return res.curve_parameter; }
+inline void assumeCurves(thread intersection_params& p) {
+    p.assume_curve_type(curve_type::round);
+    p.assume_curve_basis(curve_basis::catmull_rom);
+    p.assume_curve_control_point_count(4);
+}
+template <typename I> inline void assumeCurves(thread I& isect) {
+    isect.assume_curve_type(curve_type::round);
+    isect.assume_curve_basis(curve_basis::catmull_rom);
+    isect.assume_curve_control_point_count(4);
+}
+#else
+inline bool isCurveHit(intersection_type t) { return false; }
+template <typename Q> inline float committedCurve(thread Q& q) { return 0.0f; }
+template <typename R> inline float resultCurve(thread const R& res) { return 0.0f; }
+#endif
+
+// What a query is told it meets: triangles, the boxes of its loop (`boxes`), and the curves.
+inline geometry_type queryGeometry(bool boxes) {
+    geometry_type g = boxes ? geometry_type::triangle | geometry_type::bounding_box : geometry_type::triangle;
+#if HAS_CURVES
+    if (HAIR_CURVES) g = g | geometry_type::curve;
+#endif
+    return g;
+}
+
+inline intersection_params queryParams(bool any) {
+    intersection_params p = voxelParams(any);
+    p.assume_geometry_type(queryGeometry(true));
+#if HAS_CURVES
+    if (HAIR_CURVES) assumeCurves(p);
+#endif
+    return p;
+}
+
+template <typename Q>
+inline Hit queryClosest(Ray r, uint mask, SCENE_ACCEL accel) {
+    Q q;
+    q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), queryParams(false));
+    Hit v = voxelMiss(r);
+    while (q.next()) boxCandidate(q, r, true, v);
+    // The nearer of the box's hit and the query's triangle or curve (a box's is only ever kept in front of what was
+    // committed by then, but a nearer one may have come after it).
+    intersection_type type = q.get_committed_intersection_type();
+    bool triangle = type == intersection_type::triangle, curve = isCurveHit(type);
+    if (v.hit && !((triangle || curve) && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL or HIT_SDF
     Hit h;
-    h.hit = res.type == intersection_type::triangle;
-    h.distance = res.distance;
-    h.barycentrics = res.triangle_barycentric_coord;
-    h.instance = TILED ? res.user_instance_id : res.instance_id;   // TILED: its id (SceneBuffers' descriptors)
-    h.primitive = res.primitive_id;
+    h.hit = triangle || curve;
+    h.distance = h.hit ? q.get_committed_distance() : INFINITY;
+    h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(curve ? committedCurve(q) : 0.0f, 0.0f);
+    h.instance = TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id();
+    h.primitive = q.get_committed_primitive_id();
     h.cluster = HIT_NO_CLUSTER;
-    h.part = HIT_NO_PART;
+    h.part = curve ? HIT_CURVE : HIT_NO_PART;
     return h;
 }
 
-// Closest hit distance only (INFINITY if none).
-float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
-    if (QUERY_LOOP) {
-        intersection_query<instancing> q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
-        Hit v = voxelMiss(r);
-        while (q.next()) boxCandidate(q, r, false, v);
-        float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
-        return v.hit ? min(v.distance, t) : t;
+template <typename I>
+inline Hit intersectorClosest(thread I& isect, Ray r, uint mask, SCENE_ACCEL accel) {
+    isect.force_opacity(forced_opacity::opaque);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
+    bool curve = isCurveHit(res.type);
+    Hit h;
+    h.hit = res.type == intersection_type::triangle || curve;
+    h.distance = res.distance;
+    h.barycentrics = curve ? float2(resultCurve(res), 0.0f) : res.triangle_barycentric_coord;
+    h.instance = TILED ? res.user_instance_id : res.instance_id;   // TILED: its id (SceneBuffers' descriptors)
+    h.primitive = res.primitive_id;
+    h.cluster = HIT_NO_CLUSTER;
+    h.part = curve ? HIT_CURVE : HIT_NO_PART;
+    return h;
+}
+
+Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
+#if HAS_CURVES
+    if (HAIR_CURVES) {
+        if (QUERY_LOOP) return queryClosest<intersection_query<triangle_data, curve_data, instancing>>(r, mask, accel);
+        intersector<triangle_data, curve_data, instancing> isect;
+        isect.assume_geometry_type(queryGeometry(false));
+        assumeCurves(isect);
+        return intersectorClosest(isect, r, mask, accel);
     }
-    intersector<instancing> isect;   // no triangle_data: barycentrics aren't needed
+#endif
+    if (QUERY_LOOP) return queryClosest<intersection_query<triangle_data, instancing>>(r, mask, accel);
+    intersector<triangle_data, instancing> isect;
     isect.assume_geometry_type(geometry_type::triangle);
+    return intersectorClosest(isect, r, mask, accel);
+}
+
+template <typename Q>
+inline float queryDistance(Ray r, uint mask, SCENE_ACCEL accel) {
+    Q q;
+    q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), queryParams(false));
+    Hit v = voxelMiss(r);
+    while (q.next()) boxCandidate(q, r, false, v);
+    float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
+    return v.hit ? min(v.distance, t) : t;
+}
+
+template <typename I>
+inline float intersectorDistance(thread I& isect, Ray r, uint mask, SCENE_ACCEL accel) {
     isect.force_opacity(forced_opacity::opaque);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
     return res.type == intersection_type::none ? INFINITY : res.distance;
 }
 
-// Any hit (shadow rays): true if something is in the way; `t` = its distance.
-bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
-    if (QUERY_LOOP) {
-        intersection_query<instancing> q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(true));
-        Hit v = voxelMiss(r);
-        while (q.next()) {
-            if (boxCandidate(q, r, false, v)) { t = v.distance; return true; }   // any hit will do
-        }
-        bool hit = q.get_committed_intersection_type() != intersection_type::none;
-        t = hit ? q.get_committed_distance() : r.tmax;
-        return hit;
+// Closest hit distance only (INFINITY if none).
+float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
+#if HAS_CURVES
+    if (HAIR_CURVES) {
+        if (QUERY_LOOP) return queryDistance<intersection_query<curve_data, instancing>>(r, mask, accel);
+        intersector<curve_data, instancing> isect;
+        isect.assume_geometry_type(queryGeometry(false));
+        assumeCurves(isect);
+        return intersectorDistance(isect, r, mask, accel);
     }
-    intersector<instancing> isect;
+#endif
+    if (QUERY_LOOP) return queryDistance<intersection_query<instancing>>(r, mask, accel);
+    intersector<instancing> isect;   // no triangle_data: barycentrics aren't needed
     isect.assume_geometry_type(geometry_type::triangle);
+    return intersectorDistance(isect, r, mask, accel);
+}
+
+template <typename Q>
+inline bool queryAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
+    Q q;
+    q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), queryParams(true));
+    Hit v = voxelMiss(r);
+    while (q.next()) {
+        if (boxCandidate(q, r, false, v)) { t = v.distance; return true; }   // any hit will do
+    }
+    bool hit = q.get_committed_intersection_type() != intersection_type::none;
+    t = hit ? q.get_committed_distance() : r.tmax;
+    return hit;
+}
+
+template <typename I>
+inline bool intersectorAny(thread I& isect, Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
     isect.force_opacity(forced_opacity::opaque);
     isect.accept_any_intersection(true);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), accel, mask);
     t = res.distance;
     return res.type != intersection_type::none;
+}
+
+// Any hit (shadow rays): true if something is in the way; `t` = its distance.
+bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
+#if HAS_CURVES
+    if (HAIR_CURVES) {
+        if (QUERY_LOOP) return queryAny<intersection_query<curve_data, instancing>>(r, mask, accel, t);
+        intersector<curve_data, instancing> isect;
+        isect.assume_geometry_type(queryGeometry(false));
+        assumeCurves(isect);
+        return intersectorAny(isect, r, mask, accel, t);
+    }
+#endif
+    if (QUERY_LOOP) return queryAny<intersection_query<instancing>>(r, mask, accel, t);
+    intersector<instancing> isect;
+    isect.assume_geometry_type(geometry_type::triangle);
+    return intersectorAny(isect, r, mask, accel, t);
 }
 
 #else

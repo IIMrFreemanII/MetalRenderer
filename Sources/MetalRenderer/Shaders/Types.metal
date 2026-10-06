@@ -184,6 +184,14 @@ constant bool VOXELS = VOXEL_BOXES;
 // Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace: the
 // custom tracer where it meets such an instance, Metal's in its intersection queries' loop (their boxes).
 constant bool SDF_SHAPES = (LIGHT_SPEC & 0x00400000u) != 0;
+// Bit 21 = HAIR_CURVES: some meshes are strands, round Catmull-Rom curves (Scene.addCurves) that Metal's ray queries
+// meet (MSL 3.1 and later). The custom tracer has no curves: it never meets them.
+#if CUSTOM_RT || __METAL_VERSION__ < 310
+constant bool HAIR_CURVES = false;
+#else
+#define HAS_CURVES 1
+constant bool HAIR_CURVES = (LIGHT_SPEC & 0x00200000u) != 0;
+#endif
 constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
 struct InstanceBlockRef { device const InstanceData* records; };
 inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {

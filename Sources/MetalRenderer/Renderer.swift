@@ -836,8 +836,8 @@ final class Renderer: NSObject {
         }
         // The physics on the GPU, or only its cloths' meshes when the CPU steps it (they are drawn from the GPU's buffers).
         if let physics = scene.physics {
-            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count)
-            if onGPU || !physics.cloths.isEmpty {
+            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count)
+            if onGPU || !physics.cloths.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
                                             clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
@@ -2126,7 +2126,8 @@ final class Renderer: NSObject {
                                       descriptorStride: instanceDescriptorStride)
             }
             physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
-            deformed = physicsGPU.hasCloth
+            physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
+            deformed = physicsGPU.hasCloth || physicsGPU.hasHair
             passes.endCompute()
         }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
@@ -2622,7 +2623,7 @@ final class Renderer: NSObject {
                 enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
                                   t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
-                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
+                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur], t.albedo])
                 dispatch(enc, .manyLights, width: size.width, height: size.height)
             })
         }
@@ -2632,7 +2633,7 @@ final class Renderer: NSObject {
                 var addToDirect: UInt32 = shadowDenoiser ? 0 : 1
                 bind(enc, .meshLights, uniforms, sceneSlot: slot)
                 enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect, t.albedo])
                 dispatch(enc, .meshLights, width: size.width, height: size.height)
             })
         }

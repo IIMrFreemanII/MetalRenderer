@@ -476,7 +476,7 @@ final class CustomRayTracer {
         // The deforming meshes (the crowd's pose slots, cloths: those with last frame's vertices) in runs of
         // consecutive meshes, each run's trees refitted by one dispatch.
         var runs: [ClosedRange<Int>] = []
-        for (m, mesh) in scene.meshes.enumerated() where mesh.prevOffset != 0 {
+        for (m, mesh) in scene.meshes.enumerated() where mesh.prevOffset != 0 && !scene.hasCurveMesh(m) {   // (no curves here)
             if let last = runs.last, last.upperBound == m - 1 { runs[runs.count - 1] = last.lowerBound...m } else { runs.append(m...m) }
         }
         if let crowd = scene.crowd, let first = crowd.slots.map(\.mesh).min(), let last = crowd.slots.map(\.mesh).max() {

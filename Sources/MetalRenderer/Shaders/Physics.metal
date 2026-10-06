@@ -15,6 +15,7 @@ constant uint PHYS_SDF = 0, PHYS_SPHERE = 1, PHYS_CAPSULE = 2, PHYS_BOX = 3, PHY
 constant uint PHYS_REFINE_STEPS = 6;
 constant float PHYS_GRADIENT_STEP = 1e-3f;
 constant float PHYS_PUSH_SPEED = 3.0f;              // PhysicsWorld.pushSpeed
+constant float PHYS_GYRATION = 0.15f;               // PhysicsWorld.gyration
 
 struct PhysicsBody {
     float4 position;       // centre of mass; w = inverse mass
@@ -24,9 +25,22 @@ struct PhysicsBody {
     float4 prevPosition;   // w = how long it has been still
     float4 prevRotation;
     float4 invInertia;     // w = bounding radius
-    uint4  info;           // x = shape, y = flags, z = instance
+    uint4  info;           // x = shape, y = flags, z = instance, w = the body a joint hangs it from + 1 (0: none)
 };
 static_assert(sizeof(PhysicsBody) == 128, "PhysicsBody: GPUPhysicsBody");
+
+// A joint between two bodies: GPUPhysicsJoint (PhysicsCPU.solveJoint).
+struct PhysicsJoint {
+    float4 anchorA, anchorB;
+    float4 axisA;          // w = lo
+    float4 axisB;          // w = hi
+    float4 referenceA;     // w = a ball joint's swing
+    float4 referenceB;     // w = damping
+    uint4  info;           // x = A, y = B, z = kind
+};
+static_assert(sizeof(PhysicsJoint) == 112, "PhysicsJoint: GPUPhysicsJoint");
+constant uint PHYS_HINGE = 1;   // PhysicsJointKind.hinge
+constant uint PHYS_JOINT_ITERATIONS = 2;   // PhysicsWorld.jointIterations
 
 struct PhysicsShape {
     float4 comPosition;    // w = bounding radius
@@ -59,7 +73,7 @@ struct PhysicsParams {
     float4 sleep;          // still speed, still turn rate, time to sleep, cell speed
     uint4  particles;      // particles, their hash buckets, neighbours each, colliders each
     float4 particleGrid;   // their cell size, the speed their reach allows for, a cloth's air drag, rest speed
-    uint4  cloth;          // constraints, their colours
+    uint4  cloth;          // constraints, their colours, the joints' colours, ragdolls
     float4 rolling;        // rolling resistance, spinning resistance, wake speed, wake turn rate
 };
 static_assert(sizeof(PhysicsParams) == 128, "PhysicsParams: GPUPhysicsParams");
@@ -431,6 +445,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                 for (uint j = heads[physHash(c + int3(dx, dy, dz), p.counts.w)]; j != PHYS_NONE; j = next[j]) {
                     if (j == i) continue;
                     PhysicsBody o = bodies[j];
+                    if (b.info.w == j + 1 || o.info.w == i + 1) continue;   // joined: PhysicsWorld.joined
                     float reach = r + physReach(o, p);
                     float d2 = physDistance2(o.position.xyz, x);
                     if (d2 < reach * reach) physKeepNearest(d2s, ids, count, d2, j);
@@ -449,7 +464,13 @@ inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y &
 
 // PhysicsCPU.stirs: body b moves fast enough to wake what it touches.
 inline bool physStirs(PhysicsBody b, constant PhysicsParams& p) {
-    return physMoves(b) && (length(b.velocity.xyz) > p.rolling.z || length(b.angular.xyz) > p.rolling.w);
+    if (!physMoves(b)) return false;
+    if (length(b.velocity.xyz) > p.rolling.z) return true;
+    float rate = length(b.angular.xyz);
+    if (!(rate > 1e-9f)) return false;
+    float3 k = b.angular.xyz / rate;
+    float w = dot(k, physInvInertia(b.rotation, b.invInertia.xyz, k));   // physTurnWeight, for a body that moves
+    return w > 0.0f && rate * min(sqrt(b.position.w / w), PHYS_GYRATION) > p.rolling.w;
 }
 
 // Each entry's owner (PhysicsCPU.link), and whether the body wakes (PhysicsCPU.wake): something it touches stirs.
@@ -465,7 +486,15 @@ kernel void physicsLinkKernel(constant PhysicsParams&   p      [[buffer(0)]],
     for (uint n = 0; n < counts[i]; ++n) {
         uint e = i * PHYS_PAIRS + n, partner = pairs[e].partner;
         if (asleep && !wakes && (partner & PHYS_STATIC) == 0) wakes = physStirs(bodies[partner], p);
-        if ((partner & PHYS_STATIC) != 0 || partner > i) { pairs[e].link = e; continue; }
+        if ((partner & PHYS_STATIC) != 0) { pairs[e].link = e; continue; }
+        if (partner > i) {   // the owner keeps it only if the partner has it too (PhysicsCPU.link)
+            uint link = PHYS_NONE;
+            for (uint m = 0; m < counts[partner]; ++m) {
+                if (pairs[partner * PHYS_PAIRS + m].partner == i) { link = e; break; }
+            }
+            pairs[e].link = link;
+            continue;
+        }
         uint link = PHYS_NONE;
         for (uint m = 0; m < counts[partner]; ++m) {
             if (pairs[partner * PHYS_PAIRS + m].partner == i) { link = partner * PHYS_PAIRS + m; break; }
@@ -826,6 +855,108 @@ inline void physKickPair(constant PhysicsParams& p, device PhysicsBody* bodies, 
     if ((code & PHYS_STATIC) == 0) bodies[code] = b;
 }
 
+// MARK: - Joints
+
+// PhysicsCPU.swivel.
+inline void physSwivel(thread PhysicsBody& a, thread PhysicsBody& b, float3 correction) {
+    float angle = length(correction);
+    if (!(angle > 1e-7f)) return;
+    float3 k = correction / angle;
+    float w = physTurnWeight(a, k) + physTurnWeight(b, k);
+    if (!(w > 0.0f)) return;
+    float3 impulse = k * (angle / w);
+    if (physMoves(a)) a.rotation = physTurn(a.rotation, physInvInertia(a.rotation, a.invInertia.xyz, impulse));
+    if (physMoves(b)) b.rotation = physTurn(b.rotation, -physInvInertia(b.rotation, b.invInertia.xyz, impulse));
+}
+
+// PhysicsCPU.limitAngle.
+inline float3 physLimitAngle(float3 n, float3 n1, float3 n2, float lo, float hi) {
+    float phi = atan2(dot(cross(n1, n2), n), dot(n1, n2));
+    return n * (phi - min(max(phi, lo), hi));
+}
+
+// PhysicsCPU.across.
+inline float3 physAcross(float3 v, float3 n) {
+    float3 u = v - n * dot(v, n);
+    float l = length(u);
+    return l > 1e-6f ? u / l : float3(0.0f);
+}
+
+// PhysicsCPU.solveJoint, by the thread that has joint k (no other of its colour shares a body).
+inline void physSolveJoint(device PhysicsBody* bodies, PhysicsJoint j) {
+    PhysicsBody a = bodies[j.info.x], b = bodies[j.info.y];
+    if (!physMoves(a) && !physMoves(b)) return;
+    float lo = j.axisA.w, hi = j.axisB.w;
+    float3 axisA = quatRotate(a.rotation, j.axisA.xyz), axisB = quatRotate(b.rotation, j.axisB.xyz);
+    float3 bend = cross(axisA, axisB);
+    float sine = length(bend);
+    if (j.info.z == PHYS_HINGE) {
+        if (sine > 1e-6f) physSwivel(a, b, bend / sine * atan2(sine, dot(axisA, axisB)));
+        axisA = quatRotate(a.rotation, j.axisA.xyz);
+        float3 n1 = physAcross(quatRotate(a.rotation, j.referenceA.xyz), axisA);
+        float3 n2 = physAcross(quatRotate(b.rotation, j.referenceB.xyz), axisA);
+        physSwivel(a, b, physLimitAngle(axisA, n1, n2, lo, hi));
+    } else {
+        float swing = atan2(sine, dot(axisA, axisB));
+        if (sine > 1e-6f && swing > j.referenceA.w) physSwivel(a, b, bend / sine * (swing - j.referenceA.w));
+        axisA = quatRotate(a.rotation, j.axisA.xyz);
+        axisB = quatRotate(b.rotation, j.axisB.xyz);
+        float3 mid = axisA + axisB;
+        float l = length(mid);
+        if (l > 1e-6f) {
+            float3 n = mid / l;
+            float3 n1 = physAcross(quatRotate(a.rotation, j.referenceA.xyz), n);
+            float3 n2 = physAcross(quatRotate(b.rotation, j.referenceB.xyz), n);
+            physSwivel(a, b, physLimitAngle(n, n1, n2, lo, hi));
+        }
+    }
+    float3 ra = quatRotate(a.rotation, j.anchorA.xyz), rb = quatRotate(b.rotation, j.anchorB.xyz);
+    float3 gap = (b.position.xyz + rb) - (a.position.xyz + ra);
+    float l = length(gap);
+    if (l > 1e-7f) {
+        float3 n = gap / l;
+        float w = physWeight(a, ra, n) + physWeight(b, rb, n);
+        if (w > 0.0f) {
+            physShove(a, n * (l / w), ra);
+            physShove(b, -n * (l / w), rb);
+        }
+    }
+    bodies[j.info.x] = a;
+    bodies[j.info.y] = b;
+}
+
+// PhysicsCPU.anchorTurnWeight.
+inline float physAnchorTurnWeight(PhysicsBody b, float3 k, float3 r) {
+    float w = physTurnWeight(b, k);
+    if (!(w > 0.0f)) return 0.0f;
+    return 1.0f / (1.0f / w + length_squared(cross(k, r)) / b.position.w);
+}
+
+// PhysicsCPU.dampJoint.
+inline void physDampJoint(device PhysicsBody* bodies, PhysicsJoint j, float h) {
+    PhysicsBody a = bodies[j.info.x], b = bodies[j.info.y];
+    float3 relative = b.angular.xyz - a.angular.xyz;
+    float speed = length(relative);
+    if (!(speed > 1e-6f)) return;
+    float3 k = relative / speed;
+    float3 ra = quatRotate(a.rotation, j.anchorA.xyz), rb = quatRotate(b.rotation, j.anchorB.xyz);
+    float wa = physAnchorTurnWeight(a, k, ra), wb = physAnchorTurnWeight(b, k, rb);
+    if (!(wa + wb > 0.0f)) return;
+    float impulse = speed * min(j.referenceB.w * h, 1.0f) / (wa + wb);
+    if (wa > 0.0f) {
+        float3 turn = k * (impulse * wa);
+        a.angular = float4(a.angular.xyz + turn, a.angular.w);
+        a.velocity = float4(a.velocity.xyz - cross(turn, ra), a.velocity.w);
+    }
+    if (wb > 0.0f) {
+        float3 turn = -k * (impulse * wb);
+        b.angular = float4(b.angular.xyz + turn, b.angular.w);
+        b.velocity = float4(b.velocity.xyz - cross(turn, rb), b.velocity.w);
+    }
+    bodies[j.info.x] = a;
+    bodies[j.info.y] = b;
+}
+
 // MARK: - Colours
 
 // PhysicsCPU.priority (the high half; the entry is the low).
@@ -944,8 +1075,12 @@ inline bool physLeftover(device const PhysicsPair* pairs, uint e) { return pairs
 // PhysicsCPU.still.
 inline bool physStill(PhysicsBody b, float4 position, float4 rotation, constant PhysicsParams& p) {
     float moved = length(b.position.xyz - position.xyz);
-    float turned = 2.0f * length(quatMul(b.rotation, physConj(rotation)).xyz);
-    return moved < p.sleep.x * p.grid.w && turned < p.sleep.y * p.grid.w;
+    float3 turn = quatMul(b.rotation, physConj(rotation)).xyz;
+    float sine = length(turn);
+    if (!(moved < p.sleep.x * p.grid.w)) return false;
+    if (!(sine > 1e-9f)) return true;
+    float w = physTurnWeight(b, turn / sine);
+    return !(w > 0.0f) || 2.0f * sine * min(sqrt(b.position.w / w), PHYS_GYRATION) < p.sleep.y * p.grid.w;
 }
 
 // MARK: - Particles' substeps
@@ -1067,6 +1202,9 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
                                   device const SDFScene&    sdf [[buffer(20)]],
                                   device const PhysicsConstraint* constraints [[buffer(21)]],
                                   device const uint*        colourStarts [[buffer(22)]],
+                                  device const PhysicsJoint* joints [[buffer(25)]],
+                                  device const uint*        jointStarts [[buffer(26)]],
+                                  device const uint2*       ragdolls [[buffer(27)]],   // first body, count
                                   uint t [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]])
 {
@@ -1082,6 +1220,18 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             start[2 * i] = bodies[i].position;
             start[2 * i + 1] = bodies[i].rotation;
         }
+        // A ragdoll wakes whole (PhysicsCPU.wake): if any of its bodies is awake, woken or held, the rest wake.
+        threadgroup_barrier(mem_flags::mem_device);
+        for (uint r = t; r < p.cloth.w; r += width) {
+            uint first = ragdolls[r].x, end = first + ragdolls[r].y;
+            bool any = false;
+            for (uint i = first; i < end && !any; ++i) {
+                any = physMoves(bodies[i]) || wake[i] != 0 || (grab.target.w > 0.0f && grab.body == i);
+            }
+            if (!any) continue;
+            for (uint i = first; i < end; ++i) if ((bodies[i].info.y & PHYS_ASLEEP) != 0) wake[i] = 1;
+        }
+        threadgroup_barrier(mem_flags::mem_device);
     }
     // The particles take the same substeps, their stages beside the bodies' (one-way: against the bodies as this
     // substep moved them, before their contacts push them apart).
@@ -1102,6 +1252,13 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             physSolveParticle(p, w, particles, particlesOut, neighbours, neighbourCounts, colliders, colliderCounts, bodies, statics, i);
         }
         threadgroup_barrier(mem_flags::mem_device);
+        // The joints, a colour at a time, then the contacts (PhysicsCPU.solvePositions).
+        for (uint pass = 0; pass < PHYS_JOINT_ITERATIONS; ++pass) {
+            for (uint c = 0; c < p.cloth.z; ++c) {
+                for (uint k = jointStarts[c] + t; k < jointStarts[c + 1]; k += width) physSolveJoint(bodies, joints[k]);
+                threadgroup_barrier(mem_flags::mem_device);
+            }
+        }
         for (uint c = 0; c < colours; ++c) {
             for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physPushPair(p, bodies, statics, pairs, contacts, order[j]);
             threadgroup_barrier(mem_flags::mem_device);
@@ -1125,6 +1282,10 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             }
             threadgroup_barrier(mem_flags::mem_device);
         }
+        for (uint c = 0; c < p.cloth.z; ++c) {
+            for (uint k = jointStarts[c] + t; k < jointStarts[c + 1]; k += width) physDampJoint(bodies, joints[k], p.gravity.w);
+            threadgroup_barrier(mem_flags::mem_device);
+        }
     }
     if (group.last == 0) return;
     // PhysicsCPU.settle: the timers, then who sleeps (a sleeping body's timer is past the sleep time, so a partner
@@ -1134,10 +1295,10 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         if (physMoves(b)) bodies[i].prevPosition.w = physStill(b, start[2 * i], start[2 * i + 1], p) ? b.prevPosition.w + p.grid.w : 0.0f;
     }
     threadgroup_barrier(mem_flags::mem_device);
+    // Who may sleep, into `wake` (free until the next step's link kernel writes it)...
     for (uint i = t; i < n; i += width) {
         PhysicsBody b = bodies[i];
-        if (!physMoves(b) || !(b.prevPosition.w > p.sleep.z)) continue;
-        bool settled = true;
+        bool settled = physMoves(b) && b.prevPosition.w > p.sleep.z;
         for (uint k = 0; k < counts[i] && settled; ++k) {
             uint e = i * PHYS_PAIRS + k, partner = pairs[e].partner, link = pairs[e].link;
             if ((partner & PHYS_STATIC) != 0 || link == PHYS_NONE || pairs[link].contacts == 0) continue;
@@ -1145,7 +1306,23 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             float mass = bodies[partner].position.w;
             settled = !(mass > 0.0f && o.w <= p.sleep.z * 0.5f);
         }
-        if (!settled) continue;
+        wake[i] = settled ? 1u : 0u;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    // ...a ragdoll whole or not at all...
+    for (uint r = t; r < p.cloth.w; r += width) {
+        uint first = ragdolls[r].x, end = first + ragdolls[r].y;
+        bool all = true;
+        for (uint i = first; i < end && all; ++i) all = !physMoves(bodies[i]) || wake[i] != 0;
+        if (!all) for (uint i = first; i < end; ++i) wake[i] = 0;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    // ...and they sleep.
+    for (uint i = t; i < n; i += width) {
+        PhysicsBody b = bodies[i];
+        bool sleeps = wake[i] != 0;
+        wake[i] = 0;
+        if (!sleeps) continue;
         b.info.y |= PHYS_ASLEEP;
         b.velocity = float4(0.0f, 0.0f, 0.0f, b.velocity.w);
         b.angular = float4(0.0f, 0.0f, 0.0f, b.angular.w);
@@ -1264,4 +1441,257 @@ kernel void physicsClothMeshKernel(constant uint&                count     [[buf
     positions[at + cloth.previous.x] = positions[at];
     positions[at] = q.position.xyz;
     normals[at] = physDirection(cross(down - up, right - left));
+}
+
+// MARK: - Hair (PhysicsHair.swift)
+
+struct PhysicsStrand {
+    uint4  info;        // x = body (PHYS_NONE: the world's), y = first vertex, z = vertices, w = 1: still on a sleeping body
+    float4 stiffness;   // global at the root, at the tip, local, DFTL damping
+    float4 across;      // body space; w = length
+    float4 pad;
+};
+static_assert(sizeof(PhysicsStrand) == 64, "PhysicsStrand: GPUHairStrand");
+
+struct PhysicsHairVertex {
+    float4 position;    // w = radius
+    float4 previous;    // w = rest length of the segment before it
+    float4 velocity;    // w = friction
+    float4 rest;        // root body's space; w = global stiffness
+};
+static_assert(sizeof(PhysicsHairVertex) == 64, "PhysicsHairVertex: GPUHairVertex");
+
+struct PhysicsHairParams {
+    float4 gravity;     // w = substep
+    float4 wind;        // xyz = velocity, w = gustiness
+    uint4  counts;      // strands, bodies, statics, substeps
+    float4 air;         // drag, rest speed, (the CPU's step time: the GPU keeps its own clock), 0
+};
+static_assert(sizeof(PhysicsHairParams) == 64, "PhysicsHairParams: GPUHairParams");
+
+struct PhysicsHairGroup {
+    uint4  counts;      // first guide, guides, drawn per guide, a guide's vertices
+    uint4  mesh;        // first control point, last frame's offset, seed
+    float4 shape;       // spread, clumping, curl
+    float4 pad;
+};
+static_assert(sizeof(PhysicsHairGroup) == 64, "PhysicsHairGroup: GPUHairGroup");
+
+constant uint PHYS_HAIR_VERTICES = 16, PHYS_HAIR_COLLIDERS = 8;   // PhysicsWorld.maxHairVertices, maxHairColliders
+constant float PHYS_HAIR_PUSH = 0.01f, PHYS_HAIR_REACH = 0.15f;  // PhysicsWorld.hairPush, hairReach
+
+// PhysicsWorld.breeze, transport, between.
+inline float3 physBreeze(float4 wind, float3 x, float t) {
+    float along = dot(x, float3(0.7f, 0.2f, 0.5f));
+    float gust = 1.0f + wind.w * (0.6f * sin(1.1f * t - 1.7f * along) + 0.4f * sin(2.9f * t + 2.3f * x.y));
+    return wind.xyz * gust;
+}
+inline float3 physTransport(float3 a, float3 b, float3 v) {
+    float c = dot(a, b);
+    if (!(c > -0.999f)) return v;
+    float3 k = cross(a, b);
+    return v * c + cross(k, v) + k * (dot(k, v) / (1.0f + c));
+}
+inline PhysPose physBetween(float3 p0, float4 q0, float3 p1, float4 q1, float alpha) {
+    float4 q = dot(q0, q1) < 0.0f ? -q1 : q1;
+    PhysPose pose;
+    pose.position = p0 + (p1 - p0) * alpha;
+    pose.rotation = physNormalize(q0 + (q - q0) * alpha);
+    return pose;
+}
+
+// PhysicsWorld.pushOut.
+inline float3 physHairPushOut(PhysicsShapes w, float3 y, PhysicsHairVertex hv, thread const uint* colliders, uint count,
+                              device const PhysicsBody* bodies, device const PhysicsBody* statics, float h) {
+    for (uint c = 0; c < count; ++c) {
+        PhysicsBody b = physPartner(colliders[c], bodies, statics);
+        PhysPose pose = physPose(b);
+        uint shape = b.info.x;
+        float3 local = pose.toBody(y);
+        float depth = physDistance(w, shape, local) - hv.position.w;
+        if (!(depth < 0.0f)) continue;
+        float3 normal = pose.direction(physGradient(w, shape, local));
+        float3 surface = b.velocity.xyz + cross(b.angular.xyz, y - pose.position);
+        y += physParticlePush(normal, min(-depth, PHYS_HAIR_PUSH), y - hv.previous.xyz - surface * h, sqrt(hv.velocity.w * b.velocity.w));
+    }
+    return y;
+}
+
+// PhysicsWorld.stepStrand: a step of strand i, after the bodies' (`start`: their poses when it began), at the clock's
+// time; its vertices one after another.
+kernel void physicsHairKernel(constant PhysicsParams&       p          [[buffer(0)]],
+                              constant PhysicsHairParams&   hp         [[buffer(1)]],
+                              device PhysicsStrand*         strands    [[buffer(2)]],
+                              device PhysicsHairVertex*     v          [[buffer(3)]],
+                              device const PhysicsBody*     bodies     [[buffer(4)]],
+                              device const float4*          start      [[buffer(5)]],
+                              device const PhysicsBody*     statics    [[buffer(6)]],
+                              device const float4*          bounds     [[buffer(7)]],
+                              device const PhysicsShape*    shapes     [[buffer(8)]],
+                              device const float4*          samples    [[buffer(9)]],
+                              device const SDFScene&        sdf        [[buffer(10)]],
+                              device const float*           clock      [[buffer(11)]],
+                              uint s [[thread_position_in_grid]])
+{
+    if (s >= hp.counts.x) return;
+    PhysicsShapes w = {shapes, samples, sdf};
+    PhysicsStrand strand = strands[s];
+    uint first = strand.info.y, n = strand.info.z, body = strand.info.x;
+    bool asleep = body != PHYS_NONE && (bodies[body].info.y & PHYS_ASLEEP) != 0;
+    if (asleep && strand.info.w != 0) return;
+    float3 p0 = float3(0.0f), p1 = float3(0.0f);
+    float4 q0 = float4(0, 0, 0, 1), q1 = q0;
+    if (body != PHYS_NONE) {
+        p0 = start[2 * body].xyz;
+        q0 = start[2 * body + 1];
+        p1 = bodies[body].position.xyz;
+        q1 = bodies[body].rotation;
+    }
+    // The colliders near it (PhysicsWorld.hairColliders): statics, then bodies, the first PHYS_HAIR_COLLIDERS.
+    PhysPose end;
+    end.position = p1;
+    end.rotation = q1;
+    float3 centre = end.toWorld(v[first].rest.xyz);
+    float reach = strand.across.w + PHYS_HAIR_REACH;
+    uint colliders[PHYS_HAIR_COLLIDERS];
+    uint count = 0;
+    for (uint k = 0; k < hp.counts.z && count < PHYS_HAIR_COLLIDERS; ++k) {
+        PhysicsBody st = statics[k];
+        bool touches;
+        if (shapes[st.info.x].info.x == PHYS_PLANE) {
+            touches = dot(centre - st.position.xyz, quatRotate(st.rotation, float3(0, 1, 0))) < reach;
+        } else {
+            float3 nearest = clamp(centre, bounds[2 * k].xyz, bounds[2 * k + 1].xyz);
+            touches = length_squared(centre - nearest) < reach * reach;
+        }
+        if (touches) colliders[count++] = k | PHYS_STATIC;
+    }
+    for (uint j = 0; j < hp.counts.y && count < PHYS_HAIR_COLLIDERS; ++j) {
+        float r = reach + physReach(bodies[j], p);
+        if (length_squared(bodies[j].position.xyz - centre) < r * r) colliders[count++] = j;
+    }
+    float h = hp.gravity.w;
+    uint subs = hp.counts.w;
+    float air = min(hp.air.x * h, 1.0f);
+    float3 corrections[PHYS_HAIR_VERTICES + 1], before[PHYS_HAIR_VERTICES];
+    for (uint i = 0; i < n; ++i) before[i] = v[first + i].position.xyz;
+    for (uint sub = 0; sub < subs; ++sub) {
+        PhysPose pose = physBetween(p0, q0, p1, q1, float(sub + 1) / float(subs));
+        float t = clock[0] + h * float(sub + 1);
+        float3 root = pose.toWorld(v[first].rest.xyz);
+        v[first].previous = float4(v[first].position.xyz, v[first].previous.w);
+        v[first].position = float4(root, v[first].position.w);
+        for (uint i = first + 1; i < first + n; ++i) {
+            float3 x = v[i].position.xyz;
+            float3 vel = v[i].velocity.xyz;
+            vel += (physBreeze(hp.wind, x, t) - vel) * air + hp.gravity.xyz * h;
+            v[i].previous = float4(x, v[i].previous.w);
+            float3 y = x + vel * h;
+            y += (pose.toWorld(v[i].rest.xyz) - y) * v[i].rest.w;
+            v[i].position = float4(y, v[i].position.w);
+        }
+        float3 restBefore = float3(0.0f);
+        for (uint i = first + 1; i < first + n; ++i) {
+            float3 a = v[i - 1].position.xyz, x = v[i].position.xyz;
+            float3 restDir = physDirection(pose.direction(v[i].rest.xyz - v[i - 1].rest.xyz));
+            float3 want = i == first + 1 ? restDir : physTransport(restBefore, physDirection(a - v[i - 2].position.xyz), restDir);
+            float3 d = (want * length(x - a) - (x - a)) * strand.stiffness.z;
+            if (i == first + 1) {
+                v[i].position = float4(x + d, v[i].position.w);
+            } else {
+                v[i].position = float4(x + 0.5f * d, v[i].position.w);
+                v[i - 1].position = float4(a - 0.5f * d, v[i - 1].position.w);
+            }
+            restBefore = restDir;
+        }
+        for (uint i = first + 1; i < first + n; ++i) {
+            float3 a = v[i - 1].position.xyz, x = v[i].position.xyz;
+            float3 led = a + physDirection(x - a) * v[i].previous.w;
+            corrections[i - first] = led - x;
+            float3 y = physHairPushOut(w, led, v[i], colliders, count, bodies, statics, h);
+            y = a + physDirection(y - a) * v[i].previous.w;
+            v[i].position = float4(y, v[i].position.w);
+        }
+        corrections[n] = float3(0.0f);
+        for (uint i = first + 1; i < first + n; ++i) {
+            float3 moved = v[i].position.xyz - v[i].previous.xyz;
+            v[i].velocity = float4((moved - strand.stiffness.w * corrections[i - first + 1]) / h, v[i].velocity.w);
+        }
+        v[first].velocity = float4((root - v[first].previous.xyz) / h, v[first].velocity.w);
+    }
+    uint still = 0;
+    if (asleep) {
+        still = 1;
+        for (uint i = 0; i < n; ++i) if (!(length(v[first + i].position.xyz - before[i]) < hp.air.y * h * float(subs))) still = 0;
+    }
+    strands[s].info.w = still;
+}
+
+// The hair's clock: a step on (after the step's hair).
+kernel void physicsHairTickKernel(constant PhysicsHairParams& hp [[buffer(0)]], device float* clock [[buffer(1)]]) {
+    clock[0] += hp.gravity.w * float(hp.counts.w);
+}
+
+// Back to the start: the vertices, the strands' stillness, the clock.
+kernel void physicsHairResetKernel(constant PhysicsHairParams&     hp       [[buffer(0)]],
+                                   device const PhysicsHairVertex* initial  [[buffer(1)]],
+                                   device PhysicsHairVertex*       vertices [[buffer(2)]],
+                                   device PhysicsStrand*           strands  [[buffer(3)]],
+                                   device float*                   clock    [[buffer(4)]],
+                                   constant uint&                  count    [[buffer(5)]],
+                                   uint i [[thread_position_in_grid]])
+{
+    if (i < count) vertices[i] = initial[i];
+    if (i < hp.counts.x) strands[i].info.w = 0;
+    if (i == 0) clock[0] = 0.0f;
+}
+
+// PhysicsWorld.drawnStrand: drawn strand r of a group, into the scene's vertex buffer (last frame's first, as the cloth's
+// vertices are), ahead of the refits.
+kernel void physicsHairCurvesKernel(constant PhysicsHairGroup&      g         [[buffer(0)]],
+                                    device const PhysicsStrand*     strands   [[buffer(1)]],
+                                    device const PhysicsHairVertex* v         [[buffer(2)]],
+                                    device const PhysicsBody*       bodies    [[buffer(3)]],
+                                    device float3*                  positions [[buffer(4)]],
+                                    uint r [[thread_position_in_grid]])
+{
+    uint perGuide = g.counts.z, n = g.counts.w;
+    if (r >= g.counts.y * perGuide) return;
+    PhysicsStrand strand = strands[g.counts.x + r / perGuide];
+    uint first = strand.info.y;
+    float4 rotation = strand.info.x == PHYS_NONE ? float4(0, 0, 0, 1) : bodies[strand.info.x].rotation;
+    uint k = r % perGuide;
+    uint h0 = pcgHash(g.mesh.z ^ pcgHash(r)), h1 = pcgHash(h0);
+    float radius = k == 0 ? 0.0f : g.shape.x * sqrt(float(h0 & 0xFFFFu)) / 256.0f;
+    float angle = float(h1 & 0xFFFFu) * (2.0f * M_PI_F / 65536.0f);
+    float3 t = physDirection(v[first + 1].position.xyz - v[first].position.xyz);
+    float3 b1 = quatRotate(rotation, strand.across.xyz);
+    b1 = physDirection(b1 - t * dot(b1, t));
+    uint base = g.mesh.x + r * (n + 2);
+    float3 before = float3(0.0f), second = float3(0.0f), last = float3(0.0f);
+    for (uint i = 0; i < n; ++i) {
+        float3 x = v[first + i].position.xyz;
+        if (i > 0) {
+            float3 next = physDirection(v[first + min(i + 1, n - 1)].position.xyz - v[first + (i + 1 < n ? i : i - 1)].position.xyz);
+            b1 = physTransport(t, next, b1);
+            t = next;
+        }
+        float3 b2 = cross(t, b1);
+        float f = float(i) / float(n - 1);
+        float phase = angle + f * 12.566f;
+        float offset = radius * (1.0f - g.shape.y * f);
+        float curl = g.shape.z * f;
+        float3 point = x + (b1 * cos(angle) + b2 * sin(angle)) * offset + (b1 * cos(phase) + b2 * sin(phase)) * curl;
+        positions[base + 1 + i + g.mesh.y] = positions[base + 1 + i];
+        positions[base + 1 + i] = point;
+        if (i == 0) before = point;
+        if (i == 1) second = point;
+        if (i == n - 2) last = point;
+        if (i == n - 1) {
+            positions[base + n + 1 + g.mesh.y] = positions[base + n + 1];
+            positions[base + n + 1] = 2.0f * point - last;
+        }
+    }
+    positions[base + g.mesh.y] = positions[base];
+    positions[base] = 2.0f * before - second;
 }

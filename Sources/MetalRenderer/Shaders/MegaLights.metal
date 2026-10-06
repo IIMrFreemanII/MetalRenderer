@@ -312,7 +312,7 @@ inline void megaLightsShade(uint element, float2 uv, float pdf, uint light, thre
     if (!(pdf > 0.0f)) return;
     LightSampleEval e = evalLightSample(element, uv, sp, s, lights, tris, false, true);
     if (all(e.diffuse <= 0.0f) && all(e.specular <= 0.0f)) return;
-    if (!isVisible(sp.p, e.target, accel)) return;
+    if (!isVisible(shadowOrigin(sp, e.target), e.target, accel)) return;
     float inv = 1.0f / pdf;
     out.diffuse += e.diffuse * inv;
     out.specular += e.specular * inv;

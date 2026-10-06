@@ -15,7 +15,8 @@ extension Benchmark {
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
         "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo, "physics": physics,
-        "physicsdemo": physicsDemo,
+        "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
+        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -856,7 +857,7 @@ extension Benchmark {
     }
 
     /// The physics scene's demo video: its first 30 s along a camera track at the scene's look with the showcase's lens
-    /// (`recording`: 900 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m physicsdemo` makes the mp4).
+    /// but no depth of field (`recording`: 900 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m physicsdemo` makes the mp4).
     /// Wide while the bodies drop and the ball rolls in, down to the bin as the particles pour, round to the cloth
     /// falling over its ball, past the tower and the pile, and back out. The clock starts at -1 s, so that the warm-up's
     /// second ends as the first frame is recorded, with everything still in the air (the physics waits until 0).
@@ -876,7 +877,125 @@ extension Benchmark {
         ])
         var demo = Config("physics demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .physics)) {
             $0.usePhysicsLook()
-            $0.post = ShowcaseLook.lens
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// The ragdoll scene (Scene+Ragdolls.swift) at the physics look: paused at 5 s on each tracer and API, the CPU's
+    /// steps there too, then the first 5 s moving for timing at a few ragdoll counts on the GPU (11 bodies each) and on
+    /// the CPU where it keeps up.
+    private static func ragdolls() -> [Config] {
+        let scene = SceneSettings(kind: .ragdolls)
+        var out: [Config] = []
+        for tracer in tracers {
+            for api in RenderAPI.allCases {
+                out.append(Config("\(tracer.tag) \(api.envName)", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
+                    $0.usePhysicsLook()
+                    $0.rayTracer = tracer.kind
+                    $0.api = api
+                }.still())
+            }
+        }
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        for ragdolls in [8, 24, 96] {
+            out.append(base.named("gpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .gpu })
+        }
+        for ragdolls in [8, 24] {
+            out.append(base.named("cpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .cpu })
+        }
+        return out
+    }
+
+    /// The hair scene (Scene+Hair.swift) at the physics look on Metal's tracer: paused at 5 s on each API, on the
+    /// custom tracer (which draws no strands) and with the CPU's steps; then the first 5 s moving for timing at a few
+    /// densities of drawn strands on the GPU, and on the CPU at the fewest.
+    private static func hair() -> [Config] {
+        let scene = SceneSettings(kind: .hair)
+        var out: [Config] = []
+        for api in RenderAPI.allCases {
+            out.append(Config("metal \(api.envName)", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
+                $0.usePhysicsLook()
+                $0.rayTracer = .metal
+                $0.api = api
+            }.still())
+        }
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
+            $0.usePhysicsLook()
+            $0.rayTracer = .metal
+        }
+        out.append(base.named("custom").with { $0.rayTracer = .custom }.still())
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        for hair in [4, 12, 24] {
+            out.append(base.named("gpu \(hair) moving").with { $0.scene.physics.hair = hair; $0.scene.physics.backend = .gpu })
+        }
+        out.append(base.named("cpu 4 moving").with { $0.scene.physics.hair = 4; $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The hair scene's demo video: its first 20 s along a camera track at the physics look (Metal's tracer) with the
+    /// showcase's lens but no depth of field (`recording`; `.claude/skills/offscreen/scripts/video.sh -m hairdemo` makes the mp4). Wide as
+    /// the furry bodies drop onto the ramp, along it as they roll, down to the pile at its foot, round the mannequin
+    /// with long hair in the breeze, and back out. The clock starts at -1 s, as the physics demo's does.
+    private static func hairDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0.1, 1.9, 4.8], [0, 0.9, -0.2]),
+            key(3, [3.2, 1.8, 1.2], [1.2, 0.9, -1.6]),
+            key(6, [2.6, 0.8, 3.9], [1.2, 0.3, 2.2]),
+            key(10, [0.2, 1.6, 2.4], [-1.1, 1.35, 0.35]),
+            key(14, [-2.6, 1.6, 1.4], [-1.1, 1.3, 0.3]),
+            key(17, [-0.6, 1.2, 3.4], [0.6, 0.4, 1.8]),
+            key(20, [0.1, 1.9, 4.8], [0, 0.9, -0.2]),
+        ])
+        var demo = Config("hair demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .hair)) {
+            $0.usePhysicsLook()
+            $0.rayTracer = .metal
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// The hair scene paused at 5 s, Metal's tracer, in the views that show how its strands are lit: the picture,
+    /// the direct light (albedo divided out), the albedo, the normals.
+    private static func hairViews() -> [Config] {
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .hair)) {
+            $0.usePhysicsLook()
+            $0.rayTracer = .metal
+        }
+        var head = base.named("head").still()
+        head.camera = Scene.camera([-0.6, 1.75, 1.9], yaw: -0.32, pitch: -0.1)
+        var fur = base.named("fur").still()
+        fur.camera = Scene.camera([2.0, 0.8, 3.6], yaw: -0.55, pitch: -0.35)
+        return [base.named("final").still(), head, fur, base.named("direct").view(1).still(), base.named("albedo").view(4).still(),
+                base.named("normals").view(3).still()]
+    }
+
+    /// The ragdoll scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens
+    /// but no depth of field (`recording`: 600 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m ragdollsdemo` makes the mp4).
+    /// Wide as they drop onto the stairs, down to the foot as they tumble off the last steps into the posts and the
+    /// bench, up along the side of the stairs, and back out over the pile. The clock starts at -1 s, as the physics
+    /// demo's does.
+    private static func ragdollsDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [3.2, 3.4, 7.6], [0, 1.6, -3]),
+            key(4, [2.6, 2.2, 4.6], [0, 1.2, -2.2]),
+            key(8, [-2.4, 1.3, 3.8], [0, 0.5, -0.6]),
+            key(12, [-4.0, 3.4, 0.8], [0, 1.2, -2.6]),
+            key(16, [-2.0, 3.6, -0.4], [0.4, 1.6, -3.6]),
+            key(20, [3.2, 3.4, 7.6], [0, 1.0, -2]),
+        ])
+        var demo = Config("ragdolls demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .ragdolls)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
         }.track(track).recording()
         demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
         return [demo]

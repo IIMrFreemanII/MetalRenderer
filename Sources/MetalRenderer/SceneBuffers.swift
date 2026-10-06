@@ -417,6 +417,8 @@ struct SceneBuffers {
     private(set) var primitives: [MTLAccelerationStructure] = []        // per mesh
     private(set) var namedPrimitives: [String: MTLAccelerationStructure] = [:]
     private(set) var primitiveRefit: PrimitiveRefit?        // the meshes that deform (the crowd's pose slots)
+    /// The strands' control points' radii (Scene.curveRadii), which their curves' structures read.
+    private(set) var curveRadii: MTLBuffer?
     private(set) var instanceStructures: [MTLAccelerationStructure] = []   // per slot
     private(set) var instanceScratch: [MTLBuffer] = []      // per slot; none for a still scene
     /// A still scene with baked plants that have voxel grids: their levels, and the structures over the instances
@@ -761,8 +763,43 @@ struct SceneBuffers {
         // The poses that take another's tree: (its place in `refitted`, the mesh whose tree it takes).
         var copies: [(refit: Int, of: Int)] = []
         var firstPose: [SIMD2<UInt32>: Int] = [:]   // by the triangles a pose has: its character's
+        if scene.hasCurves {
+            curveRadii = device.makeBuffer(bytes: scene.curveRadii, length: max(scene.curveRadii.count, 1) * MemoryLayout<Float>.stride,
+                                           options: .storageModeShared)
+            curveRadii?.label = "curveRadii"
+        }
         for i in new {
             let mesh = scene.meshes[i]
+            if let curves = scene.curveMeshes[i], let curveRadii, #available(macOS 14.0, *) {
+                // Strands: round Catmull-Rom curves through the mesh's control points (its vertices), refitted every
+                // frame as the GPU moves them.
+                let geometry = MTLAccelerationStructureCurveGeometryDescriptor()
+                geometry.controlPointBuffer = positions
+                geometry.controlPointBufferOffset = Int(mesh.vertexOffset) * MemoryLayout<SIMD3<Float>>.stride
+                geometry.controlPointCount = curves.radii.count
+                geometry.controlPointStride = MemoryLayout<SIMD3<Float>>.stride
+                geometry.controlPointFormat = .float3
+                geometry.radiusBuffer = curveRadii
+                geometry.radiusBufferOffset = curves.radii.lowerBound * MemoryLayout<Float>.stride
+                geometry.radiusStride = MemoryLayout<Float>.stride
+                geometry.radiusFormat = .float
+                geometry.indexBuffer = indices
+                geometry.indexBufferOffset = Int(mesh.firstIndex) * MemoryLayout<UInt32>.stride
+                geometry.indexType = .uint32
+                geometry.segmentCount = curves.segments
+                geometry.segmentControlPointCount = 4
+                geometry.curveType = .round
+                geometry.curveBasis = .catmullRom
+                geometry.curveEndCaps = .disk
+                geometry.opaque = true
+                let descriptor = MTLPrimitiveAccelerationStructureDescriptor()
+                descriptor.geometryDescriptors = [geometry]
+                descriptor.usage = .refit
+                let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+                refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16)))
+                jobs.append((i, descriptor, sizes, true))
+                continue
+            }
             let geometry = MTLAccelerationStructureTriangleGeometryDescriptor()
             if let block = blocks.isEmpty ? nil : blocks[i] {
                 geometry.vertexBuffer = block.geometry
