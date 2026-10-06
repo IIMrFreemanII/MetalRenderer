@@ -386,41 +386,49 @@ final class PlantTracing {
     @discardableResult
     func writeDescriptors(slot: Int, into buffer: MTLBuffer, stride: Int, scene: Scene, wind: WindFrame, view: SIMD4<Float>? = nil) -> Bool {
         let base = buffer.contents(), set = set(slot: slot)
-        var usedHere = [Bool](repeating: false, count: variantCount)
-        var choice: [Int32] = []
-        choice.reserveCapacity(scene.instances.count)
         let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
         let camera = view.map { SIMD3($0.x, $0.y, $0.z) }
-        for (i, inst) in scene.instances.enumerated() {
-            if inst.assembly >= 0 {
-                let id = UInt32(i), transform = Wind.plant(inst.transform, wind: wind.wind, time: wind.time, id: id)
-                var level: UInt8 = 0
-                if let voxels, let view, let camera {
-                    let position = SIMD3(inst.transform.columns.3.x, inst.transform.columns.3.y, inst.transform.columns.3.z)
-                    let scale = length(SIMD3(inst.transform.columns.0.x, inst.transform.columns.0.y, inst.transform.columns.0.z))
-                    level = VoxelLOD.level(distance: distance(position, camera), size: voxels.gridRecords[inst.assembly].lo.w * scale,
-                                           view: view.w, jitter: VoxelLOD.jitter(position))
-                }
-                if level > 0, let voxels {
-                    let box = voxels.boxes[VoxelGrids.levels * inst.assembly + Int(level) - 1]
-                    SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: boxOptions, mask: Scene.maskVoxels,
-                                                 userID: id, structure: box)
-                    choice.append(-Int32(level))
-                    continue
-                }
-                let v = variant(assembly: inst.assembly, id: id, fall: wind.leafFall)
-                usedHere[v] = true
-                choice.append(Int32(v))
-                SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: instanceOptions, mask: inst.mask,
-                                             userID: id, structure: sets[set][v])
-            } else if inst.mesh >= 0, scene.meshes[inst.mesh].sways != 0 {
-                let m = Wind.cover(inst.transform, wind: wind.wind, time: wind.time)
-                var offset = 0
-                for column in 0..<4 {
-                    for row in 0..<3 { (base + i * stride).storeBytes(of: m[column][row], toByteOffset: offset, as: Float.self); offset += 4 }
+        let instances = scene.instances, meshes = scene.meshes, variants = sets[set], options = instanceOptions
+        // What each instance's descriptor names (its variant, -1 - a voxel level, or none), in parts side by side: a
+        // forest's thousands of plants every frame the wind blows.
+        var choice = [Int32](repeating: .max, count: instances.count)
+        let part = 1024
+        choice.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: (instances.count + part - 1) / part) { k in
+                for i in (k * part)..<min((k + 1) * part, instances.count) {
+                    let inst = instances[i]
+                    if inst.assembly >= 0 {
+                        let id = UInt32(i), transform = Wind.plant(inst.transform, wind: wind.wind, time: wind.time, id: id)
+                        var level: UInt8 = 0
+                        if let voxels, let view, let camera {
+                            let position = SIMD3(inst.transform.columns.3.x, inst.transform.columns.3.y, inst.transform.columns.3.z)
+                            let scale = length(SIMD3(inst.transform.columns.0.x, inst.transform.columns.0.y, inst.transform.columns.0.z))
+                            level = VoxelLOD.level(distance: distance(position, camera), size: voxels.gridRecords[inst.assembly].lo.w * scale,
+                                                   view: view.w, jitter: VoxelLOD.jitter(position))
+                        }
+                        if level > 0, let voxels {
+                            let box = voxels.boxes[VoxelGrids.levels * inst.assembly + Int(level) - 1]
+                            SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: boxOptions, mask: Scene.maskVoxels,
+                                                         userID: id, structure: box)
+                            out[i] = -Int32(level)
+                            continue
+                        }
+                        let v = variant(assembly: inst.assembly, id: id, fall: wind.leafFall)
+                        out[i] = Int32(v)
+                        SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: inst.mask,
+                                                     userID: id, structure: variants[v])
+                    } else if inst.mesh >= 0, meshes[inst.mesh].sways != 0 {
+                        let m = Wind.cover(inst.transform, wind: wind.wind, time: wind.time)
+                        var offset = 0
+                        for column in 0..<4 {
+                            for row in 0..<3 { (base + i * stride).storeBytes(of: m[column][row], toByteOffset: offset, as: Float.self); offset += 4 }
+                        }
+                    }
                 }
             }
         }
+        var usedHere = [Bool](repeating: false, count: variantCount)
+        for c in choice where c >= 0 && c != .max { usedHere[Int(c)] = true }
         used[set] = usedHere.indices.filter { usedHere[$0] }
         defer { chosen[set] = choice }
         return chosen[set] != choice
@@ -465,6 +473,7 @@ final class PlantTracing {
         let scratch: MTLBuffer
         let offsets: [Int]
 
+        // (Two to an encoder are no faster, four crash.)
         var encoderCount: Int { used.count }
         func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
             let v = used[part]
