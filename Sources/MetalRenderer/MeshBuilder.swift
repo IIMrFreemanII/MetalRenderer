@@ -16,8 +16,18 @@ struct MeshBuilder {
     var uvScale: Float = 1
     /// Where the next shapes go: a rotation and a translation (no scale: normals are transformed as directions).
     var frame = matrix_identity_float4x4
+    /// Where the texture coordinates count from, before `frame` (a building's module: its own corner, so that its
+    /// copies are the same mesh wherever they are; Building.beginModule).
+    var uvOrigin = SIMD3<Float>.zero
 
     init(uvScale: Float = 1) { self.uvScale = uvScale }
+
+    /// Its positions and texture coordinates on a grid of `step`: what the same shapes made at two places come to
+    /// once moved back by different offsets (float rounding), the same numbers.
+    mutating func snap(_ step: Float) {
+        for i in positions.indices { positions[i] = (positions[i] / step).rounded(.toNearestOrEven) * step }
+        for i in uvs.indices { uvs[i] = (uvs[i] / step).rounded(.toNearestOrEven) * step }
+    }
 
     var triangleCount: Int { indices.count / 3 }
     var isEmpty: Bool { indices.isEmpty }
@@ -59,7 +69,7 @@ struct MeshBuilder {
         for p in corners {
             positions.append(point(p))
             normals.append(worldNormal)
-            uvs.append(SIMD2(dot(p, t), -dot(p, b)) * uvScale)
+            uvs.append(SIMD2(dot(p - uvOrigin, t), -dot(p - uvOrigin, b)) * uvScale)
         }
         for i in 1..<UInt32(corners.count - 1) { indices += [base, base + i, base + i + 1] }
     }
