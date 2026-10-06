@@ -8,7 +8,11 @@ enum Kernel: Int, CaseIterable {
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
+    case lumenProbe, lumenTrace, lumenFilter, lumenSH, lumenResolve, lumenHZB, lumenCardCapture, lumenCardLight,
+         lumenCardRadiosity, lumenCardCombine, lumenCull,
+         lumenGlobalBin, lumenGlobalCompose
     case reflection
+    case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
@@ -20,10 +24,16 @@ enum Kernel: Int, CaseIterable {
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
+    // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
+    case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
+    // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.
+    case vsmReset, vsmViewReset, vsmFree, vsmInvalidate, vsmAlloc, vsmSettle, vsmCull, vsmChunks, vsmDebug
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
     case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit
     case crowdRefit             // ...and their bottom-level trees
+    case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
+    case vsmVGCut               // ...in the shadow maps
 
     var function: String { "\(self)Kernel" }
     /// Exists only in the custom tracer's variant of the shaders (CUSTOM_RT).
@@ -37,8 +47,9 @@ enum Kernel: Int, CaseIterable {
         switch self {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
         case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
-        case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
-        case .restirSpatial, .megaLightsSample: return F.specular
+            | F.visBuffer | F.vsm
+        case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind | F.vsm
+        case .restirSpatial, .megaLightsSample: return F.specular | F.vsm
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
         case .rcProbe, .rcTraceMerge, .lightMap: return F.wind
@@ -145,6 +156,18 @@ struct Pipelines {
     private let states: [MTLComputePipelineState?]
     let variants: KernelVariants
 
+    /// The raster visibility buffer's draw (rasterVertex, rasterFragment): instance and triangle ids into an rg32Uint
+    /// target, over a depth32Float one.
+    let visibility: MTLRenderPipelineState
+    /// The raster clusters' draw by mesh shaders (rasterClusterMesh, rasterFragment), custom tracer only.
+    let clusterMesh: MTLRenderPipelineState?
+    static let visibilityFormat = MTLPixelFormat.rg32Uint
+    static let depthFormat = MTLPixelFormat.depth32Float
+    /// The virtual shadow maps' draws (vsmVertex; vsmClearVertex, the pages' clear): depth only, each triangle into its
+    /// page's slice of the pool (VSMTargets.pool).
+    let vsm: MTLRenderPipelineState
+    let vsmClear: MTLRenderPipelineState
+
     subscript(_ kernel: Kernel) -> MTLComputePipelineState { states[kernel.rawValue]! }
 
     /// The pipeline for a dispatch of `kernel` whose uniforms carry `flags` and whose own flags are `pass`: the
@@ -157,6 +180,14 @@ struct Pipelines {
     var rc: RCPipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
+    }
+    var lumen: LumenPipelines {
+        LumenPipelines(probe: self[.lumenProbe], trace: self[.lumenTrace], filter: self[.lumenFilter], sh: self[.lumenSH],
+                       clearAmbient: self[.rcClearAmbient], resolve: self[.lumenResolve],
+                       hzb: self[.lumenHZB], hzbReduce: self[.hzbReduce], cardCapture: self[.lumenCardCapture],
+                       cardLight: self[.lumenCardLight], cardRadiosity: self[.lumenCardRadiosity],
+                       cardCombine: self[.lumenCardCombine], cull: self[.lumenCull], globalBin: self[.lumenGlobalBin],
+                       globalCompose: self[.lumenGlobalCompose])
     }
     /// The kernels that build the custom tracer's trees (nil for the Metal tracer).
     var rt: RTPipelines? {
@@ -193,6 +224,15 @@ struct Pipelines {
             }
         }
         if let failure { throw failure }
+        visibility = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                                   vertex: "rasterVertex", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
+        clusterMesh = kind != .custom ? nil
+            : try Pipelines.makeMeshState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                          mesh: "rasterClusterMesh", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
+        vsm = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                            vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
+        vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                                 vertex: "vsmClearVertex", fragment: "vsmFragment", color: nil)
         self.kind = kind
         self.api = api
         self.lightTypes = lightTypes
@@ -224,8 +264,73 @@ struct Pipelines {
         return try device.makeComputePipelineState(function: function)
     }
 
-    private static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
-                                compiler: AnyObject?) throws -> MTLLibrary {
+    /// A render pipeline over a `depthFormat` target and a `color` one (or none), specialised for the light types
+    /// (whose feature bits the vertices read: TILED). Triangles as the input topology, which layered drawing wants.
+    private static func makeRenderState(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, lightTypes: UInt32,
+                                        vertex: String, fragment: String, color: MTLPixelFormat?) throws -> MTLRenderPipelineState {
+        let constants = MTLFunctionConstantValues()
+        var types = lightTypes
+        constants.setConstantValue(&types, type: .uint, index: 0)
+        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+            func function(_ name: String) -> MTL4SpecializedFunctionDescriptor {
+                let f = MTL4LibraryFunctionDescriptor()
+                f.library = library
+                f.name = name
+                let specialized = MTL4SpecializedFunctionDescriptor()
+                specialized.functionDescriptor = f
+                specialized.constantValues = constants
+                return specialized
+            }
+            let d = MTL4RenderPipelineDescriptor()
+            d.vertexFunctionDescriptor = function(vertex)
+            d.fragmentFunctionDescriptor = function(fragment)
+            if let color { d.colorAttachments[0].pixelFormat = color }
+            d.inputPrimitiveTopology = .triangle
+            return try compiler.makeRenderPipelineState(descriptor: d)
+        }
+        let d = MTLRenderPipelineDescriptor()
+        d.label = vertex
+        d.vertexFunction = try library.makeFunction(name: vertex, constantValues: constants)
+        d.fragmentFunction = try library.makeFunction(name: fragment, constantValues: constants)
+        if let color { d.colorAttachments[0].pixelFormat = color }
+        d.depthAttachmentPixelFormat = depthFormat
+        d.inputPrimitiveTopology = .triangle
+        return try device.makeRenderPipelineState(descriptor: d)
+    }
+
+    /// A mesh-shader pipeline (no object stage): `mesh`'s threadgroups make the triangles `fragment` shades.
+    private static func makeMeshState(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, lightTypes: UInt32,
+                                      mesh: String, fragment: String, color: MTLPixelFormat) throws -> MTLRenderPipelineState {
+        let constants = MTLFunctionConstantValues()
+        var types = lightTypes
+        constants.setConstantValue(&types, type: .uint, index: 0)
+        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+            func function(_ name: String) -> MTL4SpecializedFunctionDescriptor {
+                let f = MTL4LibraryFunctionDescriptor()
+                f.library = library
+                f.name = name
+                let specialized = MTL4SpecializedFunctionDescriptor()
+                specialized.functionDescriptor = f
+                specialized.constantValues = constants
+                return specialized
+            }
+            let d = MTL4MeshRenderPipelineDescriptor()
+            d.meshFunctionDescriptor = function(mesh)
+            d.fragmentFunctionDescriptor = function(fragment)
+            d.colorAttachments[0].pixelFormat = color
+            return try compiler.makeRenderPipelineState(descriptor: d)
+        }
+        let d = MTLMeshRenderPipelineDescriptor()
+        d.label = mesh
+        d.meshFunction = try library.makeFunction(name: mesh, constantValues: constants)
+        d.fragmentFunction = try library.makeFunction(name: fragment, constantValues: constants)
+        d.colorAttachments[0].pixelFormat = color
+        d.depthAttachmentPixelFormat = depthFormat
+        return try device.makeRenderPipelineState(descriptor: d, options: []).0
+    }
+
+    static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
+                        compiler: AnyObject?) throws -> MTLLibrary {
         let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
         let options = MTLCompileOptions()
         // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep

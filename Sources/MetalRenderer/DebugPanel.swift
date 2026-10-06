@@ -31,6 +31,9 @@ struct DebugInfo {
     var directMode = "", giMode = "", rayTracer = ""
     var customTracer = false
     var vg = VirtualGeometry.off
+    /// The raster's virtual geometry as clusters (RasterClusters), when it draws them.
+    var rasterClusters: (camera: Bool, drawn: Int, capacity: Int, overflow: Bool, retested: Int, triangles: Int, residentGroups: Int,
+                         groups: Int, residentMB: Double, poolMB: Int, pending: Int, loaded: Int)?
     var vgPixelError: Float = 1
     var vgFrozen = false
     var lodFreezes = false              // Freeze LOD does something here (Renderer.lodFreezes)
@@ -246,6 +249,22 @@ final class DebugPanel: NSObject {
                 ("Pool", String(format: "%.0f of %d MB", residentMB, poolMB), residentMB > 0.95 * Double(poolMB) ? .systemOrange : nil),
                 ("Requests waiting", "\(pending)", nil),
                 ("Loaded this frame", "\(loaded) groups", nil),
+            ]
+        }
+        if let r = d.rasterClusters {
+            if r.camera {
+                vgRows += [
+                    ("Raster clusters", "\(Self.count(r.drawn)) of \(Self.count(r.capacity)), \(Self.count(r.retested)) looked at twice"
+                        + (r.overflow ? ", capacity reached" : ""), r.overflow ? .systemRed : nil),
+                    ("Raster triangles", Self.count(r.triangles), nil),
+                ]
+            } else {
+                vgRows.append(("Raster clusters", "the shadow maps' only", nil))
+            }
+            vgRows += [
+                ("Raster pool", String(format: "%.0f of %d MB, %@ of %@ groups", r.residentMB, r.poolMB, Self.count(r.residentGroups), Self.count(r.groups)),
+                 r.residentMB > 0.95 * Double(r.poolMB) ? .systemOrange : nil),
+                ("Raster streaming", "\(r.pending) waiting, \(r.loaded) loaded this frame", nil),
             ]
         }
         if !vgRows.isEmpty {

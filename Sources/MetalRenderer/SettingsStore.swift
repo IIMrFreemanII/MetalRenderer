@@ -19,6 +19,7 @@ enum SettingsStore {
         // Session state rather than preferences.
         s.paused = defaults.paused
         s.viewMode = defaults.viewMode
+        s.reference.mode = defaults.reference.mode
         s.scene.lightCheck = nil
         s.scene.worldTile = nil
         s.scene.worldAnchor = nil
