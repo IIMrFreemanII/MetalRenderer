@@ -151,6 +151,11 @@ constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
 // the wind turns) or ground cover that leans. Without it the queries and the shading compile to what they were
 // before assemblies.
 constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
+// Bit 19 = RIGID_ASSEMBLIES: some assemblies are buildings of window modules (Scene.Assembly.rigid). ASSEMBLIES: the
+// queries walk three levels and a hit names its part (FOLIAGE's plants or these); the wind, the leaves and the voxels
+// stay FOLIAGE's, so a city of modules doesn't trace the plants' code.
+constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
+constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
@@ -300,6 +305,16 @@ constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (M
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
 constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
 constant uint MASK_ALL      = 0xFF;
+// What a ray is for, in bits 8-11 of the mask it is traced with (rayMask): the traversal counters are kept per class
+// (RT_STATS, TraversalStats). Instances' masks never have these bits; the ray queries take them off.
+constant uint RAY_CLASS_SHIFT = 8;
+constant uint RAY_CAMERA = 0, RAY_SHADOW = 1, RAY_GI = 2, RAY_SPECULAR = 3, RAY_FAR = 4, RAY_LIGHTMAP = 5;
+constant uint RAY_CLASSES = 6;   // TraversalStats.classes
+inline uint rayMask(uint mask, uint cls) { return mask | (cls << RAY_CLASS_SHIFT); }
+inline uint rayClass(uint mask) { return (mask >> RAY_CLASS_SHIFT) & 0xFu; }
+// A ray cone's spread, radians per unit distance (no curvature), for GI rays: a coarse fixed one, since their hits get
+// integrated anyway. Texture filtering (traceSurface) uses it.
+constant float GI_RAY_SPREAD = 0.05f;
 
 constant float RAY_EPSILON  = 1e-3f;
 constant float FIREFLY_CLAMP = 10.0f;

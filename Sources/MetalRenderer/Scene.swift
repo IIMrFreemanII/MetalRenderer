@@ -67,6 +67,9 @@ final class Scene {
         var parts: [Part]
         var bounds: AABB
         var evergreen = false
+        /// Not a plant: a building of modules (Building.Module). It has no wind, no leaves and no voxels, and one
+        /// variant (PlantTracing).
+        var rigid = false
     }
 
     /// A leaf material as `setLeaves` changes it: its summer colour, what it turns to in autumn and when in the year
@@ -291,8 +294,10 @@ final class Scene {
     private(set) var cutouts: [(alpha: [UInt8], coverage: Float)] = []
     /// Plants' leaves as cards (`settings.leafCards`, with assemblies).
     let usesCards: Bool
-    /// Something the wind moves and the shaders' FOLIAGE paths trace: assemblies, or ground cover that leans.
-    var hasFoliage: Bool { !assemblies.isEmpty || hasSwayingMeshes }
+    /// Something the wind moves and the shaders' FOLIAGE paths trace: plants as assemblies, or ground cover that leans.
+    var hasFoliage: Bool { assemblies.contains { !$0.rigid } || hasSwayingMeshes }
+    /// Assemblies that are not plants (Scene.Assembly.rigid): the shaders walk their parts without FOLIAGE's code.
+    var hasRigidAssemblies: Bool { assemblies.contains(where: \.rigid) }
     /// Some instances may have `maskShadowTraced` (the plants, leaf cards, SDF shapes: what the raster can't draw; the
     /// crowd, cloths, soft bodies and hair, which deform every frame).
     var hasShadowTraced: Bool { hasFoliage || usesCards || hasSkinned || hasSDFShapes || !deforming.isEmpty }
@@ -727,11 +732,12 @@ final class Scene {
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
         // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
-        // (Shaders/Types.metal.)
+        // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
+            | (hasRigidAssemblies ? 0x0008_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {

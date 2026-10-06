@@ -319,7 +319,13 @@ struct WorldTile {
         // The buildings, each from its lot's own seed, in the lots' order.
         var settings = plan.settings
         settings.lit = lit
-        let specs = plan.lots.map { BuildingSpec(lot: $0, city: settings, night: true) }
+        // Beyond the camera's ring, made flat: what that leaves out is a fraction of a pixel there (and a box at
+        // level 2 is the flat building's).
+        let specs = plan.lots.map { lot in
+            var spec = BuildingSpec(lot: lot, city: settings, night: true)
+            if level > 0 { spec.detail = .flat }
+            return spec
+        }
         var built = [Building?](repeating: nil, count: specs.count)
         built.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: specs.count) { i in out[i] = BuildingGenerator.generate(specs[i]) }
