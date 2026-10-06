@@ -48,7 +48,10 @@ Leaf cards (off by default): 223 vs 83 ms. Clusters mode: ~6× slower than the B
 5. Open world plants stand still (instance blocks force a still scene): make tile plants move if wanted.
 6. Quick check: saved settings with the old `"rayTracer"` key load without resetting other settings.
 7. Other branches still have custom-tracer code: physics (PR #39), ragdolls, hair (uncommitted, other worktrees),
-   and `claude/forest-city-scene-rendering-c4c4c9` (its plant/building optimisations were made on the custom tracer).
+   and `claude/forest-city-scene-rendering-c4c4c9` (its plant/building optimisations were made on the custom tracer:
+   ported on `claude/forest-city-metal`, 2026-10-07: flat far buildings, ray classes, window modules as rigid
+   assemblies (off: slower on Metal's tracer); GI rays' plant LOD and the shader's camera voxel level measured and
+   not kept, README).
    Rebasing them onto this branch means porting their custom paths, chiefly refitting deforming meshes' BLASes.
 
 ## Traps
