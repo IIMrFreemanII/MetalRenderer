@@ -8,6 +8,7 @@
 // The only atomics build the hash grid's buckets, whose order nothing depends on (a body keeps its lowest partners).
 
 constant uint PHYS_STATIC = 0x80000000u, PHYS_NONE = 0xFFFFFFFFu, PHYS_ASLEEP = 1u;
+constant uint PHYS_KINEMATIC = 2u;   // PhysicsBody.info.y: a kinematic body (PhysicsWorld.kinematicBit), its column << 8
 constant uint PHYS_PAIRS = 16, PHYS_CONTACTS = 4;   // PhysicsWorld.maxPairs, maxContacts
 constant uint PHYS_COLOURS = 32, PHYS_ROUNDS = 64;  // PhysicsWorld.maxColours, maxRounds
 constant uint PHYS_LEFTOVER = 0xFFFFFFFEu;          // PhysicsWorld.leftover
@@ -83,6 +84,7 @@ static_assert(sizeof(PhysicsParams) == 160, "PhysicsParams: GPUPhysicsParams");
 
 constant uint PHYS_CLOTH = 1u;   // PhysicsParticle.info.y: a cloth's vertex (PhysicsWorld.clothBit)
 constant uint PHYS_SOFT = 2u;    // ...a soft body's particle (PhysicsWorld.softBit)
+constant uint PHYS_SKIN = 4u;    // ...a skin's (PhysicsWorld.skinBit)
 
 // A soft body's tet: GPUPhysicsTet (PhysicsSoft.swift).
 struct PhysicsTet {
@@ -90,7 +92,7 @@ struct PhysicsTet {
     float rest;         // six times its volume at rest
     float compliance;
     float damping;
-    float pad;
+    uint  fibre;        // a muscle's tet: its fibre + 1 (PhysicsFlesh.swift); 0: none
 };
 static_assert(sizeof(PhysicsTet) == 32, "PhysicsTet: GPUPhysicsTet");
 
@@ -108,6 +110,46 @@ struct PhysicsSoftEmbed {
     uint4  ids;      // the tet's particles
 };
 static_assert(sizeof(PhysicsSoftEmbed) == 32, "PhysicsSoftEmbed: GPUSoftEmbed");
+// ...or, by ids.w, on a body (ids.x; bary.xyz in its space) or on a skin's triangle (ids.xyz; bary.xy the last two's
+// weights, bary.z how far out along its normal): GPUSoftEmbed.bodyKind, triangleKind.
+constant uint PHYS_EMBED_BODY = 0x80000001u, PHYS_EMBED_TRIANGLE = 0x80000002u;
+
+// The flesh (PhysicsFlesh.swift): one buffer, this header, then its parts (each from a 16-byte word).
+struct PhysicsFleshHeader {
+    uint4 counts;   // kinematic bodies (the pose table's columns), its rows, muscles, pins
+    uint4 more;     // fibres, skin attachments, the clock (steps run), 0
+    uint4 at;       // where the pose table, the muscles, their activations and the fibres start
+    uint4 at2;      // where the pins and the skin's attachments start
+};
+static_assert(sizeof(PhysicsFleshHeader) == 64, "PhysicsFleshHeader: GPUFleshHeader");
+struct PhysicsFleshPin {
+    float4 restA, restB;   // in each bone's space; w = its weight
+    uint   particle, bodyA, bodyB;
+    float  compliance;
+};
+static_assert(sizeof(PhysicsFleshPin) == 48, "PhysicsFleshPin: GPUFleshPin");
+struct PhysicsMuscle {
+    float4 axisA, axisB;   // each bone's axis in its space
+    float4 range;          // the angle it starts at, the one it is full at, how full
+    uint   bodyA, bodyB, pad0, pad1;
+};
+static_assert(sizeof(PhysicsMuscle) == 64, "PhysicsMuscle: GPUMuscle");
+struct PhysicsFleshFibre {
+    float4 g;              // Dm^-1 f; w = how far it shortens at full activation
+    uint   muscle;
+    float  compliance;
+    uint   pad0, pad1;
+};
+static_assert(sizeof(PhysicsFleshFibre) == 32, "PhysicsFleshFibre: GPUFleshFibre");
+struct PhysicsSkinAttach {
+    float4 bary;           // where it rests in the tet; w = how far it may slide
+    float4 deep;           // a point under it in the same tet; w = the slide's compliance
+    uint4  ids;            // the tet's particles
+    uint   particle;
+    float  compliance;     // along the normal
+    uint   pad0, pad1;
+};
+static_assert(sizeof(PhysicsSkinAttach) == 64, "PhysicsSkinAttach: GPUSkinAttach");
 
 struct PhysicsConstraint {
     uint  a, b;
@@ -200,6 +242,14 @@ struct PhysPose {
     float3 direction(float3 v) const { return quatRotate(rotation, v); }
 };
 inline PhysPose physPose(PhysicsBody b) { PhysPose p; p.position = b.position.xyz; p.rotation = b.rotation; return p; }
+// PhysicsWorld.between: a pose `alpha` of the way from one to another, the position lerped, the rotation nlerped.
+inline PhysPose physBetween(float3 p0, float4 q0, float3 p1, float4 q1, float alpha) {
+    float4 q = dot(q0, q1) < 0.0f ? -q1 : q1;
+    PhysPose pose;
+    pose.position = p0 + (p1 - p0) * alpha;
+    pose.rotation = physNormalize(q0 + (q - q0) * alpha);
+    return pose;
+}
 
 // MARK: - Manifold (PhysicsManifold)
 
@@ -372,8 +422,10 @@ kernel void physicsResetKernel(constant PhysicsParams&       p                [[
                                device const PhysicsParticle* initialParticles [[buffer(5)]],
                                device PhysicsParticle*       particles        [[buffer(6)]],
                                device float4*                lastParticle     [[buffer(7)]],
+                               device PhysicsFleshHeader*    flesh            [[buffer(8)]],
                                uint i [[thread_position_in_grid]])
 {
+    if (i == 0) flesh->more.z = 0;   // the kinematic bodies' clock
     if (i < p.counts.x) {
         bodies[i] = initial[i];
         wake[i] = 0;
@@ -465,7 +517,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
             float3 nearest = clamp(x, bounds[2 * s].xyz, bounds[2 * s + 1].xyz);
             touches = length_squared(x - nearest) < r * r;
         }
-        if (touches) physKeepNearest(d2s, ids, count, -1.0f, s | PHYS_STATIC);
+        if (touches && (b.info.y & PHYS_KINEMATIC) == 0) physKeepNearest(d2s, ids, count, -1.0f, s | PHYS_STATIC);
     }
     int3 c = physCell(x, p.grid.x);
     for (int dz = -1; dz <= 1; ++dz) {
@@ -475,6 +527,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                     if (j == i) continue;
                     PhysicsBody o = bodies[j];
                     if (b.info.w == j + 1 || o.info.w == i + 1) continue;   // joined: PhysicsWorld.joined
+                    if ((b.info.y & o.info.y & PHYS_KINEMATIC) != 0) continue;   // neither gives
                     float reach = r + physReach(o, p);
                     float d2 = physDistance2(o.position.xyz, x);
                     if (d2 < reach * reach) physKeepNearest(d2s, ids, count, d2, j);
@@ -493,6 +546,7 @@ inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y &
 
 // PhysicsCPU.stirs: body b moves fast enough to wake what it touches.
 inline bool physStirs(PhysicsBody b, constant PhysicsParams& p) {
+    if ((b.info.y & PHYS_KINEMATIC) != 0) return length(b.velocity.xyz) > p.rolling.z || length(b.angular.xyz) * PHYS_GYRATION > p.rolling.w;
     if (!physMoves(b)) return false;
     if (length(b.velocity.xyz) > p.rolling.z) return true;
     float rate = length(b.angular.xyz);
@@ -625,12 +679,14 @@ kernel void physicsParticleNeighboursKernel(constant PhysicsParams&       p     
         }
         if (touches) physKeep(keys, touching, s | PHYS_STATIC, PHYS_COLLIDERS);
     }
+    uint own = q.info.z >> 8, owned = (q.info.y & PHYS_SOFT) != 0 ? q.info.z & 0xFFu : 0u;
     if (p.counts.x > 0) {
         int3 cb = physCell(x, p.grid.x);
         for (int dz = -1; dz <= 1; ++dz) {
             for (int dy = -1; dy <= 1; ++dy) {
                 for (int dx = -1; dx <= 1; ++dx) {
                     for (uint j = bodyHeads[physHash(cb + int3(dx, dy, dz), p.counts.w)]; j != PHYS_NONE; j = bodyNext[j]) {
+                        if (j - own < owned) continue;   // a figure's flesh and skin don't meet its own bones
                         PhysicsBody b = bodies[j];
                         float reach = r + physReach(b, p);
                         if (length_squared(b.position.xyz - x) < reach * reach) physKeep(keys, touching, j, PHYS_COLLIDERS);
@@ -693,8 +749,34 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
 
 // A sleeping body woken this step wakes (first substep), then a moving body goes by its velocity and gravity.
 // (The held body, `held`, is woken and slowed too: PhysicsCPU.integrate.)
-inline void physIntegrate(constant PhysicsParams& p, device PhysicsBody* bodies, device uint* wake, uint i, bool held) {
+// PhysicsWorld.kinematicPose: kinematic body b's pose `alpha` of the way through step `clock`, from its table.
+inline PhysPose physKinematicPose(device const float4* flesh, PhysicsFleshHeader hd, PhysicsBody b, uint clock, float alpha) {
+    uint column = b.info.y >> 8, rows = hd.counts.y, columns = hd.counts.x;
+    uint a = hd.at.x + ((clock % rows) * columns + column) * 2, e = hd.at.x + (((clock + 1) % rows) * columns + column) * 2;
+    return physBetween(flesh[a].xyz, flesh[a + 1], flesh[e].xyz, flesh[e + 1], alpha);
+}
+
+// PhysicsWorld.moveKinematic.
+inline void physMoveKinematic(thread PhysicsBody& b, PhysPose pose, float h) {
+    b.prevPosition = float4(b.position.xyz, b.prevPosition.w);
+    b.prevRotation = b.rotation;
+    b.position = float4(pose.position, b.position.w);
+    b.rotation = pose.rotation;
+    b.velocity = float4((pose.position - b.prevPosition.xyz) / h, b.velocity.w);
+    float4 dq = quatMul(b.rotation, physConj(b.prevRotation));
+    if (dq.w < 0.0f) dq = -dq;
+    b.angular = float4(2.0f * dq.xyz / h, b.angular.w);
+}
+
+inline void physIntegrate(constant PhysicsParams& p, device PhysicsBody* bodies, device uint* wake, uint i, bool held,
+                          device const float4* flesh, PhysicsFleshHeader hd, uint clock, float alpha) {
     PhysicsBody b = bodies[i];
+    if ((b.info.y & PHYS_KINEMATIC) != 0) {   // to where its table puts it (PhysicsCPU.integrate)
+        if (hd.counts.y == 0) return;
+        physMoveKinematic(b, physKinematicPose(flesh, hd, b, clock, alpha), p.gravity.w);
+        bodies[i] = b;
+        return;
+    }
     if (wake[i] != 0 || held) {
         b.info.y &= ~PHYS_ASLEEP;
         b.prevPosition.w = 0.0f;
@@ -720,7 +802,7 @@ struct PhysPoints { float3 pa, pb, ra, rb; };
 
 inline PhysPoints physPoints(PhysicsContact c, PhysicsBody a, PhysicsBody b, bool previous) {
     float3 n = c.normal.xyz;
-    bool am = previous && physMoves(a), bm = previous && physMoves(b);
+    bool am = previous && (physMoves(a) || (a.info.y & PHYS_KINEMATIC) != 0), bm = previous && (physMoves(b) || (b.info.y & PHYS_KINEMATIC) != 0);
     float3 xa = am ? a.prevPosition.xyz : a.position.xyz, xb = bm ? b.prevPosition.xyz : b.position.xyz;
     PhysPoints out;
     out.ra = quatRotate(am ? a.prevRotation : a.rotation, c.anchorA.xyz) - n * c.anchorA.w;
@@ -1215,8 +1297,34 @@ inline void physSolveConstraint(device PhysicsParticle* particles, PhysicsConstr
     particles[k.b].position.xyz -= push * wb;
 }
 
+// PhysicsWorld.solveFibre: a muscle's tet's fibre, before its volume (the same thread).
+inline void physSolveFibre(device PhysicsParticle* particles, PhysicsTet t, float h, device const float4* flesh, PhysicsFleshHeader hd) {
+    PhysicsFleshFibre f = ((device const PhysicsFleshFibre*)(flesh + hd.at.w))[t.fibre - 1];
+    float activation = ((device const float*)(flesh + hd.at.z))[f.muscle];
+    uint id[4] = {t.ids.x, t.ids.y, t.ids.z, t.ids.w};
+    float3 x[4];
+    float w[4];
+    for (uint k = 0; k < 4; ++k) { x[k] = particles[id[k]].position.xyz; w[k] = particles[id[k]].prevPosition.w; }
+    float3 v = (x[1] - x[0]) * f.g.x + (x[2] - x[0]) * f.g.y + (x[3] - x[0]) * f.g.z;
+    float l = length(v);
+    if (!(l > 1e-9f)) return;
+    float3 n = v / l;
+    float3 g[4] = {-(f.g.x + f.g.y + f.g.z) * n, f.g.x * n, f.g.y * n, f.g.z * n};
+    float alpha = f.compliance / (h * h), gamma = f.compliance * t.damping / h;
+    float sum = 0.0f, moved = 0.0f;
+    for (uint k = 0; k < 4; ++k) {
+        sum += w[k] * length_squared(g[k]);
+        moved += dot(g[k], x[k] - particles[id[k]].prevPosition.xyz);
+    }
+    float denominator = (1.0f + gamma) * sum + alpha;
+    if (!(denominator > 1e-12f)) return;
+    float lambda = (-(l - (1.0f - f.g.w * activation)) - gamma * moved) / denominator;
+    for (uint k = 0; k < 4; ++k) particles[id[k]].position.xyz += g[k] * (lambda * w[k]);
+}
+
 // PhysicsWorld.solveTet: a tet's volume (six times it, (a x b) . c), in place, damped along its gradient.
-inline void physSolveTet(device PhysicsParticle* particles, PhysicsTet t, float h) {
+inline void physSolveTet(device PhysicsParticle* particles, PhysicsTet t, float h, device const float4* flesh, PhysicsFleshHeader hd) {
+    if (t.fibre != 0) physSolveFibre(particles, t, h, flesh, hd);   // the fibre first, the volume last
     uint id[4] = {t.ids.x, t.ids.y, t.ids.z, t.ids.w};
     float3 x[4];
     float w[4];
@@ -1234,6 +1342,64 @@ inline void physSolveTet(device PhysicsParticle* particles, PhysicsTet t, float 
     if (!(denominator > 1e-12f)) return;
     float lambda = (-(dot(g3, c) - t.rest) - gamma * moved) / denominator;
     for (uint k = 0; k < 4; ++k) particles[id[k]].position.xyz += g[k] * (lambda * w[k]);
+}
+
+// MARK: - Flesh (PhysicsFlesh.swift, PhysicsSkin.swift)
+
+// PhysicsWorld.activation: muscle m's, into the activations.
+inline void physActivate(device float4* flesh, PhysicsFleshHeader hd, device const PhysicsBody* bodies, uint m) {
+    PhysicsMuscle muscle = ((device const PhysicsMuscle*)(flesh + hd.at.y))[m];
+    float3 u = quatRotate(bodies[muscle.bodyA].rotation, muscle.axisA.xyz), v = quatRotate(bodies[muscle.bodyB].rotation, muscle.axisB.xyz);
+    float angle = atan2(length(cross(u, v)), dot(u, v));
+    float f = (angle - muscle.range.x) / (muscle.range.y - muscle.range.x);
+    ((device float*)(flesh + hd.at.z))[m] = muscle.range.z * min(max(f, 0.0f), 1.0f);
+}
+
+// PhysicsWorld.pin: pin k's particle held to where its bones put it.
+inline void physPin(device PhysicsParticle* particles, device const float4* flesh, PhysicsFleshHeader hd,
+                    device const PhysicsBody* bodies, uint k, float h) {
+    PhysicsFleshPin pin = ((device const PhysicsFleshPin*)(flesh + hd.at2.x))[k];
+    PhysicsBody a = bodies[pin.bodyA], b = bodies[pin.bodyB];
+    float3 target = (a.position.xyz + quatRotate(a.rotation, pin.restA.xyz)) * pin.restA.w
+                  + (b.position.xyz + quatRotate(b.rotation, pin.restB.xyz)) * pin.restB.w;
+    PhysicsParticle q = particles[pin.particle];
+    float w = q.prevPosition.w;
+    if (w > 0.0f) {
+        float s = w / (w + pin.compliance / (h * h));
+        q.position = float4(q.position.xyz + (target - q.position.xyz) * s, q.position.w);
+    } else {
+        q.prevPosition = float4(q.position.xyz, 0.0f);
+        q.position = float4(target, q.position.w);
+        q.velocity = float4((target - q.prevPosition.xyz) / h, q.velocity.w);
+    }
+    particles[pin.particle] = q;
+}
+
+// PhysicsWorld.inTet.
+inline float3 physInTet(device const PhysicsParticle* particles, uint4 ids, float4 bary) {
+    float3 x0 = particles[ids.x].position.xyz;
+    return x0 + (particles[ids.y].position.xyz - x0) * bary.x + (particles[ids.z].position.xyz - x0) * bary.y
+              + (particles[ids.w].position.xyz - x0) * bary.z;
+}
+
+// PhysicsWorld.solveSkin for attachment k: its skin particle held to the flesh.
+inline void physSkinHold(device PhysicsParticle* particles, device const float4* flesh, PhysicsFleshHeader hd, uint k, float h) {
+    PhysicsSkinAttach a = ((device const PhysicsSkinAttach*)(flesh + hd.at2.y))[k];
+    float w = particles[a.particle].prevPosition.w;
+    if (!(w > 0.0f)) return;
+    float3 target = physInTet(particles, a.ids, a.bary), deep = physInTet(particles, a.ids, a.deep);
+    float3 up = target - deep;
+    float l = length(up);
+    float3 n = l > 1e-9f ? up / l : float3(0.0f);
+    float3 x = particles[a.particle].position.xyz;
+    float3 y = x - n * (dot(x - target, n) * (w / (w + a.compliance / (h * h))));
+    float3 d = y - target;
+    y -= (d - n * dot(d, n)) * (w / (w + a.deep.w / (h * h)));
+    d = y - target;
+    float3 across = d - n * dot(d, n);
+    float slide = length(across);
+    if (slide > a.bary.w) y -= across * (1.0f - a.bary.w / slide);
+    particles[a.particle].position.xyz = y;
 }
 
 // A run of substeps, then (the step's last) the settling, in one threadgroup: its threads take the bodies, the
@@ -1271,10 +1437,12 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
                                   device const uint2*       ragdolls [[buffer(27)]],   // first body, count
                                   device const PhysicsTet*  tets [[buffer(28)]],
                                   device const uint*        tetStarts [[buffer(29)]],
+                                  device float4*            flesh [[buffer(30)]],   // PhysicsFleshHeader, then its parts
                                   uint t [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]])
 {
     uint n = p.counts.x, np = p.particles.x, entries = n * PHYS_PAIRS;
+    PhysicsFleshHeader hd = *(device const PhysicsFleshHeader*)flesh;   // (its clock moves on after the step's last run)
     PhysicsShapes w = {shapes, samples, sdf};
     threadgroup atomic_uint tally[2], perColour[PHYS_COLOURS];
     if (group.first == 0) physColourPairs(pairs, counts, order, won, live, colouring, tally, perColour, entries, t, width);
@@ -1304,11 +1472,17 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
     for (uint s = 0; s < group.count; ++s) {
         for (uint i = t; i < n; i += width) {
             bool held = grab.target.w > 0.0f && grab.body == i;
-            physIntegrate(p, bodies, wake, i, held);
+            physIntegrate(p, bodies, wake, i, held, flesh, hd, hd.more.z, float(group.first + s + 1) / p.softDamping.z);
             if (held) physHold(bodies, grab, i);
         }
         for (uint i = t; i < np; i += width) physIntegrateParticle(p, particles, i);
         threadgroup_barrier(mem_flags::mem_device);
+        // The muscles' activations and the flesh held to its bones, where this substep moved them (PhysicsWorld.solveFlesh).
+        if (hd.counts.z + hd.counts.w > 0) {
+            for (uint m = t; m < hd.counts.z; m += width) physActivate(flesh, hd, bodies, m);
+            for (uint k = t; k < hd.counts.w; k += width) physPin(particles, flesh, hd, bodies, k, p.gravity.w);
+            threadgroup_barrier(mem_flags::mem_device);
+        }
         // The cloths' constraints, a colour at a time (PhysicsCPU.solveCloth).
         for (uint c = 0; c < p.cloth.y; ++c) {
             for (uint k = colourStarts[c] + t; k < colourStarts[c + 1]; k += width) physSolveConstraint(particles, constraints[k], p);
@@ -1316,7 +1490,12 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         }
         // The soft bodies' tets, a colour at a time (PhysicsWorld.solveTets).
         for (uint c = 0; c < p.soft.y; ++c) {
-            for (uint k = tetStarts[c] + t; k < tetStarts[c + 1]; k += width) physSolveTet(particles, tets[k], p.gravity.w);
+            for (uint k = tetStarts[c] + t; k < tetStarts[c + 1]; k += width) physSolveTet(particles, tets[k], p.gravity.w, flesh, hd);
+            threadgroup_barrier(mem_flags::mem_device);
+        }
+        // The skin held to the flesh (PhysicsWorld.solveSkin): one attachment a skin particle.
+        if (hd.more.y > 0) {
+            for (uint k = t; k < hd.more.y; k += width) physSkinHold(particles, flesh, hd, k, p.gravity.w);
             threadgroup_barrier(mem_flags::mem_device);
         }
         for (uint i = t; i < np; i += width) {
@@ -1399,6 +1578,9 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         b.angular = float4(0.0f, 0.0f, 0.0f, b.angular.w);
         bodies[i] = b;
     }
+    // The step is done: the kinematic bodies' clock on (everyone read it at the start of the run).
+    threadgroup_barrier(mem_flags::mem_device);
+    if (t == 0) ((device PhysicsFleshHeader*)flesh)->more.z = hd.more.z + 1;
 }
 
 // MARK: - Drawing
@@ -1521,6 +1703,7 @@ kernel void physicsSoftMeshKernel(constant uint&                  count     [[bu
                                   device const PhysicsSoftVertex* vertices  [[buffer(2)]],
                                   device float3*                  positions [[buffer(3)]],
                                   device const PhysicsSoftEmbed*  embeds    [[buffer(4)]],
+                                  device const PhysicsBody*       bodies    [[buffer(5)]],
                                   uint i [[thread_position_in_grid]])
 {
     if (i >= count) return;
@@ -1528,6 +1711,16 @@ kernel void physicsSoftMeshKernel(constant uint&                  count     [[bu
     float3 p = float3(0.0f);
     for (uint k = s.embeds.x, end = k + s.embeds.y; k < end; ++k) {
         PhysicsSoftEmbed e = embeds[k];
+        if (e.ids.w == PHYS_EMBED_BODY) {   // on a body: a head, a hand, a foot
+            PhysicsBody b = bodies[e.ids.x];
+            p += (b.position.xyz + quatRotate(b.rotation, e.bary.xyz)) * e.bary.w;
+            continue;
+        }
+        if (e.ids.w == PHYS_EMBED_TRIANGLE) {   // on a skin's triangle, out along its normal
+            float3 a = particles[e.ids.x].position.xyz, u = particles[e.ids.y].position.xyz - a, v = particles[e.ids.z].position.xyz - a;
+            p += (a + u * e.bary.x + v * e.bary.y + physDirection(cross(u, v)) * e.bary.z) * e.bary.w;
+            continue;
+        }
         float3 x0 = particles[e.ids.x].position.xyz;
         float3 e1 = particles[e.ids.y].position.xyz - x0, e2 = particles[e.ids.z].position.xyz - x0, e3 = particles[e.ids.w].position.xyz - x0;
         p += (x0 + e1 * e.bary.x + e2 * e.bary.y + e3 * e.bary.z) * e.bary.w;
@@ -1602,13 +1795,6 @@ inline float3 physTransport(float3 a, float3 b, float3 v) {
     if (!(c > -0.999f)) return v;
     float3 k = cross(a, b);
     return v * c + cross(k, v) + k * (dot(k, v) / (1.0f + c));
-}
-inline PhysPose physBetween(float3 p0, float4 q0, float3 p1, float4 q1, float alpha) {
-    float4 q = dot(q0, q1) < 0.0f ? -q1 : q1;
-    PhysPose pose;
-    pose.position = p0 + (p1 - p0) * alpha;
-    pose.rotation = physNormalize(q0 + (q - q0) * alpha);
-    return pose;
 }
 
 // PhysicsWorld.pushOut.

@@ -337,6 +337,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     case hair               // hair and fur (PhysicsHair.swift): furry bodies rolling down a ramp, a long-haired head
                             // swinging, in a breeze; strands drawn as curves (Metal's ray tracer)
     case softBodies         // `softBodies` soft bodies (PhysicsSoft.swift): jellies dropped onto steps, pegs and a bowl
+    case muscles            // flesh, muscles and skin (PhysicsFlesh.swift) on a character walking and running round a
+                            // circle among balls, and on ragdolls tumbling down steps
 
     var title: String {
         switch self {
@@ -363,11 +365,12 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .ragdolls: return "Ragdolls"
         case .hair: return "Hair and fur"
         case .softBodies: return "Soft bodies"
+        case .muscles: return "Muscles and skin"
         }
     }
 
     /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
-    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair || self == .softBodies }
+    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -510,6 +513,19 @@ struct PhysicsSettings: Equatable, Codable {
     /// The soft body scene: soft bodies dropped in, and their lattices' cubes along each one's longest side.
     var softBodies = 16
     var softCells = 6
+    /// The muscles scene (Scene+Muscles.swift): the character, the ragdolls with flesh, the flesh's lattice spacing
+    /// (cm), its skin, and how much its muscles contract.
+    var muscleCharacter = true
+    var muscleRagdolls = 3
+    var fleshCell: Float = 3.5
+    /// The skin: the drawn surface in the flesh's outer tets (stiffer: its tension), or on a shell of its own that
+    /// slides over the flesh (PhysicsSkin.swift; the character's).
+    enum Skin: Int, CaseIterable, Codable {
+        case embedded, sliding
+        var title: String { ["Embedded", "Sliding"][rawValue] }
+    }
+    var skin = Skin.embedded
+    var muscleGain: Float = 1
 
     static let substepRange = 1...32
     static let bodyRange = 0...4096
@@ -520,6 +536,9 @@ struct PhysicsSettings: Equatable, Codable {
     static let furBodyRange = 0...32
     static let softBodyRange = 1...128
     static let softCellRange = 3...12
+    static let muscleRagdollRange = 0...12
+    static let fleshCellRange: ClosedRange<Float> = 2...6
+    static let muscleGainRange: ClosedRange<Float> = 0...2
     static let gpuFrom = 64
 
     /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
@@ -671,7 +690,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -770,7 +789,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies:
+             .softBodies, .muscles:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

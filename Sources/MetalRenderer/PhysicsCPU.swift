@@ -19,10 +19,12 @@ extension PhysicsWorld {
             // The contacts again where the substeps have taken the bodies: found once a step, a turning body's
             // contacts stay where it was (a rolling rim's sinks into the floor, and the push out of it launches it).
             if sub > 0 && sub % PhysicsWorld.contactRefresh == 0 { narrowPhase(p, refresh: true) }
-            integrate(p)
+            integrate(p, sub: sub)
             integrateParticles(p)
+            solveFlesh(p)       // the muscles, and the flesh held to its bones where this substep moved them
             solveCloth(p)
             solveTets(p)
+            solveSkin(p)
             solveParticles(p)   // against the bodies where this substep moved them, before they are pushed apart
             solvePositions(p)
             solveVelocities(p)
@@ -80,6 +82,7 @@ extension PhysicsWorld {
                     for dx: Int32 in -1...1 {
                         for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i && !PhysicsWorld.joined(b, i, bodies[j], j) {
                             let o = bodies[j]
+                            if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { continue }   // neither gives
                             let reach = r + PhysicsWorld.reach(o, p)
                             let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
                             if d2 < reach * reach { found.append((d2, UInt32(j))) }
@@ -87,7 +90,9 @@ extension PhysicsWorld {
                     }
                 }
             }
-            for s in statics.indices where touchesStatic(s, centre: x, radius: r) { found.append((-1, UInt32(s) | PhysicsWorld.staticBit)) }
+            for s in statics.indices where !PhysicsWorld.kinematic(b) && touchesStatic(s, centre: x, radius: r) {
+                found.append((-1, UInt32(s) | PhysicsWorld.staticBit))
+            }
             found.sort { $0.0 < $1.0 || ($0.0 == $1.0 && $0.1 < $1.1) }
             pairCounts[i] = UInt32(min(found.count, k))
             for (n, f) in found.prefix(k).enumerated() { pairs[i * k + n] = GPUPhysicsPair(partner: f.1) }
@@ -98,6 +103,9 @@ extension PhysicsWorld {
     /// the wake turn (its turn rate x its radius of gyration about the turn, at most `gyration`), above the sleep ones: a neighbour settling
     /// down beside it doesn't, nor a thin limb jittering about its length.
     @inline(__always) static func stirs(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Bool {
+        if kinematic(b) {   // (no mass: its turn is its turn rate x the most gyration)
+            return length(PhysicsMath.xyz(b.velocity)) > p.rolling.z || length(PhysicsMath.xyz(b.angular)) * gyration > p.rolling.w
+        }
         guard moves(b) else { return false }
         if length(PhysicsMath.xyz(b.velocity)) > p.rolling.z { return true }
         let omega = PhysicsMath.xyz(b.angular), rate = length(omega)
@@ -259,10 +267,16 @@ extension PhysicsWorld {
 
     @inline(__always) static func moves(_ b: GPUPhysicsBody) -> Bool { b.position.w > 0 && b.info.y & PhysicsWorld.asleep == 0 }
 
-    /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target.
-    private func integrate(_ p: GPUPhysicsParams) {
+    /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target;
+    /// a kinematic body to where its table puts it at the end of substep `sub` (PhysicsFlesh.swift).
+    private func integrate(_ p: GPUPhysicsParams, sub: Int) {
         let h = p.gravity.w
         for i in bodies.indices {
+            if PhysicsWorld.kinematic(bodies[i]) {
+                guard kinematicRows > 0 else { continue }
+                PhysicsWorld.moveKinematic(&bodies[i], to: kinematicPose(bodies[i], step: stepIndex, alpha: Float(sub + 1) / p.softDamping.z), h: h)
+                continue
+            }
             let held = grab.target.w > 0 && grab.body == UInt32(i)
             if held {
                 bodies[i].info.y &= ~PhysicsWorld.asleep
@@ -302,10 +316,12 @@ extension PhysicsWorld {
     @inline(__always) static func points(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, previous: Bool = false)
         -> (pa: SIMD3<Float>, pb: SIMD3<Float>, ra: SIMD3<Float>, rb: SIMD3<Float>) {
         let n = PhysicsMath.xyz(c.normal)
-        let xa = PhysicsMath.xyz(previous && moves(a) ? a.prevPosition : a.position)
-        let xb = PhysicsMath.xyz(previous && moves(b) ? b.prevPosition : b.position)
-        let ra = PhysicsMath.qrot(previous && moves(a) ? a.prevRotation : a.rotation, PhysicsMath.xyz(c.anchorA)) - n * c.anchorA.w
-        let rb = PhysicsMath.qrot(previous && moves(b) ? b.prevRotation : b.rotation, PhysicsMath.xyz(c.anchorB)) + n * c.anchorB.w
+        // (A kinematic body went somewhere too: a ball on a moving arm slides on it only as far as the arm left it.)
+        let am = previous && (moves(a) || kinematic(a)), bm = previous && (moves(b) || kinematic(b))
+        let xa = PhysicsMath.xyz(am ? a.prevPosition : a.position)
+        let xb = PhysicsMath.xyz(bm ? b.prevPosition : b.position)
+        let ra = PhysicsMath.qrot(am ? a.prevRotation : a.rotation, PhysicsMath.xyz(c.anchorA)) - n * c.anchorA.w
+        let rb = PhysicsMath.qrot(bm ? b.prevRotation : b.rotation, PhysicsMath.xyz(c.anchorB)) + n * c.anchorB.w
         return (xa + ra, xb + rb, ra, rb)
     }
 
@@ -663,7 +679,10 @@ extension PhysicsWorld {
             for (n, f) in found.prefix(k).enumerated() { neighbours[i * k + n] = f.1 }
             var touching: [UInt32] = []
             for s in statics.indices where touchesStatic(s, centre: x, radius: r) { touching.append(UInt32(s) | PhysicsWorld.staticBit) }
-            for (j, b) in bodies.enumerated() {
+            // (A figure's flesh and skin don't meet its own bones: info.z = their first << 8 | how many.)
+            let soft = q.info.y & PhysicsWorld.softBit != 0
+            let own = soft ? Int(q.info.z >> 8)..<Int((q.info.z >> 8) + (q.info.z & 0xFF)) : 0..<0
+            for (j, b) in bodies.enumerated() where !own.contains(j) {
                 let reach = r + PhysicsWorld.reach(b, p)
                 if length_squared(PhysicsMath.xyz(b.position) - x) < reach * reach { touching.append(UInt32(j)) }
             }

@@ -75,8 +75,9 @@ extension SkinnedCharacter {
         simd_normalize(a + ((dot(a, b) < 0 ? -b : b) - a) * t)
     }
 
-    /// The skinning matrices of a pose: clip `clipA` at `timeA` (in keys), blended with `clipB` at `timeB` by `blend`.
-    func palette(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [GPUJointMatrix] {
+    /// Every joint's pose in the character's space (a rotation and where it is): clip `clipA` at `timeA` (in keys),
+    /// blended with `clipB` at `timeB` by `blend`.
+    func jointPoses(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [(q: simd_quatf, t: SIMD3<Float>)] {
         var (rotations, root) = sample(clips[clipA], timeA)
         if blend > 0 {
             let b = sample(clips[clipB], timeB)
@@ -85,18 +86,32 @@ extension SkinnedCharacter {
         }
         var world = [(q: simd_quatf, t: SIMD3<Float>)]()
         world.reserveCapacity(joints.count)
-        var out = [GPUJointMatrix]()
-        out.reserveCapacity(joints.count)
         for (j, joint) in joints.enumerated() {
             let local = joint.parent < 0 ? root : SIMD3(joint.local.x, joint.local.y, joint.local.z)
-            let pose: (q: simd_quatf, t: SIMD3<Float>)
             if joint.parent < 0 {
-                pose = (rotations[j], local)
+                world.append((rotations[j], local))
             } else {
                 let p = world[joint.parent]
-                pose = (p.q * rotations[j], p.q.act(local) + p.t)
+                world.append((p.q * rotations[j], p.q.act(local) + p.t))
             }
-            world.append(pose)
+        }
+        return world
+    }
+
+    /// Every joint's pose in the bind pose (where the mesh is): its inverse bind's inverse.
+    var bindPoses: [(q: simd_quatf, t: SIMD3<Float>)] {
+        joints.map { joint in
+            let q = simd_quatf(vector: joint.inverseBindRotation).inverse
+            return (q, -q.act(SIMD3(joint.inverseBindTranslation.x, joint.inverseBindTranslation.y, joint.inverseBindTranslation.z)))
+        }
+    }
+
+    /// The skinning matrices of a pose: clip `clipA` at `timeA` (in keys), blended with `clipB` at `timeB` by `blend`.
+    func palette(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [GPUJointMatrix] {
+        let world = jointPoses(clipA: clipA, timeA: timeA, clipB: clipB, timeB: timeB, blend: blend)
+        var out = [GPUJointMatrix]()
+        out.reserveCapacity(joints.count)
+        for (joint, pose) in zip(joints, world) {
             let ib = simd_quatf(vector: joint.inverseBindRotation)
             let q = pose.q * ib
             let t = pose.q.act(SIMD3(joint.inverseBindTranslation.x, joint.inverseBindTranslation.y, joint.inverseBindTranslation.z)) + pose.t

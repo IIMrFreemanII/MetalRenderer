@@ -545,7 +545,8 @@ struct GPUPhysicsParams {
                                              // than this (m/s, PhysicsWorld.wakeTurn)
     var soft = SIMD4<UInt32>()               // soft bodies (PhysicsSoft.swift): x = tets, y = their colours, z = drawn
                                              // vertices, w = soft bodies
-    var softDamping = SIMD4<Float>()         // x = their air drag (1/s), y = their links' damping (s), z = w = 0
+    var softDamping = SIMD4<Float>()         // x = their air drag (1/s), y = their links' damping (s), z = substeps a
+                                             // step (a kinematic body's share of the step a substep), w = 0
 }
 
 /// A soft body's tetrahedron (PhysicsSoft.swift): its four particles and its rest volume, which an XPBD constraint
@@ -555,7 +556,7 @@ struct GPUPhysicsTet {
     var rest: Float = 0                      // six times its volume at rest (m^3)
     var compliance: Float = 0                // m^3/N: 0 keeps its volume
     var damping: Float = 0                   // s (XPBD's beta)
-    var pad: Float = 0
+    var fibre: UInt32 = 0                    // a muscle's tet: its fibre (PhysicsWorld.fibres) + 1; 0: none
 }
 
 /// A soft body's drawn vertex (PhysicsSoft.swift): MSL PhysicsSoftVertex.
@@ -566,11 +567,71 @@ struct GPUSoftVertex {
     var embeds = SIMD4<UInt32>()             // x = its first place in its tets (PhysicsWorld.softEmbeds), y = how many
 }
 
-/// Where a soft body's drawn vertex is in one of the tets it follows (PhysicsSoft.swift): MSL PhysicsSoftEmbed.
+/// Where a soft body's drawn vertex is in one of the tets it follows (PhysicsSoft.swift): MSL PhysicsSoftEmbed. Or,
+/// with `ids.w` = `bodyKind` or `triangleKind` (PhysicsFlesh.swift), on a body (`ids.x`; `bary.xyz` in its space) or on
+/// a skin's triangle (`ids.xyz` its particles; `bary.xy` the weights of the last two, `bary.z` how far out along its
+/// normal).
 struct GPUSoftEmbed {
     var bary = SIMD4<Float>()                // its weights for the tet's last three particles (the first's is 1 - their
                                              // sum); w = this tet's share of where it goes
     var ids = SIMD4<UInt32>()                // the tet's particles
+    static let bodyKind: UInt32 = 0x8000_0001
+    static let triangleKind: UInt32 = 0x8000_0002
+}
+
+/// The flesh's part of the physics (PhysicsFlesh.swift), packed in one buffer after this header: MSL PhysicsFleshHeader.
+struct GPUFleshHeader {
+    var counts = SIMD4<UInt32>()             // x = kinematic bodies (the pose table's columns), y = its rows (steps), z =
+                                             // muscles, w = pins
+    var more = SIMD4<UInt32>()               // x = fibres, y = skin attachments, z = the clock: steps run (the GPU's), w = 0
+    var at = SIMD4<UInt32>()                 // where each part starts (16-byte words): x = the pose table, y = the
+                                             // muscles, z = their activations, w = the fibres
+    var at2 = SIMD4<UInt32>()                // x = the pins, y = the skin's attachments
+}
+
+/// A flesh particle held to its bones (PhysicsFlesh.swift): MSL PhysicsFleshPin. Its target is where two bodies put a
+/// point (each in its own space), blended by their weights.
+struct GPUFleshPin {
+    var restA = SIMD4<Float>()               // in body A's space; w = A's weight
+    var restB = SIMD4<Float>()               // in body B's space; w = B's weight
+    var particle: UInt32 = 0
+    var bodyA: UInt32 = 0
+    var bodyB: UInt32 = 0
+    var compliance: Float = 0                // m/N (a particle of no mass sits on its target)
+}
+
+/// A muscle's activation from the angle between two bones' axes (PhysicsFlesh.swift): MSL PhysicsMuscle.
+struct GPUMuscle {
+    var axisA = SIMD4<Float>()               // body A's axis, in its space
+    var axisB = SIMD4<Float>()               // body B's, in its space
+    var range = SIMD4<Float>()               // x = the angle it starts at, y = the one it is full at, z = how full (0...1)
+    var bodyA: UInt32 = 0
+    var bodyB: UInt32 = 0
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// A muscle's tet's fibre (PhysicsFlesh.swift): MSL PhysicsFleshFibre. Its direction at rest through the tet's rest
+/// edges' inverse (Dm^-1 f), so that the edges now times it is the fibre now.
+struct GPUFleshFibre {
+    var g = SIMD4<Float>()                   // w = how far it shortens at full activation (a share of its length)
+    var muscle: UInt32 = 0
+    var compliance: Float = 0
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// A skin particle's hold on the flesh beneath it (PhysicsSkin.swift): MSL PhysicsSkinAttach.
+struct GPUSkinAttach {
+    var bary = SIMD4<Float>()                // where it rests in the tet (the last three particles' weights); w = how far
+                                             // it may slide (m)
+    var deep = SIMD4<Float>()                // a point under it, in the same tet (its normal: from there); w = the slide's
+                                             // compliance
+    var ids = SIMD4<UInt32>()                // the tet's particles
+    var particle: UInt32 = 0
+    var compliance: Float = 0                // along the normal
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
@@ -619,6 +680,11 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsTet>.stride == 32, "GPUPhysicsTet layout mismatch")
     precondition(MemoryLayout<GPUSoftVertex>.stride == 32, "GPUSoftVertex layout mismatch")
     precondition(MemoryLayout<GPUSoftEmbed>.stride == 32, "GPUSoftEmbed layout mismatch")
+    precondition(MemoryLayout<GPUFleshHeader>.stride == 64, "GPUFleshHeader layout mismatch")
+    precondition(MemoryLayout<GPUFleshPin>.stride == 48, "GPUFleshPin layout mismatch")
+    precondition(MemoryLayout<GPUMuscle>.stride == 64, "GPUMuscle layout mismatch")
+    precondition(MemoryLayout<GPUFleshFibre>.stride == 32, "GPUFleshFibre layout mismatch")
+    precondition(MemoryLayout<GPUSkinAttach>.stride == 64, "GPUSkinAttach layout mismatch")
     precondition(MemoryLayout<GPUPhysicsConstraint>.stride == 16, "GPUPhysicsConstraint layout mismatch")
     precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
     precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")
