@@ -60,6 +60,17 @@ enum UniformFlags {
     static let giRadiance: UInt32 = 4194304  // the composite keeps the lit diffuse light for Lumen's screen traces
 }
 
+/// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.
+struct GPUPathTraceParams {
+    var samples = SIMD4<UInt32>()   // x = paths in the mean so far, y = paths to add, z = bounces, w = light-tree nodes
+    var config = SIMD4<UInt32>()    // x = flags (below), y = instances the light-proxy map covers, z = the average's seed
+    var bounds = SIMD4<Float>()     // the scene's sphere (Scene.sceneSphere): the fog is inside it (the sun's and the sky's
+                                    // light is what reaches the scene)
+
+    static let sobol: UInt32 = 1    // Owen-scrambled Sobol samples (else white noise)
+    static let fog: UInt32 = 2      // the fog's medium (FogParams at buffer 9, its noise at texture 1)
+}
+
 /// The lens and the finish (MSL PostParams), passed with setBytes to the kernels of Shaders/Post.metal.
 struct GPUPostParams {
     var bloom = SIMD4<Float>()     // x = strength (0 = none), y = threshold, z = exposure (linear scale), w = levels
@@ -420,6 +431,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
     precondition(MemoryLayout<GPUPostParams>.stride == 80, "GPUPostParams layout mismatch")
+    precondition(MemoryLayout<GPUPathTraceParams>.stride == 48, "GPUPathTraceParams layout mismatch")
     precondition(MemoryLayout<GPUSDFNode>.stride == 96, "GPUSDFNode layout mismatch")
     precondition(MemoryLayout<GPUSDFShape>.stride == 48, "GPUSDFShape layout mismatch")
     precondition(MemoryLayout<GPUSDFVolume>.stride == 48, "GPUSDFVolume layout mismatch")

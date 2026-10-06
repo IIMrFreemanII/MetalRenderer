@@ -79,6 +79,9 @@ extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
 extension CityStyle: EnvNamed {}
+extension ReferenceMode: EnvNamed {
+    var envName: String { ["off", "accumulated", "pt"][rawValue] }
+}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
@@ -464,13 +467,20 @@ enum SettingsTable {
     }()
 
     private static let rendering: Section = {
-        Section(title: "Rendering", rows: [
+        let reference: When = { $0.reference.mode != .off }, pathTraced: When = { $0.reference.mode == .pathTraced }
+        return Section(title: "Rendering", rows: [
             S.slider("Render scale", \.renderScale, RenderSettings.renderScaleRange, step: Double(RenderSettings.renderScaleStep),
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
+            S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
+            S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),
+            S.slider("Ref. samples/frame", \.reference.samplesPerFrame, ReferenceSettings.samplesPerFrameRange)
+                .env(.view, "refspp").when(pathTraced),
+            S.popup("Ref. max samples", \.reference.maxSamples, ReferenceSettings.maxSampleOptions.map { ($0 == 0 ? "No limit" : "\($0)", $0) })
+                .env(.view, "refmax").when(reference),
         ])
     }()
 
