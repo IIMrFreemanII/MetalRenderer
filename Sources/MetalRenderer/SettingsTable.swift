@@ -411,6 +411,7 @@ enum SettingsTable {
             S.slider("Mapped lights", \.vsm.maxLights, VSMSettings.maxLightRange).env(.vsm, "lights").advanced().when(vsm),
             S.slider("March steps", \.vsm.steps, VSMSettings.stepRange).env(.vsm, "steps").advanced().when(vsm),
             S.slider("Depth bias", \.vsm.bias, VSMSettings.biasRange, step: 0.25, fmt("%.2f texels")).env(.vsm, "bias").advanced().when(vsm),
+            S.check("Virtual geometry as clusters", \.vsm.clusters).env(.vsm, "clusters").advanced().when(vsm),
             S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
             S.value(\.manyLightRays).env(.gi, "lightrays"),
             S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }

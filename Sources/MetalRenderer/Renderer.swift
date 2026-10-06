@@ -2372,7 +2372,7 @@ final class Renderer: NSObject {
                   + (Renderer.voxelAsync ? ", \(voxelLevels.swaps) background rebuilds swapped in" : ""))
         }
         if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
-        if let benchmark, benchmark.shouldCapture, plan.raster != nil, let rc = rasterClusters { print("  " + rc.summary) }
+        if let benchmark, benchmark.shouldCapture, plan.raster != nil || plan.vsm != nil, let rc = rasterClusters { print("  " + rc.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
             print("  " + ts.summary)
             if ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_DEBUG"] != nil { print(ts.details) }
@@ -2394,7 +2394,9 @@ final class Renderer: NSObject {
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
         let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
-        let rasterVG = plan.raster == nil ? nil : rasterClusters   // (its counters are this frame's only if it drew)
+        // The clusters' counters and requests are this frame's only from what drew them.
+        let vgCamera = plan.raster?.scene.virtualClusters == true, vgShadows = plan.vsm != nil && settings.vsm.clusters
+        let rasterVG = vgCamera || vgShadows ? rasterClusters : nil
         let cpuInterval = frameIntervalMs
         let encodeNow = (CACurrentMediaTime() - encodeStart) * 1000
         encodeSum += encodeNow
@@ -2404,7 +2406,7 @@ final class Renderer: NSObject {
         passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
             if !Benchmark.isEnabled {
                 vg?.collect(slot: slot, frame: vgFrame)
-                rasterVG?.collect(slot: slot, frame: vgFrame)
+                rasterVG?.collect(slot: slot, frame: vgFrame, camera: vgCamera, shadows: vgShadows)
                 streamer?.collect(slot: slot)
             }
             if let bench, recordFrame {
@@ -2440,7 +2442,7 @@ final class Renderer: NSObject {
         sceneDeclaredIn = nil
         if benchmark != nil {
             vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
-            rasterVG?.collect(slot: slot, frame: vgFrame)
+            rasterVG?.collect(slot: slot, frame: vgFrame, camera: vgCamera, shadows: vgShadows)
             streamer?.collect(slot: slot)
         }
         if checkCrowd, let crowdSkinner {   // the frame is done (benchmarks wait for it)
@@ -3264,7 +3266,7 @@ final class Renderer: NSObject {
 
     /// The raster's view of the scene being drawn: made on the first raster frame of a scene's buffers.
     private func currentRasterScene() -> RasterScene? {
-        let clusters = rasterClusters != nil
+        let clusters = rasterClusters != nil && cameraClusters   // (the shadow maps may have them on their own)
         if let r = rasterScene, r.source === sceneBuffers.meshes, r.virtualClusters == clusters { return r }
         rasterScene = nil
         do {
@@ -3276,12 +3278,11 @@ final class Renderer: NSObject {
         return rasterScene
     }
 
-    /// Virtual geometry's clusters for the raster, when it draws them (made on the first such frame of a scene, with
-    /// their own streaming pool): nil otherwise, which frees the pool.
+    /// Virtual geometry's clusters, when the raster or the shadow maps draw them (made on the first such frame of a
+    /// scene, with their own streaming pool): nil otherwise, which frees the pool.
     @discardableResult
     private func currentRasterClusters() -> RasterClusters? {
-        guard settings.primary == .raster, settings.virtualGeometry.raster.drawsClusters, let customRT,
-              let blas = customRT.virtualBLAS, !scene.hasVoxelBoxes else {
+        guard cameraClusters || shadowClusters, let customRT, let blas = customRT.virtualBLAS, !scene.hasVoxelBoxes else {
             if rasterClusters != nil {
                 customRT?.rasterClusters = nil
                 rasterClusters = nil
@@ -3303,6 +3304,13 @@ final class Renderer: NSObject {
             print("Raster clusters: \(error); virtual geometry is drawn from its BLAS")
         }
         return rasterClusters
+    }
+
+    /// The camera's raster draws virtual geometry as clusters (VirtualGeometrySettings.raster).
+    private var cameraClusters: Bool { settings.primary == .raster && settings.virtualGeometry.raster.drawsClusters }
+    /// The shadow maps draw virtual geometry as clusters (VSMSettings.clusters).
+    private var shadowClusters: Bool {
+        settings.shadowMethod == .virtualMaps && settings.vsm.clusters && !CustomRayTracer.clusterMode
     }
 
     private func rasterTargets(width: Int, height: Int, scene rs: RasterScene) -> RasterTargets? {
@@ -3519,7 +3527,7 @@ final class Renderer: NSObject {
                                   flags: (rs.ids != nil ? GPUVSMParams.ids : 0) | (Renderer.vsmCache ? GPUVSMParams.cache : 0),
                                   views: UInt32(vsm.viewCount), moving: UInt32(rs.movingCount))
         // Virtual geometry as the raster's clusters: their own cut a view (vsmVGCutKernel); else zeros (VSMClusterArgs).
-        let clusters = rs.virtualClusters ? rasterClusters : nil
+        let clusters = settings.vsm.clusters ? rasterClusters : nil
         let clusterArgs = clusters?.shadowArgs(slot: slot, views: vsm.viewCount, tau: settings.virtualGeometry.pixelError)
         var vgArgs = clusterArgs?.bytes ?? [UInt64](repeating: 0, count: 12)
         let group = MTLSize(width: 64, height: 1, depth: 1), one = MTLSize(width: 1, height: 1, depth: 1)
@@ -3873,9 +3881,9 @@ final class Renderer: NSObject {
                              residentGroups: vg.stats.residentGroups, residentMB: vg.residentMB, poolMB: vg.poolBytes >> 20,
                              pending: vg.stats.pending, loadedThisFrame: vg.stats.loadedThisFrame)
         }
-        if let rc = rasterClusters, rasterScene?.virtualClusters == true {
+        if let rc = rasterClusters, rasterScene?.virtualClusters == true || shadowClusters {
             let s = rc.stats
-            d.rasterClusters = (s.drawn, RasterClusters.capacity, s.overflow, s.retested, s.triangles, s.residentGroups, rc.streamer.groupCount,
+            d.rasterClusters = (rc.drawnByCamera, s.drawn, RasterClusters.capacity, s.overflow, s.retested, s.triangles, s.residentGroups, rc.streamer.groupCount,
                                 rc.streamer.residentMB, rc.streamer.poolBytes >> 20, s.pending, s.loadedThisFrame)
         }
         d.vgPixelError = settings.virtualGeometry.pixelError

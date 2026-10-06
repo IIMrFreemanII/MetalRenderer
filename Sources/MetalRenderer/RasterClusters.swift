@@ -43,6 +43,8 @@ final class RasterClusters {
     private let device: MTLDevice
     private let lock = NSLock()
     private var counts = (drawn: 0, triangles: 0, overflow: false, retested: 0)
+    private var cameraDraws = false   // the last collected frame's raster drew them (else the shadow maps only)
+    var drawnByCamera: Bool { lock.lock(); defer { lock.unlock() }; return cameraDraws }
 
     var stats: (drawn: Int, triangles: Int, overflow: Bool, retested: Int, residentGroups: Int, pending: Int, loadedThisFrame: Int) {
         lock.lock(); let c = counts; lock.unlock()
@@ -131,16 +133,24 @@ final class RasterClusters {
     func requests(slot: Int) -> MTLBuffer { requestBuffers[slot] }
 
     /// The frame that used `slot` has finished on the GPU: collect its requests (any thread).
-    func collect(slot: Int, frame: UInt32) {
+    /// `camera`, `shadows`: the raster's cut, the shadow maps' cut ran in that frame (their counters are its).
+    func collect(slot: Int, frame: UInt32, camera: Bool, shadows: Bool) {
         let c = counterBuffers[slot].contents().bindMemory(to: UInt32.self, capacity: 5)
-        let n = min(Int(c[1]), RasterClusters.requestCapacity)
-        let r = requestBuffers[slot].contents().bindMemory(to: SIMD2<UInt32>.self, capacity: RasterClusters.requestCapacity)
-        streamer.addRequests(r, count: n, frame: frame)
-        let v = vsmRequestBuffers[slot].contents()
-        let vn = min(Int(v.load(as: UInt32.self)), RasterClusters.requestCapacity)
-        streamer.addRequests(v.advanced(by: 16).bindMemory(to: SIMD2<UInt32>.self, capacity: RasterClusters.requestCapacity), count: vn, frame: frame)
+        if camera {
+            let n = min(Int(c[1]), RasterClusters.requestCapacity)
+            let r = requestBuffers[slot].contents().bindMemory(to: SIMD2<UInt32>.self, capacity: RasterClusters.requestCapacity)
+            streamer.addRequests(r, count: n, frame: frame)
+        }
+        if shadows {
+            let v = vsmRequestBuffers[slot].contents()
+            let vn = min(Int(v.load(as: UInt32.self)), RasterClusters.requestCapacity)
+            streamer.addRequests(v.advanced(by: 16).bindMemory(to: SIMD2<UInt32>.self, capacity: RasterClusters.requestCapacity),
+                                 count: vn, frame: frame)
+        }
         lock.lock()
-        counts = (min(Int(c[0]), RasterClusters.capacity), Int(c[3]), c[2] != 0, min(Int(c[4]), RasterClusters.capacity))
+        counts = camera ? (min(Int(c[0]), RasterClusters.capacity), Int(c[3]), c[2] != 0, min(Int(c[4]), RasterClusters.capacity))
+                        : (0, 0, false, 0)
+        cameraDraws = camera
         lock.unlock()
     }
 
@@ -178,6 +188,10 @@ final class RasterClusters {
 
     var summary: String {
         let s = stats
+        if !drawnByCamera {
+            return String(format: "Raster clusters (the shadow maps'): %d groups resident (%.0f MB of %d), %d requests waiting",
+                          s.residentGroups, streamer.residentMB, streamer.poolBytes >> 20, s.pending)
+        }
         return String(format: "Raster clusters: %d triangles in %d clusters drawn%@ (%d held back for the second pass), %d groups resident (%.0f MB of %d), %d requests waiting",
                       s.triangles, s.drawn, s.overflow ? " (capacity reached)" : "", s.retested, s.residentGroups, streamer.residentMB,
                       streamer.poolBytes >> 20, s.pending)

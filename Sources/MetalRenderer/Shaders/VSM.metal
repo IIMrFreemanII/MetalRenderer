@@ -237,7 +237,8 @@ struct VSMInstance {
 };
 static_assert(sizeof(VSMInstance) == 112, "VSMInstance: VSMTargets.recordSize");
 
-// Virtual geometry drawn as the raster's clusters (RasterClusters.shadowArgs; all null without them): vsmCullKernel
+// Virtual geometry drawn as clusters (RasterClusters.shadowArgs, VSMSettings.clusters; all null without them), whether
+// the camera's raster draws it from the BLAS or as clusters: vsmCullKernel
 // leaves each (active view, virtual instance) a record, vsmVGCutKernel (RasterClusters.metal) picks and culls the
 // clusters for its pages at a level of detail of the view's texels, and vsmVertex reads their vertices in the pool.
 struct VSMClusterArgs {
@@ -437,7 +438,8 @@ kernel void vsmInvalidateKernel(device const InstanceData*    instances [[buffer
     // a new cut, and its clusters finer groups (their cut doesn't follow the camera: vsmVGCutKernel).
     bool moved = false;
     for (uint c = 0; c < 4u; ++c) moved = moved || any(inst.transform[c] != inst.prevTransform[c]);
-    bool recut = kind == RASTER_VIRTUAL || (kind == RASTER_CLUSTERS && vg.changed != nullptr && vg.changed[inst.pad1 - 1u] != 0u);
+    bool virtualMesh = kind == RASTER_VIRTUAL || kind == RASTER_CLUSTERS;
+    bool recut = virtualMesh && (vg.changed == nullptr || vg.changed[inst.pad1 - 1u] != 0u);
     if (!moved && !recut) return;
     for (uint k = 0; k < 2u; ++k) {
         VSMInstance r = vsmProjection(k == 0u ? inst.prevTransform : inst.transform, v);
@@ -519,8 +521,12 @@ kernel void vsmCullKernel(device const float3*          positions  [[buffer(2)]]
     if (meshIndex >= vp.meshCount) return;
     RasterMesh rm = rmeshes[meshIndex];
     uint kind = as_type<uint>(rm.hi.w);
-    bool clusters = (kind & RASTER_KIND) == RASTER_CLUSTERS;   // (its own cut: vsmVGCutKernel)
-    if ((kind & RASTER_KIND) == RASTER_SKIP || (clusters && vg.records == nullptr)) return;
+    // Virtual geometry: with the clusters' arguments, their own cut (vsmVGCutKernel), whatever the camera draws it from;
+    // without, the BLAS's triangles.
+    bool virtualMesh = (kind & RASTER_KIND) == RASTER_VIRTUAL || (kind & RASTER_KIND) == RASTER_CLUSTERS;
+    bool clusters = virtualMesh && vg.records != nullptr;
+    if (virtualMesh && !clusters) kind = (kind & ~RASTER_KIND) | RASTER_VIRTUAL;
+    if ((kind & RASTER_KIND) == RASTER_SKIP) return;
     uint triangles = clusters ? 1u
                    : (kind & RASTER_KIND) == RASTER_VIRTUAL ? vgTable[inst.pad1 - 1u].triangles : meshes[meshIndex].indexCount / 3u;
     if (triangles == 0u) return;

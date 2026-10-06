@@ -442,6 +442,10 @@ struct VSMSettings: Equatable, Codable {
     var steps = 8                   // the march's steps toward the light
     var bias: Float = 0.5           // depth bias, in texels of the page's level (x (1 + the slope)): 0.5 is nearest the
                                     // rays (pixels > 8 levels off in the city: 1.6% against 3.0% at 1.5), no acne
+    /// Virtual geometry (with the per-instance BLAS) drawn as clusters with a cut of each view's own (RasterClusters),
+    /// whatever the camera draws it from: its pages then stay drawn while the camera moves. Off: the BLAS's triangles,
+    /// all of them into every page the instance covers, every frame.
+    var clusters = true
 
     static let poolOptions = [256, 512, 1024, 2048]
     static let budgetRange = 16...1024
