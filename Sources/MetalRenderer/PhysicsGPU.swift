@@ -7,9 +7,17 @@ import simd
 /// pose kernel writes and the CPU reads once the slot's frame is done: three frames late, the same three every time.
 ///
 /// Buffers are written once (the parameters too: a step sets no bytes, so a replay of hundreds of steps fits a
-/// frame's constants on Metal 4). A substep reads the bodies from one buffer and writes the other twice, so the
-/// state is in `bodies[0]` between substeps.
+/// frame's constants on Metal 4). A step's substeps run in groups of `PhysicsWorld.contactRefresh`, the narrow phase
+/// before each.
 final class PhysicsGPU {
+    /// MSL PhysicsGroup: a run of a step's substeps.
+    struct Group {
+        var first: UInt32
+        var count: UInt32
+        var last: UInt32
+        var pad: UInt32 = 0
+    }
+
     /// MSL PhysicsPoseParams.
     struct PoseParams {
         var bodies: UInt32
@@ -20,7 +28,7 @@ final class PhysicsGPU {
 
     let world: PhysicsWorld
     private let params: MTLBuffer
-    private let bodies: [MTLBuffer]
+    private let bodies: MTLBuffer
     private let initial: MTLBuffer
     private let statics: MTLBuffer
     private let staticBounds: MTLBuffer
@@ -33,12 +41,19 @@ final class PhysicsGPU {
     private let contacts: MTLBuffer
     private let wake: MTLBuffer
     private let lastPose: MTLBuffer
-    private let substepCount: MTLBuffer
-    /// The step's contacts (entry x 4 + slot), their count, and each one's push or kick (MSL PhysicsResult).
-    private let list: MTLBuffer
-    private let listed: MTLBuffer
-    private let results: MTLBuffer
+    /// A step's runs of substeps (MSL PhysicsGroup), each bound at its offset; every body's pose at the step's start
+    /// (what the settling measures it against); and the colouring's pairs in order, and its per-entry flags.
+    private let groups: MTLBuffer
+    private let groupCount: Int
+    private let start: MTLBuffer
+    private let order: MTLBuffer
+    private let won: MTLBuffer
+    private let live: MTLBuffer
+    /// Where each colour starts, then the colours and how many pairs the rounds left.
+    private let colouring: MTLBuffer
     private let snapshots: [MTLBuffer]
+    /// Per frame slot, the body the mouse holds (MSL PhysicsGrab) as the CPU set it for that frame's steps.
+    private let grabs: [MTLBuffer]
     /// The particles (twice: their solve reads one and writes the other), their start, their grid, their neighbours and
     /// colliders, and where each was last frame.
     private let particles: [MTLBuffer]
@@ -85,7 +100,7 @@ final class PhysicsGPU {
         count = n
         params = try buffer([world.params], "physicsParams")
         initial = try buffer(world.initialBodies, "physicsInitial")
-        bodies = [try buffer(world.initialBodies, "physicsBodies0"), try buffer(world.initialBodies, "physicsBodies1")]
+        bodies = try buffer(world.initialBodies, "physicsBodies")
         statics = try buffer(world.statics, "physicsStatics")
         staticBounds = try buffer(world.staticBounds.flatMap { [SIMD4($0.lo, 0), SIMD4($0.hi, 0)] }, "physicsStaticBounds")
         shapes = try buffer(world.shapes, "physicsShapes")
@@ -99,11 +114,19 @@ final class PhysicsGPU {
         wake = try buffer([UInt32](repeating: 0, count: n), "physicsWake")
         let poses = world.initialBodies.flatMap { [SIMD4(PhysicsMath.xyz($0.position), 0), $0.rotation] }
         lastPose = try buffer(poses, "physicsLastPose")
-        substepCount = try buffer([UInt32(world.substeps)], "physicsSubsteps")
-        list = try buffer([UInt32](), "physicsList", length: n * k * PhysicsWorld.maxContacts * 4)
-        listed = try buffer([UInt32(0)], "physicsListed")
-        results = try buffer([UInt32](), "physicsResults", length: n * k * PhysicsWorld.maxContacts * 48)
+        let runs = stride(from: 0, to: world.substeps, by: PhysicsWorld.contactRefresh).map { first in
+            Group(first: UInt32(first), count: UInt32(min(PhysicsWorld.contactRefresh, world.substeps - first)),
+                  last: first + PhysicsWorld.contactRefresh >= world.substeps ? 1 : 0)
+        }
+        groupCount = runs.count
+        groups = try buffer(runs, "physicsGroups")
+        start = try buffer([SIMD4<Float>](), "physicsStart", length: n * 32)
+        order = try buffer([UInt32](), "physicsOrder", length: n * k * 4)
+        won = try buffer([UInt32](), "physicsWon", length: n * k * 4)
+        live = try buffer([UInt32](), "physicsLive", length: n * k * 4)
+        colouring = try buffer([UInt32](repeating: 0, count: PhysicsWorld.maxColours + 3), "physicsColouring")
         snapshots = try (0..<slots).map { try buffer(poses, "physicsSnapshot\($0)") }
+        grabs = try (0..<slots).map { try buffer([GPUPhysicsGrab()], "physicsGrab\($0)") }
         let np = world.particles.count
         particleCount = np
         particles = [try buffer(world.initialParticles, "physicsParticles0"), try buffer(world.initialParticles, "physicsParticles1")]
@@ -139,7 +162,7 @@ final class PhysicsGPU {
         enc.setComputePipelineState(pipelines[.physicsReset])
         enc.setBuffer(params, offset: 0, index: 0)
         enc.setBuffer(initial, offset: 0, index: 1)
-        enc.setBuffer(bodies[0], offset: 0, index: 2)
+        enc.setBuffer(bodies, offset: 0, index: 2)
         enc.setBuffer(wake, offset: 0, index: 3)
         enc.setBuffer(lastPose, offset: 0, index: 4)
         enc.setBuffer(initialParticles, offset: 0, index: 5)
@@ -148,20 +171,23 @@ final class PhysicsGPU {
         dispatch(enc, pipelines[.physicsReset], max(count, particleCount))
     }
 
-    /// `steps` steps, in order, into a serial pass.
-    func encodeSteps(_ enc: ComputePass, pipelines: Pipelines, steps: Int) {
+    /// The body held for slot `slot`'s steps (the world's `grab`), written once the slot's last frame is done.
+    func setGrab(slot: Int, _ grab: GPUPhysicsGrab) {
+        grabs[slot].contents().storeBytes(of: grab, as: GPUPhysicsGrab.self)
+    }
+
+    /// `steps` steps, in order, into a serial pass, with slot `slot`'s grab.
+    func encodeSteps(_ enc: ComputePass, pipelines: Pipelines, steps: Int, slot: Int = 0) {
         guard !empty, steps > 0 else { return }
-        let k = PhysicsWorld.maxPairs
         enc.useResources(sdfResources, usage: .read)
         enc.setBuffer(params, offset: 0, index: 0)
         for _ in 0..<steps {
             enc.setComputePipelineState(pipelines[.physicsClear])
             enc.setBuffer(heads, offset: 0, index: 1)
-            enc.setBuffer(listed, offset: 0, index: 2)
             enc.setBuffer(particleHeads, offset: 0, index: 3)
             dispatch(enc, pipelines[.physicsClear], max(world.buckets, world.particleBuckets))
             enc.setComputePipelineState(pipelines[.physicsInsert])
-            enc.setBuffer(bodies[0], offset: 0, index: 1)
+            enc.setBuffer(bodies, offset: 0, index: 1)
             enc.setBuffer(heads, offset: 0, index: 2)
             enc.setBuffer(next, offset: 0, index: 3)
             dispatch(enc, pipelines[.physicsInsert], count)
@@ -171,7 +197,7 @@ final class PhysicsGPU {
             enc.setBuffer(particleNext, offset: 0, index: 3)
             dispatch(enc, pipelines[.physicsParticleInsert], particleCount)
             enc.setComputePipelineState(pipelines[.physicsPairs])
-            enc.setBuffer(bodies[0], offset: 0, index: 1)
+            enc.setBuffer(bodies, offset: 0, index: 1)
             enc.setBuffer(statics, offset: 0, index: 2)
             enc.setBuffer(staticBounds, offset: 0, index: 3)
             enc.setBuffer(shapes, offset: 0, index: 4)
@@ -181,28 +207,11 @@ final class PhysicsGPU {
             enc.setBuffer(pairCounts, offset: 0, index: 8)
             dispatch(enc, pipelines[.physicsPairs], count)
             enc.setComputePipelineState(pipelines[.physicsLink])
-            enc.setBuffer(bodies[0], offset: 0, index: 1)
+            enc.setBuffer(bodies, offset: 0, index: 1)
             enc.setBuffer(pairs, offset: 0, index: 2)
             enc.setBuffer(pairCounts, offset: 0, index: 3)
             enc.setBuffer(wake, offset: 0, index: 4)
             dispatch(enc, pipelines[.physicsLink], count)
-            enc.setComputePipelineState(pipelines[.physicsNarrow])
-            enc.setBuffer(bodies[0], offset: 0, index: 1)
-            enc.setBuffer(statics, offset: 0, index: 2)
-            enc.setBuffer(shapes, offset: 0, index: 3)
-            enc.setBuffer(samples, offset: 0, index: 4)
-            enc.setBuffer(sdfScene, offset: 0, index: 5)
-            enc.setBuffer(pairs, offset: 0, index: 6)
-            enc.setBuffer(pairCounts, offset: 0, index: 7)
-            enc.setBuffer(contacts, offset: 0, index: 8)
-            enc.setBuffer(list, offset: 0, index: 9)
-            enc.setBuffer(listed, offset: 0, index: 10)
-            // A SIMD group per entry (its lanes share the samples).
-            let narrow = pipelines[.physicsNarrow], simd = narrow.threadExecutionWidth
-            if count > 0 {
-                enc.dispatchThreads(MTLSize(width: count * k * simd, height: 1, depth: 1),
-                                    threadsPerThreadgroup: MTLSize(width: min(narrow.maxTotalThreadsPerThreadgroup / simd, 4) * simd, height: 1, depth: 1))
-            }
             // The particles' neighbours and colliders (through the bodies' grid).
             enc.setComputePipelineState(pipelines[.physicsParticleNeighbours])
             enc.setBuffer(particles[0], offset: 0, index: 1)
@@ -210,7 +219,7 @@ final class PhysicsGPU {
             enc.setBuffer(particleNext, offset: 0, index: 3)
             enc.setBuffer(neighbours, offset: 0, index: 4)
             enc.setBuffer(neighbourCounts, offset: 0, index: 5)
-            enc.setBuffer(bodies[0], offset: 0, index: 6)
+            enc.setBuffer(bodies, offset: 0, index: 6)
             enc.setBuffer(statics, offset: 0, index: 7)
             enc.setBuffer(staticBounds, offset: 0, index: 8)
             enc.setBuffer(shapes, offset: 0, index: 9)
@@ -219,35 +228,63 @@ final class PhysicsGPU {
             enc.setBuffer(colliders, offset: 0, index: 12)
             enc.setBuffer(colliderCounts, offset: 0, index: 13)
             dispatch(enc, pipelines[.physicsParticleNeighbours], particleCount)
-            // Every substep in one threadgroup (Physics.metal's physicsSubstepsKernel).
-            let substeps = pipelines[.physicsSubsteps]
-            enc.setComputePipelineState(substeps)
-            enc.setBuffer(bodies[0], offset: 0, index: 1)
-            enc.setBuffer(bodies[1], offset: 0, index: 2)
-            enc.setBuffer(statics, offset: 0, index: 3)
-            enc.setBuffer(pairs, offset: 0, index: 4)
-            enc.setBuffer(pairCounts, offset: 0, index: 5)
-            enc.setBuffer(contacts, offset: 0, index: 6)
-            enc.setBuffer(wake, offset: 0, index: 7)
-            enc.setBuffer(substepCount, offset: 0, index: 8)
-            enc.setBuffer(list, offset: 0, index: 9)
-            enc.setBuffer(listed, offset: 0, index: 10)
-            enc.setBuffer(results, offset: 0, index: 11)
-            enc.setBuffer(particles[0], offset: 0, index: 12)
-            enc.setBuffer(particles[1], offset: 0, index: 13)
-            enc.setBuffer(neighbours, offset: 0, index: 14)
-            enc.setBuffer(neighbourCounts, offset: 0, index: 15)
-            enc.setBuffer(colliders, offset: 0, index: 16)
-            enc.setBuffer(colliderCounts, offset: 0, index: 17)
-            enc.setBuffer(shapes, offset: 0, index: 18)
-            enc.setBuffer(samples, offset: 0, index: 19)
-            enc.setBuffer(sdfScene, offset: 0, index: 20)
-            enc.setBuffer(constraints, offset: 0, index: 21)
-            enc.setBuffer(colourStarts, offset: 0, index: 22)
-            let lanes = substeps.threadExecutionWidth
-            let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
-            enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
+            for g in 0..<groupCount {
+                encodeNarrow(enc, pipelines: pipelines, group: g)
+                encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
+            }
         }
+    }
+
+    /// Every owned entry's contacts, where the bodies are now (before `group`; after the first, those of pairs that
+    /// move): a SIMD group per entry (its lanes share the samples).
+    private func encodeNarrow(_ enc: ComputePass, pipelines: Pipelines, group: Int) {
+        guard count > 0 else { return }
+        let narrow = pipelines[.physicsNarrow], simd = narrow.threadExecutionWidth
+        enc.setComputePipelineState(narrow)
+        enc.setBuffer(bodies, offset: 0, index: 1)
+        enc.setBuffer(statics, offset: 0, index: 2)
+        enc.setBuffer(shapes, offset: 0, index: 3)
+        enc.setBuffer(samples, offset: 0, index: 4)
+        enc.setBuffer(sdfScene, offset: 0, index: 5)
+        enc.setBuffer(pairs, offset: 0, index: 6)
+        enc.setBuffer(pairCounts, offset: 0, index: 7)
+        enc.setBuffer(contacts, offset: 0, index: 8)
+        enc.setBuffer(groups, offset: group * MemoryLayout<Group>.stride, index: 9)
+        enc.dispatchThreads(MTLSize(width: count * PhysicsWorld.maxPairs * simd, height: 1, depth: 1),
+                            threadsPerThreadgroup: MTLSize(width: min(narrow.maxTotalThreadsPerThreadgroup / simd, 4) * simd, height: 1, depth: 1))
+    }
+
+    /// Run `group` of the step's substeps in one threadgroup (Physics.metal's physicsSubstepsKernel).
+    private func encodeSubsteps(_ enc: ComputePass, pipelines: Pipelines, group: Int, slot: Int) {
+        let substeps = pipelines[.physicsSubsteps]
+        enc.setComputePipelineState(substeps)
+        enc.setBuffer(bodies, offset: 0, index: 1)
+        enc.setBuffer(start, offset: 0, index: 2)
+        enc.setBuffer(statics, offset: 0, index: 3)
+        enc.setBuffer(pairs, offset: 0, index: 4)
+        enc.setBuffer(pairCounts, offset: 0, index: 5)
+        enc.setBuffer(contacts, offset: 0, index: 6)
+        enc.setBuffer(wake, offset: 0, index: 7)
+        enc.setBuffer(groups, offset: group * MemoryLayout<Group>.stride, index: 8)
+        enc.setBuffer(order, offset: 0, index: 9)
+        enc.setBuffer(won, offset: 0, index: 10)
+        enc.setBuffer(live, offset: 0, index: 11)
+        enc.setBuffer(colouring, offset: 0, index: 23)
+        enc.setBuffer(grabs[slot], offset: 0, index: 24)
+        enc.setBuffer(particles[0], offset: 0, index: 12)
+        enc.setBuffer(particles[1], offset: 0, index: 13)
+        enc.setBuffer(neighbours, offset: 0, index: 14)
+        enc.setBuffer(neighbourCounts, offset: 0, index: 15)
+        enc.setBuffer(colliders, offset: 0, index: 16)
+        enc.setBuffer(colliderCounts, offset: 0, index: 17)
+        enc.setBuffer(shapes, offset: 0, index: 18)
+        enc.setBuffer(samples, offset: 0, index: 19)
+        enc.setBuffer(sdfScene, offset: 0, index: 20)
+        enc.setBuffer(constraints, offset: 0, index: 21)
+        enc.setBuffer(colourStarts, offset: 0, index: 22)
+        let lanes = substeps.threadExecutionWidth
+        let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
+        enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
     }
 
     /// The frame's instance records (and descriptors, `descriptorStride` > 0) from the bodies, and slot `slot`'s snapshot.
@@ -257,7 +294,7 @@ final class PhysicsGPU {
         var p = PoseParams(bodies: UInt32(count), descriptorStride: descriptors == nil ? 0 : UInt32(descriptorStride))
         enc.setComputePipelineState(pipelines[.physicsPose])
         enc.setBytes(&p, length: MemoryLayout<PoseParams>.stride, index: 0)
-        enc.setBuffer(bodies[0], offset: 0, index: 1)
+        enc.setBuffer(bodies, offset: 0, index: 1)
         enc.setBuffer(shapes, offset: 0, index: 2)
         enc.setBuffer(lastPose, offset: 0, index: 3)
         enc.setBuffer(snapshots[slot], offset: 0, index: 4)
@@ -309,6 +346,6 @@ final class PhysicsGPU {
 
     /// The bodies as the GPU has them (the work that wrote them must be done): tests and the check.
     func readBodies() -> [GPUPhysicsBody] {
-        Array(UnsafeBufferPointer(start: bodies[0].contents().bindMemory(to: GPUPhysicsBody.self, capacity: count), count: count))
+        Array(UnsafeBufferPointer(start: bodies.contents().bindMemory(to: GPUPhysicsBody.self, capacity: count), count: count))
     }
 }

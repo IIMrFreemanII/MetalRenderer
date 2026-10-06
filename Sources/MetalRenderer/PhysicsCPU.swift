@@ -3,16 +3,22 @@ import simd
 
 /// The CPU's step: the reference the GPU's (Shaders/Physics.metal) is checked against, and the backend for scenes with
 /// few bodies, where a GPU dispatch costs more than the work. Each stage is what a kernel does, over every body, in
-/// the same order; a stage that reads other bodies reads them as they were when it began (Jacobi).
+/// the same order. Contacts are solved a colour at a time (Gauss-Seidel): no two pairs of a colour share a body, so
+/// the GPU solves a colour's pairs at once and gets the same numbers.
 extension PhysicsWorld {
     func step() {
         let p = params
         broadPhase(p)
         wake(p)
         link()
-        narrowPhase(p)
+        narrowPhase(p, refresh: false)
+        colourPairs()
         particleBroadPhase(p)
-        for _ in 0..<substeps {
+        let start = bodies.map { SIMD8<Float>(lowHalf: $0.position, highHalf: $0.rotation) }
+        for sub in 0..<substeps {
+            // The contacts again where the substeps have taken the bodies: found once a step, a turning body's
+            // contacts stay where it was (a rolling rim's sinks into the floor, and the push out of it launches it).
+            if sub > 0 && sub % PhysicsWorld.contactRefresh == 0 { narrowPhase(p, refresh: true) }
             integrate(p)
             integrateParticles(p)
             solveCloth(p)
@@ -20,7 +26,7 @@ extension PhysicsWorld {
             solvePositions(p)
             solveVelocities(p)
         }
-        settle(p)
+        settle(p, start)
         stepIndex += 1
     }
 
@@ -33,6 +39,13 @@ extension PhysicsWorld {
 
     @inline(__always) static func cell(_ x: SIMD3<Float>, _ size: Float) -> SIMD3<Int32> {
         SIMD3<Int32>((x / size).rounded(.down))
+    }
+
+    /// The squared distance between two points, fused as Physics.metal's physDistance2 is: the GPU sorts partners by it
+    /// into the same order, bit for bit.
+    @inline(__always) static func distance2(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float {
+        let d = a - b
+        return (d.x * d.x).addingProduct(d.y, d.y).addingProduct(d.z, d.z)
     }
 
     /// Whether a sphere meets static collider `s`'s box (an endless plane: whether it reaches below it).
@@ -48,8 +61,9 @@ extension PhysicsWorld {
     }
 
     /// Every body's partners: the static colliders it meets, then the bodies in the 27 cells around it whose spheres
-    /// meet its own, lowest first, `maxPairs` at most (a crowded body drops its farthest-numbered bodies, never what
-    /// holds it up).
+    /// meet its own, nearest first (the lower first of equals), `maxPairs` at most: a crowded body drops its farthest
+    /// bodies, never what holds it up. (Keeping the lowest-numbered instead, a tower's middle blocks dropped a body
+    /// dragged into them, which went through.)
     private func broadPhase(_ p: GPUPhysicsParams) {
         let size = p.grid.x
         var grid: [SIMD3<Int32>: [Int]] = [:]
@@ -58,39 +72,42 @@ extension PhysicsWorld {
         for (i, b) in bodies.enumerated() {
             let x = PhysicsMath.xyz(b.position), r = PhysicsWorld.reach(b, p)
             let c = PhysicsWorld.cell(x, size)
-            var found: [UInt32] = []
+            var found: [(Float, UInt32)] = []   // (distance squared, -1 for a static; partner)
             for dz: Int32 in -1...1 {
                 for dy: Int32 in -1...1 {
                     for dx: Int32 in -1...1 {
                         for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i {
                             let o = bodies[j]
                             let reach = r + PhysicsWorld.reach(o, p)
-                            if length_squared(PhysicsMath.xyz(o.position) - x) < reach * reach { found.append(UInt32(j)) }
+                            let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
+                            if d2 < reach * reach { found.append((d2, UInt32(j))) }
                         }
                     }
                 }
             }
-            for s in statics.indices where touchesStatic(s, centre: x, radius: r) { found.append(UInt32(s) | PhysicsWorld.staticBit) }
-            found.sort { ($0 ^ PhysicsWorld.staticBit) < ($1 ^ PhysicsWorld.staticBit) }
+            for s in statics.indices where touchesStatic(s, centre: x, radius: r) { found.append((-1, UInt32(s) | PhysicsWorld.staticBit)) }
+            found.sort { $0.0 < $1.0 || ($0.0 == $1.0 && $0.1 < $1.1) }
             pairCounts[i] = UInt32(min(found.count, k))
-            for (n, partner) in found.prefix(k).enumerated() { pairs[i * k + n] = GPUPhysicsPair(partner: partner) }
+            for (n, f) in found.prefix(k).enumerated() { pairs[i * k + n] = GPUPhysicsPair(partner: f.1) }
         }
     }
 
-    /// A sleeping body that something moving touches wakes.
+    /// A sleeping body wakes when something it touches moves faster than the wake speed or turn rate (above the
+    /// sleep ones: a neighbour settling down beside it doesn't).
+    @inline(__always) static func stirs(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Bool {
+        moves(b) && (length(PhysicsMath.xyz(b.velocity)) > p.rolling.z || length(PhysicsMath.xyz(b.angular)) > p.rolling.w)
+    }
+
     private func wake(_ p: GPUPhysicsParams) {
         let k = PhysicsWorld.maxPairs
         let before = bodies
         for i in bodies.indices where before[i].info.y & PhysicsWorld.asleep != 0 {
             for n in 0..<Int(pairCounts[i]) {
                 let partner = pairs[i * k + n].partner
-                guard partner & PhysicsWorld.staticBit == 0 else { continue }
-                let o = before[Int(partner)]
-                if o.info.y & PhysicsWorld.asleep == 0 && o.position.w > 0 && o.prevPosition.w == 0 {
-                    bodies[i].info.y &= ~PhysicsWorld.asleep
-                    bodies[i].prevPosition.w = 0
-                    break
-                }
+                guard partner & PhysicsWorld.staticBit == 0, PhysicsWorld.stirs(before[Int(partner)], p) else { continue }
+                bodies[i].info.y &= ~PhysicsWorld.asleep
+                bodies[i].prevPosition.w = 0
+                break
             }
         }
     }
@@ -124,7 +141,9 @@ extension PhysicsWorld {
     }
 
     /// Each owned entry's contacts, closer than the margin plus how far the two may close in a step.
-    private func narrowPhase(_ p: GPUPhysicsParams) {
+    /// `refresh`: within the step, when only the pairs that had contacts at its start, and of which a body moves, are
+    /// found again.
+    private func narrowPhase(_ p: GPUPhysicsParams, refresh: Bool) {
         let k = PhysicsWorld.maxPairs
         for i in bodies.indices {
             let a = bodies[i]
@@ -132,6 +151,8 @@ extension PhysicsWorld {
                 let e = i * k + n
                 guard pairs[e].link == UInt32(e) else { continue }
                 let b = partner(pairs[e].partner)
+                // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
+                if refresh && (pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { continue }
                 let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
                                + length(PhysicsMath.xyz(a.angular)) * a.invInertia.w
                                + length(PhysicsMath.xyz(b.angular)) * b.invInertia.w) * p.grid.w
@@ -149,25 +170,108 @@ extension PhysicsWorld {
         }
     }
 
+    // MARK: Colours
+
+    /// A pair's priority in the colouring: a hash of its entry (Physics.metal physPairPriority), so that neighbours
+    /// numbered in a row (a sorted pile) don't wait on each other one at a time; the entry breaks ties.
+    @inline(__always) static func priority(_ e: UInt32) -> UInt64 {
+        var x = e &* 0x9E37_79B1
+        x ^= x >> 16
+        x &*= 0x85EB_CA6B
+        x ^= x >> 13
+        return UInt64(x) << 32 | UInt64(e)
+    }
+
+    /// The owned pairs with contacts in colours, once a step, no two of a colour sharing a body (the contacts reach as
+    /// far as a pair can close in a step, so a pair without any meets in none of its refreshes either). Jones-Plassmann:
+    /// in each round, every pair outranking the uncoloured pairs it shares a body with takes the lowest colour none of
+    /// those it shares a body with has (at most 31: a pair shares its bodies with 30 others at most). What
+    /// `maxRounds` rounds leave (pad = `leftover`) is solved one pair after another, after the colours.
+    private func colourPairs() {
+        let k = PhysicsWorld.maxPairs
+        func live(_ e: Int) -> Bool { e % k < Int(pairCounts[e / k]) && pairs[e].link == UInt32(e) && pairs[e].contacts > 0 }
+        func touching(_ i: Int) -> [Int] {
+            (0..<Int(pairCounts[i])).compactMap { n in
+                let link = pairs[i * k + n].link
+                return link != PhysicsWorld.none && pairs[Int(link)].contacts > 0 ? Int(link) : nil
+            }
+        }
+        func around(_ e: Int) -> [Int] {
+            let code = pairs[e].partner
+            return touching(e / k) + (code & PhysicsWorld.staticBit == 0 ? touching(Int(code)) : [])
+        }
+        var left: [Int] = []
+        for e in pairs.indices {
+            pairs[e].pad = PhysicsWorld.none
+            if live(e) { left.append(e) }
+        }
+        var rounds = 0
+        while !left.isEmpty && rounds < PhysicsWorld.maxRounds {
+            let mine = { (e: Int) in PhysicsWorld.priority(UInt32(e)) }
+            let chosen = left.filter { e in
+                around(e).allSatisfy { q in q == e || pairs[q].pad != PhysicsWorld.none || mine(q) < mine(e) }
+            }
+            for e in chosen {
+                var used: UInt64 = 0
+                for q in around(e) where q != e && pairs[q].pad != PhysicsWorld.none { used |= 1 << UInt64(pairs[q].pad) }
+                pairs[e].pad = UInt32((~used).trailingZeroBitCount)
+            }
+            left.removeAll { pairs[$0].pad != PhysicsWorld.none }
+            rounds += 1
+        }
+        for e in left { pairs[e].pad = PhysicsWorld.leftover }
+        let colours = Int(pairs.filter { $0.pad < PhysicsWorld.leftover }.map(\.pad).max().map { $0 + 1 } ?? 0)
+        pairOrder = []
+        pairColourStarts = [0]
+        for c in 0..<colours {
+            pairOrder += pairs.indices.filter { pairs[$0].pad == UInt32(c) }.map(UInt32.init)
+            pairColourStarts.append(UInt32(pairOrder.count))
+        }
+        pairOrder += left.map(UInt32.init)   // the rest: one after another
+        pairColourStarts.append(UInt32(pairOrder.count))
+    }
+
     // MARK: Substeps
 
     @inline(__always) static func moves(_ b: GPUPhysicsBody) -> Bool { b.position.w > 0 && b.info.y & PhysicsWorld.asleep == 0 }
 
-    /// Every moving body by its velocity and gravity.
+    /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target.
     private func integrate(_ p: GPUPhysicsParams) {
         let h = p.gravity.w
-        for i in bodies.indices where PhysicsWorld.moves(bodies[i]) {
+        for i in bodies.indices {
+            let held = grab.target.w > 0 && grab.body == UInt32(i)
+            if held {
+                bodies[i].info.y &= ~PhysicsWorld.asleep
+                bodies[i].prevPosition.w = 0
+            }
+            guard PhysicsWorld.moves(bodies[i]) else { continue }
             var b = bodies[i]
             b.prevPosition = SIMD4(PhysicsMath.xyz(b.position), b.prevPosition.w)
             b.prevRotation = b.rotation
-            var v = PhysicsMath.xyz(b.velocity) + PhysicsMath.xyz(p.gravity) * h
+            let decay: Float = held ? max(1 - PhysicsWorld.holdDamping * h, 0) : 1
+            b.angular = SIMD4(PhysicsMath.xyz(b.angular) * decay, b.angular.w)
+            var v = PhysicsMath.xyz(b.velocity) * decay + PhysicsMath.xyz(p.gravity) * h
             let speed = length(v)
             if speed > p.grid.z { v *= p.grid.z / speed }
             b.velocity = SIMD4(v, b.velocity.w)
             b.position = SIMD4(PhysicsMath.xyz(b.position) + v * h, b.position.w)
             b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.xyz(b.angular) * h)
+            if held { PhysicsWorld.hold(&b, grab) }
             bodies[i] = b
         }
+    }
+
+    /// The held body's anchor a fraction (`holdPull`) of the way to the target, shared between moving and turning
+    /// it by its inverse mass and inertia there (as a contact's push is): a body held off its centre swings and hangs.
+    @inline(__always) static func hold(_ b: inout GPUPhysicsBody, _ g: GPUPhysicsGrab) {
+        let r = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(g.anchor))
+        let gap = PhysicsMath.xyz(g.target) - (PhysicsMath.xyz(b.position) + r)
+        let l = length(gap)
+        guard l > 1e-7 else { return }
+        let n = gap / l
+        let w = weight(b, r, n)
+        guard w > 0 else { return }
+        shove(&b, n * (l * holdPull / w), r)
     }
 
     /// A contact's world points and lever arms (from each centre of mass) for the poses given.
@@ -220,43 +324,47 @@ extension PhysicsWorld {
         return (impulse, lambda, speed, ra, rb)
     }
 
-    /// Each moving body gathers its contacts' pushes (Jacobi: from the poses all bodies had when the pass began), and
-    /// moves by their mean. The owner keeps each contact's lambda and normal speed for the velocity pass.
+    /// Moves body `b` (if it moves) by `impulse` at lever arm `r`.
+    @inline(__always) static func shove(_ b: inout GPUPhysicsBody, _ impulse: SIMD3<Float>, _ r: SIMD3<Float>) {
+        guard moves(b) else { return }
+        b.position = SIMD4(PhysicsMath.xyz(b.position) + impulse * b.position.w, b.position.w)
+        b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), cross(r, impulse)))
+    }
+
+    /// Speeds body `b` (if it moves) up by `impulse` at lever arm `r` and angular impulse `twist`.
+    @inline(__always) static func kick(_ b: inout GPUPhysicsBody, _ impulse: SIMD3<Float>, _ r: SIMD3<Float>, _ twist: SIMD3<Float>) {
+        guard moves(b) else { return }
+        b.velocity = SIMD4(PhysicsMath.xyz(b.velocity) + impulse * b.position.w, b.velocity.w)
+        b.angular = SIMD4(PhysicsMath.xyz(b.angular)
+                          + PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), cross(r, impulse) + twist), b.angular.w)
+    }
+
+    /// Pair `e`'s contacts, one after the other, each pushing both bodies at once (`body` does it to the two).
+    private func solvePair(_ e: Int, _ body: (inout GPUPhysicsBody, inout GPUPhysicsBody, GPUPhysicsContact, Int) -> Void) {
+        let i = e / PhysicsWorld.maxPairs, code = pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
+        var a = bodies[i], b = partner(code)
+        for c in 0..<Int(pairs[e].contacts) {
+            let ci = e * PhysicsWorld.maxContacts + c
+            body(&a, &b, contacts[ci], ci)
+        }
+        bodies[i] = a
+        if dynamic { bodies[Int(code)] = b }
+    }
+
+    /// The contacts' pushes, a colour of pairs at a time, then every moving body's velocities from how far it went.
     private func solvePositions(_ p: GPUPhysicsParams) {
-        let k = PhysicsWorld.maxPairs, before = bodies
-        for i in before.indices {
-            let me = before[i]
-            var dx = SIMD3<Float>(), dtheta = SIMD3<Float>(), count: Float = 0
-            for n in 0..<Int(pairCounts[i]) {
-                let e = i * k + n, link = pairs[e].link
-                guard link != PhysicsWorld.none else { continue }
-                let owner = link == UInt32(e)
-                let other = owner ? partnerBefore(pairs[e].partner, before) : before[Int(link) / k]
-                let (a, b) = owner ? (me, other) : (other, me)
-                for c in 0..<Int(pairs[Int(link)].contacts) {
-                    let ci = Int(link) * PhysicsWorld.maxContacts + c
-                    let push = PhysicsWorld.contactPush(contacts[ci], a, b, h: p.gravity.w)
-                    if owner { contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0) }
-                    guard push.lambda > 0, PhysicsWorld.moves(me) else { continue }
-                    if owner {
-                        dx += push.impulse * me.position.w
-                        dtheta += PhysicsMath.applyInvInertia(me.rotation, PhysicsMath.xyz(me.invInertia), cross(push.ra, push.impulse))
-                    } else {
-                        dx -= push.impulse * me.position.w
-                        dtheta -= PhysicsMath.applyInvInertia(me.rotation, PhysicsMath.xyz(me.invInertia), cross(push.rb, push.impulse))
-                    }
-                    count += 1
-                }
+        let h = p.gravity.w
+        for e in pairOrder {
+            solvePair(Int(e)) { a, b, contact, ci in
+                let push = PhysicsWorld.contactPush(contact, a, b, h: h)
+                contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0)
+                guard push.lambda > 0 else { return }
+                PhysicsWorld.shove(&a, push.impulse, push.ra)
+                PhysicsWorld.shove(&b, -push.impulse, push.rb)
             }
-            guard PhysicsWorld.moves(me) else { continue }
-            var b = me
-            if count > 0 {
-                let s = 1 / count
-                b.position = SIMD4(PhysicsMath.xyz(me.position) + dx * s, me.position.w)
-                b.rotation = PhysicsMath.qturn(me.rotation, dtheta * s)
-            }
-            // The velocities from where the substep took it.
-            let h = p.gravity.w
+        }
+        for i in bodies.indices where PhysicsWorld.moves(bodies[i]) {
+            var b = bodies[i]
             b.velocity = SIMD4((PhysicsMath.xyz(b.position) - PhysicsMath.xyz(b.prevPosition)) / h, b.velocity.w)
             var dq = PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(b.prevRotation))
             if dq.w < 0 { dq = -dq }
@@ -265,13 +373,16 @@ extension PhysicsWorld {
         }
     }
 
-    @inline(__always) private func partnerBefore(_ code: UInt32, _ before: [GPUPhysicsBody]) -> GPUPhysicsBody {
-        code & PhysicsWorld.staticBit != 0 ? statics[Int(code & ~PhysicsWorld.staticBit)] : before[Int(code)]
+    /// The generalised inverse inertia of body `b` about axis `k` (0 for one that doesn't move).
+    @inline(__always) static func turnWeight(_ b: GPUPhysicsBody, _ k: SIMD3<Float>) -> Float {
+        moves(b) ? dot(k, PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), k)) : 0
     }
 
-    /// A contact's velocity change: dynamic friction against the sliding, and restitution (none for slow impacts).
+    /// A contact's velocity change: dynamic friction against the sliding, and restitution (none for slow impacts);
+    /// and its angular impulse (on A; B takes the opposite) against rolling and spinning on the spot, each held back by
+    /// at most its resistance (a length) x the normal impulse.
     @inline(__always) static func contactKick(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, _ p: GPUPhysicsParams)
-        -> (impulse: SIMD3<Float>, ra: SIMD3<Float>, rb: SIMD3<Float>)? {
+        -> (impulse: SIMD3<Float>, twist: SIMD3<Float>, ra: SIMD3<Float>, rb: SIMD3<Float>)? {
         let lambda = c.lambda.x
         guard lambda > 0 else { return nil }
         let n = PhysicsMath.xyz(c.normal), h = p.gravity.w
@@ -292,52 +403,70 @@ extension PhysicsWorld {
         let before = c.lambda.y
         let e = abs(before) <= 2 * length(PhysicsMath.xyz(p.gravity)) * h ? 0 : max(a.angular.w, b.angular.w)
         dv += n * (-vn + max(-e * before, 0))
+        var impulse = SIMD3<Float>()
         let l = length(dv)
-        guard l > 1e-7 else { return nil }
-        let w = weight(a, ra, dv / l) + weight(b, rb, dv / l)
-        guard w > 0 else { return nil }
-        return (dv / w, ra, rb)
+        if l > 1e-7 {
+            let w = weight(a, ra, dv / l) + weight(b, rb, dv / l)
+            if w > 0 { impulse = dv / w }
+        }
+        // Rolling and spinning: the relative turn across the normal and about it, each stopped by an angular impulse
+        // of up to resistance x the normal impulse (lambda / h).
+        var twist = SIMD3<Float>()
+        let spin = PhysicsMath.xyz(a.angular) - PhysicsMath.xyz(b.angular)
+        let about = n * dot(spin, n)
+        for (part, resistance) in [(spin - about, p.rolling.x), (about, p.rolling.y)] {
+            let speed = length(part)
+            guard speed > 1e-6 else { continue }
+            let k = part / speed
+            let w = turnWeight(a, k) + turnWeight(b, k)
+            guard w > 0 else { continue }
+            twist -= k * min(speed / w, resistance * lambda / h)
+        }
+        guard impulse != .zero || twist != .zero else { return nil }
+        return (impulse, twist, ra, rb)
     }
 
-    /// Each moving body gathers its contacts' velocity changes (Jacobi again) and takes their mean.
+    /// The contacts' velocity changes, a colour of pairs at a time.
     private func solveVelocities(_ p: GPUPhysicsParams) {
-        let k = PhysicsWorld.maxPairs, before = bodies
-        for i in before.indices where PhysicsWorld.moves(before[i]) {
-            let me = before[i]
-            var dv = SIMD3<Float>(), dw = SIMD3<Float>(), count: Float = 0
-            for n in 0..<Int(pairCounts[i]) {
-                let e = i * k + n, link = pairs[e].link
-                guard link != PhysicsWorld.none else { continue }
-                let owner = link == UInt32(e)
-                let other = owner ? partnerBefore(pairs[e].partner, before) : before[Int(link) / k]
-                let (a, b) = owner ? (me, other) : (other, me)
-                for c in 0..<Int(pairs[Int(link)].contacts) {
-                    guard let kick = PhysicsWorld.contactKick(contacts[Int(link) * PhysicsWorld.maxContacts + c], a, b, p) else { continue }
-                    let s: Float = owner ? 1 : -1
-                    dv += s * kick.impulse * me.position.w
-                    dw += s * PhysicsMath.applyInvInertia(me.rotation, PhysicsMath.xyz(me.invInertia), cross(owner ? kick.ra : kick.rb, kick.impulse))
-                    count += 1
-                }
+        for e in pairOrder {
+            solvePair(Int(e)) { a, b, contact, _ in
+                guard let kick = PhysicsWorld.contactKick(contact, a, b, p) else { return }
+                PhysicsWorld.kick(&a, kick.impulse, kick.ra, kick.twist)
+                PhysicsWorld.kick(&b, -kick.impulse, kick.rb, -kick.twist)
             }
-            guard count > 0 else { continue }
-            let s = 1 / count
-            bodies[i].velocity = SIMD4(PhysicsMath.xyz(me.velocity) + dv * s, me.velocity.w)
-            bodies[i].angular = SIMD4(PhysicsMath.xyz(me.angular) + dw * s, me.angular.w)
         }
     }
 
-    /// After the substeps: a body that has been slow for long enough falls asleep.
-    private func settle(_ p: GPUPhysicsParams) {
+    /// Whether body `b` went slower than the sleep speed and turn rate this step, from `position` and `rotation` (where
+    /// its velocities say little: at rest on a few contacts they are what the last substep's kicks left, which the next
+    /// substep's pushes take back).
+    @inline(__always) static func still(_ b: GPUPhysicsBody, _ position: SIMD4<Float>, _ rotation: SIMD4<Float>,
+                                        _ p: GPUPhysicsParams) -> Bool {
+        let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(position))
+        let turned = 2 * length(PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(rotation))))
+        return moved < p.sleep.x * p.grid.w && turned < p.sleep.y * p.grid.w
+    }
+
+    /// After the substeps: a body that has been slow for long enough falls asleep, once the bodies it touches (has
+    /// contacts with) have been slow for half as long (or sleep): a pile goes to sleep together, not one body propped on moving ones.
+    private func settle(_ p: GPUPhysicsParams, _ start: [SIMD8<Float>]) {
         for i in bodies.indices where PhysicsWorld.moves(bodies[i]) {
-            var b = bodies[i]
-            let still = length(PhysicsMath.xyz(b.velocity)) < p.sleep.x && length(PhysicsMath.xyz(b.angular)) < p.sleep.y
-            b.prevPosition.w = still ? b.prevPosition.w + p.grid.w : 0
-            if b.prevPosition.w > p.sleep.z {
-                b.info.y |= PhysicsWorld.asleep
-                b.velocity = SIMD4(.zero, b.velocity.w)
-                b.angular = SIMD4(.zero, b.angular.w)
+            let b = bodies[i]
+            bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
+        }
+        let k = PhysicsWorld.maxPairs, timers = bodies
+        for i in bodies.indices where PhysicsWorld.moves(timers[i]) && timers[i].prevPosition.w > p.sleep.z {
+            var settled = true
+            for n in 0..<Int(pairCounts[i]) {
+                let e = i * k + n, partner = pairs[e].partner, link = pairs[e].link
+                guard partner & PhysicsWorld.staticBit == 0, link != PhysicsWorld.none, pairs[Int(link)].contacts > 0 else { continue }
+                let o = timers[Int(partner)]
+                if PhysicsWorld.moves(o) && o.prevPosition.w <= p.sleep.z / 2 { settled = false; break }
             }
-            bodies[i] = b
+            guard settled else { continue }
+            bodies[i].info.y |= PhysicsWorld.asleep
+            bodies[i].velocity = SIMD4(.zero, timers[i].velocity.w)
+            bodies[i].angular = SIMD4(.zero, timers[i].angular.w)
         }
     }
 
@@ -411,6 +540,12 @@ extension PhysicsWorld {
         return push
     }
 
+    /// Whether a particle that went `moved` this substep stays put (PhysicsCPU.solveParticles).
+    @inline(__always) static func rests(_ q: GPUPhysicsParticle, touching: Bool, shoved: Bool, moved: SIMD3<Float>,
+                                        _ p: GPUPhysicsParams) -> Bool {
+        touching && !shoved && q.info.y & clothBit == 0 && length(moved) < p.particleGrid.w * p.gravity.w
+    }
+
     /// Each particle's pushes (Jacobi): its neighbours' overlaps, shared by mass and averaged, and the colliders' in
     /// full (they don't give), averaged too; then its velocity from how far it went.
     private func solveParticles(_ p: GPUPhysicsParams) {
@@ -431,7 +566,7 @@ extension PhysicsWorld {
                 shared += PhysicsWorld.particlePush(d / dist, overlap, slide, sqrt(q.velocity.w * o.velocity.w)) * share
                 sharedCount += 1
             }
-            var held = SIMD3<Float>(), heldCount: Float = 0
+            var held = SIMD3<Float>(), heldCount: Float = 0, shoved = false
             for n in 0..<Int(colliderCounts[i]) {
                 let b = partner(colliders[i * kc + n])
                 let pose = Pose(b), shape = Int(b.info.x)
@@ -443,11 +578,17 @@ extension PhysicsWorld {
                 held += PhysicsWorld.particlePush(normal, min(-depth, PhysicsWorld.pushSpeed * h), moved - surface * h,
                                                   sqrt(q.velocity.w * b.velocity.w))
                 heldCount += 1
+                shoved = shoved || PhysicsWorld.moves(b)
             }
             var out = q
             var y = x
             if sharedCount > 0 { y += shared / sharedCount }
             if heldCount > 0 { y += held / heldCount }
+            // At rest: a particle in a heap (no body shoving it, not a cloth's) that went slower than the rest speed
+            // stays where it was (Macklin et al. 2014's sleeping); the averaged pushes otherwise keep a heap fizzing.
+            if PhysicsWorld.rests(q, touching: sharedCount + heldCount > 0, shoved: shoved, moved: y - PhysicsMath.xyz(q.prevPosition), p) {
+                y = PhysicsMath.xyz(q.prevPosition)
+            }
             out.position = SIMD4(y, q.position.w)
             out.velocity = SIMD4((y - PhysicsMath.xyz(q.prevPosition)) / h, q.velocity.w)
             particles[i] = out

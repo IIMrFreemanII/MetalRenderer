@@ -221,7 +221,8 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 
 | Key | Action |
 |---|---|
-| Drag mouse | Look around |
+| Drag mouse | Look around (from a body in the physics scene: grab and drag it, release to throw it) |
+| Scroll | While holding a body: farther (up) or nearer (down) |
 | W A S D, Q E | Move, down/up (hold Shift to move 3.2× faster; the speed is in the panel) |
 | Space | Pause animation |
 | G | Toggle global illumination |
@@ -997,29 +998,39 @@ Rigid bodies that are SDF shapes, particles and cloth, simulated on the GPU (`Ph
 
 The scene list's keys are `bodies=96`, `particles=2048`, `cloth=36`, `substeps=16` and `physics=auto|gpu|cpu`.
 
+The scene has a look of its own that leaves the GPU to the simulation (`RenderSettings.usePhysicsLook`, applied with the scene's other defaults and by benchmarks moved to it):
+* no GI and no reflections;
+* traced at 0.375 of the window, upscaled 3× to 1440×900.
+
+On the M1 Max a frame then renders in 5 ms instead of 15. The breakdown of the 15: reflections 4.7 ms, radiance cascades 2.9, and the trace and the upscaler, which the smaller frame cuts from 6.6 to 4.7 ms. Nothing in the scene is metal, since a metal without reflections renders black. The panel can turn GI and reflections back on.
+
 * **XPBD with small substeps** (Müller et al. 2020, Macklin et al. 2019):
   * A step is 1/60 s of `substeps` substeps (16), one solver iteration each.
-  * A substep moves every body by its velocity, pushes its contacts apart (static friction holds them), takes the velocities from how far the bodies went, then applies dynamic friction and restitution.
+  * A substep moves every body by its velocity, pushes its contacts apart (static friction holds them), takes the velocities from how far the bodies went, then applies dynamic friction, restitution, and rolling and spinning resistance (4 mm and 2 cm × the normal force; without them a ball, a cone or a lying cylinder rolls or spins on the spot for ever).
+  * Contacts are solved **Gauss-Seidel by colour**. Once a step the pairs with contacts are coloured so that no two of a colour share a body (Jones-Plassmann: in rounds, each pair that outranks its uncoloured neighbours, by a hash, takes the lowest colour they don't have). The pile takes 9–15 colours, and each substep solves them a colour at a time, every pair's contacts one after another, in place. Averaging each body's contacts (Jacobi) instead rocked resting bodies: a tilted box's one penetrating corner took the whole correction.
   * Small substeps are what make a GPU-friendly solver stack. At 8 substeps a tower of 8 crossed layers sinks through the floor; at 12 it holds to 3 mm.
+  * **Sleep.** A body that has moved less than 5 cm/s and turned less than 0.08 rad/s for half a second, measured over each step from where it began (its velocities say little at rest: they are what the last substep's kicks left), falls asleep once the bodies it has contacts with have been still for half as long. Something touching it wakes it only when it moves faster than 10 cm/s or 0.16 rad/s, so a neighbour settling beside it doesn't. The physics scene's 96 bodies are all asleep by 12 to 22 s.
 * **Collision is one path for every pair** (`PhysicsCollide.swift`):
   * A shape is a distance in its body's space plus surface samples, each a small sphere. A sphere is one sample; a capsule is five along its core; a box is its corner and edge spheres (its rounding); any other SDF shape is 64 points of its surface, its boxes' corners first.
   * A pair's contacts are each side's samples against the other's distance. That is exact for spheres and capsules against anything, and for anything against a plane.
   * Two flat-sided shapes also step down one's field along the other's surface, from each side. That finds an edge across an edge, which no corner is in.
   * The distances are exact formulas for spheres, capsules, boxes and planes (their gradients too: a box's inside takes its nearest face's normal). Every other shape uses its field, so CSG, blends and baked meshes collide like the primitives.
   * Contacts are kept as Bullet keeps a manifold: four at most, the deepest always, the rest for the most area. They share one normal where they roughly agree, so a corner on a corner doesn't push sideways.
-  * Contacts are found once a step, with a speculative margin for how far the pair can close in a step, and anchored in each body. A sphere's anchor is its centre, so it stays under the sphere as it rolls.
+  * Contacts are found at the start of a step, with a speculative margin for how far the pair can close in a step, and anchored in each body. A sphere's anchor is its centre, so it stays under the sphere as it rolls.
+  * They are found again every 4 substeps for the pairs that had contacts and of which a body moves. Found once a step, a turning body's contacts stayed where it had been: a cylinder rolling on its rim sank a stale contact into the floor, and the push out of it launched it at 1.2 m/s. Every 8 substeps isn't enough (a pile is a third awake at 12 s).
 * **The GPU's step** (one serial "physics" pass, ahead of the acceleration structures):
   * A hash grid over the bodies' bounding spheres, from per-bucket linked lists.
-  * Each body's partners, the lowest 16, with static colliders first so a crowded body never drops the floor.
+  * Each body's partners, the nearest 16, with static colliders first so a crowded body never drops the floor. (Keeping the lowest-numbered 16 instead, a tower's middle blocks dropped a body dragged into them, and it passed through.)
   * Each pair's contacts, a SIMD group a pair: the lanes test 32 samples at a time, and the manifold takes them in the samples' order.
-  * Every substep in one threadgroup: barriers stand in for dispatches, and a thread works out each contact's push once for both bodies to gather.
+  * Each run of 4 substeps in one threadgroup, after the narrow phase: barriers stand in for dispatches. The step's first run colours the pairs (a counting sort by colour), and each substep solves a colour's pairs a thread a pair. Pairs the 64 rounds leave would be solved by one thread in entry order; the scene leaves none.
   * Then a pose kernel writes every body's and particle's instance record (and Metal's descriptor) where the steps left it.
 * **The same every time:**
-  * Nothing adds floats atomically. Every body gathers its own corrections in a fixed order.
+  * Nothing adds floats atomically. No two pairs of a colour share a body, so the order within a colour doesn't change a bit.
   * Two GPU runs are bit-identical, and the GPU's steps match the CPU's within 0.1 mm for half a second. Further on, a pile tells float rounding apart.
   * Going back in time replays from the start, so a benchmark's still at 5 s is the same however it was reached.
 * **Particles** are small balls, each an SDF sphere instance.
   * They find each other in a grid of their own and collide at the same substeps: with each other (Jacobi, averaged, with friction so they heap) and with the static colliders and bodies.
+  * A particle in contact that went slower than 10 cm/s over a substep stays where it was (Macklin et al. 2014's particle sleeping), unless a body is pushing it or it is a cloth's. Without that the averaged pushes kept a heap fizzing: half its particles still moved at 12 cm/s after 6 s.
   * The bodies push the particles; the particles don't push back.
 * **Cloth:**
   * Its vertices are particles whose distance constraints (stretch, shear, bend) are coloured once, so no two of a colour share a vertex. Each substep solves them a colour at a time (Gauss-Seidel).
@@ -1028,18 +1039,21 @@ The scene list's keys are `bodies=96`, `particles=2048`, `cloth=36`, `substeps=1
   * Its mesh is a deforming mesh like the crowd's poses. The pose kernel writes its vertices, last frame's (for motion vectors) and its normals, and both tracers refit its tree.
 * **What it costs** (M1 Max; the physics scene's first 5 s moving, a step a frame, 16 substeps, 2048 particles and a 36 x 36 cloth; `METALRENDERER_BENCH=physics`):
 
-  | Bodies | "physics" pass (GPU) | CPU instead (render thread, per frame) |
-  |---|---|---|
-  | 96 | 4.6 ms | 18 ms |
-  | 512 | 9.6 ms | |
-  | 2048 | 21 ms | |
+  | Bodies | "physics" pass (GPU) | Whole frame (GPU, the scene's look) | CPU instead (render thread, per frame) |
+  |---|---|---|---|
+  | 96 | 6.1 ms | 11 ms (90 fps) | 18 ms |
+  | 512 | 13.7 ms | 20 ms | |
+  | 2048 | 41 ms | 53 ms | |
 
-  * For 96 bodies, 512 particles and no cloth, a step was 1.5 ms: 0.35 ms narrow phase, 1.0 ms substeps, the rest the broad phase.
-  * What made it that:
+  * Coloured Gauss-Seidel, the contacts found 4 times a step and the particles' rest cost 1.24–1.4× the Jacobi solver's 4.6 / 9.6 / 21 ms, which never let the pile rest (2048 bodies: 26 ms).
+  * Keeping each body's nearest partners rather than its lowest-numbered took 2048 bodies from 26 to 42 ms: their pile has up to 9,000 pairs touching (14–18 colours) that were partly dropped before, and passed through each other.
+    * Colouring every partner pair rather than those with contacts took more than 32 rounds: the pairs left over went to one thread, and 2048 bodies took 364 ms.
+    * Colouring again at every refresh settles a pile a few seconds sooner, at 7.3 / 15.8 / 36 ms.
+  * What made it fast before:
     * Every substep in one threadgroup: with three dispatches a substep, 16 substeps cost 6.6 ms for 96 bodies.
-    * A thread per contact rather than a body's thread walking all of its contacts: 2.3 to 1.1 ms.
     * A SIMD group per pair in the narrow phase: 0.8 to 0.35 ms.
   * At thousands of bodies one threadgroup runs out of threads: the next thing to try is dispatches per stage above a size, measured against it.
+* **Grabbing.** A click on a body grabs it where the cursor meets it: the ray is sphere-traced through each body's distance, from the poses the frame was drawn with (on the GPU, the 3-frames-late snapshot). A drag moves the grab point on a plane through it facing the camera, and the scroll wheel moves it nearer or farther. Each substep pulls the point 3 % of the way to the target, through the body's inverse mass and inertia there, so a body held off its centre swings and hangs; its velocities fade at 8/s while held, so it doesn't swing about the cursor. Contacts are solved after the pull, so a held body can't be pushed through the floor. Release lets it go with its speed, so a flick throws it. The GPU reads the grab from a small buffer per frame slot.
 * **The CPU's copy** of the bodies comes from a snapshot the pose kernel writes per frame slot. It is read once the slot's frame is done: three frames late, but the same three every time.
 * **Backend.** `auto` steps on the CPU below 64 bodies and particles, where a dispatch costs more than the work. Then the CPU writes the instances, and a cloth is uploaded each frame for the GPU to draw.
 * **Checked:** `PhysicsTests` covers:
@@ -1048,13 +1062,16 @@ The scene list's keys are `bodies=96`, `particles=2048`, `cloth=36`, `substeps=1
   * mass properties;
   * particles heaping and a ball pushing through them;
   * cloth hanging without stretching and draping over a ball;
+  * picking, a grab lifting a box and letting it go, a dragged box knocking the tower over, and a hold on the GPU against the CPU;
+  * coming to rest: the scene's pile asleep and still (CPU, and GPU at 20 s), at least 7 of 8 drops of each body shape (on the floor and on a box) asleep within 6 s, the tower not drifting, a box on a ramp not creeping, a particle heap still;
   * GPU against CPU, and two GPU runs.
 * **Limits:**
   * Rigid bodies and SDF shapes only: a triangle mesh collides through a baked grid.
   * Particles and cloth don't push the bodies.
   * No cloth self-collision. No joints.
-  * A body's contacts are found once a step, so a fast thin shape can still pass through a thin one.
+  * A pair is coloured, and its contacts refreshed, only if it had contacts at the step's start: one that first touches mid-step waits for the next step. A fast thin shape can still pass through a thin one.
   * Glowing bodies' lights follow the CPU's copy, three frames late.
+  * Going back in time replays from the start without the grabs.
 
 ### Geometry debug views
 

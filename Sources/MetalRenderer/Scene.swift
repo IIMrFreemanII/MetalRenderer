@@ -561,6 +561,7 @@ final class Scene {
     /// (bounds, moving lights). The frame's records are the GPU's own (PhysicsGPU.encodePose).
     func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
         guard let physics else { return }
+        physics.drawnPoses = Array(poses)   // what picking sees
         for b in physics.bodies.indices {
             let i = Int(physics.bodies[b].info.z)
             instances[i].prevTransform = instances[i].transform

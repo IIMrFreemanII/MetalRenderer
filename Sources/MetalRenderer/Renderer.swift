@@ -536,6 +536,10 @@ final class Renderer: NSObject {
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
     private var shiftHeld = false
+    /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
+    private var holding: (cursor: SIMD2<Float>, depth: Float)?
+    /// The view's width over its height, for the cursor's ray.
+    private var viewAspect: Float = 1.6
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
@@ -808,6 +812,7 @@ final class Renderer: NSObject {
         customRT = nil
         crowdSkinner = nil
         physicsGPU = nil
+        holding = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
         lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
@@ -1406,9 +1411,14 @@ final class Renderer: NSObject {
         // (A still scene's were written with its buffers.)
         let first = !frameDataWritten[slot], still = sceneBuffers.still
         // The GPU's bodies where they were when this slot's last frame was done: the CPU's copy (the frame's own
-        // records are the pose kernel's).
+        // records are the pose kernel's); and the body the mouse holds, for this frame's steps.
         if let physicsGPU {
-            if physicsGPU.simulates { scene.placeBodies(poses: physicsGPU.snapshot(slot: slot)) } else { physicsGPU.upload(slot: slot) }
+            if physicsGPU.simulates {
+                scene.placeBodies(poses: physicsGPU.snapshot(slot: slot))
+                if let physics = scene.physics { physicsGPU.setGrab(slot: slot, physics.grab) }
+            } else {
+                physicsGPU.upload(slot: slot)
+            }
         }
         if let customRT {
             customRT.update(slot: slot, scene: scene)
@@ -1742,6 +1752,8 @@ final class Renderer: NSObject {
         }
         updateCamera(dt: dt)
         camera.fovY = settings.fovDegrees * .pi / 180
+        viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
+        moveGrab()
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
         scene.update(time: animTime, dayTime: dayTime)
@@ -2108,7 +2120,7 @@ final class Renderer: NSObject {
             if physicsGPU.simulates {
                 let (steps, restart) = scene.takePhysicsSteps()
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
-                physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps)
+                physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
                 let descriptors = builtRayTracer == .metal && !sceneBuffers.still ? instanceDescBuffers[slot] : nil
                 physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
                                       descriptorStride: instanceDescriptorStride)
@@ -3436,8 +3448,51 @@ final class Renderer: NSObject {
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
 
-    func mouseDragged(dx: Float, dy: Float) {
+    /// A click on a body grabs it where the cursor meets it (Physics.swift's `grab`); anywhere else, the drag turns the
+    /// camera.
+    func mouseDown(at cursor: SIMD2<Float>) {
+        holding = nil
+        guard let physics = scene.physics else { return }
+        let direction = cursorRay(cursor)
+        guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
+        let point = camera.position + direction * hit.distance
+        physics.grab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
+        holding = (cursor, dot(point - camera.position, camera.forward))
+    }
+
+    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if holding != nil {
+            holding?.cursor = cursor
+            return
+        }
         camera.yaw += dx * 0.004
         camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
+    }
+
+    /// Lets go: the body keeps its speed (a flick throws it).
+    func mouseUp() {
+        holding = nil
+        scene.physics?.grab.target.w = 0
+    }
+
+    /// While holding: the body nearer (down) or farther (up).
+    func scrolled(dy: Float) {
+        guard let depth = holding?.depth else { return }
+        holding?.depth = max(depth * exp(dy * 0.05), 0.3)
+    }
+
+    /// The ray from the camera through `cursor` (0...1 across and down), unjittered.
+    private func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {
+        let t = tan(camera.fovY / 2)
+        return normalize(camera.forward + camera.right * ((2 * cursor.x - 1) * t * viewAspect) + camera.up * ((1 - 2 * cursor.y) * t))
+    }
+
+    /// The held body's target this frame: under the cursor, on the plane facing the camera at the grab's depth (so it
+    /// follows the camera as it moves too).
+    private func moveGrab() {
+        guard let holding, let physics = scene.physics, physics.grab.target.w > 0 else { return }
+        let direction = cursorRay(holding.cursor)
+        let along = holding.depth / max(dot(direction, camera.forward), 0.1)
+        physics.grab.target = SIMD4(camera.position + direction * along, 1)
     }
 }

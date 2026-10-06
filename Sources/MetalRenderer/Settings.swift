@@ -762,11 +762,31 @@ struct RenderSettings: Equatable, Codable {
     var timeScale: Float = 1           // animation speed (Pause stops it too)
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
 
+    /// The physics scene's traced resolution (`usePhysicsLook`).
+    static let physicsScale: CGFloat = 0.375
+
+    /// The physics scene's look, which leaves the GPU to the simulation: no GI and no reflections, traced at 0.375 of
+    /// the window (3x upscaled, 1440x900 out). On the M1 Max its frame renders in 5 ms against the app look's 15
+    /// (reflections 4.7 ms, cascades 2.9, and the smaller frame halves the trace and the upscaler). The panel can turn
+    /// either back on.
+    mutating func usePhysicsLook() {
+        giEnabled = false
+        specular = false
+        renderScale = RenderSettings.physicsScale
+    }
+
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults): the GI method, the night market's light count, the fog, the sky and the lens (the showcase's
-    /// model brings its own fog and lens).
+    /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
+        if scene.kind == .physics {
+            usePhysicsLook()
+        } else if !giEnabled && !specular && renderScale == RenderSettings.physicsScale {
+            giEnabled = defaults.giEnabled
+            specular = defaults.specular
+            renderScale = defaults.renderScale
+        }
         if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
         fog = FogSettings.preset(for: scene)
         post = PostSettings.preset(for: scene)

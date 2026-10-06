@@ -9,10 +9,11 @@ import simd
 /// A step (1/60 s) finds what may touch (a hash grid over the bodies' bounding spheres; every static collider whose
 /// box a body's sphere meets), then each pair's contacts (PhysicsCollide.swift), then runs `substeps` substeps: move
 /// every body by its velocity, push the contacts apart and hold them by static friction, take the velocities from how
-/// far the bodies went, then apply dynamic friction and restitution. Contacts are solved Jacobi style: every body
-/// gathers its own corrections from its contacts, in a fixed order, and they are averaged. Nothing adds floats
-/// atomically, so a run is the same every time; that is also how the GPU runs it (Shaders/Physics.metal), one thread
-/// per body. Bodies that stay still for half a second sleep until something moving touches them.
+/// far the bodies went, then apply dynamic friction, restitution and rolling and spinning resistance. The contacts are
+/// found again every `contactRefresh` substeps (a turning body's go stale), and solved Gauss-Seidel, a colour of pairs
+/// at a time: no two pairs of a colour share a body, so the GPU (Shaders/Physics.metal) solves a colour's at once and
+/// gets the same numbers. Nothing adds floats atomically, so a run is the same every time. Bodies that have barely
+/// moved for half a second, and whose neighbours have settled too, sleep until something moving touches them.
 ///
 /// Time: `advance(to:)` takes the scene's animation time (so Pause and Time scale apply) and steps until the
 /// simulation is no more than a step behind it. Going back in time replays from the start, so any time's state is
@@ -26,6 +27,13 @@ final class PhysicsWorld {
     /// How many pairs a body may be in (more are dropped: statics and the lowest bodies stay) and contacts a pair may have.
     static let maxPairs = 16
     static let maxContacts = PhysicsManifold.capacity
+    /// Rounds of colouring a step's pairs (Jones-Plassmann) before the rest are solved one after another (their
+    /// GPUPhysicsPair.pad), and the most colours there can be (a pair shares its bodies with 30 others at most).
+    static let maxRounds = 64
+    static let maxColours = 32
+    static let leftover: UInt32 = 0xFFFF_FFFE
+    /// The contacts are found again every this many substeps.
+    static let contactRefresh = 4
     static let stepLength: Float = 1.0 / 60
     static let topSpeed: Float = 30
     /// A body's sphere reaches as far as it goes in a step at up to this speed (faster ones lean on the substeps):
@@ -41,6 +49,16 @@ final class PhysicsWorld {
     static let particleSpeed: Float = 2
     /// How fast the air slows a cloth's vertices (1/s): without it a hanging cloth swings on and on.
     static let clothDrag: Float = 2
+    /// A held body's anchor goes this fraction of the way to the target each substep, and the body's velocities fade
+    /// at this rate (1/s) so that it doesn't swing about the cursor.
+    static let holdPull: Float = 0.03
+    static let holdDamping: Float = 8
+    /// A particle in a heap going slower than this (m/s) over a substep stays put.
+    static let particleRest: Float = 0.1
+    /// How far ahead of a rolling body's contact the floor pushes back, and how wide a contact is against spinning on
+    /// the spot (m): what brings a ball, a cone or a lying cylinder to a stop (without them they roll on for ever).
+    static let rollingResistance: Float = 0.004
+    static let spinningResistance: Float = 0.02
 
     var gravity = SIMD3<Float>(0, -9.81, 0)
     let substeps: Int
@@ -63,6 +81,17 @@ final class PhysicsWorld {
     var pairs: [GPUPhysicsPair] = []
     var pairCounts: [UInt32] = []
     var contacts: [GPUPhysicsContact] = []
+    /// This step's owned pairs with contacts, by colour (PhysicsCPU.colourPairs), and where each colour starts; the
+    /// last colour is what the rounds left, solved one pair after another.
+    var pairOrder: [UInt32] = []
+    var pairColourStarts: [UInt32] = [0]
+
+    /// The body the mouse holds, if any (`target.w` = 1), which the substeps pull to the target; the GPU takes a copy
+    /// each frame (PhysicsGPU.setGrab).
+    var grab = GPUPhysicsGrab()
+    /// The poses the bodies were last drawn with when the GPU steps them (its snapshot, a position and a rotation per
+    /// body): what picking sees. Empty when the CPU steps them (then `bodies` are).
+    var drawnPoses: [SIMD4<Float>] = []
 
     /// The particles, their start, and per particle its neighbours and the colliders it may touch this step.
     var particles: [GPUPhysicsParticle] = []
@@ -304,8 +333,9 @@ final class PhysicsWorld {
                          sleep: SIMD4(0.05, 0.08, 0.5, PhysicsWorld.cellSpeed),
                          particles: SIMD4(UInt32(particles.count), UInt32(particleBuckets), UInt32(PhysicsWorld.maxNeighbours),
                                           UInt32(PhysicsWorld.maxColliders)),
-                         particleGrid: SIMD4(particleCellSize, PhysicsWorld.particleSpeed, PhysicsWorld.clothDrag, 0),
-                         cloth: SIMD4(UInt32(constraints.count), UInt32(colourStarts.count - 1), 0, 0))
+                         particleGrid: SIMD4(particleCellSize, PhysicsWorld.particleSpeed, PhysicsWorld.clothDrag, PhysicsWorld.particleRest),
+                         cloth: SIMD4(UInt32(constraints.count), UInt32(colourStarts.count - 1), 0, 0),
+                         rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, 0.16))
     }
 
     // MARK: - Time
@@ -330,6 +360,38 @@ final class PhysicsWorld {
         if restart { stepIndex = 0 }
         stepIndex += steps
         return (steps, restart)
+    }
+
+    // MARK: - Picking
+
+    /// Body `i`'s pose as last drawn.
+    func drawnPose(_ i: Int) -> (position: SIMD3<Float>, rotation: SIMD4<Float>) {
+        drawnPoses.count == 2 * bodies.count ? (PhysicsMath.xyz(drawnPoses[2 * i]), drawnPoses[2 * i + 1])
+                                             : (PhysicsMath.xyz(bodies[i].position), bodies[i].rotation)
+    }
+
+    /// The nearest body the ray from `origin` along `direction` (unit) meets, where it meets it (in the body's space)
+    /// and how far along: each body whose bounding sphere the ray crosses, sphere-traced through its distance.
+    func pick(origin: SIMD3<Float>, direction: SIMD3<Float>) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
+        var best: (body: Int, anchor: SIMD3<Float>, distance: Float)?
+        for i in bodies.indices {
+            let (x, q) = drawnPose(i)
+            let radius = bodies[i].invInertia.w, oc = origin - x
+            let b = dot(oc, direction), c = dot(oc, oc) - radius * radius, disc = b * b - c
+            guard disc >= 0 else { continue }
+            var t = max(-b - sqrt(disc), 0)
+            let end = min(-b + sqrt(disc), best?.distance ?? .infinity)
+            for _ in 0..<64 where t < end {
+                let local = PhysicsMath.qrot(PhysicsMath.qconj(q), origin + direction * t - x)
+                let d = distance(shape: Int(bodies[i].info.x), local)
+                if d < 1e-3 {
+                    best = (i, local, t)
+                    break
+                }
+                t += max(d, 1e-4)
+            }
+        }
+        return best
     }
 
     // MARK: - Drawing

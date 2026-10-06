@@ -107,6 +107,8 @@ final class Benchmark {
         func resolvedSettings(env: [String: String] = ProcessInfo.processInfo.environment) -> RenderSettings {
             var s = settings
             SettingsEnv.apply(.scene, to: &s, from: env)
+            // A run moved to the physics scene takes its look (the METALRENDERER_GI list below can change it again).
+            if s.scene.kind == .physics && settings.scene.kind != .physics { s.usePhysicsLook() }
             // The fog and sky of the scene the run ends up with, unless this config set its own.
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
             if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }

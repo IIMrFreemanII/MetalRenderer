@@ -171,6 +171,34 @@ final class SettingsTableTests: XCTestCase {
         }
     }
 
+    func testThePhysicsSceneHasItsOwnLook() {
+        var s = defaults
+        s.scene.kind = .physics
+        s.applySceneDefaults(from: defaults)
+        XCTAssertFalse(s.giEnabled)
+        XCTAssertFalse(s.specular)
+        XCTAssertEqual(s.renderScale, RenderSettings.physicsScale)
+        // Leaving it brings the defaults back...
+        s.scene.kind = .cornell
+        s.applySceneDefaults(from: defaults)
+        XCTAssertEqual(s.giEnabled, defaults.giEnabled)
+        XCTAssertEqual(s.specular, defaults.specular)
+        XCTAssertEqual(s.renderScale, defaults.renderScale)
+        // ...but not over a look chosen elsewhere.
+        s.giEnabled = false
+        s.renderScale = 1
+        s.scene.kind = .sun
+        s.applySceneDefaults(from: defaults)
+        XCTAssertFalse(s.giEnabled)
+        XCTAssertEqual(s.renderScale, 1)
+        // Starting in it from the environment.
+        var started = defaults
+        SettingsEnv.applyAll(to: &started, defaults: defaults, from: ["METALRENDERER_SCENE": "physics"])
+        XCTAssertEqual(started.scene.kind, .physics)
+        XCTAssertFalse(started.giEnabled)
+        XCTAssertEqual(started.renderScale, RenderSettings.physicsScale)
+    }
+
     func testBadInputIsSkipped() {
         var s = defaults
         SettingsEnv.applyAll(to: &s, defaults: defaults, from: [

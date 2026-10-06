@@ -42,9 +42,10 @@ extension Scene {
         let knot = addSDFVolume(SDFVolume.cached(Scene.torusKnotMesh(), resolution: 64))
         fixed(SDFShape([SDFShape.Node(.volume(knot), at: [0, 0.85, 0], rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0])),
                         SDFShape.Node(.cylinder(halfHeight: 0.2, radius: 0.5, rounding: 0.04), smooth: 0.1, at: [0, 0.2, 0])]),
-              addPBRMaterial(baseColor: [0.95, 0.75, 0.4], metallic: 1, roughness: 0.25), translate([2.6, 0, 2.4]))
+              addPBRMaterial(baseColor: [0.95, 0.75, 0.4], metallic: 0, roughness: 0.25), translate([2.6, 0, 2.4]))
 
-        // The shapes the bodies are, each in a few colours.
+        // The shapes the bodies are, each in a few colours. Nothing is metal: the scene's look has no reflections
+        // (RenderSettings.usePhysicsLook), and a metal without them is black.
         let shapes: [SDFShape] = [
             SDFShape(.sphere(radius: 0.22)),
             SDFShape(.box(halfExtents: [0.2, 0.2, 0.2], rounding: 0.02)),
@@ -62,7 +63,7 @@ extension Scene {
         let colours: [SIMD3<Float>] = [[0.8, 0.12, 0.08], [0.95, 0.6, 0.1], [0.15, 0.5, 0.25], [0.12, 0.3, 0.75],
                                        [0.85, 0.85, 0.82], [0.55, 0.2, 0.6], [0.1, 0.6, 0.65], [0.9, 0.35, 0.45]]
         let materials = colours.enumerated().map { i, c in
-            i % 3 == 2 ? addPBRMaterial(baseColor: c, metallic: 1, roughness: 0.3) : addPBRMaterial(baseColor: c, metallic: 0, roughness: 0.35)
+            addPBRMaterial(baseColor: c, metallic: 0, roughness: i % 3 == 2 ? 0.2 : 0.35)
         }
 
         // A tower of blocks on the right: two by two, crossed layer on layer.
@@ -83,7 +84,7 @@ extension Scene {
 
         // A heavy ball rolled in from the left at the tower's foot.
         if placed < physics.bodies {
-            addBody(sdf: addSDFShape(SDFShape(.sphere(radius: 0.3))), addPBRMaterial(baseColor: [0.06, 0.06, 0.07], metallic: 1, roughness: 0.15),
+            addBody(sdf: addSDFShape(SDFShape(.sphere(radius: 0.3))), addPBRMaterial(baseColor: [0.1, 0.1, 0.11], metallic: 0, roughness: 0.15),
                     translate([-3.8, 0.3, -0.6]), density: 3000, friction: 0.4, restitution: 0.1, velocity: [7, 0, 0])
             placed += 1
         }
@@ -110,7 +111,7 @@ extension Scene {
         // A bin in front on the left, and a block of particles above it, a little off to one side so that some spill.
         let binCentre = SIMD3<Float>(-2.4, 0, 2.3), binHalf: Float = 0.6, binHeight: Float = 0.45, binWall: Float = 0.05
         let binSide = SDFShape(.box(halfExtents: [binHalf + binWall, binHeight / 2, binWall / 2], rounding: 0.01))
-        let binMaterial = addPBRMaterial(baseColor: [0.6, 0.62, 0.66], metallic: 1, roughness: 0.35)
+        let binMaterial = addPBRMaterial(baseColor: [0.6, 0.62, 0.66], metallic: 0, roughness: 0.35)
         for k in 0..<4 {
             fixed(binSide, binMaterial, translate(binCentre) * rotate(Float(k) * .pi / 2, [0, 1, 0])
                   * translate([0, binHeight / 2, binHalf + binWall / 2]))
@@ -127,7 +128,7 @@ extension Scene {
 
         // A cloth by two corners from a rod between two posts, over a ball.
         if physics.cloth >= 2 {
-            let steel = addPBRMaterial(baseColor: [0.7, 0.7, 0.72], metallic: 1, roughness: 0.3)
+            let steel = addPBRMaterial(baseColor: [0.7, 0.7, 0.72], metallic: 0, roughness: 0.3)
             let rodY: Float = 1.5, rodZ: Float = 1.55, x0: Float = 0.9, half: Float = 0.75
             for side: Float in [-1, 1] {
                 fixed(SDFShape(.cylinder(halfHeight: rodY / 2, radius: 0.03)), steel, translate([x0 + side * half, rodY / 2, rodZ]))

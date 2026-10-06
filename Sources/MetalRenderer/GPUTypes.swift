@@ -351,7 +351,7 @@ struct GPUPhysicsPair {
     var partner: UInt32 = 0                  // a body, or a static collider | PhysicsWorld.staticBit
     var contacts: UInt32 = 0                 // in the owner's manifold
     var link: UInt32 = 0                     // the owner's entry for the pair (the owner's own: itself); none: ~0
-    var pad: UInt32 = 0
+    var pad: UInt32 = 0                      // its colour this step (PhysicsCPU.colourPairs); none, or the leftover mark
 }
 
 /// A contact point, from body B to body A: MSL PhysicsContact. A's point is A's anchor less `normal` x A's radius,
@@ -361,6 +361,16 @@ struct GPUPhysicsContact {
     var anchorA = SIMD4<Float>()             // A's space; w = A's radius
     var anchorB = SIMD4<Float>()             // B's space; w = B's radius
     var lambda = SIMD4<Float>()              // x = this substep's normal lambda, y = normal speed before it, zw = 0
+}
+
+/// A body held by the mouse (PhysicsWorld.grab): its point `anchor` pulled towards `target`. MSL PhysicsGrab.
+struct GPUPhysicsGrab {
+    var target = SIMD4<Float>()              // world; w = 1 while held, 0 when nothing is
+    var anchor = SIMD4<Float>()              // the body's space (its centre of mass's); w = 0
+    var body: UInt32 = 0
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+    var pad2: UInt32 = 0
 }
 
 /// A particle (Physics.swift): a small ball that the bodies and the static colliders push about, and that piles up
@@ -390,8 +400,10 @@ struct GPUPhysicsParams {
                                              // w = the speed a body's sphere reaches by (PhysicsWorld.cellSpeed)
     var particles = SIMD4<UInt32>()          // x = particles, y = their hash buckets, z = neighbours each, w = colliders each
     var particleGrid = SIMD4<Float>()        // x = their cell size, y = the speed a particle's reach allows for,
-                                             // z = a cloth's air drag (1/s), w = 0
+                                             // z = a cloth's air drag (1/s), w = a particle at rest goes slower (m/s)
     var cloth = SIMD4<UInt32>()              // x = constraints, y = their colours, zw = 0
+    var rolling = SIMD4<Float>()             // x = rolling resistance (m), y = spinning resistance (m), z = a body moving
+                                             // faster than this wakes what it touches, w = ...or turning faster than this
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
@@ -431,8 +443,9 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsShape>.stride == 64, "GPUPhysicsShape layout mismatch")
     precondition(MemoryLayout<GPUPhysicsPair>.stride == 16, "GPUPhysicsPair layout mismatch")
     precondition(MemoryLayout<GPUPhysicsContact>.stride == 64, "GPUPhysicsContact layout mismatch")
-    precondition(MemoryLayout<GPUPhysicsParams>.stride == 112, "GPUPhysicsParams layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsParams>.stride == 128, "GPUPhysicsParams layout mismatch")
     precondition(MemoryLayout<GPUPhysicsConstraint>.stride == 16, "GPUPhysicsConstraint layout mismatch")
     precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

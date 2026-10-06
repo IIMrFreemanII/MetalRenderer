@@ -9,6 +9,8 @@
 
 constant uint PHYS_STATIC = 0x80000000u, PHYS_NONE = 0xFFFFFFFFu, PHYS_ASLEEP = 1u;
 constant uint PHYS_PAIRS = 16, PHYS_CONTACTS = 4;   // PhysicsWorld.maxPairs, maxContacts
+constant uint PHYS_COLOURS = 32, PHYS_ROUNDS = 64;  // PhysicsWorld.maxColours, maxRounds
+constant uint PHYS_LEFTOVER = 0xFFFFFFFEu;          // PhysicsWorld.leftover
 constant uint PHYS_SDF = 0, PHYS_SPHERE = 1, PHYS_CAPSULE = 2, PHYS_BOX = 3, PHYS_PLANE = 4;   // PhysicsShapeKind
 constant uint PHYS_REFINE_STEPS = 6;
 constant float PHYS_GRADIENT_STEP = 1e-3f;
@@ -56,10 +58,11 @@ struct PhysicsParams {
     float4 grid;           // cell, margin, top speed, step
     float4 sleep;          // still speed, still turn rate, time to sleep, cell speed
     uint4  particles;      // particles, their hash buckets, neighbours each, colliders each
-    float4 particleGrid;   // their cell size, the speed their reach allows for, a cloth's air drag
+    float4 particleGrid;   // their cell size, the speed their reach allows for, a cloth's air drag, rest speed
     uint4  cloth;          // constraints, their colours
+    float4 rolling;        // rolling resistance, spinning resistance, wake speed, wake turn rate
 };
-static_assert(sizeof(PhysicsParams) == 112, "PhysicsParams: GPUPhysicsParams");
+static_assert(sizeof(PhysicsParams) == 128, "PhysicsParams: GPUPhysicsParams");
 
 constant uint PHYS_CLOTH = 1u;   // PhysicsParticle.info.y: a cloth's vertex (PhysicsWorld.clothBit)
 
@@ -69,6 +72,15 @@ struct PhysicsConstraint {
     float compliance;
 };
 static_assert(sizeof(PhysicsConstraint) == 16, "PhysicsConstraint: GPUPhysicsConstraint");
+
+// A body held by the mouse: GPUPhysicsGrab.
+struct PhysicsGrab {
+    float4 target;   // w = 1 while held
+    float4 anchor;   // the body's space
+    uint   body, pad0, pad1, pad2;
+};
+static_assert(sizeof(PhysicsGrab) == 48, "PhysicsGrab: GPUPhysicsGrab");
+constant float PHYS_HOLD_PULL = 0.03f, PHYS_HOLD_DAMPING = 8.0f;   // PhysicsWorld.holdPull, holdDamping
 
 struct PhysicsParticle {
     float4 position;       // w = radius
@@ -333,13 +345,11 @@ kernel void physicsResetKernel(constant PhysicsParams&       p                [[
 
 kernel void physicsClearKernel(constant PhysicsParams& p          [[buffer(0)]],
                                device atomic_uint*     heads      [[buffer(1)]],
-                               device atomic_uint*     active     [[buffer(2)]],   // the step's contact list's length
                                device atomic_uint*     particleHeads [[buffer(3)]],
                                uint h [[thread_position_in_grid]])
 {
     if (h < p.counts.w) atomic_store_explicit(&heads[h], PHYS_NONE, memory_order_relaxed);
     if (h < p.particles.y) atomic_store_explicit(&particleHeads[h], PHYS_NONE, memory_order_relaxed);
-    if (h == 0) atomic_store_explicit(active, 0u, memory_order_relaxed);
 }
 
 kernel void physicsInsertKernel(constant PhysicsParams&   p      [[buffer(0)]],
@@ -353,7 +363,7 @@ kernel void physicsInsertKernel(constant PhysicsParams&   p      [[buffer(0)]],
     next[i] = atomic_exchange_explicit(&heads[h], i, memory_order_relaxed);
 }
 
-// Into a body's partners (or a particle's colliders), kept sorted (statics first), the lowest `capacity` of them.
+// Into a particle's colliders, kept sorted (statics first), the lowest `capacity` of them.
 inline void physKeep(thread uint* keys, thread uint& count, uint partner, uint capacity = PHYS_PAIRS) {
     uint key = partner ^ PHYS_STATIC;
     if (count == capacity && key >= keys[count - 1]) return;
@@ -364,6 +374,25 @@ inline void physKeep(thread uint* keys, thread uint& count, uint partner, uint c
     for (uint k = end; k > at; --k) keys[k] = keys[k - 1];
     keys[at] = key;
     count = min(count + 1, capacity);
+}
+
+// PhysicsWorld.distance2: fused the same way, so the partners sort the same on both.
+inline float physDistance2(float3 a, float3 b) {
+    float3 d = a - b;
+    return fma(d.z, d.z, fma(d.y, d.y, d.x * d.x));
+}
+
+// Into a body's partners, kept nearest first (statics, at -1, before all; the lower first of equals), the nearest
+// PHYS_PAIRS of them (PhysicsCPU.broadPhase).
+inline void physKeepNearest(thread float* d2s, thread uint* ids, thread uint& count, float d2, uint id) {
+    if (count == PHYS_PAIRS && !(d2 < d2s[count - 1] || (d2 == d2s[count - 1] && id < ids[count - 1]))) return;
+    uint at = count;
+    while (at > 0 && (d2 < d2s[at - 1] || (d2 == d2s[at - 1] && id < ids[at - 1]))) --at;
+    if (at > 0 && d2s[at - 1] == d2 && ids[at - 1] == id) return;   // met through two cells of the same bucket
+    for (uint k = min(count, PHYS_PAIRS - 1); k > at; --k) { d2s[k] = d2s[k - 1]; ids[k] = ids[k - 1]; }
+    d2s[at] = d2;
+    ids[at] = id;
+    count = min(count + 1, PHYS_PAIRS);
 }
 
 kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
@@ -381,7 +410,8 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
     PhysicsBody b = bodies[i];
     float3 x = b.position.xyz;
     float r = physReach(b, p);
-    uint keys[PHYS_PAIRS];
+    float d2s[PHYS_PAIRS];
+    uint ids[PHYS_PAIRS];
     uint count = 0;
     for (uint s = 0; s < p.counts.y; ++s) {
         PhysicsBody st = statics[s];
@@ -392,7 +422,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
             float3 nearest = clamp(x, bounds[2 * s].xyz, bounds[2 * s + 1].xyz);
             touches = length_squared(x - nearest) < r * r;
         }
-        if (touches) physKeep(keys, count, s | PHYS_STATIC);
+        if (touches) physKeepNearest(d2s, ids, count, -1.0f, s | PHYS_STATIC);
     }
     int3 c = physCell(x, p.grid.x);
     for (int dz = -1; dz <= 1; ++dz) {
@@ -402,19 +432,27 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                     if (j == i) continue;
                     PhysicsBody o = bodies[j];
                     float reach = r + physReach(o, p);
-                    if (length_squared(o.position.xyz - x) < reach * reach) physKeep(keys, count, j);
+                    float d2 = physDistance2(o.position.xyz, x);
+                    if (d2 < reach * reach) physKeepNearest(d2s, ids, count, d2, j);
                 }
             }
         }
     }
     counts[i] = count;
     for (uint k = 0; k < count; ++k) {
-        PhysicsPair pair = {keys[k] ^ PHYS_STATIC, 0, 0, 0};
+        PhysicsPair pair = {ids[k], 0, 0, 0};
         pairs[i * PHYS_PAIRS + k] = pair;
     }
 }
 
-// Each entry's owner (PhysicsCPU.link), and whether the body wakes (PhysicsCPU.wake): something moving touches it.
+inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y & PHYS_ASLEEP) == 0; }
+
+// PhysicsCPU.stirs: body b moves fast enough to wake what it touches.
+inline bool physStirs(PhysicsBody b, constant PhysicsParams& p) {
+    return physMoves(b) && (length(b.velocity.xyz) > p.rolling.z || length(b.angular.xyz) > p.rolling.w);
+}
+
+// Each entry's owner (PhysicsCPU.link), and whether the body wakes (PhysicsCPU.wake): something it touches stirs.
 kernel void physicsLinkKernel(constant PhysicsParams&   p      [[buffer(0)]],
                               device const PhysicsBody* bodies [[buffer(1)]],
                               device PhysicsPair*       pairs  [[buffer(2)]],
@@ -426,10 +464,7 @@ kernel void physicsLinkKernel(constant PhysicsParams&   p      [[buffer(0)]],
     bool asleep = (bodies[i].info.y & PHYS_ASLEEP) != 0, wakes = false;
     for (uint n = 0; n < counts[i]; ++n) {
         uint e = i * PHYS_PAIRS + n, partner = pairs[e].partner;
-        if (asleep && !wakes && (partner & PHYS_STATIC) == 0) {
-            PhysicsBody o = bodies[partner];
-            wakes = (o.info.y & PHYS_ASLEEP) == 0 && o.position.w > 0.0f && o.prevPosition.w == 0.0f;
-        }
+        if (asleep && !wakes && (partner & PHYS_STATIC) == 0) wakes = physStirs(bodies[partner], p);
         if ((partner & PHYS_STATIC) != 0 || partner > i) { pairs[e].link = e; continue; }
         uint link = PHYS_NONE;
         for (uint m = 0; m < counts[partner]; ++m) {
@@ -545,7 +580,15 @@ kernel void physicsParticleNeighboursKernel(constant PhysicsParams&       p     
     for (uint k = 0; k < touching; ++k) colliders[i * PHYS_COLLIDERS + k] = keys[k] ^ PHYS_STATIC;
 }
 
-// A SIMD group per entry: an owned entry's contacts (PhysicsCPU.narrowPhase). The entry is the same for all of a
+// A run of a step's substeps (PhysicsGPU.Group): the narrow phase runs before each.
+struct PhysicsGroup {
+    uint first, count;   // its substeps
+    uint last;           // 1: the step's last run, which settles
+    uint pad;
+};
+
+// A SIMD group per entry: an owned entry's contacts (PhysicsCPU.narrowPhase), at the start of a step and again every
+// PhysicsWorld.contactRefresh substeps. The entry is the same for all of a
 // group's lanes, so a group that has nothing to do leaves together.
 kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]],
                                 device const PhysicsBody*  bodies   [[buffer(1)]],
@@ -556,8 +599,7 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
                                 device PhysicsPair*        pairs    [[buffer(6)]],
                                 device const uint*         counts   [[buffer(7)]],
                                 device PhysicsContact*     contacts [[buffer(8)]],
-                                device uint*               list     [[buffer(9)]],
-                                device atomic_uint*        listed   [[buffer(10)]],
+                                constant PhysicsGroup&     group    [[buffer(9)]],
                                 uint t [[thread_position_in_grid]],
                                 ushort lane [[thread_index_in_simdgroup]],
                                 ushort lanes [[threads_per_simdgroup]])
@@ -565,6 +607,8 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
     uint e = t / lanes, i = e / PHYS_PAIRS, n = e % PHYS_PAIRS;
     if (i >= p.counts.x || n >= counts[i] || pairs[e].link != e) return;
     PhysicsBody a = bodies[i], b = physPartner(pairs[e].partner, bodies, statics);
+    // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
+    if (group.first > 0 && (pairs[e].pad == PHYS_NONE || (!physMoves(a) && !physMoves(b)))) return;
     float closing = (length(a.velocity.xyz) + length(b.velocity.xyz) + length(a.angular.xyz) * a.invInertia.w
                      + length(b.angular.xyz) * b.invInertia.w) * p.grid.w;
     PhysicsShapes w = {shapes, samples, sdf};
@@ -580,20 +624,15 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
         out.lambda = float4(0.0f);
         contacts[e * PHYS_CONTACTS + c] = out;
     }
-    // Onto the step's list of contacts, for the substeps' one thread a contact (its order doesn't matter: each
-    // contact's result has a place of its own, and each body gathers its own in its own order).
-    uint at = atomic_fetch_add_explicit(listed, m.count, memory_order_relaxed);
-    for (uint c = 0; c < m.count; ++c) list[at + c] = e * PHYS_CONTACTS + c;
 }
 
 // MARK: - Substeps
 
-inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y & PHYS_ASLEEP) == 0; }
-
 // A sleeping body woken this step wakes (first substep), then a moving body goes by its velocity and gravity.
-inline void physIntegrate(constant PhysicsParams& p, device PhysicsBody* bodies, device uint* wake, uint i) {
+// (The held body, `held`, is woken and slowed too: PhysicsCPU.integrate.)
+inline void physIntegrate(constant PhysicsParams& p, device PhysicsBody* bodies, device uint* wake, uint i, bool held) {
     PhysicsBody b = bodies[i];
-    if (wake[i] != 0) {
+    if (wake[i] != 0 || held) {
         b.info.y &= ~PHYS_ASLEEP;
         b.prevPosition.w = 0.0f;
         wake[i] = 0;
@@ -602,7 +641,9 @@ inline void physIntegrate(constant PhysicsParams& p, device PhysicsBody* bodies,
         float h = p.gravity.w;
         b.prevPosition = float4(b.position.xyz, b.prevPosition.w);
         b.prevRotation = b.rotation;
-        float3 v = b.velocity.xyz + p.gravity.xyz * h;
+        float decay = held ? max(1.0f - PHYS_HOLD_DAMPING * h, 0.0f) : 1.0f;
+        b.angular = float4(b.angular.xyz * decay, b.angular.w);
+        float3 v = b.velocity.xyz * decay + p.gravity.xyz * h;
         float speed = length(v);
         if (speed > p.grid.z) v *= p.grid.z / speed;
         b.velocity = float4(v, b.velocity.w);
@@ -661,71 +702,74 @@ inline PhysPush physContactPush(PhysicsContact c, PhysicsBody a, PhysicsBody b, 
     return out;
 }
 
-// A contact's push or kick, worked out once for both bodies (by the contact's thread), for each to gather.
-struct PhysicsResult {
-    float4 impulse;   // on A (B takes the opposite); w = the push's lambda, or 1 for a kick (0: none)
-    float4 ra;        // lever arms
-    float4 rb;
-};
-
-// Contact `ci`'s push (PhysicsCPU.contactPush), from the bodies in `src`; its owner's lambda and normal speed kept.
-inline void physPushContact(constant PhysicsParams& p, device const PhysicsBody* src, device const PhysicsBody* statics,
-                            device const PhysicsPair* pairs, device PhysicsContact* contacts, device PhysicsResult* results,
-                            uint ci) {
-    uint link = ci / PHYS_CONTACTS;
-    PhysicsBody a = src[link / PHYS_PAIRS], b = physPartner(pairs[link].partner, src, statics);
-    PhysPush push = physContactPush(contacts[ci], a, b, p.gravity.w);
-    contacts[ci].lambda = float4(push.lambda, push.speed, 0.0f, 0.0f);
-    PhysicsResult r = {float4(push.impulse, push.lambda), float4(push.ra, 0.0f), float4(push.rb, 0.0f)};
-    results[ci] = r;
+// PhysicsCPU.shove: body b (if it moves) by impulse at lever arm r.
+inline void physShove(thread PhysicsBody& b, float3 impulse, float3 r) {
+    if (!physMoves(b)) return;
+    b.position = float4(b.position.xyz + impulse * b.position.w, b.position.w);
+    b.rotation = physTurn(b.rotation, physInvInertia(b.rotation, b.invInertia.xyz, cross(r, impulse)));
 }
 
-// PhysicsCPU.solvePositions for body i: its contacts' pushes gathered, from `src` into `dst`.
-inline void physSolvePositions(constant PhysicsParams& p, device const PhysicsBody* src, device PhysicsBody* dst,
-                               device const PhysicsPair* pairs, device const uint* counts,
-                               device const PhysicsResult* results, uint i) {
-    PhysicsBody me = src[i];
-    bool moves = physMoves(me);
-    float3 dx = float3(0.0f), dtheta = float3(0.0f);
-    float count = 0.0f;
+// PhysicsCPU.kick: body b's velocities (if it moves) by impulse at lever arm r and angular impulse twist.
+inline void physKick(thread PhysicsBody& b, float3 impulse, float3 r, float3 twist) {
+    if (!physMoves(b)) return;
+    b.velocity = float4(b.velocity.xyz + impulse * b.position.w, b.velocity.w);
+    b.angular = float4(b.angular.xyz + physInvInertia(b.rotation, b.invInertia.xyz, cross(r, impulse) + twist), b.angular.w);
+}
+
+// PhysicsCPU.solvePositions for pair e: its contacts one after the other, each pushing both bodies.
+inline void physPushPair(constant PhysicsParams& p, device PhysicsBody* bodies, device const PhysicsBody* statics,
+                         device const PhysicsPair* pairs, device PhysicsContact* contacts, uint e) {
+    uint i = e / PHYS_PAIRS, code = pairs[e].partner;
+    PhysicsBody a = bodies[i], b = physPartner(code, bodies, statics);
+    for (uint c = 0; c < pairs[e].contacts; ++c) {
+        uint ci = e * PHYS_CONTACTS + c;
+        PhysPush push = physContactPush(contacts[ci], a, b, p.gravity.w);
+        contacts[ci].lambda = float4(push.lambda, push.speed, 0.0f, 0.0f);
+        if (!(push.lambda > 0.0f)) continue;
+        physShove(a, push.impulse, push.ra);
+        physShove(b, -push.impulse, push.rb);
+    }
+    bodies[i] = a;
+    if ((code & PHYS_STATIC) == 0) bodies[code] = b;
+}
+
+// PhysicsCPU.hold: the held body i, right after it is integrated (by its thread).
+inline void physHold(device PhysicsBody* bodies, constant PhysicsGrab& g, uint i) {
+    PhysicsBody b = bodies[i];
+    if (!physMoves(b)) return;
+    float3 r = quatRotate(b.rotation, g.anchor.xyz);
+    float3 gap = g.target.xyz - (b.position.xyz + r);
+    float l = length(gap);
+    if (!(l > 1e-7f)) return;
+    float3 n = gap / l;
+    float w = physWeight(b, r, n);
+    if (!(w > 0.0f)) return;
+    physShove(b, n * (l * PHYS_HOLD_PULL / w), r);
+    bodies[i] = b;
+}
+
+// The end of PhysicsCPU.solvePositions for body i: its velocities from how far the substep took it.
+inline void physTakeVelocities(constant PhysicsParams& p, device PhysicsBody* bodies, uint i) {
+    PhysicsBody b = bodies[i];
+    if (!physMoves(b)) return;
     float h = p.gravity.w;
-    for (uint n = 0; moves && n < counts[i]; ++n) {
-        uint e = i * PHYS_PAIRS + n, link = pairs[e].link;
-        if (link == PHYS_NONE) continue;
-        bool owner = link == e;
-        for (uint c = 0; c < pairs[link].contacts; ++c) {
-            PhysicsResult r = results[link * PHYS_CONTACTS + c];
-            if (!(r.impulse.w > 0.0f)) continue;
-            if (owner) {
-                dx += r.impulse.xyz * me.position.w;
-                dtheta += physInvInertia(me.rotation, me.invInertia.xyz, cross(r.ra.xyz, r.impulse.xyz));
-            } else {
-                dx -= r.impulse.xyz * me.position.w;
-                dtheta -= physInvInertia(me.rotation, me.invInertia.xyz, cross(r.rb.xyz, r.impulse.xyz));
-            }
-            count += 1.0f;
-        }
-    }
-    PhysicsBody b = me;
-    if (moves) {
-        if (count > 0.0f) {
-            float s = 1.0f / count;
-            b.position = float4(me.position.xyz + dx * s, me.position.w);
-            b.rotation = physTurn(me.rotation, dtheta * s);
-        }
-        b.velocity = float4((b.position.xyz - b.prevPosition.xyz) / h, b.velocity.w);
-        float4 dq = quatMul(b.rotation, physConj(b.prevRotation));
-        if (dq.w < 0.0f) dq = -dq;
-        b.angular = float4(2.0f * dq.xyz / h, b.angular.w);
-    }
-    dst[i] = b;
+    b.velocity = float4((b.position.xyz - b.prevPosition.xyz) / h, b.velocity.w);
+    float4 dq = quatMul(b.rotation, physConj(b.prevRotation));
+    if (dq.w < 0.0f) dq = -dq;
+    b.angular = float4(2.0f * dq.xyz / h, b.angular.w);
+    bodies[i] = b;
 }
 
-struct PhysKick { bool valid; float3 impulse, ra, rb; };
+// PhysicsCPU.turnWeight.
+inline float physTurnWeight(PhysicsBody b, float3 k) {
+    return physMoves(b) ? dot(k, physInvInertia(b.rotation, b.invInertia.xyz, k)) : 0.0f;
+}
+
+struct PhysKick { bool valid; float3 impulse, twist, ra, rb; };
 
 // PhysicsCPU.contactKick.
 inline PhysKick physContactKick(PhysicsContact c, PhysicsBody a, PhysicsBody b, constant PhysicsParams& p) {
-    PhysKick out = {false, float3(0.0f), float3(0.0f), float3(0.0f)};
+    PhysKick out = {false, float3(0.0f), float3(0.0f), float3(0.0f), float3(0.0f)};
     float lambda = c.lambda.x;
     if (!(lambda > 0.0f)) return out;
     float3 n = c.normal.xyz;
@@ -746,69 +790,162 @@ inline PhysKick physContactKick(PhysicsContact c, PhysicsBody a, PhysicsBody b, 
     float e = abs(before) <= 2.0f * length(p.gravity.xyz) * h ? 0.0f : max(a.angular.w, b.angular.w);
     dv += n * (-vn + max(-e * before, 0.0f));
     float l = length(dv);
-    if (!(l > 1e-7f)) return out;
-    float w = physWeight(a, q.ra, dv / l) + physWeight(b, q.rb, dv / l);
-    if (!(w > 0.0f)) return out;
-    out.valid = true;
-    out.impulse = dv / w;
+    if (l > 1e-7f) {
+        float w = physWeight(a, q.ra, dv / l) + physWeight(b, q.rb, dv / l);
+        if (w > 0.0f) out.impulse = dv / w;
+    }
+    float3 spin = a.angular.xyz - b.angular.xyz, about = n * dot(spin, n);
+    for (uint k = 0; k < 2; ++k) {
+        float3 part = k == 0 ? spin - about : about;
+        float resistance = k == 0 ? p.rolling.x : p.rolling.y;
+        float speed = length(part);
+        if (!(speed > 1e-6f)) continue;
+        float3 axis = part / speed;
+        float w = physTurnWeight(a, axis) + physTurnWeight(b, axis);
+        if (!(w > 0.0f)) continue;
+        out.twist -= axis * min(speed / w, resistance * lambda / h);
+    }
+    out.valid = any(out.impulse != 0.0f) || any(out.twist != 0.0f);
     out.ra = q.ra;
     out.rb = q.rb;
     return out;
 }
 
-// Contact `ci`'s kick (PhysicsCPU.contactKick), from the bodies in `src`.
-inline void physKickContact(constant PhysicsParams& p, device const PhysicsBody* src, device const PhysicsBody* statics,
-                            device const PhysicsPair* pairs, device const PhysicsContact* contacts,
-                            device PhysicsResult* results, uint ci) {
-    uint link = ci / PHYS_CONTACTS;
-    PhysicsBody a = src[link / PHYS_PAIRS], b = physPartner(pairs[link].partner, src, statics);
-    PhysKick kick = physContactKick(contacts[ci], a, b, p);
-    PhysicsResult r = {float4(kick.impulse, kick.valid ? 1.0f : 0.0f), float4(kick.ra, 0.0f), float4(kick.rb, 0.0f)};
-    results[ci] = r;
+// PhysicsCPU.solveVelocities for pair e.
+inline void physKickPair(constant PhysicsParams& p, device PhysicsBody* bodies, device const PhysicsBody* statics,
+                         device const PhysicsPair* pairs, device const PhysicsContact* contacts, uint e) {
+    uint i = e / PHYS_PAIRS, code = pairs[e].partner;
+    PhysicsBody a = bodies[i], b = physPartner(code, bodies, statics);
+    for (uint c = 0; c < pairs[e].contacts; ++c) {
+        PhysKick kick = physContactKick(contacts[e * PHYS_CONTACTS + c], a, b, p);
+        if (!kick.valid) continue;
+        physKick(a, kick.impulse, kick.ra, kick.twist);
+        physKick(b, -kick.impulse, kick.rb, -kick.twist);
+    }
+    bodies[i] = a;
+    if ((code & PHYS_STATIC) == 0) bodies[code] = b;
 }
 
-// PhysicsCPU.solveVelocities for body i: its contacts' kicks gathered, from `src` into `dst`.
-inline void physSolveVelocities(constant PhysicsParams& p, device const PhysicsBody* src, device PhysicsBody* dst,
-                                device const PhysicsPair* pairs, device const uint* counts,
-                                device const PhysicsResult* results, uint i) {
-    PhysicsBody me = src[i];
-    if (physMoves(me)) {
-        float3 dv = float3(0.0f), dw = float3(0.0f);
-        float count = 0.0f;
-        for (uint n = 0; n < counts[i]; ++n) {
-            uint e = i * PHYS_PAIRS + n, link = pairs[e].link;
-            if (link == PHYS_NONE) continue;
-            bool owner = link == e;
-            for (uint c = 0; c < pairs[link].contacts; ++c) {
-                PhysicsResult r = results[link * PHYS_CONTACTS + c];
-                if (r.impulse.w == 0.0f) continue;
-                float s = owner ? 1.0f : -1.0f;
-                dv += s * r.impulse.xyz * me.position.w;
-                dw += s * physInvInertia(me.rotation, me.invInertia.xyz, cross(owner ? r.ra.xyz : r.rb.xyz, r.impulse.xyz));
-                count += 1.0f;
+// MARK: - Colours
+
+// PhysicsCPU.priority (the high half; the entry is the low).
+inline uint physPairPriority(uint e) {
+    uint x = e * 0x9E3779B1u;
+    x ^= x >> 16;
+    x *= 0x85EBCA6Bu;
+    x ^= x >> 13;
+    return x;
+}
+
+// Whether entry e is a pair the substeps solve: an owned one with contacts.
+inline bool physLive(device const PhysicsPair* pairs, device const uint* counts, uint e) {
+    return e % PHYS_PAIRS < counts[e / PHYS_PAIRS] && pairs[e].link == e && pairs[e].contacts > 0;
+}
+
+// Whether uncoloured pair e outranks every other uncoloured pair with contacts body i is in.
+inline bool physOutranks(device const PhysicsPair* pairs, device const uint* counts, uint i, uint e) {
+    uint mine = physPairPriority(e);
+    for (uint n = 0; n < counts[i]; ++n) {
+        uint q = pairs[i * PHYS_PAIRS + n].link;
+        if (q == PHYS_NONE || q == e || pairs[q].contacts == 0 || pairs[q].pad != PHYS_NONE) continue;
+        uint theirs = physPairPriority(q);
+        if (theirs > mine || (theirs == mine && q > e)) return false;
+    }
+    return true;
+}
+
+// The colours the pairs with contacts body i is in have.
+inline uint physColoursAround(device const PhysicsPair* pairs, device const uint* counts, uint i, uint e) {
+    uint used = 0;
+    for (uint n = 0; n < counts[i]; ++n) {
+        uint q = pairs[i * PHYS_PAIRS + n].link;
+        if (q == PHYS_NONE || q == e || pairs[q].contacts == 0 || pairs[q].pad >= PHYS_COLOURS) continue;
+        used |= 1u << pairs[q].pad;
+    }
+    return used;
+}
+
+// PhysicsCPU.colourPairs, by the threadgroup, once a step: the pairs by colour onto `order` (in any order within one:
+// its pairs share no body), into `colouring` where each colour begins, then the colours and how many pairs the rounds
+// left (pad = leftover: one thread takes them in entry order). `live` holds the pairs with contacts, `won` a round's.
+inline void physColourPairs(device PhysicsPair* pairs, device const uint* counts, device uint* order, device uint* won,
+                            device uint* live, device uint* colouring, threadgroup atomic_uint* tally,
+                            threadgroup atomic_uint* perColour, uint entries, uint t, uint width) {
+    if (t == 0) atomic_store_explicit(&tally[0], 0u, memory_order_relaxed);
+    for (uint c = t; c < PHYS_COLOURS; c += width) atomic_store_explicit(&perColour[c], 0u, memory_order_relaxed);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint e = t; e < entries; e += width) {
+        pairs[e].pad = PHYS_NONE;
+        if (physLive(pairs, counts, e)) live[atomic_fetch_add_explicit(&tally[0], 1u, memory_order_relaxed)] = e;
+    }
+    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    uint lives = atomic_load_explicit(&tally[0], memory_order_relaxed);
+    for (uint round = 0; round < PHYS_ROUNDS; ++round) {
+        if (t == 0) atomic_store_explicit(&tally[1], 0u, memory_order_relaxed);
+        for (uint j = t; j < lives; j += width) {
+            uint e = live[j], code = pairs[e].partner;
+            won[e] = pairs[e].pad == PHYS_NONE && physOutranks(pairs, counts, e / PHYS_PAIRS, e)
+                     && ((code & PHYS_STATIC) != 0 || physOutranks(pairs, counts, code, e)) ? 1u : 0u;
+        }
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+        // A round's winners share no body, nor any pair beside one: each reads colours no other is writing.
+        for (uint j = t; j < lives; j += width) {
+            uint e = live[j], code = pairs[e].partner;
+            if (won[e] != 0) {
+                uint used = physColoursAround(pairs, counts, e / PHYS_PAIRS, e);
+                if ((code & PHYS_STATIC) == 0) used |= physColoursAround(pairs, counts, code, e);
+                pairs[e].pad = ctz(~used);
+            } else if (pairs[e].pad == PHYS_NONE) {
+                atomic_fetch_add_explicit(&tally[1], 1u, memory_order_relaxed);
             }
         }
-        if (count > 0.0f) {
-            float s = 1.0f / count;
-            me.velocity = float4(me.velocity.xyz + dv * s, me.velocity.w);
-            me.angular = float4(me.angular.xyz + dw * s, me.angular.w);
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+        bool done = atomic_load_explicit(&tally[1], memory_order_relaxed) == 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (done) break;
+    }
+    if (t == 0) atomic_store_explicit(&tally[1], 0u, memory_order_relaxed);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint j = t; j < lives; j += width) {
+        uint e = live[j];
+        if (pairs[e].pad == PHYS_NONE) {
+            pairs[e].pad = PHYS_LEFTOVER;
+            atomic_fetch_add_explicit(&tally[1], 1u, memory_order_relaxed);
+        } else {
+            atomic_fetch_add_explicit(&perColour[pairs[e].pad], 1u, memory_order_relaxed);
         }
     }
-    dst[i] = me;
+    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    if (t == 0) {
+        uint at = 0, colours = 0;
+        for (uint c = 0; c < PHYS_COLOURS; ++c) {
+            colouring[c] = at;
+            uint k = atomic_load_explicit(&perColour[c], memory_order_relaxed);
+            if (k > 0) colours = c + 1;
+            atomic_store_explicit(&perColour[c], at, memory_order_relaxed);
+            at += k;
+        }
+        colouring[PHYS_COLOURS] = at;
+        for (uint c = colours; c < PHYS_COLOURS; ++c) colouring[c] = at;
+        colouring[PHYS_COLOURS + 1] = colours;
+        colouring[PHYS_COLOURS + 2] = atomic_load_explicit(&tally[1], memory_order_relaxed);
+    }
+    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    for (uint j = t; j < lives; j += width) {
+        uint e = live[j], c = pairs[e].pad;
+        if (c < PHYS_COLOURS) order[atomic_fetch_add_explicit(&perColour[c], 1u, memory_order_relaxed)] = e;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
 }
 
-// PhysicsCPU.settle for body i: after the substeps, a body slow for long enough falls asleep.
-inline void physSettle(constant PhysicsParams& p, device PhysicsBody* bodies, uint i) {
-    PhysicsBody b = bodies[i];
-    if (!physMoves(b)) return;
-    bool still = length(b.velocity.xyz) < p.sleep.x && length(b.angular.xyz) < p.sleep.y;
-    b.prevPosition.w = still ? b.prevPosition.w + p.grid.w : 0.0f;
-    if (b.prevPosition.w > p.sleep.z) {
-        b.info.y |= PHYS_ASLEEP;
-        b.velocity = float4(0.0f, 0.0f, 0.0f, b.velocity.w);
-        b.angular = float4(0.0f, 0.0f, 0.0f, b.angular.w);
-    }
-    bodies[i] = b;
+// The pairs the colouring left, one after another in entry order, by thread 0.
+inline bool physLeftover(device const PhysicsPair* pairs, uint e) { return pairs[e].pad == PHYS_LEFTOVER; }
+
+// PhysicsCPU.still.
+inline bool physStill(PhysicsBody b, float4 position, float4 rotation, constant PhysicsParams& p) {
+    float moved = length(b.position.xyz - position.xyz);
+    float turned = 2.0f * length(quatMul(b.rotation, physConj(rotation)).xyz);
+    return moved < p.sleep.x * p.grid.w && turned < p.sleep.y * p.grid.w;
 }
 
 // MARK: - Particles' substeps
@@ -861,6 +998,7 @@ inline void physSolveParticle(constant PhysicsParams& p, PhysicsShapes w, device
     }
     float3 held = float3(0.0f);
     float heldCount = 0.0f;
+    bool shoved = false;
     for (uint n = 0; n < colliderCounts[i]; ++n) {
         PhysicsBody b = physPartner(colliders[i * PHYS_COLLIDERS + n], bodies, statics);
         PhysPose pose = physPose(b);
@@ -872,10 +1010,15 @@ inline void physSolveParticle(constant PhysicsParams& p, PhysicsShapes w, device
         float3 surface = b.velocity.xyz + cross(b.angular.xyz, x - pose.position);
         held += physParticlePush(normal, min(-depth, PHYS_PUSH_SPEED * h), moved - surface * h, sqrt(q.velocity.w * b.velocity.w));
         heldCount += 1.0f;
+        shoved = shoved || physMoves(b);
     }
     float3 y = x;
     if (sharedCount > 0.0f) y += shared / sharedCount;
     if (heldCount > 0.0f) y += held / heldCount;
+    // PhysicsCPU.rests.
+    if (sharedCount + heldCount > 0.0f && !shoved && (q.info.y & PHYS_CLOTH) == 0 && length(y - q.prevPosition.xyz) < p.particleGrid.w * h) {
+        y = q.prevPosition.xyz;
+    }
     q.position = float4(y, q.position.w);
     q.velocity = float4((y - q.prevPosition.xyz) / h, q.velocity.w);
     dst[i] = q;
@@ -894,24 +1037,25 @@ inline void physSolveConstraint(device PhysicsParticle* particles, PhysicsConstr
     particles[k.b].position.xyz -= push * wb;
 }
 
-// Every substep of a step, then the settling, in one threadgroup: its threads take the bodies (or the contacts) in
-// turn, and a barrier between the stages stands in for the dispatch boundary (as dispatches of their own, 16 substeps'
-// stages took 6.6 ms for 96 bodies on the M1 Max). A contact's push and kick are worked out once, a thread a contact,
-// and each body gathers its own (a body's thread walking its contacts alone was latency bound: 2.3 ms a step for 96
-// bodies). The state is in bodies[0] between stages that read others (Jacobi: integrate in place, positions 0 -> 1,
-// velocities 1 -> 0).
+// A run of substeps, then (the step's last) the settling, in one threadgroup: its threads take the bodies, the
+// particles or a colour's pairs in turn, and a barrier between the stages stands in for the dispatch boundary (as
+// dispatches of their own, 16 substeps' stages took 6.6 ms for 96 bodies on the M1 Max). First the pairs the narrow
+// phase just found are coloured (the step's first run); then each substep solves them a colour at a time, in place
+// (PhysicsCPU.step).
 kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                                   device PhysicsBody*       bodies   [[buffer(1)]],
-                                  device PhysicsBody*       other    [[buffer(2)]],
+                                  device float4*            start    [[buffer(2)]],   // per body: the step's first pose
                                   device const PhysicsBody* statics  [[buffer(3)]],
-                                  device const PhysicsPair* pairs    [[buffer(4)]],
+                                  device PhysicsPair*       pairs    [[buffer(4)]],
                                   device const uint*        counts   [[buffer(5)]],
                                   device PhysicsContact*    contacts [[buffer(6)]],
                                   device uint*              wake     [[buffer(7)]],
-                                  constant uint&            substeps [[buffer(8)]],
-                                  device const uint*        list     [[buffer(9)]],
-                                  device const uint*        listed   [[buffer(10)]],
-                                  device PhysicsResult*     results  [[buffer(11)]],
+                                  constant PhysicsGroup&    group    [[buffer(8)]],
+                                  device uint*              order    [[buffer(9)]],
+                                  device uint*              won      [[buffer(10)]],
+                                  device uint*              live     [[buffer(11)]],
+                                  device uint*              colouring [[buffer(23)]],
+                                  constant PhysicsGrab&     grab     [[buffer(24)]],
                                   device PhysicsParticle*   particles [[buffer(12)]],
                                   device PhysicsParticle*   particlesOut [[buffer(13)]],
                                   device const uint*        neighbours [[buffer(14)]],
@@ -926,12 +1070,27 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
                                   uint t [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]])
 {
-    uint n = p.counts.x, m = listed[0], np = p.particles.x;
+    uint n = p.counts.x, np = p.particles.x, entries = n * PHYS_PAIRS;
     PhysicsShapes w = {shapes, samples, sdf};
+    threadgroup atomic_uint tally[2], perColour[PHYS_COLOURS];
+    if (group.first == 0) physColourPairs(pairs, counts, order, won, live, colouring, tally, perColour, entries, t, width);
+    uint colours = colouring[PHYS_COLOURS + 1];
+    bool leftovers = colouring[PHYS_COLOURS + 2] != 0;
+    device const uint* starts = colouring;
+    if (group.first == 0) {
+        for (uint i = t; i < n; i += width) {
+            start[2 * i] = bodies[i].position;
+            start[2 * i + 1] = bodies[i].rotation;
+        }
+    }
     // The particles take the same substeps, their stages beside the bodies' (one-way: against the bodies as this
     // substep moved them, before their contacts push them apart).
-    for (uint s = 0; s < substeps; ++s) {
-        for (uint i = t; i < n; i += width) physIntegrate(p, bodies, wake, i);
+    for (uint s = 0; s < group.count; ++s) {
+        for (uint i = t; i < n; i += width) {
+            bool held = grab.target.w > 0.0f && grab.body == i;
+            physIntegrate(p, bodies, wake, i, held);
+            if (held) physHold(bodies, grab, i);
+        }
         for (uint i = t; i < np; i += width) physIntegrateParticle(p, particles, i);
         threadgroup_barrier(mem_flags::mem_device);
         // The cloths' constraints, a colour at a time (PhysicsCPU.solveCloth).
@@ -939,20 +1098,59 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             for (uint k = colourStarts[c] + t; k < colourStarts[c + 1]; k += width) physSolveConstraint(particles, constraints[k], p.gravity.w);
             threadgroup_barrier(mem_flags::mem_device);
         }
-        for (uint j = t; j < m; j += width) physPushContact(p, bodies, statics, pairs, contacts, results, list[j]);
         for (uint i = t; i < np; i += width) {
             physSolveParticle(p, w, particles, particlesOut, neighbours, neighbourCounts, colliders, colliderCounts, bodies, statics, i);
         }
         threadgroup_barrier(mem_flags::mem_device);
-        for (uint i = t; i < n; i += width) physSolvePositions(p, bodies, other, pairs, counts, results, i);
+        for (uint c = 0; c < colours; ++c) {
+            for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physPushPair(p, bodies, statics, pairs, contacts, order[j]);
+            threadgroup_barrier(mem_flags::mem_device);
+        }
+        if (leftovers) {
+            if (t == 0) {
+                for (uint e = 0; e < entries; ++e) if (physLeftover(pairs, e)) physPushPair(p, bodies, statics, pairs, contacts, e);
+            }
+            threadgroup_barrier(mem_flags::mem_device);
+        }
+        for (uint i = t; i < n; i += width) physTakeVelocities(p, bodies, i);
         for (uint i = t; i < np; i += width) particles[i] = particlesOut[i];
         threadgroup_barrier(mem_flags::mem_device);
-        for (uint j = t; j < m; j += width) physKickContact(p, other, statics, pairs, contacts, results, list[j]);
-        threadgroup_barrier(mem_flags::mem_device);
-        for (uint i = t; i < n; i += width) physSolveVelocities(p, other, bodies, pairs, counts, results, i);
-        threadgroup_barrier(mem_flags::mem_device);
+        for (uint c = 0; c < colours; ++c) {
+            for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physKickPair(p, bodies, statics, pairs, contacts, order[j]);
+            threadgroup_barrier(mem_flags::mem_device);
+        }
+        if (leftovers) {
+            if (t == 0) {
+                for (uint e = 0; e < entries; ++e) if (physLeftover(pairs, e)) physKickPair(p, bodies, statics, pairs, contacts, e);
+            }
+            threadgroup_barrier(mem_flags::mem_device);
+        }
     }
-    for (uint i = t; i < n; i += width) physSettle(p, bodies, i);
+    if (group.last == 0) return;
+    // PhysicsCPU.settle: the timers, then who sleeps (a sleeping body's timer is past the sleep time, so a partner
+    // falling asleep beside it reads the same either way).
+    for (uint i = t; i < n; i += width) {
+        PhysicsBody b = bodies[i];
+        if (physMoves(b)) bodies[i].prevPosition.w = physStill(b, start[2 * i], start[2 * i + 1], p) ? b.prevPosition.w + p.grid.w : 0.0f;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint i = t; i < n; i += width) {
+        PhysicsBody b = bodies[i];
+        if (!physMoves(b) || !(b.prevPosition.w > p.sleep.z)) continue;
+        bool settled = true;
+        for (uint k = 0; k < counts[i] && settled; ++k) {
+            uint e = i * PHYS_PAIRS + k, partner = pairs[e].partner, link = pairs[e].link;
+            if ((partner & PHYS_STATIC) != 0 || link == PHYS_NONE || pairs[link].contacts == 0) continue;
+            float4 o = bodies[partner].prevPosition;
+            float mass = bodies[partner].position.w;
+            settled = !(mass > 0.0f && o.w <= p.sleep.z * 0.5f);
+        }
+        if (!settled) continue;
+        b.info.y |= PHYS_ASLEEP;
+        b.velocity = float4(0.0f, 0.0f, 0.0f, b.velocity.w);
+        b.angular = float4(0.0f, 0.0f, 0.0f, b.angular.w);
+        bodies[i] = b;
+    }
 }
 
 // MARK: - Drawing
