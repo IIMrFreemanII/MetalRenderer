@@ -300,6 +300,16 @@ constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (M
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
 constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
 constant uint MASK_ALL      = 0xFF;
+// What a ray is for, in bits 8-11 of the mask it is traced with (rayMask): the traversal counters are kept per class
+// (RT_STATS, TraversalStats). Instances' masks never have these bits; the ray queries take them off.
+constant uint RAY_CLASS_SHIFT = 8;
+constant uint RAY_CAMERA = 0, RAY_SHADOW = 1, RAY_GI = 2, RAY_SPECULAR = 3, RAY_FAR = 4, RAY_LIGHTMAP = 5;
+constant uint RAY_CLASSES = 6;   // TraversalStats.classes
+inline uint rayMask(uint mask, uint cls) { return mask | (cls << RAY_CLASS_SHIFT); }
+inline uint rayClass(uint mask) { return (mask >> RAY_CLASS_SHIFT) & 0xFu; }
+// A ray cone's spread, radians per unit distance (no curvature), for GI rays: a coarse fixed one, since their hits get
+// integrated anyway. Texture filtering (traceSurface) uses it.
+constant float GI_RAY_SPREAD = 0.05f;
 
 constant float RAY_EPSILON  = 1e-3f;
 constant float FIREFLY_CLAMP = 10.0f;

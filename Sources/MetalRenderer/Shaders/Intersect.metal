@@ -145,7 +145,7 @@ struct TraceScene {
     device const uchar*           cutouts;    // leaf cards' alpha layers, CUTOUT_SIZE squared each (ALPHA_TEST)
     uint                          clusterInstance;   // VG_CLUSTERS: the instance whose boxes are the cut's clusters
     uint                          pad;
-    device atomic_uint*           stats;      // RT_STATS builds: rays, triangle candidates, box candidates
+    device atomic_uint*           stats;      // RT_STATS builds, per ray class: rays, triangle candidates, box candidates
     device const uint*            indices;
     device const float2*          uvs;
 };
@@ -308,8 +308,12 @@ static_assert(sizeof(ClusterBox) == 64, "ClusterBox: VirtualGeometry.boxDataStri
 // intersection queries, whose loop gets them.
 constant bool QUERY_LOOP = VOXEL_BOXES || SDF_SHAPES || VG_CLUSTERS || ALPHA_TEST;
 
-// Rays that meet the scene's geometry meet the voxel boxes too.
-inline uint voxelMask(uint mask) { return VOXEL_BOXES && (mask & MASK_GEOMETRY) != 0 ? mask | MASK_VOXELS : mask; }
+// The instance mask a ray is traced with: its class's bits taken off (rayMask). Rays that meet the scene's geometry meet
+// the voxel boxes too.
+inline uint voxelMask(uint mask) {
+    mask &= MASK_ALL;
+    return VOXEL_BOXES && (mask & MASK_GEOMETRY) != 0 ? mask | MASK_VOXELS : mask;
+}
 
 inline intersection_params voxelParams(bool any) {
     intersection_params p;
@@ -598,9 +602,10 @@ inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
     if (HAIR_CURVES && !FOLIAGE) h = countedQuery<false, ANY, true, CurveLevels>(r, mask, sc, n); else
 #endif
     h = FOLIAGE ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
-    atomic_fetch_add_explicit(&sc.stats[0], 1u, memory_order_relaxed);
-    atomic_fetch_add_explicit(&sc.stats[1], n.x, memory_order_relaxed);
-    atomic_fetch_add_explicit(&sc.stats[2], n.y, memory_order_relaxed);
+    uint c = 4u * min(rayClass(mask), RAY_CLASSES - 1u);   // the ray's class's counters
+    atomic_fetch_add_explicit(&sc.stats[c], 1u, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sc.stats[c + 1u], n.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sc.stats[c + 2u], n.y, memory_order_relaxed);
     return h;
 }
 #endif
@@ -618,7 +623,7 @@ inline Hit closestHit(Ray r, uint mask, SCENE_ACCEL sc) {
     isect.assume_geometry_type(queryGeometry(false, CURVES));
     assumeCurves(isect);
     isect.force_opacity(forced_opacity::opaque);
-    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask & MASK_ALL);
     bool curve = isCurveHit(res.type);
     Hit h;
     h.hit = res.type == intersection_type::triangle || curve;
@@ -655,7 +660,7 @@ inline float closestDistance(Ray r, uint mask, SCENE_ACCEL sc) {
     isect.assume_geometry_type(queryGeometry(false, CURVES));
     assumeCurves(isect);
     isect.force_opacity(forced_opacity::opaque);
-    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask & MASK_ALL);
     return res.type == intersection_type::none ? INFINITY : res.distance;
 }
 
@@ -692,7 +697,7 @@ inline bool anyHit(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     assumeCurves(isect);
     isect.force_opacity(forced_opacity::opaque);
     isect.accept_any_intersection(true);
-    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
+    auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask & MASK_ALL);
     t = res.distance;
     return res.type != intersection_type::none;
 }

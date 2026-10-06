@@ -250,9 +250,8 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
     if (sf.backlit) { ng = -ng; ns = -ns; }
 }
 
-// Pixel-footprint spreads for texture filtering (ray cones without curvature): radians of spread per unit distance.
-// Primary rays pass their pixel's angle; GI rays a coarse fixed spread, since their hits get integrated anyway.
-constant float GI_RAY_SPREAD = 0.05f;
+// Pixel-footprint spreads for texture filtering (ray cones without curvature): primary rays pass their pixel's angle,
+// GI rays GI_RAY_SPREAD (Types.metal).
 
 // The hit triangle's vertices (object space): from a cluster in the streaming pool, a virtual instance's BLAS over
 // its cut, or the indexed mesh buffers.
