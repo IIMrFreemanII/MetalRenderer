@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------------------------
 // 3c. Geometry debug views (view modes 8-13), a pass of their own that runs only while one is shown: re-traces the
 //     primary rays and colours each pixel by what it hit. Virtual triangles carry their cluster, group, DAG level and
-//     index within the cluster (VirtualBLAS packs them into the free w components of e1 / e2; in cluster mode the
-//     cluster's pool header holds group and level, VirtualGeometry.upload). Other geometry with levels of detail
-//     carries its level in its mesh record (GPUMesh.lod), on both tracers.
+//     index within the cluster (VirtualBLAS packs them into the free w components of its triangles' second and third
+//     corners; in cluster mode the cluster's pool header holds group and level). Other geometry with levels of detail
+//     carries its level in its mesh record (GPUMesh.lod).
 // ---------------------------------------------------------------------------------------------
 
 constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;
@@ -44,17 +44,15 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 
     float3 dir = primaryDirection(u, tid);
     Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
-#if CUSTOM_RT
-    uint cost[7] = {0, 0, 0, 0, 0, 0, 0};
-    Hit res = intersectClosestCost(r, MASK_ALL, accel, cost);
-    // Work of the ray: node visits (both levels) plus triangle tests at half weight, log scale up to ~500.
-    float work = float(cost[1] + cost[2]) + 0.5f * float(cost[5]);
-    float3 costColor = debugHeat(log2(1.0f + work) / 9.0f);
-#else
-    Hit res = intersectClosest(r, MASK_ALL, accel);
-    float3 costColor = float3(1.0f, 0.0f, 1.0f);   // Metal's traversal can't be counted
-#endif
-    if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
+    Hit res;
+    if (u.viewMode == VIEW_COST) {
+        // The ray's candidates (intersectClosestCost: what Metal's traversal handed over), log scale up to ~250.
+        uint candidates;
+        res = intersectClosestCost(r, MASK_ALL, accel, candidates);
+        output.write(float4(debugHeat(log2(1.0f + float(candidates)) / 8.0f), 1.0f), tid);
+        return;
+    }
+    res = intersectClosest(r, MASK_ALL, accel);
     // With the raster visibility buffer, what it drew (virtual geometry: its own cut of clusters), as the frame sees it.
     Hit drawn;
     if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, r, accel, s, drawn)) res = drawn;
@@ -86,7 +84,6 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 
     bool isVirtual = false;
     uint cluster = 0, local = 0, group = 0, level = 0;
-#if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         uint2 rc = accel.clusters[res.cluster];
         uint packed = ((device const uint*)(accel.pool + rc.y))[3];   // group | level << 24
@@ -104,15 +101,12 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
         group = b & 0xFFFFFFu;          // group | level << 24
         level = b >> 24;
     }
-#endif
     // The level of detail, 0 = finest: a virtual triangle's DAG level, else its mesh's (GPUMesh.lod: an open-world
     // tile's ring, a crowd character's detail, a baked plant). A plant's parts are its finest.
     const float3 grey = float3(0.45f);  // geometry without levels; in the cluster and group views, what isn't virtual
     float3 lodColor = grey;
     if (isVirtual) lodColor = debugHeat(0.05f + float(level) / 10.0f);
-#if CUSTOM_RT
     else if (FOLIAGE && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
-#endif
     else if (s.meshes[inst.meshIndex].lod != 0) lodColor = debugHeat(0.05f + 0.3f * float(s.meshes[inst.meshIndex].lod - 1));
 
     uint instanceSeed = pcgHash(res.instance + 0x51ED27u);
@@ -229,7 +223,9 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
             illumination = meshDirect.read(tid).rgb * vis.r;
         } else {
-        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * dot(vis, groupMask(lightGroup(lights[l])));
+        float4 g = geoNormal.read(tid);
+        HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
         if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         }
         if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {

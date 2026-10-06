@@ -6,7 +6,7 @@ import Foundation
 extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
-        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
+        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality,
@@ -15,6 +15,9 @@ extension Benchmark {
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "rastervg": rasterVG, "vsm": vsm, "lumen": lumen,
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
+        "pathref": pathref,
+        "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
+        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -154,30 +157,6 @@ extension Benchmark {
         return out
     }
 
-    /// Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALRENDERER_RT tracer (run once per
-    /// tracer and compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run), then
-    /// moving frames for timing on both scenes at several stress-scene sizes, alternating the two tracers.
-    private static func rt() -> [Config] {
-        func scene(_ kind: SceneKind, objects: Int = 400) -> SceneSettings { SceneSettings(kind: kind, objects: objects, lights: 32) }
-        let methods = [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)]
-        var out: [Config] = []
-        for (tag, sc) in [("cornell", scene(.cornell)), ("stress", scene(.stress))] {
-            out.append(Config("\(tag) direct static", scale: 0.5, gi: nil, scene: sc).still().frames(30))
-            out += methods.map { Config("\(tag) \($0.0) static", scale: 0.5, gi: $0.1, scene: sc).still().frames(30) }
-        }
-        func moving(_ name: String, _ mode: GIMode, _ sc: SceneSettings) -> [Config] {
-            RayTracerKind.allCases.map { tracer in
-                Config("\(name) moving, \(tracer == .custom ? "custom" : "metal")", scale: 0.5, upscale: 3, gi: mode, scene: sc) {
-                    $0.rayTracer = tracer
-                }
-            }
-        }
-        for objects in [0, 400, 1000, 2000] {
-            for (tag, mode) in methods { out += moving("stress \(objects) \(tag)", mode, scene(.stress, objects: objects)) }
-        }
-        return out + moving("cornell cascades", .radianceCascades, scene(.cornell))
-    }
-
     /// The glTF gallery: full-detail meshes against virtual geometry at several error thresholds, alternating so heat
     /// affects them alike. Paused frames at t = 5 s (PNGs for diffs), then the scripted camera move and close-ups.
     private static func gallery() -> [Config] {
@@ -237,6 +216,24 @@ extension Benchmark {
             let shown = method.named("\(tag) default moving").with { $0.upscaleFactor = 3 }
             return list + [shown]
         }
+    }
+
+    /// The app's Reference pictures (README "Reference rendering"), paused at t = 5 with the default camera: "Path
+    /// traced" and "Accumulated passes" side by side in scenes with glossy materials, every light type, emissive
+    /// meshes, window glass, fog and thousands of lights; then the path tracer with the clock running and with the
+    /// camera moving, where every frame starts over (one path per pixel). `METALRENDERER_PATHREF_FRAMES` sets the
+    /// stills' frames (512).
+    private static func pathref() -> [Config] {
+        let frames = Int(env["METALRENDERER_PATHREF_FRAMES"] ?? "") ?? 512
+        let kinds: [SceneKind] = [.cornell, .gallery, .area, .mixed, .emissive, .stress, .fog, .market]
+        let stills = kinds.flatMap { kind -> [Config] in
+            let scene = kind == .stress ? stressHall() : SceneSettings(kind: kind)
+            let pt = Config("\(kind) pt", scale: 0.5, scene: scene) { $0.reference.mode = .pathTraced }.still().frames(frames)
+            return [pt, pt.named("\(kind) accumulated").with { $0.reference.mode = .accumulated }]
+        }
+        var moving = Config("cornell pt moving", scale: 0.5) { $0.reference.mode = .pathTraced }.frames(30)
+        moving.capturePrevious = true   // (each frame's paths are new ones: the two frames' noise differs)
+        return stills + [moving, moving.named("cornell pt camera").cameraMove()]
     }
 
     /// The light demo scenes, paused at t = 5: direct light only, each GI technique, then moving (timing).
@@ -538,12 +535,9 @@ extension Benchmark {
             lit.named("backlit cards").with { $0.scene.leafCards = true },
             // What each plant is traced as: its triangles (blue) or a level of its voxels.
             still.named("lod view").with { $0.foliage.lod = 2 }.from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
-            // Metal's tracer: the baked plants, far ones as their voxels (VoxelLOD; off by default), against all of
-            // them as triangles.
-            parts.named("metal triangles aerial").with { $0.rayTracer = .metal }.from(forestAerial),
-            parts.named("metal voxels aerial").with { $0.rayTracer = .metal; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
-                .from(forestAerial),
-            still.named("metal lod view").with { $0.rayTracer = .metal; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
+            // The baked plants, far ones as their voxels (VoxelLOD; off by default), against all of them as triangles.
+            baked.named("baked voxels aerial").with { $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }.from(forestAerial),
+            still.named("baked lod view").with { $0.scene.bakedPlants = true; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
                 .from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
         ]
     }
@@ -652,21 +646,13 @@ extension Benchmark {
             + [Config("default moving", scale: 0.5, upscale: 3, gi: .radianceCascades)]
     }
 
-    private static let tracers: [(tag: String, kind: RayTracerKind)] = [("custom", .custom), ("metal", .metal)]
-
-    /// Hardware ray tracing against the custom BVH: each ray tracer (the custom BVH, Metal's acceleration structures),
-    /// moving frames at 3x from 640x400 through MetalFX's denoising scaler, path traced and with radiance cascades, in
-    /// the Cornell room and the stress hall. The tracers alternate, so heat affects them
-    /// alike. Settings this GPU can't run are skipped (Capabilities).
+    /// Ray tracing's cost: moving frames at 3x from 640x400 through MetalFX's denoising scaler, path traced and with
+    /// radiance cascades, in the Cornell room and the stress hall (in hardware from Apple9 GPUs on, in software before).
     private static func hwrt() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
             for (giTag, gi) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
-                for tracer in tracers {
-                    out.append(Config("\(sceneTag) \(giTag), \(tracer.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                        $0.rayTracer = tracer.kind
-                    })
-                }
+                out.append(Config("\(sceneTag) \(giTag)", scale: 0.5, upscale: 3, gi: gi, scene: scene))
             }
         }
         return out
@@ -674,7 +660,7 @@ extension Benchmark {
 
     /// MetalFX's denoising scaler's images, path traced at 3x from 640x400, against supersampled native 1920x1200 references at
     /// t = 5 s (2 bounces, as the frames trace): a still with the frame before it (flicker), the animation running and
-    /// the camera move (Tools/eval/hwrt.py). The tracer is METALRENDERER_RT's.
+    /// the camera move (Tools/eval/hwrt.py).
     private static func hwrtq() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
@@ -685,10 +671,9 @@ extension Benchmark {
         return out
     }
 
-    /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API and METALRENDERER_RT's
-    /// tracer (run once per API and compare the PNGs with Tools/eval/pngdiff.py; frame indices must
-    /// match, so not in one run), then the same frames through each command model with each ray tracer, moving at 3x
-    /// from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
+    /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API (run once per API and
+    /// compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run), then the same frames
+    /// through each command model, moving at 3x from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
     /// the command model can change.
     private static func api() -> [Config] {
         let scenes = [("cornell cascades", SceneSettings(), GIMode.radianceCascades), ("stress pt", stressHall(), .pathTraced)]
@@ -697,13 +682,8 @@ extension Benchmark {
             out.append(Config("\(sceneTag) static", scale: 0.5, upscale: 3, gi: gi, scene: scene).still().frames(30))
         }
         for (sceneTag, scene, gi) in scenes {
-            for tracer in tracers {
-                out += RenderAPI.allCases.map { api in
-                    Config("\(sceneTag), \(tracer.tag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                        $0.rayTracer = tracer.kind
-                        $0.api = api
-                    }
-                }
+            out += RenderAPI.allCases.map { api in
+                Config("\(sceneTag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) { $0.api = api }
             }
         }
         return out
@@ -712,7 +692,7 @@ extension Benchmark {
     /// The raster visibility buffer against traced primary rays (PrimaryVisibility), scene by scene at the default
     /// settings (cascades, MetalFX denoiser 3x from 0.5x): a still of each (pngdiff.py compares the pairs), its
     /// "Visibility buffer" view (chunks in colours, magenta where the primary rays traced what it didn't draw), and the camera moving through
-    /// the stress hall and the city (the two culling passes as things come into view). The tracer is METALRENDERER_RT's.
+    /// the stress hall and the city (the two culling passes as things come into view).
     private static func raster() -> [Config] {
         let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()), ("gallery", SceneSettings(kind: .gallery)),
                                                  ("crowd", SceneSettings(kind: .crowd)), ("city", SceneSettings(kind: .city)),
@@ -920,33 +900,231 @@ extension Benchmark {
         }
     }
 
-    /// The SDF shapes scene (Scene+Shapes.swift) on each tracer and API: paused frames to compare between them
-    /// (Tools/eval/pngdiff.py: the tracers march the same shapes), path traced, each direct-light method on the glowing
-    /// shapes (mesh lights), the normals, materials and traversal cost views, then moving frames and a camera move
-    /// for timing.
+    /// The SDF shapes scene (Scene+Shapes.swift) on each API: paused frames to compare between them
+    /// (Tools/eval/pngdiff.py), path traced, each direct-light method on the glowing shapes (mesh lights), the
+    /// normals, materials and traversal cost views, then moving frames and a camera move for timing.
     private static func shapes() -> [Config] {
         let scene = SceneSettings(kind: .shapes)
         var out: [Config] = []
-        for tracer in tracers {
-            for api in RenderAPI.allCases {
-                let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
-                    $0.rayTracer = tracer.kind
-                    $0.api = api
-                }
-                let tag = "\(tracer.tag) \(api.envName)"
-                out.append(base.named("\(tag) cascades").still())
-                guard api == .metal3 else { continue }
-                out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
-                for mode in [DirectLightMode.restir, .megalights] {
-                    out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
-                }
-                for view in ["Normals", "Triangles", "Traversal cost"] {
-                    out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
-                }
-                out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
+        for api in RenderAPI.allCases {
+            let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.api = api }
+            let tag = api.envName
+            out.append(base.named("\(tag) cascades").still())
+            guard api == .metal3 else { continue }
+            out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
+            for mode in [DirectLightMode.restir, .megalights] {
+                out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
             }
+            for view in ["Normals", "Triangles", "Traversal cost"] {
+                out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
+            }
+            out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
         }
         return out
+    }
+
+    /// The physics scene (Scene+Physics.swift) at its look (RenderSettings.usePhysicsLook): paused at 5 s on each
+    /// API (the GPU's steps put the bodies in the same places on both; Tools/eval/pngdiff.py), the
+    /// CPU's steps there too (their own pile: 300 steps
+    /// of a pile tell float rounding apart), then the first 5 s moving for timing: the "physics" pass at a few body
+    /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) where they keep up.
+    private static func physics() -> [Config] {
+        let scene = SceneSettings(kind: .physics)
+        var out: [Config] = []
+        for api in RenderAPI.allCases {
+            out.append(Config(api.envName, scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
+                $0.usePhysicsLook()
+                $0.api = api
+            }.still())
+        }
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        for bodies in [96, 512, 2048] {
+            out.append(base.named("gpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .gpu })
+        }
+        for bodies in [32, 96] {
+            out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .cpu })
+        }
+        return out
+    }
+
+    /// The physics scene's demo video: its first 30 s along a camera track at the scene's look with the showcase's lens
+    /// but no depth of field (`recording`: 900 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m physicsdemo` makes the mp4).
+    /// Wide while the bodies drop and the ball rolls in, down to the bin as the particles pour, round to the cloth
+    /// falling over its ball, past the tower and the pile, and back out. The clock starts at -1 s, so that the warm-up's
+    /// second ends as the first frame is recorded, with everything still in the air (the physics waits until 0).
+    private static func physicsDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 4.2, 8.2], [0, 0.6, -1]),
+            key(4, [-0.5, 3.0, 5.5], [-0.8, 0.6, -1.0]),
+            key(8, [-1.2, 1.4, 4.4], [-2.4, 0.3, 2.3]),
+            key(12, [0.2, 1.3, 4.6], [0.9, 0.6, 2.2]),
+            key(16, [2.2, 1.6, 3.6], [0.9, 0.7, 2.0]),
+            key(20, [3.6, 1.8, 1.0], [2.2, 0.8, -0.6]),
+            key(24, [1.5, 2.2, 1.8], [-1.0, 0.5, -2.2]),
+            key(30, [0, 4.2, 8.2], [0, 0.6, -1]),
+        ])
+        var demo = Config("physics demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .physics)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// The ragdoll scene (Scene+Ragdolls.swift) at the physics look: paused at 5 s on each API, the CPU's
+    /// steps there too, then the first 5 s moving for timing at a few ragdoll counts on the GPU (11 bodies each) and on
+    /// the CPU where it keeps up.
+    private static func ragdolls() -> [Config] {
+        let scene = SceneSettings(kind: .ragdolls)
+        var out: [Config] = []
+        for api in RenderAPI.allCases {
+            out.append(Config(api.envName, scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
+                $0.usePhysicsLook()
+                $0.api = api
+            }.still())
+        }
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        for ragdolls in [8, 24, 96] {
+            out.append(base.named("gpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .gpu })
+        }
+        for ragdolls in [8, 24] {
+            out.append(base.named("cpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .cpu })
+        }
+        return out
+    }
+
+    /// The hair scene (Scene+Hair.swift) at the physics look: paused at 5 s on each API and with the CPU's steps; then the first 5 s moving for timing at a few
+    /// densities of drawn strands on the GPU, and on the CPU at the fewest.
+    private static func hair() -> [Config] {
+        let scene = SceneSettings(kind: .hair)
+        var out: [Config] = []
+        for api in RenderAPI.allCases {
+            out.append(Config(api.envName, scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
+                $0.usePhysicsLook()
+                $0.api = api
+            }.still())
+        }
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        for hair in [4, 12, 24] {
+            out.append(base.named("gpu \(hair) moving").with { $0.scene.physics.hair = hair; $0.scene.physics.backend = .gpu })
+        }
+        out.append(base.named("cpu 4 moving").with { $0.scene.physics.hair = 4; $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The hair scene's demo video: its first 20 s along a camera track at the physics look with the
+    /// showcase's lens but no depth of field (`recording`; `.claude/skills/offscreen/scripts/video.sh -m hairdemo` makes the mp4). Wide as
+    /// the furry bodies drop onto the ramp, along it as they roll, down to the pile at its foot, round the mannequin
+    /// with long hair in the breeze, and back out. The clock starts at -1 s, as the physics demo's does.
+    private static func hairDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0.1, 1.9, 4.8], [0, 0.9, -0.2]),
+            key(3, [3.2, 1.8, 1.2], [1.2, 0.9, -1.6]),
+            key(6, [2.6, 0.8, 3.9], [1.2, 0.3, 2.2]),
+            key(10, [0.2, 1.6, 2.4], [-1.1, 1.35, 0.35]),
+            key(14, [-2.6, 1.6, 1.4], [-1.1, 1.3, 0.3]),
+            key(17, [-0.6, 1.2, 3.4], [0.6, 0.4, 1.8]),
+            key(20, [0.1, 1.9, 4.8], [0, 0.9, -0.2]),
+        ])
+        var demo = Config("hair demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .hair)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// The hair scene paused at 5 s in the views that show how its strands are lit: the picture,
+    /// the direct light (albedo divided out), the albedo, the normals.
+    private static func hairViews() -> [Config] {
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .hair)) { $0.usePhysicsLook() }
+        var head = base.named("head").still()
+        head.camera = Scene.camera([-0.6, 1.75, 1.9], yaw: -0.32, pitch: -0.1)
+        var fur = base.named("fur").still()
+        fur.camera = Scene.camera([2.0, 0.8, 3.6], yaw: -0.55, pitch: -0.35)
+        return [base.named("final").still(), head, fur, base.named("direct").view(1).still(), base.named("albedo").view(4).still(),
+                base.named("normals").view(3).still()]
+    }
+
+    /// The soft body scene (Scene+Soft.swift) at the physics look: paused at 1.5, 3 and 5 s, at 5 s
+    /// on each API, the CPU's steps there too, its normals and direct light, then the first 5 s moving for
+    /// timing at a few soft body counts on the GPU, a finer lattice, and on the CPU where it keeps up.
+    private static func soft() -> [Config] {
+        let scene = SceneSettings(kind: .softBodies)
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        var out: [Config] = []
+        for time: Float in [1.5, 3] { out.append(base.named(String(format: "%.1fs", time)).still(at: time)) }
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still()) }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        out.append(base.named("normals").view(3).still())
+        out.append(base.named("direct").view(1).still())
+        for bodies in [16, 48, 128] {
+            out.append(base.named("gpu \(bodies) moving").with { $0.scene.physics.softBodies = bodies; $0.scene.physics.backend = .gpu })
+        }
+        out.append(base.named("gpu 16 cells 10 moving").with { $0.scene.physics.softCells = 10; $0.scene.physics.backend = .gpu })
+        for bodies in [16, 48] {
+            out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.softBodies = bodies; $0.scene.physics.backend = .cpu })
+        }
+        return out
+    }
+
+    /// The soft body scene's demo video: its first 20 s along a camera track at the physics look with the showcase's
+    /// lens but no depth of field (`recording`: 600 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m
+    /// softdemo` makes the mp4). Wide as the jellies drop onto the landing, down to the steps as they flop down them,
+    /// round to the pegs and the ring as they squeeze through, and back out over the pile. The clock starts at -1 s, as
+    /// the physics demo's does.
+    private static func softDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 2.6, 4.2], [0, 1.0, -4]),
+            key(4, [2.4, 2.4, 1.2], [0, 1.0, -4.2]),
+            key(8, [-2.6, 1.4, 0.6], [0, 0.5, -2.4]),
+            key(12, [-2.2, 1.2, 3.6], [0, 0.2, 0.2]),
+            key(16, [2.0, 2.2, 3.8], [0, 0.3, -1.0]),
+            key(20, [0, 2.6, 4.2], [0, 0.6, -2]),
+        ])
+        var demo = Config("soft demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .softBodies)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// The ragdoll scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens
+    /// but no depth of field (`recording`: 600 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m ragdollsdemo` makes the mp4).
+    /// Wide as they drop onto the stairs, down to the foot as they tumble off the last steps into the posts and the
+    /// bench, up along the side of the stairs, and back out over the pile. The clock starts at -1 s, as the physics
+    /// demo's does.
+    private static func ragdollsDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [3.2, 3.4, 7.6], [0, 1.6, -3]),
+            key(4, [2.6, 2.2, 4.6], [0, 1.2, -2.2]),
+            key(8, [-2.4, 1.3, 3.8], [0, 0.5, -0.6]),
+            key(12, [-4.0, 3.4, 0.8], [0, 1.2, -2.6]),
+            key(16, [-2.0, 3.6, -0.4], [0.4, 1.6, -3.6]),
+            key(20, [3.2, 3.4, 7.6], [0, 1.0, -2]),
+        ])
+        var demo = Config("ragdolls demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .ragdolls)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
     }
 
     /// The SDF shapes scene's demo video: 30 s along a camera track at the app's look (cascades, 3x from 0.5x to
@@ -1134,32 +1312,25 @@ extension Benchmark {
         return out
     }
 
-    /// Every view mode, as the app draws it (radiance cascades, MetalFX denoiser 3x from 0.5x), on each ray tracer in
-    /// the scenes with levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the
-    /// open world's tiles. Then the views that depend on the GI method with each method.
+    /// Every view mode, as the app draws it (radiance cascades, MetalFX denoiser 3x from 0.5x), in the scenes with
+    /// levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the open world's
+    /// tiles. Then the views that depend on the GI method with each method.
     private static func debugViews() -> [Config] {
         var out: [Config] = []
         let views = RenderSettings.viewModes.indices
-        for tracer in tracers {
-            for kind in [SceneKind.gallery, .forest, .crowd, .world] {
-                for mode in views {
-                    let name = "\(tracer.tag) \(kind.title.lowercased()) \(RenderSettings.viewModes[mode].lowercased())"
-                    out.append(Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: kind)) {
-                        $0.rayTracer = tracer.kind
-                    }.view(mode).still().frames(8))
-                }
+        for kind in [SceneKind.gallery, .forest, .crowd, .world] {
+            for mode in views {
+                let name = "\(kind.title.lowercased()) \(RenderSettings.viewModes[mode].lowercased())"
+                out.append(Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: kind)).view(mode).still().frames(8))
             }
         }
         // The open world from 900 m above its start, looking well down: its tiles' three levels in rings around the
         // camera's tile (the scene is made around that tile: a camera elsewhere would move its middle).
         let w = worldOfRun()
         let aerial = worldCamera(w, w.start.place.x, w.start.place.z, up: 900, pitch: -1.0)
-        for tracer in tracers {
-            for mode in [9, 11] {
-                out.append(Config("\(tracer.tag) open world aerial \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
-                                  gi: .radianceCascades, scene: SceneSettings(kind: .world)) { $0.rayTracer = tracer.kind }
-                    .view(mode).still().frames(8).from(aerial))
-            }
+        for mode in [9, 11] {
+            out.append(Config("open world aerial \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
+                              gi: .radianceCascades, scene: SceneSettings(kind: .world)).view(mode).still().frames(8).from(aerial))
         }
         for (tag, gi) in [("pt", GIMode.pathTraced), ("restir gi", .restirGI), ("cascades", .radianceCascades)] {
             for mode in [1, 2, 5, 6, 7] {

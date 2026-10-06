@@ -67,7 +67,6 @@ extension GIMode: EnvNamed {
 }
 extension ToneMap: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
-extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
 extension RasterVirtual: EnvNamed {}
@@ -79,11 +78,15 @@ extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
 extension CityStyle: EnvNamed {}
+extension PhysicsSettings.Backend: EnvNamed {}
+extension ReferenceMode: EnvNamed {
+    var envName: String { ["off", "accumulated", "pt"][rawValue] }
+}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
     // One value each.
-    case direct = "METALRENDERER_DIRECT", rt = "METALRENDERER_RT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
+    case direct = "METALRENDERER_DIRECT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
     case primary = "METALRENDERER_PRIMARY", shadowMethod = "METALRENDERER_SHADOW_METHOD"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
@@ -294,7 +297,7 @@ enum SettingsTable {
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }
-        let assemblies: When = { $0.rayTracer == .custom }   // Metal's tracer has the plants baked: they stand still
+        let assemblies: When = { !$0.scene.bakedPlants }   // baked plants stand still
         return Section(title: "Foliage", rows: [
             S.slider("Wind", \.foliage.wind, FoliageSettings.windRange, step: 0.05, fmt("%.2f")).env(.foliage, "wind").when(plants).enabled(assemblies),
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
@@ -304,13 +307,13 @@ enum SettingsTable {
             S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
                 .env(.foliage, "translucency").when(plants),
             S.slider("Distance LOD (voxels)", \.foliage.lod, FoliageSettings.lodRange, step: 0.25, fmt("%.2g px"))
-                .env(.foliage, "lod").when(plants),   // both tracers (Metal's: VoxelLOD)
+                .env(.foliage, "lod").when(plants),
         ])
     }()
 
     private static let scene: Section = {
-        let customTracer: When = { $0.rayTracer == .custom }   // Metal would need its acceleration structures rebuilt per cut
-        let virtual: When = { $0.rayTracer == .custom && $0.virtualGeometry.enabled }
+        let assemblies: When = { !$0.scene.bakedPlants }
+        let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
@@ -337,28 +340,43 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
+                .env(.scene, "bodies").when { $0.scene.kind == .physics },
+            S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
+                .env(.scene, "particles").when { $0.scene.kind == .physics },
+            S.slider("Cloth vertices", \.scene.physics.cloth, PhysicsSettings.clothRange, step: 4, live: false) { $0 == 0 ? "none" : "\($0) x \($0)" }
+                .env(.scene, "cloth").when { $0.scene.kind == .physics },
+            S.slider("Ragdolls", \.scene.physics.ragdolls, PhysicsSettings.ragdollRange, live: false)
+                .env(.scene, "ragdolls").when { $0.scene.kind == .ragdolls },
+            S.slider("Strands per guide", \.scene.physics.hair, PhysicsSettings.hairRange, live: false)
+                .env(.scene, "hair").when { $0.scene.kind == .hair },
+            S.slider("Furry bodies", \.scene.physics.furBodies, PhysicsSettings.furBodyRange, live: false)
+                .env(.scene, "fur").when { $0.scene.kind == .hair },
+            S.slider("Soft bodies", \.scene.physics.softBodies, PhysicsSettings.softBodyRange, live: false)
+                .env(.scene, "soft").when { $0.scene.kind == .softBodies },
+            S.slider("Lattice cells", \.scene.physics.softCells, PhysicsSettings.softCellRange, live: false)
+                .env(.scene, "cells").when { $0.scene.kind == .softBodies },
+            S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
+                .env(.scene, "substeps").when { $0.scene.kind.simulates },
+            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
-            S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
-            S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }
-                .enabled(customTracer).advanced(),
-            S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }
-                .enabled { $0.rayTracer == .metal }.advanced(),
-            S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
-                .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
+            S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
+            S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
+            S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)
                 .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
             S.popup("Primary visibility", \.primary, titled(\.title)).env(.primary),
             S.popup("Raster virtual geometry", \.virtualGeometry.raster, titled(\.title)).env(.rasterVG)
                 .enabled { virtual($0) && $0.primary == .raster }.advanced(),
-            S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
+            S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),
-            // It also holds the plants' voxel levels (both tracers).
+            // It also holds the plants' voxel levels.
             S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled { virtual($0) || $0.scene.kind.hasPlants },
             S.check("Specular (glTF PBR)", \.specular).env(.specular),
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
@@ -464,13 +482,20 @@ enum SettingsTable {
     }()
 
     private static let rendering: Section = {
-        Section(title: "Rendering", rows: [
+        let reference: When = { $0.reference.mode != .off }, pathTraced: When = { $0.reference.mode == .pathTraced }
+        return Section(title: "Rendering", rows: [
             S.slider("Render scale", \.renderScale, RenderSettings.renderScaleRange, step: Double(RenderSettings.renderScaleStep),
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
+            S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
+            S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),
+            S.slider("Ref. samples/frame", \.reference.samplesPerFrame, ReferenceSettings.samplesPerFrameRange)
+                .env(.view, "refspp").when(pathTraced),
+            S.popup("Ref. max samples", \.reference.maxSamples, ReferenceSettings.maxSampleOptions.map { ($0 == 0 ? "No limit" : "\($0)", $0) })
+                .env(.view, "refmax").when(reference),
         ])
     }()
 

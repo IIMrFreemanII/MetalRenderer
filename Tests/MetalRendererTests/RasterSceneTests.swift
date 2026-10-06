@@ -36,16 +36,15 @@ final class RasterSceneTests: XCTestCase {
 
     func testKinds() {
         let plain = GPUMesh(firstIndex: 0, indexCount: 6)
-        XCTAssertEqual(RasterScene.kind(of: plain, borrowed: false, customTracer: true), .arrays)
-        XCTAssertEqual(RasterScene.kind(of: plain, borrowed: true, customTracer: true), .block)
+        XCTAssertEqual(RasterScene.kind(of: plain, borrowed: false), .arrays)
+        XCTAssertEqual(RasterScene.kind(of: plain, borrowed: true), .block)
         var cards = plain
         cards.cutout = 1 << 24
-        XCTAssertEqual(RasterScene.kind(of: cards, borrowed: false, customTracer: false), .skip, "alpha-tested leaf cards are traced")
+        XCTAssertEqual(RasterScene.kind(of: cards, borrowed: false), .skip, "alpha-tested leaf cards are traced")
         var cover = plain
         cover.sways = 1
-        XCTAssertEqual(RasterScene.kind(of: cover, borrowed: false, customTracer: true), .skip, "the custom tracer bends it in the wind")
-        XCTAssertEqual(RasterScene.kind(of: cover, borrowed: false, customTracer: false), .arrays, "Metal's traces it still")
-        XCTAssertEqual(RasterScene.kind(of: GPUMesh(firstIndex: 0, indexCount: 0), borrowed: false, customTracer: true), .skip)
+        XCTAssertEqual(RasterScene.kind(of: cover, borrowed: false), .skip, "it leans in the wind where the rays meet it")
+        XCTAssertEqual(RasterScene.kind(of: GPUMesh(firstIndex: 0, indexCount: 0), borrowed: false), .skip)
         XCTAssertEqual(RasterScene.chunks(1), 1)
         XCTAssertEqual(RasterScene.chunks(128), 1)
         XCTAssertEqual(RasterScene.chunks(129), 2)
@@ -55,13 +54,13 @@ final class RasterSceneTests: XCTestCase {
         let scene = scene()
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3))
-        let raster = try RasterScene(device: device, scene: scene, buffers: buffers, customTracer: true, virtualBLAS: false)
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 3))
+        let raster = try RasterScene(device: device, scene: scene, buffers: buffers, virtualBLAS: false)
         XCTAssertEqual(raster.meshCount, 3)
         XCTAssertEqual(raster.firstAssembly, 3, "after the meshes and the virtual ones (none here)")
         XCTAssertEqual(raster.chunkCount, 2 + 1 + 1)
         XCTAssertEqual(raster.instanceCount, 3)
-        XCTAssertNil(raster.ids, "the custom tracer names an instance by its place")
+        XCTAssertNil(raster.ids, "without blocks an instance is named by its place")
         XCTAssertTrue(raster.source === buffers.meshes)
 
         let records = Array(UnsafeBufferPointer(start: raster.meshes.contents().bindMemory(to: GPURasterMesh.self, capacity: 3), count: 3))
@@ -84,8 +83,8 @@ final class RasterSceneTests: XCTestCase {
         }
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 3))
-        let raster = try RasterScene(device: device, scene: scene, buffers: buffers, customTracer: true, virtualBLAS: false)
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 3))
+        let raster = try RasterScene(device: device, scene: scene, buffers: buffers, virtualBLAS: false)
         XCTAssertEqual(raster.meshCount, 2, "the mesh, then the shape")
         let records = Array(UnsafeBufferPointer(start: raster.meshes.contents().bindMemory(to: GPURasterMesh.self, capacity: 2), count: 2))
         XCTAssertEqual(records[1].hi.w.bitPattern, RasterScene.Kind.skip.rawValue)

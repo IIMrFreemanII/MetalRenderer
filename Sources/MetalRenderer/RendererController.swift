@@ -4,7 +4,7 @@ import AppKit
 struct RendererStatus {
     /// This frame's direct-light method with Auto resolved, for the settings panel's denoiser caption.
     var directMode: DirectLightMode
-    /// The custom tracer's traversal counters are compiled in (RT_STATS).
+    /// The ray queries' counters are compiled in (RT_STATS).
     var traversalCounters: Bool
     /// What the Debug window shows; only while it is open (`RendererController.debugActive`).
     var debugInfo: DebugInfo?
@@ -27,7 +27,7 @@ final class RendererController: InputHandler {
     let passProfilingSupported: Bool
     /// The last stats tick's report; nil before the first.
     private(set) var status: RendererStatus?
-    /// The custom tracer's traversal counters (RT_STATS) are on.
+    /// The ray queries' counters (RT_STATS) are on.
     private(set) var traversalCounters: Bool
     private var sentUpdate = 0                  // the number of the last settings edit sent to the renderer
 
@@ -160,7 +160,19 @@ final class RendererController: InputHandler {
         renderer.perform { $0.setShift(shift) }
     }
 
-    func mouseDragged(dx: Float, dy: Float) {
-        renderer.perform { $0.mouseDragged(dx: dx, dy: dy) }
+    func mouseDown(at cursor: SIMD2<Float>) {
+        renderer.perform { $0.mouseDown(at: cursor) }
+    }
+
+    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        renderer.perform { $0.mouseDragged(dx: dx, dy: dy, at: cursor) }
+    }
+
+    func mouseUp() {
+        renderer.perform { $0.mouseUp() }
+    }
+
+    func scrolled(dy: Float) {
+        renderer.perform { $0.scrolled(dy: dy) }
     }
 }

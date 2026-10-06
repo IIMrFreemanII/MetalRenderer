@@ -187,6 +187,34 @@ enum GIMode: Int, CaseIterable, Codable {
     }
 }
 
+/// A converged reference picture for debugging (README "Reference rendering"): samples averaged over frames, the
+/// average restarted whenever the picture would change (the camera, a setting, the scene animating).
+enum ReferenceMode: Int, CaseIterable, Codable {
+    case off
+    case accumulated    // the frame's own passes (path traced GI, exact direct light, raw specular) averaged: the benchmarks' references
+    case pathTraced     // one kernel traces whole paths (PathTrace.metal): glossy bounces, glass, lights met by rays
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .accumulated: return "Accumulated passes"
+        case .pathTraced: return "Path traced"
+        }
+    }
+}
+
+/// The reference modes' parameters.
+struct ReferenceSettings: Equatable, Codable {
+    var mode = ReferenceMode.off
+    var bounces = 8             // path length (both modes)
+    var samplesPerFrame = 1     // path traced: paths per pixel per frame
+    var maxSamples = 0          // stop adding samples at this many per pixel; 0 = never
+
+    static let bounceRange = 1...16
+    static let samplesPerFrameRange = 1...16
+    static let maxSampleOptions = [0, 64, 256, 1024, 4096, 16384]
+}
+
 /// ReSTIR GI (Shaders/RestirGI.metal): one path per pixel (or per 2x2 block) whose first bounce is resampled over
 /// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
 struct RestirGISettings: Equatable, Codable {
@@ -305,6 +333,11 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // volumetric beams, mist, accent lights, particles, with bloom and depth of field
     case shapes             // SDF shapes (SDFShapes.swift): primitives, cuts and blends, a baked mesh, glowing shapes as lights
     case storeroom          // the glTF models in Assets/ again and again in walled bays along an aisle: most out of sight
+    case physics            // rigid SDF shapes (Physics.swift) poured into an arena: a ramp, a pile, a tower knocked over
+    case ragdolls           // `ragdolls` ragdolls (jointed bodies, Physics.swift) dropped down a staircase
+    case hair               // hair and fur (PhysicsHair.swift): furry bodies rolling down a ramp, a long-haired head
+                            // swinging, in a breeze; strands drawn as curves (Metal's ray tracer)
+    case softBodies         // `softBodies` soft bodies (PhysicsSoft.swift): jellies dropped onto steps, pegs and a bowl
 
     var title: String {
         switch self {
@@ -328,9 +361,15 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .showcase: return "Showcase (one model)"
         case .shapes: return "SDF shapes"
         case .storeroom: return "Storeroom (Assets)"
+        case .physics: return "Physics"
+        case .ragdolls: return "Ragdolls"
+        case .hair: return "Hair and fur"
+        case .softBodies: return "Soft bodies"
         }
     }
 
+    /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
+    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair || self == .softBodies }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -391,22 +430,6 @@ struct CitySettings: Equatable, Codable {
     static let roomRange: ClosedRange<Float> = 0...0.5
 }
 
-/// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
-enum RayTracerKind: Int, CaseIterable, Codable {
-    case custom             // this project's BVHs: per-mesh BLAS + static TLAS (CPU, once) + dynamic TLAS (every frame)
-    case metal              // Metal's acceleration structures and intersector
-
-    var title: String {
-        switch self {
-        case .custom: return "Custom BVH"
-        case .metal: return Capabilities.current.hardwareRayTracing ? "Metal (hardware)" : "Metal (software)"
-        }
-    }
-
-    /// `METALRENDERER_RT=metal|custom` picks the starting tracer (benchmarks: for every setting).
-    static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALRENDERER_RT"] == "metal" ? .metal : .custom
-}
-
 /// Where the camera's surfaces come from: one traced ray per pixel, or a raster visibility buffer (Shaders/Raster.metal,
 /// in the manner of Unreal's Nanite: GPU-driven, culled by chunks of 128 triangles against the view and a depth pyramid),
 /// whose triangles the primary rays then only meet. The rest of the frame is the same.
@@ -464,6 +487,47 @@ struct ExtraModel: Equatable, Codable {
     var yaw: Float
 }
 
+/// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
+struct PhysicsSettings: Equatable, Codable {
+    /// Where the steps run: the GPU (Shaders/Physics.metal), the CPU (PhysicsCPU.swift), or whichever suits the
+    /// scene's size (the CPU below `PhysicsSettings.gpuFrom` bodies, where a dispatch costs more than the work).
+    enum Backend: Int, CaseIterable, Codable {
+        case auto, gpu, cpu
+        var title: String { ["Automatic", "GPU", "CPU"][rawValue] }
+    }
+    var backend = Backend.auto
+    /// Substeps a step (1/60 s): more hold stacks stiffer, for more work (8 lets a tower of 8 crossed layers sink
+    /// through the floor; 12 holds it to 3 mm).
+    var substeps = 16
+    /// Rigid bodies poured in, and particles poured into a bin.
+    var bodies = 96
+    var particles = 2048
+    /// The cloth's vertices along a side (0: no cloth).
+    var cloth = 36
+    /// Ragdolls dropped down the ragdoll scene's stairs (11 bodies each).
+    var ragdolls = 24
+    /// The hair scene: strands drawn around each simulated one (guide), and furry bodies dropped down its ramp.
+    var hair = 12
+    var furBodies = 6
+    /// The soft body scene: soft bodies dropped in, and their lattices' cubes along each one's longest side.
+    var softBodies = 16
+    var softCells = 6
+
+    static let substepRange = 1...32
+    static let bodyRange = 0...4096
+    static let particleRange = 0...16384
+    static let clothRange = 0...96
+    static let ragdollRange = 1...256
+    static let hairRange = 1...32
+    static let furBodyRange = 0...32
+    static let softBodyRange = 1...128
+    static let softCellRange = 3...12
+    static let gpuFrom = 64
+
+    /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
+    func runsOnGPU(bodies: Int) -> Bool { backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom) }
+}
+
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
 struct SceneSettings: Equatable, Codable {
     var kind = SceneKind.cornell
@@ -498,17 +562,19 @@ struct SceneSettings: Equatable, Codable {
     /// ...and whether its cities' lights are the scene's lights: the renderer's to set too, with the time of day
     /// (`World.lightsReady`). By day nothing samples them, and they are off.
     var worldLit = false
-    /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
-    /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
+    /// Plants baked into meshes of their own instead of assemblies: no wind or leaf fall, and eight times the
+    /// triangles (METALRENDERER_BENCH=forestcheck compares the two).
     var bakedPlants = false
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
-    /// by an alpha mask the custom tracer tests. Off: every leaf is a mesh of its own.
+    /// by an alpha mask the ray queries test. Off: every leaf is a mesh of its own.
     var leafCards = false
-    /// Metal's tracer: far plants as their voxel grids (VoxelLOD), as on the custom tracer, instead of their
-    /// triangles. Off: it is slower wherever it was measured. In software (M1 Max) the ray queries a voxel box needs
+    /// Far baked plants as their voxel grids (VoxelLOD) instead of their triangles. Off: it is slower wherever it was
+    /// measured. In software (M1 Max) the ray queries a voxel box needs
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
     /// forest takes 1.3 to 2.1 times as long, the open world 3 times.
     var voxelBoxes = false
+    /// The physics scene: its bodies and how they are simulated.
+    var physics = PhysicsSettings()
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -529,7 +595,7 @@ struct SceneSettings: Equatable, Codable {
     }
 }
 
-/// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
+/// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
 struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
@@ -607,7 +673,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .storeroom, .area, .crowd, .cityNight, .shapes:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .storeroom, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -705,7 +771,8 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .storeroom, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes:
+        case .cornell, .stress, .gallery, .storeroom, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
+             .softBodies:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -769,7 +836,7 @@ struct PostSettings: Equatable, Codable {
     }
 }
 
-/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures, like the tracer.
+/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures.
 enum RenderAPI: Int, CaseIterable, Codable {
     case metal3             // MTLCommandQueue, one compute encoder per frame
     case metal4             // Metal 4: MTL4CommandQueue, argument tables, residency sets (macOS 26; Capabilities.metal4)
@@ -781,8 +848,8 @@ enum RenderAPI: Int, CaseIterable, Codable {
 }
 
 /// Everything the settings panel and the keyboard shortcuts can change.
-/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (custom ray
-/// tracer: plants as assemblies; Metal's traces them baked and still).
+/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (plants as
+/// assemblies; baked plants stand still).
 struct FoliageSettings: Equatable, Codable {
     var wind: Float = 0                 // 0 = still ... 1 = a strong wind
     var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
@@ -818,6 +885,7 @@ struct RenderSettings: Equatable, Codable {
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
     var paused = false
     var viewMode = 0
+    var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
     var denoiser = DenoiserSettings()
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
@@ -831,7 +899,6 @@ struct RenderSettings: Equatable, Codable {
     var cascades = CascadeSettings()
     var lumen = LumenSettings()
     var scene = SceneSettings()
-    var rayTracer = RayTracerKind.initial
     var api = RenderAPI.initial
     var primary = PrimaryVisibility.initial
     var shadowMethod = ShadowMethod.initial
@@ -851,11 +918,31 @@ struct RenderSettings: Equatable, Codable {
     var timeScale: Float = 1           // animation speed (Pause stops it too)
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
 
+    /// The physics scene's traced resolution (`usePhysicsLook`).
+    static let physicsScale: CGFloat = 0.375
+
+    /// The physics scene's look, which leaves the GPU to the simulation: no GI and no reflections, traced at 0.375 of
+    /// the window (3x upscaled, 1440x900 out). On the M1 Max its frame renders in 5 ms against the app look's 15
+    /// (reflections 4.7 ms, cascades 2.9, and the smaller frame halves the trace and the upscaler). The panel can turn
+    /// either back on.
+    mutating func usePhysicsLook() {
+        giEnabled = false
+        specular = false
+        renderScale = RenderSettings.physicsScale
+    }
+
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults): the GI method, the night market's light count, the fog, the sky and the lens (the showcase's
-    /// model brings its own fog and lens).
+    /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
+        if scene.kind.simulates {
+            usePhysicsLook()
+        } else if !giEnabled && !specular && renderScale == RenderSettings.physicsScale {
+            giEnabled = defaults.giEnabled
+            specular = defaults.specular
+            renderScale = defaults.renderScale
+        }
         if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
         fog = FogSettings.preset(for: scene)
         post = PostSettings.preset(for: scene)

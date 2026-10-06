@@ -12,6 +12,4 @@ __pycache__/
 /renders/
 # virtual-geometry / texture caches built from Assets/ on first load (the models themselves are in Git LFS)
 /Assets/.metalrenderer-cache/
-# graphify knowledge graph (regenerate with: graphify update .)
-/graphify-out/
 .idea

@@ -15,7 +15,6 @@ enum SettingsEnv {
         // What a fresh launch would have: the code's defaults (not this process's env-derived ones) and the scene's presets.
         var d = defaults
         d.directLight = .auto
-        d.rayTracer = .custom
         d.api = .metal3
         d.primary = .traced
         d.shadowMethod = .rays

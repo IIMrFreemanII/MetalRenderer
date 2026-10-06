@@ -8,7 +8,6 @@
 // y = its entry in the frame's cluster list, which holds its pool offset for the trace (fetchHitVertices reads the list
 // as the selected clusters).
 // ---------------------------------------------------------------------------------------------
-#if CUSTOM_RT
 
 // RasterClusters.Params.
 struct RasterVGParams {
@@ -330,5 +329,3 @@ kernel void vsmVGCutKernel(device const InstanceData*    instances  [[buffer(6)]
     }
     if (used) vg.lastUsed[g] = vp.frame;
 }
-
-#endif

@@ -19,28 +19,30 @@ final class Scene {
         var virtualMesh = -1                  // >= 0: index into `virtualMeshes` (then `mesh` is -1)
         var assembly = -1                     // >= 0: index into `assemblies` (then `mesh` is -1 and `material` is its
                                               // wood's, with its leaves' right after it)
-        /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; the custom ray
-        /// tracer reads its rows as the world -> object matrix).
+        /// `transform.inverse.transpose`, kept up to date with the transform (the GPU's normal matrix; its columns are
+        /// the rows of the world -> object matrix, which the shading reads them as).
         var normalMatrix = matrix_identity_float4x4
         /// A light's proxy whose light moves (`LightMotion.animated`): `Scene.update` re-poses it every frame.
         var poseAnimated = false
-        /// A member of the crowd: its mesh is a pose slot's, which deforms every frame (Crowd).
-        var skinned = false
+        /// Its mesh deforms every frame on the GPU: a crowd member's pose slot (Crowd), or a cloth (Physics.swift).
+        var deforms = false
         /// ...that walks: `Scene.update` moves it along its lane.
         var travels = false
         /// >= 0: an SDF shape's instance, index into `sdfShapes` (then `mesh` is -1 and `material` is its nodes' first).
         var sdf = -1
+        /// A rigid body's: the physics (Physics.swift) moves it.
+        var simulated = false
 
-        /// Never moves or deforms: its transform is the one it was added with (the ray tracers' static trees).
-        var isStatic: Bool { animation == nil && !poseAnimated && !skinned }
+        /// Never moves or deforms: its transform is the one it was added with (a still scene's structure is built once).
+        var isStatic: Bool { animation == nil && !poseAnimated && !deforms && !simulated }
         /// Its transform changes from frame to frame.
-        var moves: Bool { animation != nil || poseAnimated || travels }
+        var moves: Bool { animation != nil || poseAnimated || travels || simulated }
         /// Solid geometry, which shadow and GI rays meet (with `maskShadowTraced` or not).
         var isGeometry: Bool { mask & ~Scene.maskShadowTraced == Scene.maskGeometry }
     }
 
     /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
-    /// (the species' boughs). Every instance of the plant shares it; the custom ray tracer walks a tree over the parts.
+    /// (the species' boughs). Every instance of the plant shares it, through the structures over its parts (PlantTracing).
     struct Assembly {
         /// What a part turns about in the wind (Shaders/Foliage.metal). `angle`: its largest turn, at full wind; 0 = it doesn't.
         struct Bone {
@@ -238,7 +240,7 @@ final class Scene {
     /// Window glass: only camera rays meet it (they pass through it and take its reflection, traceKernel); to shadow
     /// and GI rays it isn't there, so light goes through windows.
     static let maskGlass: UInt32 = 4
-    /// A far plant as its voxels (Metal's tracer: VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
+    /// A far plant as its voxels (VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
     /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
     /// sways, SDF shapes), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
@@ -252,45 +254,48 @@ final class Scene {
         return skipped ? mask | Scene.maskShadowTraced : mask
     }
 
-    /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0; the
-    /// custom tracer's RT_SDF). No ray's mask has it, so no ray tests it as one.
+    /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0). No ray's
+    /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
 
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
     private(set) var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
     private(set) var textures: [TextureSource] = []
-    /// Large glTF meshes as streamed, level-of-detail cluster DAGs (custom ray tracer only; see VirtualGeometry).
+    /// Large glTF meshes as streamed, level-of-detail cluster DAGs (VirtualTracing: VirtualBLAS, VirtualGeometry).
     private(set) var virtualMeshes: [VirtualMesh] = []
     private(set) var virtualMeshNames: [String] = []
     let usesVirtualGeometry: Bool
-    /// Generated plants as assemblies of shared parts (custom ray tracer only); otherwise each is baked into meshes of its own.
+    /// Virtual geometry is traced as this frame's cut of clusters (VirtualGeometry), not a BLAS per instance.
+    var tracesClusters: Bool { !virtualMeshes.isEmpty && VirtualGeometry.clusterMode }
+    /// Generated plants as assemblies of shared parts (PlantTracing), unless baked into meshes of their own (bakedPlants).
     private(set) var assemblies: [Assembly] = []
     let usesAssemblies: Bool
-    /// The custom tracer traces the scene: the meshes it borrows come with their trees (an open world's tiles).
-    let borrowsTrees: Bool
-    /// The scene has generated plants: it is built differently for a tracer that walks assemblies and one that doesn't.
+    /// The scene has generated plants: it is built differently with assemblies and without.
     private(set) var hasPlants = false
-    /// The plants that are voxels when far (FoliageVoxels): on the custom tracer one per assembly, in its order; on
-    /// Metal's, one per baked plant with boughs, its wood and leaf meshes in `meshVoxels`.
+    /// The plants that are voxels when far (FoliageVoxels): one per assembly, in its order; or one per baked plant
+    /// with boughs, its wood and leaf meshes in `meshVoxels`.
     private(set) var voxelPlants: [FoliageVoxels.Plant] = []
-    /// Metal's tracer: a baked plant's mesh -> its voxel plant (`voxelPlants`), | `meshVoxelsLeaves` for its leaves.
+    /// A baked plant's mesh -> its voxel plant (`voxelPlants`), | `meshVoxelsLeaves` for its leaves.
     private(set) var meshVoxels: [Int: UInt32] = [:]
     static let meshVoxelsLeaves: UInt32 = 0x8000_0000
-    /// Metal's tracer, with far baked plants as their voxels (SceneSettings.voxelBoxes): the plants have grids.
+    /// Far plants as their voxels (SceneSettings.voxelBoxes): the plants have grids.
     let usesVoxelBoxes: Bool
-    /// ...and it does: a still scene with such plants (VoxelLOD rebuilds a still scene's structure).
-    var hasVoxelBoxes: Bool { usesVoxelBoxes && isStill && !meshVoxels.isEmpty }
+    /// ...and it does: a still scene with baked plants that have them (VoxelLOD rebuilds a still scene's structure),
+    /// or a moving one with assemblies (their instances name a grid's level when far: PlantTracing). (Not the open
+    /// world's assemblies: a still scene's plants stay as they were built.)
+    var hasVoxelBoxes: Bool { usesVoxelBoxes && (isStill ? !meshVoxels.isEmpty : !assemblies.isEmpty) }
     private(set) var hasSwayingMeshes = false
-    /// Leaf cards' alpha layers (FoliageTextures.CardSheet), each FoliageTextures.cardSheetSize squared: the custom
-    /// tracer tests a card's hits against its layer. `coverage`: the share of a card that is there.
+    /// Leaf cards' alpha layers (FoliageTextures.CardSheet), each FoliageTextures.cardSheetSize squared: the ray
+    /// queries test a card's hits against its layer (rtCutout). `coverage`: the share of a card that is there.
     private(set) var cutouts: [(alpha: [UInt8], coverage: Float)] = []
-    /// Plants' leaves as cards (`settings.leafCards`, where the tracer cuts them out: the custom one).
+    /// Plants' leaves as cards (`settings.leafCards`, with assemblies).
     let usesCards: Bool
     /// Something the wind moves and the shaders' FOLIAGE paths trace: assemblies, or ground cover that leans.
     var hasFoliage: Bool { !assemblies.isEmpty || hasSwayingMeshes }
-    /// Some instances may have `maskShadowTraced` (the plants, leaf cards: what the raster can't draw; the crowd).
-    var hasShadowTraced: Bool { hasFoliage || usesCards || hasSkinned }
+    /// Some instances may have `maskShadowTraced` (the plants, leaf cards, SDF shapes: what the raster can't draw; the
+    /// crowd, cloths, soft bodies and hair, which deform every frame).
+    var hasShadowTraced: Bool { hasFoliage || usesCards || hasSkinned || hasSDFShapes || !deforming.isEmpty }
     private var leafMaterials: [LeafMaterial] = []
     private var leafState = SIMD2<Float>(-1, -1)   // the season and translucency they are set to
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
@@ -353,6 +358,8 @@ final class Scene {
     /// The first sun among the lights (the sky follows it), if any.
     private(set) var firstSun: Int?
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
+    /// The deforming meshes other than the crowd's: each one's mesh and its vertices (`addDeformingMesh`).
+    private(set) var deforming: [(mesh: Int, first: Int, count: Int)] = []
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     /// Per model file added: its first material, the material of its parts without one, and each of its meshes'
@@ -370,6 +377,11 @@ final class Scene {
 
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
+    /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
+    private(set) var physics: PhysicsWorld?
+    private(set) var physicsOnGPU = false
+    /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
+    private var physicsPending = (steps: 0, restart: false)
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).
@@ -404,15 +416,14 @@ final class Scene {
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead
     /// of ordinary full-detail meshes.
     /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
-    /// `voxelBoxes`: Metal's tracer traces far baked plants as their voxels (VoxelLOD).
+    /// `voxelBoxes`: far baked plants are traced as their voxels (VoxelLOD).
     init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
          building: ((Scene) -> Void)? = nil) {
         self.settings = settings
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
-        self.borrowsTrees = assemblies
         self.usesCards = assemblies && settings.leafCards
-        self.usesVoxelBoxes = voxelBoxes && !assemblies
+        self.usesVoxelBoxes = voxelBoxes
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
         switch settings.kind {
         case .cornell: buildCornell()
@@ -435,10 +446,18 @@ final class Scene {
         case .world: buildWorld()
         case .showcase: buildShowcase()
         case .shapes: buildShapes()
+        case .physics: buildPhysics(settings.physics)
+        case .ragdolls: buildRagdolls(settings.physics)
+        case .hair: buildHair(settings.physics)
+        case .softBodies: buildSoftBodies(settings.physics)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
         finishCrowd()
+        finishDeforming()
+        finishHair()
+        finishSoftBodies()
+        physics?.finish()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }
@@ -480,7 +499,10 @@ final class Scene {
         animated = (instances: instances.indices.filter { instances[$0].moves },
                     lights: lights.indices.filter { !lights[$0].isMesh && moves(lights[$0]) },
                     scaledLights: lights.indices.filter { !lights[$0].isMesh && !moves(lights[$0]) && lights[$0].motion == .scaleOnly })
-        isStill = instances.allSatisfy(\.isStatic)
+        // (Virtual geometry's cuts change the structure under its instances, and the wind the plants' and the ground
+        // cover's: the frames update it. Not the open world's, whose instance blocks need a still scene: its plants
+        // stand still.)
+        isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty && (!hasFoliage || hasGroups)
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -532,6 +554,15 @@ final class Scene {
             setCityLights(sunElevation: now.sunElevation)
         }
         for i in fogVolumes.indices { if let motion = fogVolumes[i].motion { fogVolumes[i].center = motion(t) } }
+        if let physics {
+            if physicsOnGPU {
+                let claim = physics.claim(to: t)
+                physicsPending = claim.restart ? claim : (physicsPending.steps + claim.steps, physicsPending.restart)
+            } else {
+                physics.advance(to: t)
+                placeBodies()
+            }
+        }
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
@@ -545,6 +576,40 @@ final class Scene {
                 instances[w.instance].normalMatrix.columns.2.w = -dot(w.inverse2, p)
             }
         }
+    }
+
+    /// The rigid bodies' and particles' instances where the physics has them.
+    func placeBodies() {
+        guard let physics else { return }
+        for b in physics.bodies.indices { setTransform(Int(physics.bodies[b].info.z), physics.transform(b)) }
+        for p in physics.particles.indices where physics.particles[p].info.x != PhysicsWorld.none {   // (a cloth's vertex has none)
+            setTransform(Int(physics.particles[p].info.x), physics.particleTransform(p))
+        }
+    }
+
+    /// ...where the GPU had them (`poses`: position, rotation per body): the CPU's copy, for what reads it here
+    /// (bounds, moving lights). The frame's records are the GPU's own (PhysicsGPU.encodePose).
+    func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
+        guard let physics else { return }
+        physics.drawnPoses = Array(poses)   // what picking sees
+        for b in physics.bodies.indices {
+            let i = Int(physics.bodies[b].info.z)
+            instances[i].prevTransform = instances[i].transform
+            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1]))
+        }
+    }
+
+    /// The renderer runs the physics on the GPU from now on, from the start up to where it is.
+    func runPhysicsOnGPU() {
+        guard let physics else { return }
+        physicsOnGPU = true
+        physicsPending = (physics.stepIndex, true)
+    }
+
+    /// The steps to encode this frame (the renderer's), which are then forgotten.
+    func takePhysicsSteps() -> (steps: Int, restart: Bool) {
+        defer { physicsPending = (0, false) }
+        return physicsPending
     }
 
     private func setTransform(_ i: Int, _ transform: float4x4) {
@@ -620,8 +685,8 @@ final class Scene {
 
     // MARK: - GPU data
 
-    /// Virtual instances: meshIndex points past the ordinary meshes (the ray tracer's mesh table lists the virtual
-    /// meshes' bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
+    /// Virtual instances: meshIndex points past the ordinary meshes (the raster's mesh table lists the virtual meshes'
+    /// bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
     /// Assembly instances: meshIndex points past those too (the table then lists the assemblies), and SDF shapes'
     /// instances past those (the shapes), with `Scene.instanceSDF` in pad0.
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
@@ -661,14 +726,16 @@ final class Scene {
     /// The bits under it: the features the scene's shaders are compiled with.
     var lightTypeMask: UInt32 {
         // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
-        // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots). Bit 27: GLASS. Bit 26:
+        // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots, cloths). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
-        // voxel boxes on Metal's tracer. Bit 22: SDF_SHAPES, some instances are SDF shapes. (Shaders/Types.metal.)
+        // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
+        // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
+        // (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
-            | (crowd?.slots.isEmpty == false ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
+            | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
-            | (hasSDFShapes ? 0x0040_0000 : 0)
+            | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -846,21 +913,7 @@ final class Scene {
         var uvs: Stored<SIMD2<Float>>
         var indices: Stored<UInt32>             // into its own vertices
         var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
-        var tree: BorrowedTree? = nil           // the custom tracer's, where it is built already (a tile's file has it)
         var mesh = 0                            // in `meshes`
-    }
-
-    /// A borrowed mesh's tree as the custom tracer reads it (`BVHBuilder.buildBLAS(...storage:)`, of a mesh without a
-    /// cutout): `nodeCount` nodes, the root first, then three vectors for each of the mesh's triangles; in vectors.
-    struct BorrowedTree {
-        var memory: Stored<SIMD4<Float>>
-        var nodeCount: Int
-        var depth: Int
-        var bounds: AABB
-
-        static let vectorsPerNode = MemoryLayout<BVHNode>.stride / MemoryLayout<SIMD4<Float>>.stride
-        /// Whether it is as long as the tree of a mesh of `indexCount` indices is.
-        func fits(indexCount: Int) -> Bool { nodeCount % 3 == 0 && memory.count == nodeCount * BorrowedTree.vectorsPerNode + indexCount }
     }
 
     /// Adds a borrowed mesh, with its bounds as they are known. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s,
@@ -880,7 +933,7 @@ final class Scene {
     }
 
     /// Lets go of the vertex and index arrays, of the borrowed meshes and of the instance groups, once the renderer
-    /// has them in its buffers and the ray tracer has their trees: for a scene that is made again when anything about
+    /// has them in its buffers and their structures: for a scene that is made again when anything about
     /// it changes, never built from twice (the open world's). The meshes' table, bounds and names stay.
     func releaseGeometry() {
         (positions, normals, uvs, indices, triangleMaterials, borrowed) = ([], [], [], [], [], [])
@@ -922,13 +975,93 @@ final class Scene {
 
     /// Marks instance `i` as a member of the crowd (its mesh is a pose slot's).
     func setSkinned(_ i: Int, travels: Bool) {
-        instances[i].skinned = true
+        instances[i].deforms = true
         instances[i].travels = travels
         // Virtual shadow maps would draw it again every frame wherever it casts a shadow: its shadows are traced.
         if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
         hasSkinned = true
     }
     private(set) var hasSkinned = false
+
+    /// A mesh whose vertices the GPU rewrites every frame (a cloth's: PhysicsGPU), within `bounds` whatever it does.
+    /// Its vertices are its own (`vertexOffset` 0), and `finishDeforming` puts last frame's after everything else.
+    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, bounds: AABB) -> Int {
+        let m = addMesh(mesh, uvs: uvs)
+        meshBounds[m] = (bounds.lo, bounds.hi)
+        deforming.append((mesh: m, first: positions.count - mesh.positions.count, count: mesh.positions.count))
+        return m
+    }
+
+    /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).
+    @discardableResult
+    func addDeformingInstance(_ mesh: Int, _ material: Int) -> Int {
+        let i = addInstance(mesh, material, matrix_identity_float4x4)
+        instances[i].deforms = true
+        // Like the crowd's: virtual shadow maps would draw it again every frame (and can't draw curves): traced.
+        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+        return i
+    }
+
+    /// A curve mesh's segments and its control points' radii (`curveRadii`).
+    struct CurveMesh {
+        var segments: Int
+        var radii: Range<Int>
+    }
+    /// The meshes that are strands (hair), drawn as round Catmull-Rom curves (HAIR_CURVES): to everything that reads
+    /// triangles they are meshes with none.
+    private(set) var curveMeshes: [Int: CurveMesh] = [:]
+    private(set) var curveRadii: [Float] = []
+    var hasCurves: Bool { !curveMeshes.isEmpty }
+    /// The hair's groups of drawn strands and their curve meshes (Scene+Hair.swift): once the meshes are done, each
+    /// group is told where its mesh's control points are (`finishHair`).
+    var hairMeshes: [(group: Int, mesh: Int)] = []
+    func hasCurveMesh(_ m: Int) -> Bool { curveMeshes[m] != nil }
+
+    /// Strands as curves: `points` control points, `perStrand` of them a strand (a Catmull-Rom curve passes through
+    /// all but its first and last), each with its radius (`radii`). The GPU rewrites them every frame (hair:
+    /// PhysicsGPU), within `bounds` whatever they do; `finishDeforming` puts last frame's after everything else. The
+    /// mesh's vertices start at its `vertexOffset`; its indices, from `firstIndex`, are each segment's first point
+    /// counted from there (`indexCount` stays 0: it has no triangles).
+    func addCurves(points: [SIMD3<Float>], perStrand: Int, radii: [Float], bounds: AABB) -> Int {
+        precondition(perStrand >= 4 && points.count % perStrand == 0 && radii.count == points.count, "whole strands of 4 points or more")
+        let first = positions.count
+        let firstIndex = indices.count
+        positions += points
+        normals += [SIMD3<Float>](repeating: SIMD3(0, 1, 0), count: points.count)
+        uvs += [SIMD2<Float>](repeating: .zero, count: points.count)
+        for s in 0..<(points.count / perStrand) {
+            for k in 0..<(perStrand - 3) { indices.append(UInt32(s * perStrand + k)) }
+        }
+        meshes.append(GPUMesh(firstIndex: UInt32(firstIndex), indexCount: 0, vertexOffset: UInt32(first)))
+        meshBounds.append((bounds.lo, bounds.hi))
+        let m = meshes.count - 1
+        curveMeshes[m] = CurveMesh(segments: indices.count - firstIndex, radii: curveRadii.count..<(curveRadii.count + radii.count))
+        curveRadii += radii
+        deforming.append((mesh: m, first: first, count: points.count))
+        return m
+    }
+
+    /// The hair's groups: where their meshes' control points are, and last frame's.
+    private func finishHair() {
+        guard let physics else { return }
+        for (g, m) in hairMeshes {
+            physics.hairGroups[g].mesh.x = meshes[m].vertexOffset
+            physics.hairGroups[g].mesh.y = meshes[m].prevOffset
+        }
+    }
+
+    /// Once every mesh is in (after the crowd's): the deforming meshes' last-frame vertices, after everything, as the
+    /// first frame's (the same as the current ones).
+    private func finishDeforming() {
+        for d in deforming {
+            let previous = positions.count
+            positions += positions[d.first..<(d.first + d.count)]
+            meshes[d.mesh].prevOffset = UInt32(previous - d.first)
+        }
+    }
+
+    /// Some mesh deforms (DEFORMING_MESHES): the crowd's pose slots, cloths.
+    var hasDeformingMeshes: Bool { crowd?.slots.isEmpty == false || !deforming.isEmpty }
 
     /// Once every mesh is in: the pose slots' vertices go after them (each slot's current positions and normals,
     /// then every slot's previous positions), skinned on the CPU to the pose at time 0. The GPU rewrites them every
@@ -972,7 +1105,7 @@ final class Scene {
     static let coverLean: Float = 0.2
 
     /// A generated mesh (Foliage, Terrain): its arrays appended whole, its bounds as it counted them. `sways`: ground
-    /// cover standing along +y, which the custom tracer leans in the wind (every instance of it).
+    /// cover standing along +y, which leans in the wind (every instance of it: its transform, PlantTracing).
     /// `cutout`: the alpha layer (`addCutout`) that cuts out its leaves, if they are cards.
     /// `name`: see `meshNames`.
     func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil, name: String? = nil) -> Int {
@@ -1008,7 +1141,7 @@ final class Scene {
         return voxelPlants.count - 1
     }
 
-    /// Mesh `mesh` is voxel plant `plant`'s wood, or its leaves (Metal's tracer: VoxelLOD).
+    /// Mesh `mesh` is voxel plant `plant`'s wood, or its leaves (VoxelLOD).
     func setMeshVoxels(_ mesh: Int, plant: Int, leaves: Bool) {
         guard mesh >= 0 else { return }
         meshVoxels[mesh] = UInt32(plant) | (leaves ? Scene.meshVoxelsLeaves : 0)
@@ -1045,6 +1178,117 @@ final class Scene {
                                   transform: transform, prevTransform: transform, animation: animation,
                                   normalMatrix: transform.inverse.transpose, sdf: sdf))
         return instances.count - 1
+    }
+
+    // MARK: - Physics
+
+    private func physicsWorld() -> PhysicsWorld {
+        if let physics { return physics }
+        let world = PhysicsWorld(substeps: settings.physics.substeps)
+        physics = world
+        return world
+    }
+
+    /// A rigid body: an instance of SDF shape `sdf` that the physics moves, starting at `transform` (a rotation and a
+    /// translation). `density` kg/m^3; `friction` and `restitution` are mixed with what it touches (the geometric
+    /// mean and the larger).
+    @discardableResult
+    func addBody(sdf: Int, _ material: Int, _ transform: float4x4, density: Float = 500, friction: Float = 0.5,
+                 restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero) -> Int {
+        let i = addInstance(sdf: sdf, material, transform)
+        instances[i].simulated = true
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        world.addBody(sdf: sdf, sdfShapes[sdf], transform: transform, instance: i, density: density, friction: friction,
+                      restitution: restitution, velocity: velocity, spin: spin)
+        return i
+    }
+
+    /// The cloths' meshes, in the physics' order.
+    private(set) var clothMeshes: [Int] = []
+
+    /// A cloth: `columns` x `rows` vertices from `origin` along `across` and `down` (its whole width and height),
+    /// `pinned` ones (row-major) held where they are; the physics moves the rest, the GPU writes the mesh every frame.
+    func addCloth(_ material: Int, origin: SIMD3<Float>, across: SIMD3<Float>, down: SIMD3<Float>, columns: Int, rows: Int,
+                  pinned: Set<Int>, thickness: Float = 0.008, friction: Float = 0.6) {
+        var positions: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
+        let normal = normalize(cross(down, across))
+        for r in 0..<rows {
+            for c in 0..<columns {
+                let u = Float(c) / Float(columns - 1), v = Float(r) / Float(rows - 1)
+                positions.append(origin + across * u + down * v)
+                uvs.append(SIMD2(u, v))
+            }
+        }
+        // Wound as PhysicsGPU's normals face: along a row, then down a column.
+        for r in 0..<(rows - 1) {
+            for c in 0..<(columns - 1) {
+                let a = UInt32(r * columns + c), b = a + 1, d = a + UInt32(columns), e = d + 1
+                indices += [a, d, b, b, d, e]
+            }
+        }
+        // As far as it can get: its size every way from where it starts, and down to the floor.
+        var box = AABB()
+        for p in positions { box.grow(p) }
+        let reach = max(length(across), length(down)) + 0.1
+        box.lo = simd_min(box.lo - reach, SIMD3(box.lo.x - reach, -0.1, box.lo.z - reach))
+        box.hi += reach
+        let mesh = addDeformingMesh((positions, [SIMD3<Float>](repeating: normal, count: positions.count), indices), uvs: uvs, bounds: box)
+        addDeformingInstance(mesh, material)
+        clothMeshes.append(mesh)
+        physicsWorld().addCloth(origin: origin, across: across, down: down, columns: columns, rows: rows, pinned: pinned,
+                                thickness: thickness, friction: friction, vertexBase: deforming.last!.first)
+    }
+
+    /// The soft bodies' meshes, in the physics' order.
+    private(set) var softMeshes: [Int] = []
+
+    /// A soft body made of `model` (PhysicsSoft.swift), placed by `transform` (a rotation and a translation): the
+    /// physics moves its lattice, the GPU writes its surface every frame. `edge` and `volume`: its links' and tets'
+    /// compliance; `bounds`: where it can get to (the mesh's box whatever it does).
+    func addSoftBody(_ model: SoftModel, _ material: Int, _ transform: float4x4, bounds: AABB, velocity: SIMD3<Float> = .zero,
+                     density: Float = 1000, edge: Float = 1e-3, volume: Float = 1e-9, damping: Float = PhysicsWorld.softLinkDamping,
+                     friction: Float = 0.6) {
+        let rotation = simd_float3x3(columns: (PhysicsMath.xyz(transform.columns.0), PhysicsMath.xyz(transform.columns.1),
+                                               PhysicsMath.xyz(transform.columns.2)))
+        let positions = model.surface.positions.map { PhysicsMath.xyz(transform * SIMD4($0, 1)) }
+        let mesh = addDeformingMesh((positions, model.surface.normals.map { rotation * $0 }, model.surface.indices), bounds: bounds)
+        addDeformingInstance(mesh, material)
+        softMeshes.append(mesh)
+        physicsWorld().addSoftBody(model, transform: transform, vertexBase: deforming.last!.first, velocity: velocity, density: density,
+                                   edge: edge, volume: volume, damping: damping, friction: friction)
+    }
+
+    /// The soft bodies' drawn vertices: where their meshes' last-frame vertices are (once `finishDeforming` put them).
+    private func finishSoftBodies() {
+        guard let physics, !softMeshes.isEmpty else { return }
+        for v in physics.softVertices.indices {
+            physics.softVertices[v].info.y = meshes[softMeshes[Int(physics.softVertices[v].info.z)]].prevOffset
+        }
+    }
+
+    /// Particles: balls of `radius` at `positions` that the physics moves (each an instance of one sphere shape).
+    func addParticles(_ material: Int, radius: Float, positions: [SIMD3<Float>], density: Float = 1500, friction: Float = 0.5) {
+        guard !positions.isEmpty else { return }
+        let sphere = addSDFShape(SDFShape(.sphere(radius: radius)))
+        let world = physicsWorld()
+        for p in positions {
+            let i = addInstance(sdf: sphere, material, translate(p))
+            instances[i].simulated = true
+            world.addParticle(at: p, radius: radius, instance: i, density: density, friction: friction)
+        }
+    }
+
+    /// Something bodies bounce off that never moves: SDF shape `sdf` at `transform` (draw it, or not, apart).
+    func addStaticCollider(sdf: Int, _ transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        world.addStatic(sdf: sdf, sdfShapes[sdf], transform: transform, friction: friction, restitution: restitution)
+    }
+
+    /// An endless static plane bodies rest on.
+    func addStaticPlane(point: SIMD3<Float>, normal: SIMD3<Float>, friction: Float = 0.6, restitution: Float = 0.2) {
+        physicsWorld().addPlane(point: point, normal: normal, friction: friction, restitution: restitution)
     }
 
     /// Generated plants were placed (Flora): see `hasPlants`.
@@ -1096,6 +1340,13 @@ final class Scene {
         return materials.count - 1
     }
 
+    /// A strand's (Hair.metal): its colour, the one it is seen to have (the pigment's absorption is fitted to it).
+    /// Marked by params.z < 0 (an emissive-mesh light's is > 0).
+    func addHairMaterial(color: SIMD3<Float>) -> Int {
+        materials.append(GPUMaterial(albedo: SIMD4<Float>(color, 0), emission: SIMD4<Float>(.zero, 1), params: SIMD4(0, 1, -1, 0)))
+        return materials.count - 1
+    }
+
     func addLeafMaterial(_ material: LeafMaterial) { leafMaterials.append(material) }
 
     /// A texture made here rather than read from a model (FoliageTextures): the index a material names it by. The
@@ -1123,7 +1374,7 @@ final class Scene {
         return UInt32(textures.count - 1)
     }
 
-    /// The share of the deciduous plants' leaves that have fallen at `season` (the custom ray tracer drops them).
+    /// The share of the deciduous plants' leaves that have fallen at `season` (the plants' variants drop them).
     static func leafFall(season: Float) -> Float {
         let t = min(max((season - 0.62) / 0.33, 0), 1)
         return t * t * (3 - 2 * t)
@@ -1280,7 +1531,7 @@ final class Scene {
         var flagged = Set<Int>()
         let lent = Set(borrowed.map(\.mesh))   // their lights come with them (`addMeshLight`)
         var sdfLights: [Int: (positions: [SIMD3<Float>], indices: [UInt32], materials: [Int])] = [:]
-        for (i, inst) in instances.enumerated() where inst.isGeometry && !inst.skinned {
+        for (i, inst) in instances.enumerated() where inst.isGeometry && !inst.deforms {
             if inst.sdf >= 0 {
                 // An SDF shape: a light per material of its that emits, its triangles those of the shape's surface
                 // (made once per shape, just outside it: SDFShape.triangles) where that material is.

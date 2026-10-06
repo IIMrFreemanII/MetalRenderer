@@ -168,6 +168,32 @@ float3 lightUnshadowedOther(Light light, float3 p, float3 n, float3 ng) {
     return float3(0.0f);
 }
 
+// A light's unshadowed light at a point in a medium (no surface, so no receiver cosine): lightUnshadowed with the
+// normal toward the light's centre (the sun: its direction). The weight a light is picked by there.
+inline float lightVolumeWeight(Light light, float3 p) {
+    float3 nl = lightType(light) == LIGHT_SUN ? light.axis.xyz : normalize(light.positionRadius.xyz - p);
+    return luminance(lightUnshadowed(light, p, nl, nl));
+}
+
+// The suns whose discs camera rays see: the light table's (at most 2), or among the analytic lights.
+inline uint sunDiscCount(constant Uniforms& u) { return LIGHT_TABLE ? u.lightTable.y : u.lightGroupEnd.w; }
+inline uint sunDiscLight(constant Uniforms& u, uint k) { return LIGHT_TABLE ? (k == 0 ? u.lightTable.z : u.lightTable.w) : k; }
+
+// A sun's disc seen along unit `dir`: its irradiance over its solid angle; 0 off the disc, or for a light that isn't a
+// sun. With the sky texture the disc darkens toward its limb and clouds in front of it dim it (skyAlpha: the sky
+// texture's alpha along dir).
+inline float3 sunDisc(Light light, float3 dir, uint flags, float skyAlpha) {
+    float theta = light.positionRadius.w;
+    float c = dot(dir, light.axis.xyz);
+    if (lightType(light) != LIGHT_SUN || c < cos(theta)) return float3(0.0f);
+    float3 disc = light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
+    if (flagOn(flags, FLAG_SKY_MAP)) {
+        float x = sqrt(max(1.0f - c * c, 0.0f)) / sin(theta), mu = sqrt(max(1.0f - x * x, 0.0f));
+        disc *= skyAlpha * (1.0f - 0.6f * (1.0f - mu)) / 0.8f;   // limb darkening (u = 0.6), mean 1
+    }
+    return disc;
+}
+
 // A random point of the light, for a soft-shadow ray from p.
 inline float3 lightShadowTarget(Light light, float3 p, float2 u) {
     uint type = lightType(light);

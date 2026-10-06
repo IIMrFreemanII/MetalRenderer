@@ -5,7 +5,13 @@ struct ShadingPoint {
     float3 f0;
     float  roughness;
     bool   specular;      // F0 > 0 (with FLAG_SPECULAR)
+    HairPoint hair;       // a strand's (Hair.metal): lit by its BSDF
 };
+
+// Where a shadow ray from `sp` toward `target` starts: `sp.p`, or a strand's own (hairShadowOrigin).
+inline float3 shadowOrigin(thread const ShadingPoint& sp, float3 target) {
+    return sp.hair.on ? hairShadowOrigin(sp.p - sp.ng * RAY_EPSILON, sp.n, target) : sp.p;
+}
 
 // A light sample at a surface, unshadowed: diffuse light (albedo divided out, like lightUnshadowed), specular light,
 // and the shadow ray's end point. The clouds' shadow is in for the sun.
@@ -29,6 +35,13 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
         float3 l = w * rsqrt(max(d2, 1e-12f));
         e.target = sp.p + w * 0.99f;   // pulled toward p: an emitter traced at a coarser level of detail doesn't shadow itself
         float cosP = dot(sp.n, l), cosL = abs(dot(mp.cr, l)) / max(mp.area2, 1e-12f);   // emission is two-sided
+        if (sp.hair.on && mp.area2 > 0.0f) {
+            // A strand: the irradiance the triangle's point gives a surface facing it, through the hair's BSDF.
+            float g = cosL / max(d2, 1e-6f) * (0.5f * mp.area2);
+            float3 emission = exact ? meshLightPointEmission(mp, s) : float3(tris[index].radianceLum);
+            e.diffuse = emission * g * (hairScatter(sp.hair, l) + hairMultiple(sp.hair, l)) / sp.hair.albedo;
+            return e;
+        }
         if (cosP <= 0.0f || dot(sp.ng, l) <= 0.0f || mp.area2 <= 0.0f) return e;
         float g = cosP * cosL / max(d2, 1e-6f) * (0.5f * mp.area2) / M_PI_F;   // uniform point: pdf = 1 / area
         e.diffuse = exact ? meshLightPointEmission(mp, s) * g : float3(tris[index].radianceLum * g);
@@ -37,7 +50,7 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
     Light light = lights[index];
     e.target = lightShadowTarget(light, sp.p, uv);
     float cloud = sunVisibilityScale(light, sp.p, s);
-    e.diffuse = lightUnshadowed(light, sp.p, sp.n, sp.ng) * cloud;
+    e.diffuse = litUnshadowed(light, sp.p, sp.n, sp.ng, sp.hair) * cloud;
     if (sp.specular) e.specular = lightSpecular(light, sp.p, sp.n, sp.ng, sp.v, sp.f0, sp.roughness) * cloud;
     return e;
 }
@@ -74,6 +87,7 @@ float3 sampleLightsRIS(device const Light* lights, uint lightCount, uint4 table,
     ShadingPoint sp;
     sp.p = p; sp.n = n; sp.ng = ng; sp.v = n; sp.albedo = float3(1.0f); sp.f0 = float3(0.0f); sp.roughness = 1.0f;
     sp.specular = false;
+    sp.hair = noHair();
     device const LightTableEntry* entries = lightTableEntries(lights, lightCount);
     device const TriangleInfo* tris = lightTableTriangles(lights, lightCount, table.x);
     uint M = table.x > 0 ? candidates : 0u;

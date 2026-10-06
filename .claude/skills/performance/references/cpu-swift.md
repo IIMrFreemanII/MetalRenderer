@@ -61,7 +61,7 @@ nothing.
 * **Use value types and `final class`.** Every class here is `final`; keep new ones `final` too. That gives static
   dispatch. Avoid protocols, existentials (`any P`) and generic code that isn't specialized inside a hot loop.
 * **Remove bounds and CoW checks** on proven-hot loops with `withUnsafeBufferPointer` /
-  `withUnsafeMutableBufferPointer` (BVH.swift and CustomRayTracer.swift do this). Keep the unsafe region small.
+  `withUnsafeMutableBufferPointer` (BVH.swift, VirtualBLAS.swift and PlantTracing.swift do this). Keep the unsafe region small.
 * **Reserve capacity.** `reserveCapacity` before append loops (BVH, MeshSimplifier, MeshClusterizer, Scene). Better
   still, preallocate with `Array(repeating:count:)` and write by index.
 * **No dictionaries or sets in inner loops** when a dense index works. Map IDs to `0..<n` once, then use arrays.
@@ -69,7 +69,7 @@ nothing.
 * **SIMD:**
   * use `SIMD3<Float>` / `SIMD4<Float>` and `simd` functions (`min`, `max`, `dot`, `length`) for vector math;
   * `SIMD3<Float>` has a 16-byte stride, so for large arrays of positions consider SoA or packed `Float` triples;
-  * keep AABB math in SIMD4 (as `BVHNode` does).
+  * keep AABB math in SIMD4 (as `BVHNode`, a cluster tree's node, does).
 * **ARC:** reading a class reference inside a loop can retain and release. Hoist class properties into locals (`let
   nodes = self.nodes`) before the loop. Keep closures out of the hot path.
 * **Algorithmic wins dwarf micro-optimizations.**
@@ -82,8 +82,9 @@ nothing.
 
 ## 3. Parallelism
 
-* **`DispatchQueue.concurrentPerform`** is the project's pattern, used in BVH.swift:207, FogNoise.swift:40,
-  MaterialTextures.swift:17, VirtualBLAS.swift:138, TextureStreamer.swift:311 and VirtualGeometryBuilder.swift:210.
+* **`DispatchQueue.concurrentPerform`** is the project's pattern, used in BVH.swift:213, FogNoise.swift:40,
+  MaterialTextures.swift:17, VirtualBLAS.swift:254 (gathering the cuts' triangles), PlantTracing.swift:397 (the
+  plants' descriptors, in parts), TextureStreamer.swift:311 and VirtualGeometryBuilder.swift:210.
   * Iterate over coarse units (meshes, groups, slices, textures) so each iteration does at least ~100 µs of work.
   * Chunk fine-grained work manually (`iterations: cores * 4`, then a range per iteration).
   * Each iteration writes to its own preallocated slot (`UnsafeMutableBufferPointer` captured before the call). No
@@ -91,7 +92,7 @@ nothing.
   * Merge the results serially afterwards, or under a lock only for rare events.
 * **Locks:** `NSLock` for rare state shared between the render thread and a worker (VirtualBLAS `busy`/`finished`,
   TextureStreamer). Hold a lock only to swap a pointer or an array, never while doing work.
-* **The background build handoff pattern** (VirtualBLAS.swift ~120–145) is the template for any heavy per-change CPU
+* **The background build handoff pattern** (VirtualBLAS.swift ~106–145) is the template for any heavy per-change CPU
   work:
   1. The render thread starts a job on `worker` if none is running (`busy`).
   2. The job appends its results to `finished` under the lock.

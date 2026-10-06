@@ -25,7 +25,7 @@ final class RasterScene {
     let chunkMeshes: MTLBuffer     // per chunk with bounds: its mesh index
     let chunkCount: Int
     let chunkBounds: MTLBuffer     // per chunk: lo, hi (float4 each), from rasterBoundsKernel
-    let ids: MTLBuffer?            // per instance: its id (Metal's tracer with blocks), else nil (the id is the place)
+    let ids: MTLBuffer?            // per instance: its id (a scene with blocks), else nil (the id is the place)
     let visible: MTLBuffer         // per instance: 1 = drawn last frame (MSL RASTER_VISIBLE; RASTER_IN_VIEW between the passes)
     /// The scene's own instances that move or deform, or whose virtual geometry's cut may change (places): what
     /// invalidates the virtual shadow maps' pages it covers (vsmInvalidateKernel). The blocks' never move.
@@ -48,16 +48,16 @@ final class RasterScene {
     }
 
     /// How `mesh` is drawn: from its own buffer or the scene's arrays, or not at all (traced): leaf cards are cut out by
-    /// an alpha mask the raster doesn't apply, and the custom tracer bends swaying ground cover where it meets it.
-    static func kind(of mesh: GPUMesh, borrowed: Bool, customTracer: Bool) -> Kind {
-        if mesh.cutout != 0 || (customTracer && mesh.sways != 0) || mesh.indexCount == 0 { return .skip }
+    /// an alpha mask the raster doesn't apply, and swaying ground cover leans in the wind where the rays meet it.
+    static func kind(of mesh: GPUMesh, borrowed: Bool) -> Kind {
+        if mesh.cutout != 0 || mesh.sways != 0 || mesh.indexCount == 0 { return .skip }
         return borrowed ? .block : .arrays
     }
 
     /// Chunks of `triangles`.
     static func chunks(_ triangles: Int) -> Int { (triangles + chunk - 1) / chunk }
 
-    init(device: MTLDevice, scene: Scene, buffers: SceneBuffers, customTracer: Bool, virtualBLAS: Bool, clusters: Bool = false) throws {
+    init(device: MTLDevice, scene: Scene, buffers: SceneBuffers, virtualBLAS: Bool, clusters: Bool = false) throws {
         func shared<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
             let made = array.withUnsafeBytes { raw in
                 raw.count > 0 ? device.makeBuffer(bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
@@ -74,7 +74,7 @@ final class RasterScene {
         var records: [GPURasterMesh] = [], chunkMeshes: [UInt32] = []
         for (m, mesh) in scene.meshes.enumerated() {
             let borrowed = mesh.block != 0 || (m < buffers.blocks.count && buffers.blocks[m] != nil)
-            let kind = RasterScene.kind(of: mesh, borrowed: borrowed, customTracer: customTracer)
+            let kind = RasterScene.kind(of: mesh, borrowed: borrowed)
             let deforms = mesh.prevOffset != 0 || mesh.vertexOffset != 0
             let b = scene.localBounds(mesh: m)
             let first = chunkMeshes.count
@@ -115,7 +115,7 @@ final class RasterScene {
         }
         let movers = scene.instances.indices.filter {
             let inst = scene.instances[$0]
-            return inst.moves || inst.skinned || inst.virtualMesh >= 0
+            return inst.moves || inst.deforms || inst.virtualMesh >= 0
         }.map { UInt32($0) }
         movingCount = movers.count
         moving = try shared(movers, "raster moving instances")

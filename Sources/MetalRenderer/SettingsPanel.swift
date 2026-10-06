@@ -419,8 +419,7 @@ final class SettingsPanel: NSObject {
         let defaults = renderer.defaultSettings
         renderer.update { s in
             var reset = defaults
-            reset.scene = s.scene   // render settings only; the loaded scene and tracer stay
-            reset.rayTracer = s.rayTracer
+            reset.scene = s.scene   // render settings only; the loaded scene and API stay
             reset.api = s.api
             reset.applySceneDefaults(from: defaults)
             s = reset

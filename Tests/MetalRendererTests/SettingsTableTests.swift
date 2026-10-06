@@ -171,6 +171,56 @@ final class SettingsTableTests: XCTestCase {
         }
     }
 
+    func testThePhysicsSceneHasItsOwnLook() {
+        var s = defaults
+        s.scene.kind = .physics
+        s.applySceneDefaults(from: defaults)
+        XCTAssertFalse(s.giEnabled)
+        XCTAssertFalse(s.specular)
+        XCTAssertEqual(s.renderScale, RenderSettings.physicsScale)
+        // Leaving it brings the defaults back...
+        s.scene.kind = .cornell
+        s.applySceneDefaults(from: defaults)
+        XCTAssertEqual(s.giEnabled, defaults.giEnabled)
+        XCTAssertEqual(s.specular, defaults.specular)
+        XCTAssertEqual(s.renderScale, defaults.renderScale)
+        // ...but not over a look chosen elsewhere.
+        s.giEnabled = false
+        s.renderScale = 1
+        s.scene.kind = .sun
+        s.applySceneDefaults(from: defaults)
+        XCTAssertFalse(s.giEnabled)
+        XCTAssertEqual(s.renderScale, 1)
+        // Starting in it from the environment.
+        var started = defaults
+        SettingsEnv.applyAll(to: &started, defaults: defaults, from: ["METALRENDERER_SCENE": "physics"])
+        XCTAssertEqual(started.scene.kind, .physics)
+        XCTAssertFalse(started.giEnabled)
+        XCTAssertEqual(started.renderScale, RenderSettings.physicsScale)
+        // The ragdoll scene shares it, and its count is a scene key.
+        var ragdolls = defaults
+        SettingsEnv.applyAll(to: &ragdolls, defaults: defaults, from: ["METALRENDERER_SCENE": "ragdolls,ragdolls=40"])
+        XCTAssertEqual(ragdolls.scene.kind, .ragdolls)
+        XCTAssertEqual(ragdolls.scene.physics.ragdolls, 40)
+        XCTAssertFalse(ragdolls.specular)
+        XCTAssertEqual(ragdolls.renderScale, RenderSettings.physicsScale)
+        // The hair scene too.
+        var hair = defaults
+        SettingsEnv.applyAll(to: &hair, defaults: defaults, from: ["METALRENDERER_SCENE": "hair,hair=6,fur=3"])
+        XCTAssertEqual(hair.scene.kind, .hair)
+        XCTAssertEqual(hair.scene.physics.hair, 6)
+        XCTAssertEqual(hair.scene.physics.furBodies, 3)
+        XCTAssertEqual(hair.renderScale, RenderSettings.physicsScale)
+        // The soft body scene shares the look; its counts are scene keys.
+        var soft = defaults
+        SettingsEnv.applyAll(to: &soft, defaults: defaults, from: ["METALRENDERER_SCENE": "softbodies,soft=8,cells=5"])
+        XCTAssertEqual(soft.scene.kind, .softBodies)
+        XCTAssertEqual(soft.scene.physics.softBodies, 8)
+        XCTAssertEqual(soft.scene.physics.softCells, 5)
+        XCTAssertFalse(soft.giEnabled)
+        XCTAssertEqual(soft.renderScale, RenderSettings.physicsScale)
+    }
+
     func testBadInputIsSkipped() {
         var s = defaults
         SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
@@ -200,7 +250,7 @@ final class SettingsTableTests: XCTestCase {
             "METALRENDERER_GI": "mode=restir, bounces = 3.7,scale=0.75",
             "METALRENDERER_FOG_SET": "on=0,wind=1:0:2",
             "METALRENDERER_VIEW": "tonemap=AgX,paused=1",
-            "METALRENDERER_RT": "metal",
+            "METALRENDERER_API": "metal4",
         ])
         XCTAssertEqual(s.scene.kind, .market)
         XCTAssertEqual(s.scene.lights, SceneSettings.marketLights)
@@ -212,7 +262,7 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.fog.wind, SIMD3<Float>(1, 0, 2))
         XCTAssertEqual(s.toneMap, .agx)
         XCTAssertTrue(s.paused)
-        XCTAssertEqual(s.rayTracer, .metal)
+        XCTAssertEqual(s.api, .metal4)
         // Benchmarks choose the view and the pause themselves.
         var b = defaults
         SettingsEnv.apply(.view, to: &b, from: ["METALRENDERER_VIEW": "paused=1,view=3,fov=70"])
@@ -221,7 +271,7 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(b.fovDegrees, 70)
     }
 
-    /// Metal's tracer traces far plants as their triangles unless asked for their voxels, which are slower wherever
+    /// Far plants are traced as their triangles unless asked for their voxels, which are slower wherever
     /// they were measured.
     func testFarPlantsAreTrianglesUnlessAskedFor() {
         XCTAssertFalse(defaults.scene.voxelBoxes)

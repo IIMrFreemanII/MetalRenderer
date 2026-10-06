@@ -205,8 +205,8 @@ final class SDFTests: XCTestCase {
         XCTAssertEqual(scene.materials[scene.instances[glowing].material + 1].params.z, 1, "flagged: its glow is sampled as a light")
     }
 
-    /// The shapes on the GPU: both tracers' buffers, and on Metal's a box per shape after the meshes' structures,
-    /// which the shapes' instances' descriptors name.
+    /// The shapes on the GPU: their buffers, and a box per shape after the meshes' structures, which the shapes'
+    /// instances' descriptors name.
     func testShapesOnTheGPU() throws {
         let scene = Scene(SceneSettings(kind: .cornell)) { scene in
             let material = scene.addMaterial(albedo: [0.5, 0.5, 0.5])
@@ -217,22 +217,20 @@ final class SDFTests: XCTestCase {
             scene.addInstance(sdf: a, material, translate([-1, 0, 0]))
         }
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let custom = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .custom, api: .metal3, slots: 2))
-        XCTAssertEqual(custom.sdf.shapeCount, 2)
-        let shapes = UnsafeBufferPointer(start: custom.sdf.shapes.contents().bindMemory(to: GPUSDFShape.self, capacity: 2), count: 2)
+        let metal = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 2))
+        XCTAssertEqual(metal.sdf.shapeCount, 2)
+        let shapes = UnsafeBufferPointer(start: metal.sdf.shapes.contents().bindMemory(to: GPUSDFShape.self, capacity: 2), count: 2)
         XCTAssertEqual(shapes.map(\.range.x), [0, 1])
         XCTAssertEqual(shapes.map(\.range.y), [1, 2])
         XCTAssertEqual(shapes[0].lo.w, 1, "exact: full steps")
         XCTAssertLessThan(shapes[1].lo.w, 1)
-        XCTAssertTrue(custom.buffers.contains { $0 === custom.sdf.nodes })
-        XCTAssertTrue(custom.sdf.boxes.isEmpty, "no boxes for the custom tracer")
-        let scenes = UnsafeBufferPointer(start: custom.sdf.scene.contents().bindMemory(to: UInt64.self, capacity: 4), count: 4)
-        XCTAssertEqual(Array(scenes), [custom.sdf.shapes.gpuAddress, custom.sdf.nodes.gpuAddress, custom.sdf.volumes.gpuAddress,
-                                       custom.sdf.cells.gpuAddress])
+        XCTAssertTrue(metal.buffers.contains { $0 === metal.sdf.nodes })
+        let scenes = UnsafeBufferPointer(start: metal.sdf.scene.contents().bindMemory(to: UInt64.self, capacity: 4), count: 4)
+        XCTAssertEqual(Array(scenes), [metal.sdf.shapes.gpuAddress, metal.sdf.nodes.gpuAddress, metal.sdf.volumes.gpuAddress,
+                                       metal.sdf.cells.gpuAddress])
 
-        guard device.supportsRaytracing else { return }
-        let metal = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(rayTracer: .metal, api: .metal3, slots: 2))
         XCTAssertEqual(metal.sdf.boxes.count, 2)
         XCTAssertEqual(metal.primitives.count, scene.meshes.count + 2)
         XCTAssertTrue(metal.primitives[scene.meshes.count] === metal.sdf.boxes[0])

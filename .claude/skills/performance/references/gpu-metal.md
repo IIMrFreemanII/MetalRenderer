@@ -2,8 +2,9 @@
 
 Apple-silicon GPUs here: a unified memory architecture (no managed storage, no PCIe copies), 32-wide simdgroups, tile
 memory, and counters that can be sampled only at encoder boundaries. M1/M2 have no ray-tracing hardware, so Metal's
-intersector is software and the project's own BVH (`CUSTOM_RT`) can beat it. On M3 and later, re-check with
-`METALRENDERER_BENCH=rt`.
+intersector, the only tracer since the project's own BVH was removed (October 2026), runs in software there; M3 and
+later traverse in hardware. A cost that comes from handing work back to the shader (boxes, non-opaque triangles)
+looks very different on the two: measure on both before choosing (`METALRENDERER_BENCH=hwrt` for the plain cost).
 
 The shaders are compiled at runtime (MSL 3.2, `Pipelines.compile`) from `Sources/MetalRenderer/Shaders.metal`, the
 entry file, and the pieces it lists in `Sources/MetalRenderer/Shaders/` (one per subject; `ShaderSource.swift` joins
@@ -82,7 +83,7 @@ fewer threads run at once and memory latency stops being hidden.
     (`tracePassFlags`, `initialPassFlags`): keep the two identical, `swift test` checks the constants and
     measuring.md's safe-math diff checks the result.
   * function constants: `lightTypesConstant` / `LIGHT_SPEC` strips unused light types per scene;
-  * preprocessor macros: `CUSTOM_RT`, `RT_STATS` (`Pipelines.compile`).
+  * preprocessor macros: `RT_STATS` (`Pipelines.compile`).
 
   A runtime `if (feature)` on a uniform is cheap for divergence, but both paths stay in the kernel. Measured
   (variants against general pipelines): what pays is a path with a **ray cast** in it. traceKernel with the bounce
@@ -103,22 +104,25 @@ fewer threads run at once and memory latency stops being hidden.
 * A simdgroup runs as slowly as its slowest lane. Keep loop trip counts uniform: fixed sample counts per pixel, and
   bounded traversal stacks. Variable-length work (traversal, many-light loops) is where divergence lives.
 * Branch on data that's uniform across the simdgroup (`Uniforms`, the scene config) where possible.
-* **Lay data out for one fetch per decision.** The BVH node (`BVHNode`, BVH.swift:6) is 64 bytes and holds both
-  children's boxes, so one load tests two. The TLAS `hi.w` carries an OR of instance masks so rays skip whole
-  subtrees. Apply the same thinking to new structures: pack what's tested together, and keep cold data elsewhere.
+* **Lay data out for one fetch per decision.** The node of a cluster's tree (`BVHNode`, BVH.swift), which the ray
+  queries walk in `METALRENDERER_VG_MODE=clusters` (`clusterWalk`), is 64 bytes and holds both children's boxes, so
+  one load tests two. Instance masks let Metal's traversal skip whole instances. Apply the same thinking to new
+  structures: pack what's tested together, and keep cold data elsewhere.
 * Access 2D textures in 2D tiles (`dispatchThreads` with 2D threadgroups) for cache locality. Avoid scattered reads
   driven by per-pixel indirection unless that is the algorithm (ReSTIR spatial neighbours: few, bounded).
-* Use RT_STATS (`METALRENDERER_RT_STATS=1`, or the Debug window toggle) to quantify traversal: nodes, instance
-  entries, cluster entries and triangle tests per ray. A tree-quality change should move these numbers.
+* Use RT_STATS (`METALRENDERER_RT_STATS=1`, or the Debug window toggle) to quantify traversal: the triangle and box
+  candidates Metal's traversal hands the ray queries, per ray. Metal can't count its nodes, so those builds make every
+  triangle non-opaque to count it (and trace slower). A change to what the structures hold (boxes, leaf cards,
+  cluster boxes) should move these numbers; view 13 ("Traversal cost") shows them per pixel.
 
 ## 5. Reductions, atomics and threadgroup memory
 
-* Atomics are relaxed throughout (`memory_order_relaxed`). Keep it that way unless ordering is needed: MSL 3.2
-  device-scope fences are used in `rtFitKernel` for the bottom-up LBVH fit.
+* Atomics are relaxed throughout (`memory_order_relaxed`). Keep it that way unless ordering is needed. (The
+  bottom-up tree fits that needed device-scope fences went with the custom tracer.)
 * **Simdgroup intrinsics** (`simd_sum`, `simd_min` / `simd_max`, `simd_all`, `simd_is_first`,
   `simd_prefix_exclusive_sum`, `simd_ballot`) replace threadgroup-memory round-trips and barriers. In use:
-  `shadowTemporalKernel` (`simd_all` to mark settled tiles) and `rtKeysKernel` (`simd_min` / `simd_max` for the
-  centroid bounds). Every thread of a group must reach the call: no early `return` above it.
+  `shadowTemporalKernel` (`simd_all` to mark settled tiles). Every thread of a group must reach the call: no early
+  `return` above it.
   * Don't expect a gain from them on a small pass. `rcSHKernel` adds four atomics per probe to one 16-byte buffer;
     with `simd_sum` and one add per SIMD group the frame measured the same (0.00 ± 0.02 ms, October 2026), so it
     kept its simple form. `restirGISpatialKernel`'s ambient sums are already 1 pixel in 64.
@@ -141,12 +145,25 @@ fewer threads run at once and memory latency stops being hidden.
 
 ## 7. Acceleration structures and ray tracing
 
-* Static geometry: build once (the static TLAS, per-mesh BLAS with binned SAH).
-* Moving instances: the custom tracer rebuilds an LBVH on the GPU every frame (`CustomRayTracer.swift`). Metal's TLAS
-  refits, with a full rebuild every `METALRENDERER_TLAS` frames (16 by default). Compare tree quality against
-  build cost with `METALRENDERER_RT_BUILD=cpu` (binned SAH, a better tree).
-* Virtual geometry swaps per-instance BLAS on a background thread. Keep cut changes rare (`slack` in
-  VirtualBLAS.swift), because every rebuild costs CPU and memory churn.
+* Every ray goes through Metal's structures (`TraceScene.swift`: the kernels get the TLAS and what a hit reads at
+  buffer 1). Per-mesh structures are built once with the scene, for fast intersection and compacted
+  (`METALRENDERER_BLAS=default` turns that off).
+* A still scene (`Scene.isStill`: nothing moves, no virtual geometry) builds its TLAS once, at default quality.
+  Otherwise the TLAS refits each frame, with a full rebuild every `METALRENDERER_TLAS` frames (16 by default) and
+  whenever a descriptor names another structure (a new virtual-geometry cut, a plant's other variant or voxel level).
+  `METALRENDERER_TLAS_BUILD` picks its build quality.
+* Refits are not free per structure: on the M1 Max about 0.09 ms each, whatever its size (the crowd's pose slots).
+  The plants' wind refits each variant a plant names in an encoder of its own (`PlantTracing.refit`): two to an
+  encoder are no faster there, and four crash the M1 Max's driver. 232 refits plus the posing are ~11.6 ms of the
+  forest's frame on that GPU: fewer variants named is the lever, not tighter kernels.
+* Virtual geometry swaps a per-instance BLAS (`VirtualBLAS`): the cut on the CPU, the cut's triangles gathered into a
+  buffer, Metal's build on a queue of its own (so frames never wait behind it), then a TLAS rebuild. Keep cut changes
+  rare (`slack` in VirtualBLAS.swift): every rebuild costs CPU, GPU and memory churn, and an uncompacted BLAS is about
+  twice the custom tracer's old tree (107 vs 53 MB for 418k triangles).
+* What Metal's traversal hands back to the shader is the cost to watch in software: bounding boxes (far plants'
+  voxels, SDF shapes, `VG_MODE=clusters`' cluster boxes) and non-opaque triangles (leaf cards, alpha-tested by
+  `rtCutout`) turn the queries into intersection-query loops. On the M1 Max leaf cards take the forest from 70 to
+  223 ms, and clusters mode is ~6× the BLAS mode. Re-measure on hardware RT before drawing conclusions.
 * Shadow rays: they are any-hit and terminate early. Many-light sampling replaces one ray per light; ReSTIR reuses
   samples. Ray count is the main budget on M1/M2.
 
@@ -156,7 +173,7 @@ fewer threads run at once and memory latency stops being hidden.
   a scene load (`prepareScene`) or a hot reload (`reloadShaders`) builds the next set on a background queue, all
   kernels in parallel, and the renderer swaps it in between two frames. A new kernel is one `Kernel` case named
   after its function (`trace` ↔ `traceKernel`).
-* The set is keyed by tracer and light types (`Pipelines.kind`, `.lightTypes`). Its library is reused when only the
+* The set is keyed by API, the counters and the light types (`Pipelines.api`, `.stats`, `.lightTypes`). Its library is reused when only the
   light types change.
 * Metal caches compiled pipelines on disk, shared by every build of the app: a warm build of all 47 takes 2–6 ms.
   Cold, the source compile takes 1.9 s and the pipelines 0.5–0.7 s in parallel (0.9–1.2 s one by one: the compiler
@@ -186,7 +203,6 @@ copies did, checked bit for bit under `METALRENDERER_MATH=safe`):
 | The pixel that shows a world point | `surfacePixel(...)`, `lastFramePixel(u, prevPosition, n, prevND, q)` | LightSampling.metal |
 | Spatial reuse | `diskNeighbour(...)`, `pairwiseMIS(...)` | LightSampling.metal |
 | Edge stopping on depth and normal | `depthGradient(...)`, `geometryWeights(...)` | Denoise.metal |
-| A Karras tree's node range, a box's world box | `karrasRange(keys, n, i)`, `boxToWorld(lo, hi, m)` | BVHBuild.metal |
 
 Rules that kept the refactor bit-identical, and keep a helper honest:
 
@@ -203,9 +219,6 @@ path's hit: the path tracer, ReSTIR GI and the reflections take their branches i
 do not. The ambient fixed point: 1024 in
 the cascades, `RGI_AMBIENT_SCALE` (256) in ReSTIR GI. The distance floor of a light sample: 1e-6 at surfaces, 1e-4
 in fog. Making any of them alike changes images, so it is a change to measure, not a clean-up.
-
-The two bottom-up fit kernels (`rtFitKernel`, `vgFitKernel`) keep their own walk-up loops: the loop writes through a
-`coherent(device)` pointer between device-scope fences, and that stays visible in the kernel.
 
 ## 10. GPU tools
 

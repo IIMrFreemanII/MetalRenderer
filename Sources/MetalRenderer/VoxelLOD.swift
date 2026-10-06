@@ -3,10 +3,10 @@ import Metal
 import QuartzCore
 import simd
 
-/// Metal's tracer: distance level of detail for baked plants, by their voxel grids (FoliageVoxels, VoxelGrids). As on
-/// the custom tracer (rtPrepKernel), a plant far enough that a voxel of one of its grid's levels is smaller than the
-/// "Distance LOD (voxels)" bias in traced pixels is that level's voxels: its wood instance points at the level's box
-/// (whose rays the ray queries march through the grid, Shaders/Intersect.metal) and its leaf instance is masked out.
+/// Distance level of detail for baked plants, by their voxel grids (FoliageVoxels, VoxelGrids): a plant far enough
+/// that a voxel of one of its grid's levels is smaller than the "Distance LOD (voxels)" bias in traced pixels is that
+/// level's voxels: its wood instance points at the level's box (whose rays the ray queries march through the grid,
+/// Shaders/Intersect.metal) and its leaf instance is masked out.
 ///
 /// A still scene's top-level structure is built once, for tracing: the levels change it by building another in the
 /// background (`rebuild`), which the renderer swaps in at a frame's start (`swap`). Its levels trail the camera by
@@ -16,7 +16,7 @@ final class VoxelLOD {
     struct Entry {
         var position: SIMD3<Float>
         var size: Float                 // its grid's level 0 voxel, placed (the grid's size x the instance's scale)
-        var jitter: Float               // its own offset of the level boundaries (as rtPrepKernel's)
+        var jitter: Float               // its own offset of the level boundaries
         var descriptor: Int             // its instance descriptor
         var mesh: Int
         var grid: Int
@@ -39,7 +39,7 @@ final class VoxelLOD {
     /// The structure the frames trace, and the one the next levels are built into.
     private(set) var current: MTLAccelerationStructure
     private var spare: MTLAccelerationStructure
-    /// The view the levels were last picked for: (camera position, bias / pixel scale), as rtPrepKernel's lodView.
+    /// The view the levels were last picked for: (camera position, bias / pixel scale).
     private(set) var pickedView: SIMD4<Float>?
     /// What the last `rebuild` took: picking (CPU) and building, and how many instances it changed.
     private(set) var last: (pickMs: Double, buildMs: Double, changed: Int) = (0, 0, 0)
@@ -63,7 +63,7 @@ final class VoxelLOD {
 
     // MARK: - Levels
 
-    /// rtPrepKernel's level for a plant at `distance` from the camera: 0 = its triangles, else the level + 1.
+    /// The level for a plant at `distance` from the camera: 0 = its triangles, else the level + 1.
     /// `view`: bias in traced pixels / the view's pixel scale (0 = always triangles).
     static func level(distance: Float, size: Float, view: Float, jitter: Float) -> UInt8 {
         guard view > 0 else { return 0 }
@@ -146,7 +146,7 @@ final class VoxelLOD {
         let picked = CACurrentMediaTime()
         guard changed > 0 else { last = ((picked - start) * 1000, 0, 0); return false }
         let build = TLASUpdate(structure: spare, scratch: scratch, refit: false, instanceCount: instanceCount, usage: usage,
-                               instances: descriptors, instanceStride: stride, primitives: primitives)
+                               instances: descriptors, instanceStride: stride, primitives: primitives, indirect: indirect)
         guard let cmd = queue.makeCommandBuffer(), let enc = cmd.makeAccelerationStructureCommandEncoder() else { return false }
         // Indirect descriptors name the meshes' structures by ID: the build reads them, so they must be resident.
         if indirect { enc.useResources(primitives, usage: .read) }
