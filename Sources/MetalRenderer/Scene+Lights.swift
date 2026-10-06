@@ -66,7 +66,7 @@ extension Scene {
         case .market: return camera([0.6, 1.7, 30], yaw: 0.02, pitch: 0.12)
         case .forest: return camera([1.5, 1.7, 10], yaw: 0.06, pitch: 0.1)
         case .shapes: return camera([0, 3.9, 4.4], pitch: -0.58)
-        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase:
+        case .cornell, .stress, .gallery, .storeroom, .crowd, .city, .cityNight, .world, .showcase:
             return nil   // the crowd's, the city's, the world's and the showcase's are their scenes' to say
         }
     }

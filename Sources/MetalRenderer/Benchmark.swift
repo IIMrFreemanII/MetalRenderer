@@ -141,6 +141,12 @@ final class Benchmark {
             start.position = SIMD3<Float>(-3.2, 1.5, 0.2)
             start.yaw = -0.7
             start.pitch = -0.05
+        } else if scene == .storeroom {
+            // Halfway down the aisle, turned toward the left bays, walking back to the way in.
+            c = Scene.storeroomCamera
+            start.position = SIMD3<Float>(0.6, 1.6, -14)
+            start.yaw = -0.3
+            start.pitch = -0.02
         } else if scene == .stress {
             // Low in the central aisle, turned toward the office, rising and backing up to the overview.
             c = Scene.stressCamera

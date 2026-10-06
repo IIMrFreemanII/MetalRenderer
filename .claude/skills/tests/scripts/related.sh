@@ -73,6 +73,7 @@ if [[ $suites == " " ]]; then
           TextureStreamer.swift) add TextureStreamerTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
+          Scene+Storeroom.swift) add GLTFLoaderTests BenchmarkModesTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
           VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests VGCutTests ;;
           VirtualBLAS.swift) add VGCutTests ;;

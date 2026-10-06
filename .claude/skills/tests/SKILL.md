@@ -64,6 +64,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `TextureStreamer` | TextureStreamerTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
+| `Scene+Storeroom` (and `Scene.addModel`'s sharing) | GLTFLoaderTests, BenchmarkModesTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
 | `VGStreamer`, `VirtualGeometry`, `RasterClusters` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |
 | `VirtualBLAS` (its cut, the reference), `Shaders/RasterClusters.metal`, `Shaders/Raster.metal`, `Shaders/VirtualGeometry.metal` | VGCutTests (the shaders: plus the shader pair) |

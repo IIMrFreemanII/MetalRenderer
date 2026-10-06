@@ -746,7 +746,9 @@ extension Benchmark {
         let model = Scene.galleryFiles().map(Scene.showcaseName).first
         var scenes: [(String, SceneSettings, Camera?)] = [("gallery", SceneSettings(kind: .gallery), nil),
                                                           ("closeup", SceneSettings(kind: .gallery), galleryCloseup)]
-        if let model { scenes.append(("showcase", SceneSettings(kind: .showcase, showcase: model), nil)) }
+        let showcase = model.map { SceneSettings(kind: .showcase, showcase: $0) }
+        if let showcase { scenes.append(("showcase", showcase, nil)) }
+        scenes.append(("storeroom", SceneSettings(kind: .storeroom), nil))   // (most of it hidden: where occlusion pays)
         func config(_ name: String, _ scene: SceneSettings, _ camera: Camera?, _ path: (String, PrimaryVisibility, RasterVirtual),
                     gi: GIMode? = .radianceCascades) -> Config {
             let c = Config(name, scale: 0.5, upscale: 3, gi: gi, scene: scene) {
@@ -768,7 +770,8 @@ extension Benchmark {
         }
         for path in paths { out.append(config("gallery camera \(path.0)", SceneSettings(kind: .gallery), nil, path).cameraMove()) }
         for path in paths.dropFirst() {
-            out.append(config("showcase camera \(path.0)", scenes.last!.1, nil, path).cameraMove())
+            if let showcase { out.append(config("showcase camera \(path.0)", showcase, nil, path).cameraMove()) }
+            out.append(config("storeroom camera \(path.0)", SceneSettings(kind: .storeroom), nil, path).cameraMove())
         }
         out.append(config("gallery clusters pool 128", SceneSettings(kind: .gallery), nil, paths[2])
             .with { $0.virtualGeometry.rasterPoolMB = 128 }.cameraMove())

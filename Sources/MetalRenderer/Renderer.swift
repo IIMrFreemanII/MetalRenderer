@@ -695,7 +695,7 @@ final class Renderer: NSObject {
 
     /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
     private var virtualGeometryChanged: Bool {
-        let hasModels = scene.settings.kind == .gallery || !scene.settings.extraModels.isEmpty
+        let hasModels = [.gallery, .storeroom].contains(scene.settings.kind) || !scene.settings.extraModels.isEmpty
         let poolChanged = customRT?.virtualGeometry.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
         return hasModels && (scene.usesVirtualGeometry != wantsVirtualGeometry(settings.rayTracer) || poolChanged)
     }

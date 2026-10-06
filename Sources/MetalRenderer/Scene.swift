@@ -355,6 +355,9 @@ final class Scene {
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
+    /// Per model file added: its first material, the material of its parts without one, and each of its meshes'
+    /// index (ordinary, or virtual). A model placed again shares them (the storeroom's many copies).
+    private var modelResources: [URL: (firstMaterial: Int, fallback: Int, meshOf: [Int: (mesh: Int, virtual: Int)])] = [:]
     var defaultCamera = Camera()
     let settings: SceneSettings
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
@@ -415,6 +418,7 @@ final class Scene {
         case .cornell: buildCornell()
         case .stress: buildStress(objects: settings.objects, lights: settings.lights)
         case .gallery: buildGallery()
+        case .storeroom: buildStoreroom()
         case .spots: buildSpots()
         case .sun: buildSun()
         case .area: buildArea()
@@ -1407,8 +1411,32 @@ final class Scene {
     }
 
     /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
-    /// materials and textures. `animation`, if given, replaces `transform` over time.
+    /// materials and textures (those of the first placement when `url` was added before). `animation`, if given,
+    /// replaces `transform` over time.
     func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+        let resources = modelResources[url] ?? addModelResources(model, url: url)
+        modelResources[url] = resources
+        let (firstMaterial, fallback, meshOf) = resources
+        addModelLights(model, transform: transform, animation: animation)
+        for part in model.parts {
+            let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
+            let (mesh, virtual) = meshOf[part.mesh]!
+            let index: Int
+            if let animation {
+                index = addInstance(mesh, material, transform * part.transform) { t in animation(t) * part.transform }
+            } else {
+                index = addInstance(mesh, material, transform * part.transform)
+            }
+            instances[index].virtualMesh = virtual
+            if materials[material].emission.x + materials[material].emission.y + materials[material].emission.z > 0 {
+                let m = model.meshes[part.mesh]
+                emitterSources[index] = (m.positions, m.uvs, m.indices)
+            }
+        }
+    }
+
+    /// `model`'s materials, textures and meshes (big ones virtual: cached cluster DAGs), for `addModel`.
+    private func addModelResources(_ model: GLTFModel, url: URL) -> (firstMaterial: Int, fallback: Int, meshOf: [Int: (mesh: Int, virtual: Int)]) {
         var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
         func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
             guard let ref else { return .max }
@@ -1430,7 +1458,6 @@ final class Scene {
                                 texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
         }
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
-        addModelLights(model, transform: transform, animation: animation)
         // Big meshes become virtual (cached cluster DAGs); the rest are ordinary meshes.
         let virtualIndices = usesVirtualGeometry
             ? model.meshes.indices.filter { model.meshes[$0].indices.count / 3 >= VirtualGeometryBuilder.minTriangles } : []
@@ -1447,21 +1474,7 @@ final class Scene {
         for (i, mesh) in model.meshes.enumerated() where meshOf[i] == nil {
             meshOf[i] = (addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs), -1)
         }
-        for part in model.parts {
-            let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
-            let (mesh, virtual) = meshOf[part.mesh]!
-            let index: Int
-            if let animation {
-                index = addInstance(mesh, material, transform * part.transform) { t in animation(t) * part.transform }
-            } else {
-                index = addInstance(mesh, material, transform * part.transform)
-            }
-            instances[index].virtualMesh = virtual
-            if materials[material].emission.x + materials[material].emission.y + materials[material].emission.z > 0 {
-                let m = model.meshes[part.mesh]
-                emitterSources[index] = (m.positions, m.uvs, m.indices)
-            }
-        }
+        return (firstMaterial, fallback, meshOf)
     }
 
     /// glTF punctual lights to this renderer's units: candela (point, spot) and lux (directional) are photometric,
