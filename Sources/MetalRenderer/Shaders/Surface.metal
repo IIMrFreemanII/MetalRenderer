@@ -250,9 +250,8 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
     if (sf.backlit) { ng = -ng; ns = -ns; }
 }
 
-// Pixel-footprint spreads for texture filtering (ray cones without curvature): radians of spread per unit distance.
-// Primary rays pass their pixel's angle; GI rays a coarse fixed spread, since their hits get integrated anyway.
-constant float GI_RAY_SPREAD = 0.05f;
+// Pixel-footprint spreads for texture filtering (ray cones without curvature): primary rays pass their pixel's angle,
+// GI rays GI_RAY_SPREAD (Types.metal).
 
 // The hit triangle's vertices (object space): from a cluster in the streaming pool, a virtual instance's BLAS over
 // its cut, or the indexed mesh buffers.
@@ -305,7 +304,7 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         return v;
     }
     // An assembly's part: its mesh's triangle, brought into the plant's space (the instance's object space).
-    bool inPart = FOLIAGE && res.part != HIT_NO_PART;
+    bool inPart = ASSEMBLIES && res.part != HIT_NO_PART;
     RTPart part;
     if (inPart) {
         part = accel.parts[res.part];
@@ -500,7 +499,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
                    + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
     }
-    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
+    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f) && accel.parts[res.part].pad != RT_PART_RIGID) {
         // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
         // frame ago (the motion vector), and its normals now.
         RTPart part = accel.parts[res.part];

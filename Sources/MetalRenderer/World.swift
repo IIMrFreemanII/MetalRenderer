@@ -29,7 +29,7 @@ struct World {
     var lit: Float = 0.35
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
-    static let version = 5
+    static let version = 6
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.

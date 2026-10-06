@@ -79,7 +79,7 @@ kernel void lumenCardCaptureKernel(constant Uniforms&               u          [
     float spread = max(ext[(a + 1u) % 3u], ext[(a + 2u) % 3u]) * scale / float(c.atlas.z) / max(tMax, 1e-3f);
     float tMin = 0.0f;
     for (int k = 0; k < 4; ++k) {
-        Surface h = traceSurface(makeRay(o, d, tMin, tMax), MASK_GEOMETRY, accel, s, spread);
+        Surface h = traceSurface(makeRay(o, d, tMin, tMax), rayMask(MASK_GEOMETRY, RAY_GI), accel, s, spread);
         if (!h.hit) break;
         float t = dot(h.position - o, d);
         // Facing the card by its shading normal: some meshes' triangles are wound against their normals (the quads).
@@ -272,7 +272,7 @@ kernel void lumenCardRadiosityKernel(constant Uniforms&               u         
             h.hit = false;
             if (gh.hit) h = lumenGlobalSurface(gh, instances, s.materials, s.textures, sdfMeshes, sdfBricks, sdfCoarse, sdfAtlas);
         } else {
-            h = traceSurface(makeRay(p, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+            h = traceSurface(makeRay(p, d, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
         }
         if (!h.hit) { sum += skyRadiance(u, s, d, 2.0f); continue; }
         float3 hng, hns;

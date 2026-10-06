@@ -123,7 +123,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     bindLightSampling(s, u.lightTable, regirGrid, regir);
     bool last = p.layout.w != 0;
     Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
-    Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+    Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
 
     float3 radiance = float3(0.0f);
     if (h.hit) {
