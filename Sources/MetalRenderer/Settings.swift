@@ -187,6 +187,34 @@ enum GIMode: Int, CaseIterable, Codable {
     }
 }
 
+/// A converged reference picture for debugging (README "Reference rendering"): samples averaged over frames, the
+/// average restarted whenever the picture would change (the camera, a setting, the scene animating).
+enum ReferenceMode: Int, CaseIterable, Codable {
+    case off
+    case accumulated    // the frame's own passes (path traced GI, exact direct light, raw specular) averaged: the benchmarks' references
+    case pathTraced     // one kernel traces whole paths (PathTrace.metal): glossy bounces, glass, lights met by rays
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .accumulated: return "Accumulated passes"
+        case .pathTraced: return "Path traced"
+        }
+    }
+}
+
+/// The reference modes' parameters.
+struct ReferenceSettings: Equatable, Codable {
+    var mode = ReferenceMode.off
+    var bounces = 8             // path length (both modes)
+    var samplesPerFrame = 1     // path traced: paths per pixel per frame
+    var maxSamples = 0          // stop adding samples at this many per pixel; 0 = never
+
+    static let bounceRange = 1...16
+    static let samplesPerFrameRange = 1...16
+    static let maxSampleOptions = [0, 64, 256, 1024, 4096, 16384]
+}
+
 /// ReSTIR GI (Shaders/RestirGI.metal): one path per pixel (or per 2x2 block) whose first bounce is resampled over
 /// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
 struct RestirGISettings: Equatable, Codable {
@@ -800,6 +828,7 @@ struct RenderSettings: Equatable, Codable {
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
     var paused = false
     var viewMode = 0
+    var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
     var denoiser = DenoiserSettings()
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays

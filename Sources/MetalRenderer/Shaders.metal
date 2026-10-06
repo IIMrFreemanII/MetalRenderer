@@ -28,6 +28,7 @@ using namespace metal::raytracing;
 #include "Shaders/MegaLights.metal"        // MegaLights-style direct light: tile light lists, MIS-combined samples
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
+#include "Shaders/PathTrace.metal"         // pathTraceKernel: the reference path tracer (Reference "Path traced")
 #include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser
 #include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
 #include "Shaders/Post.metal"              // the lens and the finish: depth of field, bloom, vignette, grain

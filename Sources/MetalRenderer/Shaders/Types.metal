@@ -287,6 +287,7 @@ constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser hand
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
 
 constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
+constant uint MASK_LIGHTS   = 2;     // the lights' visible shapes and the camera-only motes (Scene.maskLights)
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
 constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows

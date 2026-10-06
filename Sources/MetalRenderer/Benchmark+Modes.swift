@@ -15,6 +15,7 @@ extension Benchmark {
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "rastervg": rasterVG, "vsm": vsm, "lumen": lumen,
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
+        "pathref": pathref,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -213,6 +214,24 @@ extension Benchmark {
             let shown = method.named("\(tag) default moving").with { $0.upscaleFactor = 3 }
             return list + [shown]
         }
+    }
+
+    /// The app's Reference pictures (README "Reference rendering"), paused at t = 5 with the default camera: "Path
+    /// traced" and "Accumulated passes" side by side in scenes with glossy materials, every light type, emissive
+    /// meshes, window glass, fog and thousands of lights; then the path tracer with the clock running and with the
+    /// camera moving, where every frame starts over (one path per pixel). `METALRENDERER_PATHREF_FRAMES` sets the
+    /// stills' frames (512).
+    private static func pathref() -> [Config] {
+        let frames = Int(env["METALRENDERER_PATHREF_FRAMES"] ?? "") ?? 512
+        let kinds: [SceneKind] = [.cornell, .gallery, .area, .mixed, .emissive, .stress, .fog, .market]
+        let stills = kinds.flatMap { kind -> [Config] in
+            let scene = kind == .stress ? stressHall() : SceneSettings(kind: kind)
+            let pt = Config("\(kind) pt", scale: 0.5, scene: scene) { $0.reference.mode = .pathTraced }.still().frames(frames)
+            return [pt, pt.named("\(kind) accumulated").with { $0.reference.mode = .accumulated }]
+        }
+        var moving = Config("cornell pt moving", scale: 0.5) { $0.reference.mode = .pathTraced }.frames(30)
+        moving.capturePrevious = true   // (each frame's paths are new ones: the two frames' noise differs)
+        return stills + [moving, moving.named("cornell pt camera").cameraMove()]
     }
 
     /// The light demo scenes, paused at t = 5: direct light only, each GI technique, then moving (timing).

@@ -83,18 +83,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         // sky texture the disc darkens toward its limb and clouds in front of it dim it (the texture's alpha).
         float4 skyHere = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
         float3 sky = skyHere.rgb;
-        for (uint k = 0; k < (LIGHT_TABLE ? u.lightTable.y : u.lightGroupEnd.w); ++k) {
-            Light light = lights[LIGHT_TABLE ? (k == 0 ? u.lightTable.z : u.lightTable.w) : k];
-            float theta = light.positionRadius.w;
-            float c = dot(dir, light.axis.xyz);
-            if (lightType(light) != LIGHT_SUN || c < cos(theta)) continue;
-            float3 disc = light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
-            if (flagOn(u.flags, FLAG_SKY_MAP)) {
-                float x = sqrt(max(1.0f - c * c, 0.0f)) / sin(theta), mu = sqrt(max(1.0f - x * x, 0.0f));
-                disc *= skyHere.a * (1.0f - 0.6f * (1.0f - mu)) / 0.8f;   // limb darkening (u = 0.6), mean 1
-            }
-            sky += disc;
-        }
+        for (uint k = 0; k < sunDiscCount(u); ++k) sky += sunDisc(lights[sunDiscLight(u, k)], dir, u.flags, skyHere.a);
         outEmission.write(float4(sky, 1.0f), tid);
         outMotion.write(float4(0.0f), tid);
         outDirect.write(float4(0.0f), tid);
