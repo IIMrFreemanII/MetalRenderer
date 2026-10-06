@@ -19,20 +19,17 @@ enum Kernel: Int, CaseIterable {
     case composite, accumulateColor, tonemap
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    case plantWind              // the plants' variants in the wind (PlantTracing)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
     // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.
     case vsmReset, vsmViewReset, vsmFree, vsmInvalidate, vsmAlloc, vsmSettle, vsmCull, vsmChunks, vsmDebug
-    // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
-    case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
-    case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit
-    case crowdRefit             // ...and their bottom-level trees
+    // Virtual geometry: the per-frame cut, and its clusters' boxes (METALRENDERER_VG_MODE=clusters).
+    case vgReset, vgCut, vgBoxes
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
     case vsmVGCut               // ...in the shadow maps
 
     var function: String { "\(self)Kernel" }
-    /// Exists only in the custom tracer's variant of the shaders (CUSTOM_RT).
-    var customOnly: Bool { rawValue >= Kernel.rtPrep.rawValue }
 
     /// The bits of Uniforms.flags that this kernel's variants have compiled in (KernelVariants): the ones it reads
     /// that stay the same from frame to frame. A bit that is missing here is only read at run time, as before; a bit
@@ -139,12 +136,12 @@ final class KernelVariants {
     }
 }
 
-/// Every compute pipeline, made from one compile of the shaders for one ray tracer (the CUSTOM_RT macro) and
+/// Every compute pipeline, made from one compile of the shaders (with or without the RT_STATS counters) and
 /// specialised for one set of light types (function constant 0, see Scene.lightTypeMask). A value, so a scene load or a
 /// hot reload builds the next set in the background while frames keep using this one, and the renderer swaps the whole
 /// set between two frames.
 struct Pipelines {
-    let kind: RayTracerKind
+    let stats: Bool                // compiled with the ray queries' counters (RT_STATS)
     let api: RenderAPI             // Metal 4: compiled and specialised by its compiler (MTL4Compiler)
     let lightTypes: UInt32
     let library: MTLLibrary        // kept: another set of light types specialises it again without recompiling
@@ -154,8 +151,8 @@ struct Pipelines {
     /// The raster visibility buffer's draw (rasterVertex, rasterFragment): instance and triangle ids into an rg32Uint
     /// target, over a depth32Float one.
     let visibility: MTLRenderPipelineState
-    /// The raster clusters' draw by mesh shaders (rasterClusterMesh, rasterFragment), custom tracer only.
-    let clusterMesh: MTLRenderPipelineState?
+    /// The raster clusters' draw by mesh shaders (rasterClusterMesh, rasterFragment).
+    let clusterMesh: MTLRenderPipelineState
     static let visibilityFormat = MTLPixelFormat.rg32Uint
     static let depthFormat = MTLPixelFormat.depth32Float
     /// The virtual shadow maps' draws (vsmVertex; vsmClearVertex, the pages' clear): depth only, each triangle into its
@@ -184,24 +181,17 @@ struct Pipelines {
                        cardCombine: self[.lumenCardCombine], cull: self[.lumenCull], globalBin: self[.lumenGlobalBin],
                        globalCompose: self[.lumenGlobalCompose])
     }
-    /// The kernels that build the custom tracer's trees (nil for the Metal tracer).
-    var rt: RTPipelines? {
-        kind != .custom ? nil :
-            RTPipelines(prep: self[.rtPrep], keys: self[.rtKeys], sortLocal: self[.rtSortLocal], sortGlobal: self[.rtSortGlobal],
-                        hierarchy: self[.rtHierarchy], fit: self[.rtFit], crowdRefit: self[.crowdRefit],
-                        vg: VGPipelines(reset: self[.vgReset], cut: self[.vgCut], finish: self[.vgFinish], pad: self[.vgPad],
-                                        hierarchy: self[.vgHierarchy], fit: self[.vgFit]))
-    }
+    var vg: VGPipelines { VGPipelines(reset: self[.vgReset], cut: self[.vgCut], boxes: self[.vgBoxes]) }
 
-    /// Compiles `source` for `kind` unless `library` already is that, then makes every pipeline, in parallel. Safe to
-    /// call from any thread; `stats` (the traversal counters, RT_STATS) is read by the caller for that reason.
+    /// Compiles `source` unless `library` already is that, then makes every pipeline, in parallel. Safe to call from
+    /// any thread; `stats` (the ray queries' counters, RT_STATS) is read by the caller for that reason.
     /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`.
-    init(device: MTLDevice, source: URL, kind: RayTracerKind, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
+    init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
          lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil) throws {
         let start = CACurrentMediaTime()
-        let library = try library ?? Pipelines.compile(device: device, source: source, kind: kind, stats: stats, compiler: compiler)
+        let library = try library ?? Pipelines.compile(device: device, source: source, stats: stats, compiler: compiler)
         let compiled = CACurrentMediaTime()
-        let kernels = Kernel.allCases.filter { kind == .custom || !$0.customOnly }
+        let kernels = Kernel.allCases
         var states = [MTLComputePipelineState?](repeating: nil, count: Kernel.allCases.count)
         var failure: Error?
         let lock = NSLock()
@@ -221,14 +211,13 @@ struct Pipelines {
         if let failure { throw failure }
         visibility = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                    vertex: "rasterVertex", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
-        clusterMesh = kind != .custom ? nil
-            : try Pipelines.makeMeshState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
-                                          mesh: "rasterClusterMesh", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
+        clusterMesh = try Pipelines.makeMeshState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                                  mesh: "rasterClusterMesh", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
         vsm = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                             vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
         vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                  vertex: "vsmClearVertex", fragment: "vsmFragment", color: nil)
-        self.kind = kind
+        self.stats = stats
         self.api = api
         self.lightTypes = lightTypes
         self.library = library
@@ -324,15 +313,11 @@ struct Pipelines {
         return try device.makeRenderPipelineState(descriptor: d, options: []).0
     }
 
-    static func compile(device: MTLDevice, source url: URL, kind: RayTracerKind, stats: Bool,
-                        compiler: AnyObject?) throws -> MTLLibrary {
+    static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
         let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
         let options = MTLCompileOptions()
-        // MSL 3.2 for device-scope fences and coherent buffers (rtFitKernel, custom ray tracer). Older systems keep
-        // 3.0 and then need METALRENDERER_RT=metal.
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
-        options.preprocessorMacros = ["CUSTOM_RT": NSNumber(value: kind == .custom ? 1 : 0),
-                                      "RT_STATS": NSNumber(value: stats ? 1 : 0)]
+        options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0)]
         // Fast math is the default (relaxed cost ~0.2 ms a frame in the old stress hall and rendered the same image);
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
         // `safe` also keeps the order of every operation: a kernel's variants then compute bit for bit what its

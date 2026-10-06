@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------------------------
 
 // A shape is its nodes joined one after the other: ((n0 op1 n1) op2 n2) ... Each node is a primitive placed in the
-// shape by a rotation, a translation and a uniform scale (so its distances stay distances), or a baked grid. Both
-// tracers march a shape here (the custom one in rtTraverse, Metal's in its intersection queries' loop), which gives
-// the hit its normal and material: nothing after the hit needs the shapes (traceSurface).
+// shape by a rotation, a translation and a uniform scale (so its distances stay distances), or a baked grid. The ray
+// queries march a shape here (in their intersection queries' loop, boxCandidate), which gives the hit its normal and
+// material: nothing after the hit needs the shapes (traceSurface).
 
 constant uint SDF_SPHERE = 0, SDF_BOX = 1, SDF_TORUS = 2, SDF_CAPSULE = 3, SDF_CYLINDER = 4, SDF_CONE = 5, SDF_VOLUME = 6;
 constant uint SDF_UNION = 0, SDF_SUBTRACT = 1, SDF_INTERSECT = 2;

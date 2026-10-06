@@ -33,7 +33,7 @@ struct MeshData {
     uint vertexOffset;  // a skinned character's pose slot: its vertices are this far after the ones its indices name
     uint prevOffset;    // ...and its previous frame's positions this far after those (0 = the mesh doesn't deform)
     uint sways;         // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
-    uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
+    uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh
     // STREAMED: a mesh in a buffer of its own (MeshBlock in SceneBuffers.swift) instead of the scene's, or null. There:
     // `vertexCount` positions, as many normals, as many UVs, `indexCount` indices into them, a material offset
     // (a byte) per triangle.
@@ -147,10 +147,11 @@ constant uint lightTypesConstant [[function_constant(0)]];
 constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7F00003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
-// Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
-// it the traversal and the shading compile to what they were before assemblies.
+// Bit 30 = FOLIAGE: the scene has assemblies (generated plants as shared parts, each part an instance of its own that
+// the wind turns) or ground cover that leans. Without it the queries and the shading compile to what they were
+// before assemblies.
 constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
-// Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the traversal cuts out by an alpha mask (rtCutout).
+// Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
 // Only then does a hit read MeshData's offsets and a previous position (the offsets cost the trace 7% in the stress
@@ -161,32 +162,25 @@ constant bool GLASS = (LIGHT_SPEC & 0x08000000u) != 0;
 // Bit 26 = MULTI_MATERIAL: some meshes have several materials (SceneShading.triangleMaterials; the city's buildings).
 constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
 // Bit 25 = STREAMED: some meshes are in buffers of their own (MeshData.block; an open world's tiles), which a hit
-// reaches through the mesh table and the custom traversal through its instances' records (RT_OWN_TREE).
+// reaches through the mesh table.
 constant bool STREAMED = (LIGHT_SPEC & 0x02000000u) != 0;
 // Bit 24 = GROUPED: some instances are in blocks of their own (InstanceBlock in SceneBuffers.swift; the plants of an
 // open world's tiles), which the scenes that have them share.
-// TILED: on Metal's tracer each block's records are in a buffer of the block's. An instance's id is then its block's
+// TILED: each block's records are in a buffer of the block's. An instance's id is then its block's
 // number and its place in the block (the scene's own instances are block 0), the same in every scene; a hit names
 // its instance by it, and what is bound as the instances' records is a table of the blocks' addresses.
-// (The custom tracer's scene has all its records in one buffer, the blocks' copied into it, and a hit names an
-// instance by its place there, as in any scene: one more read to a hit showed in its frame; it doesn't in Metal's.)
 constant bool GROUPED = (LIGHT_SPEC & 0x01000000u) != 0;
-#if CUSTOM_RT
-constant bool TILED = false;
-#else
 constant bool TILED = GROUPED;
-#endif
-// Bit 23 = VOXEL_BOXES: on Metal's tracer, far plants are voxel boxes (VoxelLOD.swift): bounding boxes whose rays the
-// ray queries march through the plant's grid (rtVoxels). VOXELS: far plants can be voxels on this tracer.
+// Bit 23 = VOXEL_BOXES: far plants are voxel boxes (VoxelLOD.swift): bounding boxes whose rays the ray queries march
+// through the plant's grid (rtVoxels).
 constant bool VOXEL_BOXES = (LIGHT_SPEC & 0x00800000u) != 0;
-#if CUSTOM_RT
-constant bool VOXELS = FOLIAGE;
-#else
 constant bool VOXELS = VOXEL_BOXES;
-#endif
-// Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace: the
-// custom tracer where it meets such an instance, Metal's in its intersection queries' loop (their boxes).
+// Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace in
+// their intersection queries' loop (their boxes).
 constant bool SDF_SHAPES = (LIGHT_SPEC & 0x00400000u) != 0;
+// Bit 21 = VG_CLUSTERS: virtual geometry is traced as this frame's cut of clusters (METALRENDERER_VG_MODE=clusters,
+// VirtualGeometry.swift): boxes whose rays the ray queries walk through the cluster's own BVH.
+constant bool VG_CLUSTERS = (LIGHT_SPEC & 0x00200000u) != 0;
 constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
 struct InstanceBlockRef { device const InstanceData* records; };
 inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {
@@ -263,7 +257,7 @@ constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture 
 constant uint FLAG_RESTIR        = 32768; // direct light from a pass of its own: ReSTIR DI (restirTemporalKernel,
                                           // restirSpatialKernel) or MegaLights (megaLightsSampleKernel)
 constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
-constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (RTScene.wind.z > 0), the plants' parts turn
+constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (TraceScene.wind.z > 0), the plants' parts turn
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
 constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)

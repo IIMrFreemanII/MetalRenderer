@@ -11,7 +11,7 @@ import simd
 /// (its own VGStreamer; the rays keep the BLAS) streams it in.
 ///
 /// A drawn cluster's triangle is named in the visibility buffer by its entry in this frame's cluster list
-/// (`list`: selfError bits, pool offset in float4s), which the trace reads as the custom tracer's selected clusters.
+/// (`list`: selfError bits, pool offset in float4s), which the trace reads as TraceScene's clusters.
 final class RasterClusters {
     static let capacity = 1 << 17         // clusters drawn a frame, both passes (the list's entries)
     static let requestCapacity = 4096

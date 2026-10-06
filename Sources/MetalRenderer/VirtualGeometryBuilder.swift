@@ -46,7 +46,7 @@ struct VirtualMesh {
 enum VirtualGeometryBuilder {
     /// Page (streaming unit) size: every group's clusters must fit, and the GPU pool has slots of this size.
     static let pageBytes = 65536
-    /// Meshes with at least this many triangles become virtual (custom ray tracer); smaller ones stay ordinary.
+    /// Meshes with at least this many triangles become virtual; smaller ones stay ordinary.
     static let minTriangles = 65536
 
     // MARK: Cluster pages

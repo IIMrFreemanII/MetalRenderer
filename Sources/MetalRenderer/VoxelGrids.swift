@@ -2,9 +2,10 @@ import Metal
 import QuartzCore
 import simd
 
-/// Metal's tracer: the plants' voxel grids (FoliageVoxels) on the GPU, and for each grid and level a structure of one
-/// bounding box, the grid's, whose primitive data says what the ray queries march through it (MSL `VoxelBox` in
-/// Shaders/Intersect.metal). A far plant's wood instance points at one of these instead of its mesh (VoxelLOD).
+/// The plants' voxel grids (FoliageVoxels) on the GPU, and for each grid and level a structure of one bounding box,
+/// the grid's, whose primitive data says what the ray queries march through it (MSL `VoxelBox` in
+/// Shaders/Intersect.metal). A far plant's (wood) instance points at one of these instead of its mesh (VoxelLOD) or
+/// its variant (PlantTracing).
 /// The scenes of an open world share it: the same library in the same order (SceneBuffers.Options.voxelGrids).
 final class VoxelGrids {
     /// MSL `VoxelBox`: a box's primitive data.

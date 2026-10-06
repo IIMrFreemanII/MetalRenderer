@@ -166,17 +166,6 @@ enum Stored<T> {
 enum GeneratedCache {
     private static let choice = ProcessInfo.processInfo.environment["METALRENDERER_CACHE"]
     static let enabled = choice != "0"
-    /// The trees and the voxels are cached where making them is slow: in an unoptimised build, which takes 6.5 s over
-    /// the forest's and 0.35 s to read them back. An optimised one builds a city's trees (5.3 M triangles, 0.13 s)
-    /// as fast as it hashes its meshes and copies the trees out of a file, so there the cache only costs disk.
-    static let cachesTrees: Bool = {
-        if let choice { return choice != "0" }
-        #if DEBUG
-        return true
-        #else
-        return false
-        #endif
-    }()
     static let folder: URL = {
         let folder = CacheFile.userFolder.appendingPathComponent("generated")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

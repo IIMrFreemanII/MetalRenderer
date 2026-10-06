@@ -6,7 +6,7 @@ import Foundation
 extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
-        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "rt": rt, "gallery": gallery, "gi": gi,
+        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality,
@@ -153,30 +153,6 @@ extension Benchmark {
             }
         }
         return out
-    }
-
-    /// Ray tracer comparison. Paused frames at t = 5 s in every GI mode with the METALRENDERER_RT tracer (run once per
-    /// tracer and compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run), then
-    /// moving frames for timing on both scenes at several stress-scene sizes, alternating the two tracers.
-    private static func rt() -> [Config] {
-        func scene(_ kind: SceneKind, objects: Int = 400) -> SceneSettings { SceneSettings(kind: kind, objects: objects, lights: 32) }
-        let methods = [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)]
-        var out: [Config] = []
-        for (tag, sc) in [("cornell", scene(.cornell)), ("stress", scene(.stress))] {
-            out.append(Config("\(tag) direct static", scale: 0.5, gi: nil, scene: sc).still().frames(30))
-            out += methods.map { Config("\(tag) \($0.0) static", scale: 0.5, gi: $0.1, scene: sc).still().frames(30) }
-        }
-        func moving(_ name: String, _ mode: GIMode, _ sc: SceneSettings) -> [Config] {
-            RayTracerKind.allCases.map { tracer in
-                Config("\(name) moving, \(tracer == .custom ? "custom" : "metal")", scale: 0.5, upscale: 3, gi: mode, scene: sc) {
-                    $0.rayTracer = tracer
-                }
-            }
-        }
-        for objects in [0, 400, 1000, 2000] {
-            for (tag, mode) in methods { out += moving("stress \(objects) \(tag)", mode, scene(.stress, objects: objects)) }
-        }
-        return out + moving("cornell cascades", .radianceCascades, scene(.cornell))
     }
 
     /// The glTF gallery: full-detail meshes against virtual geometry at several error thresholds, alternating so heat
@@ -557,12 +533,9 @@ extension Benchmark {
             lit.named("backlit cards").with { $0.scene.leafCards = true },
             // What each plant is traced as: its triangles (blue) or a level of its voxels.
             still.named("lod view").with { $0.foliage.lod = 2 }.from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
-            // Metal's tracer: the baked plants, far ones as their voxels (VoxelLOD; off by default), against all of
-            // them as triangles.
-            parts.named("metal triangles aerial").with { $0.rayTracer = .metal }.from(forestAerial),
-            parts.named("metal voxels aerial").with { $0.rayTracer = .metal; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
-                .from(forestAerial),
-            still.named("metal lod view").with { $0.rayTracer = .metal; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
+            // The baked plants, far ones as their voxels (VoxelLOD; off by default), against all of them as triangles.
+            baked.named("baked voxels aerial").with { $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }.from(forestAerial),
+            still.named("baked lod view").with { $0.scene.bakedPlants = true; $0.scene.voxelBoxes = true; $0.foliage.lod = 2 }
                 .from(forestAerial).view(RenderSettings.viewModes.firstIndex(of: "LOD level")!),
         ]
     }
@@ -671,21 +644,13 @@ extension Benchmark {
             + [Config("default moving", scale: 0.5, upscale: 3, gi: .radianceCascades)]
     }
 
-    private static let tracers: [(tag: String, kind: RayTracerKind)] = [("custom", .custom), ("metal", .metal)]
-
-    /// Hardware ray tracing against the custom BVH: each ray tracer (the custom BVH, Metal's acceleration structures),
-    /// moving frames at 3x from 640x400 through MetalFX's denoising scaler, path traced and with radiance cascades, in
-    /// the Cornell room and the stress hall. The tracers alternate, so heat affects them
-    /// alike. Settings this GPU can't run are skipped (Capabilities).
+    /// Ray tracing's cost: moving frames at 3x from 640x400 through MetalFX's denoising scaler, path traced and with
+    /// radiance cascades, in the Cornell room and the stress hall (in hardware from Apple9 GPUs on, in software before).
     private static func hwrt() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
             for (giTag, gi) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
-                for tracer in tracers {
-                    out.append(Config("\(sceneTag) \(giTag), \(tracer.tag)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                        $0.rayTracer = tracer.kind
-                    })
-                }
+                out.append(Config("\(sceneTag) \(giTag)", scale: 0.5, upscale: 3, gi: gi, scene: scene))
             }
         }
         return out
@@ -693,7 +658,7 @@ extension Benchmark {
 
     /// MetalFX's denoising scaler's images, path traced at 3x from 640x400, against supersampled native 1920x1200 references at
     /// t = 5 s (2 bounces, as the frames trace): a still with the frame before it (flicker), the animation running and
-    /// the camera move (Tools/eval/hwrt.py). The tracer is METALRENDERER_RT's.
+    /// the camera move (Tools/eval/hwrt.py).
     private static func hwrtq() -> [Config] {
         var out: [Config] = []
         for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
@@ -704,10 +669,9 @@ extension Benchmark {
         return out
     }
 
-    /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API and METALRENDERER_RT's
-    /// tracer (run once per API and compare the PNGs with Tools/eval/pngdiff.py; frame indices must
-    /// match, so not in one run), then the same frames through each command model with each ray tracer, moving at 3x
-    /// from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
+    /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API (run once per API and
+    /// compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run), then the same frames
+    /// through each command model, moving at 3x from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
     /// the command model can change.
     private static func api() -> [Config] {
         let scenes = [("cornell cascades", SceneSettings(), GIMode.radianceCascades), ("stress pt", stressHall(), .pathTraced)]
@@ -716,13 +680,8 @@ extension Benchmark {
             out.append(Config("\(sceneTag) static", scale: 0.5, upscale: 3, gi: gi, scene: scene).still().frames(30))
         }
         for (sceneTag, scene, gi) in scenes {
-            for tracer in tracers {
-                out += RenderAPI.allCases.map { api in
-                    Config("\(sceneTag), \(tracer.tag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                        $0.rayTracer = tracer.kind
-                        $0.api = api
-                    }
-                }
+            out += RenderAPI.allCases.map { api in
+                Config("\(sceneTag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) { $0.api = api }
             }
         }
         return out
@@ -731,7 +690,7 @@ extension Benchmark {
     /// The raster visibility buffer against traced primary rays (PrimaryVisibility), scene by scene at the default
     /// settings (cascades, MetalFX denoiser 3x from 0.5x): a still of each (pngdiff.py compares the pairs), its
     /// "Visibility buffer" view (chunks in colours, magenta where the primary rays traced what it didn't draw), and the camera moving through
-    /// the stress hall and the city (the two culling passes as things come into view). The tracer is METALRENDERER_RT's.
+    /// the stress hall and the city (the two culling passes as things come into view).
     private static func raster() -> [Config] {
         let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()), ("gallery", SceneSettings(kind: .gallery)),
                                                  ("crowd", SceneSettings(kind: .crowd)), ("city", SceneSettings(kind: .city)),
@@ -936,31 +895,25 @@ extension Benchmark {
         }
     }
 
-    /// The SDF shapes scene (Scene+Shapes.swift) on each tracer and API: paused frames to compare between them
-    /// (Tools/eval/pngdiff.py: the tracers march the same shapes), path traced, each direct-light method on the glowing
-    /// shapes (mesh lights), the normals, materials and traversal cost views, then moving frames and a camera move
-    /// for timing.
+    /// The SDF shapes scene (Scene+Shapes.swift) on each API: paused frames to compare between them
+    /// (Tools/eval/pngdiff.py), path traced, each direct-light method on the glowing shapes (mesh lights), the
+    /// normals, materials and traversal cost views, then moving frames and a camera move for timing.
     private static func shapes() -> [Config] {
         let scene = SceneSettings(kind: .shapes)
         var out: [Config] = []
-        for tracer in tracers {
-            for api in RenderAPI.allCases {
-                let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
-                    $0.rayTracer = tracer.kind
-                    $0.api = api
-                }
-                let tag = "\(tracer.tag) \(api.envName)"
-                out.append(base.named("\(tag) cascades").still())
-                guard api == .metal3 else { continue }
-                out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
-                for mode in [DirectLightMode.restir, .megalights] {
-                    out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
-                }
-                for view in ["Normals", "Triangles", "Traversal cost"] {
-                    out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
-                }
-                out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
+        for api in RenderAPI.allCases {
+            let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.api = api }
+            let tag = api.envName
+            out.append(base.named("\(tag) cascades").still())
+            guard api == .metal3 else { continue }
+            out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
+            for mode in [DirectLightMode.restir, .megalights] {
+                out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
             }
+            for view in ["Normals", "Triangles", "Traversal cost"] {
+                out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
+            }
+            out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
         }
         return out
     }
@@ -1150,32 +1103,25 @@ extension Benchmark {
         return out
     }
 
-    /// Every view mode, as the app draws it (radiance cascades, MetalFX denoiser 3x from 0.5x), on each ray tracer in
-    /// the scenes with levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the
-    /// open world's tiles. Then the views that depend on the GI method with each method.
+    /// Every view mode, as the app draws it (radiance cascades, MetalFX denoiser 3x from 0.5x), in the scenes with
+    /// levels of detail: the gallery's virtual meshes, the forest's plants, the crowd's characters and the open world's
+    /// tiles. Then the views that depend on the GI method with each method.
     private static func debugViews() -> [Config] {
         var out: [Config] = []
         let views = RenderSettings.viewModes.indices
-        for tracer in tracers {
-            for kind in [SceneKind.gallery, .forest, .crowd, .world] {
-                for mode in views {
-                    let name = "\(tracer.tag) \(kind.title.lowercased()) \(RenderSettings.viewModes[mode].lowercased())"
-                    out.append(Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: kind)) {
-                        $0.rayTracer = tracer.kind
-                    }.view(mode).still().frames(8))
-                }
+        for kind in [SceneKind.gallery, .forest, .crowd, .world] {
+            for mode in views {
+                let name = "\(kind.title.lowercased()) \(RenderSettings.viewModes[mode].lowercased())"
+                out.append(Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: kind)).view(mode).still().frames(8))
             }
         }
         // The open world from 900 m above its start, looking well down: its tiles' three levels in rings around the
         // camera's tile (the scene is made around that tile: a camera elsewhere would move its middle).
         let w = worldOfRun()
         let aerial = worldCamera(w, w.start.place.x, w.start.place.z, up: 900, pitch: -1.0)
-        for tracer in tracers {
-            for mode in [9, 11] {
-                out.append(Config("\(tracer.tag) open world aerial \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
-                                  gi: .radianceCascades, scene: SceneSettings(kind: .world)) { $0.rayTracer = tracer.kind }
-                    .view(mode).still().frames(8).from(aerial))
-            }
+        for mode in [9, 11] {
+            out.append(Config("open world aerial \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
+                              gi: .radianceCascades, scene: SceneSettings(kind: .world)).view(mode).still().frames(8).from(aerial))
         }
         for (tag, gi) in [("pt", GIMode.pathTraced), ("restir gi", .restirGI), ("cascades", .radianceCascades)] {
             for mode in [1, 2, 5, 6, 7] {
