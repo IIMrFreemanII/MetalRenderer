@@ -3,8 +3,8 @@
 // A pose slot is one character in one pose; many instances share it. Every frame:
 //   crowdPoseKernel   each slot's skinning matrices, from its clips' keys (one thread per joint and slot);
 //   crowdSkinKernel   each slot's vertices, from the bind-pose mesh (one thread per vertex and slot), into the slot's
-//                     range of the scene's position and normal buffers, after keeping the old positions for motion;
-//   crowdRefitKernel  (custom ray tracer) each slot's bottom-level tree around its new triangles.
+//                     range of the scene's position and normal buffers, after keeping the old positions for motion.
+// Metal then refits each slot's acceleration structure around its new triangles (SceneBuffers.primitiveRefit).
 // SkinnedCharacter.palette / skin are the same math on the CPU (the reference CrowdSkinner.check compares with).
 // ---------------------------------------------------------------------------------------------
 
@@ -167,99 +167,3 @@ kernel void crowdSkinKernel(constant CrowdSkinParams& p          [[buffer(0)]],
     positions[current] = position;
     normals[current] = normalize(n);
 }
-
-#if CUSTOM_RT
-
-struct CrowdRefitParams {
-    uint nodeBase;    // the pose slots' first bottom-level node (their trees are consecutive)
-    uint nodeCount;
-    uint tag;         // differs every frame: a counter that holds it has been reached this frame
-    uint pad;
-};
-static_assert(sizeof(CrowdRefitParams) == 16, "CrowdRefitParams: CustomRayTracer.RefitParams");
-
-// A leaf's triangles, rewritten from its mesh's current vertices (they stay in the tree's leaf order: a triangle
-// record keeps its index in the mesh in v0.w), and their box.
-inline void crowdLeaf(uint ref, MeshData mesh, device float4* tris, device const float3* positions, device const uint* indices,
-                      thread float3& lo, thread float3& hi) {
-    uint first = ref & 0x0FFFFFFFu, count = ((ref >> 28) & 7u) + 1u;
-    lo = float3(3.0e38f);
-    hi = float3(-3.0e38f);
-    for (uint t = first; t < first + count; ++t) {
-        float w = tris[3 * t].w;
-        uint base = mesh.firstIndex + 3 * as_type<uint>(w);
-        float3 p0 = positions[indices[base] + mesh.vertexOffset], p1 = positions[indices[base + 1] + mesh.vertexOffset];
-        float3 p2 = positions[indices[base + 2] + mesh.vertexOffset];
-        tris[3 * t] = float4(p0, w);
-        tris[3 * t + 1] = float4(p1 - p0, 0.0f);
-        tris[3 * t + 2] = float4(p2 - p0, 0.0f);
-        lo = min(lo, min(p0, min(p1, p2)));
-        hi = max(hi, max(p0, max(p1, p2)));
-    }
-}
-
-// Refits the pose slots' bottom-level trees to their skinned vertices: the trees keep their shape, their boxes
-// follow. One thread per node. A node's thread rewrites the triangles of its leaf children and sets their boxes; a
-// node whose two boxes are set is finished, and the thread that finished it sets its box in its parent and goes on
-// there if the parent's other box is set too (the second to reach a node through `arrived`, as in rtFitKernel).
-// The thread that finishes a tree's root writes the mesh's bounds for rtPrepKernel.
-kernel void crowdRefitKernel(constant CrowdRefitParams&       p         [[buffer(0)]],
-                             coherent(device) device BVHNode* nodes     [[buffer(1)]],
-                             device float4*                   tris      [[buffer(2)]],
-                             device const uint2*              links     [[buffer(3)]],   // per node: x = its parent (bit 31: as
-                                                                                         // child 1), RT_NONE for a root; y = mesh
-                             device atomic_uint*              arrived   [[buffer(4)]],
-                             device const float3*             positions [[buffer(5)]],
-                             device const uint*               indices   [[buffer(6)]],
-                             device const MeshData*           meshes    [[buffer(7)]],
-                             device float4*                   meshInfo  [[buffer(8)]],
-                             uint gid [[thread_position_in_grid]])
-{
-    if (gid >= p.nodeCount) return;
-    uint n = p.nodeBase + gid;
-    uint meshIndex = links[gid].y;
-    MeshData mesh = meshes[meshIndex];
-    uint ref0 = as_type<uint>(nodes[n].lo0.w), ref1 = as_type<uint>(nodes[n].lo1.w);
-    bool leaf0 = (ref0 & RT_LEAF) != 0, leaf1 = (ref1 & RT_LEAF) != 0;
-    if (!leaf0 && !leaf1) return;   // both boxes come from below
-    float3 lo, hi;
-    if (leaf0 && ref0 != RT_NONE) {
-        crowdLeaf(ref0, mesh, tris, positions, indices, lo, hi);
-        nodes[n].lo0.xyz = lo;
-        nodes[n].hi0.xyz = hi;
-    }
-    if (leaf1 && ref1 != RT_NONE) {
-        crowdLeaf(ref1, mesh, tris, positions, indices, lo, hi);
-        nodes[n].lo1.xyz = lo;
-        nodes[n].hi1.xyz = hi;
-    }
-    if (!(leaf0 && leaf1)) {
-        atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-        if (atomic_exchange_explicit(&arrived[gid], p.tag, memory_order_relaxed) != p.tag) return;   // the child below finishes it
-        atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-    }
-    while (true) {
-        BVHNode node = nodes[n];
-        lo = node.lo0.xyz;
-        hi = node.hi0.xyz;
-        if (as_type<uint>(node.lo1.w) != RT_NONE) {   // (a lone leaf's root has an empty second child)
-            lo = min(lo, node.lo1.xyz);
-            hi = max(hi, node.hi1.xyz);
-        }
-        uint link = links[n - p.nodeBase].x;
-        if (link == RT_NONE) {
-            meshInfo[2 * meshIndex].xyz = lo;
-            meshInfo[2 * meshIndex + 1].xyz = hi;
-            return;
-        }
-        uint parent = link & 0x7FFFFFFFu;
-        if ((link >> 31) != 0) { nodes[parent].lo1.xyz = lo; nodes[parent].hi1.xyz = hi; }
-        else                   { nodes[parent].lo0.xyz = lo; nodes[parent].hi0.xyz = hi; }
-        atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-        if (atomic_exchange_explicit(&arrived[parent - p.nodeBase], p.tag, memory_order_relaxed) != p.tag) return;
-        atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device);
-        n = parent;
-    }
-}
-
-#endif

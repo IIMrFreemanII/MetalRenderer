@@ -44,7 +44,7 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
   * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);
   * GI: `METALRENDERER_GI="mode=pt|cascades|restir,bounces=2,scale=0.75,factor=0"` (factor 0 means native, no
     upscaling);
-  * also `_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW="exposure=…,tod=…"`, `_RT`, `_DIRECT`.
+  * also `_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW="exposure=…,tod=…"`, `_API`, `_DIRECT`.
 * It prints the timing table, the log path and the new PNG paths. Override typos are printed too ("unknown key"); a
   typo doesn't stop the run.
 * `-q` prints only the PNG paths. `-b <binary>` runs another build, from its own folder, with its own shaders.

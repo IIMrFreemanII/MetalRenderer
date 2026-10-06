@@ -10,8 +10,9 @@ speedup that costs image quality without a score. Don't trust a single run.
 
 The renderer is GPU-bound almost everywhere. A frame is around 640×400 traced and upscaled 3× to 1920×1200, on Apple
 silicon (the README's numbers are from an M1 Max, which has no ray-tracing hardware). The CPU matters for the frame loop
-(encoding, uploads, the virtual-geometry cut, texture streaming) and for offline builders (BVH, mesh simplification,
-clustering, cluster-DAG pages, texture mips).
+(encoding, uploads, the virtual-geometry cut, texture streaming) and for offline builders (mesh simplification,
+clustering, cluster-DAG pages and their trees, distance fields, texture mips). Every ray goes through Metal's
+acceleration structures and intersector: in software on M1/M2, in hardware from M3 on.
 
 ## The loop
 
@@ -26,8 +27,9 @@ clustering, cluster-DAG pages, texture mips).
    * Halve `METALRENDERER_GI=scale=…`. If the pass scales with pixels, it's per-pixel bound (bandwidth or ALU).
    * Sweep `METALRENDERER_TG="<kernel>=16x8"`. Big swings point to occupancy or register pressure, or to cache
      locality.
-   * `METALRENDERER_RT_STATS=1` shows nodes, instance and cluster entries and triangle tests per ray. That's
-     traversal cost.
+   * `METALRENDERER_RT_STATS=1` shows the triangle and box candidates Metal's traversal hands the ray queries, per
+     ray (every triangle is non-opaque in those builds; Metal can't count its nodes). That's traversal cost as far as
+     it can be seen; view 13 ("Traversal cost") shows it per pixel.
    * Compile a feature out (a macro or function constant, or `on=0`-style overrides). What's left is that feature's
      price.
    * Bandwidth-bound passes (temporal, à-trous, composite, upscaler) barely react to ALU changes. ALU-bound ones
@@ -61,9 +63,10 @@ Every run is offscreen (no window, no focus change); never launch the binary wit
   * Avoid dynamically indexed local arrays: they spill to memory.
   * Compile features out instead of branching on them at runtime. Copy the patterns: kernel variants (`flagOn` /
     `passOn` in Shaders/Types.metal with `Kernel.fixedFlags` / `fixedPassFlags` in Pipelines.swift), the `LIGHT_SPEC`
-    function constant and the `RT_STATS` / `CUSTOM_RT` macros (`Pipelines.compile`).
+    function constant and the `RT_STATS` macro (`Pipelines.compile`).
 * **Branch on uniforms, not on pixels.** Keep loop trip counts uniform across a simdgroup. Make one memory fetch serve
-  one decision: the 64-byte two-child BVH node (BVH.swift:6) tests both children with one load.
+  one decision: the 64-byte two-child node of a cluster's tree (`BVHNode`, BVH.swift) tests both children with one
+  load.
 * **Reduce before atomics** where a pass is dominated by them: simdgroup (`simd_sum`) → threadgroup → one
   `atomic_fetch_add_explicit(…, memory_order_relaxed)` per group. (Measure: four atomics per probe in `rcSHKernel`
   turned out not to matter.)

@@ -230,7 +230,7 @@ final class SoftBodyTests: XCTestCase {
     private func metal() throws -> (device: MTLDevice, queue: MTLCommandQueue, pipelines: Pipelines) {
         if let compiled = SoftBodyTests.compiled { return compiled }
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
-        let pipelines = try Pipelines(device: device, source: SoftBodyTests.shaders, kind: .metal, lightTypes: 0x3F, stats: false)
+        let pipelines = try Pipelines(device: device, source: SoftBodyTests.shaders, lightTypes: 0x3F, stats: false)
         SoftBodyTests.compiled = (device, queue, pipelines)
         return (device, queue, pipelines)
     }

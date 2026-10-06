@@ -204,21 +204,13 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(ragdolls.scene.physics.ragdolls, 40)
         XCTAssertFalse(ragdolls.specular)
         XCTAssertEqual(ragdolls.renderScale, RenderSettings.physicsScale)
-        // The hair scene too, and it traces with Metal's ray tracer (the custom one draws no curves), which
-        // METALRENDERER_RT can still change; leaving it, the default tracer is back.
+        // The hair scene too.
         var hair = defaults
         SettingsEnv.applyAll(to: &hair, defaults: defaults, from: ["METALRENDERER_SCENE": "hair,hair=6,fur=3"])
         XCTAssertEqual(hair.scene.kind, .hair)
         XCTAssertEqual(hair.scene.physics.hair, 6)
         XCTAssertEqual(hair.scene.physics.furBodies, 3)
-        XCTAssertEqual(hair.rayTracer, .metal)
         XCTAssertEqual(hair.renderScale, RenderSettings.physicsScale)
-        var custom = defaults
-        SettingsEnv.applyAll(to: &custom, defaults: defaults, from: ["METALRENDERER_SCENE": "hair", "METALRENDERER_RT": "custom"])
-        XCTAssertEqual(custom.rayTracer, .custom)
-        hair.scene.kind = .physics
-        hair.applySceneDefaults(from: defaults)
-        XCTAssertEqual(hair.rayTracer, defaults.rayTracer)
         // The soft body scene shares the look; its counts are scene keys.
         var soft = defaults
         SettingsEnv.applyAll(to: &soft, defaults: defaults, from: ["METALRENDERER_SCENE": "softbodies,soft=8,cells=5"])
@@ -258,7 +250,7 @@ final class SettingsTableTests: XCTestCase {
             "METALRENDERER_GI": "mode=restir, bounces = 3.7,scale=0.75",
             "METALRENDERER_FOG_SET": "on=0,wind=1:0:2",
             "METALRENDERER_VIEW": "tonemap=AgX,paused=1",
-            "METALRENDERER_RT": "metal",
+            "METALRENDERER_API": "metal4",
         ])
         XCTAssertEqual(s.scene.kind, .market)
         XCTAssertEqual(s.scene.lights, SceneSettings.marketLights)
@@ -270,7 +262,7 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.fog.wind, SIMD3<Float>(1, 0, 2))
         XCTAssertEqual(s.toneMap, .agx)
         XCTAssertTrue(s.paused)
-        XCTAssertEqual(s.rayTracer, .metal)
+        XCTAssertEqual(s.api, .metal4)
         // Benchmarks choose the view and the pause themselves.
         var b = defaults
         SettingsEnv.apply(.view, to: &b, from: ["METALRENDERER_VIEW": "paused=1,view=3,fov=70"])
@@ -279,7 +271,7 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(b.fovDegrees, 70)
     }
 
-    /// Metal's tracer traces far plants as their triangles unless asked for their voxels, which are slower wherever
+    /// Far plants are traced as their triangles unless asked for their voxels, which are slower wherever
     /// they were measured.
     func testFarPlantsAreTrianglesUnlessAskedFor() {
         XCTAssertFalse(defaults.scene.voxelBoxes)

@@ -24,11 +24,11 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Fog, sky, clouds | `fogcheck`, `skycheck` |
 | Reflections, specular light | `speccheck` |
 | The upscaler (MetalFX denoiser), the output path | `quality`, `hwrtq` |
-| Tracers, acceleration structures | `rt`, `hwrt` (both tracers), and any mode with `-- METALRENDERER_RT=metal` |
+| Ray queries, acceleration structures, `TraceScene` | `quick`, `hwrt`; plants (variants, wind, leaf cards, voxels) `forestcheck`; virtual geometry `vgdebug`, `gallery`; SDF shapes `shapes` |
 | Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
 | Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery`, with `-- METALRENDERER_ASSETS=<repo>/Assets` (see below) |
-| Skinned characters, the crowd, deforming meshes | `crowd` with `-- METALRENDERER_CROWD_CHECK=1` (its log lines compare the GPU's vertices and refitted trees with the CPU's) |
-| The city, the building generator, glass, meshes of several materials | `city` (its first 17 settings are stills: narrow with `"overview\|street\|facade\|night"`), also with `-- METALRENDERER_RT=metal` |
+| Skinned characters, the crowd, deforming meshes | `crowd` with `-- METALRENDERER_CROWD_CHECK=1` (its log lines compare the GPU's vertices with the CPU's) |
+| The city, the building generator, glass, meshes of several materials | `city` (its first 17 settings are stills: narrow with `"overview\|street\|facade\|night"`) |
 | Capability fallbacks | any mode with `-- METALRENDERER_CAPS=rt` and the like |
 
 What a mode costs, per run, on an M4 Max under macOS 27.0 without the references (`same.sh` runs it twice):
@@ -38,18 +38,19 @@ What a mode costs, per run, on an M4 Max under macOS 27.0 without the references
 | `shadow` | 5 | 2 | | `quality` | 8 | 16 |
 | `denoise` | 7 | 4 | | `hwrtq` | 8 | ≈6-8 |
 | `vgdebug` | 18 | 4 | | `gi` | 36 | ≈17 |
-| `lightcheck` | 6 | 6 | | `rt` | 24 | 21 |
-| `quick` | 4 | ≈4 | | `hwrt` | 8 | ≈8 |
-| `api` | 10 | ≈7 | | `skycheck` | 20 | 28 |
+| `lightcheck` | 6 | 6 | | `hwrt` | 4 | ≈4 |
+| `quick` | 4 | ≈4 | | `skycheck` | 20 | 28 |
+| `api` | 6 | ≈4 | | | | |
 | `speccheck` | 18 | 10 | | `fogcheck` | 12 | 30 |
 | | | | | `stressq` | 39 | ≈37 |
 | | | | | `restirgicheck` | 8 | 60 |
 | | | | | `restircheck` | 36 | minutes |
 
-≈: scaled down from the measured time when the other upscalers were removed, not measured again.
+≈: scaled down from the measured time when the other upscalers were removed (and, for `hwrt` and `api`, when the
+custom tracer went and their settings halved), not measured again.
 
 Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
-other sixteen together take about five minutes per binary, so ten for a comparison.
+other fifteen together take about five minutes per binary, so ten for a comparison.
 
 `vgdebug` and `gallery` need both binaries to read the same models *and the same caches*: pass
 `METALRENDERER_ASSETS=<repo>/Assets`. Left alone, the baseline builds its own cluster DAGs in its worktree, and two
@@ -59,9 +60,9 @@ When images differ:
 * **Run `same.sh --self <mode> "<filter>"`.** It compares the baseline with itself. A setting that differs there
   differs from run to run and can't prove anything. On the M4 Max every mode in the table repeated bit for bit,
   MetalFX and Metal's hardware tracer included. That isn't a given elsewhere: 9d3e661 saw Metal's tracer differ
-  from itself. For a setting that doesn't repeat, prove the path with the custom tracer,
-  and score the rest (`Tools/eval/hwrt.py` and the other scorers: a refactor leaves the scores within the ±0.2 dB
-  that single frames swing by).
+  from itself. For a setting that doesn't repeat, score it instead (`Tools/eval/hwrt.py` and the other scorers: a
+  refactor leaves the scores within the ±0.2 dB that single frames swing by). (Before October 2026 such a path was
+  proven on the custom tracer, which repeated; it is gone.)
 * **Otherwise the change is real.** `python3 Tools/eval/pngdiff.py <a> <b>` gives the size per image in 8-bit levels
   (it needs numpy and Pillow). A difference of 1 level everywhere is usually reordered floating-point math, a few
   pixels with large differences usually a changed condition, and noise all over a changed random seed or sample
@@ -101,6 +102,9 @@ cover the change: `.claude/skills/tests/scripts/related.sh` picks them (the `tes
 * `KernelVariantsTests`: the flag values in Swift match the shaders', and the variants compile.
 * `ShaderSourceTests`: every piece in `Shaders/` is included once, and compile errors name the piece.
 * `BVHTests`, `CacheTests`: the parallel BVH build equals the serial one; cache files are written whole.
+* `PlantTracingTests`: the plants' layouts match the shaders', plants name the variant of their phase bucket and
+  leaf share, `plantWindKernel` poses a variant's parts as the shading turns their points, and the instances lean
+  downwind as `Wind.plant` / `Wind.cover` say.
 
 Green tests prove the tables. They say nothing about the frame: that takes images.
 

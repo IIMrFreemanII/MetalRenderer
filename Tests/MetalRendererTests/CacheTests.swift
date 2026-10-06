@@ -74,34 +74,6 @@ final class CacheTests: XCTestCase {
         XCTAssertNil(SectionFile(url: cut, key: "key 1"), "another format")
     }
 
-    /// The meshes' trees from the cache are the ones the builder makes; other geometry is another file.
-    func testBottomLevelTreesAreCached() {
-        guard GeneratedCache.cachesTrees else { return }
-        // Two meshes, enough triangles between them for the cache to take them.
-        let ground = Terrain(size: 100, cells: 80, seed: 3, relief: 6, flat: (center: [0, 0], inner: 5, outer: 20)).mesh()
-        let positions = ground.positions + ground.positions.map { $0 + SIMD3(0, 30, 0) }
-        let indices = ground.indices + ground.indices.map { $0 + UInt32(ground.positions.count) }
-        let count = UInt32(ground.indices.count)
-        let meshes = [GPUMesh(firstIndex: 0, indexCount: count), GPUMesh(firstIndex: count, indexCount: count)]
-        let built = BVHBuilder.buildBLAS(positions: positions, indices: indices, meshes: meshes)
-        let first = BVHBuilder.cachedBLAS(positions: positions, indices: indices, meshes: meshes)
-        let second = BVHBuilder.cachedBLAS(positions: positions, indices: indices, meshes: meshes)
-        XCTAssertTrue(second.cached)
-        XCTAssertEqual(first.geometry, second.geometry)
-        for result in [first.blas, second.blas] {
-            XCTAssertEqual(result.roots, built.roots)
-            XCTAssertEqual(result.nodeBases, built.nodeBases)
-            XCTAssertEqual(result.maxDepth, built.maxDepth)
-            XCTAssertEqual(result.triangles.map(\.w.bitPattern), built.triangles.map(\.w.bitPattern))
-            XCTAssertEqual(result.triangles.map { SIMD3($0.x, $0.y, $0.z) }, built.triangles.map { SIMD3($0.x, $0.y, $0.z) })
-            XCTAssertEqual(result.nodes.map { $0.ref(0) }, built.nodes.map { $0.ref(0) })
-            XCTAssertEqual(result.nodes.map { $0.hi(1) }, built.nodes.map { $0.hi(1) })
-            XCTAssertEqual(result.bounds.map(\.lo), built.bounds.map(\.lo))
-        }
-        XCTAssertNil(BVHBuilder.cachedBLAS(positions: ground.positions, indices: Array(ground.indices.prefix(300)),
-                                           meshes: [GPUMesh(firstIndex: 0, indexCount: 300)]).geometry, "too small to cache")
-    }
-
     /// The cached tile is whole: every rank once, as (rank + 0.5) / count. (Generating one to compare takes a debug
     /// build 40 s; the cache's name carries the generator's parameters and a version instead.)
     func testBlueNoiseTileIsCachedWhole() {

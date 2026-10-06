@@ -192,12 +192,12 @@ extension Scene {
             return (vertices, indices)
         }
 
-        /// A plant that is an assembly where the scene has them, and voxels when far on either tracer: one with
+        /// A plant that is an assembly where the scene has them, and voxels when far: one with
         /// boughs, or a dead tree (an assembly only for the wind to lean it). Ferns and grass are meshes that lean by
         /// themselves (`sways`), close to the ground: always triangles.
         static func hasVoxels(_ plant: Foliage.Plant, _ species: Foliage.Species) -> Bool { plant.parts.count > 1 || species == .dead }
 
-        /// What the plant's voxels are made of (FoliageVoxels): its parts, as the custom tracer's assembly places them.
+        /// What the plant's voxels are made of (FoliageVoxels): its parts, as its assembly places them.
         private func voxelPlant(_ set: Foliage.SpeciesSet, _ index: Int) -> FoliageVoxels.Plant {
             let plant = set.plants[index]
             return FoliageVoxels.Plant(key: "\(library): \(set.species) \(index)", pieces: plant.parts.map { part in
@@ -220,7 +220,7 @@ extension Scene {
                 let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
                 let name = "\(library): \(set.species) \(index)"
                 let layer = leaves.cutout ? sheet(set.species)?.layer : nil
-                // A baked plant is its finest level; on Metal's tracer, one with boughs is voxels when far (VoxelLOD).
+                // A baked plant is its finest level; one with boughs is voxels when far (VoxelLOD).
                 func finest(_ m: Int) -> Int { scene.setDetailLevel(m, 0); return m }
                 func flat(wood w: Int, leaves l: Int) -> Placed {
                     if scene.usesVoxelBoxes, w >= 0, Flora.hasVoxels(plant, set.species) {

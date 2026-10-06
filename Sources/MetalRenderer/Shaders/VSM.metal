@@ -503,7 +503,7 @@ kernel void vsmCullKernel(device const float3*          positions  [[buffer(2)]]
                           device uint4*                 groups     [[buffer(12)]],
                           device VSMCounters*           counters   [[buffer(13)]],
                           device const RasterMesh*      rmeshes    [[buffer(14)]],
-                          device const VGBlasEntry*     vgTable    [[buffer(16)]],
+                          device const VGBlas*          vgTable    [[buffer(16)]],
                           device VSMInstance*           records    [[buffer(17)]],
                           device const uint*            activeViews [[buffer(19)]],
                           device const uint4*           rects      [[buffer(20)]],

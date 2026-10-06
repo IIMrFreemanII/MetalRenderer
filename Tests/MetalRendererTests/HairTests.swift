@@ -207,7 +207,7 @@ final class HairTests: XCTestCase {
     private func metal() throws -> (device: MTLDevice, queue: MTLCommandQueue, pipelines: Pipelines) {
         if let compiled = HairTests.compiled { return compiled }
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
-        let pipelines = try Pipelines(device: device, source: HairTests.shaders, kind: .metal, lightTypes: 0x3F, stats: false)
+        let pipelines = try Pipelines(device: device, source: HairTests.shaders, lightTypes: 0x3F, stats: false)
         HairTests.compiled = (device, queue, pipelines)
         return (device, queue, pipelines)
     }
