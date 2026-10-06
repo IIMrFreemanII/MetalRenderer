@@ -149,13 +149,14 @@ final class VirtualBLAS {
 
     /// Nanite's rule without residency (every page is readable), over `groups` of `mesh`: a cluster is in the cut when
     /// its group's simplification is too coarse on screen and its own error is fine enough (or it is at the finest
-    /// level). A group's clusters share the first test, so it is made once per group.
+    /// level). A group's clusters share the first test, so it is made once per group. (VGCutTests: the reference the
+    /// raster clusters' GPU cut is checked against.)
     ///
     /// `slack`: how far the camera can move before any test made here could turn out differently. Each test
     /// "projected error <= tau" is "distance to the sphere >= error x scale x pixelScale / tau", and that distance
     /// changes at most as much as the camera moves.
-    private func selection(mesh: VirtualMesh, groups: Range<Int>, transform m: float4x4, camPos: SIMD3<Float>,
-                           pixelScale: Float, tau: Float) -> (selection: [UInt32], slack: Float) {
+    static func selection(mesh: VirtualMesh, groups: Range<Int>, transform m: float4x4, camPos: SIMD3<Float>,
+                          pixelScale: Float, tau: Float) -> (selection: [UInt32], slack: Float) {
         let scale = max(length(SIMD3(m[0].x, m[0].y, m[0].z)), length(SIMD3(m[1].x, m[1].y, m[1].z)), length(SIMD3(m[2].x, m[2].y, m[2].z)))
         var slack = Float.infinity
         func fineEnough(_ s: SIMD4<Float>, _ error: Float) -> Bool {
@@ -205,8 +206,8 @@ final class VirtualBLAS {
             parts.withUnsafeMutableBufferPointer { out in
                 DispatchQueue.concurrentPerform(iterations: items.count) { i in
                     let (k, groups) = items[i]
-                    out[i] = selection(mesh: meshes[instances[k].mesh], groups: groups, transform: transforms[k],
-                                       camPos: camPos, pixelScale: pixelScale, tau: tau)
+                    out[i] = VirtualBLAS.selection(mesh: meshes[instances[k].mesh], groups: groups, transform: transforms[k],
+                                                   camPos: camPos, pixelScale: pixelScale, tau: tau)
                 }
             }
             var i = 0

@@ -44,4 +44,5 @@ using namespace metal::raytracing;
 #include "Shaders/Lumen.metal"             // the Lumen GI mode: screen probes (uses the cascades' probe weight and SH)
 #include "Shaders/BVHBuild.metal"          // custom ray tracer: the per-frame top-level tree (rt* kernels)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its tree (vg* kernels)
+#include "Shaders/RasterClusters.metal"    // the raster clusters: virtual geometry's cut, culled and drawn as Nanite does
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices, vertices and trees (crowd* kernels)

@@ -6,7 +6,7 @@ struct Uniforms {
     float4 camPos;          // xyz
     float4 camRight;        // xyz, w = tan(fovX/2)
     float4 camUp;           // xyz, w = tan(fovY/2)
-    float4 camForward;      // xyz
+    float4 camForward;      // xyz, w = rays leave a raster cluster this many times its error in front (RasterClusters.bias)
     float4 prevCamPos;
     float4 prevCamRight;
     float4 prevCamUp;

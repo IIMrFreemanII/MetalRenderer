@@ -70,6 +70,7 @@ extension DirectLightMode: EnvNamed {}
 extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
+extension RasterVirtual: EnvNamed {}
 extension LumenTrace: EnvNamed {}
 extension ShadowMethod: EnvNamed {
     var envName: String { ["rays", "vsm"][rawValue] }
@@ -86,6 +87,7 @@ enum EnvVariable: String, CaseIterable {
     case primary = "METALRENDERER_PRIMARY", shadowMethod = "METALRENDERER_SHADOW_METHOD"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
+    case rasterVG = "METALRENDERER_RASTER_VG", rasterVGPool = "METALRENDERER_RASTER_VG_POOL"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
     // Lists of key=value.
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
@@ -351,6 +353,8 @@ enum SettingsTable {
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)
                 .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
             S.popup("Primary visibility", \.primary, titled(\.title)).env(.primary),
+            S.popup("Raster virtual geometry", \.virtualGeometry.raster, titled(\.title)).env(.rasterVG)
+                .enabled { virtual($0) && $0.primary == .raster }.advanced(),
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),
@@ -407,6 +411,7 @@ enum SettingsTable {
             S.slider("Mapped lights", \.vsm.maxLights, VSMSettings.maxLightRange).env(.vsm, "lights").advanced().when(vsm),
             S.slider("March steps", \.vsm.steps, VSMSettings.stepRange).env(.vsm, "steps").advanced().when(vsm),
             S.slider("Depth bias", \.vsm.bias, VSMSettings.biasRange, step: 0.25, fmt("%.2f texels")).env(.vsm, "bias").advanced().when(vsm),
+            S.check("Virtual geometry as clusters", \.vsm.clusters).env(.vsm, "clusters").advanced().when(vsm),
             S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
             S.value(\.manyLightRays).env(.gi, "lightrays"),
             S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }
@@ -634,6 +639,8 @@ enum SettingsTable {
 
     private static let memory = Section(title: "Memory", advanced: true, rows: [
         S.popup("Geometry pool", \.virtualGeometry.poolMB, VirtualGeometrySettings.poolOptions.map { ("\($0) MB", $0) }).env(.vgPool).advanced(),
+        S.popup("Raster clusters' pool", \.virtualGeometry.rasterPoolMB,
+                VirtualGeometrySettings.rasterPoolOptions.map { ("\($0) MB", $0) }).env(.rasterVGPool).advanced(),
         S.popup("Texture budget", \.textureBudgetMB, RenderSettings.textureBudgetOptions.map { ("\($0) MB", $0) }).env(.textureBudget).advanced(),
     ])
 }

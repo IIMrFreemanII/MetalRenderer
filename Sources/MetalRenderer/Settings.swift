@@ -442,6 +442,10 @@ struct VSMSettings: Equatable, Codable {
     var steps = 8                   // the march's steps toward the light
     var bias: Float = 0.5           // depth bias, in texels of the page's level (x (1 + the slope)): 0.5 is nearest the
                                     // rays (pixels > 8 levels off in the city: 1.6% against 3.0% at 1.5), no acne
+    /// Virtual geometry (with the per-instance BLAS) drawn as clusters with a cut of each view's own (RasterClusters),
+    /// whatever the camera draws it from: its pages then stay drawn while the camera moves. Off: the BLAS's triangles,
+    /// all of them into every page the instance covers, every frame.
+    var clusters = true
 
     static let poolOptions = [256, 512, 1024, 2048]
     static let budgetRange = 16...1024
@@ -528,12 +532,30 @@ struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
+    /// How the raster visibility buffer draws it (with the per-instance BLAS; the cluster tree's mode traces it).
+    var raster = RasterVirtual(envText: ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG"] ?? "") ?? .blas
+    /// The raster clusters' own streaming pool (the rays keep the BLAS): 512 MB holds what the gallery's shadow maps and
+    /// camera ask for (about 390 MB settled).
+    var rasterPoolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG_POOL"] ?? "") ?? 512
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
     static let poolOptions = [256, 512, 768, 1024, 2048]
+    static let rasterPoolOptions = [128, 256, 512, 768]
+}
+
+/// How the raster visibility buffer draws virtual geometry: the triangles of its instance's BLAS over the CPU's cut,
+/// 128 at a time and culled by instance only; or Nanite's way, clusters of the DAG picked, culled and streamed on the GPU
+/// every frame (RasterClusters), drawn by vertex pulling or by mesh shaders.
+enum RasterVirtual: Int, CaseIterable, Codable {
+    case blas
+    case clusters
+    case mesh
+
+    var title: String { ["BLAS triangles", "Clusters", "Clusters (mesh shaders)"][rawValue] }
+    var drawsClusters: Bool { self != .blas }
 }
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
