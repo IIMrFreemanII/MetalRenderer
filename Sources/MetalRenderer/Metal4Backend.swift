@@ -225,12 +225,13 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         endCompute()
         let d = MTL4RenderPassDescriptor()
         attachments.apply(color: d.colorAttachments[0], depth: d.depthAttachment)
-        keep(attachments.color)
+        d.renderTargetArrayLength = attachments.layers
+        if let color = attachments.color { keep(color) }
         keep(attachments.depth)
         guard let enc = buffer(name).makeRenderCommandEncoder(descriptor: d) else { return }
         enc.label = name
         enc.barrier(afterQueueStages: Metal4Frame.queueStages, beforeStages: [.vertex, .fragment], visibilityOptions: .device)
-        enc.setArgumentTable(table, stages: .vertex)
+        enc.setArgumentTable(table, stages: [.vertex, .mesh])
         encode(RenderPass4(frame: self, enc: enc))
         enc.endEncoding()
     }
@@ -241,12 +242,22 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
         func setRenderPipelineState(_ state: MTLRenderPipelineState) { enc.setRenderPipelineState(state) }
         func setDepthStencilState(_ state: MTLDepthStencilState) { enc.setDepthStencilState(state) }
+        func clampDepth() { enc.setDepthClipMode(.clamp) }
         func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { frame.setBytes(bytes, length: length, index: index) }
         func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { frame.setBuffer(buffer, offset: offset, index: index) }
         func useResources(_ resources: [MTLResource]) { frame.useResources(resources, usage: .read) }
         func drawTriangles(indirectBuffer: MTLBuffer, indirectBufferOffset: Int) {
             frame.keep(indirectBuffer)
             enc.drawPrimitives(primitiveType: .triangle, indirectBuffer: indirectBuffer.gpuAddress + UInt64(indirectBufferOffset))
+        }
+        // (One argument table serves the vertex and the mesh stage.)
+        func setMeshBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { frame.setBytes(bytes, length: length, index: index) }
+        func setMeshBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { frame.setBuffer(buffer, offset: offset, index: index) }
+        func drawMeshThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threads: Int) {
+            frame.keep(indirectBuffer)
+            enc.drawMeshThreadgroups(indirectBuffer: indirectBuffer.gpuAddress + UInt64(indirectBufferOffset),
+                                     threadsPerObjectThreadgroup: MTLSize(width: 1, height: 1, depth: 1),
+                                     threadsPerMeshThreadgroup: MTLSize(width: threads, height: 1, depth: 1))
         }
     }
 

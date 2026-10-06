@@ -91,6 +91,7 @@ final class RasterSceneTests: XCTestCase {
         XCTAssertEqual(records[1].hi.w.bitPattern, RasterScene.Kind.skip.rawValue)
         XCTAssertEqual(records[1].lo.x, -0.5, accuracy: 0.05)
         XCTAssertEqual(records[1].hi.x, 0.5, accuracy: 0.05)
+        XCTAssertNotEqual(scene.instances[1].mask & Scene.maskShadowTraced, 0, "virtual shadow maps trace it")
     }
 
     func testDeformingMeshesHaveNoChunkBounds() {

@@ -362,7 +362,8 @@ extension Scene {
             let transform = translate(position) * rotate(yaw, [0, 1, 0]) * scale(size), normal = transform.inverse.transpose
             let wood = shades[s][shade % shades[s].count]
             func instance(mesh: Int, assembly: Int, _ material: Int) -> Instance {
-                Instance(mesh: mesh, material: material, mask: Scene.maskGeometry, transform: transform, prevTransform: transform,
+                Instance(mesh: mesh, material: material, mask: scene.instanceMask(Scene.maskGeometry, mesh: mesh, assembly: assembly >= 0),
+                         transform: transform, prevTransform: transform,
                          animation: nil, assembly: assembly, normalMatrix: normal)
             }
             switch known {

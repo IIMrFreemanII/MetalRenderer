@@ -114,7 +114,7 @@ final class Benchmark {
             if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase { s.post = PostSettings.preset(for: s.scene) }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.restir, .restirGI, .megaLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.restir, .restirGI, .megaLights, .vsm, .lumen, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }
@@ -263,6 +263,26 @@ final class Benchmark {
 
     func noteDraw(resolution: String) {
         resolutions[configIndex] = resolution
+    }
+
+    /// Most frames the last warm-up frame is held while streaming settles (`hold(settled:)`).
+    static let maxHold = 600
+    private var held = 0
+    /// Whether to draw the last warm-up frame again instead of advancing: virtual geometry's streaming hasn't
+    /// loaded what the view asks for yet (`settled` false), so measuring would start on a coarser cut that a
+    /// later run, or a faster disk, wouldn't show. At most `maxHold` frames; the time stands still meanwhile.
+    func hold(settled: Bool) -> Bool {
+        guard frameInConfig == warmupFrames - 1, cut == nil else { return false }
+        if !settled && held < Benchmark.maxHold {
+            held += 1
+            return true
+        }
+        if held > 0 {
+            print(settled ? "  streaming settled after \(held) more warm-up frames"
+                          : "  streaming not settled after \(held) more warm-up frames: measuring anyway")
+        }
+        held = 0
+        return false
     }
 
     /// Returns true when the config changed (the caller should reset its animation clock).

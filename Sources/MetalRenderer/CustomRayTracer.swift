@@ -295,7 +295,7 @@ final class CustomRayTracer {
                 continue   // in the cluster tree, not the instance trees
             } else if inst.isStatic {
                 let box = bounds(inst).transformed(inst.transform)
-                if inst.mask == Scene.maskGeometry {
+                if inst.isGeometry {
                     geometry.boxes.append(box); geometry.ids.append(i); geometry.masks.append(inst.mask)
                 } else {
                     proxies.boxes.append(box); proxies.ids.append(i); proxies.masks.append(inst.mask)
@@ -336,12 +336,14 @@ final class CustomRayTracer {
         }
         let staticCount = geometry.ids.count + proxies.ids.count - tilePartOf.count
         // The assemblies' trees over their parts: a leaf is a part's record. They sit with the static nodes, so the
-        // traversal reads them as it reads the top level, in the plant's space.
+        // traversal reads them as it reads the top level, in the plant's space (masks too: a part is geometry the raster
+        // doesn't draw, Scene.maskShadowTraced).
         var roots: [UInt32] = [], partDepth = 0, firstPart = 0
         let firstAssemblyNode = nodes.count
         for boxes in partBoxes {
             let tree = BVHBuilder.buildTLAS(boxes: boxes, ids: Array(firstPart..<firstPart + boxes.count),
-                                            masks: [UInt32](repeating: Scene.maskGeometry, count: boxes.count), nodeBase: 0, into: &nodes)
+                                            masks: [UInt32](repeating: Scene.maskGeometry | Scene.maskShadowTraced, count: boxes.count),
+                                            nodeBase: 0, into: &nodes)
             roots.append(tree.root)
             partDepth = max(partDepth, tree.depth)
             firstPart += boxes.count
@@ -501,6 +503,15 @@ final class CustomRayTracer {
         if CustomRayTracer.checked, !scene.hasBorrowedMeshes { selfTest(scene: scene) }   // (it reads the scene's arrays)
     }
 
+    /// The raster's clusters (per-instance BLAS mode): their list and pool stand in the selected clusters' fields, which
+    /// nothing else uses there, so a primary hit on a drawn cluster reads its triangle as the cluster tree's would.
+    weak var rasterClusters: RasterClusters? {
+        didSet {
+            guard virtualGeometry == nil, rasterClusters !== oldValue else { return }
+            for slot in 0..<sceneArgs.count { writeArgs(slot: slot) }
+        }
+    }
+
     /// RTScene (160 bytes, asserted in Shaders/Intersect.metal): 10 GPU addresses, then the static and dynamic root refs and the
     /// cluster tree's first node, then the assemblies' parts and their voxels; the wind is written every frame (`encodeBuild`).
     private func writeArgs(slot: Int) {
@@ -510,8 +521,8 @@ final class CustomRayTracer {
         p.storeBytes(of: blasNodes.gpuAddress, toByteOffset: 8, as: UInt64.self)
         p.storeBytes(of: triangles.gpuAddress, toByteOffset: 16, as: UInt64.self)
         p.storeBytes(of: instances[slot].gpuAddress, toByteOffset: 24, as: UInt64.self)
-        p.storeBytes(of: (vg?.selectedBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
-        p.storeBytes(of: (vg?.pool ?? dummy).gpuAddress, toByteOffset: 40, as: UInt64.self)
+        p.storeBytes(of: (vg?.selectedBuffers[slot] ?? rasterClusters?.listBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
+        p.storeBytes(of: (vg?.pool ?? rasterClusters?.streamer.pool ?? dummy).gpuAddress, toByteOffset: 40, as: UInt64.self)
         p.storeBytes(of: (vg?.rootsBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 48, as: UInt64.self)
         p.storeBytes(of: (vg?.nodeInstanceBuffers[slot] ?? dummy).gpuAddress, toByteOffset: 56, as: UInt64.self)
         p.storeBytes(of: stats.gpuAddress, toByteOffset: 64, as: UInt64.self)
@@ -587,7 +598,7 @@ final class CustomRayTracer {
                     box.grow(child.lo(0)); box.grow(child.hi(0))
                     if child.ref(1) != BVHNode.none { box.grow(child.lo(1)); box.grow(child.hi(1)) }
                 }
-                fittedNodes[i].setChild(k, lo: box.lo, hi: box.hi, ref: ref, mask: Scene.maskGeometry)
+                fittedNodes[i].setChild(k, lo: box.lo, hi: box.hi, ref: ref, mask: Scene.maskGeometry | Scene.maskShadowTraced)
             }
         }
     }
@@ -798,7 +809,7 @@ final class CustomRayTracer {
         enc.setBuffer(sceneArgs[slot], offset: 0, index: 1)
         guard declare else { return }
         enc.useResources([tlasNodes[slot], blasNodes, triangles, instances[slot], parts, voxelGrids, voxels, cutouts] + (virtualGeometry?.resources(slot: slot) ?? [dummy])
-                         + (virtualBLAS?.resources(slot: slot) ?? []), usage: .read)
+                         + (virtualBLAS?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? []), usage: .read)
         if !blockTrees.isEmpty { enc.useResources(blockTrees, usage: .read) }
         if sdf.shapeCount > 0 { enc.useResources(sdf.buffers, usage: .read) }
         enc.useResource(stats, usage: [.read, .write])

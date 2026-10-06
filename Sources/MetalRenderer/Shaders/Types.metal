@@ -6,7 +6,7 @@ struct Uniforms {
     float4 camPos;          // xyz
     float4 camRight;        // xyz, w = tan(fovX/2)
     float4 camUp;           // xyz, w = tan(fovY/2)
-    float4 camForward;      // xyz
+    float4 camForward;      // xyz, w = rays leave a raster cluster this many times its error in front (RasterClusters.bias)
     float4 prevCamPos;
     float4 prevCamRight;
     float4 prevCamUp;
@@ -94,6 +94,8 @@ constant uint SKY_ATMOSPHERE = 1, SKY_IMAGE = 2;
 constant uint SKY_CLOUDS = 1, SKY_SHADOWS = 2, SKY_UPDATE_ALL = 4, SKY_CLOUDS_OVER_IMAGE = 8;
 
 // Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table; the sky.
+struct VSMScene;   // Shaders/VSM.metal
+
 struct SceneShading {
     device const Material*        materials;
     device const float2*          uvs;
@@ -106,8 +108,9 @@ struct SceneShading {
     texture2d_array<float>        sky;         // with FLAG_SKY_MAP: [0] upper, [1] lower hemisphere (skyKernel)
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
+    device const VSMScene*        vsm;         // with FLAG_VSM: the virtual shadow maps (VSMTargets.writeScene)
 };
-static_assert(sizeof(SceneShading) == 272, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
+static_assert(sizeof(SceneShading) == 288, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -264,6 +267,8 @@ constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowin
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
 constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
+constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
+constant uint FLAG_GI_RADIANCE   = 4194304; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
@@ -290,6 +295,7 @@ constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups p
 constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
+constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
 constant uint MASK_ALL      = 0xFF;
 
 constant float RAY_EPSILON  = 1e-3f;

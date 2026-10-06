@@ -12,10 +12,10 @@ import simd
 /// What isn't drawn is traced where its bounding box is in front (the raster draws the box): an assembly's parts, leaf
 /// cards (alpha tested), ground cover that sways in the wind, virtual geometry without a BLAS over its cut (the cluster
 /// tree, `METALRENDERER_VG_MODE=clusters`) and instances finer than the pixels; every primary ray traces when the draw
-/// lists are full (RasterTraced).
+/// lists are full (RasterTraced). Virtual geometry is drawn from its BLAS's triangles, or as clusters (RasterClusters).
 final class RasterScene {
     /// How a mesh's triangles are read (MSL RASTER_*), with `deforms` added for a crowd's pose slots.
-    enum Kind: UInt32 { case skip = 0, arrays, block, virtual }
+    enum Kind: UInt32 { case skip = 0, arrays, block, virtual, clusters = 5 }   // (4: a box, drawn for what is skipped)
     static let deforms: UInt32 = 16
     static let chunk = 128   // triangles a chunk (RASTER_CHUNK)
 
@@ -27,11 +27,19 @@ final class RasterScene {
     let chunkBounds: MTLBuffer     // per chunk: lo, hi (float4 each), from rasterBoundsKernel
     let ids: MTLBuffer?            // per instance: its id (Metal's tracer with blocks), else nil (the id is the place)
     let visible: MTLBuffer         // per instance: 1 = drawn last frame (MSL RASTER_VISIBLE; RASTER_IN_VIEW between the passes)
+    /// The scene's own instances that move or deform, or whose virtual geometry's cut may change (places): what
+    /// invalidates the virtual shadow maps' pages it covers (vsmInvalidateKernel). The blocks' never move.
+    let moving: MTLBuffer
+    let movingCount: Int
     let instanceCount: Int
     /// rasterBoundsKernel has filled `chunkBounds` (the renderer sets it once it has encoded that).
     var boundsReady = false
     /// What it was made for: the mesh table of the scene's buffers (a new set of buffers has a new one).
     private(set) weak var source: MTLBuffer?
+    /// Virtual geometry is drawn as clusters (RasterClusters), not from the BLAS.
+    let virtualClusters: Bool
+    /// The raster clusters' per-frame state where there are none (rasterResetKernel clears it all the same).
+    let noClusterState: MTLBuffer
 
     /// A mesh's record: `kind`, its bounds (a pose slot's hold every pose it takes), its first chunk.
     static func record(lo: SIMD3<Float>, hi: SIMD3<Float>, kind: Kind, deforms: Bool, firstChunk: Int) -> GPURasterMesh {
@@ -49,7 +57,7 @@ final class RasterScene {
     /// Chunks of `triangles`.
     static func chunks(_ triangles: Int) -> Int { (triangles + chunk - 1) / chunk }
 
-    init(device: MTLDevice, scene: Scene, buffers: SceneBuffers, customTracer: Bool, virtualBLAS: Bool) throws {
+    init(device: MTLDevice, scene: Scene, buffers: SceneBuffers, customTracer: Bool, virtualBLAS: Bool, clusters: Bool = false) throws {
         func shared<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
             let made = array.withUnsafeBytes { raw in
                 raw.count > 0 ? device.makeBuffer(bytes: raw.baseAddress!, length: raw.count, options: .storageModeShared)
@@ -60,6 +68,8 @@ final class RasterScene {
             return made
         }
         source = buffers.meshes
+        virtualClusters = virtualBLAS && clusters
+        noClusterState = try shared([UInt32](repeating: 0, count: 4), "raster no clusters")
         // The ordinary meshes, then the virtual ones (meshIndex = meshes.count + v).
         var records: [GPURasterMesh] = [], chunkMeshes: [UInt32] = []
         for (m, mesh) in scene.meshes.enumerated() {
@@ -74,7 +84,7 @@ final class RasterScene {
             records.append(RasterScene.record(lo: b.lo, hi: b.hi, kind: kind, deforms: deforms, firstChunk: first))
         }
         for v in scene.virtualMeshes {
-            records.append(RasterScene.record(lo: v.bounds.lo, hi: v.bounds.hi, kind: virtualBLAS ? .virtual : .skip,
+            records.append(RasterScene.record(lo: v.bounds.lo, hi: v.bounds.hi, kind: !virtualBLAS ? .skip : clusters ? .clusters : .virtual,
                                               deforms: false, firstChunk: 0))
         }
         firstAssembly = records.count
@@ -103,6 +113,12 @@ final class RasterScene {
         } else {
             ids = nil
         }
+        let movers = scene.instances.indices.filter {
+            let inst = scene.instances[$0]
+            return inst.moves || inst.skinned || inst.virtualMesh >= 0
+        }.map { UInt32($0) }
+        movingCount = movers.count
+        moving = try shared(movers, "raster moving instances")
         guard let visible = device.makeBuffer(length: max(instanceCount, 1) * 4, options: .storageModeShared) else {
             throw RendererError.resourceCreation("buffer raster visibility")
         }
@@ -113,7 +129,7 @@ final class RasterScene {
 
     /// Bytes on the GPU (the Debug window's memory line).
     var megabytes: Double {
-        Double(meshes.length + chunkMeshes.length + chunkBounds.length + (ids?.length ?? 0) + visible.length) / 1_048_576
+        Double(meshes.length + chunkMeshes.length + chunkBounds.length + (ids?.length ?? 0) + visible.length + moving.length) / 1_048_576
     }
 }
 
@@ -124,6 +140,9 @@ final class RasterTargets {
     let visibility: MTLTexture     // rg32Uint: instance id, triangle (RASTER_NO_ID = nothing)
     let depth: MTLTexture          // depth32Float, reversed Z
     let hzb: MTLTexture            // r32Float, mipmapped: level 0 is half the size rounded up to powers of two
+    /// The pyramid of a frame's final depth, which the next frame's raster clusters test against (`prevFrame`).
+    let hzbPrev: MTLTexture
+    var prevFrame: UInt32 = .max   // the frame `hzbPrev` is of
     let maxDraws: Int, maxGroups: Int
     let draws: MTLBuffer           // per pass: maxDraws chunks (uint4)
     let groups: MTLBuffer          // per pass: maxGroups groups (uint4)
@@ -146,6 +165,7 @@ final class RasterTargets {
         depth = try texture(Pipelines.depthFormat, width, height, mips: false, [.renderTarget, .shaderRead], "raster depth")
         func half(_ n: Int) -> Int { max(1, (1 << Int(ceil(log2(Double(max(n, 2)))))) / 2) }
         hzb = try texture(.r32Float, half(width), half(height), mips: true, [.shaderRead, .shaderWrite], "hzb")
+        hzbPrev = try texture(.r32Float, half(width), half(height), mips: true, [.shaderRead, .shaderWrite], "hzb previous")
         // Every chunk of the scene, or for the cut's triangles about four a pixel; the groups follow.
         maxDraws = min(max(chunks + width * height * 4 / RasterScene.chunk, 65536), 1 << 22)
         maxGroups = instances + maxDraws / 64 + 1
