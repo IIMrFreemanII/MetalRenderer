@@ -319,8 +319,9 @@ inline void megaLightsShade(uint element, float2 uv, float pdf, uint light, thre
     if (all(e.diffuse <= 0.0f) && all(e.specular <= 0.0f)) return;
     float b;
     uint li = element & ELEMENT_INDEX;
-    if ((element & ELEMENT_TYPE) != ELEMENT_TRIANGLE ? !shadowVisible(flags, s.vsm, li, lights[li], sp.p, sp.ng, e.target, accel, b)
-                                                      : !isVisible(sp.p, e.target, accel)) return;
+    float3 o = shadowOrigin(sp, e.target);
+    if ((element & ELEMENT_TYPE) != ELEMENT_TRIANGLE ? !shadowVisible(flags, s.vsm, li, lights[li], o, sp.ng, e.target, accel, b)
+                                                      : !isVisible(o, e.target, accel)) return;
     float inv = 1.0f / pdf;
     out.diffuse += e.diffuse * inv;
     out.specular += e.specular * inv;

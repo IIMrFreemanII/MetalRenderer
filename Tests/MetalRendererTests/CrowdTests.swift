@@ -77,7 +77,7 @@ final class CrowdTests: XCTestCase {
         let scene = Scene(SceneSettings(kind: .crowd, characters: 300, poses: 24, detail: 4))
         let crowd = try XCTUnwrap(scene.crowd)
         XCTAssertEqual(crowd.memberCount, 300)
-        let members = scene.instances.filter(\.skinned)
+        let members = scene.instances.filter(\.deforms)
         XCTAssertEqual(members.count, 300)
         let poseMeshes = Set(crowd.slots.map(\.mesh))
         for inst in members {

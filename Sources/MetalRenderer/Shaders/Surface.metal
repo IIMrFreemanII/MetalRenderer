@@ -136,7 +136,26 @@ struct Surface {
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
     bool   backlit;       // a translucent leaf showing the light of its far side: orientNormals faces it away
+    bool   hair;          // a strand (HAIR_CURVES) whose material is hair (Material.params.z < 0): Hair.metal lights it
+    float3 tangent;       // a strand's direction there
+    float  hairH;         // where across the strand the ray met it, -1...1 (Hair.metal's h)
 };
+
+// Where across a strand along `tangent` its normal `n` is, seen from `view` (pbrt's h: in the strand's frame x =
+// tangent, y = the view across it, z = x cross y, the normal is (cos gamma) y - (sin gamma) z and h = sin gamma).
+inline float hairOffset(float3 n, float3 tangent, float3 view) {
+    float3 y = view - tangent * dot(view, tangent);
+    return length_squared(y) > 1e-12f ? clamp(-dot(n, cross(tangent, normalize(y))), -1.0f, 1.0f) : 0.0f;
+}
+
+// A uniform Catmull-Rom segment (Metal's curve_basis::catmull_rom) between c[1] and c[2], at t, and its derivative.
+inline float3 catmullRom(float3 c0, float3 c1, float3 c2, float3 c3, float t) {
+    float t2 = t * t, t3 = t2 * t;
+    return 0.5f * (2.0f * c1 + (c2 - c0) * t + (2.0f * c0 - 5.0f * c1 + 4.0f * c2 - c3) * t2 + (3.0f * c1 - c0 - 3.0f * c2 + c3) * t3);
+}
+inline float3 catmullRomTangent(float3 c0, float3 c1, float3 c2, float3 c3, float t) {
+    return 0.5f * ((c2 - c0) + 2.0f * (2.0f * c0 - 5.0f * c1 + 4.0f * c2 - c3) * t + 3.0f * (3.0f * c1 - c0 - 3.0f * c2 + c3) * t * t);
+}
 
 // Light through a leaf comes out yellower than what it reflects.
 constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
@@ -359,6 +378,9 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     sf.instanceId = 0;
     sf.lightEmitter = false;
     sf.backlit = false;
+    sf.hair = false;
+    sf.tangent = float3(0.0f);
+    sf.hairH = 0.0f;
     if (!res.hit) return sf;
 
     uint id = res.instance;
@@ -384,6 +406,46 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
         }
         sf.instanceId = surfaceInstance(id);
+        return sf;
+    }
+    if (HAIR_CURVES && res.part == HIT_CURVE) {
+        // A strand's segment (Scene.addCurves): its four control points, where they are now and where they were a
+        // frame ago (they deform, as a cloth's vertices do); the point on its axis at the hit's parameter, the
+        // normal out from there, and the same offset from last frame's axis point.
+        MeshData mesh = s.meshes[inst.meshIndex];
+        uint first = mesh.vertexOffset + s.indices[mesh.firstIndex + res.primitive];
+        float3 c0 = s.positions[first], c1 = s.positions[first + 1], c2 = s.positions[first + 2], c3 = s.positions[first + 3];
+        float t = res.barycentrics.x;
+        float3 axis = catmullRom(c0, c1, c2, c3, t);
+        float3 tangent = catmullRomTangent(c0, c1, c2, c3, t);
+        tangent = length_squared(tangent) > 1e-20f ? normalize(tangent) : float3(0, 1, 0);
+        float3 world = r.origin + r.direction * res.distance;
+        float3 radial = world - axis;
+        radial -= tangent * dot(radial, tangent);
+        float3 view = -normalize(r.direction);
+        float3 n = length_squared(radial) > 1e-20f ? normalize(radial) : normalize(view - tangent * dot(view, tangent) + 1e-6f);
+        float3 prevAxis = axis;
+        if (mesh.prevOffset != 0) {
+            uint q = first + mesh.prevOffset;
+            prevAxis = catmullRom(s.positions[q], s.positions[q + 1], s.positions[q + 2], s.positions[q + 3], t);
+        }
+        sf.hit = true;
+        sf.position = world;
+        sf.prevPosition = prevAxis + (world - axis);
+        sf.normal = sf.geomNormal = n;
+        Material mat = s.materials[inst.materialIndex];
+        surfaceMaterial(sf, mat);
+        sf.instanceId = surfaceInstance(id);
+        sf.hair = mat.params.z < 0.0f;
+        sf.tangent = tangent;
+        // pbrt's h: in the strand's frame x = tangent, y = the view across it, z = x cross y, the normal is
+        // (cos gamma) y - (sin gamma) z, and h = sin gamma.
+        sf.hairH = hairOffset(n, tangent, view);
+        if (sf.hair) {
+            sf.albedo = max(sf.albedo, float3(0.02f));   // HAIR_MIN_ALBEDO: the light on it is divided by its colour
+            sf.specular = 0.0f;
+        }
+        surfaceSpecular(sf);
         return sf;
     }
     if (SDF_SHAPES && res.part == HIT_SDF) {

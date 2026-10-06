@@ -193,6 +193,10 @@ For the plants:
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
 * `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest, and `lit` the share of lit windows at night. Its day starts in mid-morning: `METALRENDERER_VIEW=tod=0.6` starts it at midnight (`tod=0.41` as the sun sets). `METALRENDERER_BENCH=worldnight` renders the night from a street, a street corner, above the first city and 2 km from it, then drives 600 m down a street; `METALRENDERER_BENCH=worlddusk` renders the first city from above and from a street at eleven times from afternoon to the next morning, then lets 20 s of dusk go by in each view; `METALRENDERER_BENCH=worldground` renders the first city's ground: a junction of two streets from above and from its corner, a courtyard, the last street and the fields beyond it, the roads from over the city and from 2 km, and the junction at night; `METALRENDERER_BENCH=worldroads` renders the road from the first city to the next one: from the junction it leaves by, from the fields, before its deepest cutting and its highest bank, in the woods, from above, all of it from over the city, from short of the other city and at night, then flies 600 m along it; with `METALRENDERER_SHOT_SWAP=<k>` a setting ends, and its picture is taken, `k` frames after its scene is first made again (around another tile, or with the cities' lights). `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles, and renders the start with the scene's origin elsewhere and a place 50 km out. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits. `METALRENDERER_WORLD_GROUPS=0` makes every tile's trees again with every scene, as the scene's own instances (for comparing with the groups they are in otherwise).
+* `METALRENDERER_SCENE=physics` starts in the physics scene (`,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=physics` renders it paused at 5 s under each API (the GPU's steps put everything in the same place under both) and with the CPU's steps, then times the first 5 s moving at 96, 512 and 2048 bodies on the GPU and 32 and 96 on the CPU. `METALRENDERER_BENCH=physicsdemo` records its demo, 30 s from the first drop along a camera track (`video.sh -m physicsdemo`).
+* `METALRENDERER_SCENE=ragdolls` starts in the ragdoll scene (`,ragdolls=…,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=ragdolls` renders it paused at 5 s under each API and with the CPU's steps, then times the first 5 s moving at 8, 24 and 96 ragdolls on the GPU and 8 and 24 on the CPU. `METALRENDERER_BENCH=ragdollsdemo` records its demo, 20 s from the drop along a camera track (`video.sh -m ragdollsdemo`).
+* `METALRENDERER_SCENE=hair` starts in the hair scene (`,hair=…` drawn strands a guide, `,fur=…` furry bodies, `,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=hair` renders it paused at 5 s under each API and with the CPU's steps, then times the first 5 s moving at 4, 12 and 24 strands a guide on the GPU and at 4 on the CPU. `METALRENDERER_BENCH=hairdemo` records its demo (`video.sh -m hairdemo`), and `hairviews` its views of the strands' light, albedo and normals and close-ups.
+* `METALRENDERER_SCENE=softbodies` starts in the soft body scene (`,soft=…` soft bodies, `,cells=…` lattice cubes along each one's longest side, `,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=soft` renders it paused at 1.5, 3 and 5 s, under each API, with the CPU's steps and in its normals and direct light, then times the first 5 s moving at 16, 48 and 128 soft bodies on the GPU, at 16 with 10 cells, and at 16 and 48 on the CPU. `METALRENDERER_BENCH=softdemo` records its demo, 20 s from the throw along a camera track (`video.sh -m softdemo`).
 * `METALRENDERER_SCENE=shapes` starts in the SDF shapes scene. `METALRENDERER_BENCH=shapes` renders it paused under each API, then under Metal 3 with path tracing, ReSTIR and MegaLights on its glowing shapes, and in the normals, triangles (here: the shapes' materials) and traversal cost views; then it times moving frames and a camera move (settings named `<api> <what>`: `metal3 pt`, `metal4 cascades`). `METALRENDERER_BENCH=shapesdemo` records its demo: 30 s along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o demo.mp4` makes the mp4 (with ffmpeg; it does `showcasevideo` too).
 * `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, the plants' voxels, the world's tiles) instead of taking it from `~/Library/Caches/MetalRenderer/generated`. `METALRENDERER_CACHE_MB=4096` caps that folder.
@@ -217,7 +221,8 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 
 | Key | Action |
 |---|---|
-| Drag mouse | Look around |
+| Drag mouse | Look around (from a body in the physics scene: grab and drag it, release to throw it) |
+| Scroll | While holding a body: farther (up) or nearer (down) |
 | W A S D, Q E | Move, down/up (hold Shift to move 3.2× faster; the speed is in the panel) |
 | Space | Pause animation |
 | G | Toggle global illumination |
@@ -1079,6 +1084,170 @@ A shape is a list of up to 32 nodes, joined one after the other: `((n0 op1 n1) o
   * A shape's nodes don't animate; its instance does.
   * Thin features under about 2 mm can be skipped by the 1 mm offset of a ray that leaves a surface.
 
+### Physics
+
+Rigid bodies that are SDF shapes, joints between them (ragdolls), particles and cloth, simulated on the GPU (`Physics.swift`, `Shaders/Physics.metal`), with the same steps on the CPU as their reference. The **Physics** scene (`METALRENDERER_SCENE=physics`, `Scene+Physics.swift`) is an arena:
+* `bodies` shapes of every kind drop in layers onto a ramp, a tower of blocks and each other, and a heavy ball rolls in at the tower's foot;
+* `particles` balls pour into a bin, heap up and spill over its rim;
+* a cloth (`cloth` vertices a side) hangs by two corners from a rod and falls over a ball;
+* a torus knot baked into a distance grid stands on a pedestal; it is a static collider like the rest.
+
+The scene list's keys are `bodies=96`, `particles=2048`, `cloth=36`, `substeps=16` and `physics=auto|gpu|cpu`.
+
+The **Ragdolls** scene (`METALRENDERER_SCENE=ragdolls`, `Scene+Ragdolls.swift`) drops `ragdolls=24` ragdolls in layers over the top of a staircase, lying across it and thrown forward: they tumble down the steps and pile up against posts and a bench at its foot. Each ragdoll is 11 bodies (`Scene.addRagdoll`): a pelvis, a chest, a head, upper and lower arms and legs, all capsules but the head, joined by 10 joints. It shares the physics scene's look, `substeps` and `physics`.
+
+The scene has a look of its own that leaves the GPU to the simulation (`RenderSettings.usePhysicsLook`, applied with the scene's other defaults and by benchmarks moved to it):
+* no GI and no reflections;
+* traced at 0.375 of the window, upscaled 3× to 1440×900.
+
+On the M1 Max a frame then renders in 5 ms instead of 15. The breakdown of the 15: reflections 4.7 ms, radiance cascades 2.9, and the trace and the upscaler, which the smaller frame cuts from 6.6 to 4.7 ms. Nothing in the scene is metal, since a metal without reflections renders black. The panel can turn GI and reflections back on.
+
+* **XPBD with small substeps** (Müller et al. 2020, Macklin et al. 2019):
+  * A step is 1/60 s of `substeps` substeps (16), one solver iteration each.
+  * A substep moves every body by its velocity, pushes its contacts apart (static friction holds them), takes the velocities from how far the bodies went, then applies dynamic friction, restitution, and rolling and spinning resistance (4 mm and 2 cm × the normal force; without them a ball, a cone or a lying cylinder rolls or spins on the spot for ever).
+  * Contacts are solved **Gauss-Seidel by colour**. Once a step the pairs with contacts are coloured so that no two of a colour share a body (Jones-Plassmann: in rounds, each pair that outranks its uncoloured neighbours, by a hash, takes the lowest colour they don't have). The pile takes 9–15 colours, and each substep solves them a colour at a time, every pair's contacts one after another, in place. Averaging each body's contacts (Jacobi) instead rocked resting bodies: a tilted box's one penetrating corner took the whole correction.
+  * Small substeps are what make a GPU-friendly solver stack. At 8 substeps a tower of 8 crossed layers sinks through the floor; at 12 it holds to 3 mm.
+  * **Sleep.** A body that has moved less than 5 cm/s, and turned its mass slower than 2 cm/s, for half a second falls asleep once the bodies it has contacts with have been still for half as long. Both are measured over each step from where it began (its velocities say little at rest: they are what the last substep's kicks left). Its mass's turning is its turn rate times its radius of gyration about the turn, at most 15 cm: 0.13 rad/s for a body that size or more, more for a ragdoll's forearm turning about its length (it jittered at 0.27 rad/s that way, 1 cm/s at its surface, and a pile of ragdolls never slept; at 0.08 rad/s, 24 ragdolls took 48 s). Something touching it wakes it only when it moves faster than 10 cm/s or turns its mass faster than 4 cm/s (0.27 rad/s at 15 cm), so a neighbour settling beside it doesn't, nor a thin limb jittering. (Without the cap, a tower's long blocks needed to be stiller than before, and never slept.) The physics scene's 96 bodies are all asleep by 12 to 22 s.
+* **Collision is one path for every pair** (`PhysicsCollide.swift`):
+  * A shape is a distance in its body's space plus surface samples, each a small sphere. A sphere is one sample; a capsule is five along its core; a box is its corner and edge spheres (its rounding); any other SDF shape is 64 points of its surface, its boxes' corners first.
+  * A pair's contacts are each side's samples against the other's distance. That is exact for spheres and capsules against anything, and for anything against a plane.
+  * Two flat-sided shapes also step down one's field along the other's surface, from each side. That finds an edge across an edge, which no corner is in.
+  * The distances are exact formulas for spheres, capsules, boxes and planes (their gradients too: a box's inside takes its nearest face's normal). Every other shape uses its field, so CSG, blends and baked meshes collide like the primitives.
+  * Contacts are kept as Bullet keeps a manifold: four at most, the deepest always, the rest for the most area. They share one normal where they roughly agree, so a corner on a corner doesn't push sideways.
+  * Contacts are found at the start of a step, with a speculative margin for how far the pair can close in a step, and anchored in each body. A sphere's anchor is its centre, so it stays under the sphere as it rolls.
+  * They are found again every 4 substeps for the pairs that had contacts and of which a body moves. Found once a step, a turning body's contacts stayed where it had been: a cylinder rolling on its rim sank a stale contact into the floor, and the push out of it launched it at 1.2 m/s. Every 8 substeps isn't enough (a pile is a third awake at 12 s).
+* **The GPU's step** (one serial "physics" pass, ahead of the acceleration structures):
+  * A hash grid over the bodies' bounding spheres, from per-bucket linked lists.
+  * Each body's partners, the nearest 16, with static colliders first so a crowded body never drops the floor. (Keeping the lowest-numbered 16 instead, a tower's middle blocks dropped a body dragged into them, and it passed through.)
+  * Each pair's contacts, a SIMD group a pair: the lanes test 32 samples at a time, and the manifold takes them in the samples' order.
+  * Each run of 4 substeps in one threadgroup, after the narrow phase: barriers stand in for dispatches. The step's first run colours the pairs (a counting sort by colour), and each substep solves a colour's pairs a thread a pair. Pairs the 64 rounds leave would be solved by one thread in entry order; the scene leaves none.
+  * Then a pose kernel writes every body's and particle's instance record (and Metal's descriptor) where the steps left it.
+* **The same every time:**
+  * Nothing adds floats atomically. No two pairs of a colour share a body, so the order within a colour doesn't change a bit.
+  * A pair is solved only if both of its bodies keep it among their nearest. The colours see a pair through both bodies' lists, and one that only the lower body kept took a colour beside the higher one's other pairs: two threads moved that body at once, and a pile of 512 bodies (or 24 ragdolls) ran differently every time after a second.
+  * Two GPU runs are bit-identical, and the GPU's steps match the CPU's within 0.1 mm for half a second. Further on, a pile tells float rounding apart.
+  * Going back in time replays from the start, so a benchmark's still at 5 s is the same however it was reached.
+* **Particles** are small balls, each an SDF sphere instance.
+  * They find each other in a grid of their own and collide at the same substeps: with each other (Jacobi, averaged, with friction so they heap) and with the static colliders and bodies.
+  * A particle in contact that went slower than 10 cm/s over a substep stays where it was (Macklin et al. 2014's particle sleeping), unless a body is pushing it or it is a cloth's. Without that the averaged pushes kept a heap fizzing: half its particles still moved at 12 cm/s after 6 s.
+  * The bodies push the particles; the particles don't push back.
+* **Cloth:**
+  * Its vertices are particles whose distance constraints (stretch, shear, bend) are coloured once, so no two of a colour share a vertex. Each substep solves them a colour at a time (Gauss-Seidel).
+  * Air drag damps it. Pinned vertices never move.
+  * It collides with the bodies and static colliders, not with itself or the particles.
+  * Its mesh is a deforming mesh like the crowd's poses. The pose kernel writes its vertices, last frame's (for motion vectors) and its normals, and Metal refits its structure.
+* **What it costs** (M1 Max; the physics scene's first 5 s moving, a step a frame, 16 substeps, 2048 particles and a 36 x 36 cloth; `METALRENDERER_BENCH=physics`):
+
+  | Bodies | "physics" pass (GPU) | Whole frame (GPU, the scene's look) | CPU instead (render thread, per frame) |
+  |---|---|---|---|
+  | 96 | 5.9 ms | 11 ms (90 fps) | 17.5 ms |
+  | 512 | 11.7 ms | 19 ms | |
+  | 2048 | 41 ms | 52 ms | |
+
+  * Coloured Gauss-Seidel, the contacts found 4 times a step and the particles' rest cost 1.24–1.4× the Jacobi solver's 4.6 / 9.6 / 21 ms, which never let the pile rest (2048 bodies: 26 ms).
+  * Keeping each body's nearest partners rather than its lowest-numbered took 2048 bodies from 26 to 42 ms: their pile has up to 9,000 pairs touching (14–18 colours) that were partly dropped before, and passed through each other.
+    * Colouring every partner pair rather than those with contacts took more than 32 rounds: the pairs left over went to one thread, and 2048 bodies took 364 ms.
+    * Colouring again at every refresh settles a pile a few seconds sooner, at 7.3 / 15.8 / 36 ms.
+  * What made it fast before:
+    * Every substep in one threadgroup: with three dispatches a substep, 16 substeps cost 6.6 ms for 96 bodies.
+    * A SIMD group per pair in the narrow phase: 0.8 to 0.35 ms.
+  * At thousands of bodies one threadgroup runs out of threads: the next thing to try is dispatches per stage above a size, measured against it.
+* **Joints** (a ragdoll's; Müller et al. 2020's positional and angular constraints):
+  * A joint holds a point of each of two bodies together. A **ball joint** keeps the angle between their axes within a cone (a shoulder's leans out and forward from the arm hanging down, a hip's forward) and their twist about them within a range; a **hinge** keeps its axes together and its turn about them within a range (elbows bend one way, knees the other). The pose the bodies are built in is every angle's 0.
+  * Each substep solves them before the contacts, a colour at a time (they never change, so they are coloured once: a ragdoll takes 4), twice over. Once over left a whipping chain's anchors 2.5 mm apart, twice 0.55 mm. Before the contacts, so that static friction undoes what the joints slid a resting body along; after them, a ragdoll's chest crept a little every substep and never slept. The contacts then have the last word: at the hardest landings in a pile the anchors part by up to 8 mm for a moment, and by 0.2 mm at rest.
+  * A joint's limits are angles taken with `atan2`, corrected by the whole excess, about the axis that moves them back.
+  * Damping (6/s) slows two joined bodies' relative turning, each body turned about the joint with its velocity, by their inertia about it. Slowing only their turning about their centres hardly slowed a head swinging on its neck: the joint gave it back from how the head still went round it. At 6/s a pile of 24 ragdolls sleeps by 15 s; at 2/s by 27 s.
+  * Two bodies a joint joins don't collide (`info.w` holds the body a body hangs from); every other pair of a ragdoll does.
+  * A ragdoll sleeps and wakes whole: if one of its bodies is awake (or held) at a step's start, they all wake, and none sleeps while any can't. One asleep would hold its joints still under the others.
+  * Elbows and knees go 0.1 rad past straight, so that the pose they're built in isn't on a limit, where float rounding decides whether they're pushed back.
+  * What ragdolls cost (M1 Max, the ragdoll scene's first 5 s moving at the physics look; `METALRENDERER_BENCH=ragdolls`):
+
+    | Ragdolls (bodies) | "physics" pass (GPU) | Whole frame (GPU) | CPU instead (render thread, per frame) |
+    |---|---|---|---|
+    | 8 (88) | 2.0 ms | 5.5 ms | 2.4 ms |
+    | 24 (264) | 2.9 ms | 6.9 ms | 6.4 ms |
+    | 96 (1056) | 7.1 ms | 12.5 ms | |
+* **Grabbing.** A click on a body grabs it where the cursor meets it: the ray is sphere-traced through each body's distance, from the poses the frame was drawn with (on the GPU, the 3-frames-late snapshot). A drag moves the grab point on a plane through it facing the camera, and the scroll wheel moves it nearer or farther. Each substep pulls the point 3 % of the way to the target, through the body's inverse mass and inertia there, so a body held off its centre swings and hangs; its velocities fade at 8/s while held, so it doesn't swing about the cursor. Contacts are solved after the pull, so a held body can't be pushed through the floor. Release lets it go with its speed, so a flick throws it. The GPU reads the grab from a small buffer per frame slot.
+* **The CPU's copy** of the bodies comes from a snapshot the pose kernel writes per frame slot. It is read once the slot's frame is done: three frames late, but the same three every time.
+* **Backend.** `auto` steps on the CPU below 64 bodies and particles, where a dispatch costs more than the work. Then the CPU writes the instances, and a cloth is uploaded each frame for the GPU to draw.
+* **Checked:** `PhysicsTests` covers:
+  * resting, stacking, bouncing (restitution), sliding or holding on a slope (friction);
+  * crossed bars' edge contact;
+  * mass properties;
+  * particles heaping and a ball pushing through them;
+  * cloth hanging without stretching and draping over a ball;
+  * picking, a grab lifting a box and letting it go, a dragged box knocking the tower over, and a hold on the GPU against the CPU;
+  * coming to rest: the scene's pile asleep and still (CPU, and GPU at 20 s), at least 7 of 8 drops of each body shape (on the floor and on a box) asleep within 6 s, the tower not drifting, a box on a ramp not creeping, a particle heap still;
+  * and `RagdollTests` covers joints: a swinging chain's anchors within 1 mm, a hinge and a ball joint stopped at their limits (within 0.03 rad), joined bodies never partners, six ragdolls tumbling down the stairs with their joints holding and asleep within 24 s, one sleeping and waking whole and lifted by a hand, and on the GPU the drop against the CPU, two runs of a pile bit-identical, and 24 ragdolls all asleep at 25 s (15 s here);
+  * GPU against CPU, and two GPU runs.
+* **Limits:**
+  * Rigid bodies and SDF shapes only: a triangle mesh collides through a baked grid.
+  * Particles and cloth don't push the bodies.
+  * No cloth self-collision. Joints are rigid: no motors, springs or breaking, and a ball joint's cone is round.
+  * A pair is coloured, and its contacts refreshed, only if it had contacts at the step's start: one that first touches mid-step waits for the next step. A fast thin shape can still pass through a thin one.
+  * Glowing bodies' lights follow the CPU's copy, three frames late.
+  * Going back in time replays from the start without the grabs.
+
+### Hair and fur
+
+Strands of hair simulated on the GPU (`PhysicsHair.swift`, `Shaders/Physics.metal`), with the same steps on the CPU as their reference, drawn as Metal's round curves and lit by a hair BSDF (`Shaders/Hair.metal`). The **Hair and fur** scene (`METALRENDERER_SCENE=hair`, `Scene+Hair.swift`) drops `fur=6` furry bodies (balls, a rounded box, a capsule) at the top of a ramp to roll down it, beside a mannequin with long hair on a stand (a ragdoll held at its pelvis and chest), swaying, in a gusting breeze. It shares the physics scene's look, `substeps` and `physics`.
+
+* **Guides and drawn strands** (as TressFX has them): a few thousand guide strands are simulated, each 6 to 12 vertices from a root its body holds, and around each guide `hair=12` strands are drawn (`Scene.addHair`: roots spread over the body's surface, grown out along its normal and combed over). A drawn strand is its guide offset across it (in a frame carried along it), drawn in toward it by the tip (clumping) and curling about it: `physicsHairCurvesKernel` writes their control points every frame, as the cloth's vertices are written.
+* **A step** (`PhysicsWorld.stepHair`, `physicsHairKernel`), after the bodies' substeps (the strands never push a body back, as the particles don't), as many substeps as theirs, each strand one thread's, its vertices one after another (no colouring; every run the same):
+  * the root follows its body, its pose between where the step began and where it ended;
+  * the other vertices move by their velocities, which the air (2/s) takes toward the breeze, and gravity;
+  * **global shape**: each is pulled toward where it rests on its body, stiffest at the root;
+  * **local shape**: each segment is turned about its middle toward its rest direction as the segment before it carries it (curls stay curls as hair hangs). Turning only its far end, as follow-the-leader moves vertices, made a stiff strand flutter at a metre a second: a load that follows the strand's own turn;
+  * **length**: follow-the-leader from the root (Müller et al. 2012): each vertex at its length from the one before, then pushed out of the bodies and static colliders near the strand (8 at most, with friction);
+  * velocities from how far the vertices went, less half of how far the next one was moved to keep its length (DFTL's damping: without it a loose strand never settles; at Müller's 0.9, with the shape's pulls, a tilted fur strand kept a zigzag at half a metre a second).
+  * Stiffness is how fast a shape springs back (rad/s): a substep pulls (ωh)² of the way back, so gravity bends a strand by about g/ω² whatever the substeps. Fur is 80 rad/s at the root and 30 at the tip (a strand out sideways sags 9 mm); long hair 10 at the root and 0 at the tip, 4 locally. (TressFX's share of the way a substep: 1% held long hair against gravity to a millimetre at 16 substeps.)
+  * A strand on a sleeping body stops once no vertex has gone 2 cm/s over a step, and wakes with the body.
+* **Curves** (MSL 3.1 or later: `HAIR_CURVES`): a drawn strand is round Catmull-Rom segments of 4 control points, its first and last points phantoms past its ends, its radius tapering to the tip. A group of strands is one mesh with no triangles (`Scene.addCurves`): everything that reads triangles skips it, its control points sit in the scene's vertex buffer (last frame's after everything, for motion vectors), and Metal's structure over them (`MTLAccelerationStructureCurveGeometryDescriptor`) is refitted every frame with the deforming meshes'. The ray queries meet curves where the scene has them (`HAIR_CURVES`, feature bit 20: `curve_data` queries, `CurveLevels`), and a hit on one (`HIT_CURVE`) is a surface from the segment's point and tangent at the curve's parameter, its normal out from the axis.
+* **The hair BSDF** (Chiang et al. 2016, as pbrt-v3's `HairBSDF`): R, TT and TRT lobes and the rest, each a longitudinal spread shifted by the cuticle's 2° tilt, Fresnel and the pigment's absorption (from the strand's colour, Chiang's fit), and an azimuthal logistic; β_m = β_n = 0.3. Light between strands, most of a pelt's colour, which a path tracer gathers and the lobes leave out, is a stand-in: Kajiya-Kay's diffuse at 0.7 of a Lambert surface's. A hair material is `addHairMaterial` (params.z = -1); its pixels keep their tangent in the G-buffer's alphas (albedo.a and geoNormal.w + 2) and the offset across the strand comes back from the normal, so every kernel that lights the visible surface lights strands by the BSDF: the trace's light loop, many lights and their reuse, mesh lights, ReSTIR DI, MegaLights and the shadow denoiser's composite. A shadow ray toward a light behind a strand starts 2 mm along it, out of its own curve.
+* What hair costs (M1 Max, Metal's tracer in software, the hair scene's first 5 s moving at the physics look; `METALRENDERER_BENCH=hair`). The scene has 4,781 guides (32,172 vertices: 700 on each furry body, 581 on the mannequin's head); the head draws 1.5 times as many strands a guide as the fur:
+
+  | Strands a guide | Drawn strands (control points) | Curves' refit ("blas") | "physics" pass (bodies and hair) | Trace | Whole frame (GPU) |
+  |---|---|---|---|---|---|
+  | 4 | 20,286 (186,000) | 1.7 ms | 2.8 ms | 10.2 ms | 16.8 ms |
+  | 12 (the default) | 60,858 (550,000) | 4.0 ms | 3.0 ms | 16.8 ms | 26.2 ms |
+  | 24 | 121,716 (1.1 M) | 7.4 ms | 3.3 ms | 23.0 ms | 35.8 ms |
+
+  The same scene on the custom tracer (since removed), without its strands, rendered in 4.4 ms. Stepped on the CPU instead (`physics=cpu`, 4 strands a guide), the bodies and the 4,781 guides take 10.2 ms a frame on the render thread; the GPU's whole "physics" pass, bodies and hair, takes 2.8 to 3.3 ms. The curves are refitted every frame, paused too.
+* **Checked:** `HairTests` covers a strand's segments within 3e-6 of their length in a gusting breeze, long hair hanging, fur keeping its shape (upright still, sideways sagging 9 mm), roots following a spinning body to 1e-5 m, hair falling over a ball onto the floor without sinking into either, strands resting and waking with their body, the breeze blowing hair, the scene's curve meshes, and on the GPU the first steps against the CPU, two runs bit-identical, the drawn strands against the CPU's to 5e-7 m, and the fur at rest; and the BSDF's white furnace (1 within 1%) and its highlight 2α off the mirror direction.
+* **Limits:**
+  * No hair-hair collision (strands pass through each other), and the hair never pushes a body.
+  * The BSDF is evaluated for direct light only: GI on hair (and hair seen in GI's bounces) is Lambert, and reflections skip it. The physics look has GI off.
+  * Area lights light a strand from their middle.
+  * The roughnesses are the same for every hair material (the G-buffer keeps no more).
+  * Velocities from positions over a substep: the GPU's rounding parts its hair from the CPU's by millimetres in five steps, as two swinging pendulums would.
+  * Fur squeezed between two resting bodies keeps stirring by millimetres a step (11 strands of 2100 in the test).
+
+### Soft bodies
+
+Jellies, simulated as tetrahedral lattices on the GPU (`PhysicsSoft.swift`, `Shaders/Physics.metal`), with the same steps on the CPU as their reference, and drawn as their shapes' surfaces bent with them. The **Soft bodies** scene (`METALRENDERER_SCENE=softbodies`, `Scene+Soft.swift`) throws `soft=16` of them (balls, rounded cubes, capsules and pucks, every fifth a stiffer rubber one) onto a landing at the back of the studio, to flop down steps, squeeze past pegs and pile up; `cells=6` sets their lattices' fineness. It shares the physics scene's look, `substeps` and `physics`.
+
+* **The lattice** (`SoftModel`): a cubic grid over an SDF shape, `cells` cubes along its longest side (at least two thirds as many along its shortest), each cube kept whose centre is inside the shape shrunk by a particle's radius (0.35 of the spacing) and none of whose corners is far outside it, and cut into six tets along its main diagonal (Freudenthal's, so neighbouring cubes share faces). Its corners are particles; those on its outside are moved onto the shrunk shape, so that their balls reach the shape's surface. Each shape's lattice is made once and placed per body.
+* **A substep** (in the particles' substeps, `PhysicsWorld.solveTets`): every edge a link (XPBD distance, with the cloths' links, coloured with them), then every tet's volume (XPBD on six times it, Müller et al. 2020), a colour of tets at a time (no two of a colour share a particle: 29 colours), both with Macklin et al. 2016's damping of what moves along them (3 s for the links), and the air's 0.3/s. A jelly's links give (compliance 4e-3), a rubber one's hardly (2e-5); the volume almost not (1e-9: fully rigid, linear tets lock and a jelly stands stiff).
+* **Collision** is the particles': a soft body's particles meet the static colliders, the bodies, loose particles and other soft bodies' particles, not their own body's. Unlike a heap's particle, a soft body's takes its pushes summed (averaged, the floor's push halved a box's shoving it, and a jelly on another sank 3 cm into it) and at up to 10 m/s rather than 3 (a box sliding at 3 m/s pushed it no faster than it came). One-way, as the cloths: a soft body never pushes a body back.
+* **Drawing**: the shape's surface (surface nets, 20 cells along its longest side) is a deforming mesh, as the cloths' are. Each of its vertices is where the tets it and its ring's vertices are in put it, averaged (`physicsSoftMeshKernel`): it is a little outside the lattice, and one tet alone creases the surface where two bend apart; any rigid motion stays exact. Its normal is the triangles' around it (`physicsSoftNormalsKernel`), not a tet's own deformation's (which shaded the creases). Metal refits its structure with the other deforming meshes'.
+* What soft bodies cost (M1 Max, the soft body scene's first 5 s moving at the physics look, on the custom tracer, since removed; `METALRENDERER_BENCH=soft`). Each body is 63 to 275 particles at 6 cells (the cube most), and 1,800 drawn vertices on average:
+
+  | Soft bodies (particles, tets) | "physics" pass (GPU) | Whole frame (GPU) | CPU instead (render thread, per frame) |
+  |---|---|---|---|
+  | 16 (3,036, 9,864) | 6.3 ms | 10.0 ms | 35 ms |
+  | 48 | | 20.6 ms | 91 ms |
+  | 128 | 49.8 ms | 55.0 ms | |
+  | 16 at 10 cells | | 32.0 ms | |
+
+  The same scene paused renders in 3.7 ms. The steps are most of it: every substep in the one threadgroup the bodies' run in (16 substeps of 14 link colours and 29 tet colours, a barrier each), so from a few dozen jellies the work no longer spreads over the GPU. A threadgroup per soft body for its links and tets is the next thing to try.
+* **Checked:** `SoftBodyTests` covers the lattice (every tet the right way out, each link once, the balls reaching the surface), the colours sharing no particle, the drawn surface at rest where the shape is (to 1e-5 m, its normals the shape's), a jelly dropped on the floor at rest within 8 s with its volume within 0.3 % and its drawn surface within 2 mm of the floor, a soft jelly sagging more than a rubber one, a jelly dropped on another landing on it without their balls passing into each other's, a heavy box shoving a jelly along without it sinking in, a jelly crushed to 40 % of its volume recovering, the scene's meshes, and on the GPU the first 20 steps against the CPU (within 2 mm: the rounding parts them as the jellies land), two runs bit-identical, the drawn surfaces against the CPU's to 5e-7 m, and the scene at rest at 15 s.
+* **Limits:**
+  * One-way: a body lower than a jelly goes through it (the jelly can't lift it, and its particles squeeze round it), and resting on a jelly a body sinks to the floor.
+  * No self-collision: a soft body folded onto itself passes through itself.
+  * Contact is the lattice's balls: the drawn surface can dip a few millimetres into what it rests on, and a heavy jelly slides off another.
+  * A jelly settles over several seconds (the scene, by about 15 s); there is no sleeping.
+  * The drawn surface still undulates a little where a jelly is squashed hard.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -1126,6 +1295,9 @@ CPU    animate what moves or flickers (objects, lights)  ->  write those instanc
        virtual geometry (background thread): Nanite cut per instance -> the cut's triangles gathered -> Metal
        builds a BLAS over them on its own queue, where the cut changed
 GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what hits read, at buffer 1):
+       physics: the steps since last frame (bodies' and particles' grids, pairs, contacts, every substep in one
+       threadgroup), then the bodies' and particles' instance records and descriptors, and the cloths', soft
+       bodies' and strands' vertices -> refit their structures (with the crowd's)
        crowd: crowdPoseKernel + crowdSkinKernel -> refit the pose slots' structures
        wind: plantWindKernel poses the plants' variants -> refit each variant a plant names (an encoder each)
        VG_MODE=clusters: vgCutKernel -> vgBoxesKernel (a world-space box per cluster) -> build their structure
@@ -1229,6 +1401,9 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail, made from the library's plants |
 | `PlantTracing.swift` | The plants in Metal's structures: each assembly's variants (wind phases × leaf shares) by multi-level instancing, the plants' descriptors, the wind's posing and refits; `Wind`, the wind's math on the CPU |
 | `SDFShapes.swift`, `SDFVolume.swift`, `SDFBuffers.swift`, `Scene+Shapes.swift` | SDF shapes: their nodes, distances, boxes and surface triangles; meshes baked into distance grids; the shapes on the GPU (and their one-box structures); the SDF shapes scene |
+| `Physics.swift`, `PhysicsCollide.swift`, `PhysicsCPU.swift`, `PhysicsGPU.swift`, `Scene+Physics.swift`, `Scene+Ragdolls.swift` | Physics: rigid SDF bodies, joints, particles and cloth (the world, its time and replays); shapes' samples and mass, contacts; the CPU's step (the reference); the GPU's buffers and passes, poses and cloth meshes; the physics scene; ragdolls and their scene |
+| `PhysicsHair.swift`, `HairBSDF.swift`, `Scene+Hair.swift`, `Shaders/Hair.metal` | Hair and fur: guide strands (building, the CPU's steps, drawn strands), the hair BSDF on the CPU (tests), the hair scene, the BSDF and the strands' lights |
+| `PhysicsSoft.swift`, `Scene+Soft.swift` | Soft bodies: their lattices and drawn surfaces (`SoftModel`), the tets' constraints on the CPU, the soft body scene |
 | `VoxelGrids.swift`, `VoxelLOD.swift` | The grids as one-box structures per level, and a still scene's far baked plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |

@@ -25,6 +25,8 @@ constant uint HIT_VOXEL   = 0xFFFFFFFEu;   // Hit.part: a voxel of a far plant's
 constant uint HIT_SDF     = 0xFFFFFFFDu;   // Hit.part: an SDF shape (sdfMarch); `primitive` is then the material
                                            // offset there, barycentrics the normal (instance space, sdfOctEncode;
                                            // intersectClosest only)
+constant uint HIT_CURVE   = 0xFFFFFFFCu;   // Hit.part: a strand's curve (HAIR_CURVES); `primitive` is then its segment,
+                                           // barycentrics.x the curve's parameter along it
 
 struct Hit {
     bool   hit;
@@ -350,6 +352,63 @@ inline bool rtCutout(SCENE_ACCEL sc, uint mesh, uint prim, float2 bc) {
     return sc.cutouts[((layer - 1u) * CUTOUT_SIZE + texel.y) * CUTOUT_SIZE + texel.x] != 0;
 }
 
+// HAIR_CURVES: the queries meet the strands' curves too (round Catmull-Rom segments of 4 control points, opaque),
+// which only queries with curve_data may: in such a scene every query has them (CurveLevels). A curve's hit is
+// HIT_CURVE with the curve's parameter in barycentrics.x (traceSurface finds the point there). The overloads pick out
+// the queries that have them; on the others they do nothing.
+inline bool isCurveHit(intersection_type t) {
+#if HAS_CURVES
+    return t == intersection_type::curve;
+#else
+    return false;
+#endif
+}
+template <typename Q> inline float committedCurve(thread Q& q) { return 0.0f; }
+template <typename R> inline float resultCurve(thread const R& res) { return 0.0f; }
+template <typename I> inline void assumeCurves(thread I& isect) {}
+// A curve candidate (non-opaque: the counting queries) committed if it is the nearest so far. False if it isn't one.
+template <typename Q> inline bool commitCurve(thread Q& q) { return false; }
+#if HAS_CURVES
+inline float committedCurve(thread intersection_query<triangle_data, curve_data, instancing>& q) { return q.get_committed_curve_parameter(); }
+inline float resultCurve(thread const intersection_result<triangle_data, curve_data, instancing>& res) { return res.curve_parameter; }
+template <typename T> inline void assumeCurveShape(thread T& t) {
+    t.assume_curve_type(curve_type::round);
+    t.assume_curve_basis(curve_basis::catmull_rom);
+    t.assume_curve_control_point_count(4);
+}
+inline void assumeCurves(thread intersection_params& p) { assumeCurveShape(p); }
+inline void assumeCurves(thread intersector<triangle_data, curve_data, instancing>& i) { assumeCurveShape(i); }
+inline void assumeCurves(thread intersector<curve_data, instancing>& i) { assumeCurveShape(i); }
+template <typename Q> inline bool commitCurveCandidate(thread Q& q) {
+    if (q.get_candidate_intersection_type() != intersection_type::curve) return false;
+    if (q.get_committed_intersection_type() == intersection_type::none
+        || q.get_candidate_curve_distance() < q.get_committed_distance()) q.commit_curve_intersection();
+    return true;
+}
+inline bool commitCurve(thread intersection_query<triangle_data, curve_data, instancing>& q) { return commitCurveCandidate(q); }
+inline bool commitCurve(thread intersection_query<curve_data, instancing>& q) { return commitCurveCandidate(q); }
+#endif
+
+// What a query or intersector is told it meets: triangles, the boxes of a query's loop, and with `curves` the strands.
+inline geometry_type queryGeometry(bool boxes, bool curves) {
+    geometry_type g = boxes ? geometry_type::triangle | geometry_type::bounding_box : geometry_type::triangle;
+#if HAS_CURVES
+    if (curves) g = g | geometry_type::curve;
+#endif
+    return g;
+}
+
+// A query's parameters (voxelParams), with the strands' curves for the queries that have them.
+template <bool CURVES>
+inline intersection_params queryParams(bool any) {
+    intersection_params p = voxelParams(any);
+    if (CURVES) {
+        p.assume_geometry_type(queryGeometry(true, true));
+        assumeCurves(p);
+    }
+    return p;
+}
+
 // The queries' types and what a hit names, by how deep the instances go. FOLIAGE scenes have three levels (multi-level
 // instancing, PlantTracing.swift): a plant's instance names one of its assembly's variants, an instance structure
 // whose instances are the plant's parts, each with the part's number as its user id. Every other scene has two.
@@ -392,6 +451,16 @@ template <> struct Levels<true> {
         return rtCutout(sc, sc.parts[part].mesh, q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord());
     }
 };
+#if HAS_CURVES
+// HAIR_CURVES scenes (two levels: strands aren't plants' parts): the queries' types with curve_data. What a hit
+// names is read as Levels<false> reads it.
+struct CurveLevels {
+    typedef intersection_query<triangle_data, curve_data, instancing> Closest;
+    typedef intersection_query<curve_data, instancing> Plain;
+    typedef intersector<triangle_data, curve_data, instancing> ClosestIntersector;
+    typedef intersector<curve_data, instancing> PlainIntersector;
+};
+#endif
 
 // The query's candidate box: marched (or walked) as far as the nearest hit so far, `v`'s or the triangle the query
 // has committed. True if the ray stops in it: `v` is then that hit (its distance, instance, and a voxel's cell and
@@ -465,26 +534,27 @@ template <bool PLANTS, typename Q>
 inline Hit queryHit(thread Q& q, Hit v) {
     // The nearer of the box's hit and the query's triangle (a box's is only ever kept in front of the triangle
     // committed by then, but a nearer triangle may have come after it).
-    bool triangle = q.get_committed_intersection_type() == intersection_type::triangle;
-    if (v.hit && !(triangle && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL, HIT_SDF or a cluster
+    intersection_type type = q.get_committed_intersection_type();
+    bool triangle = type == intersection_type::triangle, curve = isCurveHit(type);
+    if (v.hit && !((triangle || curve) && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL, HIT_SDF or a cluster
     Hit h;
-    h.hit = triangle;
-    h.distance = triangle ? q.get_committed_distance() : INFINITY;
-    h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(0.0f);
+    h.hit = triangle || curve;
+    h.distance = h.hit ? q.get_committed_distance() : INFINITY;
+    h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(curve ? committedCurve(q) : 0.0f, 0.0f);
     h.instance = Levels<PLANTS>::committed(q);
     h.primitive = q.get_committed_primitive_id();
     h.cluster = HIT_NO_CLUSTER;
-    h.part = triangle ? Levels<PLANTS>::committedPart(q) : HIT_NO_PART;
+    h.part = triangle ? Levels<PLANTS>::committedPart(q) : curve ? HIT_CURVE : HIT_NO_PART;
     return h;
 }
 
 // A query that counts what Metal's traversal hands it (`n`: triangles, boxes), every triangle made non-opaque for it
 // so that it does: the "Traversal cost" view and RT_STATS builds. The same hit as the queries below (the nearest
 // candidate is committed, a leaf card's where its picture is; ANY: the first).
-template <bool PLANTS, bool ANY>
+template <bool PLANTS, bool ANY, bool CURVES = false, typename L = Levels<PLANTS>>
 inline Hit countedQuery(Ray r, uint mask, SCENE_ACCEL sc, thread uint2& n) {
-    typename Levels<PLANTS>::Closest q;
-    intersection_params p = voxelParams(ANY);
+    typename L::Closest q;
+    intersection_params p = queryParams<CURVES>(ANY);
     p.force_opacity(forced_opacity::non_opaque);
     q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), p);
     Hit v = voxelMiss(r);
@@ -495,6 +565,9 @@ inline Hit countedQuery(Ray r, uint mask, SCENE_ACCEL sc, thread uint2& n) {
             if (ALPHA_TEST && !Levels<PLANTS>::card(q, sc)) continue;
             if (q.get_committed_intersection_type() == intersection_type::none
                 || q.get_candidate_triangle_distance() < q.get_committed_distance()) q.commit_triangle_intersection();
+            if (ANY) break;
+        } else if (commitCurve(q)) {
+            ++n.x;   // (a curve counts as a triangle)
             if (ANY) break;
         } else {
             ++n.y;
@@ -507,7 +580,11 @@ inline Hit countedQuery(Ray r, uint mask, SCENE_ACCEL sc, thread uint2& n) {
 // Closest hit, counting the candidates on the way (`countedQuery`): the "Traversal cost" view only.
 Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidates) {
     uint2 n;
-    Hit h = FOLIAGE ? countedQuery<true, false>(r, mask, sc, n) : countedQuery<false, false>(r, mask, sc, n);
+    Hit h;
+#if HAS_CURVES
+    if (HAIR_CURVES && !FOLIAGE) h = countedQuery<false, false, true, CurveLevels>(r, mask, sc, n); else
+#endif
+    h = FOLIAGE ? countedQuery<true, false>(r, mask, sc, n) : countedQuery<false, false>(r, mask, sc, n);
     candidates = n.x + n.y;
     return h;
 }
@@ -516,7 +593,11 @@ Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidat
 template <bool ANY>
 inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
     uint2 n;
-    Hit h = FOLIAGE ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
+    Hit h;
+#if HAS_CURVES
+    if (HAIR_CURVES && !FOLIAGE) h = countedQuery<false, ANY, true, CurveLevels>(r, mask, sc, n); else
+#endif
+    h = FOLIAGE ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
     atomic_fetch_add_explicit(&sc.stats[0], 1u, memory_order_relaxed);
     atomic_fetch_add_explicit(&sc.stats[1], n.x, memory_order_relaxed);
     atomic_fetch_add_explicit(&sc.stats[2], n.y, memory_order_relaxed);
@@ -524,27 +605,29 @@ inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
 }
 #endif
 
-template <bool PLANTS>
+template <bool PLANTS, bool CURVES = false, typename L = Levels<PLANTS>>
 inline Hit closestHit(Ray r, uint mask, SCENE_ACCEL sc) {
     if (QUERY_LOOP) {
-        typename Levels<PLANTS>::Closest q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(false));
+        typename L::Closest q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), queryParams<CURVES>(false));
         Hit v = voxelMiss(r);
         while (q.next()) candidate<PLANTS, false>(q, r, mask, true, sc, v);
         return queryHit<PLANTS>(q, v);
     }
-    typename Levels<PLANTS>::ClosestIntersector isect;
-    isect.assume_geometry_type(geometry_type::triangle);
+    typename L::ClosestIntersector isect;
+    isect.assume_geometry_type(queryGeometry(false, CURVES));
+    assumeCurves(isect);
     isect.force_opacity(forced_opacity::opaque);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
+    bool curve = isCurveHit(res.type);
     Hit h;
-    h.hit = res.type == intersection_type::triangle;
+    h.hit = res.type == intersection_type::triangle || curve;
     h.distance = res.distance;
-    h.barycentrics = res.triangle_barycentric_coord;
+    h.barycentrics = curve ? float2(resultCurve(res), 0.0f) : res.triangle_barycentric_coord;
     h.instance = Levels<PLANTS>::instance(res);   // TILED: its id (SceneBuffers' descriptors)
     h.primitive = res.primitive_id;
     h.cluster = HIT_NO_CLUSTER;
-    h.part = h.hit ? Levels<PLANTS>::part(res) : HIT_NO_PART;
+    h.part = curve ? HIT_CURVE : h.hit ? Levels<PLANTS>::part(res) : HIT_NO_PART;
     return h;
 }
 
@@ -552,21 +635,25 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
 #if RT_STATS
     return countedHit<false>(r, mask, sc);
 #endif
+#if HAS_CURVES
+    if (HAIR_CURVES && !FOLIAGE) return closestHit<false, true, CurveLevels>(r, mask, sc);
+#endif
     return FOLIAGE ? closestHit<true>(r, mask, sc) : closestHit<false>(r, mask, sc);
 }
 
-template <bool PLANTS>
+template <bool PLANTS, bool CURVES = false, typename L = Levels<PLANTS>>
 inline float closestDistance(Ray r, uint mask, SCENE_ACCEL sc) {
     if (QUERY_LOOP) {
-        typename Levels<PLANTS>::Plain q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(false));
+        typename L::Plain q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), queryParams<CURVES>(false));
         Hit v = voxelMiss(r);
         while (q.next()) candidate<PLANTS, false>(q, r, mask, false, sc, v);
         float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
         return v.hit ? min(v.distance, t) : t;
     }
-    typename Levels<PLANTS>::PlainIntersector isect;   // no triangle_data: barycentrics aren't needed
-    isect.assume_geometry_type(geometry_type::triangle);
+    typename L::PlainIntersector isect;   // no triangle_data: barycentrics aren't needed
+    isect.assume_geometry_type(queryGeometry(false, CURVES));
+    assumeCurves(isect);
     isect.force_opacity(forced_opacity::opaque);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
     return res.type == intersection_type::none ? INFINITY : res.distance;
@@ -578,14 +665,17 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL sc) {
     Hit h = countedHit<false>(r, mask, sc);
     return h.hit ? h.distance : INFINITY;
 #endif
+#if HAS_CURVES
+    if (HAIR_CURVES && !FOLIAGE) return closestDistance<false, true, CurveLevels>(r, mask, sc);
+#endif
     return FOLIAGE ? closestDistance<true>(r, mask, sc) : closestDistance<false>(r, mask, sc);
 }
 
-template <bool PLANTS>
+template <bool PLANTS, bool CURVES = false, typename L = Levels<PLANTS>>
 inline bool anyHit(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     if (QUERY_LOOP) {
-        typename Levels<PLANTS>::Plain q;
-        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), voxelParams(true));
+        typename L::Plain q;
+        q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), queryParams<CURVES>(true));
         Hit v = voxelMiss(r);
         while (q.next()) {
             if (candidate<PLANTS, true>(q, r, mask, false, sc, v)) {   // any hit will do
@@ -597,8 +687,9 @@ inline bool anyHit(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
         t = hit ? q.get_committed_distance() : r.tmax;
         return hit;
     }
-    typename Levels<PLANTS>::PlainIntersector isect;
-    isect.assume_geometry_type(geometry_type::triangle);
+    typename L::PlainIntersector isect;
+    isect.assume_geometry_type(queryGeometry(false, CURVES));
+    assumeCurves(isect);
     isect.force_opacity(forced_opacity::opaque);
     isect.accept_any_intersection(true);
     auto res = isect.intersect(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, mask);
@@ -612,6 +703,9 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     Hit h = countedHit<true>(r, mask, sc);
     t = h.hit ? h.distance : r.tmax;
     return h.hit;
+#endif
+#if HAS_CURVES
+    if (HAIR_CURVES && !FOLIAGE) return anyHit<false, true, CurveLevels>(r, mask, sc, t);
 #endif
     return FOLIAGE ? anyHit<true>(r, mask, sc, t) : anyHit<false>(r, mask, sc, t);
 }

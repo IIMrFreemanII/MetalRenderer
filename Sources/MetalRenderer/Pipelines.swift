@@ -19,6 +19,11 @@ enum Kernel: Int, CaseIterable {
     case composite, accumulateColor, tonemap
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
+    case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
+    case physicsParticleInsert, physicsParticleNeighbours
+    case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
+    case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
     case plantWind              // the plants' variants in the wind (PlantTracing)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug

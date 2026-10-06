@@ -37,9 +37,10 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
   (`METALRENDERER_SHOT_FRAMES=<n>`). It takes about 1–2 s.
 * `KEY=VALUE` arguments are any `METALRENDERER_*` overrides (the list is in the performance skill's
   `references/measuring.md`, "Narrowing and overriding"):
-  * scene: `METALRENDERER_SCENE=cornell|stress|gallery|spots|sun|area|tubes|emissive|mixed|fog|valley|market|crowd|city|citynight|showcase`,
+  * scene: `METALRENDERER_SCENE=cornell|stress|gallery|spots|sun|area|tubes|emissive|mixed|fog|valley|market|crowd|city|citynight|showcase|shapes|physics`,
     plus `,objects=…,lights=…` (the crowd: `,characters=…,poses=…,detail=…`; the city: `,seed=…,blocks=…,style=…,lit=…,rooms=…,textures=…`;
-    the showcase: `,showcase=owl`, a part of a model's file name);
+    the showcase: `,showcase=owl`, a part of a model's file name; the physics scene, `physics`:
+    `,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`);
   * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);
   * GI: `METALRENDERER_GI="mode=pt|cascades|restir,bounces=2,scale=0.75,factor=0"` (factor 0 means native, no
     upscaling);

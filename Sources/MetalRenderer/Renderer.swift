@@ -386,6 +386,8 @@ final class Renderer: NSObject {
     private var namedInstanceBlocks: [String: InstanceBlock] { sceneBuffers?.namedInstanceBlocks ?? [:] }
     /// The crowd's pose slots, if the scene has a crowd: the skinning, then their structures' refit.
     private var crowdSkinner: CrowdSkinner?
+    /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
+    private var physicsGPU: PhysicsGPU?
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
     private var virtualTracing: VirtualTracing?
@@ -582,6 +584,10 @@ final class Renderer: NSObject {
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
     private var shiftHeld = false
+    /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
+    private var holding: (cursor: SIMD2<Float>, depth: Float)?
+    /// The view's width over its height, for the cursor's ray.
+    private var viewAspect: Float = 1.6
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
@@ -866,6 +872,8 @@ final class Renderer: NSObject {
         virtualTracing = nil
         plantsWritten = [SIMD2<Float>?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
+        physicsGPU = nil
+        holding = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
         lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
@@ -887,6 +895,17 @@ final class Renderer: NSObject {
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
             crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+        }
+        // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
+        // from the GPU's buffers).
+        if let physics = scene.physics {
+            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count)
+            if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
+                physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
+                                            slots: Renderer.maxFramesInFlight, simulates: onGPU,
+                                            clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
+                if onGPU { scene.runPhysicsOnGPU() }
+            }
         }
         try createLightBuffers()
         virtualTracing = try prepared?.virtualTracing ?? makeVirtualTracing(scene, poolMB: settings.virtualGeometry.poolMB)
@@ -1447,8 +1466,19 @@ final class Renderer: NSObject {
         // the ones that move, the rest being as they were (a crowd is tens of thousands of records).
         // (A still scene's were written with its buffers.)
         let first = !frameDataWritten[slot], still = sceneBuffers.still
+        // The GPU's bodies where they were when this slot's last frame was done: the CPU's copy (the frame's own
+        // records are the pose kernel's); and the body the mouse holds, for this frame's steps.
+        if let physicsGPU {
+            if physicsGPU.simulates {
+                scene.placeBodies(poses: physicsGPU.snapshot(slot: slot))
+                if let physics = scene.physics { physicsGPU.setGrab(slot: slot, physics.grab) }
+            } else {
+                physicsGPU.upload(slot: slot)
+            }
+        }
         if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
-        instanceASStale[slot] = first || !scene.movingInstances.isEmpty || virtualTracing != nil
+        // Deforming meshes (the crowd's, cloths, soft bodies, hair) change their structures' bounds: the top level's too.
+        instanceASStale[slot] = first || !scene.movingInstances.isEmpty || virtualTracing != nil || scene.hasDeformingMeshes
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
                                                                first: sceneBuffers.instanceCount, scene: scene) {
@@ -1807,6 +1837,8 @@ final class Renderer: NSObject {
         }
         updateCamera(dt: dt)
         camera.fovY = settings.fovDegrees * .pi / 180
+        viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
+        moveGrab()
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
         scene.update(time: animTime, dayTime: dayTime)
@@ -2240,17 +2272,37 @@ final class Renderer: NSObject {
 
     /// The scene's structures for this frame, ahead of everything that traces rays.
     private func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
-        // 0. The crowd: this frame's poses and skinned vertices, then the pose slots' bottom-level structures around
-        //    them (a refit: a pose keeps its triangles, so its tree keeps its shape). Ahead of the top level, which
-        //    takes the new bounds.
+        // Rigid bodies: the steps since last frame (or a replay from the start), then every body's instance record,
+        // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
+        // Cloths too: their vertices, from where the physics (or the CPU's) left them.
+        var deformed = false
+        if let physicsGPU, let enc = passes.compute("physics", serial: true) {
+            if physicsGPU.simulates {
+                let (steps, restart) = scene.takePhysicsSteps()
+                if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
+                physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
+                let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
+                physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
+                                      descriptorStride: instanceDescriptorStride)
+            }
+            physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
+            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair
+            passes.endCompute()
+        }
+        // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
+        //    bottom-level structures around them (a refit: a pose keeps its triangles, so its tree keeps its shape).
+        //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
                 crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
-            if let primitiveRefit { passes.updatePrimitives(primitiveRefit, pass: "blas") }
+            deformed = true
         }
+        if deformed, let primitiveRefit { passes.updatePrimitives(primitiveRefit, pass: "blas") }
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, strength: windFrame.wind.z) {
             if let enc = passes.compute("wind", serial: true) {
@@ -2787,7 +2839,7 @@ final class Renderer: NSObject {
                 enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
                                   t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
-                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
+                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur], t.albedo])
                 dispatch(enc, .manyLights, width: size.width, height: size.height)
             })
         }
@@ -2797,7 +2849,7 @@ final class Renderer: NSObject {
                 var addToDirect: UInt32 = shadowDenoiser ? 0 : 1
                 bind(enc, .meshLights, uniforms, sceneSlot: slot)
                 enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect, t.albedo])
                 dispatch(enc, .meshLights, width: size.width, height: size.height)
             })
         }
@@ -3245,7 +3297,7 @@ final class Renderer: NSObject {
     /// ground cover). A card sees a canopy's outer, sunlit leaves, and the hits inside it read them: the backlit forest
     /// was 2% too bright with them. Plants' hits are lit where they are.
     private func lumenCardEligible(_ inst: Scene.Instance) -> Bool {
-        inst.isGeometry && !inst.skinned && !lumenFoliage(inst)
+        inst.isGeometry && !inst.deforms && !lumenFoliage(inst)
     }
 
     /// Plants: assemblies, leaf cards, ground cover.
@@ -3260,7 +3312,7 @@ final class Renderer: NSObject {
     /// Instances traced through a distance field: geometry that doesn't deform (the crowd: screen traces only) or
     /// sway (ground cover); meshes, virtual meshes and plants' assemblies. Not SDF shapes (cards and screen traces).
     private func lumenSDFEligible(_ inst: Scene.Instance) -> Bool {
-        guard inst.isGeometry, !inst.skinned, inst.sdf < 0 else { return false }
+        guard inst.isGeometry, !inst.deforms, inst.sdf < 0 else { return false }
         guard inst.mesh >= 0 else { return true }
         let m = scene.meshes[inst.mesh]
         return m.sways == 0 && m.vertexOffset == 0
@@ -4160,8 +4212,51 @@ final class Renderer: NSObject {
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
 
-    func mouseDragged(dx: Float, dy: Float) {
+    /// A click on a body grabs it where the cursor meets it (Physics.swift's `grab`); anywhere else, the drag turns the
+    /// camera.
+    func mouseDown(at cursor: SIMD2<Float>) {
+        holding = nil
+        guard let physics = scene.physics else { return }
+        let direction = cursorRay(cursor)
+        guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
+        let point = camera.position + direction * hit.distance
+        physics.grab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
+        holding = (cursor, dot(point - camera.position, camera.forward))
+    }
+
+    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if holding != nil {
+            holding?.cursor = cursor
+            return
+        }
         camera.yaw += dx * 0.004
         camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
+    }
+
+    /// Lets go: the body keeps its speed (a flick throws it).
+    func mouseUp() {
+        holding = nil
+        scene.physics?.grab.target.w = 0
+    }
+
+    /// While holding: the body nearer (down) or farther (up).
+    func scrolled(dy: Float) {
+        guard let depth = holding?.depth else { return }
+        holding?.depth = max(depth * exp(dy * 0.05), 0.3)
+    }
+
+    /// The ray from the camera through `cursor` (0...1 across and down), unjittered.
+    private func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {
+        let t = tan(camera.fovY / 2)
+        return normalize(camera.forward + camera.right * ((2 * cursor.x - 1) * t * viewAspect) + camera.up * ((1 - 2 * cursor.y) * t))
+    }
+
+    /// The held body's target this frame: under the cursor, on the plane facing the camera at the grab's depth (so it
+    /// follows the camera as it moves too).
+    private func moveGrab() {
+        guard let holding, let physics = scene.physics, physics.grab.target.w > 0 else { return }
+        let direction = cursorRay(holding.cursor)
+        let along = holding.depth / max(dot(direction, camera.forward), 0.1)
+        physics.grab.target = SIMD4(camera.position + direction * along, 1)
     }
 }

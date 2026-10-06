@@ -160,7 +160,19 @@ final class RendererController: InputHandler {
         renderer.perform { $0.setShift(shift) }
     }
 
-    func mouseDragged(dx: Float, dy: Float) {
-        renderer.perform { $0.mouseDragged(dx: dx, dy: dy) }
+    func mouseDown(at cursor: SIMD2<Float>) {
+        renderer.perform { $0.mouseDown(at: cursor) }
+    }
+
+    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        renderer.perform { $0.mouseDragged(dx: dx, dy: dy, at: cursor) }
+    }
+
+    func mouseUp() {
+        renderer.perform { $0.mouseUp() }
+    }
+
+    func scrolled(dy: Float) {
+        renderer.perform { $0.scrolled(dy: dy) }
     }
 }

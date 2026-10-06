@@ -43,7 +43,9 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Foliage.metal) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Intersect.metal) add ShaderSourceTests KernelVariantsTests PlantTracingTests ;;
-      Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests PhysicsTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests SoftBodyTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
@@ -62,7 +64,9 @@ if [[ $suites == " " ]]; then
           Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
           PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
-          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests ;;
+          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
+          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests ;;
+          HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;

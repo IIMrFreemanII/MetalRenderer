@@ -6,7 +6,11 @@ protocol InputHandler: AnyObject {
     func keyDown(_ event: NSEvent)
     func keyUp(_ event: NSEvent)
     func flagsChanged(_ event: NSEvent)
-    func mouseDragged(dx: Float, dy: Float)
+    /// `at`: the cursor in the view, 0...1 across and down.
+    func mouseDown(at: SIMD2<Float>)
+    func mouseDragged(dx: Float, dy: Float, at: SIMD2<Float>)
+    func mouseUp()
+    func scrolled(dy: Float)
 }
 
 /// The window's view: its layer is the CAMetalLayer the render thread draws into (`surface`), and it forwards keyboard
@@ -82,7 +86,19 @@ final class RenderView: NSView {
     override func keyUp(with event: NSEvent) { inputHandler?.keyUp(event) }
     override func flagsChanged(with event: NSEvent) { inputHandler?.flagsChanged(event) }
 
+    /// Where `event` happened in the view: 0...1 across and down.
+    private func cursor(_ event: NSEvent) -> SIMD2<Float> {
+        let p = convert(event.locationInWindow, from: nil)
+        return SIMD2(Float(p.x / max(bounds.width, 1)), Float(1 - p.y / max(bounds.height, 1)))
+    }
+
+    override func mouseDown(with event: NSEvent) { inputHandler?.mouseDown(at: cursor(event)) }
+    override func mouseUp(with event: NSEvent) { inputHandler?.mouseUp() }
     override func mouseDragged(with event: NSEvent) {
-        inputHandler?.mouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY))
+        inputHandler?.mouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event))
+    }
+    override func scrollWheel(with event: NSEvent) {
+        // A trackpad's deltas are in points, a wheel's in lines.
+        inputHandler?.scrolled(dy: Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.1 : 1))
     }
 }

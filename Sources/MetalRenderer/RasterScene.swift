@@ -115,7 +115,7 @@ final class RasterScene {
         }
         let movers = scene.instances.indices.filter {
             let inst = scene.instances[$0]
-            return inst.moves || inst.skinned || inst.virtualMesh >= 0
+            return inst.moves || inst.deforms || inst.virtualMesh >= 0
         }.map { UInt32($0) }
         movingCount = movers.count
         moving = try shared(movers, "raster moving instances")
