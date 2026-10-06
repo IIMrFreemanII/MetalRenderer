@@ -560,6 +560,7 @@ final class Renderer: NSObject {
     // Reference "Path traced": pathTraceKernel's running mean, the paths in it per pixel, and the view it was made from.
     private var pathTraceAccum: MTLTexture?
     private var pathTraceCount: UInt32 = 0
+    private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
     private var referenceView: [SIMD4<Float>] = []
     private var lightProxies: MTLBuffer?        // makeLightProxies
     private var lightProxyCount = 0
@@ -2003,7 +2004,7 @@ final class Renderer: NSObject {
             let left = r.maxSamples > 0 ? UInt32(r.maxSamples) - min(count, UInt32(r.maxSamples)) : UInt32.max
             pt.params.samples = SIMD4(count, min(UInt32(ReferenceSettings.samplesPerFrameRange.clamp(r.samplesPerFrame)), left),
                                       UInt32(ReferenceSettings.bounceRange.clamp(r.bounces)), nodes)
-            pt.params.config = SIMD4(flags, UInt32(lightProxyCount), 0, 0)
+            pt.params.config = SIMD4(flags, UInt32(lightProxyCount), referenceEpoch, 0)
             pt.params.bounds = scene.sceneSphere
             p.pathTrace = pt
             p.uniforms.viewMode = 0   // the light, tone mapped
@@ -3312,6 +3313,7 @@ final class Renderer: NSObject {
         accumCount = 0
         colorAccumCount = 0
         pathTraceCount = 0
+        referenceEpoch &+= 1
     }
 
     /// Reference pictures in the app (not a benchmark's, which its config keeps still) start over when the view

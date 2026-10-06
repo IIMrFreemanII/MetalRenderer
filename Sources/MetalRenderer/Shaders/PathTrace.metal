@@ -21,7 +21,8 @@ constant uint PT_LIGHT_HITS = LIGHT_CANDIDATES;
 
 struct PathTraceParams {
     uint4 samples;   // x = paths in the mean so far, y = paths to add, z = bounces, w = light-tree nodes (0: none)
-    uint4 config;    // x = PT_* flags, y = instances the light-proxy map covers
+    uint4 config;    // x = PT_* flags, y = instances the light-proxy map covers, z = the average's seed (a new one
+                     //   each time it starts over, so frames that each start over draw new samples)
     float4 bounds;   // the scene's sphere: the fog is inside it (the sun's and the sky's light is what reaches the scene)
 };
 static_assert(sizeof(PathTraceParams) == 48, "PathTraceParams: GPUPathTraceParams");
@@ -576,7 +577,7 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
     float pixelSpread = 2.0f * u.camUp.w / float(u.height);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need (as traceKernel's do).
     bool record = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
-    uint pixelSeed = pcgHash(tid.x + pcgHash(tid.y ^ 0x3C6EF372u));
+    uint pixelSeed = pcgHash(tid.x + pcgHash(tid.y ^ pcgHash(params.config.z ^ 0x3C6EF372u)));
 
     float3 sum = float3(0.0f);
     for (uint k = 0; k < params.samples.y; ++k) {

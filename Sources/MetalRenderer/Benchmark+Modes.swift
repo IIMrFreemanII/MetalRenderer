@@ -253,7 +253,8 @@ extension Benchmark {
             let pt = Config("\(kind) pt", scale: 0.5, scene: scene) { $0.reference.mode = .pathTraced }.still().frames(frames)
             return [pt, pt.named("\(kind) accumulated").with { $0.reference.mode = .accumulated }]
         }
-        let moving = Config("cornell pt moving", scale: 0.5) { $0.reference.mode = .pathTraced }.frames(30)
+        var moving = Config("cornell pt moving", scale: 0.5) { $0.reference.mode = .pathTraced }.frames(30)
+        moving.capturePrevious = true   // (each frame's paths are new ones: the two frames' noise differs)
         return stills + [moving, moving.named("cornell pt camera").cameraMove()]
     }
 

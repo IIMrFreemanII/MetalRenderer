@@ -63,7 +63,7 @@ enum UniformFlags {
 /// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.
 struct GPUPathTraceParams {
     var samples = SIMD4<UInt32>()   // x = paths in the mean so far, y = paths to add, z = bounces, w = light-tree nodes
-    var config = SIMD4<UInt32>()    // x = flags (below), y = instances the light-proxy map covers
+    var config = SIMD4<UInt32>()    // x = flags (below), y = instances the light-proxy map covers, z = the average's seed
     var bounds = SIMD4<Float>()     // the scene's sphere (Scene.sceneSphere): the fog is inside it (the sun's and the sky's
                                     // light is what reaches the scene)
 
