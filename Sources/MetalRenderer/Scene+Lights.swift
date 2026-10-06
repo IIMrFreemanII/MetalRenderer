@@ -5,8 +5,8 @@ import simd
 /// misty hall for the volumetric fog, an open valley for the sky and clouds, and a night market for many lights. Procedural geometry only, so they load at once; every light moves, sweeps or
 /// flickers. Their fog settings are presets (FogSettings.preset); the local fog volumes are set up here.
 extension Scene {
-    /// Shared meshes and a box helper for the builders below.
-    private struct Kit {
+    /// Shared meshes and a box helper for the builders below (and the showcase's and Scene+Shapes.swift's).
+    struct Kit {
         let scene: Scene
         let quad: Int, cube: Int, sphere: Int
 
@@ -44,7 +44,7 @@ extension Scene {
         }
     }
 
-    private static func camera(_ position: SIMD3<Float>, yaw: Float = 0, pitch: Float) -> Camera {
+    static func camera(_ position: SIMD3<Float>, yaw: Float = 0, pitch: Float) -> Camera {
         var c = Camera()
         c.position = position
         c.yaw = yaw
@@ -65,14 +65,16 @@ extension Scene {
         case .valley: return camera([4, 2.2, 38], yaw: -0.15, pitch: 0.12)
         case .market: return camera([0.6, 1.7, 30], yaw: 0.02, pitch: 0.12)
         case .forest: return camera([1.5, 1.7, 10], yaw: 0.06, pitch: 0.1)
-        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world: return nil   // the crowd's, the city's and the world's are their scenes' to say
+        case .shapes: return camera([0, 3.9, 4.4], pitch: -0.58)
+        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase:
+            return nil   // the crowd's, the city's, the world's and the showcase's are their scenes' to say
         }
     }
 
-    private static func degrees(_ d: Float) -> Float { d * .pi / 180 }
+    static func degrees(_ d: Float) -> Float { d * .pi / 180 }
 
     /// Unit-luminance colour.
-    private static func hue(_ c: SIMD3<Float>) -> SIMD3<Float> { c / dot(c, [0.2126, 0.7152, 0.0722]) }
+    static func hue(_ c: SIMD3<Float>) -> SIMD3<Float> { c / dot(c, [0.2126, 0.7152, 0.0722]) }
 
     // MARK: - Light check
 

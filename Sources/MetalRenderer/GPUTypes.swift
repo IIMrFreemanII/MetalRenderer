@@ -54,7 +54,18 @@ enum UniformFlags {
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
     static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
-    static let visBuffer: UInt32 = 524288    // traceKernel takes its primary hits from the raster visibility buffer
+    static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
+    static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
+}
+
+/// The lens and the finish (MSL PostParams), passed with setBytes to the kernels of Shaders/Post.metal.
+struct GPUPostParams {
+    var bloom = SIMD4<Float>()     // x = strength (0 = none), y = threshold, z = exposure (linear scale), w = levels
+    var lens = SIMD4<Float>()      // x = aperture (output pixels), y = focus distance (m, 0 = auto), z = largest blur
+                                   // radius (output pixels), w = autofocus easing per frame
+    var finish = SIMD4<Float>()    // x = vignette, y = grain, z = chromatic aberration
+    var size = SIMD4<UInt32>()     // xy = output size, zw = traced size
+    var frame = SIMD4<UInt32>()    // x = frame index, y = bloom level being made
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).
@@ -268,6 +279,36 @@ struct GPUEmissiveTriangle {
     var uv12: SIMD4<Float>   // uv1, uv2
 }
 
+/// One node of an SDF shape (MSL SDFNode, Shaders/SDF.metal; SDFShape.gpuNodes).
+struct GPUSDFNode {
+    var row0: SIMD4<Float>               // shape space -> the primitive's, as rows
+    var row1: SIMD4<Float>
+    var row2: SIMD4<Float>
+    var params = SIMD4<Float>()          // per kind (SDFShape.sphereKind ...): its sizes
+    var kind: UInt32 = 0
+    var op: UInt32 = 0                   // SDFShape.Op, joining it to the nodes before it
+    var k: Float = 0                     // the blend's radius
+    var scale: Float = 1                 // the node's uniform scale (its distances are the primitive's x this)
+    var material: UInt32 = 0             // offset from the instance's material
+    var volume: UInt32 = 0               // a volume's: Scene.sdfVolumes index
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// An SDF shape (MSL SDFShape): its box and its nodes.
+struct GPUSDFShape {
+    var lo: SIMD4<Float>                 // xyz = box min (shape space), w = the march's step scale (1 = exact distances)
+    var hi: SIMD4<Float>                 // xyz = box max, w = 0
+    var range: SIMD4<UInt32>             // x = first node, y = node count
+}
+
+/// A baked distance grid (MSL SDFVolume; SDFVolume.gpu).
+struct GPUSDFVolume {
+    var lo: SIMD4<Float>                 // xyz = the first sample's place, w = the samples' spacing
+    var hi: SIMD4<Float>                 // xyz = the last's, w = the least sample on the grid's faces
+    var dims: SIMD4<UInt32>              // xyz = samples per axis, w = where its samples start among all of them
+}
+
 /// A local fog volume (MSL FogVolume): a soft-edged box or sphere of denser fog.
 struct GPUFogVolume {
     var centerShape = SIMD4<Float>()     // xyz = centre, w = shape (0 = box, 1 = sphere)
@@ -329,6 +370,10 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
+    precondition(MemoryLayout<GPUPostParams>.stride == 80, "GPUPostParams layout mismatch")
+    precondition(MemoryLayout<GPUSDFNode>.stride == 96, "GPUSDFNode layout mismatch")
+    precondition(MemoryLayout<GPUSDFShape>.stride == 48, "GPUSDFShape layout mismatch")
+    precondition(MemoryLayout<GPUSDFVolume>.stride == 48, "GPUSDFVolume layout mismatch")
     precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
     precondition(MemoryLayout<GPUSkyParams>.stride == 192, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")

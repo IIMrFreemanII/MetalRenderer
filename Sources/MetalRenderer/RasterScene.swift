@@ -81,6 +81,9 @@ final class RasterScene {
         for a in scene.assemblies {   // (traced: their boxes are drawn, to say where)
             records.append(RasterScene.record(lo: a.bounds.lo, hi: a.bounds.hi, kind: .skip, deforms: false, firstChunk: 0))
         }
+        for b in scene.sdfBounds {    // SDF shapes, alike
+            records.append(RasterScene.record(lo: b.lo, hi: b.hi, kind: .skip, deforms: false, firstChunk: 0))
+        }
         meshCount = records.count
         chunkCount = chunkMeshes.count
         meshes = try shared(records, "raster meshes")

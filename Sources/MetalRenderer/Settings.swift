@@ -203,7 +203,7 @@ struct RestirGISettings: Equatable, Codable {
                                     // ms at 640x400), so off
     var spatialSamples = 2          // neighbours per pass (1 scored as 5)
     var unbiased = true             // spatial reuse: visibility in the targets, two rays per neighbour (without: cheaper,
-                                    // but 8-17% darker in the stress hall, where neighbours see different light)
+                                    // but 8-17% darker in the old stress hall, where neighbours saw different light)
     var radius: Float = 30          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
     var minDistance: Float = 0.02   // floor of the sample distance in the target (m): no spikes from very close samples
     var denoise = true              // SVGF on the result
@@ -237,7 +237,7 @@ struct CascadeSettings: Equatable, Codable {
 /// Which scene is loaded.
 enum SceneKind: Int, CaseIterable, Codable {
     case cornell            // small Cornell-style room: 5 objects (2 moving), 3 moving lights
-    case stress             // stress test: a hall with `objects` (mostly moving) objects and `lights` moving lights
+    case stress             // stress test: a warehouse, factory, garage and office with `objects` props and `lights` lights
     case gallery            // the glTF models in Assets/ on plinths, 8 moving lights
     case spots              // a stage under six sweeping spot lights
     case sun                // a courtyard and a covered room under the sun, with a day cycle
@@ -254,6 +254,9 @@ enum SceneKind: Int, CaseIterable, Codable {
     case cityNight          // the same city at night: lit windows and rooms, street lamps, the moon
     case world              // the open world (World.swift): hills, forest and cities without end, made around the camera;
                             // its day goes through dusk into a night of lit windows, street lamps and the moon
+    case showcase           // one model of Assets/ (`SceneSettings.showcase`) staged on a set of its own (ShowcaseLook):
+                            // volumetric beams, mist, accent lights, particles, with bloom and depth of field
+    case shapes             // SDF shapes (SDFShapes.swift): primitives, cuts and blends, a baked mesh, glowing shapes as lights
 
     var title: String {
         switch self {
@@ -274,6 +277,8 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .city: return "City"
         case .cityNight: return "City at night"
         case .world: return "Open world"
+        case .showcase: return "Showcase (one model)"
+        case .shapes: return "SDF shapes"
         }
     }
 
@@ -291,7 +296,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld }
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase }   // the showcase's frames its model
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
     var hasPlants: Bool { self == .forest || self == .valley || isWorld }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
@@ -384,6 +389,8 @@ struct SceneSettings: Equatable, Codable {
     /// ...and at which level of detail they are skinned and traced: 0 = the full mesh, each level half the one before.
     var detail = 3
     var city = CitySettings()
+    /// The showcase: which model of `Scene.galleryFiles()`, as a part of its file name (any case); "" = the first.
+    var showcase = ""
     var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
     /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
     /// Off: they only light what GI rays happen to hit, as before.
@@ -496,7 +503,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -530,8 +537,18 @@ struct FogSettings: Equatable, Codable {
         case .fog:
             f.enabled = true; f.density = 0.045; f.heightFalloff = 0.04; f.anisotropy = 0.7; f.ambient = 0.25; f.noise = 0.6
             f.maxDistance = 60
+        case .showcase:   // the base every model's look tunes (ShowcaseLook.fog)
+            f.enabled = true; f.density = 0.03; f.heightFalloff = 0.15; f.anisotropy = 0.65; f.ambient = 0.15; f.noise = 0.5
+            f.noiseScale = 4; f.wind = [0.15, 0.04, 0.08]; f.maxDistance = 30
         }
         if let override { f.enabled = override }
+        return f
+    }
+
+    /// The fog that suits `scene`: its kind's, and in the showcase the model's look on top.
+    static func preset(for scene: SceneSettings) -> FogSettings {
+        var f = preset(for: scene.kind)
+        if scene.kind == .showcase { ShowcaseLook.look(for: scene.showcase).fog(&f) }
         return f
     }
 }
@@ -584,7 +601,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -614,6 +631,37 @@ struct SkySettings: Equatable, Codable {
             }
         }
         return s
+    }
+}
+
+/// The camera's lens and the image's finish (Shaders/Post.metal), on the light at the output resolution before and
+/// after the tone curve: depth of field, bloom, chromatic aberration, vignette and film grain. Each is off at 0, and
+/// all are off but in the showcase (`preset(for:)`), so the other scenes' frames are what they were.
+struct PostSettings: Equatable, Codable {
+    var bloom: Float = 0                // the share of the light spread out as glow (0 = no bloom)
+    var bloomThreshold: Float = 1       // the brightness (after exposure) where glow starts, with a soft knee below it
+    var aperture: Float = 0             // the blur circle's radius in output pixels far behind the focus (as much at half
+                                        // the focus distance, more nearer, at most `maxBlur`); 0 = no depth of field
+    var focus: Float = 0                // focus distance (m); 0 = autofocus on what is at the centre of the frame
+    var vignette: Float = 0             // how much the corners darken
+    var grain: Float = 0                // film grain's strength
+    var aberration: Float = 0           // chromatic aberration: red and blue apart by this share of the width at the corners
+
+    var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 }
+
+    static let bloomRange: ClosedRange<Float> = 0...0.3
+    static let thresholdRange: ClosedRange<Float> = 0...8
+    static let apertureRange: ClosedRange<Float> = 0...24
+    static let focusRange: ClosedRange<Float> = 0...30
+    static let vignetteRange: ClosedRange<Float> = 0...1
+    static let grainRange: ClosedRange<Float> = 0...0.2
+    static let aberrationRange: ClosedRange<Float> = 0...0.01
+    static let maxBlur: Float = 24      // the depth of field's widest blur circle (output pixels)
+    static let bloomLevels = 6          // the glow's halvings, from half the output size
+
+    /// Off, but in the showcase: the model's look.
+    static func preset(for scene: SceneSettings) -> PostSettings {
+        scene.kind == .showcase ? ShowcaseLook.look(for: scene.showcase).post : PostSettings()
     }
 }
 
@@ -687,6 +735,7 @@ struct RenderSettings: Equatable, Codable {
     var fog = FogSettings.preset(for: .cornell)
     var sky = SkySettings.preset(for: .cornell)
     var foliage = FoliageSettings.preset(for: .cornell)
+    var post = PostSettings()
     // Camera and animation
     var exposure: Float = 0            // stops (EV) before the tone curve
     var toneMap = ToneMap.aces
@@ -696,11 +745,13 @@ struct RenderSettings: Equatable, Codable {
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
 
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
-    /// Reset to Defaults): the GI method, the night market's light count, the fog and the sky.
+    /// Reset to Defaults): the GI method, the night market's light count, the fog, the sky and the lens (the showcase's
+    /// model brings its own fog and lens).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
         if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
-        fog = FogSettings.preset(for: scene.kind)
+        fog = FogSettings.preset(for: scene)
+        post = PostSettings.preset(for: scene)
         foliage = FoliageSettings.preset(for: scene.kind)
         let image = sky.mode == .image ? sky : nil   // an image the user opened stays
         sky = SkySettings.preset(for: scene.kind)
@@ -722,6 +773,11 @@ struct RenderSettings: Equatable, Codable {
                             "Fog scattering", "Visibility buffer"]
     /// The raster visibility buffer's chunks (rasterDebugKernel), with the primary visibility on raster.
     static let visibilityBufferView = 15
+    /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
+    /// is (normals, albedo, the geometry views, the visibility buffer's colours...): viewIsHDR in Shaders/Output.metal.
+    static func showsLight(_ mode: Int) -> Bool {
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && mode != visibilityBufferView
+    }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13

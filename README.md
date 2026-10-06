@@ -5,9 +5,10 @@ It's built for Apple Silicon and tuned for an M1 Max.
 
 * **Dynamic scenes:** objects and lights move every frame. Pick a scene in the settings panel:
   * a small Cornell-style room;
-  * a **stress test** hall with up to 2000 moving objects and 16384 moving lights (see below);
+  * a **stress test** building (a warehouse, a factory floor, a parking garage and an office) with up to 2000 props and 16384 lights (see below);
   * a **Night market** street lit by thousands of festoon bulbs, lanterns, windows and neon signs (see "Many lights" below);
   * the glTF **Gallery**;
+  * a **Showcase** for each glTF model: the model alone on a set of its own, with volumetric beams, mist, drifting particles, bloom and depth of field (see "Showcase" below);
   * six light demos (see "Light types" below);
   * a **Misty hall** for the volumetric fog (see "Volumetric fog" below);
   * an **Open valley** for the sky and clouds (see "Sky and clouds" below);
@@ -21,6 +22,10 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * The scene's shaders are specialised for the light types it uses, so a scene with only sphere lights runs the same code as before.
 * **Emissive meshes are lights:** any glowing surface (a neon sign, a screen, a glTF emissive texture) is sampled for direct light with shadow rays, one triangle at a time.
 * **glTF lights:** `KHR_lights_punctual` point, spot and directional lights load with their models.
+* **SDF shapes:** geometry given by signed distance fields, sphere-traced by both ray tracers.
+  * Primitives (sphere, rounded box, torus, capsule, cylinder, cone), cut, intersected and smoothly blended into one another, a material per node.
+  * Meshes baked into distance grids that can be used like any primitive.
+  * Glowing shapes are lights, sampled like emissive meshes.
 * **Sky and clouds:** a physically based atmosphere, or an HDR environment image, with the sun.
   * The atmosphere has Rayleigh, Mie and ozone, with multiple scattering. It gives blue skies, bright horizons and red sunsets, and the sun light's colour follows it.
   * An image's sun is found and cut out, and the sun light takes its place.
@@ -195,6 +200,7 @@ For the plants:
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
 * `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest, and `lit` the share of lit windows at night. Its day starts in mid-morning: `METALRENDERER_VIEW=tod=0.6` starts it at midnight (`tod=0.41` as the sun sets). `METALRENDERER_BENCH=worldnight` renders the night from a street, a street corner, above the first city and 2 km from it, then drives 600 m down a street; `METALRENDERER_BENCH=worlddusk` renders the first city from above and from a street at eleven times from afternoon to the next morning, then lets 20 s of dusk go by in each view; `METALRENDERER_BENCH=worldground` renders the first city's ground: a junction of two streets from above and from its corner, a courtyard, the last street and the fields beyond it, the roads from over the city and from 2 km, and the junction at night; `METALRENDERER_BENCH=worldroads` renders the road from the first city to the next one: from the junction it leaves by, from the fields, before its deepest cutting and its highest bank, in the woods, from above, all of it from over the city, from short of the other city and at night, then flies 600 m along it; with `METALRENDERER_SHOT_SWAP=<k>` a setting ends, and its picture is taken, `k` frames after its scene is first made again (around another tile, or with the cities' lights). `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles, and renders the start with the scene's origin elsewhere and a place 50 km out. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits. `METALRENDERER_WORLD_GROUPS=0` makes every tile's trees again with every scene, as the scene's own instances (for comparing with the groups they are in otherwise), and `METALRENDERER_BLOCK_PART=<n>` sets how many instances of a group the custom tracer's top-level tree takes as one leaf (16).
+* `METALRENDERER_SCENE=shapes` starts in the SDF shapes scene. `METALRENDERER_BENCH=shapes` renders it paused on each tracer and API, with path tracing, ReSTIR and MegaLights on its glowing shapes, and in the normals, triangles (here: the shapes' materials) and traversal cost views; then it times moving frames and a camera move. `METALRENDERER_BENCH=shapesdemo` records its demo: 30 s along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o demo.mp4` makes the mp4 (with ffmpeg; it does `showcasevideo` too).
 * `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, its meshes' trees, the plants' voxels) instead of taking it from `~/Library/Caches/MetalRenderer/generated`; `=1` caches the trees and voxels in an optimised build too. `METALRENDERER_CACHE_MB=4096` caps that folder.
 
@@ -263,8 +269,8 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Setting | Default | Effect |
 |---|---|---|
 | Scene | Cornell room | Cornell room (5 objects, 2 moving, 3 lights), the stress test, the Gallery of glTF models in `Assets/`, or one of the light demos and the Misty hall (see below). Switching rebuilds the geometry and acceleration structures in the background, and picks that scene's fog and sky defaults (and resets the GI method to radiance cascades). Reset to Defaults also uses the current scene's. The gallery's first load builds its geometry and texture caches (about a minute for 11 models); later loads take seconds. |
-| Objects | 400 | Stress test: objects in the hall, about 85% of them moving. Applied when you release the slider. |
-| Lights | 32 | Stress test: moving sphere lights, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 the bulbs also shrink. Night market: festoon bulbs, 4096 by default. |
+| Objects | 400 | Stress test: props in the building, about 60% of them moving at 400 (see "The stress test" below). Applied when you release the slider. |
+| Lights | 32 | Stress test: ceiling fixtures and lights that travel, 1 to 16384. Their total power stays the same, so the brightness barely changes; above 256 they also shrink. Night market: festoon bulbs, 4096 by default. |
 | Characters | 2048 | Crowd: how many characters stand, walk and run in the square, 1 to 131072. Applied when you release the slider. |
 | Poses | 64 | Crowd: how many poses the GPU animates each frame; every character shows one of them. More poses, fewer characters in step with each other. |
 | Detail level | 3 | Crowd: the mesh the poses are skinned at. 0 is the full mesh (about 50k triangles), each level has half the triangles of the one before (level 3: about 6.5k). |
@@ -287,13 +293,35 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Visibility reuse | Off | ReSTIR: test the initial pick's visibility before reuse. Less noise but about 10% darker, because the target function ignores visibility. |
 | Shadow rays | 1 per group + reuse | Grouped, with more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
 
+#### The stress test
+
+A 40 × 8 × 40 m building in four zones round a cross-shaped aisle: a **warehouse** (pallet racks, an overhead conveyor, forklifts, carts, pickers) and a **factory floor** (two conveyor loops, robot arms, machines, gantry hoists) behind safety barriers at the back; a two-level **parking garage** (a deck on columns, a ramp, parked and circling cars) and an open-plan **office** (desk islands, chairs, people, delivery robots, glass meeting rooms) behind walls at the front. Its front wall has a garage entrance, a door and a window band to the sky. The default camera looks down the aisle from high over its front.
+
+* **Objects** are props, one instance each: cartons in the rack slots, parcels and parts on the conveyors, vehicles, machines, desks, chairs, people and drones. A kind with fixed places (slots, bays, desks, lanes) takes no more than it has, and its share goes to the kinds with room left; drones (in each zone's airspace) always have room. About 60% move up to 400; at 2000 the racks hold 1256 cartons and 355 drones fly, and a third move. 0 leaves the empty building.
+* **Lights** are exactly as many as asked, of the same total power: light j is in zone j mod 4, and every other one of a zone's is a ceiling fixture (high-bay spots, fluorescent tubes, LED panels, a few flickering) and the others travel (forklift and car headlights, cart and robot beacons, hoist spots, weld glows at the arms' grippers), each riding the vehicle, arm or hoist of the same slot. No prop glows, so these are all the scene's lights.
+* Whole-frame GPU ms on an M1 Max (radiance cascades, MetalFX's denoiser 3× from 640×400, custom BVH; `METALRENDERER_BENCH=stress` with `METALRENDERER_BENCH_SPLIT=0`):
+
+  | 400 objects | 1 light | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
+  |---|---|---|---|---|---|---|---|---|
+  | GPU ms | 6.64 | 10.73 | 11.38 | 13.71 | 15.35 | 16.67 | 18.10 | 20.54 |
+
+  | 32 lights | 0 objects | 100 | 400 | 1000 | 2000 | path traced (400) | camera move (400) |
+  |---|---|---|---|---|---|---|---|
+  | GPU ms | 12.24 | 13.88 | 15.35 | 15.89 | 27.35 | 35.41 | 14.18 |
+
+  Quality at 640×400 against the converged references (`METALRENDERER_BENCH=stressq`, `Tools/eval/stress.py`): direct light 29.4–29.5 dB still and moving at 32 lights, 27.4 dB at 128; the final image against an 8-bounce path-traced reference 25.7 dB with radiance cascades, 27.7 dB path traced, 31.0 dB with ReSTIR GI; MetalFX's denoiser at 3× against supersampled frames 29.3 dB (albedo) and 26.9 dB (direct light).
+
+  ReSTIR DI, its light grid and MegaLights, accumulated without reuse, match tracing every light here (mean brightness ratio 1.00, 47–48 dB, `METALRENDERER_BENCH=restircheck`).
+* `METALRENDERER_BENCH=stressdemo` records its demo: a 58 s tour (the overview, down a warehouse aisle, the factory's walkway, the office, the garage's upper deck) along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m stressdemo -o demo.mp4` makes the mp4.
+* Every run builds the same building (seeded). It replaced a 20 × 6 × 20 m hall of floating and bouncing cubes and spheres lit by drifting sphere lights in October 2026: the figures in this README quoted for "the stress hall" or "the stress scene" were measured in that hall, unless a table says otherwise.
+
 ### Light types
 
 Each light demo is procedural, so it loads at once. Each demo scene shows one light type, and every light in it moves, sweeps or flickers.
 
 | Type | Shape and units | Diffuse | Specular | Demo scene |
 |---|---|---|---|---|
-| Sphere | Sphere of radius r; intensity I (power 4πI) | Exact for a sphere above the horizon | Representative point (Karis 2013) | Cornell, stress, gallery |
+| Sphere | Sphere of radius r; intensity I (power 4πI) | Exact for a sphere above the horizon | Representative point (Karis 2013) | Cornell, gallery (the stress test has spheres, spots, tubes and rects) |
 | Spot | A sphere light with a smooth falloff between an inner and an outer cone | As the sphere × cone | As the sphere × cone | **Spot lights**: a stage with six coloured spots sweeping their beams |
 | Sun | Direction and angular radius (0.27°); irradiance E | E cos / π | Reflection vector clamped into the sun's disc | **Sun and sky**: a courtyard and a room lit only through its windows, with a one-minute day cycle that also changes the sky colour |
 | Rect | One-sided panel; radiance L | Exact polygon form factor (Lambert), clamped at the horizon | Representative point on the rect | **Area lights**: softboxes, a ceiling strip and a window panel over a roughness ramp of glossy spheres |
@@ -887,6 +915,32 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 * Outside the fields the ground changes material in cells: 1 m next to the camera, 16 m at the edge of sight.
 * GI sees no sun shadows beyond 384 m of the camera.
 
+### Showcase
+
+One model of `Assets/` on a set made for it, seen through a lens. Pick the scene "Showcase (one model)", then the model in the Model popup under it; each model brings its own fog and lens settings, as a scene does.
+
+| Set | Models | What is in it |
+|---|---|---|
+| Crypt | golem, harpy | A stone hall; a low sun (or moon) through three tall windows lays shafts across ground mist and through the model |
+| Forge | demon, steampunk warrior | Dark brick, a glowing pit with a flickering light, embers rising into a column of smoke |
+| Underwater | submarine | Dense blue-green water, five swaying shafts from the surface, sand, rocks, kelp, bubbles; the model drifts and bobs |
+| Neon | battle maiden, cat robot | A glossy black floor between coloured light panels, tube strips, a scanner beam sweeping the model, haze |
+| Workshop | owl, lab bench | A room at dusk: the sun's shaft through a window, a desk lamp, glowing jars on shelves, a stuttering tube light, dust in the air |
+| Sanctum | sorceress, fantasy character | A round dais under one beam from high above, a ring of columns, a glowing cloud, runes circling the model |
+| Studio | any other model | A dark cyclorama |
+
+* Every set has the same rig round the model: a polished plinth with a glowing ring, a key spot from high in front, whose beam shows in the fog (the model's shadow cuts a dark shaft behind it), and two spots high behind it for its outline, their beams meeting at it in the fog. Most models turn slowly on the plinth.
+* Particles (embers, bubbles, dust, runes) are small emissive shapes only camera rays meet (`maskLights`): they glow and bloom, but cast no shadows and light nothing, so they cost no light samples.
+* The camera frames the model from its bounds: three-quarters from the front, slightly below its middle, the model filling about 70% of the frame's height.
+* A model is found by a part of its file name, without regard to case. A model with no look of its own (any `.glb` you add to `Assets/`) gets the studio. The looks are a table in `Showcase.swift`: a new model is one row.
+
+**The lens and the finish** (`Shaders/Post.metal`, the "Lens and finish" settings) work in any scene, but are on only in the showcase by default, so every other scene draws what it drew. They run on the frame's light at the output resolution, after the composite or after MetalFX's denoising scaler, before and after the tone curve:
+* **Depth of field:** each pixel's blur circle grows with its distance from the focus (`aperture` is its radius in output pixels far behind it, at most 24). A gather of up to 64 taps on a golden-angle disc, each tap counted where its own circle reaches the pixel and spread over its circle's area, so bright points become discs; a tap behind a pixel can't blur over it, so a sharp model keeps its edge against a blurred background. Focus 0 is autofocus: the median depth of a patch at the centre of the frame, eased in over about ten frames.
+* **Bloom:** six halvings from half the output size (13 taps; the first with a soft threshold and Karis's average, so a lone bright pixel doesn't flicker into a blob), then back up with a tent filter, mixed in before the tone curve.
+* **Chromatic aberration**, **vignette** and **film grain** (luminance-weighted, new every frame) finish the image.
+
+`METALRENDERER_SCENE="showcase,showcase=owl"` starts in the showcase (`showcase=` takes a part of a file name; without it, the first model). `METALRENDERER_POST="bloom=0.08,threshold=1,aperture=6,focus=0,vignette=0.35,grain=0.015,ca=0.0015"` sets the lens in any scene. `METALRENDERER_BENCH=showcase` renders every model on its set as the app shows it, paused at t = 5 s; then the first model without the lens, at 0.75× without MetalFX (the lens on the composite's light) and with the camera moving. `METALRENDERER_BENCH=showcasevideo` records a video's frames instead: each model for 6 s, the camera orbiting it, every other frame of the 60 Hz clock saved as a JPEG (`<setting>/f0001.jpg` and on, 30 fps) for ffmpeg to join. `METALRENDERER_GALLERY="owl|demon"` picks the models.
+
 ### Glass
 
 Window glass is thin and clear, or tinted: the camera sees through it and sees its mirror reflection, and to light it isn't there.
@@ -898,6 +952,39 @@ Window glass is thin and clear, or tinted: the camera sees through it and sees i
 * **Why a pass of its own:** `traceKernel` is short of registers. With the panes' rays inside it, every pixel of the city traced at a third of the speed (13.6 ms a frame from the road against 10.4); with only the ray through the panes inside it, as one call in a loop, the two kernels together were still 0.3 ms slower. One glass mesh per wall instead of per building changed nothing.
 * **Cost:** 0.2 to 1.9 ms by day (the table above), more at night, when the mirror ray's hit draws its light from the light table.
 * **Limits:** no refraction; glass doesn't tint or dim the light that passes it; the reflection's one light sample is filtered only by the upscaler (among many lights it is held low, so a dark pane doesn't sparkle); reflections off other surfaces see the room, not the pane.
+
+### SDF shapes
+
+A shape is a list of up to 32 nodes, joined one after the other: `((n0 op1 n1) op2 n2) …` (`SDFShapes.swift`). An instance places a shape the way an instance places a mesh, with any transform, and it can move. The **SDF shapes** scene (`METALRENDERER_SCENE=shapes`, `Scene+Shapes.swift`) has a row of primitives, a row of cut and blended shapes, a baked torus knot, and two glowing shapes that light the room.
+
+* **Nodes.**
+  * A node is a primitive: sphere, box (rounded), torus, capsule, cylinder (rounded), capped cone, or a baked grid.
+  * It is placed by a rotation, a translation and a uniform scale, so its distances stay distances.
+  * Its op is union, subtract or intersect. With a blend radius `k` the join is smooth: a polynomial smooth minimum, never more than k/4 below the sharp one.
+  * Its material is an offset from the instance's. A union's surface takes the nearer node's material, and a cut face takes the cutter's.
+* **Tracing.** Both tracers sphere-trace a shape inside its box, in the instance's space, with the shared marcher `sdfMarch` (`Shaders/SDF.metal`):
+  * The march stops within 0.1 mm, plus 0.1 mm per metre along the ray, well inside the 1 mm that a ray leaving a surface starts off it.
+  * A ray that starts inside a shape meets the inside surface, as rays meet both faces of triangles.
+  * Shapes with blends or grids step at 0.8 of the distance; exact ones at the full distance. A ray gives up after 128 steps.
+  * The custom tracer marches a shape where its traversal reaches the instance (`RT_SDF` in the instance's mask).
+  * Metal's tracer gives each shape a structure of one box, as with far plants' voxels. Its intersection queries hand the boxes to the shader, which marches them and never commits the hit.
+  * The march returns the hit's normal (a tetrahedral gradient) and its material. Everything after the hit (`traceSurface`, every pass) needs nothing more from the shape: no buffers, no second march.
+* **Baked grids** (`SDFVolume.swift`). A mesh is sampled about 64 times along its longest side, with two cells of room around it, and stored as `half`s.
+  * The distance is exact, to the nearest triangle.
+  * The sign is a vote of three. A sample is inside if an odd number of faces is crossed counting along x, y and z, in at least two of the three. A mesh with a few holes or doubled faces still has its inside right.
+  * Outside the grid the distance is a bound: the distance to the grid plus the least of its face samples.
+  * Grids are cached by a hash of the mesh (`GeneratedCache`).
+* **Glowing shapes are lights.**
+  * A shape whose material emits is turned into triangles: surface nets, each vertex moved onto the surface and then 0.15 of a cell outward. These triangles become an ordinary mesh light, so ReSTIR, MegaLights, the light tree, the light table and the fog sample it unchanged.
+  * Because the triangles lie just outside the surface, a shadow ray to a point on them never meets the shape first.
+  * A shape of several materials gets a light per material that emits.
+* **Textures.** An SDF hit has no UVs. Base colour, metallic-roughness and emissive textures are projected along the instance's three axes, once per unit, and blended by the normal (triplanar). There are no normal maps.
+* **Compiled in only where used.** A scene without SDF shapes compiles none of this (bit 22 of the light-type constant) and traces what it traced before. In a scene with shapes, Metal's tracer runs every ray as an intersection query, as it does with far plants' voxels.
+* **Limits:**
+  * Shapes can't be in instance groups.
+  * A node's scale is uniform.
+  * A shape's nodes don't animate; its instance does.
+  * Thin features under about 2 mm can be skipped by the 1 mm offset of a ray that leaves a surface.
 
 ### Geometry debug views
 
@@ -1004,7 +1091,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `SectionFile.swift` | Cache files of arrays behind a table of sections, and the generated scenes' cache folder (its names, its cap) |
 | `Benchmark.swift` | Benchmark mode (`METALRENDERER_BENCH`): a setting of a run (`Config`), the frame clock, timing table and PNG capture |
 | `Benchmark+Modes.swift` | The benchmark modes: each one's list of settings |
-| `Scene.swift` | The Cornell, stress and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
+| `Scene.swift` | The Cornell and gallery scenes: meshes, materials, instances, animation paths; the light types, their poses and visible shapes, shadow-denoiser groups, emissive-mesh lights and the light table; glTF models and their lights |
+| `Scene+Stress.swift` | The stress test's building: its zones, props and their paths, fixtures and the lights that ride vehicles, arms and hoists |
 | `Scene+Lights.swift` | The six light demo scenes, the Misty hall and the fog volumes, the Open valley, the Night market, and the light-check scene the `lightcheck` benchmark renders |
 | `Scene+Forest.swift` | Generated plants in a scene (`Flora`: materials, textures, assemblies and their wind bones) and the Forest |
 | `World.swift` | The open world as a function of a seed and a place: ground, cities with their blocks, roads and fields, the roads between cities, where trees and ground cover stand; its day (`Heavens`: the sun, the moon, when the lights come on) |
@@ -1016,6 +1104,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
 | `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
 | `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail, made from the library's plants for both tracers |
+| `SDFShapes.swift`, `SDFVolume.swift`, `SDFBuffers.swift`, `Scene+Shapes.swift` | SDF shapes: their nodes, distances, boxes and surface triangles; meshes baked into distance grids; the shapes on the GPU (and Metal's one-box structures); the SDF shapes scene |
 | `VoxelGrids.swift`, `VoxelLOD.swift` | Metal's tracer: the grids as one-box structures per level, and far plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
@@ -1034,6 +1123,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `BuildingStyle.swift` | The five styles: proportions, pieces and palettes a building draws from |
 | `MeshBuilder.swift` | Quads, boxes, prisms, cylinders and balls with texture coordinates in metres, for generated meshes |
 | `ProceduralTextures.swift` | The city's generated tiling textures and their cache files |
+| `Showcase.swift` | The showcase's looks: per model of `Assets/`, its set, colours, particles, fog and lens; finding a model by name |
+| `Scene+Showcase.swift` | The showcase scene: the model on its plinth, the rig, the seven sets, the particles, the camera framed from the model |
 | `GLTFLoader.swift` | glTF 2.0 (`.glb` / `.gltf`) parsing: accessors, node hierarchy, metallic-roughness materials, images, punctual lights |
 | `MaterialTextures.swift` | Whole textures, decoded at a capped size (when streaming is off or unsupported) |
 | `TextureStreamer.swift` | Texture streaming: mip-chain caches, sparse textures, feedback, mapping and uploads |
@@ -1045,7 +1136,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind), `Crowd` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `BVHBuild`, `VirtualGeometry`, `Foliage` (the wind), `Crowd` |
 
 ## Notes for M1 / M2 Macs
 

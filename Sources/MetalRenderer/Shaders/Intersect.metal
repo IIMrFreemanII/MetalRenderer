@@ -22,6 +22,9 @@ constant uint HIT_NO_PART = 0xFFFFFFFFu;
 constant uint HIT_VOXEL   = 0xFFFFFFFEu;   // Hit.part: a voxel of a far plant's grid; `primitive` is then its cell's
                                            // low 24 bits (leaf share, normal: FoliageVoxels.swift), barycentrics.x
                                            // the grid's level
+constant uint HIT_SDF     = 0xFFFFFFFDu;   // Hit.part: an SDF shape (sdfMarch); `primitive` is then the material
+                                           // offset there, barycentrics the normal (instance space, sdfOctEncode;
+                                           // intersectClosest only)
 
 struct Hit {
     bool   hit;
@@ -129,8 +132,23 @@ struct VoxelBox {
 };
 static_assert(sizeof(VoxelBox) == 32, "VoxelBox: VoxelGrids.BoxData");
 
+// SDF_SHAPES: an SDF shape's instance is a box too, the shape's (SDFBuffers.swift), which the loop marches (sdfMarch).
+// Its data is laid out as a voxel box's, `tag` where a voxel box has its level: what tells the two apart.
+constant uint SDF_BOX_TAG = 0xFFFFFFFFu;
+struct SDFBox {
+    device const SDFScene* scene;
+    uint shape;
+    uint pad0;
+    uint tag;                       // SDF_BOX_TAG
+    uint pad1, pad2, pad3;
+};
+static_assert(sizeof(SDFBox) == 32 && __builtin_offsetof(SDFBox, tag) == __builtin_offsetof(VoxelBox, level), "SDFBox: SDFBuffers.BoxData");
+
+// The scene has boxes (far plants' voxels, SDF shapes): the ray queries are intersection queries, whose loop gets them.
+constant bool QUERY_LOOP = VOXEL_BOXES || SDF_SHAPES;
+
 // Rays that meet the scene's geometry meet the voxel boxes too.
-inline uint voxelMask(uint mask) { return (mask & MASK_GEOMETRY) != 0 ? mask | MASK_VOXELS : mask; }
+inline uint voxelMask(uint mask) { return VOXEL_BOXES && (mask & MASK_GEOMETRY) != 0 ? mask | MASK_VOXELS : mask; }
 
 inline intersection_params voxelParams(bool any) {
     intersection_params p;
@@ -148,15 +166,34 @@ inline Hit voxelMiss(Ray r) {
 }
 
 // The query's candidate box: marched as far as the nearest hit so far, `v`'s or the triangle the query has
-// committed. True if the ray stops in it: `v` is then that hit (its distance, instance, cell and level).
+// committed. True if the ray stops in it: `v` is then that hit (its distance, instance, and a voxel's cell and level
+// or a shape's material and, with `normal`, normal).
 template <typename Q>
-inline bool voxelCandidate(thread Q& q, Ray r, thread Hit& v) {
+inline bool boxCandidate(thread Q& q, Ray r, bool normal, thread Hit& v) {
     device const VoxelBox& box = *(device const VoxelBox*)q.get_candidate_primitive_data();
     uint id = TILED ? q.get_candidate_user_instance_id() : q.get_candidate_instance_id();
-    float3 o = q.get_candidate_ray_origin(), d = q.get_candidate_ray_direction(), inv = rtSafeInverse(d);
+    float3 o = q.get_candidate_ray_origin(), d = q.get_candidate_ray_direction();
+    float tmax = q.get_committed_intersection_type() == intersection_type::none ? v.distance : min(v.distance, q.get_committed_distance());
+    if (SDF_SHAPES && box.level == SDF_BOX_TAG) {
+        device const SDFBox& shape = *(device const SDFBox*)&box;
+        float t;
+        float2 n = float2(0.0f);
+        uint material, steps = 0;
+        if (!sdfMarch(*shape.scene, shape.shape, o, d, r.tmin, tmax, length(r.direction), normal, t, n, material, steps)) return false;
+        v.hit = true;
+        v.distance = t;
+        v.barycentrics = n;
+        v.primitive = material;
+        v.cluster = HIT_NO_CLUSTER;
+        v.part = HIT_SDF;
+        v.instance = id;
+        return true;
+    }
+    if (!VOXEL_BOXES) return false;
+    float3 inv = rtSafeInverse(d);
     Hit c;
     c.hit = false;
-    c.distance = q.get_committed_intersection_type() == intersection_type::none ? v.distance : min(v.distance, q.get_committed_distance());
+    c.distance = tmax;
     if (!rtVoxels(box.cells, *box.grid, box.level, o, d, inv, -o * inv, r.tmin, voxelSeed(r, id), 1.0f, c)) return false;
     v = c;
     v.instance = id;
@@ -164,15 +201,15 @@ inline bool voxelCandidate(thread Q& q, Ray r, thread Hit& v) {
 }
 
 Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
-    if (VOXEL_BOXES) {
+    if (QUERY_LOOP) {
         intersection_query<triangle_data, instancing> q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
         Hit v = voxelMiss(r);
-        while (q.next()) voxelCandidate(q, r, v);
-        // The nearer of the voxel hit and the query's triangle (a voxel is only ever kept in front of the triangle
+        while (q.next()) boxCandidate(q, r, true, v);
+        // The nearer of the box's hit and the query's triangle (a box's is only ever kept in front of the triangle
         // committed by then, but a nearer triangle may have come after it).
         bool triangle = q.get_committed_intersection_type() == intersection_type::triangle;
-        if (v.hit && !(triangle && q.get_committed_distance() < v.distance)) return v;   // rtVoxels: the cell, the level, HIT_VOXEL
+        if (v.hit && !(triangle && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL or HIT_SDF
         Hit h;
         h.hit = triangle;
         h.distance = triangle ? q.get_committed_distance() : INFINITY;
@@ -200,11 +237,11 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL accel) {
 
 // Closest hit distance only (INFINITY if none).
 float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
-    if (VOXEL_BOXES) {
+    if (QUERY_LOOP) {
         intersection_query<instancing> q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(false));
         Hit v = voxelMiss(r);
-        while (q.next()) voxelCandidate(q, r, v);
+        while (q.next()) boxCandidate(q, r, false, v);
         float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
         return v.hit ? min(v.distance, t) : t;
     }
@@ -217,12 +254,12 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL accel) {
 
 // Any hit (shadow rays): true if something is in the way; `t` = its distance.
 bool intersectAny(Ray r, uint mask, SCENE_ACCEL accel, thread float& t) {
-    if (VOXEL_BOXES) {
+    if (QUERY_LOOP) {
         intersection_query<instancing> q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), accel, voxelMask(mask), voxelParams(true));
         Hit v = voxelMiss(r);
         while (q.next()) {
-            if (voxelCandidate(q, r, v)) { t = v.distance; return true; }   // any hit will do
+            if (boxCandidate(q, r, false, v)) { t = v.distance; return true; }   // any hit will do
         }
         bool hit = q.get_committed_intersection_type() != intersection_type::none;
         t = hit ? q.get_committed_distance() : r.tmax;
@@ -267,6 +304,9 @@ constant uint RT_ASSEMBLY = 0x7FFFFFu, RT_SWAYS = 0x800000u;
 // is its place in the table of those trees' addresses; its instances' records have RT_OWN_TREE in their mask and the
 // address where blasRoot and pad0 are (RTBlockInstance).
 constant uint RT_BLOCK = 0x40000000u, RT_OWN_TREE = 0x80000000u;
+// SDF_SHAPES: an SDF shape's instance has RT_SDF in its mask (Scene.instanceSDF) and its shape as its blasRoot: the
+// traversal marches the shape where it meets the instance.
+constant uint RT_SDF = 0x20000000u;
 struct RTBlockInstance {
     float4 row0;
     float4 row1;
@@ -329,8 +369,10 @@ struct RTScene {
     device const RTVoxels*   voxelGrids;  // per assembly
     device const uint*       voxels;      // their cells
     device const uchar*      cutouts;     // leaf cards' alpha layers, CUTOUT_SIZE squared each (ALPHA_TEST)
+    device const SDFScene*   sdf;         // the SDF shapes (SDF_SHAPES)
 };
-static_assert(sizeof(RTScene) == 176 && __builtin_offsetof(RTScene, cutouts) == 160, "RTScene: CustomRayTracer.writeArgs writes these offsets");
+static_assert(sizeof(RTScene) == 176 && __builtin_offsetof(RTScene, cutouts) == 160 && __builtin_offsetof(RTScene, sdf) == 168,
+              "RTScene: CustomRayTracer.writeArgs writes these offsets");
 
 #ifndef RT_STATS
 #define RT_STATS 0
@@ -595,6 +637,30 @@ inline bool rtTraverse(constant RTScene& sc, Ray r, uint mask, thread Hit& h, th
                     VGBlas e = sc.vgBlas[inst.pad0 - 1];
                     nodes = e.nodes; tris = e.tris; root = 0;
                     present = e.triangles != 0;
+                }
+                if (SDF_SHAPES && (inst.mask & RT_SDF) != 0) {   // an SDF shape: marched here, in the instance's space
+                    present = false;
+                    if ((inst.mask & mask) != 0) {
+                        float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);
+                        float3 so = float3(dot(inst.row0, o4), dot(inst.row1, o4), dot(inst.row2, o4));
+                        float3 sd = float3(dot(inst.row0, d4), dot(inst.row1, d4), dot(inst.row2, d4));
+                        float t;
+                        float2 n = float2(0.0f);
+                        uint material, steps = 0;
+                        RT_COUNT(3, 1u);
+                        bool met = sdfMarch(*sc.sdf, inst.blasRoot, so, sd, r.tmin, h.distance, length(r.direction), !ANY, t, n, material, steps);
+                        RT_COUNT(5, steps);
+                        if (met) {
+                            h.hit = true;
+                            h.distance = t;
+                            h.barycentrics = n;
+                            h.primitive = material;
+                            h.instance = id;
+                            h.cluster = HIT_NO_CLUSTER;
+                            h.part = HIT_SDF;
+                            if (ANY) return true;
+                        }
+                    }
                 }
                 if (present && (inst.mask & mask) != 0 && RT_ROOM(sp)) {
                     float4 o4 = float4(r.origin, 1.0f), d4 = float4(r.direction, 0.0f);

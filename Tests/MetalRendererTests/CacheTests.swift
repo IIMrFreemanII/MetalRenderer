@@ -117,6 +117,22 @@ final class CacheTests: XCTestCase {
         }
     }
 
+    /// A virtual-geometry cache file with many meshes (the golem has dozens): its header outgrows the page it was
+    /// padded to unless each mesh's record is counted at its real size. What goes in comes back.
+    func testVirtualGeometryCacheWithManyMeshes() throws {
+        let url = temporary("many.mgv")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let quad = VirtualGeometryBuilder.build(positions: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], normals: Array(repeating: [0, 0, 1], count: 4),
+                                                uvs: Array(repeating: .zero, count: 4), indices: [0, 1, 2, 0, 2, 3], name: "quad") { _ in }
+        let meshes = (0..<600).map { (index: $0 * 3, mesh: quad) }
+        try VirtualGeometryBuilder.write(meshes, to: url)
+        let read = try VirtualGeometryBuilder.read(url)
+        XCTAssertEqual(read.count, meshes.count)
+        XCTAssertEqual(read[597]?.triangleCount, quad.triangleCount)
+        XCTAssertEqual(read[597]?.pageData.count, quad.pageData.count)
+        XCTAssertEqual(read[597]?.clusters.count, quad.clusters.count)
+    }
+
     func testAtomicWrite() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("CacheTests-\(UUID().uuidString).bin")
         defer { try? FileManager.default.removeItem(at: url) }

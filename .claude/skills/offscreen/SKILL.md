@@ -37,14 +37,18 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
   (`METALRENDERER_SHOT_FRAMES=<n>`). It takes about 1–2 s.
 * `KEY=VALUE` arguments are any `METALRENDERER_*` overrides (the list is in the performance skill's
   `references/measuring.md`, "Narrowing and overriding"):
-  * scene: `METALRENDERER_SCENE=cornell|stress|gallery|spots|sun|area|tubes|emissive|mixed|fog|valley|market|crowd|city|citynight`,
-    plus `,objects=…,lights=…` (the crowd: `,characters=…,poses=…,detail=…`; the city: `,seed=…,blocks=…,style=…,lit=…,rooms=…,textures=…`);
+  * scene: `METALRENDERER_SCENE=cornell|stress|gallery|spots|sun|area|tubes|emissive|mixed|fog|valley|market|crowd|city|citynight|showcase`,
+    plus `,objects=…,lights=…` (the crowd: `,characters=…,poses=…,detail=…`; the city: `,seed=…,blocks=…,style=…,lit=…,rooms=…,textures=…`;
+    the showcase: `,showcase=owl`, a part of a model's file name);
+  * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);
   * GI: `METALRENDERER_GI="mode=pt|cascades|restir,bounces=2,scale=0.75,factor=0"` (factor 0 means native, no
     upscaling);
   * also `_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW="exposure=…,tod=…"`, `_RT`, `_DIRECT`.
 * It prints the timing table, the log path and the new PNG paths. Override typos are printed too ("unknown key"); a
   typo doesn't stop the run.
 * `-q` prints only the PNG paths. `-b <binary>` runs another build, from its own folder, with its own shaders.
+* A setting with `.recording()` (Benchmark.swift) also saves every other measured frame as a JPEG in a folder of its
+  own: a 30 fps sequence for ffmpeg. `-m showcasevideo` records every showcase model orbited for 6 s.
 
 Not settable from the environment:
 * the camera pose: each scene's default camera is used, or a `Config.camera` / `.cameraMove()` in a mode;
@@ -75,6 +79,16 @@ python3 Tools/eval/pngdiff.py "$SCRATCH/before" "$SCRATCH/after"
 python3 Tools/eval/stress.py "$SCRATCH/q"
 ```
 The mode-to-scorer table is in measuring.md. Narrow long modes with `METALRENDERER_BENCH_ONLY="name|other"`.
+
+**Make a video.** A mode whose settings record (`.recording()`, see the note above; `.track(...)` gives a setting a
+camera track of its own) becomes an mp4 with `scripts/video.sh`, which runs `render.sh` and then ffmpeg on each
+setting's frames:
+```bash
+.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
+```
+`-m stressdemo` tours the stress building the same way (58 s).
+It takes minutes (every frame of the track is rendered), so run it with `run_in_background`. To tune a track, look
+along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 
 **Time it.** Timings belong to the `performance` skill (`ab.sh`, alternating rounds). Its runs are headless too.
 

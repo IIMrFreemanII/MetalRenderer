@@ -5,7 +5,7 @@ from evalcommon import *
 runs = sys.argv[1:]
 pick_up_refs("stress", runs, ["ref-direct-32", "ref-direct-128", "ref8-final-32", "ref8-indirect-32", "ref-albedo-1.5x",
                               "ref-direct-1.5x"])
-CROP = (180, 230, 460, 390)   # floor in front of the pillars: contact shadows of the bouncing balls
+CROP = (400, 190, 635, 330)   # the office floor: contact shadows of the chairs, people and robots
 print(f"{'run':16s}{'lights':>7s}{'static':>9s}{'crop':>9s}{'flicker':>9s}{'moving':>9s}{'camera':>9s}    (direct light)")
 for d in runs:
     for lights in (32, 128):
