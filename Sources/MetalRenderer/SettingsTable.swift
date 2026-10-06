@@ -73,6 +73,7 @@ extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
 extension CityStyle: EnvNamed {}
+extension PhysicsSettings.Backend: EnvNamed {}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
@@ -329,6 +330,15 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
+                .env(.scene, "bodies").when { $0.scene.kind == .physics },
+            S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
+                .env(.scene, "particles").when { $0.scene.kind == .physics },
+            S.slider("Cloth vertices", \.scene.physics.cloth, PhysicsSettings.clothRange, step: 4, live: false) { $0 == 0 ? "none" : "\($0) x \($0)" }
+                .env(.scene, "cloth").when { $0.scene.kind == .physics },
+            S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
+                .env(.scene, "substeps").when { $0.scene.kind == .physics },
+            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind == .physics },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }

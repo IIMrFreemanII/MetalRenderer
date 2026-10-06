@@ -323,6 +323,77 @@ struct GPUFogParams {
     }
 }
 
+// MARK: - Physics (Physics.swift, Shaders/Physics.metal)
+
+/// A rigid body's state: MSL PhysicsBody. Rotations are quaternions, xyz then the real part in w. A body's space is
+/// its principal axes about its centre of mass (its shape's `comPosition` / `comRotation` place it in shape space).
+struct GPUPhysicsBody {
+    var position = SIMD4<Float>()            // centre of mass, world; w = inverse mass (0: it never moves)
+    var rotation = SIMD4<Float>(0, 0, 0, 1)  // body -> world
+    var velocity = SIMD4<Float>()            // w = friction
+    var angular = SIMD4<Float>()             // angular velocity, world; w = restitution
+    var prevPosition = SIMD4<Float>()        // at the substep's start; w = how long it has been still (s)
+    var prevRotation = SIMD4<Float>(0, 0, 0, 1)
+    var invInertia = SIMD4<Float>()          // inverse principal moments; w = bounding radius about the centre of mass
+    var info = SIMD4<UInt32>()               // x = shape, y = flags (PhysicsWorld.asleep), z = the instance it moves, w = 0
+}
+
+/// A collision shape: MSL PhysicsShape. `samples`: its surface points (and their count), in body space.
+struct GPUPhysicsShape {
+    var comPosition = SIMD4<Float>()         // the body's origin in shape space; w = bounding radius about it
+    var comRotation = SIMD4<Float>(0, 0, 0, 1)   // body space -> shape space
+    var params = SIMD4<Float>()              // sphere: (r); capsule: (half length, r) along y; box: (half extents, rounding)
+    var info = SIMD4<UInt32>()               // x = kind (PhysicsShapeKind), y = first sample, z = samples, w = SDF shape
+}
+
+/// One entry of a body's list of what it may touch this step: MSL PhysicsPair.
+struct GPUPhysicsPair {
+    var partner: UInt32 = 0                  // a body, or a static collider | PhysicsWorld.staticBit
+    var contacts: UInt32 = 0                 // in the owner's manifold
+    var link: UInt32 = 0                     // the owner's entry for the pair (the owner's own: itself); none: ~0
+    var pad: UInt32 = 0
+}
+
+/// A contact point, from body B to body A: MSL PhysicsContact. A's point is A's anchor less `normal` x A's radius,
+/// B's is B's anchor plus `normal` x B's radius (a sphere's anchor is its centre: it stays under it as it rolls).
+struct GPUPhysicsContact {
+    var normal = SIMD4<Float>()              // world, out of B; w = the separation it was found at
+    var anchorA = SIMD4<Float>()             // A's space; w = A's radius
+    var anchorB = SIMD4<Float>()             // B's space; w = B's radius
+    var lambda = SIMD4<Float>()              // x = this substep's normal lambda, y = normal speed before it, zw = 0
+}
+
+/// A particle (Physics.swift): a small ball that the bodies and the static colliders push about, and that piles up
+/// against the others. MSL PhysicsParticle.
+struct GPUPhysicsParticle {
+    var position = SIMD4<Float>()            // w = radius
+    var velocity = SIMD4<Float>()            // w = friction
+    var prevPosition = SIMD4<Float>()        // at the substep's start; w = inverse mass
+    var info = SIMD4<UInt32>()               // x = its instance (none: a cloth's vertex), y = flags (PhysicsWorld.clothBit),
+                                             // z = a cloth vertex's place in the scene's vertex buffer, w = its cloth
+}
+
+/// A cloth's distance constraint between two of its vertices (particles): MSL PhysicsConstraint.
+struct GPUPhysicsConstraint {
+    var a: UInt32
+    var b: UInt32
+    var rest: Float
+    var compliance: Float                    // m/N: 0 holds it rigid
+}
+
+/// What every physics kernel is told: MSL PhysicsParams.
+struct GPUPhysicsParams {
+    var gravity = SIMD4<Float>()             // w = the substep's length (s)
+    var counts = SIMD4<UInt32>()             // x = bodies, y = static colliders, z = pairs a body may have, w = hash buckets
+    var grid = SIMD4<Float>()                // x = cell size, y = contact margin, z = top speed, w = the step's length
+    var sleep = SIMD4<Float>()               // x = still below this speed, y = ...and turn rate, z = asleep after (s),
+                                             // w = the speed a body's sphere reaches by (PhysicsWorld.cellSpeed)
+    var particles = SIMD4<UInt32>()          // x = particles, y = their hash buckets, z = neighbours each, w = colliders each
+    var particleGrid = SIMD4<Float>()        // x = their cell size, y = the speed a particle's reach allows for,
+                                             // z = a cloth's air drag (1/s), w = 0
+    var cloth = SIMD4<UInt32>()              // x = constraints, y = their colours, zw = 0
+}
+
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
@@ -356,5 +427,12 @@ func validateGPULayouts() {
     precondition(MemoryLayout<VGCluster>.stride == 80, "VGCluster layout mismatch")
     precondition(MemoryLayout<VirtualBLAS.Entry>.stride == 32, "VirtualBLAS.Entry (VGBlas) layout mismatch")
     precondition(MemoryLayout<VirtualGeometry.Params>.stride == 48, "VirtualGeometry.Params (VGParams) layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsBody>.stride == 128, "GPUPhysicsBody layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsShape>.stride == 64, "GPUPhysicsShape layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsPair>.stride == 16, "GPUPhysicsPair layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsContact>.stride == 64, "GPUPhysicsContact layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsParams>.stride == 112, "GPUPhysicsParams layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsConstraint>.stride == 16, "GPUPhysicsConstraint layout mismatch")
+    precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

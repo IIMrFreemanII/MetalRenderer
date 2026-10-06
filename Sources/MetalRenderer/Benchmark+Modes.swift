@@ -14,7 +14,8 @@ extension Benchmark {
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
-        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
+        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo, "physics": physics,
+        "physicsdemo": physicsDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -824,6 +825,58 @@ extension Benchmark {
             }
         }
         return out
+    }
+
+    /// The physics scene (Scene+Physics.swift): paused at 5 s on each tracer and API (the GPU's steps put the bodies
+    /// in the same places on all of them; Tools/eval/pngdiff.py), the CPU's steps there too (their own pile: 300 steps
+    /// of a pile tell float rounding apart), then the first 5 s moving for timing: the "physics" pass at a few body
+    /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) where they keep up.
+    private static func physics() -> [Config] {
+        let scene = SceneSettings(kind: .physics)
+        var out: [Config] = []
+        for tracer in tracers {
+            for api in RenderAPI.allCases {
+                out.append(Config("\(tracer.tag) \(api.envName)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
+                    $0.rayTracer = tracer.kind
+                    $0.api = api
+                }.still())
+            }
+        }
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        for bodies in [96, 512, 2048] {
+            out.append(base.named("gpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .gpu })
+        }
+        for bodies in [32, 96] {
+            out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .cpu })
+        }
+        return out
+    }
+
+    /// The physics scene's demo video: its first 30 s along a camera track at the app's look with the showcase's lens
+    /// (`recording`: 900 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m physicsdemo` makes the mp4).
+    /// Wide while the bodies drop and the ball rolls in, down to the bin as the particles pour, round to the cloth
+    /// falling over its ball, past the tower and the pile, and back out. The clock starts at -1 s, so that the warm-up's
+    /// second ends as the first frame is recorded, with everything still in the air (the physics waits until 0).
+    private static func physicsDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 4.2, 8.2], [0, 0.6, -1]),
+            key(4, [-0.5, 3.0, 5.5], [-0.8, 0.6, -1.0]),
+            key(8, [-1.2, 1.4, 4.4], [-2.4, 0.3, 2.3]),
+            key(12, [0.2, 1.3, 4.6], [0.9, 0.6, 2.2]),
+            key(16, [2.2, 1.6, 3.6], [0.9, 0.7, 2.0]),
+            key(20, [3.6, 1.8, 1.0], [2.2, 0.8, -0.6]),
+            key(24, [1.5, 2.2, 1.8], [-1.0, 0.5, -2.2]),
+            key(30, [0, 4.2, 8.2], [0, 0.6, -1]),
+        ])
+        var demo = Config("physics demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .physics)) {
+            $0.post = ShowcaseLook.lens
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
     }
 
     /// The SDF shapes scene's demo video: 30 s along a camera track at the app's look (cascades, 3x from 0.5x to

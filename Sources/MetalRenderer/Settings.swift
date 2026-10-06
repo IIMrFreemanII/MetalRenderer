@@ -257,6 +257,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     case showcase           // one model of Assets/ (`SceneSettings.showcase`) staged on a set of its own (ShowcaseLook):
                             // volumetric beams, mist, accent lights, particles, with bloom and depth of field
     case shapes             // SDF shapes (SDFShapes.swift): primitives, cuts and blends, a baked mesh, glowing shapes as lights
+    case physics            // rigid SDF shapes (Physics.swift) poured into an arena: a ramp, a pile, a tower knocked over
 
     var title: String {
         switch self {
@@ -279,6 +280,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .world: return "Open world"
         case .showcase: return "Showcase (one model)"
         case .shapes: return "SDF shapes"
+        case .physics: return "Physics"
         }
     }
 
@@ -365,6 +367,34 @@ struct ExtraModel: Equatable, Codable {
     var yaw: Float
 }
 
+/// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
+struct PhysicsSettings: Equatable, Codable {
+    /// Where the steps run: the GPU (Shaders/Physics.metal), the CPU (PhysicsCPU.swift), or whichever suits the
+    /// scene's size (the CPU below `PhysicsSettings.gpuFrom` bodies, where a dispatch costs more than the work).
+    enum Backend: Int, CaseIterable, Codable {
+        case auto, gpu, cpu
+        var title: String { ["Automatic", "GPU", "CPU"][rawValue] }
+    }
+    var backend = Backend.auto
+    /// Substeps a step (1/60 s): more hold stacks stiffer, for more work (8 lets a tower of 8 crossed layers sink
+    /// through the floor; 12 holds it to 3 mm).
+    var substeps = 16
+    /// Rigid bodies poured in, and particles poured into a bin.
+    var bodies = 96
+    var particles = 2048
+    /// The cloth's vertices along a side (0: no cloth).
+    var cloth = 36
+
+    static let substepRange = 1...32
+    static let bodyRange = 0...4096
+    static let particleRange = 0...16384
+    static let clothRange = 0...96
+    static let gpuFrom = 64
+
+    /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
+    func runsOnGPU(bodies: Int) -> Bool { backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom) }
+}
+
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
 struct SceneSettings: Equatable, Codable {
     var kind = SceneKind.cornell
@@ -410,6 +440,8 @@ struct SceneSettings: Equatable, Codable {
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
     /// forest takes 1.3 to 2.1 times as long, the open world 3 times.
     var voxelBoxes = false
+    /// The physics scene: its bodies and how they are simulated.
+    var physics = PhysicsSettings()
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -490,7 +522,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -588,7 +620,7 @@ struct SkySettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

@@ -375,6 +375,8 @@ final class Renderer: NSObject {
     private var namedInstanceBlocks: [String: InstanceBlock] { sceneBuffers?.namedInstanceBlocks ?? [:] }
     /// The crowd's pose slots, if the scene has a crowd: the skinning, and for the Metal tracer their structures' refit.
     private var crowdSkinner: CrowdSkinner?
+    /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
+    private var physicsGPU: PhysicsGPU?
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     private var customRT: CustomRayTracer? {                           // custom ray tracer only
         didSet { traversalLast = nil }   // a new tracer's counters start at 0
@@ -805,6 +807,7 @@ final class Renderer: NSObject {
         builtAPI = prepared?.api ?? settings.api
         customRT = nil
         crowdSkinner = nil
+        physicsGPU = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
         lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
@@ -825,6 +828,16 @@ final class Renderer: NSObject {
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
             crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+        }
+        // The physics on the GPU, or only its cloths' meshes when the CPU steps it (they are drawn from the GPU's buffers).
+        if let physics = scene.physics {
+            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count)
+            if onGPU || !physics.cloths.isEmpty {
+                physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
+                                            slots: Renderer.maxFramesInFlight, simulates: onGPU,
+                                            clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
+                if onGPU { scene.runPhysicsOnGPU() }
+            }
         }
         try createLightBuffers()
         if builtRayTracer == .custom {
@@ -1392,6 +1405,11 @@ final class Renderer: NSObject {
         // the ones that move, the rest being as they were (a crowd is tens of thousands of records).
         // (A still scene's were written with its buffers.)
         let first = !frameDataWritten[slot], still = sceneBuffers.still
+        // The GPU's bodies where they were when this slot's last frame was done: the CPU's copy (the frame's own
+        // records are the pose kernel's).
+        if let physicsGPU {
+            if physicsGPU.simulates { scene.placeBodies(poses: physicsGPU.snapshot(slot: slot)) } else { physicsGPU.upload(slot: slot) }
+        }
         if let customRT {
             customRT.update(slot: slot, scene: scene)
         } else if !still {
@@ -2082,18 +2100,38 @@ final class Renderer: NSObject {
 
     /// The scene's structures for this frame, ahead of everything that traces rays.
     private func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
-        // 0. The crowd: this frame's poses and skinned vertices, then the pose slots' bottom-level structures around
-        //    them (a refit: a pose keeps its triangles, so its tree keeps its shape). Ahead of the top level, which
-        //    takes the new bounds.
+        // Rigid bodies: the steps since last frame (or a replay from the start), then every body's instance record,
+        // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
+        // Cloths too: their vertices, from where the physics (or the CPU's) left them.
+        var deformed = false
+        if let physicsGPU, let enc = passes.compute("physics", serial: true) {
+            if physicsGPU.simulates {
+                let (steps, restart) = scene.takePhysicsSteps()
+                if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
+                physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps)
+                let descriptors = builtRayTracer == .metal && !sceneBuffers.still ? instanceDescBuffers[slot] : nil
+                physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
+                                      descriptorStride: instanceDescriptorStride)
+            }
+            physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            deformed = physicsGPU.hasCloth
+            passes.endCompute()
+        }
+        // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
+        //    bottom-level structures around them (a refit: a pose keeps its triangles, so its tree keeps its shape).
+        //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
                 crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
+            deformed = true
+        }
+        if deformed {
             if let primitiveRefit { passes.refitPrimitives(primitiveRefit, pass: "blas") }
             if let customRT, let enc = passes.compute("blas", serial: true) {
-                customRT.encodeCrowdRefit(enc, positions: positionBuffer, indices: indexBuffer, meshes: meshBuffer)
+                customRT.encodeDeformRefit(enc, positions: positionBuffer, indices: indexBuffer, meshes: meshBuffer)
                 passes.endCompute()
             }
         }

@@ -15,6 +15,10 @@ enum Kernel: Int, CaseIterable {
     case composite, accumulateColor, tonemap
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
+    case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
+    case physicsParticleInsert, physicsParticleNeighbours
+    case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh
     // Custom ray tracer only: the per-frame build of its dynamic tree and of the virtual geometry's cut.
     case rtPrep, rtKeys, rtSortLocal, rtSortGlobal, rtHierarchy, rtFit
     case vgReset, vgCut, vgFinish, vgPad, vgHierarchy, vgFit

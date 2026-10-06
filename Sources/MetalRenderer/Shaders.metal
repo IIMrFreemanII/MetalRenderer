@@ -40,3 +40,4 @@ using namespace metal::raytracing;
 #include "Shaders/BVHBuild.metal"          // custom ray tracer: the per-frame top-level tree (rt* kernels)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its tree (vg* kernels)
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices, vertices and trees (crowd* kernels)
+#include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)

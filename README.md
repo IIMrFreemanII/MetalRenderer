@@ -200,6 +200,7 @@ For the plants:
 * `METALRENDERER_BENCH=forestcheck` renders the checks described under "Generated plants".
 * `METALRENDERER_FOLIAGE_TEST=<seed>` builds every plant, times and checks them, and exits; with `METALRENDERER_FOLIAGE_TEXTURES=<folder>` it also writes the generated textures there as PNGs.
 * `METALRENDERER_SCENE=world` starts in the Open world; `seed`, `trees` and `undergrowth` change it as they change the Forest, and `lit` the share of lit windows at night. Its day starts in mid-morning: `METALRENDERER_VIEW=tod=0.6` starts it at midnight (`tod=0.41` as the sun sets). `METALRENDERER_BENCH=worldnight` renders the night from a street, a street corner, above the first city and 2 km from it, then drives 600 m down a street; `METALRENDERER_BENCH=worlddusk` renders the first city from above and from a street at eleven times from afternoon to the next morning, then lets 20 s of dusk go by in each view; `METALRENDERER_BENCH=worldground` renders the first city's ground: a junction of two streets from above and from its corner, a courtyard, the last street and the fields beyond it, the roads from over the city and from 2 km, and the junction at night; `METALRENDERER_BENCH=worldroads` renders the road from the first city to the next one: from the junction it leaves by, from the fields, before its deepest cutting and its highest bank, in the woods, from above, all of it from over the city, from short of the other city and at night, then flies 600 m along it; with `METALRENDERER_SHOT_SWAP=<k>` a setting ends, and its picture is taken, `k` frames after its scene is first made again (around another tile, or with the cities' lights). `METALRENDERER_BENCH=world` renders it from where it starts, from a street, in the woods and from above, then flies 600 m across its tiles, and renders the start with the scene's origin elsewhere and a place 50 km out. `METALRENDERER_WORLD_TEST=<seed>` makes the tiles around the first city, says what they hold and how long they took, and exits. `METALRENDERER_WORLD_GROUPS=0` makes every tile's trees again with every scene, as the scene's own instances (for comparing with the groups they are in otherwise), and `METALRENDERER_BLOCK_PART=<n>` sets how many instances of a group the custom tracer's top-level tree takes as one leaf (16).
+* `METALRENDERER_SCENE=physics` starts in the physics scene (`,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=physics` renders it paused at 5 s on each tracer and API (the GPU's steps put everything in the same place on all of them) and with the CPU's steps, then times the first 5 s moving at 96, 512 and 2048 bodies on the GPU and 32 and 96 on the CPU. `METALRENDERER_BENCH=physicsdemo` records its demo, 30 s from the first drop along a camera track (`video.sh -m physicsdemo`).
 * `METALRENDERER_SCENE=shapes` starts in the SDF shapes scene. `METALRENDERER_BENCH=shapes` renders it paused on each tracer and API, with path tracing, ReSTIR and MegaLights on its glowing shapes, and in the normals, triangles (here: the shapes' materials) and traversal cost views; then it times moving frames and a camera move. `METALRENDERER_BENCH=shapesdemo` records its demo: 30 s along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o demo.mp4` makes the mp4 (with ffmpeg; it does `showcasevideo` too).
 * `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, its meshes' trees, the plants' voxels) instead of taking it from `~/Library/Caches/MetalRenderer/generated`; `=1` caches the trees and voxels in an optimised build too. `METALRENDERER_CACHE_MB=4096` caps that folder.
@@ -986,6 +987,75 @@ A shape is a list of up to 32 nodes, joined one after the other: `((n0 op1 n1) o
   * A shape's nodes don't animate; its instance does.
   * Thin features under about 2 mm can be skipped by the 1 mm offset of a ray that leaves a surface.
 
+### Physics
+
+Rigid bodies that are SDF shapes, particles and cloth, simulated on the GPU (`Physics.swift`, `Shaders/Physics.metal`), with the same steps on the CPU as their reference. The **Physics** scene (`METALRENDERER_SCENE=physics`, `Scene+Physics.swift`) is an arena:
+* `bodies` shapes of every kind drop in layers onto a ramp, a tower of blocks and each other, and a heavy ball rolls in at the tower's foot;
+* `particles` balls pour into a bin, heap up and spill over its rim;
+* a cloth (`cloth` vertices a side) hangs by two corners from a rod and falls over a ball;
+* a torus knot baked into a distance grid stands on a pedestal; it is a static collider like the rest.
+
+The scene list's keys are `bodies=96`, `particles=2048`, `cloth=36`, `substeps=16` and `physics=auto|gpu|cpu`.
+
+* **XPBD with small substeps** (Müller et al. 2020, Macklin et al. 2019):
+  * A step is 1/60 s of `substeps` substeps (16), one solver iteration each.
+  * A substep moves every body by its velocity, pushes its contacts apart (static friction holds them), takes the velocities from how far the bodies went, then applies dynamic friction and restitution.
+  * Small substeps are what make a GPU-friendly solver stack. At 8 substeps a tower of 8 crossed layers sinks through the floor; at 12 it holds to 3 mm.
+* **Collision is one path for every pair** (`PhysicsCollide.swift`):
+  * A shape is a distance in its body's space plus surface samples, each a small sphere. A sphere is one sample; a capsule is five along its core; a box is its corner and edge spheres (its rounding); any other SDF shape is 64 points of its surface, its boxes' corners first.
+  * A pair's contacts are each side's samples against the other's distance. That is exact for spheres and capsules against anything, and for anything against a plane.
+  * Two flat-sided shapes also step down one's field along the other's surface, from each side. That finds an edge across an edge, which no corner is in.
+  * The distances are exact formulas for spheres, capsules, boxes and planes (their gradients too: a box's inside takes its nearest face's normal). Every other shape uses its field, so CSG, blends and baked meshes collide like the primitives.
+  * Contacts are kept as Bullet keeps a manifold: four at most, the deepest always, the rest for the most area. They share one normal where they roughly agree, so a corner on a corner doesn't push sideways.
+  * Contacts are found once a step, with a speculative margin for how far the pair can close in a step, and anchored in each body. A sphere's anchor is its centre, so it stays under the sphere as it rolls.
+* **The GPU's step** (one serial "physics" pass, ahead of the acceleration structures):
+  * A hash grid over the bodies' bounding spheres, from per-bucket linked lists.
+  * Each body's partners, the lowest 16, with static colliders first so a crowded body never drops the floor.
+  * Each pair's contacts, a SIMD group a pair: the lanes test 32 samples at a time, and the manifold takes them in the samples' order.
+  * Every substep in one threadgroup: barriers stand in for dispatches, and a thread works out each contact's push once for both bodies to gather.
+  * Then a pose kernel writes every body's and particle's instance record (and Metal's descriptor) where the steps left it.
+* **The same every time:**
+  * Nothing adds floats atomically. Every body gathers its own corrections in a fixed order.
+  * Two GPU runs are bit-identical, and the GPU's steps match the CPU's within 0.1 mm for half a second. Further on, a pile tells float rounding apart.
+  * Going back in time replays from the start, so a benchmark's still at 5 s is the same however it was reached.
+* **Particles** are small balls, each an SDF sphere instance.
+  * They find each other in a grid of their own and collide at the same substeps: with each other (Jacobi, averaged, with friction so they heap) and with the static colliders and bodies.
+  * The bodies push the particles; the particles don't push back.
+* **Cloth:**
+  * Its vertices are particles whose distance constraints (stretch, shear, bend) are coloured once, so no two of a colour share a vertex. Each substep solves them a colour at a time (Gauss-Seidel).
+  * Air drag damps it. Pinned vertices never move.
+  * It collides with the bodies and static colliders, not with itself or the particles.
+  * Its mesh is a deforming mesh like the crowd's poses. The pose kernel writes its vertices, last frame's (for motion vectors) and its normals, and both tracers refit its tree.
+* **What it costs** (M1 Max; the physics scene's first 5 s moving, a step a frame, 16 substeps, 2048 particles and a 36 x 36 cloth; `METALRENDERER_BENCH=physics`):
+
+  | Bodies | "physics" pass (GPU) | CPU instead (render thread, per frame) |
+  |---|---|---|
+  | 96 | 4.6 ms | 18 ms |
+  | 512 | 9.6 ms | |
+  | 2048 | 21 ms | |
+
+  * For 96 bodies, 512 particles and no cloth, a step was 1.5 ms: 0.35 ms narrow phase, 1.0 ms substeps, the rest the broad phase.
+  * What made it that:
+    * Every substep in one threadgroup: with three dispatches a substep, 16 substeps cost 6.6 ms for 96 bodies.
+    * A thread per contact rather than a body's thread walking all of its contacts: 2.3 to 1.1 ms.
+    * A SIMD group per pair in the narrow phase: 0.8 to 0.35 ms.
+  * At thousands of bodies one threadgroup runs out of threads: the next thing to try is dispatches per stage above a size, measured against it.
+* **The CPU's copy** of the bodies comes from a snapshot the pose kernel writes per frame slot. It is read once the slot's frame is done: three frames late, but the same three every time.
+* **Backend.** `auto` steps on the CPU below 64 bodies and particles, where a dispatch costs more than the work. Then the CPU writes the instances, and a cloth is uploaded each frame for the GPU to draw.
+* **Checked:** `PhysicsTests` covers:
+  * resting, stacking, bouncing (restitution), sliding or holding on a slope (friction);
+  * crossed bars' edge contact;
+  * mass properties;
+  * particles heaping and a ball pushing through them;
+  * cloth hanging without stretching and draping over a ball;
+  * GPU against CPU, and two GPU runs.
+* **Limits:**
+  * Rigid bodies and SDF shapes only: a triangle mesh collides through a baked grid.
+  * Particles and cloth don't push the bodies.
+  * No cloth self-collision. No joints.
+  * A body's contacts are found once a step, so a fast thin shape can still pass through a thin one.
+  * Glowing bodies' lights follow the CPU's copy, three frames late.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -1019,7 +1089,10 @@ With the Metal tracer, the clusters, groups and LOD views are grey, because Meta
 CPU    animate what moves or flickers (objects, lights)  ->  write those instances, lights and materials into this
        frame's buffers (triple-buffered; what never changes is written once per buffer)
        virtual geometry (background thread): Nanite cut per instance -> SAH BLAS over the cut where it changed
-GPU 0  textures: map + upload the mip levels last frame's hits asked for (sparse textures), unmap unused ones
+GPU 0  physics: the steps since last frame (bodies' and particles' grids, pairs, contacts, every substep in one
+       threadgroup), then the bodies' and particles' instance records and the cloths' vertices; deforming meshes
+       (the crowd's poses, cloths) refitted
+       textures: map + upload the mip levels last frame's hits asked for (sparse textures), unmap unused ones
 GPU 1  custom RT: rebuild the moving instances' top-level BVH (prep -> Morton keys -> sort -> hierarchy -> boxes);
        static geometry and the shapes of lights that stay in place are in trees built once
        (Metal RT instead: refit the instance acceleration structure, rebuild it every 16 frames; a scene in
@@ -1099,6 +1172,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
 | `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail, made from the library's plants for both tracers |
 | `SDFShapes.swift`, `SDFVolume.swift`, `SDFBuffers.swift`, `Scene+Shapes.swift` | SDF shapes: their nodes, distances, boxes and surface triangles; meshes baked into distance grids; the shapes on the GPU (and Metal's one-box structures); the SDF shapes scene |
+| `Physics.swift`, `PhysicsCollide.swift`, `PhysicsCPU.swift`, `PhysicsGPU.swift`, `Scene+Physics.swift` | Physics: rigid SDF bodies, particles and cloth (the world, its time and replays); shapes' samples and mass, contacts; the CPU's step (the reference); the GPU's buffers and passes, poses and cloth meshes; the physics scene |
 | `VoxelGrids.swift`, `VoxelLOD.swift` | Metal's tracer: the grids as one-box structures per level, and far plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
