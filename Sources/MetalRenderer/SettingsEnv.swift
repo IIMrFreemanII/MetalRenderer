@@ -25,7 +25,7 @@ enum SettingsEnv {
         d.virtualGeometry.pixelError = 1
         d.virtualGeometry.poolMB = 768
         d.virtualGeometry.raster = .blas
-        d.virtualGeometry.rasterPoolMB = 256
+        d.virtualGeometry.rasterPoolMB = 512
         d.scene = SceneSettings()
         d.scene.kind = s.scene.kind
         d.scene.showcase = s.scene.showcase   // the model's look: its fog and lens

@@ -534,8 +534,9 @@ struct VirtualGeometrySettings: Equatable, Codable {
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
     /// How the raster visibility buffer draws it (with the per-instance BLAS; the cluster tree's mode traces it).
     var raster = RasterVirtual(envText: ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG"] ?? "") ?? .blas
-    /// The raster clusters' own streaming pool (the rays keep the BLAS).
-    var rasterPoolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG_POOL"] ?? "") ?? 256
+    /// The raster clusters' own streaming pool (the rays keep the BLAS): 512 MB holds what the gallery's shadow maps and
+    /// camera ask for (about 390 MB settled).
+    var rasterPoolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG_POOL"] ?? "") ?? 512
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     var freeze = false
