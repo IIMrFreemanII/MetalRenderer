@@ -1099,6 +1099,22 @@ extension Benchmark {
             close.camera = start.camera
             out += [start, close]
         }
+        // The character as its muscles and bones (MuscleAtlas.swift, SkeletonAtlas.swift): from its front, its back and
+        // its side as it sets off, close up, in its normals, and in its walk.
+        let ecorche = base.with { $0.scene.physics.body = .muscles }
+        for (name, from, to) in [("front", SIMD3<Float>(3.4, 1.3, 3.1), SIMD3<Float>(1.2, 1.0, 3.1)), ("back", [-1.0, 1.3, 3.1], [1.2, 1.0, 3.1]),
+                                 ("side", [3.0, 1.5, 4.9], [1.2, 1.0, 3.1]), ("chest", [2.3, 1.3, 3.1], [1.2, 1.2, 3.1]),
+                                 ("hips", [0.2, 1.05, 3.1], [1.2, 0.95, 3.1]), ("shoulder", [0.5, 1.55, 2.4], [1.2, 1.4, 2.95]),
+                                 ("skull", [1.75, 1.7, 3.3], [1.2, 1.66, 3.1]), ("knee", [2.0, 0.55, 3.0], [1.2, 0.4, 3.1]),
+                                 ("hand", [1.6, 0.95, 2.3], [1.2, 0.85, 2.9]), ("spine", [0.2, 1.35, 3.1], [1.2, 1.25, 3.1])] {
+            var still = ecorche.named("ecorche \(name)").still(at: 1)
+            still.camera = look(from, to)
+            out.append(still)
+        }
+        var ecorcheNormals = ecorche.named("ecorche normals").view(3).still(at: 1)
+        ecorcheNormals.camera = look([3.4, 1.3, 3.1], [1.2, 1.0, 3.1])
+        out.append(ecorcheNormals)
+        out.append(ecorche.named("ecorche walking").still(at: 6))
         var ragdolls = base.named("ragdolls").still()
         ragdolls.camera = look([-1.6, 2.4, -0.8], [-4.6, 0.7, -4.0])
         out.append(ragdolls)
@@ -1109,6 +1125,7 @@ extension Benchmark {
             out.append(base.named("gpu \(count) ragdolls moving").with { $0.scene.physics.muscleRagdolls = count; $0.scene.physics.backend = .gpu })
         }
         out.append(base.named("gpu sliding moving").with { $0.scene.physics.skin = .sliding; $0.scene.physics.backend = .gpu })
+        out.append(base.named("gpu ecorche moving").with { $0.scene.physics.body = .muscles; $0.scene.physics.backend = .gpu })
         out.append(base.named("cpu moving").with { $0.scene.physics.backend = .cpu })
         return out
     }
@@ -1134,7 +1151,9 @@ extension Benchmark {
             $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
         }.track(track).recording()
         demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
-        return [demo]
+        // The same with the character drawn as its muscles (MuscleAtlas.swift).
+        var ecorche = demo.named("ecorche demo").with { $0.scene.physics.body = .muscles }
+        return [demo, ecorche]
     }
 
     /// The soft body scene's demo video: its first 20 s along a camera track at the physics look with the showcase's

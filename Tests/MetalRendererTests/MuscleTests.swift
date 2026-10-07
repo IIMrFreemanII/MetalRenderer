@@ -3,9 +3,9 @@ import Metal
 import simd
 @testable import MetalRenderer
 
-/// PhysicsFlesh.swift, PhysicsRig.swift, PhysicsSkin.swift and the muscles scene: kinematic bodies that follow their
-/// table and carry what they touch, a character's rig, flesh held to its bones, muscles that bulge as their joints
-/// bend and keep their volume, the skin, and the GPU's steps against the CPU's.
+/// PhysicsFlesh.swift, PhysicsRig.swift, PhysicsSkin.swift, MuscleAtlas.swift, SkeletonAtlas.swift and the muscles scene: kinematic bodies
+/// that follow their table and carry what they touch, a character's rig, flesh held to its bones, muscles that bulge
+/// as their joints bend and keep their volume, the skin, the écorché and its skeleton, and the GPU's steps against the CPU's.
 final class MuscleTests: XCTestCase {
     // MARK: Kinematic bodies
 
@@ -108,8 +108,10 @@ final class MuscleTests: XCTestCase {
 
     // MARK: The scene's flesh
 
-    private func scene(character: Bool = true, ragdolls: Int = 1, skin: PhysicsSettings.Skin = .embedded, muscles: Float = 1) -> Scene {
+    private func scene(character: Bool = true, ragdolls: Int = 1, skin: PhysicsSettings.Skin = .embedded, muscles: Float = 1,
+                       body: PhysicsSettings.Body = .skin) -> Scene {
         var settings = SceneSettings(kind: .muscles)
+        settings.physics.body = body
         settings.physics.muscleGain = muscles
         settings.physics.muscleCharacter = character
         settings.physics.muscleRagdolls = ragdolls
@@ -208,11 +210,11 @@ final class MuscleTests: XCTestCase {
     }
 
     /// The muscles scene, its world stepped by the CPU, and the GPU's copy: `run(steps, reset)` encodes steps.
-    private func gpuScene(ragdolls: Int = 1, skin: PhysicsSettings.Skin = .embedded, muscles: Float = 1) throws
+    private func gpuScene(ragdolls: Int = 1, skin: PhysicsSettings.Skin = .embedded, muscles: Float = 1, body: PhysicsSettings.Body = .skin) throws
         -> (scene: Scene, gpu: PhysicsGPU, run: (Int, Bool) -> Void, encode: ((ComputePass) -> Void) -> Void) {
         _ = try rig()
         let m = try metal()
-        let scene = scene(ragdolls: ragdolls, skin: skin, muscles: muscles)
+        let scene = scene(ragdolls: ragdolls, skin: skin, muscles: muscles, body: body)
         let sdf = try SDFBuffers(device: m.device, scene: scene)
         let gpu = try PhysicsGPU(device: m.device, world: scene.physics!, sdfScene: sdf.scene, sdfResources: sdf.buffers, slots: 1)
         let encode = { (body: (ComputePass) -> Void) in
@@ -310,21 +312,155 @@ final class MuscleTests: XCTestCase {
         XCTAssertEqual(passive.volume / passive.rest, 1, accuracy: 0.02)
     }
 
-    func testGPUDrawsTheFleshTheCPUDoes() throws {
-        let (scene, gpu, run, encode) = try gpuScene()
+    /// The GPU's drawn vertices after `steps` steps (its soft mesh kernel), against the CPU's from the GPU's particles
+    /// and bodies: the worst miss, and the CPU's.
+    private func drawn(_ steps: Int, body: PhysicsSettings.Body, ragdolls: Int = 1, muscles: Float = 1) throws
+        -> (worst: Float, cpu: [SIMD3<Float>], scene: Scene, gpu: PhysicsGPU) {
+        let (scene, gpu, run, encode) = try gpuScene(ragdolls: ragdolls, muscles: muscles, body: body)
         let m = try metal(), w = scene.physics!
-        run(30, false)
+        run(steps, false)
         let particles = gpu.readParticles(), bodies = gpu.readBodies()
         let positions = m.device.makeBuffer(length: (scene.positions.count + 16) * 16, options: .storageModeShared)!
         let normals = m.device.makeBuffer(length: (scene.positions.count + 16) * 16, options: .storageModeShared)!
         encode { gpu.encodeSoftMesh($0, pipelines: m.pipelines, slot: 0, positions: positions, normals: normals) }
         let p = positions.contents().bindMemory(to: SIMD3<Float>.self, capacity: scene.positions.count)
-        var worst: Float = 0
+        var worst: Float = 0, cpu: [SIMD3<Float>] = []
         for v in w.softVertices.indices {
-            worst = max(worst, length(p[Int(w.softVertices[v].info.x)] - w.drawnSoftVertex(v, particles: particles, bodies: bodies)))
+            cpu.append(w.drawnSoftVertex(v, particles: particles, bodies: bodies))
+            worst = max(worst, length(p[Int(w.softVertices[v].info.x)] - cpu[v]))
         }
+        return (worst, cpu, scene, gpu)
+    }
+
+    func testGPUDrawsTheFleshTheCPUDoes() throws {
+        let worst = try drawn(30, body: .skin).worst
         print(String(format: "GPU's drawn flesh within %.2g m of the CPU's", worst))
         XCTAssertLessThan(worst, 1e-5)
+    }
+
+    // MARK: The écorché
+
+    func testTheMuscleAtlasCoversTheCharacter() throws {
+        let rig = try rig()
+        let started = Date()
+        let atlas = MuscleAtlas(rig)
+        let seconds = Date().timeIntervalSince(started)
+        let muscles = atlas.ranges.reduce(0) { $0 + $1.count }
+        print(String(format: "the écorché: %d muscles, %d of its %d vertices theirs, %d triangles, in %.2f s", atlas.shapes.count, muscles,
+                     atlas.mesh.positions.count, atlas.mesh.indices.count / 3, seconds))
+        XCTAssertEqual(atlas.shapes.count, 2 * MuscleAtlas.muscles(side: 1).count)
+        XCTAssertEqual(Set(MuscleAtlas.muscles(side: 1).map(\.name)).count, MuscleAtlas.muscles(side: 1).count, "named once a side")
+        XCTAssertLessThan(atlas.mesh.positions.count, 200_000)
+        // Every muscle is there, under the skin by its fat (to a surface nets cell's error), and mirrors its other
+        // side's (the Y Bot is symmetric to a few millimetres).
+        var deepest: Float = -1, worstMirror: Float = 0, shallow = 0
+        for (k, range) in atlas.ranges.enumerated() {
+            XCTAssertGreaterThan(range.count, 100, atlas.shapes[k].muscle.name)
+            let depths = atlas.mesh.positions[range].map { atlas.body.distance($0) }
+            shallow += depths.filter { $0 > -MuscleAtlas.fat + 0.0015 }.count
+            deepest = max(deepest, depths.max() ?? -1)
+            guard atlas.shapes[k].muscle.side > 0 else { continue }
+            let other = atlas.ranges[k - atlas.ranges.count / 2]
+            func centre(_ r: Range<Int>) -> SIMD3<Float> { atlas.mesh.positions[r].reduce(.zero, +) / Float(r.count) }
+            worstMirror = max(worstMirror, length(centre(range) * SIMD3(-1, 1, 1) - centre(other)))
+        }
+        print(String(format: "  under the skin by %.1f mm at least (%d vertices less than %.1f mm); sides mirror within %.1f mm", -deepest * 1000,
+                     shallow, (MuscleAtlas.fat - 0.0015) * 1000, worstMirror * 1000))
+        XCTAssertLessThan(deepest, 0, "none out of it")
+        XCTAssertLessThan(Float(shallow), 1e-3 * Float(muscles), "all but a few by its fat")
+        XCTAssertLessThan(worstMirror, 0.01)
+        // Carved from the bones: none in one (but a few, to a surface nets cell's error).
+        let inBone = atlas.ranges.flatMap { atlas.mesh.positions[$0] }.filter { atlas.skeleton.distance($0) < -0.001 }.count
+        print("  \(inBone) of its muscles' vertices more than 1 mm in a bone")
+        XCTAssertLessThan(Float(inBone), 1e-3 * Float(muscles))
+        // Its muscles' and fascia's surfaces hardly branch: an edge is two triangles' (surface nets gives four where two
+        // sheets of a surface pass through one cell, rarely).
+        var edges: [SIMD2<UInt32>: Int] = [:]
+        for (t, material) in atlas.materials.enumerated() where material < 2 {
+            for k in 0..<3 {
+                let a = atlas.mesh.indices[3 * t + k], b = atlas.mesh.indices[3 * t + (k + 1) % 3]
+                edges[SIMD2(min(a, b), max(a, b)), default: 0] += 1
+            }
+        }
+        let branching = edges.values.filter { $0 > 2 }.count
+        print("  \(branching) of its \(edges.count) edges branch")
+        XCTAssertLessThan(Float(branching), 5e-3 * Float(edges.count))
+    }
+
+    func testTheSkeletonFitsTheCharacter() throws {
+        let rig = try rig()
+        let atlas = MuscleAtlas(rig)
+        let skeleton = atlas.skeleton
+        let drawn = atlas.pieces.reduce(0) { $0 + $1.count }
+        print("the skeleton: \(skeleton.pieces.count) bones, \(skeleton.meshes.reduce(0) { $0 + $1.positions.count }) vertices, \(drawn) drawn")
+        // The skull, the jaw and the teeth, 24 vertebrae and the sacrum, 12 ribs a side and the sternum; 12 bones a side
+        // from the clavicle to the foot.
+        XCTAssertEqual(skeleton.pieces.count, 3 + 24 + 1 + 24 + 1 + 2 * 12)
+        XCTAssertEqual(Set(skeleton.pieces.map { "\($0.name) \($0.side)" }).count, skeleton.pieces.count, "named once a side")
+        // Every bone is whole and under the skin, its sides mirror each other (a middle one is on the middle), and
+        // the drawn mesh's bone vertices ride their bones.
+        var outermost: Float = -1, worstMirror: Float = 0
+        func centre(_ i: Int) -> SIMD3<Float> { skeleton.meshes[i].positions.reduce(.zero, +) / Float(skeleton.meshes[i].positions.count) }
+        for (i, piece) in skeleton.pieces.enumerated() {
+            XCTAssertGreaterThan(skeleton.meshes[i].positions.count, 50, piece.name)
+            outermost = max(outermost, skeleton.meshes[i].positions.map { atlas.body.distance($0) }.max() ?? -1)
+            XCTAssert(atlas.pieces[i].allSatisfy { atlas.bones[$0] == piece.rides }, piece.name)
+            if piece.side == 0 {
+                worstMirror = max(worstMirror, abs(centre(i).x))
+            } else if piece.side > 0, let other = skeleton.pieces.firstIndex(where: { $0.name == piece.name && $0.side < 0 }) {
+                worstMirror = max(worstMirror, length(centre(i) * SIMD3(-1, 1, 1) - centre(other)))
+            }
+        }
+        print(String(format: "  under the skin by %.1f mm at least; sides mirror within %.1f mm", -outermost * 1000, worstMirror * 1000))
+        XCTAssertLessThan(outermost, 0, "none out of it")
+        XCTAssertLessThan(worstMirror, 0.005)
+        // What is bare in life shows: the drawn mesh keeps it.
+        for name in ["skull", "mandible", "teeth", "sternum", "clavicle", "patella", "tibia", "ulna", "hand", "foot", "T6"] {
+            for (i, piece) in skeleton.pieces.enumerated() where piece.name == name {
+                XCTAssertGreaterThan(atlas.pieces[i].count, 50, "\(name) shows")
+            }
+        }
+    }
+
+    func testGPUDrawsTheEcorcheTheCPUDoes() throws {
+        let worst = try drawn(30, body: .muscles, ragdolls: 0).worst
+        print(String(format: "GPU's drawn écorché within %.2g m of the CPU's", worst))
+        XCTAssertLessThan(worst, 1e-5)
+    }
+
+    func testTheEcorchesBicepsBulgesAsTheElbowBends() throws {
+        // The écorché's left biceps (its vertices, in the drawn mesh's order: the character's flesh is the only one)
+        // at the step its elbow is bent most, with the muscles and without: how far out from the upper arm's axis.
+        let rig = try rig()
+        let atlas = MuscleAtlas(rig)
+        let biceps = try XCTUnwrap(atlas.shapes.indices.first { atlas.shapes[$0].muscle.name == "biceps" && atlas.shapes[$0].muscle.side > 0 })
+        let arm = try XCTUnwrap(rig.bones.firstIndex { $0.role == .upperArm(1) })
+        // The most bent step: the flesh test's (the biceps' activation from the table).
+        let w = scene(ragdolls: 0).physics!
+        let m = try XCTUnwrap(w.muscles.first { m in m.range.y > m.range.x && Int(m.bodyA) == arm })
+        func bent(_ muscles: Float, step: Int) throws -> Float {
+            let (_, cpu, scene, gpu) = try drawn(step, body: .muscles, ragdolls: 0, muscles: muscles)
+            XCTAssertEqual(scene.physics!.softVertices.count, atlas.mesh.positions.count)
+            let b = gpu.readBodies()[arm], axis = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(m.axisA))
+            let out = atlas.ranges[biceps].map { v -> Float in
+                let c = cpu[v] - PhysicsMath.xyz(b.position)
+                return length(c - axis * dot(c, axis))
+            }
+            return out.reduce(0, +) / Float(out.count)
+        }
+        let columns = w.kinematicTable.count / (2 * w.kinematicRows)
+        func bend(_ row: Int) -> Float {
+            var full = m, a = GPUPhysicsBody(), b = GPUPhysicsBody()
+            full.range.z = 1
+            a.rotation = w.kinematicTable[(row * columns + Int(m.bodyA)) * 2 + 1]
+            b.rotation = w.kinematicTable[(row * columns + Int(m.bodyB)) * 2 + 1]
+            return PhysicsWorld.activation(full, a, b)
+        }
+        let step = (60..<w.kinematicRows).max { bend($0) < bend($1) }!
+        let active = try bent(1, step: step), passive = try bent(0, step: step)
+        print(String(format: "the écorché's biceps (%d vertices) bent (step %d): %.1f mm out from the arm's axis active, %.1f mm relaxed",
+                     atlas.ranges[biceps].count, step, active * 1000, passive * 1000))
+        XCTAssertGreaterThan(active - passive, 0.001, "it bulges")
     }
 
     func testGPUSkinSlidesButStaysOnTheFlesh() throws {
