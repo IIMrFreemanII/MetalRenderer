@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791323433.3154328,
-    "seen": 1791323445.029396,
-    "ast_hash": "c930e5d2c08c73d427ada115b3d51e1f",
+    "mtime": 1791378784.4585714,
+    "seen": 1791378796.3318,
+    "ast_hash": "4579e0218dfffbe1c9027c02722106ce",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -240,15 +240,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene.swift": {
-    "mtime": 1791323433.3190532,
-    "seen": 1791323445.029301,
-    "ast_hash": "403aef0396d08fda2976c5d947f5a8f3",
+    "mtime": 1791325277.6192813,
+    "seen": 1791328792.413016,
+    "ast_hash": "8cf8cb4dc5fd5efe336c52180b9dcfb7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1791323433.3193529,
-    "seen": 1791323445.029303,
-    "ast_hash": "eed19375caa5dca262facf568e4d25a0",
+    "mtime": 1791325639.406971,
+    "seen": 1791328792.413019,
+    "ast_hash": "fc504a3738645e3b0f8b0c72428c4857",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
@@ -432,9 +432,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsTable.swift": {
-    "mtime": 1791323433.3195994,
-    "seen": 1791323445.0293062,
-    "ast_hash": "432f356ab34ce26d3d6119fc6b33a099",
+    "mtime": 1791325639.4073403,
+    "seen": 1791328792.413023,
+    "ast_hash": "9b98ba721dc27743ea01d7fbc07f0e7b",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SettingsTableTests.swift": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791323433.315768,
-    "seen": 1791323445.029239,
-    "ast_hash": "3e812a966d69c0a6d2e7b9ac72fecaef",
+    "mtime": 1791376992.4852633,
+    "seen": 1791378796.3316019,
+    "ast_hash": "7cd8c968087389a5d3493027422db441",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -936,15 +936,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/tests/scripts/related.sh": {
-    "mtime": 1791323433.314639,
-    "seen": 1791323445.029236,
-    "ast_hash": "ccc19aab506ae95eeec6a3d64f853638",
+    "mtime": 1791378163.453612,
+    "seen": 1791378796.331598,
+    "ast_hash": "dd864ac7d144d3beddacf36d75f8d75a",
     "semantic_hash": ""
   },
   ".claude/skills/tests/SKILL.md": {
-    "mtime": 1791323433.31445,
-    "seen": 1791323445.0293949,
-    "ast_hash": "253c5e3a1c49077aa79e6238ea680714",
+    "mtime": 1791378163.4564426,
+    "seen": 1791378796.331798,
+    "ast_hash": "264e832ce4fd6c03a22408ab836890d7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VoxelGrids.swift": {
@@ -1086,9 +1086,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SDFShapes.swift": {
-    "mtime": 1791270966.6626515,
-    "seen": 1791323445.029289,
-    "ast_hash": "b63108afc2c431a1ec6e449d716c3d8a",
+    "mtime": 1791325265.6995907,
+    "seen": 1791328792.413003,
+    "ast_hash": "7122ee32f1587b1f6c2e53cb72b441b0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SDFVolume.swift": {
@@ -1368,21 +1368,33 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Muscles.swift": {
-    "mtime": 1791323433.3182545,
-    "seen": 1791323445.029294,
-    "ast_hash": "5d146a8b246dff8236383c2aff1bb274",
+    "mtime": 1791376977.158811,
+    "seen": 1791378796.331677,
+    "ast_hash": "21e3496025cbe3cefda9bf4bf3f818c4",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MuscleTests.swift": {
-    "mtime": 1791323433.3204548,
-    "seen": 1791323445.02936,
-    "ast_hash": "a43040e51744c4c9fa1aceed24608984",
+    "mtime": 1791378154.7713351,
+    "seen": 1791378796.331755,
+    "ast_hash": "2445cd32794719d859b40d8da6ee2b43",
     "semantic_hash": ""
   },
   "muscles-demo-1280.mp4": {
     "mtime": 1791322541.5816932,
     "seen": 1791323445.0294158,
     "ast_hash": "0be773037371fac10e1de6a863b00e30",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/MuscleAtlas.swift": {
+    "mtime": 1791377765.820645,
+    "seen": 1791378796.331647,
+    "ast_hash": "7a9c456a5c0e2d0946ce4b6dca5ae897",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/SkeletonAtlas.swift": {
+    "mtime": 1791378500.2410886,
+    "seen": 1791378796.3317251,
+    "ast_hash": "adad8e766757dd8b428073ae3c6034c4",
     "semantic_hash": ""
   }
 }
