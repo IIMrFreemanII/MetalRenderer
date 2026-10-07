@@ -67,6 +67,7 @@ if [[ $suites == " " ]]; then
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
           SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
           Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests ;;
+          MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests ;;
           HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;

@@ -24,7 +24,8 @@ extension Scene {
 
         // The character, round its circle, and the balls on the circle ahead of it.
         let centre = SIMD3<Float>(1.2, 0, 0.4)
-        if physics.muscleCharacter, let radius = addFleshCharacter(centre: centre, options: options, sliding: physics.skin == .sliding, bounds: room) {
+        if physics.muscleCharacter, let radius = addFleshCharacter(centre: centre, options: options, body: physics.body,
+                                                                   sliding: physics.body == .skin && physics.skin == .sliding, bounds: room) {
             let ball = addSDFShape(SDFShape(.sphere(radius: 0.11)))
             let colours: [SIMD3<Float>] = [[0.85, 0.15, 0.12], [0.95, 0.6, 0.1], [0.2, 0.6, 0.85], [0.3, 0.7, 0.3]]
             let looks = colours.map { addPBRMaterial(baseColor: $0, metallic: 0, roughness: 0.3) }
@@ -71,7 +72,8 @@ extension Scene {
         addLight(.rect(width: 5, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -0.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }
-        for (colour, position) in [(SIMD3<Float>(1.0, 0.8, 0.6), SIMD3<Float>(-4.5, 3.2, 3)), (SIMD3<Float>(0.7, 0.85, 1.0), SIMD3<Float>(4.5, 3.5, -3))] {
+        for (colour, position) in [(SIMD3<Float>(1.0, 0.8, 0.6), SIMD3<Float>(-4.5, 3.2, 3)), (SIMD3<Float>(0.7, 0.85, 1.0), SIMD3<Float>(4.5, 3.5, -3)),
+                                   (SIMD3<Float>(1.0, 0.95, 0.9), SIMD3<Float>(4.8, 2.6, 4.6))] {
             addLight(.sphere(radius: 0.1), color: colour * 5, proxyMesh: kit.sphere, motion: .constant) { _ in LightPose(position: position) }
         }
         defaultCamera = Scene.demoCamera(.muscles)!
@@ -80,8 +82,10 @@ extension Scene {
     /// The crowd's Y Bot as a figure (FleshFigure): its bones kinematic bodies its programme moves round a circle about
     /// `centre` (PhysicsRig.swift), its flesh, and its own mesh drawn on the flesh (its head, hands and feet on their
     /// bones). Returns the circle's radius; nil if there is no character to load.
-    /// `sliding`: its mesh rides a skin of its own over the flesh (PhysicsSkin.swift), not the flesh itself.
-    private func addFleshCharacter(centre: SIMD3<Float>, options: PhysicsWorld.FleshOptions, sliding: Bool, bounds: AABB) -> Float? {
+    /// `body`: what is drawn, its skin or its muscles (MuscleAtlas.swift). `sliding`: its mesh rides a skin of its own
+    /// over the flesh (PhysicsSkin.swift), not the flesh itself.
+    private func addFleshCharacter(centre: SIMD3<Float>, options: PhysicsWorld.FleshOptions, body: PhysicsSettings.Body, sliding: Bool,
+                                   bounds: AABB) -> Float? {
         let library = CharacterLibrary.load()
         guard let character = library.characters.first(where: { $0.name.contains("Y Bot") }) ?? library.characters.first,
               let rig = CharacterRig(character) else { return nil }
@@ -126,6 +130,10 @@ extension Scene {
             }
             skin = world.addSkin((surface.positions, normals, surface.indices), over: flesh, figure: figure)
         }
+        if body == .muscles {
+            addEcorche(rig, flesh: flesh, figure: figure, bounds: bounds)
+            return radius
+        }
         // Its mesh (half detail), each vertex in the flesh, or on its bone where that is a head, a hand or a foot.
         let level = character.level(1)
         var own: [Int] = [], rigid: [Int] = []
@@ -137,6 +145,29 @@ extension Scene {
         addFleshMesh(flesh, figure: figure, mesh: (level.positions, level.normals, level.indices), uvs: level.uvs, own: own, rigid: rigid,
                      weld: true, material: material, bounds: bounds, skin: skin)
         return radius
+    }
+
+    /// The character drawn as its muscles and bones (MuscleAtlas, SkeletonAtlas): red muscles with white tendons (their
+    /// textures) and a pale fascia between them, in the flesh; ivory bones, each on the rig bone it rides.
+    private func addEcorche(_ rig: CharacterRig, flesh: PhysicsWorld.Flesh, figure: FleshFigure, bounds: AABB) {
+        let started = Date()
+        let atlas = MuscleAtlas(rig)
+        let looks = MuscleAtlas.textures()
+        let base = addGeneratedTexture(looks.base, name: "muscle-base"), normal = addGeneratedTexture(looks.normal, name: "muscle-normal", srgb: false)
+        let muscle = addMaterial(GPUMaterial(albedo: [1, 1, 1, 0], emission: [0, 0, 0, 0.42], params: [1, 1, 0, 0],
+                                             textures: [base, .max, normal, .max]))
+        _ = addPBRMaterial(baseColor: [0.7, 0.5, 0.45], metallic: 0, roughness: 0.45)   // the fascia
+        _ = addPBRMaterial(baseColor: [0.8, 0.76, 0.66], metallic: 0, roughness: 0.55)   // the bones
+        // A muscle's or the fascia's vertex in the flesh (or on its bone, a head's, a hand's or a foot's); a bone's on
+        // the bone it rides.
+        let bones = atlas.pieces.first!.lowerBound
+        let own = atlas.mesh.positions.indices.map { v in
+            v >= bones || rig.bones[atlas.bones[v]].rigid ? -1 : flesh.model.locate(atlas.mesh.positions[v])?.tet ?? -1
+        }
+        addFleshMesh(flesh, figure: figure, mesh: atlas.mesh, uvs: atlas.uvs, materials: atlas.materials, own: own, rigid: atlas.bones,
+                     weld: true, material: muscle, bounds: bounds)
+        print(String(format: "Muscles: %d muscles and %d bones, %d vertices, %d triangles in %.2f s", atlas.shapes.count, atlas.skeleton.pieces.count,
+                     atlas.mesh.positions.count, atlas.mesh.indices.count / 3, Date().timeIntervalSince(started)))
     }
 
     /// A ragdoll (`addRagdoll`) with flesh over all but its head, which stays drawn: built in its standing pose (its

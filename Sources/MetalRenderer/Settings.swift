@@ -526,6 +526,12 @@ struct PhysicsSettings: Equatable, Codable {
     }
     var skin = Skin.embedded
     var muscleGain: Float = 1
+    /// What the character is drawn as: its skin, or its muscles (an écorché: MuscleAtlas.swift) on the same flesh.
+    enum Body: Int, CaseIterable, Codable {
+        case skin, muscles
+        var title: String { ["Skin", "Muscles"][rawValue] }
+    }
+    var body = Body.skin
 
     static let substepRange = 1...32
     static let bodyRange = 0...4096
