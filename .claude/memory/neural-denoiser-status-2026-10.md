@@ -51,7 +51,17 @@ Paused clips built 2026-10-07 (`<scene>-<seed>-p0`, 100 frames, one reference; `
 stress 27.9/26.6, paused 29.6/28.0; held-out forest-2 24.4/24.0, paused 24.9/26.4; market-2 25.7/27.3, paused
 26.3/28.5. In the app (exported): stress static 27.0 vs 27.3 (flicker 1.7 vs 0.65), Cornell still 31.1 vs 34.6. The
 Cornell error map: grain left on saturated walls (dark channels: the loss is in log1p light, where they weigh little,
-while ACES + sRGB display brightens them) and outlines at edges and small lights. Next idea: a display-space loss term.
+while ACES + sRGB display brightens them) and outlines at edges and small lights. `runs/display` (fine-tune with `--display-weight 1`, 30 epochs): dataset PSNR +0.1-0.5 dB everywhere, still-view
+flicker worse (forest-2 paused 0.57 -> 1.32); in the app no better (Cornell 31.0, flicker 2.5). Not committed as weights.
+Root cause of the in-app gap, found 2026-10-07: TARGET MISMATCH. Dataset references trace 4 bounces (`bounces=4`),
+the app (and its noisy input) and hwrtq's references 2 (RenderSettings default). The two references are 28.4 dB apart
+in Cornell (4% brighter at 4). Against 4-bounce references the net (runs/still) matches or beats MetalFX in the app:
+Cornell static 27.2 vs 27.1, moving 27.2 vs 27.1, camera 26.3 vs 27.0; stress static 26.6 vs 26.0, moving 26.3 vs
+25.9. Against 2-bounce ones MetalFX wins (34.8 vs 31.2). The user chose (2026-10-07) to KEEP 4-bounce targets: `neuralq` now renders its
+own references at `DatasetSpec.bounces` ("<scene> ref neural", Tools/eval/neural.py, refs/neural/); hwrtq/hwrt.py keep
+the app's 2. In the app against them: runs/still Cornell static 27.2 vs MetalFX 27.1, moving 27.1/27.1, camera
+26.3/27.0, stress 26.6/26.0, 26.3/25.8, 25.8/25.8; runs/display a little higher (stress static 26.8, Cornell camera
+26.9). Flicker is the open gap: net 1.7-2.5 vs MetalFX 0.7-1.2 (display's worse in Cornell).
 Not done: a net that beats MetalFX
 (only a 1-minute smoke model: 16.7 dB vs MetalFX 34.6), speed (plain kernels ~90 ms/frame at 1920×1200), the
 fallback for GPUs without MetalFX's denoiser.

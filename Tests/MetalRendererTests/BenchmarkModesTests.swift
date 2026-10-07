@@ -46,6 +46,18 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertEqual(Benchmark.datasetReferences().map(\.startTime), [4], "frame 0 has its reference")
     }
 
+    /// neuralq scores both upscalers against references traced as deep as the neural dataset's, not the app's 2 bounces.
+    func testNeuralQualityReferencesTraceTheDatasetsBounces() {
+        let configs = Benchmark.modes["neuralq"]!()
+        let refs = configs.filter(\.accumulate)
+        XCTAssertEqual(refs.map(\.name), ["cornell ref neural", "stress ref neural"])
+        XCTAssertTrue(refs.allSatisfy { $0.settings.bounces == Benchmark.DatasetSpec().bounces && $0.supersample })
+        XCTAssertNotEqual(Benchmark.DatasetSpec().bounces, RenderSettings().bounces, "the point of having its own references")
+        let shown = configs.filter { !$0.accumulate }
+        XCTAssertEqual(shown.filter { $0.settings.upscaler == .neural }.count, 6)
+        XCTAssertTrue(shown.allSatisfy { $0.settings.bounces == RenderSettings().bounces })
+    }
+
     /// Paused clips: a still camera on a paused scene, as long as `pausedframes=`, at a moment of their own, after the
     /// scene's moving clips (which they leave as they were); the reference pass renders only their first frame's.
     func testDatasetPausedClips() throws {

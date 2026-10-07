@@ -3,7 +3,8 @@
     python3 train.py <dataset> [--val forest,market] [--exclude stress] [--epochs 50] [--out runs/first]
 
 Loss, on log light (log1p of the exposed colour): L1 against the reference, L1 of the frame-to-frame change against
-the reference's (temporal stability), L1 of the image gradients (sharp edges). Each sample runs `--length` frames
+the reference's (temporal stability), L1 of the image gradients (sharp edges); and with `--display-weight`, L1 of the
+picture as the app shows it (ACES, sRGB), where noise in a saturated colour's dark channels shows and log light hides it. Each sample runs `--length` frames
 from an empty history, so the net learns to start from nothing too, as after a reset.
 
 Paused clips (common.paused: a still view, new noise every frame) teach it to keep accumulating, as MetalFX does while
@@ -58,14 +59,25 @@ def masked_l1(a, b, mask):
     return ((a - b).abs() * m).sum() / m.sum().clamp(min=1)
 
 
-def loss_fn(out, ref, valid):
+def display(log_light):
+    """common.display of log1p(exposed light), differentiable: ACES, then the sRGB curve (its power clamped where the
+    linear segment takes over, so the unused branch has no infinite gradient)."""
+    x = torch.expm1(log_light).clamp(min=0)
+    c = ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0, 1)
+    return torch.where(c <= 0.0031308, c * 12.92, 1.055 * c.clamp(min=0.0031308) ** (1 / 2.4) - 0.055)
+
+
+def loss_fn(out, ref, valid, display_weight=0.0):
     spatial = masked_l1(out, ref, valid)
     temporal = masked_l1(out[1:] - out[:-1], ref[1:] - ref[:-1], valid[1:] & valid[:-1])
     grad = lambda x: (x[..., :, 1:] - x[..., :, :-1], x[..., 1:, :] - x[..., :-1, :])
     both = lambda m: (m[..., :, 1:] & m[..., :, :-1], m[..., 1:, :] & m[..., :-1, :])
     (ox, oy), (rx, ry), (mx, my) = grad(out), grad(ref), both(valid)
     gradient = masked_l1(ox, rx, mx) + masked_l1(oy, ry, my)
-    return spatial + 0.5 * temporal + 0.25 * gradient
+    loss = spatial + 0.5 * temporal + 0.25 * gradient
+    if display_weight:
+        loss = loss + display_weight * masked_l1(display(out), display(ref), valid)
+    return loss
 
 
 @torch.no_grad()
@@ -118,6 +130,7 @@ def main():
     p.add_argument("--resume", default="", help="carry on a run: its weights, optimizer, schedule and epoch")
     p.add_argument("--init", default="", help="start from a checkpoint's weights (and widths), with a new schedule")
     p.add_argument("--widths", default=",".join(map(str, WIDTHS)), help="the U-Net's channels per level, e.g. 64,96,128")
+    p.add_argument("--display-weight", type=float, default=0.0, help="weight of the L1 on the displayed picture")
     p.add_argument("--paused-every", type=int, default=4, help="a batch of paused clips after this many (0: none)")
     p.add_argument("--paused-length", type=int, default=80, help="frames of a paused sample, warm-up included")
     args = p.parse_args()
@@ -167,7 +180,7 @@ def main():
 
     def step(batch, warm=0):
         out, ref, valid = run_sequence(net, batch, dev, warm)
-        loss = loss_fn(out, ref, valid)
+        loss = loss_fn(out, ref, valid, args.display_weight)
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)

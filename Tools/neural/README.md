@@ -11,7 +11,7 @@ It sits next to MetalFX as a choice (`RenderSettings.upscaler`), so the two can 
 | Model, training, export | `Tools/neural/` (PyTorch, runs on the Mac's GPU through MPS) |
 | Inference in the app | `Sources/MetalRenderer/NeuralUpscaler.swift`, `Shaders/Neural.metal` |
 | Kernels = PyTorch check | `Tests/MetalRendererTests/NeuralUpscalerTests.swift` + `Neural/golden.nnw` |
-| Scoring against MetalFX | `METALRENDERER_BENCH=neuralq` + `Tools/eval/hwrt.py` |
+| Scoring against MetalFX | `METALRENDERER_BENCH=neuralq` + `Tools/eval/neural.py` |
 
 ## Setup
 
@@ -86,7 +86,7 @@ motion, folded 3×3 into the render resolution); `--widths` 32,48,64 is ~274k pa
 Then choose "Neural (ours)" in the panel's Upscaler popup, or `METALRENDERER_GI=upscaler=neural`
 (`METALRENDERER_NEURAL=<file>` for other weights). Score it against MetalFX:
 ```bash
-.claude/skills/offscreen/scripts/render.sh -m neuralq -o /tmp/nq METALRENDERER_GI_REFS=0 && python3 Tools/eval/hwrt.py /tmp/nq
+.claude/skills/offscreen/scripts/render.sh -m neuralq -o /tmp/nq && Tools/neural/.venv/bin/python Tools/eval/neural.py /tmp/nq
 ```
 
 ## Status (Oct 2026)

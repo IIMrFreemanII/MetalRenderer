@@ -1,6 +1,6 @@
-"""usage: hwrt.py <run-dir> ... — scores METALRENDERER_BENCH=hwrtq (or neuralq) against the supersampled 1920x1200 references in refs/hwrt/.
+"""usage: hwrt.py <run-dir> ... — scores METALRENDERER_BENCH=hwrtq against the supersampled 1920x1200 references in refs/hwrt/.
 
-MetalFX's denoising scaler (and with neuralq ours, "neural") in the Cornell room and the stress hall: PSNR of a still frame, its flicker against the frame before, and PSNR with the animation running and
+MetalFX's denoising scaler in the Cornell room and the stress hall: PSNR of a still frame, its flicker against the frame before, and PSNR with the animation running and
 during the camera move."""
 import os, sys
 from evalcommon import *

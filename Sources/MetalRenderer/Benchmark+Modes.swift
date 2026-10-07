@@ -682,12 +682,18 @@ extension Benchmark {
         return out
     }
 
-    /// Our denoising upscaler (NeuralUpscaler) against MetalFX's: hwrtq's frames and references, and the same frames
-    /// upscaled by ours (Tools/eval/hwrt.py scores both). Ours needs weights (Assets/Neural/denoiser.nnw or
-    /// METALRENDERER_NEURAL); without them MetalFX renders its frames too.
+    /// Our denoising upscaler (NeuralUpscaler) against MetalFX's, in the Cornell room and the stress hall, both scored
+    /// (Tools/eval/neural.py) against references traced as deep as the dataset's (DatasetSpec.bounces, 4): ours learns
+    /// those, more light than the 2-bounce GI it is given and hwrtq's references have. Ours needs weights
+    /// (Assets/Neural/denoiser.nnw or METALRENDERER_NEURAL); without them MetalFX renders its frames too.
     private static func neuralq() -> [Config] {
-        hwrtq() + [("cornell", SceneSettings()), ("stress", stressHall())].flatMap { sceneTag, scene in
-            scored(Config("", scale: 0.5, upscale: 3, scene: scene) { $0.upscaler = .neural }) { "\(sceneTag) final \($0) neural" }
+        let bounces = DatasetSpec().bounces
+        return [("cornell", SceneSettings()), ("stress", stressHall())].flatMap { sceneTag, scene -> [Config] in
+            let shown = Config("", scale: 0.5, upscale: 3, scene: scene)
+            return references([Config("\(sceneTag) ref neural", scale: 1.5, scene: scene) { $0.bounces = bounces }
+                                .reference(frames: 1024, supersample: true)])
+                + scored(shown) { "\(sceneTag) final \($0) denoiser" }
+                + scored(shown.with { $0.upscaler = .neural }) { "\(sceneTag) final \($0) neural" }
         }
     }
 
