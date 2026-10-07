@@ -563,9 +563,10 @@ struct MuscleAtlas {
     let ranges: [Range<Int>]
     let pieces: [Range<Int>]
 
-    /// The atlas on `rig`'s character (its mesh's level 1 the skin).
+    /// The atlas on `rig`'s character, sculpted on its whole mesh (its coarser levels, simplified when the character cache
+    /// is built, aren't symmetric: a rebuilt cache moved a muscle a centimetre off its mirror).
     init(_ rig: CharacterRig, muscles: [Muscle] = MuscleAtlas.all) {
-        let level = rig.character.level(1)
+        let level = rig.character.level(0)
         // Its skin, and its bones' shapes 8 mm within it inside too (the Y Bot's elbows are hollow).
         let solids = rig.bones.indices.filter { !rig.bones[$0].rigid }.map { b -> (bounds: AABB, distance: (SIMD3<Float>) -> Float) in
             let shape = rig.bones[b].shape, unplace = rig.restPlacement(b).inverse, placed = rig.restPlacement(b)

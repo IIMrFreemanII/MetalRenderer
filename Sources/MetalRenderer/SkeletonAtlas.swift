@@ -171,7 +171,7 @@ struct SkeletonAtlas {
         let names = rig.character.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }
         func joint(_ name: String) -> SIMD3<Float> { rig.bind[names.firstIndex(of: name)!].t }
         func index(_ role: FleshFigure.Role) -> Int { rig.bones.firstIndex { $0.role == role }! }
-        let level = rig.character.level(1)
+        let level = rig.character.level(0)
         let ground = level.positions.map(\.y).min() ?? 0
         let k = (joint("HeadTop_End").y - ground) / 1.786   // sized to the Y Bot's 1.79 m
         let fat = MuscleAtlas.fat
