@@ -425,6 +425,9 @@ struct CitySettings: Equatable, Codable {
     var rooms: Float = 0.15
     /// Generated brick, plaster, concrete, tile and paving textures (ProceduralTextures); off: flat colours.
     var textures = true
+    /// A window's shell (reveal, frame, sill, lintel, shutters) is made once and placed at every window like it
+    /// (Building.Module), a building an assembly of them (Scene.Assembly.rigid); off: every building one mesh of its own.
+    var modules = false
 
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1
@@ -874,6 +877,10 @@ struct FoliageSettings: Equatable, Codable {
     /// Far plants are traced as voxels (FoliageVoxels) from where a voxel is this many traced pixels: 0 = never.
     /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
     var lod: Float = 2
+    /// How far from the camera the plants' limbs move in the wind, in metres (0 = everywhere). Farther plants still lean
+    /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 20 m the moving forest is
+    /// 7-16% faster than with every limb moving (M1 Max, Metal 3); from above, where every crown is farther, only whole trees lean.
+    var swayReach: Float = 20
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
     var season: Float = 0.3
     /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
@@ -883,6 +890,7 @@ struct FoliageSettings: Equatable, Codable {
     static let directionRange: ClosedRange<Float> = -180...180
     static let gustRange: ClosedRange<Float> = 0...1
     static let lodRange: ClosedRange<Float> = 0...4
+    static let swayRange: ClosedRange<Float> = 0...200
     static let seasonRange: ClosedRange<Float> = 0...1
     static let translucencyRange: ClosedRange<Float> = 0...1
 

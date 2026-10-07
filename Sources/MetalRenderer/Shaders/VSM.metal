@@ -685,7 +685,7 @@ inline bool shadowVisible(uint flags, device const VSMScene* vsm, uint li, Light
             if ((vsm->flags & VSM_S_TRACED) == 0u) return true;
             float3 d = target - p;
             float dist = length(d), t;
-            bool hit = intersectAny(makeRay(p, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), MASK_SHADOW_TRACED, accel, t);
+            bool hit = intersectAny(makeRay(p, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_SHADOW_TRACED, RAY_SHADOW), accel, t);
             blocker = hit ? max(t, 1e-3f) : 0.0f;
             return !hit;
         }

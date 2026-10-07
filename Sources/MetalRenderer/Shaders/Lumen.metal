@@ -258,7 +258,7 @@ kernel void lumenTraceKernel(constant Uniforms&               u           [[buff
             globalHit = true;
         }
     } else if (!sdfHit) {
-        h = traceSurface(makeRay(origin, dir, tMin, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+        h = traceSurface(makeRay(origin, dir, tMin, INFINITY), rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
     }
 
     float3 L;

@@ -195,7 +195,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         for (uint b = 0; b < u.bounces; ++b) {
             float3 d = sampleBounce(normal, geomNormal, rng.next2());
             Ray r = makeRay(origin, d, 0.0f, INFINITY);
-            Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+            Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
                 indirect += throughput * skyRadiance(u, s, d, 2.0f);
                 break;

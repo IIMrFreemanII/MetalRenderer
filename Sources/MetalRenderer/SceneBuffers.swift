@@ -491,6 +491,47 @@ struct SceneBuffers {
         instanceScratch = []
     }
 
+    /// Compacted copies of `structures`, built and done: their compacted sizes (UInt32s) are in `sizes` at the indices
+    /// `at` (nil: written here first, one after the other). A compacted copy holds what its structure keeps, about half
+    /// what a build reserves: less memory to walk, fewer cache misses per ray.
+    static func copyAndCompact(_ structures: [MTLAccelerationStructure], sizes: MTLBuffer? = nil, at: [Int]? = nil,
+                               device: MTLDevice, queue: MTLCommandQueue) throws -> [MTLAccelerationStructure] {
+        guard !structures.isEmpty else { return [] }
+        let stride = MemoryLayout<UInt32>.stride
+        var sizeBuffer = sizes
+        if sizeBuffer == nil {
+            guard let b = device.makeBuffer(length: structures.count * stride, options: .storageModeShared),
+                  let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
+                throw RendererError.resourceCreation("compacted sizes")
+            }
+            for (k, structure) in structures.enumerated() {
+                encoder.writeCompactedSize(accelerationStructure: structure, buffer: b, offset: k * stride, sizeDataType: .uint)
+            }
+            encoder.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            sizeBuffer = b
+        }
+        guard let sizeBuffer, let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
+            throw RendererError.resourceCreation("acceleration structure command encoder")
+        }
+        let index = at ?? Array(structures.indices)
+        let read = sizeBuffer.contents().bindMemory(to: UInt32.self, capacity: (index.max() ?? 0) + 1)
+        var small: [MTLAccelerationStructure] = []
+        for (k, structure) in structures.enumerated() {
+            guard let copy = device.makeAccelerationStructure(size: Int(read[index[k]])) else {
+                throw RendererError.resourceCreation("compacted acceleration structure")
+            }
+            copy.label = structure.label
+            encoder.copyAndCompact(sourceAccelerationStructure: structure, destinationAccelerationStructure: copy)
+            small.append(copy)
+        }
+        encoder.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return small
+    }
+
     /// `body` for the parts of `0..<count`, side by side: a still scene's hundreds of thousands of records, each
     /// written once (an unoptimised build takes a second over them in one loop).
     private static func inParts(_ count: Int, _ body: (Range<Int>) -> Void) {
@@ -667,20 +708,14 @@ struct SceneBuffers {
             encoder.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
-            guard options.compact, let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else { return }
-            let sizes = compactedSizes.contents().bindMemory(to: UInt32.self, capacity: batch.count)
-            for (k, j) in batch.enumerated() where !jobs[j].deforms {
-                guard let small = device.makeAccelerationStructure(size: Int(sizes[k])) else {
-                    throw RendererError.resourceCreation("compacted acceleration structure")
-                }
-                encoder.copyAndCompact(sourceAccelerationStructure: built[k], destinationAccelerationStructure: small)
-                structures[jobs[j].index] = small
+            guard options.compact else { return }
+            let kept = (0..<batch.count).filter { !jobs[batch.lowerBound + $0].deforms }
+            let small = try SceneBuffers.copyAndCompact(kept.map { built[$0] }, sizes: compactedSizes, at: kept, device: device, queue: queue)
+            for (n, k) in kept.enumerated() {
+                structures[jobs[batch.lowerBound + k].index] = small[n]
                 before += built[k].size
-                after += small.size
+                after += small[n].size
             }
-            encoder.endEncoding()
-            cmd.commit()
-            cmd.waitUntilCompleted()
         }
         var first = 0, bytes = 0
         for j in jobs.indices {

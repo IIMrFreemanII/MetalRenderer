@@ -107,7 +107,7 @@ struct RTPart {
     float4 row1;
     float4 row2;
     uint mesh;        // the part's mesh
-    uint pad;
+    uint pad;         // RT_PART_RIGID: a building's part (Scene.Assembly.rigid), which the wind doesn't turn
     uint firstLeaf;   // its triangles from here on take the instance's leaf material (the one after its wood's)
     uint leafCount;   // how many they are, in a shuffled order: autumn drops them from the end (0 = evergreen)
     float4 limb;      // the wind's bones: xyz = pivot (plant space), w = its largest turn, 0 = none
@@ -116,6 +116,7 @@ struct RTPart {
     float4 boughAxis;
 };
 static_assert(sizeof(RTPart) == 128, "RTPart: Scene.Assembly.gpuParts");
+constant uint RT_PART_RIGID = 1u;
 
 // A part's point (or direction) turned by its bones (its bough's, then its limb's), in its plant's space.
 inline float3 partBones(RTPart part, PlantWind w, float strength, float3 p, bool point) {
