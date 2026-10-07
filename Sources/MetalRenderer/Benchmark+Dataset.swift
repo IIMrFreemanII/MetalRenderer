@@ -14,7 +14,8 @@ import simd
 ///
 /// `METALRENDERER_DATASET="scenes=cornell|gallery,clips=2,frames=32,spp=1024,seed=1,factor=3,bounces=4"` chooses the
 /// clips (`DatasetSpec` has the defaults); both runs need the same value. They go to `METALRENDERER_DATASET_DIR`
-/// (default `dataset`): `<clip>/clip.json`, `<clip>/fNNNN.json`, `<clip>/fNNNN-<buffer>.npy`.
+/// (default `dataset`): `<clip>/fNNNN.json`, `<clip>/fNNNN-<buffer>.npy`. A paused clip (`<scene>-<seed>-p<n>`) holds a
+/// still camera on a paused scene: every frame is new noise over the same image, so it has one reference, frame 0's.
 extension Benchmark {
     struct DatasetSpec {
         var scenes: [SceneKind] = [.cornell, .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog, .valley,
@@ -23,8 +24,10 @@ extension Benchmark {
         var rooms = 24          // ...but this many random rooms (Scene+Training.swift): each clip is another room
                                 // (and the showcase has a clip per model of Assets/, each on its own set)
         var frames = 32         // saved per clip, after the warm-up
-        var showcaseFrames = 8  // ...but fewer of the showcase's: its references take 5-8 times as long (fog, full-detail models)
-        var stressFrames = 8    // ...and of the stress building's (32 lights, each traced at every bounce)
+        var showcaseFrames: Int? = nil  // fewer of the showcase's, if set: its references are the slowest (fog, full-detail models)
+        var stressFrames: Int? = nil    // ...and of the stress building's (32 lights, each traced at every bounce)
+        var pausedClips = 1     // per scene, paused clips: long, still views (a model or room of their own)
+        var pausedFrames = 100  // ...each this many frames, and one reference
         var spp = 1024          // frames averaged per reference
         var seed = 1
         var bounces = 4         // the references' path length
@@ -44,6 +47,8 @@ extension Benchmark {
                 case "frames": frames = Int(kv[1]) ?? frames
                 case "showcaseframes": showcaseFrames = Int(kv[1]) ?? showcaseFrames
                 case "stressframes": stressFrames = Int(kv[1]) ?? stressFrames
+                case "pausedclips": pausedClips = Int(kv[1]) ?? pausedClips
+                case "pausedframes": pausedFrames = Int(kv[1]) ?? pausedFrames
                 case "spp": spp = Int(kv[1]) ?? spp
                 case "seed": seed = Int(kv[1]) ?? seed
                 case "bounces": bounces = Int(kv[1]) ?? bounces
@@ -65,26 +70,36 @@ extension Benchmark {
             return c
         }
 
-        /// The clips, scene by scene: a seed for the scene, a start time and a camera drift each.
+        /// The clips, scene by scene: its moving clips, then its paused ones.
         var clipList: [DatasetClip] {
             let models = Scene.galleryFiles().map(Scene.showcaseName)
-            return scenes.flatMap { kind in
-                (0..<(kind == .randomRoom ? rooms : kind == .showcase ? models.count : clips)).map { c in
-                    var rng = BlueNoise.SplitMix64(seed: UInt64(seed) &* 0x1_0000 &+ UInt64(kind.rawValue) &* 0x100 &+ UInt64(c))
-                    var scene = SceneSettings(kind: kind)
-                    if kind == .market { scene.lights = SceneSettings.marketLights }
-                    if kind == .showcase { scene.showcase = models[c] }
-                    scene.seed = seed * 100 + c
-                    let start = Float.random(in: 0..<(kind.dayCycle ?? 20), using: &rng)
-                    // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model; the stress
-                    // building's clips start inside a zone, a few metres from its partitions.
-                    let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : kind == .stress ? 0.6 : 1
-                    let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
-                    return DatasetClip(name: "\(kind)-\(seed)-\(c)", index: c, scene: scene, startTime: start, drift: drift,
-                                       frames: kind == .showcase ? showcaseFrames : kind == .stress ? stressFrames : frames,
-                                       camera: kind == .stress ? DatasetSpec.stressViews[c % DatasetSpec.stressViews.count] : nil)
-                }
+            return scenes.flatMap { kind -> [DatasetClip] in
+                let moving = kind == .randomRoom ? rooms : kind == .showcase ? models.count : clips
+                let paused = kind == .showcase && models.isEmpty ? 0 : pausedClips
+                return (0..<moving).map { clip(kind, $0, paused: false, models: models) }
+                    + (0..<paused).map { clip(kind, $0, paused: true, models: models) }
             }
+        }
+
+        /// Clip `c` of `kind`: a seed for the scene, a start time and, moving, a camera drift through the animation;
+        /// paused, a still camera on the paused scene, at a moment (and in a room, on a model) of its own.
+        private func clip(_ kind: SceneKind, _ c: Int, paused: Bool, models: [String]) -> DatasetClip {
+            let stream = UInt64(paused ? 0x80 + c : c)
+            var rng = BlueNoise.SplitMix64(seed: UInt64(seed) &* 0x1_0000 &+ UInt64(kind.rawValue) &* 0x100 &+ stream)
+            var scene = SceneSettings(kind: kind)
+            if kind == .market { scene.lights = SceneSettings.marketLights }
+            if kind == .showcase { scene.showcase = models[(paused ? c + models.count / 2 : c) % models.count] }
+            scene.seed = seed * 100 + (paused ? 50 + c : c)
+            let start = Float.random(in: 0..<(kind.dayCycle ?? 20), using: &rng)
+            // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model; the stress
+            // building's clips start inside a zone, a few metres from its partitions.
+            let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : kind == .stress ? 0.6 : 1
+            let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
+            let frames = paused ? pausedFrames : (kind == .showcase ? showcaseFrames : kind == .stress ? stressFrames : nil) ?? frames
+            let views = DatasetSpec.stressViews
+            return DatasetClip(name: "\(kind)-\(seed)-\(paused ? "p" : "")\(c)", index: c, scene: scene, startTime: start,
+                               drift: paused ? nil : drift, frames: frames,
+                               camera: kind == .stress ? views[(paused ? c + 1 : c) % views.count] : nil, paused: paused)
         }
     }
 
@@ -93,9 +108,10 @@ extension Benchmark {
         var index: Int          // its number within its scene
         var scene: SceneSettings
         var startTime: Float
-        var drift: CameraDrift
+        var drift: CameraDrift? // the camera's move, none while paused
         var frames: Int         // saved, after the warm-up
         var camera: Camera?     // where it starts, if not the scene's own camera
+        var paused = false      // the animation holds still: one image under every frame's noise, one reference
 
         /// Settings both of its runs share. glTF models (random rooms, the gallery, the showcase) at full detail and
         /// with every texture level, so the references don't get finer meshes or mips than the noisy frames had (as the
@@ -145,7 +161,9 @@ extension Benchmark {
         print("dataset: \(clips.count) of \(spec.clipList.count) clips to render")
         return clips.map { clip in
             var c = Config(clip.name, scale: spec.scale, upscale: spec.factor, gi: RenderSettings().giMode, scene: clip.scene,
-                           clip.shared).drifting(clip.drift).frames(clip.frames)
+                           clip.shared).frames(clip.frames)
+            if let drift = clip.drift { c = c.drifting(drift) }
+            c.settings.paused = clip.paused
             c.startTime = clip.startTime
             c.camera = clip.camera
             c.dataset = .inputs(clip: spec.directory.appendingPathComponent(clip.name))
@@ -153,15 +171,16 @@ extension Benchmark {
         }
     }
 
-    /// `METALRENDERER_BENCH=datasetref`: a reference for every saved frame that has none yet. Every scene's first clip
-    /// first, then every scene's second, ...: a run stopped early leaves complete clips of every scene to train on.
+    /// `METALRENDERER_BENCH=datasetref`: a reference for every saved frame that has none yet (a paused clip: for its first,
+    /// which is every frame's). Every scene's first clip first, then every scene's second, ...: a run stopped early
+    /// leaves complete clips of every scene to train on.
     static func datasetReferences() -> [Config] {
         let spec = DatasetSpec()
         let decoder = JSONDecoder()
         var list: [Config] = [], missing = 0
         for clip in spec.clipList.enumerated().sorted(by: { ($0.element.index, $0.offset) < ($1.element.index, $1.offset) }).map(\.element) {
             let dir = spec.directory.appendingPathComponent(clip.name)
-            for f in 0..<clip.frames {
+            for f in 0..<(clip.paused ? 1 : clip.frames) {
                 let row = dir.appendingPathComponent(datasetFileName(frame: f, buffer: nil))
                 guard let data = try? Data(contentsOf: row), let frame = try? decoder.decode(DatasetFrame.self, from: data) else {
                     missing += 1
