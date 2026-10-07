@@ -334,6 +334,13 @@ kernel void tonemapKernel(constant Uniforms&              u        [[buffer(0)]]
 //    of a paused scene, used in place of the denoiser to make a converged ground-truth image.
 // ---------------------------------------------------------------------------------------------
 
+// A frame's sample as the running means take it. References have no firefly clamp, so a rare sample overflows the
+// half-float light textures to inf, and one inf turns a running mean into NaN for good (inf - inf): count it as the
+// largest half instead, and a NaN sample as nothing.
+static float3 finiteSample(float3 c) {
+    return select(min(c, float3(65504.0f)), float3(0.0f), isnan(c));
+}
+
 kernel void accumulateKernel(constant Uniforms&                   u              [[buffer(0)]],
                              constant uint&                       sampleCount    [[buffer(1)]],
                              texture2d<float, access::read>       direct         [[texture(0)]],
@@ -347,13 +354,13 @@ kernel void accumulateKernel(constant Uniforms&                   u             
     if (tid.x >= u.width || tid.y >= u.height) return;
     // Running means, kept apart so the "Indirect only" view has a converged reference too.
     float w = 1.0f / float(sampleCount + 1);
-    float3 d = direct.read(tid).rgb, i = indirect.read(tid).rgb;
+    float3 d = finiteSample(direct.read(tid).rgb), i = finiteSample(indirect.read(tid).rgb);
     float3 meanD = sampleCount > 0 ? accumDirect.read(tid).rgb : float3(0.0f);
     float3 meanI = sampleCount > 0 ? accumIndirect.read(tid).rgb : float3(0.0f);
     accumDirect.write(float4(meanD + (d - meanD) * w, 1.0f), tid);
     accumIndirect.write(float4(meanI + (i - meanI) * w, 1.0f), tid);
     if (flagOn(u.flags, FLAG_SPECULAR)) {
-        float3 sp = spec.read(tid).rgb, meanS = sampleCount > 0 ? accumSpec.read(tid).rgb : float3(0.0f);
+        float3 sp = finiteSample(spec.read(tid).rgb), meanS = sampleCount > 0 ? accumSpec.read(tid).rgb : float3(0.0f);
         accumSpec.write(float4(meanS + (sp - meanS) * w, 1.0f), tid);
     }
 }
@@ -367,7 +374,7 @@ kernel void accumulateColorKernel(constant uint2&                      params [[
                                   uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
-    float3 c = color.read(tid).rgb;
+    float3 c = finiteSample(color.read(tid).rgb);
     if (params.y != 0) {
         float3 m = params.x > 0 ? accum.read(tid).rgb : float3(0.0f);
         c = m + (c - m) / float(params.x + 1);
