@@ -96,6 +96,8 @@ struct FluidSystem {
     var domain: AABB { AABB(lo: PhysicsMath.xyz(params.lo), hi: PhysicsMath.xyz(params.hi)) }
     var cell: Float { params.lo.w }
     var dims: SIMD3<Int> { SIMD3(Int(params.dims.x), Int(params.dims.y), Int(params.dims.z)) }
+    /// MPM: the blocks of 4^3 nodes along each axis its particles go to the grid by (MSL fluidMpmBlocks).
+    var mpmBlocks: SIMD3<Int> { (dims &+ 3) / 4 }
     /// A particle's mass (kg) and spacing (m).
     var mass: Float { params.material.y }
     var spacing: Float { params.extra.y }

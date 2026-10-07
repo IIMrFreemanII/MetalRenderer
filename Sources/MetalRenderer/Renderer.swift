@@ -2343,11 +2343,13 @@ final class Renderer: NSObject {
         // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
         // Cloths too: their vertices, from where the physics (or the CPU's) left them.
         var deformed = false
-        if let physicsGPU, let enc = passes.compute("physics", serial: true) {
+        if let physicsGPU, let enc = passes.compute("physics", serial: true, concurrent: physicsGPU.hasFluid) {
+            physicsGPU.concurrent = physicsGPU.hasFluid   // (its own barriers: the liquids' steps side by side)
             if physicsGPU.simulates {
                 // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
                 // buffer, past the watchdog: it catches up over the next frames instead.
                 let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid ? 20 : .max)
+                if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
                 physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
                 let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
@@ -2357,8 +2359,13 @@ final class Renderer: NSObject {
             physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
-            physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
-            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || physicsGPU.hasFluid
+            // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
+            let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0
+            if liquids {
+                physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
+                physicsGPU.liquidFrames -= 1
+            }
+            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
             passes.endCompute()
         }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
@@ -2374,12 +2381,13 @@ final class Renderer: NSObject {
         }
         if deformed, let primitiveRefit {
             // A liquid's surface: built over as many triangles as it last needed (read back a few frames late), with
-            // room to grow by half again.
+            // room to grow by a fifth (a pour's surface grows by a few percent over those frames; past it, the
+            // triangles left out wait a frame). The build's time is its triangles': on the M1 Max about 5 ms for 100k.
             if let fluid = physicsGPU?.fluid {
                 for (i, m) in primitiveRefit.rebuiltMeshes.enumerated() {
                     guard let s = scene.liquidMeshes.first(where: { $0.mesh == m })?.system else { continue }
                     let room = Int(fluid.systems[s].system.surface.triangles.x), used = Int(fluid.readSurfaceStats(s).y)
-                    primitiveRefit.setTriangles(i, min(room, (used * 3 / 2 + 8192 + 4095) / 4096 * 4096))
+                    primitiveRefit.setTriangles(i, min(room, (used * 6 / 5 + 2048 + 1023) / 1024 * 1024))
                 }
             }
             passes.updatePrimitives(primitiveRefit, pass: "blas")

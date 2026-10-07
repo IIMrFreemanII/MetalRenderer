@@ -311,7 +311,9 @@ inline float3 fluidSpiky(float3 r, float h) {
     return r * (-45.0f / (M_PI_F * pow(h, 6.0f)) * d * d / l);
 }
 
-constant uint FLUID_CELL_MOST = 96;   // PhysicsWorld.fluidCellMost: a cell's particles a neighbour sum reads at most
+constant uint FLUID_CELL_MOST = 96;   // PhysicsWorld.fluidCellMost: a cell's particles a neighbour search reads at most
+constant uint FLUID_NEIGHBOURS_MOST = 64;   // PhysicsWorld.fluidNeighboursMost: a particle's neighbours at most
+constant float FLUID_REACH = 1.1f;   // PhysicsWorld.fluidReach: how far its neighbours are looked for, in h
 
 // The 27 cells about c (z, then y, then x), each cell's particles in order: PhysicsWorld.forNeighbours.
 #define FLUID_NEIGHBOURS(c, j, body) \
@@ -321,6 +323,13 @@ constant uint FLUID_CELL_MOST = 96;   // PhysicsWorld.fluidCellMost: a cell's pa
         uint k_ = fluidCellIndex(n_, p); \
         for (uint j = starts[k_], e_ = min(starts[k_ + 1], starts[k_] + FLUID_CELL_MOST); j < e_; ++j) { body } \
     }
+
+// A particle's neighbours, as fluidPbfNeighbours listed them (j the neighbour's index in the sorted order).
+#define FLUID_LIST(i, j, body) \
+    for (uint n_ = 0, e_ = neighbourCounts[i]; n_ < e_; ++n_) { uint j = neighbours[n_ * p.counts.x + i]; body }
+#define FLUID_LIST_BUFFERS \
+    device const uint* neighbours      [[buffer(13)]], \
+    device const uint* neighbourCounts [[buffer(17)]]
 
 // Predicted positions (gravity, then where the velocity takes them, in the domain) and their cells.
 kernel void fluidPredictKernel(constant FluidParams&       p         [[buffer(0)]],
@@ -340,10 +349,11 @@ kernel void fluidPredictKernel(constant FluidParams&       p         [[buffer(0)
     keys[i] = fluidCellIndex(fluidCell(x, p), p);
 }
 
-kernel void fluidCellsClearKernel(constant FluidParams& p [[buffer(0)]], device uint* counts [[buffer(8)]], device uint* cursor [[buffer(10)]],
+// The counts and cursors of the size.x cells (PBF) or blocks (MPM) a sort puts particles in, and the one after them.
+kernel void fluidCellsClearKernel(constant uint4& size [[buffer(16)]], device uint* counts [[buffer(8)]], device uint* cursor [[buffer(10)]],
                                   uint c [[thread_position_in_grid]])
 {
-    if (c > p.dims.w) return;
+    if (c > size.x) return;
     counts[c] = 0;
     cursor[c] = 0;
 }
@@ -423,11 +433,34 @@ kernel void fluidReorderKernel(device const FluidState&    st        [[buffer(1)
     } \
 }
 
+// Each particle's neighbours for the substep (PhysicsWorld.pbfNeighbours): those within FLUID_REACH h of it as sorted,
+// in the order the cells about it hold them, FLUID_NEIGHBOURS_MOST at most. The sums then read a list of about 45, not
+// the 27 cells' 200 (each of them: 4 iterations of 2, and 2 after); one that comes closer from further in the substep
+// is missed.
+kernel void fluidPbfNeighboursKernel(constant FluidParams&    p               [[buffer(0)]],
+                                     device const FluidState& st              [[buffer(1)]],
+                                     device const float4*     predicted       [[buffer(4)]],
+                                     device const uint*       cells           [[buffer(7)]],
+                                     device const uint*       starts          [[buffer(9)]],
+                                     device uint*             neighbours      [[buffer(13)]],
+                                     device uint*             neighbourCounts [[buffer(17)]],
+                                     uint i [[thread_position_in_grid]])
+{
+    if (i >= st.counts.y) return;
+    float3 x = predicted[i].xyz;
+    float reach = FLUID_REACH * p.pbf.x;
+    uint count = 0;
+    int3 cell = fluidCellOf(cells[i], p);
+    FLUID_NEIGHBOURS(cell, j, {
+        if (count < FLUID_NEIGHBOURS_MOST && length_squared(x - predicted[j].xyz) < reach * reach) neighbours[count++ * p.counts.x + i] = j;
+    })
+    neighbourCounts[i] = count;
+}
+
 kernel void fluidPbfLambdaKernel(constant FluidParams&    p         [[buffer(0)]],
                                  device const FluidState& st        [[buffer(1)]],
                                  device const float4*     predicted [[buffer(4)]],
-                                 device const uint*       cells     [[buffer(7)]],
-                                 device const uint*       starts    [[buffer(9)]],
+                                 FLUID_LIST_BUFFERS,
                                  device float*            lambdas   [[buffer(12)]],
                                  FLUID_WORLD,
                                  uint i [[thread_position_in_grid]])
@@ -438,8 +471,7 @@ kernel void fluidPbfLambdaKernel(constant FluidParams&    p         [[buffer(0)]
     float3 x = predicted[i].xyz;
     float density = 0.0f, squares = 0.0f;
     float3 own = float3(0.0f);
-    int3 cell = fluidCellOf(cells[i], p);
-    FLUID_NEIGHBOURS(cell, j, {
+    FLUID_LIST(i, j, {
         float3 d = x - predicted[j].xyz;
         density += fluidPoly6(length_squared(d), h);
         if (j == i) continue;
@@ -458,8 +490,7 @@ kernel void fluidPbfDeltaKernel(constant FluidParams&       p         [[buffer(0
                                 device const FluidParticle* particles [[buffer(3)]],
                                 device const float4*        predicted [[buffer(4)]],
                                 device float4*              next      [[buffer(5)]],
-                                device const uint*          cells     [[buffer(7)]],
-                                device const uint*          starts    [[buffer(9)]],
+                                FLUID_LIST_BUFFERS,
                                 device const float*         lambdas   [[buffer(12)]],
                                 FLUID_WORLD,
                                 uint i [[thread_position_in_grid]])
@@ -469,8 +500,7 @@ kernel void fluidPbfDeltaKernel(constant FluidParams&       p         [[buffer(0
     float h = p.pbf.x, volume = 1.0f / p.material.x, r = p.extra.x;
     float3 x = predicted[i].xyz, delta = float3(0.0f);
     float li = lambdas[i];
-    int3 cell = fluidCellOf(cells[i], p);
-    FLUID_NEIGHBOURS(cell, j, {
+    FLUID_LIST(i, j, {
         if (j == i) continue;
         float3 d = x - predicted[j].xyz;
         float r2 = length_squared(d);
@@ -506,15 +536,13 @@ kernel void fluidPbfVelocityKernel(constant FluidParams&    p         [[buffer(0
 kernel void fluidPbfVorticityKernel(constant FluidParams&    p         [[buffer(0)]],
                                     device const FluidState& st        [[buffer(1)]],
                                     device FluidParticle*    particles [[buffer(3)]],
-                                    device const uint*       cells     [[buffer(7)]],
-                                    device const uint*       starts    [[buffer(9)]],
+                                    FLUID_LIST_BUFFERS,
                                     uint i [[thread_position_in_grid]])
 {
     if (i >= st.counts.y) return;
     float h = p.pbf.x, volume = 1.0f / p.material.x;
     float3 x = particles[i].position.xyz, v = particles[i].velocity.xyz, w = float3(0.0f);
-    int3 c = fluidCellOf(cells[i], p);
-    FLUID_NEIGHBOURS(c, j, {
+    FLUID_LIST(i, j, {
         if (j == i) continue;
         w += cross(fluidSpiky(x - particles[j].position.xyz, h), particles[j].velocity.xyz - v) * volume;
     })
@@ -526,8 +554,7 @@ kernel void fluidPbfViscosityKernel(constant FluidParams&       p         [[buff
                                     device const FluidState&    st        [[buffer(1)]],
                                     device FluidParticle*       out       [[buffer(2)]],
                                     device const FluidParticle* particles [[buffer(3)]],
-                                    device const uint*          cells     [[buffer(7)]],
-                                    device const uint*          starts    [[buffer(9)]],
+                                    FLUID_LIST_BUFFERS,
                                     uint i [[thread_position_in_grid]])
 {
     if (i >= st.counts.y) return;
@@ -536,8 +563,7 @@ kernel void fluidPbfViscosityKernel(constant FluidParams&       p         [[buff
     float3 x = q.position.xyz, v = q.velocity.xyz, w = q.affine0.xyz;
     float wl = length(w);
     float3 smooth = float3(0.0f), eta = float3(0.0f);
-    int3 c = fluidCellOf(cells[i], p);
-    FLUID_NEIGHBOURS(c, j, {
+    FLUID_LIST(i, j, {
         if (j == i) continue;
         float3 d = x - particles[j].position.xyz;
         smooth += (particles[j].velocity.xyz - v) * (fluidPoly6(length_squared(d), h) * volume);
@@ -578,15 +604,22 @@ kernel void fluidMpmClearKernel(constant FluidParams& p [[buffer(0)]], device in
     if (n < p.dims.w) grid[n] = int4(0);
 }
 
-// Particles to grid: PhysicsWorld.mpmAffine, then each of the 27 nodes' weight and momentum, as integers.
-kernel void fluidMpmP2GKernel(constant FluidParams&       p         [[buffer(0)]],
-                              device const FluidState&    st        [[buffer(1)]],
-                              device const FluidParticle* particles [[buffer(2)]],
-                              device atomic_int*          grid      [[buffer(14)]],
-                              uint i [[thread_position_in_grid]])
-{
-    if (i >= st.counts.y) return;
-    FluidParticle q = particles[i];
+// Particles to grid: PhysicsWorld.mpmAffine, then each of the 27 nodes' weight and momentum, as integers. A particle
+// adds to its 27 nodes with atomics, and 27 times 4 for each of them (most of a substep's time, as the particles about
+// a node add to it at once), so the particles go by blocks of 4^3 cells (Gao et al. 2018): their indices sorted by the
+// block their base node is in (fluidMpmKeys, then the count, scan and scatter PBF sorts with), a threadgroup a block
+// adds its particles' parts into threadgroup memory over the 6^3 nodes they reach, then those to the grid. Integers add
+// up the same in any order: the grid is as the particles add to it one by one.
+constant int FLUID_MPM_BLOCK = 4;
+constant int FLUID_MPM_TILE = FLUID_MPM_BLOCK + 2;
+constant uint FLUID_MPM_TILE_NODES = FLUID_MPM_TILE * FLUID_MPM_TILE * FLUID_MPM_TILE;
+
+// FluidSystem.mpmBlocks: the blocks along each axis.
+inline uint3 fluidMpmBlocks(constant FluidParams& p) { return (p.dims.xyz + uint(FLUID_MPM_BLOCK - 1)) / uint(FLUID_MPM_BLOCK); }
+
+// What a particle gives the nodes about it: its spline, velocity and affine momentum (with its stress).
+struct FluidMpmPart { FluidSpline sp; float3 v, a0, a1, a2; };
+inline FluidMpmPart fluidMpmPart(constant FluidParams& p, FluidParticle q) {
     float j = q.position.w, k = p.material.z, gamma = p.material.w;
     float pressure = max(k / gamma * (pow(j, -gamma) - 1.0f), -p.pbf.x * k);
     float3 c0 = q.affine0.xyz, c1 = q.affine1.xyz, c2 = q.affine2.xyz;
@@ -598,21 +631,71 @@ kernel void fluidMpmP2GKernel(constant FluidParams&       p         [[buffer(0)]
     float mu = fluidViscosity(p.viscosity, shear);
     float s = -p.gravity.w * (j / p.material.x) * 4.0f * p.hi.w * p.hi.w;
     float pq = pressure - p.pbf.y * 3.0f * third;   // (PhysicsWorld.mpmAffine: and the bulk viscosity)
-    float3 a0 = c0 + (d0 * (2.0f * mu) - float3(pq, 0, 0)) * s;
-    float3 a1 = c1 + (d1 * (2.0f * mu) - float3(0, pq, 0)) * s;
-    float3 a2 = c2 + (d2 * (2.0f * mu) - float3(0, 0, pq)) * s;
-    FluidSpline sp = fluidSpline((q.position.xyz - p.lo.xyz) * p.hi.w);
-    float3 v = q.velocity.xyz;
-    for (int n = 0; n < 27; ++n) {
-        int3 o = int3(n % 3, n / 3 % 3, n / 9);
-        float weight = sp.w[o.x].x * sp.w[o.y].y * sp.w[o.z].z;
-        float3 dpos = (float3(o) - sp.fx) * p.lo.w;
-        float3 momentum = (v + float3(dot(a0, dpos), dot(a1, dpos), dot(a2, dpos))) * weight;
-        device atomic_int* at = grid + 4 * fluidNode(sp.base + o, p);
-        atomic_fetch_add_explicit(at + 0, fluidFixed(momentum.x, p.fixed.y), memory_order_relaxed);
-        atomic_fetch_add_explicit(at + 1, fluidFixed(momentum.y, p.fixed.y), memory_order_relaxed);
-        atomic_fetch_add_explicit(at + 2, fluidFixed(momentum.z, p.fixed.y), memory_order_relaxed);
-        atomic_fetch_add_explicit(at + 3, fluidFixed(weight, p.fixed.x), memory_order_relaxed);
+    FluidMpmPart r;
+    r.a0 = c0 + (d0 * (2.0f * mu) - float3(pq, 0, 0)) * s;
+    r.a1 = c1 + (d1 * (2.0f * mu) - float3(0, pq, 0)) * s;
+    r.a2 = c2 + (d2 * (2.0f * mu) - float3(0, 0, pq)) * s;
+    r.sp = fluidSpline((q.position.xyz - p.lo.xyz) * p.hi.w);
+    r.v = q.velocity.xyz;
+    return r;
+}
+
+// Each particle's block: the one its base node is in.
+kernel void fluidMpmKeysKernel(constant FluidParams&       p         [[buffer(0)]],
+                               device const FluidState&    st        [[buffer(1)]],
+                               device const FluidParticle* particles [[buffer(2)]],
+                               device uint*                keys      [[buffer(6)]],
+                               uint i [[thread_position_in_grid]])
+{
+    if (i >= st.counts.y) return;
+    int3 base = fluidSpline((particles[i].position.xyz - p.lo.xyz) * p.hi.w).base;
+    uint3 b = uint3(clamp(base, int3(0), int3(p.dims.xyz) - 1) / FLUID_MPM_BLOCK), n = fluidMpmBlocks(p);
+    keys[i] = b.x + n.x * (b.y + n.y * b.z);
+}
+
+// A threadgroup a block (64 threads).
+kernel void fluidMpmP2GKernel(constant FluidParams&       p         [[buffer(0)]],
+                              device const FluidParticle* particles [[buffer(2)]],
+                              device const uint*          starts    [[buffer(9)]],
+                              device const uint*          order     [[buffer(11)]],
+                              device atomic_int*          grid      [[buffer(14)]],
+                              uint b [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                              uint width [[threads_per_threadgroup]])
+{
+    uint first = starts[b], end = starts[b + 1];
+    if (first == end) return;
+    threadgroup atomic_int tile[FLUID_MPM_TILE_NODES * 4];
+    for (uint k = t; k < FLUID_MPM_TILE_NODES * 4; k += width) atomic_store_explicit(&tile[k], 0, memory_order_relaxed);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint3 n = fluidMpmBlocks(p);
+    int3 origin = int3(b % n.x, (b / n.x) % n.y, b / (n.x * n.y)) * FLUID_MPM_BLOCK;
+    for (uint k = first + t; k < end; k += width) {
+        FluidMpmPart q = fluidMpmPart(p, particles[order[k]]);
+        for (int m = 0; m < 27; ++m) {
+            int3 o = int3(m % 3, m / 3 % 3, m / 9);
+            float weight = q.sp.w[o.x].x * q.sp.w[o.y].y * q.sp.w[o.z].z;
+            float3 dpos = (float3(o) - q.sp.fx) * p.lo.w;
+            float3 momentum = (q.v + float3(dot(q.a0, dpos), dot(q.a1, dpos), dot(q.a2, dpos))) * weight;
+            int4 add = int4(fluidFixed(momentum.x, p.fixed.y), fluidFixed(momentum.y, p.fixed.y), fluidFixed(momentum.z, p.fixed.y),
+                            fluidFixed(weight, p.fixed.x));
+            int3 l = q.sp.base + o - origin;
+            if (all(l >= 0) && all(l < FLUID_MPM_TILE)) {
+                threadgroup atomic_int* at = tile + 4 * (l.x + FLUID_MPM_TILE * (l.y + FLUID_MPM_TILE * l.z));
+                for (int c = 0; c < 4; ++c) atomic_fetch_add_explicit(at + c, add[c], memory_order_relaxed);
+            } else {   // (a particle past the grid, its block the last: straight to the grid)
+                device atomic_int* at = grid + 4 * fluidNode(q.sp.base + o, p);
+                for (int c = 0; c < 4; ++c) atomic_fetch_add_explicit(at + c, add[c], memory_order_relaxed);
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint k = t; k < FLUID_MPM_TILE_NODES; k += width) {
+        int4 sum;
+        for (int c = 0; c < 4; ++c) sum[c] = atomic_load_explicit(&tile[4 * k + c], memory_order_relaxed);
+        if (all(sum == 0)) continue;
+        int3 l = int3(k % FLUID_MPM_TILE, k / FLUID_MPM_TILE % FLUID_MPM_TILE, k / (FLUID_MPM_TILE * FLUID_MPM_TILE));
+        device atomic_int* at = grid + 4 * fluidNode(origin + l, p);
+        for (int c = 0; c < 4; ++c) if (sum[c] != 0) atomic_fetch_add_explicit(at + c, sum[c], memory_order_relaxed);
     }
 }
 
@@ -635,8 +718,9 @@ kernel void fluidMpmGridKernel(constant FluidParams&    p    [[buffer(0)]],
                                uint k [[thread_position_in_grid]])
 {
     if (k >= p.dims.w) return;
-    FLUID_COLLIDERS;
     int4 g = grid[k];
+    if (g.w <= 0) { grid[k] = int4(0); return; }   // read by no particle: most of the grid, which skips the colliders
+    FLUID_COLLIDERS;
     int3 node = int3(k % p.dims.x, (k / p.dims.x) % p.dims.y, k / (p.dims.x * p.dims.y));
     // PhysicsWorld.mpmSolid: past the walls or inside a collider (a body's too), a node weighs a rest cell's particles in
     // the density.
@@ -650,7 +734,6 @@ kernel void fluidMpmGridKernel(constant FluidParams&    p    [[buffer(0)]],
         solid = physDistance(c.w, b.info.x, physPose(b).toBody(x)) < 0.0f;
     }
     float rest = p.lo.w * p.lo.w * p.lo.w / p.extra.z;
-    if (g.w <= 0) { grid[k] = as_type<int4>(float4(0.0f, 0.0f, 0.0f, solid ? rest : 0.0f)); return; }
     float m = float(g.w) / p.fixed.x;
     float3 v = float3(g.xyz) / p.fixed.y / m + p.gravity.xyz * p.gravity.w;
     float friction = p.pbf2.z, stick = p.pbf2.w;

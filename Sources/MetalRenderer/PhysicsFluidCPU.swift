@@ -147,8 +147,12 @@ extension PhysicsWorld {
         Int(c.x) + Int(p.dims.x) * (Int(c.y) + Int(p.dims.y) * Int(c.z))
     }
 
-    /// A cell's particles a neighbour sum reads at most (MSL FLUID_CELL_MOST): a cell at rest holds about 8.
+    /// A cell's particles a neighbour search reads at most (MSL FLUID_CELL_MOST): a cell at rest holds about 8.
     static let fluidCellMost: UInt32 = 96
+    /// A particle's neighbours at most (MSL FLUID_NEIGHBOURS_MOST), and how far they are looked for, in h (FLUID_REACH):
+    /// about 45 at rest.
+    static let fluidNeighboursMost = 64
+    static let fluidReach: Float = 1.1
 
     /// The neighbours of a particle in cell `c`, in the order the GPU visits them: the 27 cells about it (z, then y,
     /// then x), each cell's particles in order.
@@ -189,8 +193,16 @@ extension PhysicsWorld {
         for (i, k) in keys.enumerated() { order[Int(cursor[k])] = i; cursor[k] += 1 }
         var particles = order.map { system.particles[$0] }
         predicted = order.map { predicted[$0] }
-        // Each particle's cell as sorted: its neighbours are looked for about it for the rest of the substep.
+        // Each particle's neighbours as sorted, for the rest of the substep (fluidPbfNeighboursKernel).
         let cells = predicted.map { PhysicsWorld.fluidCell($0, p) }
+        let reach = PhysicsWorld.fluidReach * h
+        let neighbours = (0..<n).map { i -> [Int] in
+            var list: [Int] = []
+            PhysicsWorld.forNeighbours(cells[i], p, starts) { j in
+                if list.count < PhysicsWorld.fluidNeighboursMost && length_squared(predicted[i] - predicted[j]) < reach * reach { list.append(j) }
+            }
+            return list
+        }
         let start = particles.map { PhysicsMath.xyz($0.position) }
         // The constraints, `emission.w` Jacobi iterations (fluidPbfLambdaKernel, fluidPbfDeltaKernel).
         var lambdas = [Float](repeating: 0, count: n)
@@ -198,10 +210,10 @@ extension PhysicsWorld {
             for i in 0..<n {
                 let x = predicted[i]
                 var density: Float = 0, own = SIMD3<Float>(), squares: Float = 0
-                PhysicsWorld.forNeighbours(cells[i], p, starts) { j in
+                for j in neighbours[i] {
                     let d = x - predicted[j]
                     density += PBF.poly6(length_squared(d), h: h)
-                    guard j != i else { return }
+                    guard j != i else { continue }
                     let g = PBF.spiky(d, h: h) * volume
                     own += g
                     squares += length_squared(g)
@@ -218,10 +230,10 @@ extension PhysicsWorld {
             for i in 0..<n {
                 let x = predicted[i]
                 var delta = SIMD3<Float>()
-                PhysicsWorld.forNeighbours(cells[i], p, starts) { j in
-                    guard j != i else { return }
+                for j in neighbours[i] {
+                    guard j != i else { continue }
                     let d = x - predicted[j], r2 = length_squared(d)
-                    guard r2 < h * h else { return }
+                    guard r2 < h * h else { continue }
                     let w = PBF.poly6(r2, h: h) * p.pbf.w
                     let corr = -p.pbf.z * (w * w) * (w * w)
                     delta += PBF.spiky(d, h: h) * ((lambdas[i] + lambdas[j] + corr) * volume)
@@ -247,8 +259,8 @@ extension PhysicsWorld {
         for i in 0..<n {
             let x = predicted[i], v = PhysicsMath.xyz(particles[i].velocity)
             var w = SIMD3<Float>()
-            PhysicsWorld.forNeighbours(cells[i], p, starts) { j in
-                guard j != i else { return }
+            for j in neighbours[i] {
+                guard j != i else { continue }
                 w += cross(PBF.spiky(x - predicted[j], h: h), PhysicsMath.xyz(particles[j].velocity) - v) * volume
             }
             vorticity[i] = w
@@ -257,8 +269,8 @@ extension PhysicsWorld {
         for i in 0..<n {
             let x = predicted[i], v = PhysicsMath.xyz(particles[i].velocity), w = vorticity[i], wl = length(w)
             var smooth = SIMD3<Float>(), eta = SIMD3<Float>()
-            PhysicsWorld.forNeighbours(cells[i], p, starts) { j in
-                guard j != i else { return }
+            for j in neighbours[i] {
+                guard j != i else { continue }
                 let d = x - predicted[j]
                 smooth += (PhysicsMath.xyz(particles[j].velocity) - v) * (PBF.poly6(length_squared(d), h: h) * volume)
                 eta += PBF.spiky(d, h: h) * ((length(vorticity[j]) - wl) * volume)
@@ -442,11 +454,13 @@ extension PhysicsWorld {
     /// Grid node `node`'s velocity from what the particles gave it, with gravity, the walls and the colliders (and their
     /// impulses on the bodies); w = its weight (MSL fluidMpmGridKernel).
     private func mpmNodeVelocity(_ g: SIMD4<Int32>, _ node: SIMD3<Int32>, _ p: GPUFluidParams, colliders: [UInt32]) -> SIMD4<Float> {
+        // An empty node is read by no particle (each reads the nodes it gave mass to), so it stays empty: most of the
+        // grid, which skips the colliders.
+        guard g.w > 0 else { return .zero }
         // A node past a wall or inside a collider weighs a rest cell's particles in the density J is taken from (as SPH's
         // boundary particles do): a particle at the floor saw half the grid empty and took itself for half as dense.
         let solid = mpmSolid(node, p, colliders: colliders)
         let rest = p.lo.w * p.lo.w * p.lo.w / p.extra.z
-        guard g.w > 0 else { return SIMD4(.zero, solid ? rest : 0) }
         let m = Float(g.w) / p.fixed.x
         var v = SIMD3<Float>(Float(g.x), Float(g.y), Float(g.z)) / p.fixed.y / m + PhysicsMath.xyz(p.gravity) * p.gravity.w
         let friction = p.pbf2.z, stick = p.pbf2.w

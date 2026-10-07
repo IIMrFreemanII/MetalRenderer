@@ -27,8 +27,8 @@ enum Kernel: Int, CaseIterable {
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder
-    case fluidPbfLambda, fluidPbfDelta, fluidPbfVelocity, fluidPbfVorticity, fluidPbfViscosity
-    case fluidMpmClear, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
+    case fluidPbfNeighbours, fluidPbfLambda, fluidPbfDelta, fluidPbfVelocity, fluidPbfVorticity, fluidPbfViscosity
+    case fluidMpmClear, fluidMpmKeys, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
     case fluidSurfaceClear, fluidSurfaceSplat, fluidSurfaceBlur, fluidSurfaceCount, fluidSurfaceVertex, fluidSurfaceQuad, fluidSurfaceTail
     case plantWind              // the plants' variants in the wind (PlantTracing)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.

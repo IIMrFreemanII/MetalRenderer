@@ -18,7 +18,9 @@ final class FluidGPU {
     }
 
     /// A liquid's buffers. PBF: two of its particles and predicted positions (the sort reads one and writes the other),
-    /// its cells' counts, starts (n + 1) and cursors, the particles' cells and order, their lambdas. MPM: its grid.
+    /// its cells' counts, starts (n + 1) and cursors, the particles' cells, order, neighbours (FLUID_NEIGHBOURS_MOST
+    /// each, the first of every particle's then the second ...) and how many, their lambdas. MPM: its grid, and
+    /// its blocks' counts, starts and cursors and the particles' blocks and order (fluidMpmP2GKernel).
     final class System {
         let system: FluidSystem
         let params: MTLBuffer
@@ -27,17 +29,21 @@ final class FluidGPU {
         let layer: MTLBuffer
         let statics: MTLBuffer
         let predicted: [MTLBuffer]
-        let keys: MTLBuffer?
+        let keys: MTLBuffer
         let cells: MTLBuffer?
-        let counts: MTLBuffer?
-        let starts: MTLBuffer?
-        let cursor: MTLBuffer?
-        let order: MTLBuffer?
+        let counts: MTLBuffer
+        let starts: MTLBuffer
+        let cursor: MTLBuffer
+        let order: MTLBuffer
+        let neighbours: MTLBuffer?
+        let neighbourCounts: MTLBuffer?
         let lambdas: MTLBuffer?
         let grid: MTLBuffer?
-        /// The scan's block totals and its size (uint4: x = elements).
-        let partials: MTLBuffer?
-        let scanSize: MTLBuffer?
+        /// What the sort puts the particles in (PBF: cells; MPM: blocks), the scan's block totals and its size (uint4:
+        /// x = elements).
+        let bins: Int
+        let partials: MTLBuffer
+        let scanSize: MTLBuffer
         /// The surface (FluidSurface.swift): its parameters, the splat (ints), the field (twice: the blur goes back and
         /// forth), per node its cell's vertex and its edges' quads, their scans, the scan's block totals and size, and
         /// what the last surface needed (uint4: vertices, triangles, whether it ran out).
@@ -67,18 +73,22 @@ final class FluidGPU {
             s.statics.withUnsafeBytes { if !$0.isEmpty { statics.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
             self.statics = statics
             predicted = pbf ? try (0..<2).map { try buffer(n * 16, "fluidPredicted\($0).\(name)") } : []
-            keys = pbf ? try buffer(n * 4, "fluidKeys.\(name)") : nil
+            let blocks = s.mpmBlocks
+            bins = pbf ? cellCount : blocks.x * blocks.y * blocks.z
+            keys = try buffer(n * 4, "fluidKeys.\(name)")
             cells = pbf ? try buffer(n * 4, "fluidCells.\(name)") : nil
-            counts = pbf ? try buffer((cellCount + 1) * 4, "fluidCounts.\(name)") : nil
-            starts = pbf ? try buffer((cellCount + 1) * 4, "fluidStarts.\(name)") : nil
-            cursor = pbf ? try buffer((cellCount + 1) * 4, "fluidCursor.\(name)") : nil
-            order = pbf ? try buffer(n * 4, "fluidOrder.\(name)") : nil
+            counts = try buffer((bins + 1) * 4, "fluidCounts.\(name)")
+            starts = try buffer((bins + 1) * 4, "fluidStarts.\(name)")
+            cursor = try buffer((bins + 1) * 4, "fluidCursor.\(name)")
+            order = try buffer(n * 4, "fluidOrder.\(name)")
+            neighbours = pbf ? try buffer(n * PhysicsWorld.fluidNeighboursMost * 4, "fluidNeighbours.\(name)") : nil
+            neighbourCounts = pbf ? try buffer(n * 4, "fluidNeighbourCounts.\(name)") : nil
             lambdas = pbf ? try buffer(n * 4, "fluidLambdas.\(name)") : nil
             grid = pbf ? nil : try buffer(cellCount * 16, "fluidGrid.\(name)")
-            precondition(cellCount <= 4096 * 1024, "a liquid's grid has more cells than the scan takes")
-            partials = pbf ? try buffer((cellCount + 1023) / 1024 * 4, "fluidPartials.\(name)") : nil
-            scanSize = pbf ? try buffer(16, "fluidScanSize.\(name)") : nil
-            scanSize?.contents().storeBytes(of: SIMD4<UInt32>(UInt32(cellCount), 0, 0, 0), as: SIMD4<UInt32>.self)
+            precondition(bins <= 4096 * 1024, "a liquid's grid has more cells than the scan takes")
+            partials = try buffer((bins + 1023) / 1024 * 4, "fluidPartials.\(name)")
+            scanSize = try buffer(16, "fluidScanSize.\(name)")
+            scanSize.contents().storeBytes(of: SIMD4<UInt32>(UInt32(bins), 0, 0, 0), as: SIMD4<UInt32>.self)
             let nodes = Int(s.surface.dims.w)
             precondition(nodes <= 4096 * 1024, "a liquid's surface grid has more nodes than the scan takes")
             surface = try buffer(MemoryLayout<GPUFluidSurface>.stride, "fluidSurface.\(name)")
@@ -125,197 +135,229 @@ final class FluidGPU {
         bodyCount = bodies
     }
 
+    /// The pass runs its dispatches together (PhysicsGPU.concurrent): the liquids' steps go side by side, a barrier
+    /// between each and the next.
+    var concurrent = false
+
+    /// One of a liquid's dispatches: it binds what its kernel reads (the encoder holds the last liquid's), then dispatches.
+    private typealias Step = (ComputePass) -> Void
+
     private func dispatch(_ enc: ComputePass, _ state: MTLComputePipelineState, _ threads: Int) {
         let width = min(state.threadExecutionWidth, max(threads, 1))
         enc.dispatchThreads(MTLSize(width: max(threads, 1), height: 1, depth: 1),
                             threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
     }
 
-    /// Every liquid back to its start: nothing poured, the clock at 0.
-    func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
-        enc.setComputePipelineState(pipelines[.fluidReset])
-        for s in systems {
-            enc.setBuffer(s.state, offset: 0, index: 1)
-            dispatch(enc, pipelines[.fluidReset], 1)
+    /// Each liquid's steps in turn, the liquids side by side: every liquid's first, a barrier, every liquid's second, ...
+    /// A liquid's run in order (in a serial pass too), and the liquids share only the bodies' impulses, which they add
+    /// as integers: the same in any order. On the M1 Max a step is 20 µs however few particles, mostly waiting for the
+    /// one before it; side by side, three liquids take little more than one.
+    private func run(_ enc: ComputePass, _ lists: [[Step]]) {
+        for k in 0..<(lists.map(\.count).max() ?? 0) {
+            if concurrent { enc.memoryBarrier(scope: .buffers) }
+            for list in lists where k < list.count { list[k](enc) }
         }
-        clock = 0
     }
 
-    private func bindWorld(_ enc: ComputePass, _ s: System) {
-        enc.setBuffer(world.params, offset: 0, index: 19)
-        enc.setBuffer(world.bodies, offset: 0, index: 20)
-        enc.setBuffer(world.statics, offset: 0, index: 21)
-        enc.setBuffer(world.staticBounds, offset: 0, index: 22)
-        enc.setBuffer(world.shapes, offset: 0, index: 23)
-        enc.setBuffer(world.samples, offset: 0, index: 24)
-        enc.setBuffer(world.sdfScene, offset: 0, index: 25)
-        enc.setBuffer(s.statics, offset: 0, index: 26)
-        enc.setBuffer(impulses, offset: 0, index: 27)
+    /// A liquid's steps from its bindings: `add` appends a kernel's dispatch over `count` threads (or `count`
+    /// threadgroups of `group` threads), with what `set` binds over the bindings.
+    private struct Steps {
+        let pipelines: Pipelines
+        let bind: Step
+        let dispatch: (ComputePass, MTLComputePipelineState, Int) -> Void
+        var list: [Step] = []
+
+        mutating func add(_ kernel: Kernel, _ count: Int, group: Int = 0, _ set: Step? = nil) {
+            let state = pipelines[kernel], bind = bind, dispatch = dispatch
+            list.append { enc in
+                bind(enc)
+                set?(enc)
+                enc.setComputePipelineState(state)
+                if group > 0 {
+                    enc.dispatchThreadgroups(MTLSize(width: count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: group, height: 1, depth: 1))
+                } else {
+                    dispatch(enc, state, count)
+                }
+            }
+        }
+
+        /// An exclusive prefix sum of the `count` uints bound at 8 into 9 (the total after them), with the block
+        /// totals at 15 and the size at 16.
+        mutating func scan(_ count: Int, _ set: Step? = nil) {
+            add(.fluidScanBlocks, (count + 1023) / 1024, group: 256, set)
+            add(.fluidScanTop, 1, group: 256, set)
+            add(.fluidScanAdd, count, set)
+        }
+    }
+
+    /// Every liquid back to its start: nothing poured, the clock at 0.
+    func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
+        let reset = pipelines[.fluidReset]
+        run(enc, systems.map { s in
+            [{ enc in
+                enc.setBuffer(s.state, offset: 0, index: 1)
+                enc.setComputePipelineState(reset)
+                self.dispatch(enc, reset, 1)
+            }]
+        })
+        clock = 0
     }
 
     /// One group: every liquid's start, pour and substeps, then the bodies' impulses applied. Leaves buffer 0 as it
     /// found it (the physics' parameters, which its kernels read there).
     func encodeGroup(_ enc: ComputePass, pipelines: Pipelines) {
-        for s in systems {
-            let p = s.system.params
-            // The most there can be by now: what the clock has poured (the GPU counts the same).
-            let active = FluidSystem.poured(p, clock: clock)
-            enc.setBuffer(s.params, offset: 0, index: 0)
-            enc.setBuffer(s.state, offset: 0, index: 1)
-            bindWorld(enc, s)
-            enc.setComputePipelineState(pipelines[.fluidBegin])
-            dispatch(enc, pipelines[.fluidBegin], 1)
-            enc.setBuffer(s.particles[0], offset: 0, index: 2)
-            enc.setBuffer(s.layer, offset: 0, index: 13)
-            enc.setComputePipelineState(pipelines[.fluidPour])
-            dispatch(enc, pipelines[.fluidPour], s.system.mostPouredInAGroup)
-            guard active > 0 else { continue }
-            for _ in 0..<Int(p.counts.y) {
-                if s.system.solver == .mpm { encodeMPM(enc, pipelines: pipelines, s, active) } else { encodePBF(enc, pipelines: pipelines, s, active) }
-            }
-        }
+        run(enc, systems.map { groupSteps($0, pipelines: pipelines) })
         clock += 1
-        guard let first = systems.first, bodyCount > 0 else { return }
-        enc.setComputePipelineState(pipelines[.fluidApply])
-        enc.setBuffer(first.params, offset: 0, index: 0)
-        enc.setBuffer(first.state, offset: 0, index: 1)
-        enc.setBuffer(drops, offset: 0, index: 2)
-        enc.setBuffer(world.params, offset: 0, index: 19)
-        enc.setBuffer(world.bodies, offset: 0, index: 20)
-        enc.setBuffer(impulses, offset: 0, index: 27)
-        dispatch(enc, pipelines[.fluidApply], bodyCount)
+        if let first = systems.first, bodyCount > 0 {
+            if concurrent { enc.memoryBarrier(scope: .buffers) }
+            enc.setComputePipelineState(pipelines[.fluidApply])
+            enc.setBuffer(first.params, offset: 0, index: 0)
+            enc.setBuffer(first.state, offset: 0, index: 1)
+            enc.setBuffer(drops, offset: 0, index: 2)
+            enc.setBuffer(world.params, offset: 0, index: 19)
+            enc.setBuffer(world.bodies, offset: 0, index: 20)
+            enc.setBuffer(impulses, offset: 0, index: 27)
+            dispatch(enc, pipelines[.fluidApply], bodyCount)
+        }
         enc.setBuffer(world.params, offset: 0, index: 0)
     }
 
-    /// An exclusive prefix sum of the system's cell counts into its starts (the total after them).
-    private func encodeScan(_ enc: ComputePass, pipelines: Pipelines, _ s: System) {
-        encodeScan(enc, pipelines: pipelines, s.counts!, into: s.starts!, partials: s.partials!, size: s.scanSize!,
-                   count: Int(s.system.params.dims.w))
-    }
-
-    /// An exclusive prefix sum of `count` uints in `input` into `output` (the total at `output[count]`).
-    private func encodeScan(_ enc: ComputePass, pipelines: Pipelines, _ input: MTLBuffer, into output: MTLBuffer, partials: MTLBuffer,
-                            size: MTLBuffer, count n: Int) {
-        let blocks = (n + 1023) / 1024
-        enc.setBuffer(size, offset: 0, index: 16)
-        enc.setBuffer(input, offset: 0, index: 8)
-        enc.setBuffer(output, offset: 0, index: 9)
-        enc.setBuffer(partials, offset: 0, index: 15)
-        let group = MTLSize(width: 256, height: 1, depth: 1)
-        enc.setComputePipelineState(pipelines[.fluidScanBlocks])
-        enc.dispatchThreadgroups(MTLSize(width: blocks, height: 1, depth: 1), threadsPerThreadgroup: group)
-        enc.setComputePipelineState(pipelines[.fluidScanTop])
-        enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: group)
-        enc.setComputePipelineState(pipelines[.fluidScanAdd])
-        dispatch(enc, pipelines[.fluidScanAdd], n)
-    }
-
-    private func encodePBF(_ enc: ComputePass, pipelines: Pipelines, _ s: System, _ active: Int) {
-        let cells = Int(s.system.params.dims.w)
-        enc.setBuffer(s.particles[0], offset: 0, index: 2)
-        enc.setBuffer(s.particles[1], offset: 0, index: 3)
-        enc.setBuffer(s.predicted[0], offset: 0, index: 4)
-        enc.setBuffer(s.predicted[1], offset: 0, index: 5)
-        enc.setBuffer(s.keys, offset: 0, index: 6)
-        enc.setBuffer(s.cells, offset: 0, index: 7)
-        enc.setBuffer(s.counts, offset: 0, index: 8)
-        enc.setBuffer(s.starts, offset: 0, index: 9)
-        enc.setBuffer(s.cursor, offset: 0, index: 10)
-        enc.setBuffer(s.order, offset: 0, index: 11)
-        enc.setBuffer(s.lambdas, offset: 0, index: 12)
-        enc.setComputePipelineState(pipelines[.fluidPredict])
-        dispatch(enc, pipelines[.fluidPredict], active)
-        enc.setComputePipelineState(pipelines[.fluidCellsClear])
-        dispatch(enc, pipelines[.fluidCellsClear], cells + 1)
-        enc.setComputePipelineState(pipelines[.fluidCellCount])
-        dispatch(enc, pipelines[.fluidCellCount], active)
-        encodeScan(enc, pipelines: pipelines, s)
-        enc.setBuffer(s.counts, offset: 0, index: 8)
-        enc.setComputePipelineState(pipelines[.fluidScatter])
-        dispatch(enc, pipelines[.fluidScatter], active)
-        enc.setComputePipelineState(pipelines[.fluidCellSort])
-        dispatch(enc, pipelines[.fluidCellSort], cells)
-        enc.setComputePipelineState(pipelines[.fluidReorder])
-        dispatch(enc, pipelines[.fluidReorder], active)
-        // The iterations, from the sorted predictions (buffer 1) back and forth.
-        var current = s.predicted[1], other = s.predicted[0]
-        for _ in 0..<Int(s.system.params.emission.w) {
-            enc.setBuffer(current, offset: 0, index: 4)
-            enc.setBuffer(other, offset: 0, index: 5)
-            enc.setComputePipelineState(pipelines[.fluidPbfLambda])
-            dispatch(enc, pipelines[.fluidPbfLambda], active)
-            enc.setComputePipelineState(pipelines[.fluidPbfDelta])
-            dispatch(enc, pipelines[.fluidPbfDelta], active)
-            swap(&current, &other)
+    /// Liquid `s`'s steps in a group: its start, its pour, its substeps.
+    private func groupSteps(_ s: System, pipelines: Pipelines) -> [Step] {
+        let p = s.system.params, pbf = s.system.solver == .pbf
+        // The most there can be by now: what the clock has poured (the GPU counts the same).
+        let active = FluidSystem.poured(p, clock: clock)
+        let world = world, impulses = impulses
+        var steps = Steps(pipelines: pipelines, bind: { enc in
+            enc.setBuffer(s.params, offset: 0, index: 0)
+            enc.setBuffer(s.state, offset: 0, index: 1)
+            enc.setBuffer(s.particles[0], offset: 0, index: 2)
+            enc.setBuffer(s.keys, offset: 0, index: 6)
+            enc.setBuffer(s.counts, offset: 0, index: 8)
+            enc.setBuffer(s.starts, offset: 0, index: 9)
+            enc.setBuffer(s.cursor, offset: 0, index: 10)
+            enc.setBuffer(s.order, offset: 0, index: 11)
+            enc.setBuffer(s.partials, offset: 0, index: 15)
+            enc.setBuffer(s.scanSize, offset: 0, index: 16)
+            if pbf {
+                enc.setBuffer(s.particles[1], offset: 0, index: 3)
+                enc.setBuffer(s.predicted[0], offset: 0, index: 4)
+                enc.setBuffer(s.predicted[1], offset: 0, index: 5)
+                enc.setBuffer(s.cells, offset: 0, index: 7)
+                enc.setBuffer(s.lambdas, offset: 0, index: 12)
+                enc.setBuffer(s.neighbours, offset: 0, index: 13)
+                enc.setBuffer(s.neighbourCounts, offset: 0, index: 17)
+            } else {
+                enc.setBuffer(s.grid, offset: 0, index: 14)
+            }
+            enc.setBuffer(world.params, offset: 0, index: 19)
+            enc.setBuffer(world.bodies, offset: 0, index: 20)
+            enc.setBuffer(world.statics, offset: 0, index: 21)
+            enc.setBuffer(world.staticBounds, offset: 0, index: 22)
+            enc.setBuffer(world.shapes, offset: 0, index: 23)
+            enc.setBuffer(world.samples, offset: 0, index: 24)
+            enc.setBuffer(world.sdfScene, offset: 0, index: 25)
+            enc.setBuffer(s.statics, offset: 0, index: 26)
+            enc.setBuffer(impulses, offset: 0, index: 27)
+        }, dispatch: dispatch)
+        steps.add(.fluidBegin, 1)
+        steps.add(.fluidPour, s.system.mostPouredInAGroup) { $0.setBuffer(s.layer, offset: 0, index: 13) }
+        guard active > 0 else { return steps.list }
+        // The particles sorted by the cell (PBF) or block (MPM) their key says, into `order`: counted, the counts'
+        // exclusive prefix sum (the starts), then scattered (in any order within one).
+        func sort() {
+            steps.add(.fluidCellsClear, s.bins + 1)
+            steps.add(.fluidCellCount, active)
+            steps.scan(s.bins)
+            steps.add(.fluidScatter, active)
         }
-        enc.setBuffer(current, offset: 0, index: 4)
-        enc.setComputePipelineState(pipelines[.fluidPbfVelocity])
-        dispatch(enc, pipelines[.fluidPbfVelocity], active)
-        enc.setComputePipelineState(pipelines[.fluidPbfVorticity])
-        dispatch(enc, pipelines[.fluidPbfVorticity], active)
-        enc.setComputePipelineState(pipelines[.fluidPbfViscosity])
-        dispatch(enc, pipelines[.fluidPbfViscosity], active)
-    }
-
-    private func encodeMPM(_ enc: ComputePass, pipelines: Pipelines, _ s: System, _ active: Int) {
-        let nodes = Int(s.system.params.dims.w)
-        enc.setBuffer(s.particles[0], offset: 0, index: 2)
-        enc.setBuffer(s.grid, offset: 0, index: 14)
-        enc.setComputePipelineState(pipelines[.fluidMpmClear])
-        dispatch(enc, pipelines[.fluidMpmClear], nodes)
-        enc.setComputePipelineState(pipelines[.fluidMpmP2G])
-        dispatch(enc, pipelines[.fluidMpmP2G], active)
-        enc.setComputePipelineState(pipelines[.fluidMpmGrid])
-        dispatch(enc, pipelines[.fluidMpmGrid], nodes)
-        enc.setComputePipelineState(pipelines[.fluidMpmG2P])
-        dispatch(enc, pipelines[.fluidMpmG2P], active)
+        let nodes = Int(p.dims.w)
+        for _ in 0..<Int(p.counts.y) {
+            if !pbf {
+                steps.add(.fluidMpmClear, nodes)
+                steps.add(.fluidMpmKeys, active)
+                sort()
+                steps.add(.fluidMpmP2G, s.bins, group: 64)
+                steps.add(.fluidMpmGrid, nodes)
+                steps.add(.fluidMpmG2P, active)
+                continue
+            }
+            steps.add(.fluidPredict, active)
+            sort()
+            steps.add(.fluidCellSort, nodes)
+            steps.add(.fluidReorder, active)
+            // The neighbours, then the iterations, from the sorted predictions (buffer 1) back and forth.
+            steps.add(.fluidPbfNeighbours, active) { $0.setBuffer(s.predicted[1], offset: 0, index: 4) }
+            var current = 1
+            for _ in 0..<Int(p.emission.w) {
+                let from = s.predicted[current], to = s.predicted[1 - current]
+                let set: Step = { enc in
+                    enc.setBuffer(from, offset: 0, index: 4)
+                    enc.setBuffer(to, offset: 0, index: 5)
+                }
+                steps.add(.fluidPbfLambda, active, set)
+                steps.add(.fluidPbfDelta, active, set)
+                current = 1 - current
+            }
+            let last = s.predicted[current]
+            steps.add(.fluidPbfVelocity, active) { $0.setBuffer(last, offset: 0, index: 4) }
+            steps.add(.fluidPbfVorticity, active)
+            steps.add(.fluidPbfViscosity, active)
+        }
+        return steps.list
     }
 
     // MARK: - The surfaces
 
     /// Every liquid's surface from where its particles are now, into the scene's vertex and index buffers (FluidSurface.swift).
     func encodeSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {
-        for s in systems where s.system.surface.mesh.w > 0 {
-            let nodes = Int(s.system.surface.dims.w), active = max(FluidSystem.poured(s.system.params, clock: clock), 1)
+        run(enc, systems.filter { $0.system.surface.mesh.w > 0 }.map {
+            surfaceSteps($0, pipelines: pipelines, positions: positions, normals: normals, indices: indices)
+        })
+    }
+
+    private func surfaceSteps(_ s: System, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) -> [Step] {
+        let nodes = Int(s.system.surface.dims.w), active = max(FluidSystem.poured(s.system.params, clock: clock), 1)
+        var steps = Steps(pipelines: pipelines, bind: { enc in
             enc.setBuffer(s.surface, offset: 0, index: 0)
             enc.setBuffer(s.state, offset: 0, index: 1)
             enc.setBuffer(s.density, offset: 0, index: 2)
-            enc.setBuffer(s.particles[0], offset: 0, index: 4)
-            enc.setComputePipelineState(pipelines[.fluidSurfaceClear])
-            dispatch(enc, pipelines[.fluidSurfaceClear], nodes)
-            enc.setComputePipelineState(pipelines[.fluidSurfaceSplat])
-            dispatch(enc, pipelines[.fluidSurfaceSplat], active)
-            // The blur: x from the splat into field 0, y into field 1, z back into field 0.
-            enc.setComputePipelineState(pipelines[.fluidSurfaceBlur])
-            for (axis, from, to) in [(0, 1, 0), (1, 0, 1), (2, 1, 0)] {
-                var pass = SIMD4<UInt32>(UInt32(axis), axis == 0 ? 1 : 0, 0, 0)
-                enc.setBuffer(s.field[from], offset: 0, index: 3)
-                enc.setBuffer(s.field[to], offset: 0, index: 5)
-                enc.setBytes(&pass, length: 16, index: 6)
-                dispatch(enc, pipelines[.fluidSurfaceBlur], nodes)
-            }
             enc.setBuffer(s.field[0], offset: 0, index: 3)
+            enc.setBuffer(s.particles[0], offset: 0, index: 4)
             enc.setBuffer(s.vertexCounts, offset: 0, index: 7)
             enc.setBuffer(s.quadCounts, offset: 0, index: 8)
-            enc.setComputePipelineState(pipelines[.fluidSurfaceCount])
-            dispatch(enc, pipelines[.fluidSurfaceCount], nodes)
-            encodeScan(enc, pipelines: pipelines, s.vertexCounts, into: s.vertexAt, partials: s.surfacePartials, size: s.surfaceSize, count: nodes)
-            encodeScan(enc, pipelines: pipelines, s.quadCounts, into: s.quadAt, partials: s.surfacePartials, size: s.surfaceSize, count: nodes)
-            enc.setBuffer(s.surface, offset: 0, index: 0)
-            enc.setBuffer(s.field[0], offset: 0, index: 3)
             enc.setBuffer(s.vertexAt, offset: 0, index: 9)
             enc.setBuffer(positions, offset: 0, index: 10)
             enc.setBuffer(normals, offset: 0, index: 11)
             enc.setBuffer(s.quadAt, offset: 0, index: 12)
             enc.setBuffer(indices, offset: 0, index: 13)
             enc.setBuffer(s.stats, offset: 0, index: 14)
-            enc.setComputePipelineState(pipelines[.fluidSurfaceVertex])
-            dispatch(enc, pipelines[.fluidSurfaceVertex], nodes)
-            enc.setComputePipelineState(pipelines[.fluidSurfaceQuad])
-            dispatch(enc, pipelines[.fluidSurfaceQuad], nodes)
-            enc.setComputePipelineState(pipelines[.fluidSurfaceTail])
-            dispatch(enc, pipelines[.fluidSurfaceTail], Int(s.system.surface.triangles.x))
+            enc.setBuffer(s.surfacePartials, offset: 0, index: 15)
+            enc.setBuffer(s.surfaceSize, offset: 0, index: 16)
+        }, dispatch: dispatch)
+        steps.add(.fluidSurfaceClear, nodes)
+        steps.add(.fluidSurfaceSplat, active)
+        // The blur: x from the splat into field 0, y into field 1, z back into field 0.
+        for (axis, from, to) in [(0, 1, 0), (1, 0, 1), (2, 1, 0)] {
+            let a = s.field[from], b = s.field[to]
+            steps.add(.fluidSurfaceBlur, nodes) { enc in
+                var pass = SIMD4<UInt32>(UInt32(axis), axis == 0 ? 1 : 0, 0, 0)
+                enc.setBuffer(a, offset: 0, index: 3)
+                enc.setBuffer(b, offset: 0, index: 5)
+                enc.setBytes(&pass, length: 16, index: 6)
+            }
         }
+        steps.add(.fluidSurfaceCount, nodes)
+        // Where each cell's vertex and each node's quads go: the scans of their counts (sharing the block totals).
+        steps.scan(nodes) { $0.setBuffer(s.vertexCounts, offset: 0, index: 8) }
+        steps.scan(nodes) { enc in
+            enc.setBuffer(s.quadCounts, offset: 0, index: 8)
+            enc.setBuffer(s.quadAt, offset: 0, index: 9)
+        }
+        steps.add(.fluidSurfaceVertex, nodes)
+        steps.add(.fluidSurfaceQuad, nodes)
+        steps.add(.fluidSurfaceTail, Int(s.system.surface.triangles.x))
+        return steps.list
     }
 
     /// Per liquid (as its last frames left it): particles poured, how high they are (median, top), how fast, its surface.

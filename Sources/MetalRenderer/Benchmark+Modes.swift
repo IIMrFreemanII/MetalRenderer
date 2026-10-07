@@ -1077,8 +1077,8 @@ extension Benchmark {
 
     /// The fluids scene (Scene+Fluids.swift) at the physics look: paused at 2, 4 and 6 s (the boxes dropped at 4 and
     /// 5 s), at 6 s on each API, each liquid alone, all by one solver, in its normals and albedo, and path traced (the
-    /// reference: refraction and absorption as they are); then the first 5 s moving for timing at a few particle
-    /// counts on the GPU, and small on the CPU.
+    /// reference: refraction and absorption as they are); then 5 s moving for timing: the first on the GPU, from 12 s
+    /// (the pours longer) at a few particle counts a liquid, and the first small on the CPU.
     private static func fluids() -> [Config] {
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) { $0.usePhysicsLook() }
         var out: [Config] = []
@@ -1092,8 +1092,11 @@ extension Benchmark {
         out.append(base.named("normals").view(3).still(at: 6))
         out.append(base.named("albedo").view(4).still(at: 6))
         out.append(base.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 6).frames(256))
+        out.append(base.named("gpu moving").with { $0.scene.physics.backend = .gpu })
         for particles in [16384, 32768, 65536] {
-            out.append(base.named("gpu \(particles / 1024)k moving").with { $0.scene.physics.fluidParticles = particles; $0.scene.physics.backend = .gpu })
+            var c = base.named("gpu \(particles / 1024)k moving").with { $0.scene.physics.fluidParticles = particles; $0.scene.physics.backend = .gpu }
+            c.startTime = 12   // by then the pours have filled 16k a liquid (the warm-up catches up 19 steps a frame)
+            out.append(c)
         }
         out.append(base.named("cpu 2k moving").with { $0.scene.physics.fluidParticles = 2048; $0.scene.physics.backend = .cpu })
         return out
@@ -1102,7 +1105,7 @@ extension Benchmark {
     /// The fluids scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens
     /// but no depth of field (`recording`; `.claude/skills/offscreen/scripts/video.sh -m fluidsdemo` makes the mp4). Wide
     /// as the three start pouring, down to the water as it runs off the steps, along to the blood and the honey as the
-    /// boxes drop in, low across the basins as they float and sink, and back out. The clock starts at -1 s.
+    /// boxes drop in, across the basins from the right as they float and sink, and back out. The clock starts at -1 s.
     private static func fluidsDemo() -> [Config] {
         func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
             CameraTrack.Key(time: time, position: position, target: target)
@@ -1112,7 +1115,7 @@ extension Benchmark {
             key(4, [-0.9, 0.75, 0.55], [-0.64, 0.15, -0.5]),
             key(8, [0.1, 0.65, 0.6], [0.1, 0.1, -0.35]),
             key(12, [0.95, 0.55, 0.45], [0.55, 0.1, -0.3]),
-            key(16, [1.6, 0.35, -0.2], [0, 0.05, -0.25]),
+            key(16, [1.45, 0.62, 0.25], [0.05, 0.05, -0.45]),
             key(20, [0, 1.25, 1.05], [0, 0.15, -0.45]),
         ])
         var demo = Config("fluids demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) {
