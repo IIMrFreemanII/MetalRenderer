@@ -1,17 +1,17 @@
 # Graph Report - graphify-update-4183f9  (2026-10-07)
 
 ## Corpus Check
-- 207 files · ~1,199,881 words
+- 207 files · ~1,200,291 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 28 file(s) not represented in the graph (top: .fbx 12, .glb 11, (none) 4)
 
 ## Summary
-- 6099 nodes · 18557 edges · 224 communities (205 shown, 19 thin omitted)
-- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 2794 edges (avg confidence: 0.84)
+- 6099 nodes · 18558 edges · 226 communities (206 shown, 20 thin omitted)
+- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 2795 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `fd5a4de7`
+- Built from commit: `0a97ec96`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -52,7 +52,7 @@
 - restirTemporalKernel
 - restirGIInitialKernel
 - RadianceCascades
-- GPUTypes.swift
+- PhysicsWorld
 - 3D Scene Composition
 - SectionFile
 - Physics.metal
@@ -118,7 +118,7 @@
 - Footprint
 - float3
 - ClusterBox
-- PhysicsWorld
+- SoftModel
 - uint4
 - Building
 - SurfaceMaterial
@@ -183,7 +183,7 @@
 - related.sh
 - .used
 - RTVoxels
-- FleshFigure
+- SkinShell
 - VGParams
 - LumenRadiosityParams
 - Float
@@ -217,6 +217,8 @@
 - SDFBox
 - LumenSDFHit
 - .meshes
+- RagdollTests
+- .transmittance
 - PhysicsGrab
 - PhysPush
 - Shape
@@ -239,7 +241,7 @@
 - .end
 - AABB
 - LightMotion
-- Side
+- FleshFigure
 
 ## God Nodes (most connected - your core abstractions)
 1. `SIMD3` - 379 edges
@@ -285,7 +287,7 @@
 - **Stress Test Rendering Pipeline** — tools_eval_refs_stress_ref_direct_32_direct_rendering, tools_eval_refs_stress_ref_direct_32_3d_objects, tools_eval_refs_stress_ref_direct_32_lighting [INFERRED 0.85]
 - **Global Illumination Rendering Components** — tools_eval_refs_gi_ref8_0_5x_geometric_primitives, tools_eval_refs_gi_ref8_0_5x_material_surfaces, tools_eval_refs_gi_ref8_0_5x_light_source [INFERRED 0.85]
 
-## Communities (224 total, 19 thin omitted)
+## Communities (226 total, 20 thin omitted)
 
 ### Community 0 - "Scene"
 Cohesion: 0.05
@@ -312,8 +314,8 @@ Cohesion: 0.10
 Nodes (49): 3. Occupancy and registers: the default suspect for big kernels, hairFresnel(), hairFromGBuffer(), hairI0(), hairLightDirection(), hairLogI0(), hairLogistic(), hairLogisticCDF() (+41 more)
 
 ### Community 6 - ".part"
-Cohesion: 0.17
-Nodes (15): simd_quatd, FBXError, .description, CharacterImporter, concurrently(), Mapping, controlPoint, polygonVertex (+7 more)
+Cohesion: 0.15
+Nodes (18): simd_double4x4, simd_quatd, FBXError, .description, CharacterImporter, concurrently(), Mapping, controlPoint (+10 more)
 
 ### Community 7 - ".simplify"
 Cohesion: 0.31
@@ -392,8 +394,8 @@ Cohesion: 0.09
 Nodes (58): diskNeighbour(), equalAreaOctDecode(), equalAreaOctEncode(), evalLightSample(), giLightIllum(), lastFramePixel(), LightCandidate, element (+50 more)
 
 ### Community 26 - "SkinnedCharacter"
-Cohesion: 0.12
-Nodes (18): simd_double4x4, GPUJoint, .parent, Clip, .duration, .loopKeys, Level, .triangleCount (+10 more)
+Cohesion: 0.13
+Nodes (15): GPUJoint, .parent, Clip, .duration, .loopKeys, Level, .triangleCount, SkinnedCharacter (+7 more)
 
 ### Community 27 - "geometryDebugKernel"
 Cohesion: 0.21
@@ -431,9 +433,9 @@ Nodes (45): emptyGIReservoir(), giGeometry(), giLobe(), GIReceiver, depth, n, ng
 Cohesion: 0.19
 Nodes (11): Cascade, RadianceCascades, RCParams, RCPipelines, Float, MTLBuffer, MTLComputePipelineState, MTLDevice (+3 more)
 
-### Community 36 - "GPUTypes.swift"
-Cohesion: 0.12
-Nodes (27): simd_float4x4, GPUFleshFibre, GPUFleshPin, GPUInstanceData, GPUJointMatrix, GPUMegaLightsParams, GPUPathTraceParams, GPUPhysicsConstraint (+19 more)
+### Community 36 - "PhysicsWorld"
+Cohesion: 0.06
+Nodes (52): simd_float4x4, GPUFleshFibre, GPUFleshPin, GPUHairGroup, GPUHairParams, GPUHairStrand, GPUInstanceData, GPUJointMatrix (+44 more)
 
 ### Community 37 - "3D Scene Composition"
 Cohesion: 0.27
@@ -504,8 +506,8 @@ Cohesion: 0.29
 Nodes (7): Box Geometric Primitive, Cube Geometric Primitive, Global Illumination and Reflections, Colored Materials, 3D Geometric Test Scene, Sphere Geometric Primitive, Ray Tracing Stress Test Reference
 
 ### Community 54 - ".xyz"
-Cohesion: 0.08
-Nodes (15): GPUPhysicsBody, GPUPhysicsContact, GPUPhysicsJoint, GPUPhysicsParams, PhysicsJoint, Float, SIMD8, Void (+7 more)
+Cohesion: 0.14
+Nodes (7): GPUPhysicsBody, GPUPhysicsContact, GPUPhysicsParams, Float, SIMD8, Void, .bodies
 
 ### Community 55 - "Color Bleeding from Walls to Objects"
 Cohesion: 0.40
@@ -524,8 +526,8 @@ Cohesion: 0.50
 Nodes (5): 3D Graphics Rendering Benchmark, Color Variation for Visual Distinction, Geometric Primitives Rendering Test, Object Density and Spatial Distribution, Stress Test Visualization - Geometric Primitives
 
 ### Community 59 - "MuscleAtlas"
-Cohesion: 0.08
-Nodes (37): BodyMarks, BodySurface, .bounds, Mark, Muscle, MuscleAtlas, Place, trunk (+29 more)
+Cohesion: 0.07
+Nodes (41): BodyMarks, BodySurface, .bounds, Mark, Muscle, MuscleAtlas, Place, trunk (+33 more)
 
 ### Community 60 - "FogParams"
 Cohesion: 0.15
@@ -656,12 +658,12 @@ Cohesion: 0.05
 Nodes (56): CrowdJoint, inverseBindRotation, inverseBindTranslation, local, crowdPoseKernel(), CrowdPoseParams, firstSlot, jointBase (+48 more)
 
 ### Community 97 - ".length"
-Cohesion: 0.13
-Nodes (10): GPUPhysicsGrab, Cloth, Set, .length, PhysicsTests, Float, MTLCommandQueue, MTLDevice (+2 more)
+Cohesion: 0.14
+Nodes (8): GPUPhysicsGrab, .length, PhysicsTests, Float, MTLCommandQueue, MTLDevice, SDFShape, Void
 
 ### Community 98 - "MuscleTests"
-Cohesion: 0.10
-Nodes (10): GPUFleshHeader, UInt32, UInt32, Group, MTLDevice, UInt32, MuscleTests, Float (+2 more)
+Cohesion: 0.17
+Nodes (4): MuscleTests, Float, MTLCommandQueue, MTLDevice
 
 ### Community 99 - "Footprint"
 Cohesion: 0.15
@@ -675,9 +677,9 @@ Nodes (37): float3, thread, physAdd(), physAddFound(), physAgree(), physArea(), 
 Cohesion: 0.14
 Nodes (14): BVHNode, hi0, hi1, lo0, lo1, ClusterBox, index, mask (+6 more)
 
-### Community 102 - "PhysicsWorld"
-Cohesion: 0.06
-Nodes (39): ArraySlice, GPUMuscle, GPUPhysicsParticle, GPUPhysicsTet, GPUSoftVertex, PhysicsWorld, .buckets, .cellSize (+31 more)
+### Community 102 - "SoftModel"
+Cohesion: 0.11
+Nodes (18): ArraySlice, NearCache, SoftModel, .near, .radius, Float, float4x4, MeshGeometry (+10 more)
 
 ### Community 103 - "uint4"
 Cohesion: 0.04
@@ -804,7 +806,7 @@ Cohesion: 0.14
 Nodes (8): MTL4RenderCommandEncoder, RenderPass4, MTLAccelerationStructure, MTLAllocation, MTLBuffer, MTLDepthStencilState, MTLRenderPipelineState, UnsafeRawPointer
 
 ### Community 140 - "HairTests"
-Cohesion: 0.23
+Cohesion: 0.18
 Nodes (5): HairTests, Float, MTLCommandQueue, MTLDevice, Void
 
 ### Community 141 - "Map"
@@ -907,9 +909,9 @@ Nodes (3): add(), related.sh script, usage()
 Cohesion: 0.29
 Nodes (7): uint3, uint4, RTVoxels, dims, lo, offsets, voxelDims()
 
-### Community 167 - "FleshFigure"
-Cohesion: 0.11
-Nodes (16): .cells, Axis, along, front, up, Bone, FleshFigure, Float (+8 more)
+### Community 167 - "SkinShell"
+Cohesion: 0.29
+Nodes (7): .cells, SkinOptions, SkinShell, Float, MeshGeometry, SIMD2, UInt32
 
 ### Community 168 - "VGParams"
 Cohesion: 0.08
@@ -920,8 +922,8 @@ Cohesion: 0.22
 Nodes (9): LumenRadiosityParams, cardInstances, frame, levels, on, pad0, pad1, pad2 (+1 more)
 
 ### Community 170 - "Float"
-Cohesion: 0.15
-Nodes (8): PhysicsJoint, PhysicsJointKind, ball, hinge, Float, float4x4, SDFShape, UnsafeBufferPointer
+Cohesion: 0.10
+Nodes (14): GPUFleshHeader, PhysicsJoint, PhysicsJointKind, ball, hinge, Float, float4x4, SDFShape (+6 more)
 
 ### Community 171 - ".points"
 Cohesion: 0.46
@@ -976,8 +978,8 @@ Cohesion: 0.15
 Nodes (13): VSMParams, budget, entries, flags, frame, instanceCount, keep, maxDraws (+5 more)
 
 ### Community 186 - "SIMD3"
-Cohesion: 0.06
-Nodes (34): Atmosphere, Float, GPUHairGroup, GPUHairParams, GPUHairStrand, GPUHairVertex, GPUPhysicsShape, GPURasterMesh (+26 more)
+Cohesion: 0.07
+Nodes (29): GPUHairVertex, GPUPhysicsShape, GPURasterMesh, PhysicsCandidate, .middle, PhysicsManifold, PhysicsMath, PhysicsShapeKind (+21 more)
 
 ### Community 187 - "RasterParams"
 Cohesion: 0.17
@@ -1034,6 +1036,10 @@ Nodes (7): LumenSDFHit, hit, id, local, normal, position, t
 ### Community 200 - ".meshes"
 Cohesion: 0.12
 Nodes (7): GLTFModel, .bounds, .triangleCount, GPUMesh, UInt64, MeshGeometry, URL
+
+### Community 201 - "RagdollTests"
+Cohesion: 0.15
+Nodes (8): GPUPhysicsJoint, PhysicsJoint, RagdollTests, Float, MTLCommandQueue, MTLDevice, PhysicsJoint, Void
 
 ### Community 204 - "PhysicsGrab"
 Cohesion: 0.29
@@ -1103,19 +1109,19 @@ Nodes (25): AABB, .area, .centroid, .isEmpty, SDFVolume, Assembly, Bone, Borrowe
 Cohesion: 0.50
 Nodes (4): LightMotion, animated, constant, scaleOnly
 
-### Community 227 - "Side"
-Cohesion: 0.50
-Nodes (4): Side, back, front, out
+### Community 227 - "FleshFigure"
+Cohesion: 0.21
+Nodes (10): MuscleSpec, Side, back, front, out, Bone, FleshFigure, Float (+2 more)
 
 ## Knowledge Gaps
 - **1395 isolated node(s):** `PackageDescription`, `.isEmpty`, `.centroid`, `.area`, `built` (+1390 more)
   These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1910 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **19 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **20 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Int` connect `Int` to `Scene`, `GLTFLoader`, `Equatable`, `.part`, `.simplify`, `DebugPanel`, `RenderSettings`, `FramePlan`, `GPUProfiler`, `Metal4Frame`, `translate`, `SDFVolume`, `LightTable`, `TextureStreamWork`, `VirtualGeometry`, `SkinnedCharacter`, `Kernel`, `SettingsPanel`, `Renderer`, `DebugInfo`, `RadianceCascades`, `SectionFile`, `Mesh`, `SettingsTable.swift`, `VSMTargets`, `SceneBuffers`, `LumenScene`, `Crowd`, `FBXFile`, `RendererController`, `SceneKind`, `.xyz`, `MuscleAtlas`, `.build`, `VirtualTracing`, `CityPlan`, `VirtualBLAS`, `RenderPass`, `VoxelGrids`, `BVHBuilder`, `Double`, `Float`, `FoliageTextures`, `SurfaceKind`, `Upscaler`, `Int32`, `.length`, `MuscleTests`, `Footprint`, `PhysicsWorld`, `Building`, `EnvVariable`, `Species`, `.write`, `WorldTile`, `BuildingAssembler`, `SplitMix64`, `KernelVariants`, `Foliage`, `.commit`, `PlantTracing`, `CityTests`, `SDFShape`, `Slot`, `RasterClusters`, `StressSceneTests`, `Benchmark`, `TextureStreamer`, `RenderPass4`, `HairTests`, `VGStreamer`, `String`, `.buildStress`, `Pipelines`, `LightKind`, `Phyllotaxis`, `VirtualMesh`, `.used`, `FleshFigure`, `Float`, `.points`, `Camera`, `LumenGlobalSDF`, `SceneSettings`, `FoliageRuntimeTests`, `SIMD3`, `SDFBuffers`, `Buffer`, `.addHair`, `.meshes`, `Bool`, `.rasterResources`, `AABB`?**
+- **Why does `Int` connect `Int` to `Scene`, `GLTFLoader`, `Equatable`, `.part`, `.simplify`, `DebugPanel`, `RenderSettings`, `FramePlan`, `GPUProfiler`, `Metal4Frame`, `translate`, `SDFVolume`, `LightTable`, `TextureStreamWork`, `VirtualGeometry`, `SkinnedCharacter`, `Kernel`, `SettingsPanel`, `Renderer`, `DebugInfo`, `RadianceCascades`, `PhysicsWorld`, `SectionFile`, `Mesh`, `SettingsTable.swift`, `VSMTargets`, `SceneBuffers`, `LumenScene`, `Crowd`, `FBXFile`, `RendererController`, `SceneKind`, `.xyz`, `MuscleAtlas`, `.build`, `VirtualTracing`, `CityPlan`, `VirtualBLAS`, `RenderPass`, `VoxelGrids`, `BVHBuilder`, `Double`, `Float`, `FoliageTextures`, `SurfaceKind`, `Upscaler`, `Int32`, `.length`, `MuscleTests`, `Footprint`, `SoftModel`, `Building`, `EnvVariable`, `Species`, `.write`, `WorldTile`, `BuildingAssembler`, `SplitMix64`, `KernelVariants`, `Foliage`, `.commit`, `PlantTracing`, `CityTests`, `SDFShape`, `Slot`, `RasterClusters`, `StressSceneTests`, `Benchmark`, `TextureStreamer`, `RenderPass4`, `HairTests`, `VGStreamer`, `String`, `.buildStress`, `Pipelines`, `LightKind`, `Phyllotaxis`, `VirtualMesh`, `.used`, `SkinShell`, `Float`, `.points`, `Camera`, `LumenGlobalSDF`, `SceneSettings`, `FoliageRuntimeTests`, `SIMD3`, `SDFBuffers`, `Buffer`, `.addHair`, `.meshes`, `RagdollTests`, `.transmittance`, `Bool`, `.rasterResources`, `AABB`, `FleshFigure`?**
   _High betweenness centrality (0.345) - this node is a cross-community bridge._
 - **Why does `Pipelines: `Pipelines.swift`` connect `.compile` to `reflectionKernel`, `restirGIInitialKernel`, `traceKernel`, `RenderSettings`, `Map`, `KernelVariants`, `Kernel`, `Pipelines`?**
   _High betweenness centrality (0.141) - this node is a cross-community bridge._

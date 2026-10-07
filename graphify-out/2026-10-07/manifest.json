@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791380330.8016455,
-    "seen": 1791380342.245894,
-    "ast_hash": "d929e90de2d886a494996589bf6e6dd8",
+    "mtime": 1791383136.958725,
+    "seen": 1791383168.1572092,
+    "ast_hash": "43862f0ee0a8e94f25bf83e22c50b805",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791380329.3952746,
-    "seen": 1791380342.245714,
-    "ast_hash": "7cd8c968087389a5d3493027422db441",
+    "mtime": 1791382991.244285,
+    "seen": 1791383168.157022,
+    "ast_hash": "36f79e64d71095d958929010694f43e2",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -1356,9 +1356,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsRig.swift": {
-    "mtime": 1791323433.3171768,
-    "seen": 1791379999.7948139,
-    "ast_hash": "046313340d76f106e7fb9a29797b8cd2",
+    "mtime": 1791382589.0348837,
+    "seen": 1791383168.157067,
+    "ast_hash": "00887c2c4056f6c0b20c2561d09487c1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsSkin.swift": {
@@ -1368,15 +1368,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Muscles.swift": {
-    "mtime": 1791380329.398312,
-    "seen": 1791380342.245779,
-    "ast_hash": "21e3496025cbe3cefda9bf4bf3f818c4",
+    "mtime": 1791382605.6816237,
+    "seen": 1791383168.157088,
+    "ast_hash": "6f320b303846f83e3023100f3ddc2e20",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MuscleTests.swift": {
-    "mtime": 1791380329.4055228,
-    "seen": 1791380342.245853,
-    "ast_hash": "2445cd32794719d859b40d8da6ee2b43",
+    "mtime": 1791382976.2712321,
+    "seen": 1791383168.157166,
+    "ast_hash": "2b86a996ccdf4dd5318b2779100206a2",
     "semantic_hash": ""
   },
   "muscles-demo-1280.mp4": {
@@ -1386,15 +1386,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MuscleAtlas.swift": {
-    "mtime": 1791380329.3965492,
-    "seen": 1791380342.24575,
-    "ast_hash": "7a9c456a5c0e2d0946ce4b6dca5ae897",
+    "mtime": 1791381117.563419,
+    "seen": 1791381397.504129,
+    "ast_hash": "24905386bf4c5327ac303b921a40f57c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SkeletonAtlas.swift": {
-    "mtime": 1791380329.4042985,
-    "seen": 1791380342.245824,
-    "ast_hash": "adad8e766757dd8b428073ae3c6034c4",
+    "mtime": 1791380961.9704082,
+    "seen": 1791381397.504205,
+    "ast_hash": "051e2859693471ff98468122e38ca493",
     "semantic_hash": ""
   }
 }
