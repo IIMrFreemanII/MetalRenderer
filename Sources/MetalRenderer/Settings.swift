@@ -859,9 +859,9 @@ struct FoliageSettings: Equatable, Codable {
     /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
     var lod: Float = 2
     /// How far from the camera the plants' limbs move in the wind, in metres (0 = everywhere). Farther plants still lean
-    /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 40 m the moving forest is
-    /// 10-13% faster (M1 Max); from above, where every crown is farther, only whole trees lean.
-    var swayReach: Float = 40
+    /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 20 m the moving forest is
+    /// 7-16% faster than with every limb moving (M1 Max, Metal 3); from above, where every crown is farther, only whole trees lean.
+    var swayReach: Float = 20
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
     var season: Float = 0.3
     /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
