@@ -128,16 +128,21 @@ final class PlantTracing {
     /// The leaf cards' alpha layers, one after the other (Scene.cutouts), for the ray queries' alpha test.
     let cutouts: MTLBuffer
     let hasCards: Bool
-    /// Per set: the wind strength its parts were last posed for (0 = at rest), and the variants its plants name (the
-    /// ones its frames refit).
-    private var posed: [Float]
+    /// Per set: what its parts were last posed for (WindFrame.poseKey; a still wind's at rest), and the variants its
+    /// plants name (the ones its frames refit).
+    private var posed: [SIMD8<Float>]
     private var used: [[Int]]
     /// Far plants as their voxels (SceneSettings.voxelBoxes, a scene that moves): the assemblies' grids, whose boxes
     /// a far plant's instance names at its level instead of its variant (as VoxelLOD does a still scene's baked plants).
     var voxels: VoxelGrids?
-    /// Per set: what each plant's descriptor names (its variant, or -1 - its voxel level's box), to tell when another
-    /// structure is named: the top-level structure is then built again, not refitted.
+    /// Per set: what each plant's descriptor names (its variant, variantCount + its rest variant, or -1 - its voxel
+    /// level's box), to tell when another structure is named: the top-level structure is then built again, not refitted.
     private var chosen: [[Int32]]
+    /// A scene that moves: per assembly and share kept, a variant at rest, built once and never posed or refitted,
+    /// which a plant beyond the wind's `sway` reach names (it still leans as a whole: its instance's transform). Per
+    /// assembly, its first.
+    private(set) var rest: [MTLAccelerationStructure] = []
+    private var restBase: [Int] = []
 
     /// `meshStructures`: each mesh's (SceneBuffers.primitives); `positions` and `indices`: the scene's arrays, which the
     /// leafy meshes' prefixes are built over. `sets`: 1 for a still scene, else the frame slots.
@@ -231,6 +236,8 @@ final class PlantTracing {
             enc.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
+            // They never change: compacted, before any descriptor names them.
+            built = try SceneBuffers.copyAndCompact(built, device: device, queue: queue)
         }
         guard built.count == jobs.count, let pad = built.last else { throw RendererError.resourceCreation("the plants' structures") }
         for (k, job) in jobs.enumerated().dropLast() { prefixes[job.key] = built[k] }
@@ -343,7 +350,7 @@ final class PlantTracing {
         }
         scratch = try buffer(refitBytes, "plantScratch", shared: false)
         scratchOffsets = refitOffsets
-        posed = [Float](repeating: 0, count: setCount)
+        posed = [SIMD8<Float>](repeating: WindFrame().poseKey, count: setCount)
         used = [[Int]](repeating: Array(0..<variantCount), count: setCount)
         chosen = [[Int32]](repeating: [], count: setCount)
         for set in sets.indices {
@@ -359,9 +366,49 @@ final class PlantTracing {
             cmd.commit()
             cmd.waitUntilCompleted()
         }
+        // A still scene's one set is never refitted: compacted (the open world's plants name it).
+        if setCount == 1 {
+            sets[0] = try SceneBuffers.copyAndCompact(sets[0], device: device, queue: queue)
+        }
+        if setCount > 1 { try buildRest(device: device, queue: queue) }
         print(String(format: "Plants: %d assemblies, %d parts, %d variants (%d structures), %.1f MB of variants",
                      scene.assemblies.count, records.count, variantCount, variantCount * sets.count,
-                     Double(sets.joined().reduce(0) { $0 + $1.size } + descriptorBuffers.reduce(0) { $0 + $1.length }) / 1_048_576))
+                     Double(sets.joined().reduce(0) { $0 + $1.size } + rest.reduce(0) { $0 + $1.size }
+                            + descriptorBuffers.reduce(0) { $0 + $1.length }) / 1_048_576))
+    }
+
+    /// The variants at rest (`rest`), from the first set's descriptors while they are still at rest: each share kept's
+    /// phase 0 (the phases differ only once posed).
+    private func buildRest(device: MTLDevice, queue: MTLCommandQueue) throws {
+        var made: [MTLInstanceAccelerationStructureDescriptor] = [], sizes: [MTLAccelerationStructureSizes] = []
+        for a in variantBase.indices {
+            restBase.append(made.count)
+            for k in 0..<keeps[a] {
+                let d = variantDescriptors[0][variantBase[a] + k * Wind.phases].copy() as! MTLInstanceAccelerationStructureDescriptor
+                d.usage = []
+                made.append(d)
+                sizes.append(device.accelerationStructureSizes(descriptor: d))
+            }
+        }
+        var offsets: [Int] = [], scratchBytes = 0
+        for s in sizes { offsets.append(scratchBytes); scratchBytes += (s.buildScratchBufferSize + 255) & ~255 }
+        guard let scratch = device.makeBuffer(length: max(scratchBytes, 16), options: .storageModePrivate),
+              let cmd = queue.makeCommandBuffer(), let enc = cmd.makeAccelerationStructureCommandEncoder() else {
+            throw RendererError.resourceCreation("the plants' variants at rest")
+        }
+        enc.useResources(blases, usage: .read)
+        for (k, d) in made.enumerated() {
+            guard let accel = device.makeAccelerationStructure(size: sizes[k].accelerationStructureSize) else {
+                throw RendererError.resourceCreation("acceleration structure (a plant's variant at rest)")
+            }
+            accel.label = "plantRest"
+            enc.build(accelerationStructure: accel, descriptor: d, scratchBuffer: scratch, scratchBufferOffset: offsets[k])
+            rest.append(accel)
+        }
+        enc.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        rest = try SceneBuffers.copyAndCompact(rest, device: device, queue: queue)
     }
 
     /// The set a frame slot traces: its own, or the one of a still scene.
@@ -389,6 +436,9 @@ final class PlantTracing {
         let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
         let camera = view.map { SIMD3($0.x, $0.y, $0.z) }
         let instances = scene.instances, meshes = scene.meshes, variants = sets[set], options = instanceOptions
+        // Beyond the sway's reach (in the wind, in a scene with variants at rest), a plant's limbs stand still.
+        let reach = wind.wind.z > 0 && !rest.isEmpty ? wind.sway.w : 0, near = SIMD3(wind.sway.x, wind.sway.y, wind.sway.z)
+        let variantTotal = Int32(variantCount)
         // What each instance's descriptor names (its variant, -1 - a voxel level, or none), in parts side by side: a
         // forest's thousands of plants every frame the wind blows.
         var choice = [Int32](repeating: .max, count: instances.count)
@@ -414,6 +464,14 @@ final class PlantTracing {
                             continue
                         }
                         let v = variant(assembly: inst.assembly, id: id, fall: wind.leafFall)
+                        let position = SIMD3(inst.transform.columns.3.x, inst.transform.columns.3.y, inst.transform.columns.3.z)
+                        if reach > 0, distance(position, near) > reach * exp2(VoxelLOD.jitter(position)) {
+                            let r = restBase[inst.assembly] + (v - variantBase[inst.assembly]) / Wind.phases
+                            out[i] = variantTotal + Int32(r)
+                            SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: inst.mask,
+                                                         userID: id, structure: rest[r])
+                            continue
+                        }
                         out[i] = Int32(v)
                         SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: inst.mask,
                                                      userID: id, structure: variants[v])
@@ -428,7 +486,7 @@ final class PlantTracing {
             }
         }
         var usedHere = [Bool](repeating: false, count: variantCount)
-        for c in choice where c >= 0 && c != .max { usedHere[Int(c)] = true }
+        for c in choice where c >= 0 && c < variantTotal { usedHere[Int(c)] = true }
         used[set] = usedHere.indices.filter { usedHere[$0] }
         defer { chosen[set] = choice }
         return chosen[set] != choice
@@ -446,13 +504,13 @@ final class PlantTracing {
         Array(UnsafeBufferPointer(start: work.contents().bindMemory(to: SIMD2<UInt32>.self, capacity: descriptorCount), count: descriptorCount))
     }
 
-    /// Whether `slot`'s variants need posing this frame: in the wind, or back at rest after it.
-    func needsPosing(slot: Int, strength: Float) -> Bool { sets.count > 1 && (strength > 0 || posed[set(slot: slot)] != 0) }
+    /// Whether `slot`'s variants need posing this frame: in the wind while time runs, or back at rest after it.
+    func needsPosing(slot: Int, wind: WindFrame) -> Bool { sets.count > 1 && posed[set(slot: slot)] != wind.poseKey }
 
     /// Poses `slot`'s variants' parts for this frame's wind (plantWindKernel), then has them refitted (`refit`).
     func encodeWind(_ enc: ComputePass, slot: Int, pipeline: MTLComputePipelineState, wind: WindFrame) {
         let set = set(slot: slot)
-        posed[set] = wind.wind.z
+        posed[set] = wind.poseKey
         struct Params { var wind: SIMD4<Float>; var time: Float; var count: UInt32; var stride: UInt32; var pad: UInt32 = 0 }
         var p = Params(wind: wind.wind, time: wind.time, count: UInt32(descriptorCount), stride: UInt32(PlantTracing.descriptorStride / 4))
         enc.setComputePipelineState(pipeline)
@@ -464,7 +522,7 @@ final class PlantTracing {
                             threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
     }
 
-    /// The refit of `slot`'s variants around their posed parts: the ones its plants name, each in an encoder of its own.
+    /// The refit of `slot`'s variants around their posed parts: the ones its plants name, `perEncoder` to an encoder.
     struct Refit: PrimitiveWork {
         let structures: [MTLAccelerationStructure]
         let descriptors: [MTLInstanceAccelerationStructureDescriptor]
@@ -473,13 +531,16 @@ final class PlantTracing {
         let scratch: MTLBuffer
         let offsets: [Int]
 
-        // (Two to an encoder are no faster, four crash.)
-        var encoderCount: Int { used.count }
+        /// Refits to an encoder (`METALRENDERER_PLANT_REFITS`). M1 Max: two make the moving forest 3% faster than one;
+        /// three or more crash the driver.
+        static let perEncoder = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_PLANT_REFITS"] ?? "") ?? 2)
+        var encoderCount: Int { (used.count + Refit.perEncoder - 1) / Refit.perEncoder }
         func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
-            let v = used[part]
-            enc.useResources(blases[v], usage: .read)
-            enc.refit(sourceAccelerationStructure: structures[v], descriptor: descriptors[v], destinationAccelerationStructure: structures[v],
-                      scratchBuffer: scratch, scratchBufferOffset: offsets[v])
+            for v in used[(part * Refit.perEncoder)..<min((part + 1) * Refit.perEncoder, used.count)] {
+                enc.useResources(blases[v], usage: .read)
+                enc.refit(sourceAccelerationStructure: structures[v], descriptor: descriptors[v], destinationAccelerationStructure: structures[v],
+                          scratchBuffer: scratch, scratchBufferOffset: offsets[v])
+            }
         }
     }
     func refit(slot: Int) -> Refit {
@@ -490,7 +551,9 @@ final class PlantTracing {
 
     /// What `slot`'s ray queries read through the plants' variants and TraceScene, besides the meshes' structures (the
     /// scene declares those): the variants and the leafy meshes' prefixes.
-    func resources(slot: Int) -> [MTLResource] { [parts, cutouts] + sets[set(slot: slot)] + prefixes + (voxels.map { $0.buffers + $0.boxes } ?? []) }
+    func resources(slot: Int) -> [MTLResource] {
+        [parts, cutouts] + sets[set(slot: slot)] + rest + prefixes + (voxels.map { $0.buffers + $0.boxes } ?? [])
+    }
     /// The structures `slot`'s top-level structure names (its build reads them).
-    func structures(slot: Int) -> [MTLAccelerationStructure] { sets[set(slot: slot)] + blases + (voxels?.boxes ?? []) }
+    func structures(slot: Int) -> [MTLAccelerationStructure] { sets[set(slot: slot)] + rest + blases + (voxels?.boxes ?? []) }
 }

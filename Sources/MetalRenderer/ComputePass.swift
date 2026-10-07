@@ -166,8 +166,8 @@ struct TLASUpdate {
 /// Per-mesh structures a frame builds or refits, in an acceleration-structure encoder of their own (Metal 4: on the
 /// Metal 3 queue, between the frame's command buffers).
 protocol PrimitiveWork {
-    /// How many encoders it takes: Metal's driver doesn't refit several instance structures in one encoder (M1 Max:
-    /// the encoding crashes), so the plants' variants take one each.
+    /// How many encoders it takes: Metal's driver doesn't refit many instance structures in one encoder (M1 Max: three
+    /// crash), so the plants' variants take two each.
     var encoderCount: Int { get }
     /// Encodes part `part` (0..<encoderCount) of the work.
     func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int)

@@ -33,6 +33,18 @@ struct BuildingSpec {
     var lit: Float = 0.35
     /// The share of windows with a room behind the glass instead of a blind.
     var rooms: Float = 0.15
+    /// How much of it to make: in full, or plainly (seen from further away). Every level draws the same numbers, so
+    /// the same windows are lit at each.
+    var detail = Detail.full
+
+    enum Detail: Int {
+        /// Windows with frames, sills, lintels and shutters, rooms behind some, balconies with their balustrades.
+        case full
+        /// What stands out of the walls as its front faces alone (frames, sills, lintels, shutters, railings: their
+        /// colours stay where they were, their depth goes), and a room as the dark it looks from afar unless its lamp
+        /// is on (the same mesh lights at both levels).
+        case flat
+    }
 
     init(size: SIMD2<Float>) { self.size = size }
     init(lot: CityPlan.Lot, city: CitySettings, night: Bool) {
