@@ -12,6 +12,9 @@
 // lights the diffuse lobe, the specular lobe meets them. Samples are Owen-scrambled Sobol points per pixel
 // (Sampling.metal) for the first bounces. Russian roulette after 3 bounces, no firefly clamp. Each frame's paths
 // join a running mean (rgba32Float), which the renderer restarts when the picture would change.
+// Liquids (LIQUID: Liquid.metal's material) as exact dielectrics: a path reflects off one with Fresnel's probability or
+// refracts into it (total internal reflection turns it back), and inside absorbs along its way (Beer-Lambert); shadow
+// rays go through them straight, (1 - Fresnel) at each crossing and the absorption inside (no caustics).
 // Not here: refraction through thick glass (the panes are thin), the fog's haze (a realtime stand-in).
 // ---------------------------------------------------------------------------------------------
 
@@ -493,6 +496,25 @@ float3 ptTransmittance(float3 from, float3 to, SCENE_ACCEL accel, thread const S
             o = g.position + d * RAY_EPSILON;
         }
     }
+    if (LIQUID) {
+        // Each liquid's surface on the way: Fresnel's share kept out, and the absorption over the part inside it (up
+        // to a crossing that leaves it: its normal faces along the ray).
+        float reach = dist;
+        float3 o = from;
+        for (uint crossing = 0; crossing < 8 && reach > 0.0f && any(T > 0.0f); ++crossing) {
+            Surface w = traceSurface(makeRay(o, d, 0.0f, reach), MASK_LIQUID, accel, s, GI_RAY_SPREAD);
+            if (!w.hit) break;
+            float roughness;
+            float4 m = liquidMaterial(s, w.instanceId, roughness);
+            float3 n = normalize(w.normal);
+            float along = distance(w.position, o);
+            bool leaving = dot(d, n) > 0.0f;
+            if (leaving) T *= exp(-m.rgb * along);
+            T *= 1.0f - liquidFresnel(abs(dot(d, n)), leaving ? m.a : 1.0f / m.a);
+            reach -= along + RAY_EPSILON;
+            o = w.position + d * RAY_EPSILON;
+        }
+    }
     if (fogOn && any(T > 0.0f)) T *= ptFogTransmittance(fog, from, d, dist, rng);
     return T;
 }
@@ -596,14 +618,16 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
         bool cameraRay = true;     // meets the lights' shapes and camera-only geometry, as the frame's camera rays do
         float spread = pixelSpread;
         uint bounce = 0;
+        float4 medium = float4(0.0f);   // LIQUID: the liquid the path is in (absorption, index), 0: none
 
         for (uint event = 0; event < 2 * params.samples.z + 16u; ++event) {
-            uint mask = cameraRay ? MASK_ALL & ~MASK_GLASS : treeLights ? MASK_GEOMETRY | MASK_LIGHTS : MASK_GEOMETRY;
+            uint mask = (cameraRay ? MASK_ALL & ~MASK_GLASS : treeLights ? MASK_GEOMETRY | MASK_LIGHTS : MASK_GEOMETRY) & ~MASK_LIQUID;
             Ray ray = makeRay(origin, dir, 0.0f, INFINITY);
             Hit hit = intersectClosest(ray, mask, accel);
             Surface h = surfaceFromHit(hit, ray, accel, s, spread, record && event == 0);
             float tNear = h.hit ? distance(origin, h.position) : FAR_DISTANCE;
-            // What the ray meets first: 0 the sky, 1 a surface, 2 a light, 3 a pane, 4 a shape to pass through.
+            // What the ray meets first: 0 the sky, 1 a surface, 2 a light, 3 a pane, 4 a shape to pass through,
+            // 5 a liquid's surface.
             uint kind = h.hit ? 1u : 0u;
             uint metLight = 0;
             float3 metLe = float3(0.0f);
@@ -626,6 +650,13 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
             if (GLASS) {
                 pane = traceSurface(makeRay(origin, dir, 0.0f, tNear), MASK_GLASS, accel, s, spread);
                 if (pane.hit) { tNear = distance(origin, pane.position); kind = 3u; }
+            }
+            // A liquid's surface in front of it.
+            Surface wet;
+            wet.hit = false;
+            if (LIQUID) {
+                wet = traceSurface(makeRay(origin, dir, 0.0f, tNear), MASK_LIQUID, accel, s, spread);
+                if (wet.hit) { tNear = distance(origin, wet.position); kind = 5u; }
             }
             // Few lights: an analytic light in front of all that.
             if (fewLights && !cameraRay) {
@@ -685,6 +716,36 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 }
             }
 
+            // Inside a liquid, what it absorbed on the way here.
+            if (LIQUID && medium.a > 0.0f) {
+                float3 kept = exp(-medium.rgb * (isFar(tNear) ? 1e3f : tNear));
+                throughput *= kept;
+                emitterThroughput *= kept;
+            }
+            if (kind == 5u) {
+                // A dielectric: reflected with Fresnel's probability (all of it past the critical angle), else bent
+                // through, into the liquid or out of it.
+                float roughness;
+                float4 m = liquidMaterial(s, wet.instanceId, roughness);
+                float3 n = normalize(wet.normal);
+                bool entering = dot(dir, n) < 0.0f;
+                float3 facing = entering ? n : -n;
+                float eta = entering ? 1.0f / m.a : m.a;
+                float fresnel = liquidFresnel(saturate(dot(-dir, facing)), eta);
+                float3 bent = refract(dir, facing, eta);
+                if (fresnel >= 1.0f || length_squared(bent) == 0.0f || rng.next() < fresnel) {
+                    dir = reflect(dir, facing);
+                    origin = wet.position + facing * RAY_EPSILON;
+                    emitterThroughput = throughput;
+                    cameraRay = false;
+                } else {
+                    dir = normalize(bent);
+                    origin = wet.position - facing * RAY_EPSILON;
+                    medium = entering ? m : float4(0.0f);
+                }
+                prevDelta = true;
+                continue;
+            }
             if (kind == 2u) {
                 float w = prevDelta ? 1.0f : ptPowerHeuristic(prevPdf, ptPickPdf(L, prev, metLight) * metPdf);
                 L_ += throughput * metLe * w;

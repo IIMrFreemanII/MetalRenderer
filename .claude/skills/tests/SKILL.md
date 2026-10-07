@@ -56,7 +56,8 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `PlantTracing`, `Shaders/Foliage.metal` (the plants' variants, the wind) | PlantTracingTests, FoliageTests, ForestTests, FoliageRuntimeTests (the shader: + the shader pair) |
 | `VoxelGrids`, `VoxelLOD` | FoliageRuntimeTests, SceneBuffersTests |
 | `SDF*.swift`, `Scene+Shapes`, `Shaders/SDF.metal` | SDFTests, SceneBuffersTests, PhysicsTests (the shader: SDFTests + PhysicsTests + the shader pair) |
-| `Physics*.swift`, `Scene+Physics`, `Scene+Ragdolls`, `Scene+Hair`, `Scene+Soft`, `Scene+Muscles`, `Shaders/Physics.metal` | PhysicsTests, RagdollTests, HairTests, SoftBodyTests, MuscleTests (the shader: + the shader pair) |
+| `Physics*.swift`, `Scene+Physics`, `Scene+Ragdolls`, `Scene+Hair`, `Scene+Soft`, `Scene+Muscles`, `Shaders/Physics.metal` | PhysicsTests, RagdollTests, HairTests, SoftBodyTests, MuscleTests, FluidTests (the shader: + the shader pair) |
+| `FluidSurface`, `Scene+Fluids`, `Shaders/Fluid.metal`, `Shaders/FluidSurface.metal`, `Shaders/Liquid.metal` | FluidTests (the shaders: + the shader pair) |
 | `MuscleAtlas`, `SkeletonAtlas` | MuscleTests (the écorché and its skeleton) |
 | `HairBSDF.swift`, `Shaders/Hair.metal` | HairTests (the shader: + the shader pair) |
 | `GLTFLoader` | GLTFLoaderTests |

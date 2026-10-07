@@ -99,6 +99,8 @@ final class PhysicsGPU {
     /// steps it, the bodies as it left them per frame slot (what heads and hands are drawn on).
     private let flesh: MTLBuffer
     private let bodyUploads: [MTLBuffer]
+    /// The liquids (PhysicsFluidGPU.swift), stepped before each group's narrow phase.
+    let fluid: FluidGPU?
     /// It steps the world; otherwise it only draws the CPU's cloths and hair.
     let simulates: Bool
     var hasCloth: Bool { clothTable != nil }
@@ -116,7 +118,7 @@ final class PhysicsGPU {
         self.world = world
         self.simulates = simulates
         func buffer<T>(_ array: [T], _ label: String, length: Int? = nil) throws -> MTLBuffer {
-            let size = max(length ?? array.count * MemoryLayout<T>.stride, 16)
+            let size = max(length ?? array.count * MemoryLayout<T>.stride, 256)   // (an empty one still holds a record: validation)
             guard let b = device.makeBuffer(length: size, options: .storageModeShared) else {
                 throw RendererError.resourceCreation("buffer \(label)")
             }
@@ -194,6 +196,13 @@ final class PhysicsGPU {
             : try (0..<slots).map { try buffer(world.initialBodies, "physicsFleshBodies\($0)") }
         self.sdfScene = sdfScene
         self.sdfResources = sdfResources
+        if simulates, let liquids = world.fluid {
+            fluid = try FluidGPU(device: device, fluid: liquids, bodies: n,
+                                 world: FluidGPU.World(params: params, bodies: bodies, statics: statics, staticBounds: staticBounds,
+                                                       shapes: shapes, samples: samples, sdfScene: sdfScene))
+        } else {
+            fluid = nil
+        }
     }
 
     // MARK: - Encoding
@@ -205,7 +214,7 @@ final class PhysicsGPU {
     }
 
     /// Back to the start (a replay).
-    private var empty: Bool { count + particleCount == 0 }
+    private var empty: Bool { count + particleCount == 0 && fluid == nil }
 
     func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
         guard !empty else { return }
@@ -220,6 +229,7 @@ final class PhysicsGPU {
         enc.setBuffer(lastParticle, offset: 0, index: 7)
         enc.setBuffer(flesh, offset: 0, index: 8)
         dispatch(enc, pipelines[.physicsReset], max(count, particleCount, 1))
+        fluid?.encodeReset(enc, pipelines: pipelines)
         guard strandCount > 0 else { return }
         var vertexCount = UInt32(world.initialHairVertices.count)
         enc.setComputePipelineState(pipelines[.physicsHairReset])
@@ -242,6 +252,11 @@ final class PhysicsGPU {
         guard !empty, steps > 0 else { return }
         enc.useResources(sdfResources, usage: .read)
         enc.setBuffer(params, offset: 0, index: 0)
+        // Liquids alone (no bodies, no particles): only their groups (the bodies' stages have nothing to dispatch).
+        if count + particleCount == 0, let fluid {
+            for _ in 0..<(steps * groupCount) { fluid.encodeGroup(enc, pipelines: pipelines) }
+            return
+        }
         for _ in 0..<steps {
             enc.setComputePipelineState(pipelines[.physicsClear])
             enc.setBuffer(heads, offset: 0, index: 1)
@@ -290,6 +305,7 @@ final class PhysicsGPU {
             enc.setBuffer(colliderCounts, offset: 0, index: 13)
             dispatch(enc, pipelines[.physicsParticleNeighbours], particleCount)
             for g in 0..<groupCount {
+                fluid?.encodeGroup(enc, pipelines: pipelines)
                 encodeNarrow(enc, pipelines: pipelines, group: g)
                 encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
             }
@@ -471,6 +487,12 @@ final class PhysicsGPU {
         enc.setBuffer(normals, offset: 0, index: 4)
         dispatch(enc, pipelines[.physicsSoftNormals], Int(n))
     }
+
+    /// The liquids' surfaces into the scene's vertex and index buffers, ahead of the structures' builds.
+    func encodeFluidSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {
+        fluid?.encodeSurfaces(enc, pipelines: pipelines, positions: positions, normals: normals, indices: indices)
+    }
+    var hasFluid: Bool { fluid != nil }
 
     /// The flesh's buffer as the GPU has it (tests: its clock, the muscles' activations).
     func readFlesh() -> [SIMD4<UInt32>] {

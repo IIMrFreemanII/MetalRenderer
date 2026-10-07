@@ -155,6 +155,8 @@ constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
 // queries walk three levels and a hit names its part (FOLIAGE's plants or these); the wind, the leaves and the voxels
 // stay FOLIAGE's, so a city of modules doesn't trace the plants' code.
 constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
+// Bit 18 = LIQUID: some instances are a liquid's surface (MASK_LIQUID), which camera rays are bent through (liquidKernel).
+constant bool LIQUID = (LIGHT_SPEC & 0x00040000u) != 0;
 constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
@@ -304,6 +306,7 @@ constant uint MASK_LIGHTS   = 2;     // the lights' visible shapes and the camer
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
 constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
+constant uint MASK_LIQUID   = 32;    // a liquid's surface (Scene.maskLiquid): only liquidKernel's rays meet it
 constant uint MASK_ALL      = 0xFF;
 // What a ray is for, in bits 8-11 of the mask it is traced with (rayMask): the traversal counters are kept per class
 // (RT_STATS, TraversalStats). Instances' masks never have these bits; the ray queries take them off.

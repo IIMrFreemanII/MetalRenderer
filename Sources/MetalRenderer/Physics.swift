@@ -180,6 +180,9 @@ final class PhysicsWorld {
     var fibres: [GPUFleshFibre] = []
     var skinAttachments: [GPUSkinAttach] = []
 
+    /// Liquids (PhysicsFluid.swift), if there are any.
+    var fluid: FluidWorld?
+
     /// How far the simulation has gone (whole steps).
     var stepIndex = 0
     var time: Float { Float(stepIndex) * PhysicsWorld.stepLength }
@@ -442,6 +445,7 @@ final class PhysicsWorld {
         initialBodies = bodies
         initialParticles = particles
         initialHairVertices = hairVertices
+        resetFluids()
     }
 
     /// Back to the start.
@@ -450,6 +454,7 @@ final class PhysicsWorld {
         particles = initialParticles
         hairVertices = initialHairVertices
         for i in hairStrands.indices { hairStrands[i].info.w = 0 }
+        resetFluids()
         stepIndex = 0
     }
 

@@ -4,7 +4,7 @@ import QuartzCore
 
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
-    case trace, glass, geometryDebug, lightMap
+    case trace, glass, liquid, liquidApply, geometryDebug, lightMap
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
@@ -24,6 +24,12 @@ enum Kernel: Int, CaseIterable {
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
+    // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
+    case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
+    case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder
+    case fluidPbfLambda, fluidPbfDelta, fluidPbfVelocity, fluidPbfVorticity, fluidPbfViscosity
+    case fluidMpmClear, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
+    case fluidSurfaceClear, fluidSurfaceSplat, fluidSurfaceBlur, fluidSurfaceCount, fluidSurfaceVertex, fluidSurfaceQuad, fluidSurfaceTail
     case plantWind              // the plants' variants in the wind (PlantTracing)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug

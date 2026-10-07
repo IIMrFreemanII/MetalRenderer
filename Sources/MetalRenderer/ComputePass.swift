@@ -177,17 +177,32 @@ extension PrimitiveWork {
 }
 
 /// This frame's refit of the per-mesh structures that deform (the crowd's pose slots): each keeps its tree and takes
-/// its boxes from the vertices its descriptor points at, which the skinning has just rewritten.
+/// its boxes from the vertices its descriptor points at, which the skinning has just rewritten. And the build of those
+/// whose triangles change (a liquid's surface: FluidSurface.swift), from scratch, into the same structure.
 struct PrimitiveRefit: PrimitiveWork {
     let structures: [MTLAccelerationStructure]
     let descriptors: [MTLPrimitiveAccelerationStructureDescriptor]
     let scratch: MTLBuffer
     let scratchOffsets: [Int]
+    var rebuilt: [(structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratchOffset: Int)] = []
+    /// The mesh each rebuilt structure is of.
+    var rebuiltMeshes: [Int] = []
+
+    /// How many of rebuilt structure `i`'s triangles the next builds take (the rest are left out: a liquid's surface
+    /// holds room for far more than it needs): at most what it was made for.
+    func setTriangles(_ i: Int, _ count: Int) {
+        guard let geometry = rebuilt[i].descriptor.geometryDescriptors?.first as? MTLAccelerationStructureTriangleGeometryDescriptor
+        else { return }
+        geometry.triangleCount = count
+    }
 
     func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
         for (i, structure) in structures.enumerated() {
             enc.refit(sourceAccelerationStructure: structure, descriptor: descriptors[i], destinationAccelerationStructure: structure,
                       scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
+        }
+        for r in rebuilt {
+            enc.build(accelerationStructure: r.structure, descriptor: r.descriptor, scratchBuffer: scratch, scratchBufferOffset: r.scratchOffset)
         }
     }
 }

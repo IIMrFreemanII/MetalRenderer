@@ -25,6 +25,7 @@ using namespace metal::raytracing;
 #include "Shaders/Sky.metal"               // atmosphere, clouds, the sky map and its noise
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
 #include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
+#include "Shaders/Liquid.metal"            // liquidKernel: camera rays bent through liquids, liquidApplyKernel
 #include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
 #include "Shaders/MegaLights.metal"        // MegaLights-style direct light: tile light lists, MIS-combined samples
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
@@ -41,3 +42,5 @@ using namespace metal::raytracing;
 #include "Shaders/RasterClusters.metal"    // the raster clusters: virtual geometry's cut, culled and drawn as Nanite does
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices and vertices (crowd* kernels)
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
+#include "Shaders/Fluid.metal"             // liquids: PBF and MLS-MPM, their pour and their pushes on bodies (fluid* kernels)
+#include "Shaders/FluidSurface.metal"      // liquids' surfaces: splat, blur, surface nets into the scene's buffers

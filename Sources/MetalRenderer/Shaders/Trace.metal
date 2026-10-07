@@ -37,6 +37,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
                         texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
                         texture2d<uint, access::read>    visBuffer      [[texture(15)]],  // with FLAG_VIS_BUFFER: instance, triangle
+                        texture2d<float, access::read>   liquidRay      [[texture(16)]],  // LIQUID: the camera ray bent through
+                        texture2d<float, access::read>   liquidDir      [[texture(17)]],  // a liquid (liquidKernel)
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -54,8 +56,20 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
-    // Window glass isn't met here: glassKernel adds it over the surface behind it.
-    uint primaryMask = GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL;
+    // Window glass isn't met here: glassKernel adds it over the surface behind it. Nor a liquid: where one is in view,
+    // the ray goes on from where liquidKernel bent it, and liquidApplyKernel adds the liquid over what it finds.
+    uint primaryMask = (GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL) & (LIQUID ? ~MASK_LIQUID : MASK_ALL);
+    float liquidEntry = -1.0f;
+    float3 eye = dir;   // the camera's ray (dir: the ray that reaches what this pixel shows)
+    if (LIQUID) {
+        float4 bent = liquidRay.read(tid);
+        if (bent.w > 0.0f) {
+            float4 along = liquidDir.read(tid);
+            liquidEntry = along.w;
+            dir = along.xyz;
+            primary = makeRay(bent.xyz, dir, 0.0f, INFINITY);
+        }
+    }
     Hit hit;
     if (!flagOn(u.flags, FLAG_VIS_BUFFER) || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
         hit = intersectClosest(primary, primaryMask, accel);
@@ -111,11 +125,19 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     // The denoiser wants the index of the previous frame's pixel, whose sample was taken at its center + that frame's jitter.
     float prevDepth;
     float2 prevPixel = projectToPixel(sf.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, prevDepth);
+    // Seen through a liquid, the surface isn't where this pixel looks: the pixel moves as the liquid's surface it looks
+    // through does (taken as still), its depth as the surface's.
+    float3 seen = sf.position;
+    if (LIQUID && liquidEntry > 0.0f) {
+        seen = u.camPos.xyz + eye * liquidEntry;
+        float ignored;
+        prevPixel = projectToPixel(seen - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, ignored);
+    }
     outMotion.write(float4(prevPixel - 0.5f - u.jitter.zw, prevDepth, prevDepth > 0.0f ? 1.0f : 0.0f), tid);
     if (upscale) {
         // MetalFX wants unjittered motion in pixels, from this pixel to where it was last frame.
         float curDepth;
-        float2 curPixel = projectToPixel(sf.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
+        float2 curPixel = projectToPixel(seen - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
         outDeviceDepth.write(float4(NEAR_PLANE / max(viewDepth, NEAR_PLANE)), tid);
         outPixelMotion.write(float4(prevDepth > 0.0f ? prevPixel - curPixel : float2(0.0f), 0.0f, 0.0f), tid);
     }
