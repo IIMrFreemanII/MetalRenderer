@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791383136.958725,
-    "seen": 1791383168.1572092,
-    "ast_hash": "43862f0ee0a8e94f25bf83e22c50b805",
+    "mtime": 1791383715.6401913,
+    "seen": 1791383798.1234062,
+    "ast_hash": "267315837c52c43e31ccd15f32599762",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791382991.244285,
-    "seen": 1791383168.157022,
-    "ast_hash": "36f79e64d71095d958929010694f43e2",
+    "mtime": 1791383291.0710647,
+    "seen": 1791383798.1232278,
+    "ast_hash": "fb176f2fc0efc07746086db3a820a446",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -1374,9 +1374,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MuscleTests.swift": {
-    "mtime": 1791382976.2712321,
-    "seen": 1791383168.157166,
-    "ast_hash": "2b86a996ccdf4dd5318b2779100206a2",
+    "mtime": 1791383715.6395829,
+    "seen": 1791383798.1233668,
+    "ast_hash": "89f5fe5e56cf4652e8d5630337ff7b80",
     "semantic_hash": ""
   },
   "muscles-demo-1280.mp4": {

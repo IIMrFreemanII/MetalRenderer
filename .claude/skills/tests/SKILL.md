@@ -43,6 +43,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `Benchmark*.swift` | BenchmarkModesTests, CapabilitiesTests |
 | `Capabilities`, `Upscaler`, `Metal4Backend` | CapabilitiesTests |
 | `ShaderSource`, `Pipelines`, `GPUTypes`, `Shaders.metal`, any `Shaders/*.metal` | ShaderSourceTests, KernelVariantsTests |
+| `Pipelines` (also its `PipelineCache`) | + PipelineCacheTests (in `LoadActivityTests.swift`) |
 | `Shaders/Intersect.metal` (the ray queries) | ShaderSourceTests, KernelVariantsTests, PlantTracingTests |
 | `BVH.swift` (the SAH builder over boxes, the clusters' trees) | BVHTests, CacheTests |
 | `CacheFile`, `SectionFile`, `BlueNoise` | CacheTests |
@@ -67,6 +68,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `MeshSDFBuilder.swift`, `LumenScene.swift` | MeshSDFBuilderTests |
 | `LumenGlobalSDF.swift` | GlobalSDFTests |
 | `TextureStreamer` | TextureStreamerTests |
+| `LoadActivity` (the loading overlay's model) | LoadActivityTests (the overlay itself, `LoadingOverlay`: none, it is AppKit) |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |

@@ -60,6 +60,17 @@ final class TextureStreamer {
     var textures: [MTLTexture] { entries.map(\.texture) }
     /// Per texture: its finest level the shaders may sample.
     var residentLevels: [Int] { entries.map(\.resident) }
+    /// The levels mapped of those the textures want (base levels first), summed over the textures (render thread): the
+    /// loading overlay's progress. Done when every texture has what it wants.
+    var levelProgress: (done: Int, total: Int) {
+        var done = 0, total = 0
+        for e in entries {
+            let wanted = e.levels.count - min(e.wanted, e.floor)
+            total += wanted
+            done += min(e.levels.count - e.resident, wanted)
+        }
+        return (done, total)
+    }
     var details: String {
         entries.map { e in "  \(e.texture.label ?? "?"): \(e.levels[0].width)px wanted \(e.wanted) resident \(e.resident)" }
             .joined(separator: "\n")
@@ -81,15 +92,18 @@ final class TextureStreamer {
     }
 
     /// `placement`: placement-sparse textures on a placement heap, for Metal 4's queue (see `isSupported`).
+    /// `load`: the load to report the cache files and textures to.
     init(sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue, budgetMB: Int, slots: Int,
-         placement: Bool) throws {
+         placement: Bool, load: LoadJob? = nil) throws {
         self.device = device
         let start = CFAbsoluteTimeGetCurrent()
+        let step = load?.step("Textures", total: sources.count)
         let pageSize = MTLSparsePageSize.size64
         let tileBytes = placement ? device.sparseTileSizeInBytes(sparsePageSize: pageSize) : device.sparseTileSizeInBytes
         self.tileBytes = tileBytes
         // Cache files: one per model file, holding all of its images' mip chains.
-        let cached = try TextureStreamer.loadCaches(sources, device: device, queue: queue)
+        let cached = try TextureStreamer.loadCaches(sources, device: device, queue: queue, step: step)
+        step?.set(done: 0, detail: "sparse textures")
         // The heap: as large as the budget, or as everything these textures could ever map, if that is less. (It
         // counts in full against the process whatever is mapped of it, and a generated scene's textures are a tenth
         // of the budget.) A level is a tile at least: more than the mip tail takes.
@@ -147,6 +161,7 @@ final class TextureStreamer {
             baseBytes += cost[floor...].reduce(0, +)
             entries.append(Entry(texture: texture, data: data, levels: levels, resident: levels.count, floor: floor,
                                  wanted: floor, bytesPerLevel: cost, tiles: Array(repeating: [], count: levels.count)))
+            step?.advance()
         }
         for slot in 0..<slots {
             guard let m = device.makeBuffer(length: max(entries.count, 1) * 4, options: .storageModeShared),
@@ -392,18 +407,22 @@ final class TextureStreamer {
     // MARK: Cache files
 
     /// Mip chains for every source, from its model's cache file (built on first use).
-    private static func loadCaches(_ sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue) throws
-        -> [(Data, [Level])] {
+    private static func loadCaches(_ sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue,
+                                   step: LoadStep?) throws -> [(Data, [Level])] {
         var byModel: [String: [Int]] = [:]
         for (i, s) in sources.enumerated() { byModel[s.modelPath, default: []].append(i) }
         var out = [(Data, [Level])?](repeating: nil, count: sources.count)
         for (model, indices) in byModel {
             let url = cacheURL(for: URL(fileURLWithPath: model))
+            let name = URL(fileURLWithPath: model).deletingPathExtension().lastPathComponent
+            step?.set(detail: name)
+            defer { step?.advance(by: indices.count) }
             if let table = try? read(url), indices.allSatisfy({ table.levels[sources[$0].cacheKey] != nil }) {
                 for i in indices { out[i] = (table.data, table.levels[sources[i].cacheKey]!) }
                 continue
             }
             print("Textures: building mip chains for \(URL(fileURLWithPath: model).lastPathComponent) (first load)")
+            step?.set(detail: "\(name): building mip chains (first load)")
             try write(indices.map { sources[$0] }, to: url, device: device, queue: queue)
             let table = try read(url)
             for i in indices { out[i] = (table.data, table.levels[sources[i].cacheKey]!) }

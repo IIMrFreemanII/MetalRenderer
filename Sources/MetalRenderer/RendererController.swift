@@ -41,6 +41,9 @@ final class RendererController: InputHandler {
     var onFirstFrame: (() -> Void)?
     var onTogglePanel: (() -> Void)?            // Tab key
     var onToggleDebug: (() -> Void)?            // I key
+    var onToggleLoading: (() -> Void)?          // P key
+    /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
+    let loadActivity: LoadActivity
 
     /// The Debug window is open: the stats tick brings `debugInfo`, and every frame `onFrameTime`.
     var debugActive = false {
@@ -61,6 +64,7 @@ final class RendererController: InputHandler {
         upscaleSteps = renderer.upscaleSteps
         passProfilingSupported = renderer.passProfilingSupported
         traversalCounters = renderer.traversalCounters
+        loadActivity = renderer.loadActivity
         renderer.onSettings = { [weak self] settings, update, persist in
             DispatchQueue.main.async { self?.received(settings, update: update, persist: persist) }
         }
@@ -142,8 +146,8 @@ final class RendererController: InputHandler {
     func keyDown(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" {
-            if !event.isARepeat { (key == "\t" ? onTogglePanel : onToggleDebug)?() }
+        if key == "\t" || key == "i" || key == "p" {
+            if !event.isARepeat { (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : onToggleLoading)?() }
             return
         }
         let isRepeat = event.isARepeat

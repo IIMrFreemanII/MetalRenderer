@@ -241,6 +241,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | ⌘O, drop files | Add glTF models (`.glb` / `.gltf`) in front of the camera, or an HDR sky (`.hdr` / `.exr`) |
 | Tab, ⌘, | Show or hide the Render Settings panel |
 | I, ⌘I | Show or hide the Debug window |
+| P | Show or hide the loading overlay (see "The loading overlay" below) |
 
 The window title and the Debug window show the resolution, frame rate and GPU time. The panels never take keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
 
@@ -255,6 +256,27 @@ The window title and the Debug window show the resolution, frame rate and GPU ti
 * **Copy as Env** puts the `METALRENDERER_*` variables that reproduce the current settings on the clipboard, listing only what differs from the defaults (fog and sky from the scene's preset). They work in a normal launch, where they override the saved settings, and in benchmarks, where they apply to every setting. A key the app doesn't know, or a value it can't read, is reported on the console and skipped. `METALRENDERER_DUMP_SETTINGS=1` prints the settings as JSON at startup, to compare two launches. The camera pose and where added models were placed aren't included.
 
 The environment variables, in a normal launch and in benchmarks: `METALRENDERER_SCENE`, `METALRENDERER_GI` (now also `on=0` for GI off), `METALRENDERER_DENOISE`, `METALRENDERER_RESTIR`, `METALRENDERER_RESTIR_GI`, `METALRENDERER_FOG_SET` (now also `albedo=r:g:b` and `wind=x:y:z`), `METALRENDERER_SKY_SET`, and `METALRENDERER_VIEW="exposure=1,tonemap=agx,fov=70,speed=5,timescale=0.5,tod=0.25"` (plus `view=<index>` and `paused=1` outside benchmarks; `reference=off|accumulated|pt,refbounces=8,refspp=1,refmax=0` for the reference picture). The plain ones (`METALRENDERER_DIRECT`, `_API`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`) set defaults, as before.
+
+### The loading overlay
+
+A box in the bottom-left corner of the view shows what loads in the background, and how far it is. It comes up when
+something has been loading for 0.3 s, and fades out 2 s after everything is done. It is drawn by AppKit over the view,
+so frames, screenshots and benchmarks never have it. P (or Loading Progress in the app menu) turns it off, and on again;
+the choice is kept.
+
+* **A scene switch** (and a tile of the open world as the camera reaches it): its steps in order, each with a count,
+  the item it is on, a bar and how long it took. **Shaders** (the pipelines, specialised for the scene's light types:
+  1.5–3 s on an M1 Max, so the last six sets are kept, and a scene with light types seen before takes its set at once;
+  R drops them), **Scene**
+  (the gallery's and the showcase's models one by one, an added model, a first load's virtual geometry), **Textures**
+  (each model's cache file, or the images decoded when textures don't stream), **Buffers**, **Metal BLAS** (by batch,
+  with the MB built), **Virtual geometry**, and **Install** (on the render thread, after the frames in flight). The old
+  scene keeps drawing until then. Picking another scene meanwhile drops the load: the gallery stops loading models and
+  the BLAS stop between batches. A line on the console sums it up: `Loaded Gallery (Assets) in 2.4 s: shaders 1.5 s, …`.
+* **Compiling shaders**, at launch and after R.
+* **Streaming in:** what keeps coming once the scene is in. Texture levels and virtual geometry pages (and the cut's
+  BLAS) while the new scene settles, for 20 s at most (later, as the camera moves, they stream without showing);
+  Lumen's distance-field bakes, an HDR sky image, the noise tiles and shader variants whenever they are being made.
 
 ### The debug window
 
@@ -1431,6 +1453,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `SettingsEnv.swift` | The settings as `METALRENDERER_*` variables, both ways: Copy as Env and the parser, from the table |
 | `GPUProfiler.swift` | The Debug window's GPU pass timings (timestamp counters at encoder boundaries) |
 | `DebugPanel.swift` | The Debug window: frame graph, pass timings, scene, virtual geometry, textures, memory, the ray queries' counters |
+| `LoadActivity.swift` | What loads in the background: loads made of steps, the streams after a scene is in (thread-safe; the loaders report to it) |
+| `LoadingOverlay.swift` | The loading overlay over the view (AppKit), refreshed ten times a second while something loads |
 | `Upscaler.swift` | MetalFX's denoising scaler and the sub-pixel jitter sequence |
 | `RasterScene.swift` | The raster visibility buffer's view of a scene (per-mesh records, chunks, instance ids, visibility) and its targets (depth pyramid, draw lists) |
 | `VSM.swift` | Virtual shadow maps: which lights get maps, their views (the sun's clipmap, spot and cube views) written each frame, the page table, the physical pool and the lists that draw it |

@@ -1,7 +1,7 @@
 # Graph Report - graphify-update-4183f9  (2026-10-07)
 
 ## Corpus Check
-- 207 files · ~1,200,291 words
+- 207 files · ~1,200,309 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 28 file(s) not represented in the graph (top: .fbx 12, .glb 11, (none) 4)
 

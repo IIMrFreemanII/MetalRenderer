@@ -41638,7 +41638,7 @@
       "file_type": "code",
       "norm_label": ".drawn()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325"
+      "source_location": "L326"
     },
     {
       "id": "tests_metalrenderertests_muscletests_muscletests_flesh",
@@ -41698,7 +41698,7 @@
       "file_type": "code",
       "norm_label": ".testgpudrawstheecorchethecpudoes()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L433"
+      "source_location": "L434"
     },
     {
       "id": "tests_metalrenderertests_muscletests_muscletests_testgpudrawsthefleshthecpudoes",
@@ -41710,7 +41710,7 @@
       "file_type": "code",
       "norm_label": ".testgpudrawsthefleshthecpudoes()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L343"
+      "source_location": "L344"
     },
     {
       "id": "tests_metalrenderertests_muscletests_muscletests_testgpufleshmatchesthecpu",
@@ -41758,7 +41758,7 @@
       "file_type": "code",
       "norm_label": ".testgpuskinslidesbutstaysontheflesh()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L474"
+      "source_location": "L475"
     },
     {
       "id": "tests_metalrenderertests_muscletests_muscletests_testtheecorchesbicepsbulgesastheelbowbends",
@@ -41770,7 +41770,7 @@
       "file_type": "code",
       "norm_label": ".testtheecorchesbicepsbulgesastheelbowbends()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L439"
+      "source_location": "L440"
     },
     {
       "id": "tests_metalrenderertests_muscletests_muscletests_testthemuscleatlascoversthecharacter",
@@ -41782,7 +41782,7 @@
       "file_type": "code",
       "norm_label": ".testthemuscleatlascoversthecharacter()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L351"
+      "source_location": "L352"
     },
     {
       "id": "tests_metalrenderertests_muscletests_muscletests_testtheprogrammerepeats",
@@ -41818,7 +41818,7 @@
       "file_type": "code",
       "norm_label": ".testtheskeletonfitsthecharacter()",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L398"
+      "source_location": "L399"
     },
     {
       "id": "sources_metalrenderer_building_buildingassembler_band",
@@ -109881,7 +109881,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L327",
+      "source_location": "L328",
       "weight": 1.0
     },
     {
@@ -109893,7 +109893,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L328",
+      "source_location": "L329",
       "weight": 1.0
     },
     {
@@ -110025,7 +110025,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L434",
+      "source_location": "L435",
       "weight": 1.0
     },
     {
@@ -110037,7 +110037,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L344",
+      "source_location": "L345",
       "weight": 1.0
     },
     {
@@ -110097,7 +110097,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L475",
+      "source_location": "L476",
       "weight": 1.0
     },
     {
@@ -110109,7 +110109,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L487",
+      "source_location": "L488",
       "weight": 1.0
     },
     {
@@ -110121,7 +110121,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L442",
+      "source_location": "L443",
       "weight": 1.0
     },
     {
@@ -110133,7 +110133,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L447",
+      "source_location": "L448",
       "weight": 1.0
     },
     {
@@ -110181,7 +110181,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L352",
+      "source_location": "L353",
       "weight": 1.0
     },
     {
@@ -110193,7 +110193,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L360",
+      "source_location": "L361",
       "weight": 1.0
     },
     {
@@ -110229,7 +110229,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L399",
+      "source_location": "L400",
       "weight": 1.0
     },
     {
@@ -149601,7 +149601,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -197589,7 +197589,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -197601,7 +197601,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -213927,7 +213927,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -213939,7 +213939,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -213951,7 +213951,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -258308,7 +258308,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L325",
+      "source_location": "L326",
       "weight": 1.0
     },
     {
@@ -258319,7 +258319,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L343",
+      "source_location": "L344",
       "weight": 1.0
     },
     {
@@ -258330,7 +258330,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L351",
+      "source_location": "L352",
       "weight": 1.0
     },
     {
@@ -258352,7 +258352,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L398",
+      "source_location": "L399",
       "weight": 1.0
     },
     {
@@ -258363,7 +258363,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 1.0
     },
     {
@@ -258374,7 +258374,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L439",
+      "source_location": "L440",
       "weight": 1.0
     },
     {
@@ -258385,7 +258385,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L474",
+      "source_location": "L475",
       "weight": 1.0
     },
     {
@@ -266527,7 +266527,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L330",
+      "source_location": "L331",
       "weight": 1.0
     },
     {
@@ -266539,7 +266539,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L330",
+      "source_location": "L331",
       "weight": 1.0
     },
     {
@@ -266551,7 +266551,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L333",
+      "source_location": "L334",
       "weight": 1.0
     },
     {
@@ -266563,7 +266563,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L337",
+      "source_location": "L338",
       "weight": 1.0
     },
     {
@@ -266803,7 +266803,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L479",
+      "source_location": "L480",
       "weight": 1.0
     },
     {
@@ -270871,7 +270871,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L338",
+      "source_location": "L339",
       "weight": 1.0
     },
     {
@@ -270919,7 +270919,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L448",
+      "source_location": "L449",
       "weight": 1.0
     },
     {
@@ -288667,7 +288667,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L338",
+      "source_location": "L339",
       "weight": 1.0
     },
     {
@@ -288871,7 +288871,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L487",
+      "source_location": "L488",
       "weight": 1.0
     },
     {
@@ -288883,7 +288883,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L489",
+      "source_location": "L490",
       "weight": 1.0
     },
     {
@@ -288895,7 +288895,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L443",
+      "source_location": "L444",
       "weight": 1.0
     },
     {
@@ -288907,7 +288907,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L467",
+      "source_location": "L468",
       "weight": 1.0
     },
     {
@@ -288931,7 +288931,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L354",
+      "source_location": "L355",
       "weight": 1.0
     },
     {
@@ -288943,7 +288943,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L373",
+      "source_location": "L374",
       "weight": 1.0
     },
     {
@@ -288955,7 +288955,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L400",
+      "source_location": "L401",
       "weight": 1.0
     },
     {
@@ -288967,7 +288967,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/MuscleTests.swift",
-      "source_location": "L419",
+      "source_location": "L420",
       "weight": 1.0
     },
     {

@@ -334,6 +334,7 @@ final class Renderer: NSObject {
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
     private var pipelines: Pipelines!
     private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
+    private let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
     private var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
     private var lumen: Lumen?                         // ...and of the Lumen GI mode
@@ -542,6 +543,14 @@ final class Renderer: NSObject {
     var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
     /// Called once, when the first frame has been drawn.
     var onFirstFrame: (() -> Void)?
+    /// What is loading in the background and how far it is, for the loading overlay (any thread reads it). The app
+    /// reports to it; benchmarks don't.
+    let loadActivity = LoadActivity()
+    private var loadJob: LoadJob?                   // the scene load running in the background
+    /// After a scene is installed: until when texture levels and virtual geometry pages count as loading (until they
+    /// settle; while the camera moves later they stream on without showing).
+    private var settlingStreams: (from: Double, until: Double)?
+    private var streamsPublished = 0.0
     /// Where frames are made, and what runs `perform`'s work (RenderThread.swift).
     private let renderThread = RenderThread()
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
@@ -637,6 +646,7 @@ final class Renderer: NSObject {
             // Benchmarks start with everything in place: the same frames every run.
             pipelines = try Pipelines(device: device, source: shaderURL, api: builtAPI, compiler: compiler(for: builtAPI),
                                       lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled)
+            keepPipelines(pipelines, generation: shaderGeneration)
         } else {
             // The app compiles them in the background: a second or two after a shader edit (Metal's cache has them
             // otherwise), during which the window is up and the scene, the textures and the noise load.
@@ -773,13 +783,27 @@ final class Renderer: NSObject {
                              instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, extraInstances: extraInstances, leafFall: leafFall)
     }
 
-    /// The pipelines for `api`, `stats` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
-    /// library is reused when only the light types differ.
-    private func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool,
-                               current: Pipelines) throws -> Pipelines? {
+    /// The pipelines for `api`, `stats` and `lightTypes` of shader generation `generation`, unless `current` already fits:
+    /// a set made for them before (`pipelineCache`), or compiled here (any thread). Its library is reused when only the
+    /// light types differ.
+    private func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
+                               current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
         if current.stats == stats && current.api == api && current.lightTypes == lightTypes { return nil }
-        return try Pipelines(device: device, source: shaderURL, api: api, compiler: compiler, lightTypes: lightTypes,
-                             stats: stats, reusing: current.stats == stats && current.api == api ? current.library : nil)
+        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation)
+        if let kept = pipelineCache.get(key) {
+            load?.step("Shaders", detail: "kept from before").finish()
+            return kept
+        }
+        let made = try Pipelines(device: device, source: shaderURL, api: api, compiler: compiler, lightTypes: lightTypes,
+                                 stats: stats, reusing: current.stats == stats && current.api == api ? current.library : nil,
+                                 load: load)
+        pipelineCache.put(key, made)
+        return made
+    }
+
+    /// Keeps `made`, of shader generation `generation`, for a later scene with its light types.
+    private func keepPipelines(_ made: Pipelines, generation: Int) {
+        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation), made)
     }
 
     /// The scene's virtual geometry for the tracer, if it has virtual meshes (any thread).
@@ -790,8 +814,9 @@ final class Renderer: NSObject {
 
     /// `current`: the scene being drawn, reused when only the API changes; `instances` is then the render thread's copy
     /// of its instances (the frame loop keeps animating the scene while this runs).
+    /// `load`: the load to report the steps to (the loading overlay).
     private func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
-                              options: LoadOptions) throws -> PreparedScene {
+                              options: LoadOptions, load: LoadJob? = nil) throws -> PreparedScene {
         let virtual = options.virtualGeometry
         // Generated plants are assemblies (unless SceneSettings.bakedPlants); baked ones far away are voxels if asked for
         // (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
@@ -799,24 +824,32 @@ final class Renderer: NSObject {
         let voxelBoxes = sceneSettings.voxelBoxes
         let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual
             && (!$0.hasPlants || ($0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants) && $0.usesVoxelBoxes == voxelBoxes)) ? $0 : nil }
-        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies, voxelBoxes: voxelBoxes)
+        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies, voxelBoxes: voxelBoxes,
+                                       load: load)
+        if load?.isCancelled == true { throw CancellationError() }   // another scene was asked for meanwhile
         let kept = options.worldTextures.flatMap { $0.identities == newScene.textures.map(\.identity) ? $0 : nil }
         let streamer = kept != nil ? kept?.streamer
             : newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
             : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
-                                  slots: Renderer.maxFramesInFlight, placement: options.api == .metal4)
-        let textures = try kept?.textures ?? streamer?.textures ?? MaterialTextures.load(newScene.textures, device: device, queue: queue)
+                                  slots: Renderer.maxFramesInFlight, placement: options.api == .metal4, load: load)
+        let textures = try kept?.textures ?? streamer?.textures
+            ?? MaterialTextures.load(newScene.textures, device: device, queue: queue, load: load)
         // The scene's buffers and structures, unless the frames are still animating it.
         let buffers = reused != nil ? nil : try autoreleasepool {
-            try SceneBuffers(device: device, queue: buildQueue, scene: newScene,
-                             options: bufferOptions(api: options.api, known: options.primitives, blocks: options.blocks,
-                                                    instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids,
-                                                    extraInstances: newScene.tracesClusters ? 1 : 0, leafFall: options.leafFall))
+            var made = bufferOptions(api: options.api, known: options.primitives, blocks: options.blocks,
+                                     instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids,
+                                     extraInstances: newScene.tracesClusters ? 1 : 0, leafFall: options.leafFall)
+            made.load = load
+            return try SceneBuffers(device: device, queue: buildQueue, scene: newScene, options: made)
+        }
+        if buffers != nil && !newScene.virtualMeshes.isEmpty {
+            load?.step("Virtual geometry", detail: "\(newScene.virtualMeshes.count) meshes")
         }
         let virtualTracing = buffers == nil ? nil : try makeVirtualTracing(newScene, poolMB: options.poolMB)
         // The shaders too, when the API changes (a recompile) or the new scene has other light types.
         let pipelines = try makePipelines(api: options.api, compiler: options.compiler, lightTypes: newScene.lightTypeMask,
-                                          stats: options.traversalStats, current: options.pipelines)
+                                          stats: options.traversalStats, generation: options.shaderGeneration,
+                                          current: options.pipelines, load: load)
         if let buffers { SceneBuffers.touch(buffers.buffers, device: device, queue: buildQueue) }
         // The open world's scene is made again for every tile the camera comes to, never built from twice: its vertex
         // arrays, now in the buffers, go.
@@ -841,11 +874,16 @@ final class Renderer: NSObject {
         loading = wanted
         let reuse = wanted.scene == scene.settings ? scene : nil   // only the API changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
+        // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
+        loadJob?.cancel()
+        let job = benchmark != nil ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
+            : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title)
+        loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let start = CACurrentMediaTime()
             let result = Result {
-                try self.prepareScene(wanted.scene, reuse: reuse, instances: instances, options: options)
+                try self.prepareScene(wanted.scene, reuse: reuse, instances: instances, options: options, load: job)
             }
             let preparedMs = (CACurrentMediaTime() - start) * 1000
             self.renderThread.perform {
@@ -853,11 +891,15 @@ final class Renderer: NSObject {
                     return   // superseded by a newer request
                 }
                 self.loading = nil
+                if self.loadJob === job { self.loadJob = nil }
                 switch result {
                 case .success(let prepared):
                     if self.benchmark?.isMeasuring == true { self.streaming.preparedMs.append(preparedMs) }
+                    job?.step("Install", detail: "waiting for the frames in flight")
                     self.install(prepared, resetCamera: prepared.scene.settings.kind != self.scene.settings.kind)
+                    job?.finish()
                 case .failure(let error):
+                    job?.fail()
                     print("Scene load failed, keeping the previous scene: \(error)")
                     self.settings.scene = self.scene.settings
                     self.settings.api = self.builtAPI
@@ -954,7 +996,7 @@ final class Renderer: NSObject {
                 pipelines = ready
             } else if let made = try makePipelines(api: prepared.api, compiler: compiler(for: prepared.api),
                                                    lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled,
-                                                   current: pipelines) {
+                                                   generation: shaderGeneration, current: pipelines) {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
@@ -1002,6 +1044,10 @@ final class Renderer: NSObject {
         let installedMs = (CACurrentMediaTime() - start) * 1000
         if sameWorld, benchmark?.isMeasuring == true { streaming.installedMs.append(installedMs) }
         if sameWorld { benchmark?.noteSwap() }
+        if benchmark == nil {
+            let now = CACurrentMediaTime()
+            settlingStreams = (now, now + Renderer.settlingStreamsSeconds)
+        }
         print(String(format: "Scene: %@, %d instances, %d lights, %@ (installed in %.0f ms)", scene.settings.kind.title,
                      sceneBuffers.instanceCount, scene.lights.count, builtAPI.title, installedMs))
     }
@@ -1730,7 +1776,7 @@ final class Renderer: NSObject {
 
         finishFrame(plan)
         updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
-        if let benchmark { advanceBenchmark(benchmark) }
+        if let benchmark { advanceBenchmark(benchmark) } else { publishStreams() }
         return true
     }
 
@@ -3390,6 +3436,56 @@ final class Renderer: NSObject {
             && (rasterClusters?.streamer.isSettled ?? true)
     }
 
+    /// How long after a scene is installed its texture levels and virtual geometry pages may show as loading at most
+    /// (a texture budget too small for what the view wants never settles).
+    static let settlingStreamsSeconds = 20.0
+
+    /// What is still coming in now that the scene is installed, for the loading overlay (`loadActivity`), ten times a
+    /// second: texture levels and virtual geometry pages while a new scene settles; Lumen's bakes, the sky image, the
+    /// noise tiles and shader variants whenever they are being made.
+    private func publishStreams() {
+        let now = CACurrentMediaTime()
+        guard now - streamsPublished >= 0.1 else { return }
+        streamsPublished = now
+        typealias Stream = LoadActivity.Stream
+        var streams: [Stream] = []
+        if let settling = settlingStreams {
+            var settlers: [Stream] = []
+            if let ts = textureStreamer {
+                let p = ts.levelProgress
+                if p.done < p.total {
+                    settlers.append(Stream(name: "Texture levels", done: p.done, total: p.total,
+                                           detail: String(format: "%.0f MB resident", ts.stats.residentMB)))
+                }
+            }
+            for (name, streamer) in [("Virtual geometry pages", virtualTracing?.clusters?.streamer),
+                                     ("Raster cluster pages", rasterClusters?.streamer)] {
+                guard let streamer, !streamer.isSettled else { continue }
+                let st = streamer.stats
+                settlers.append(Stream(name: name, done: st.residentGroups, total: st.residentGroups + st.pending,
+                                       detail: String(format: "%d waiting, %.0f MB resident", st.pending, streamer.residentMB)))
+            }
+            if let blas = virtualTracing?.blas, blas.isBusy {
+                settlers.append(Stream(name: "Virtual geometry BLAS", done: 0, total: 0,
+                                       detail: String(format: "%.1fM triangles", Double(blas.stats.triangles) / 1e6)))
+            }
+            // (A streamer may not have asked for anything in the first frames: a moment before they count as settled.)
+            if (settlers.isEmpty && now - settling.from > 0.5) || now > settling.until { settlingStreams = nil }
+            else { streams += settlers }
+        }
+        if let lumen = lumenScene, lumenSceneOf === scene, lumen.isBaking {
+            streams.append(Stream(name: "Lumen SDF bakes", done: lumen.baked, total: lumen.toBake,
+                                  detail: "\(lumen.megabytes) MB"))
+        }
+        if skyImageLoading { streams.append(Stream(name: "Sky image", done: 0, total: 0, detail: "decoding")) }
+        if !blueNoiseReady { streams.append(Stream(name: "Blue noise tile", done: 0, total: 0, detail: "first launch")) }
+        if fogNoisePending { streams.append(Stream(name: "Fog noise", done: 0, total: 0)) }
+        if let pending = pipelines?.variants.pending, pending > 0 {
+            streams.append(Stream(name: "Shader variants", done: 0, total: 0, detail: "\(pending) compiling"))
+        }
+        loadActivity.setStreams(streams)
+    }
+
     private func colorAccumTexture(width: Int, height: Int) -> MTLTexture? {
         if let t = colorAccum, t.width == width, t.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
@@ -4016,10 +4112,13 @@ final class Renderer: NSObject {
         let lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
         let api = pipelines?.api ?? builtAPI, compiler = compiler(for: api)
         let stats = TraceSceneArgs.statsEnabled
+        let job = benchmark != nil ? nil : loadActivity.begin("shaders", verbs: ("Compiling", "Compiled"))
         shaderQueue.async { [weak self] in
             let result = Result {
-                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats)
+                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats,
+                              load: job)
             }
+            if case .failure = result { job?.fail() } else { job?.finish() }
             self?.renderThread.perform {
                 guard let self else { return }
                 switch result {
@@ -4030,6 +4129,7 @@ final class Renderer: NSObject {
                     }
                     self.pipelines = made
                     self.shaderGeneration += 1
+                    self.keepPipelines(made, generation: self.shaderGeneration)
                     self.resetGIState()
                     if !self.benchmarkAccumulating { self.resetReference() }
                     self.upscalerReset = true

@@ -189,6 +189,8 @@ struct SceneBuffers {
         var extraInstances = 0
         /// The share of the leaves that have fallen (Scene.leafFall): which variants a still scene's plants name.
         var leafFall: Float = 0
+        /// The load to report the buffers and the structures' batches to; the batches stop when it is cancelled.
+        var load: LoadJob?
     }
 
     /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
@@ -295,6 +297,7 @@ struct SceneBuffers {
             made.label = label
             return made
         }
+        options.load?.step("Buffers", detail: scene.hasSDFShapes ? "arrays, SDF shapes" : "arrays")
         positions = try buffer(scene.positions, "positions")
         sdf = try SDFBuffers(device: device, scene: scene)
         normals = try buffer(scene.normals, "normals")
@@ -717,15 +720,23 @@ struct SceneBuffers {
                 after += small[n].size
             }
         }
-        var first = 0, bytes = 0
+        let step = options.load?.step("Metal BLAS", total: jobs.count, detail: new.count < structures.count
+                                      ? "\(structures.count - new.count) kept from the last scene" : "")
+        var first = 0, bytes = 0, total = 0
+        func buildBatch(_ batch: Range<Int>) throws {
+            if step?.isCancelled == true { throw CancellationError() }   // another scene was asked for
+            try autoreleasepool { try build(batch) }
+            total += batch.reduce(0) { $0 + jobs[$1].sizes.accelerationStructureSize }
+            step?.advance(by: batch.count, detail: String(format: "%.0f MB built", Double(total) / 1_048_576))
+        }
         for j in jobs.indices {
             bytes += jobs[j].sizes.accelerationStructureSize
             if bytes >= SceneBuffers.buildBatchBytes {
-                try autoreleasepool { try build(first..<(j + 1)) }
+                try buildBatch(first..<(j + 1))
                 (first, bytes) = (j + 1, 0)
             }
         }
-        try autoreleasepool { try build(first..<jobs.count) }
+        try buildBatch(first..<jobs.count)
         if options.compact, !jobs.isEmpty {
             print(String(format: "Metal BLAS: %d meshes (%d the last scene's), %.1f MB compacted to %.1f MB", structures.count,
                          structures.count - new.count, Double(before) / 1_048_576, Double(after) / 1_048_576))

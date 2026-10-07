@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: RendererController!
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
+    private var loadingOverlay: LoadingOverlay?
     private var offscreen: OffscreenSurface?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -68,6 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // shaders failed to compile.)
             controller.onFirstFrame = { [weak self] in self?.showPanels() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.showPanels() }
+            // What loads in the background (the launch's shader compile is already running).
+            let overlay = LoadingOverlay(activity: controller.loadActivity)
+            overlay.attach(to: view)
+            loadingOverlay = overlay
+            controller.onToggleLoading = { [weak self] in self?.toggleLoading(nil) }
         }
         renderer.startRenderThread()
 
@@ -82,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           R            hot-reload the shaders (edit Shaders/*.metal while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
+          P            show or hide the loading overlay (what loads in the background, and how far it is)
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
     }
@@ -123,6 +130,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugPanel?.toggle(nextTo: window, below: settingsPanel?.panel)
     }
 
+    @objc private func toggleLoading(_ sender: Any?) {
+        loadingOverlay?.toggle()
+        loadingItem?.state = LoadingOverlay.isEnabled ? .on : .off
+    }
+    private var loadingItem: NSMenuItem?
+
     private func buildMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -130,6 +143,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Render Settings…", action: #selector(toggleSettings(_:)), keyEquivalent: ",").target = self
         appMenu.addItem(withTitle: "Debug Window", action: #selector(toggleDebug(_:)), keyEquivalent: "i").target = self
+        if !Benchmark.isEnabled {
+            let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = LoadingOverlay.isEnabled ? .on : .off
+            loadingItem = item
+        }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit MetalRenderer",
                         action: #selector(NSApplication.terminate(_:)),
