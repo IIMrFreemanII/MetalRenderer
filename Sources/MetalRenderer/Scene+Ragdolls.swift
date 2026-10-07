@@ -102,15 +102,15 @@ extension Scene {
     /// A ragdoll of 11 bodies (pelvis, chest, head, upper arms, forearms, thighs, shins) standing 1.7 m tall with its
     /// feet at the origin of `transform` (a rotation and a translation), facing +z, its arms by its sides. Ball joints
     /// at the spine, neck, shoulders and hips (each with a swing cone and a twist range), hinges at the elbows and
-    /// knees (bending one way). Returns its bodies.
+    /// knees (bending one way). Returns its bodies. `drawn` false: only its head is (flesh covers the rest).
     @discardableResult
     func addRagdoll(_ parts: RagdollShapes, _ transform: float4x4, skin: Int, top: Int, bottom: Int, density: Float = 1000,
-                    velocity: SIMD3<Float> = .zero) -> Range<Int> {
+                    velocity: SIMD3<Float> = .zero, drawn: Bool = true) -> Range<Int> {
         let first = physics?.bodies.count ?? 0
         let across = rotate(.pi / 2, [0, 0, 1])   // a capsule along x
         func part(_ shape: Int, _ material: Int, _ at: SIMD3<Float>, _ turn: float4x4 = matrix_identity_float4x4) -> Int {
             addBody(sdf: shape, material, transform * translate(at) * turn, density: density, friction: 0.8, restitution: 0.1,
-                    velocity: velocity)
+                    velocity: velocity, mask: drawn || shape == parts.head ? Scene.maskGeometry : 0)
             return physics!.bodies.count - 1
         }
         let pelvis = part(parts.pelvis, bottom, [0, 0.98, 0], across)

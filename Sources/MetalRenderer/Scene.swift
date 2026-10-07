@@ -451,6 +451,7 @@ final class Scene {
         case .ragdolls: buildRagdolls(settings.physics)
         case .hair: buildHair(settings.physics)
         case .softBodies: buildSoftBodies(settings.physics)
+        case .muscles: buildMuscles(settings.physics)
         }
         }
         for extra in settings.extraModels { addExtraModel(extra) }
@@ -987,8 +988,9 @@ final class Scene {
 
     /// A mesh whose vertices the GPU rewrites every frame (a cloth's: PhysicsGPU), within `bounds` whatever it does.
     /// Its vertices are its own (`vertexOffset` 0), and `finishDeforming` puts last frame's after everything else.
-    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, bounds: AABB) -> Int {
-        let m = addMesh(mesh, uvs: uvs)
+    /// `materials`: per triangle, its material's offset from the instance's (as `addMesh`'s).
+    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB) -> Int {
+        let m = addMesh(mesh, uvs: uvs, materials: materials)
         meshBounds[m] = (bounds.lo, bounds.hi)
         deforming.append((mesh: m, first: positions.count - mesh.positions.count, count: mesh.positions.count))
         return m
@@ -1196,14 +1198,41 @@ final class Scene {
     /// mean and the larger).
     @discardableResult
     func addBody(sdf: Int, _ material: Int, _ transform: float4x4, density: Float = 500, friction: Float = 0.5,
-                 restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero) -> Int {
-        let i = addInstance(sdf: sdf, material, transform)
+                 restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero,
+                 mask: UInt32 = Scene.maskGeometry) -> Int {
+        let i = addInstance(sdf: sdf, material, transform, mask: mask)
         instances[i].simulated = true
         let world = physicsWorld()
         world.setVolumes(sdfVolumes)
         world.addBody(sdf: sdf, sdfShapes[sdf], transform: transform, instance: i, density: density, friction: friction,
                       restitution: restitution, velocity: velocity, spin: spin)
         return i
+    }
+
+    /// A kinematic body (PhysicsFlesh.swift): an instance of SDF shape `sdf` that its column of the physics' pose table
+    /// moves, starting at `transform`; `mask` 0 to keep it out of sight (a bone under flesh). Returns its body.
+    @discardableResult
+    func addKinematicBody(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry, friction: Float = 0.6) -> Int {
+        let i = addInstance(sdf: sdf, material, transform, mask: mask)
+        instances[i].simulated = true
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        return world.addKinematicBody(sdf: sdf, sdfShapes[sdf], transform: transform, instance: i, friction: friction)
+    }
+
+    /// A figure's flesh drawn (PhysicsFlesh.swift): `mesh`, in the figure's rest space, embedded in `flesh`'s lattice
+    /// (each vertex in the tet `own` gives it, or on figure bone `rigid[v]` where that is -1), as a deforming mesh the
+    /// GPU writes every frame, starting where the flesh is. `weld`: its vertices at one place share their normal.
+    func addFleshMesh(_ flesh: PhysicsWorld.Flesh, figure: FleshFigure, mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil,
+                      materials: [UInt8]? = nil, own: [Int], rigid: [Int], weld: Bool, material: Int, bounds: AABB, skin: SkinShell? = nil) {
+        var drawn = flesh
+        drawn.model.embed(mesh, in: own, weld: weld)
+        let m = addDeformingMesh(mesh, uvs: uvs, materials: materials, bounds: bounds)
+        addDeformingInstance(m, material)
+        softMeshes.append(m)
+        let world = physicsWorld(), base = deforming.last!.first, firstVertex = world.softVertices.count
+        world.addFleshSurface(drawn, figure: figure, vertexBase: base, rigid: rigid, skin: skin)
+        for v in firstVertex..<world.softVertices.count { positions[Int(world.softVertices[v].info.x)] = world.drawnSoftVertex(v) }
     }
 
     /// The cloths' meshes, in the physics' order.
@@ -1353,11 +1382,12 @@ final class Scene {
 
     /// A texture made here rather than read from a model (FoliageTextures): the index a material names it by. The
     /// streamer keeps one cache file for all of a scene kind's, named by their pixels, so a change remakes it.
-    func addGeneratedTexture(_ image: FoliageTextures.Image, name: String) -> UInt32 {
+    /// `srgb`: its pixels are colours (false: data, such as a normal map's).
+    func addGeneratedTexture(_ image: FoliageTextures.Image, name: String, srgb: Bool = true) -> UInt32 {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for byte in image.pixels { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 }
         // (With the cache off, a file of its own: the mip chains named by parameters stay as they are.)
-        textures.append(TextureSource(data: Data(image.pixels), srgb: true, name: "generated/\(name)",
+        textures.append(TextureSource(data: Data(image.pixels), srgb: srgb, name: "generated/\(name)",
                                       modelPath: GeneratedCache.folder.appendingPathComponent("\(settings.kind)\(GeneratedCache.enabled ? "" : "-uncached")").path,
                                       cacheKey: "\(name)-\(image.width)x\(image.height)-\(String(hash, radix: 16))",
                                       raw: (image.width, image.height)))

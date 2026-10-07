@@ -79,6 +79,8 @@ extension SceneKind: EnvNamed {
 }
 extension CityStyle: EnvNamed {}
 extension PhysicsSettings.Backend: EnvNamed {}
+extension PhysicsSettings.Skin: EnvNamed {}
+extension PhysicsSettings.Body: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -359,6 +361,16 @@ enum SettingsTable {
                 .env(.scene, "soft").when { $0.scene.kind == .softBodies },
             S.slider("Lattice cells", \.scene.physics.softCells, PhysicsSettings.softCellRange, live: false)
                 .env(.scene, "cells").when { $0.scene.kind == .softBodies },
+            S.check("Character", \.scene.physics.muscleCharacter).env(.scene, "character").when { $0.scene.kind == .muscles },
+            S.slider("Ragdolls with flesh", \.scene.physics.muscleRagdolls, PhysicsSettings.muscleRagdollRange, live: false)
+                .env(.scene, "fleshragdolls").when { $0.scene.kind == .muscles },
+            S.slider("Flesh lattice", \.scene.physics.fleshCell, PhysicsSettings.fleshCellRange, step: 0.5, live: false) { String(format: "%.1f cm", $0) }
+                .env(.scene, "flesh").when { $0.scene.kind == .muscles },
+            S.popup("Body", \.scene.physics.body, titled(\.title)).env(.scene, "body").when { $0.scene.kind == .muscles },
+            S.popup("Skin", \.scene.physics.skin, titled(\.title)).env(.scene, "skin")
+                .when { $0.scene.kind == .muscles && $0.scene.physics.body == .skin },
+            S.slider("Muscle strength", \.scene.physics.muscleGain, PhysicsSettings.muscleGainRange, step: 0.05, live: false) { String(format: "%.2f", $0) }
+                .env(.scene, "muscle").when { $0.scene.kind == .muscles },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },

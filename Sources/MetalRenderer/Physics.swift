@@ -25,10 +25,13 @@ import simd
 final class PhysicsWorld {
     static let staticBit: UInt32 = 0x8000_0000
     static let none: UInt32 = ~0
-    /// info.y flags: a body's, and a particle's.
+    /// info.y flags: a body's, and a particle's. A kinematic body's column in the pose table is in its flags above
+    /// bit 8 (PhysicsFlesh.swift).
     static let asleep: UInt32 = 1
+    static let kinematicBit: UInt32 = 2
     static let clothBit: UInt32 = 1
     static let softBit: UInt32 = 2
+    static let skinBit: UInt32 = 4
     /// How many pairs a body may be in (more are dropped: statics and the lowest bodies stay) and contacts a pair may have.
     static let maxPairs = 16
     static let maxContacts = PhysicsManifold.capacity
@@ -165,6 +168,18 @@ final class PhysicsWorld {
     var hairGroups: [GPUHairGroup] = []
     var wind = SIMD4<Float>()
 
+    /// Flesh (PhysicsFlesh.swift): the kinematic bodies' poses, a row of `kinematicColumns` (position, rotation) per
+    /// step, repeating after `kinematicRows`; the muscles and how active each is now; the particles held to bones; the
+    /// muscles' tets' fibres; the skin's holds on the flesh (PhysicsSkin.swift).
+    var kinematicTable: [SIMD4<Float>] = []
+    private(set) var kinematicColumns = 0
+    var kinematicRows: Int { kinematicColumns == 0 ? 0 : kinematicTable.count / (2 * kinematicColumns) }
+    var muscles: [GPUMuscle] = []
+    var activations: [Float] = []
+    var pins: [GPUFleshPin] = []
+    var fibres: [GPUFleshFibre] = []
+    var skinAttachments: [GPUSkinAttach] = []
+
     /// How far the simulation has gone (whole steps).
     var stepIndex = 0
     var time: Float { Float(stepIndex) * PhysicsWorld.stepLength }
@@ -224,6 +239,31 @@ final class PhysicsWorld {
         bodies.append(b)
         return bodies.count - 1
     }
+
+    /// A kinematic body moving `instance`, SDF shape `sdf`, placed by `transform` (no scale) at the start: it goes where
+    /// its column of the pose table says, step by step (PhysicsFlesh.swift), whatever touches it. What it touches it
+    /// pushes, carries along by friction and wakes; nothing pushes it back.
+    @discardableResult
+    func addKinematicBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, friction: Float = 0.6,
+                          restitution: Float = 0.1) -> Int {
+        let s = self.shape(sdf: sdf, shape)
+        let (p, q) = pose(shape: s, transform)
+        var b = GPUPhysicsBody()
+        b.position = SIMD4(p, 0)
+        b.rotation = q
+        b.velocity = SIMD4(.zero, friction)
+        b.angular = SIMD4(.zero, restitution)
+        b.prevPosition = SIMD4(p, 0)
+        b.prevRotation = q
+        b.invInertia = SIMD4(.zero, shapes[s].comPosition.w)
+        b.info = SIMD4(UInt32(s), PhysicsWorld.kinematicBit | UInt32(kinematicColumns) << 8, UInt32(instance), 0)
+        kinematicColumns += 1
+        bodies.append(b)
+        return bodies.count - 1
+    }
+
+    /// The pose (centre of mass, rotation) of body `i` whose shape space is placed by `transform`: a pose table's entry.
+    func bodyPose(_ i: Int, _ transform: float4x4) -> (SIMD3<Float>, SIMD4<Float>) { pose(shape: Int(bodies[i].info.x), transform) }
 
     /// A static collider: SDF shape `sdf` placed by `transform` (it needn't be drawn).
     func addStatic(sdf: Int, _ shape: SDFShape, transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
@@ -442,7 +482,7 @@ final class PhysicsWorld {
                                       UInt32(ragdolls.count)),
                          rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, PhysicsWorld.wakeTurn),
                          soft: SIMD4(UInt32(tets.count), UInt32(tetStarts.count - 1), UInt32(softVertices.count), UInt32(softBodies.count)),
-                         softDamping: SIMD4(PhysicsWorld.softDrag, PhysicsWorld.softLinkDamping, 0, 0))
+                         softDamping: SIMD4(PhysicsWorld.softDrag, PhysicsWorld.softLinkDamping, Float(substeps), 0))
     }
 
     // MARK: - Time
@@ -481,7 +521,7 @@ final class PhysicsWorld {
     /// and how far along: each body whose bounding sphere the ray crosses, sphere-traced through its distance.
     func pick(origin: SIMD3<Float>, direction: SIMD3<Float>) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
         var best: (body: Int, anchor: SIMD3<Float>, distance: Float)?
-        for i in bodies.indices {
+        for i in bodies.indices where bodies[i].position.w > 0 {   // (not what nothing moves: a kinematic body, a mount)
             let (x, q) = drawnPose(i)
             let radius = bodies[i].invInertia.w, oc = origin - x
             let b = dot(oc, direction), c = dot(oc, oc) - radius * radius, disc = b * b - c

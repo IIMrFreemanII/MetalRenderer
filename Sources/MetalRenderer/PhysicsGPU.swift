@@ -95,6 +95,10 @@ final class PhysicsGPU {
     private let hairClock: MTLBuffer
     private let hairUploads: [(vertices: MTLBuffer, bodies: MTLBuffer)]
     private let strandCount: Int
+    /// The flesh (PhysicsFlesh.swift: GPUFleshHeader, then the pose table, the muscles, the pins...); and when the CPU
+    /// steps it, the bodies as it left them per frame slot (what heads and hands are drawn on).
+    private let flesh: MTLBuffer
+    private let bodyUploads: [MTLBuffer]
     /// It steps the world; otherwise it only draws the CPU's cloths and hair.
     let simulates: Bool
     var hasCloth: Bool { clothTable != nil }
@@ -185,6 +189,9 @@ final class PhysicsGPU {
         hairUploads = simulates || world.hairGroups.isEmpty ? [] : try (0..<slots).map {
             (try buffer(world.initialHairVertices, "physicsHairUpload\($0)"), try buffer(world.initialBodies, "physicsBodyUpload\($0)"))
         }
+        flesh = try buffer(world.fleshWords(), "physicsFlesh")
+        bodyUploads = simulates || !world.softEmbeds.contains(where: { $0.ids.w == GPUSoftEmbed.bodyKind }) ? []
+            : try (0..<slots).map { try buffer(world.initialBodies, "physicsFleshBodies\($0)") }
         self.sdfScene = sdfScene
         self.sdfResources = sdfResources
     }
@@ -211,7 +218,8 @@ final class PhysicsGPU {
         enc.setBuffer(initialParticles, offset: 0, index: 5)
         enc.setBuffer(particles[0], offset: 0, index: 6)
         enc.setBuffer(lastParticle, offset: 0, index: 7)
-        dispatch(enc, pipelines[.physicsReset], max(count, particleCount))
+        enc.setBuffer(flesh, offset: 0, index: 8)
+        dispatch(enc, pipelines[.physicsReset], max(count, particleCount, 1))
         guard strandCount > 0 else { return }
         var vertexCount = UInt32(world.initialHairVertices.count)
         enc.setComputePipelineState(pipelines[.physicsHairReset])
@@ -385,6 +393,7 @@ final class PhysicsGPU {
         enc.setBuffer(ragdolls, offset: 0, index: 27)
         enc.setBuffer(tets, offset: 0, index: 28)
         enc.setBuffer(tetStarts, offset: 0, index: 29)
+        enc.setBuffer(flesh, offset: 0, index: 30)
         let lanes = substeps.threadExecutionWidth
         let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
         enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
@@ -426,6 +435,9 @@ final class PhysicsGPU {
                 if !$0.isEmpty { hairUploads[slot].bodies.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             }
         }
+        if !bodyUploads.isEmpty {
+            world.bodies.withUnsafeBytes { bodyUploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        }
     }
 
     /// The cloths' vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.
@@ -451,12 +463,19 @@ final class PhysicsGPU {
         enc.setBuffer(softVertices, offset: 0, index: 2)
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(softEmbeds, offset: 0, index: 4)
+        enc.setBuffer(simulates ? bodies : bodyUploads.isEmpty ? bodies : bodyUploads[slot], offset: 0, index: 5)
         dispatch(enc, pipelines[.physicsSoftMesh], Int(n))
         enc.setComputePipelineState(pipelines[.physicsSoftNormals])
         enc.setBuffer(softVertices, offset: 0, index: 1)
         enc.setBuffer(softRings, offset: 0, index: 2)
         enc.setBuffer(normals, offset: 0, index: 4)
         dispatch(enc, pipelines[.physicsSoftNormals], Int(n))
+    }
+
+    /// The flesh's buffer as the GPU has it (tests: its clock, the muscles' activations).
+    func readFlesh() -> [SIMD4<UInt32>] {
+        let n = flesh.length / 16
+        return Array(UnsafeBufferPointer(start: flesh.contents().bindMemory(to: SIMD4<UInt32>.self, capacity: n), count: n))
     }
 
     /// The particles as the GPU has them (tests).
