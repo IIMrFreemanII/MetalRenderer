@@ -24,18 +24,29 @@ uv pip install -p Tools/neural/.venv -r Tools/neural/requirements.txt
 ## 1. Make the dataset
 
 ```bash
-nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.log
+METALRENDERER_RT=metal nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.log
 ```
 Renders offscreen (no window). First every clip's noisy frames (minutes), then a path-traced reference for every
-frame (the long part: ~70 s each on an M1 Max, 6–9 min for the showcase's and the stress building's; ~1,500 of them). Stop it any time; run it again to carry on. The clip
+frame (the long part: 1,660 of them, 62 GB; 6–54 s each on an M4 Max with the Metal tracer, ~10 h in all; ~70 s each on an
+M1 Max, 6–9 min for the showcase's and the stress building's). Stop it any time; run it again to carry on. The clip
 list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, the stress building's 4 zones, 24 random rooms
-and the showcase's 11 models, each on its own set; 20 frames a clip, 8 for the stress building and the showcase; 512
+and the showcase's 11 models, each on its own set; 20 frames a clip (`stressframes=` / `showcaseframes=` cut those two); 512
 spp; keys in `Benchmark.DatasetSpec`). Scenes with glTF models trace them at full detail and every clip
 runs without the lens (bloom, depth of field), in both runs (`DatasetClip.shared`).
 
-On a Mac with hardware ray tracing (M3 and later), first time one reference with the Metal tracer, which may be much
-faster: `METALRENDERER_DATASET="scenes=cornell,clips=1,frames=1,spp=512" METALRENDERER_RT=metal Tools/neural/make-dataset.sh -d /tmp/try`
-and compare `dataset/run.log` times. `METALRENDERER_RT=metal` then goes in front of the real run.
+Each scene also has a **paused clip** (`<scene>-<seed>-p0`; `pausedclips=`, `pausedframes=`, default 1 × 100 frames):
+a still camera on the paused scene, at a moment (room, model, stress zone) of its own. Every frame is new noise over
+the same image, so it needs one reference, frame 0's, for all 100: long, still views cost almost nothing to add, and
+they are what teaches the net to keep accumulating while a view holds still, as MetalFX does. 14 of them: ~1,400 noisy
+frames (30 GB, half a minute) and 14 references.
+
+`METALRENDERER_RT=metal` is for Macs with hardware ray tracing (M3 and later): on an M4 Max it renders the same reference
+as the custom tracer (92 dB apart) in ~60% of the time. On an M1 Max leave it out. To time a new scene first:
+`METALRENDERER_DATASET="scenes=cornell,clips=1,frames=1,spp=512" METALRENDERER_RT=metal Tools/neural/make-dataset.sh -d /tmp/try`.
+
+References have no firefly clamp, so a rare sample overflows the half-float light textures; the averaging kernels
+count it as 65504 (`finiteSample`, Output.metal). Datasets rendered before that fix (6 Oct 2026) have NaN or zeroed
+pixels next to bright lights; `train.py` leaves non-finite reference pixels out of its loss and scores.
 
 **Layout** (`dataset/`, gitignored): a folder per clip, `<scene>-<seed>-<clip>`, holding per frame `fNNNN.json`
 (time, camera, jitter, exposure, sizes) and float16 arrays `fNNNN-<buffer>.npy`:
@@ -50,12 +61,17 @@ input, MetalFX, reference on top; albedo, normals, motion below.
 
 ```bash
 cd Tools/neural
-.venv/bin/python train.py ../../dataset --val market,forest --out runs/first
+.venv/bin/python train.py ../../dataset --val market-2,forest-2 --widths 64,96,128 --length 20 --out runs/long
 ```
-Market and forest are held out, so validation measures how the net does on scenes it never saw. Each epoch prints
-the net's PSNR and flicker next to MetalFX's on the same frames. Checkpoints: `runs/first/best.pt`, `last.pt`
-(`--resume`). The model (`model.py`): a recurrent U-Net at the render resolution over the noisy light, the guides and
-last frame's output (warped by the motion, folded 3×3 into the render resolution); ~274k parameters.
+`--val` holds out scenes (`market`) or one seed's clips of them (`market-2`, rendered with
+`METALRENDERER_DATASET="scenes=market|forest,clips=2,frames=20,seed=2" make-dataset.sh`): the app runs these scenes, so
+validating on new clips of them measures what it will show. Each epoch prints the net's PSNR and flicker next to
+MetalFX's on the same frames, and with paused clips held out, "still" scores: the last 20 of `--paused-length` (80)
+frames. Paused clips train in a batch every `--paused-every` (4): a random warm-up of up to 60 frames without
+gradients, then `--length` frames with. Checkpoints: `best.pt` (moving and still validation alike), `last.pt`
+(`--resume`); `--init <checkpoint>` starts from another run's weights with a new schedule. The model (`model.py`): a
+recurrent U-Net at the render resolution over the noisy light, the guides and last frame's output (warped by the
+motion, folded 3×3 into the render resolution); `--widths` 32,48,64 is ~274k parameters, 64,96,128 ~968k.
 
 ```bash
 .venv/bin/python infer.py runs/first/best.pt ../../dataset --scenes market,forest --png out/   # whole clips, side by side

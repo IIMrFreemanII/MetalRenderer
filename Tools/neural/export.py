@@ -74,13 +74,13 @@ def main():
     args = p.parse_args()
     if args.checkpoint:
         ck = torch.load(args.checkpoint, map_location="cpu")
-        net = DenoisingUpscaler(ck["factor"])
+        net = DenoisingUpscaler(ck["factor"], ck.get("widths", WIDTHS))
         net.load_state_dict(ck["model"])
     else:
         torch.manual_seed(0)
         net = DenoisingUpscaler(3)
     net.eval()
-    meta = {"factor": net.factor, "guides": GUIDES, "hidden": HIDDEN, "widths": list(WIDTHS)}
+    meta = {"factor": net.factor, "guides": GUIDES, "hidden": HIDDEN, "widths": list(net.widths)}
     weights = [(k, v.numpy().astype(np.float16)) for k, v in net.state_dict().items()]
     if args.checkpoint:
         write_nnw(args.out, meta, weights)

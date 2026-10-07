@@ -5,6 +5,7 @@ and in it per frame `fNNNN.json` (time, camera, jitter, exposure, sizes) and flo
 render resolution: color (noisy linear light), albedo, specular (specular albedo), normal (xyz + view depth, sky -1),
 depth (reversed Z), motion (previous minus current pixel, render pixels), roughness;
 output resolution: metalfx (MetalFX's denoising scaler, the baseline) and reference (supersampled, path traced).
+Paused clips (`paused`) have one reference for all their frames.
 """
 import glob, json, os
 import numpy as np
@@ -12,12 +13,18 @@ import numpy as np
 INPUTS = ["color", "albedo", "specular", "normal", "motion", "roughness"]
 
 
+def matches(clip, names):
+    """Whether a clip folder (`<scene>-<seed>-<clip>`) is one of `names`: a scene ("market") or a scene's clips of one
+    seed ("market-2")."""
+    base = os.path.basename(clip)
+    return any(n == base.split("-")[0] or base.startswith(n + "-") for n in names)
+
+
 def clip_dirs(root, scenes=None, exclude=()):
-    """The clip folders under `root`, optionally only those of `scenes` (names like "gallery"), without `exclude`."""
+    """The clip folders under `root`, optionally only those of `scenes` (see `matches`), without `exclude`."""
     out = []
     for d in sorted(glob.glob(os.path.join(root, "*"))):
-        scene = os.path.basename(d).split("-")[0]
-        if not os.path.exists(os.path.join(d, "f0000.json")) or scene in exclude or (scenes and scene not in scenes):
+        if not os.path.exists(os.path.join(d, "f0000.json")) or matches(d, exclude) or (scenes and not matches(d, scenes)):
             continue
         out.append(d)
     return out
@@ -33,7 +40,15 @@ def frames(clip, need=("reference",)):
     return out
 
 
+def paused(clip):
+    """A paused clip (`<scene>-<seed>-p<n>`): a still camera on a paused scene, every frame new noise over the same
+    image, so its one reference (frame 0's) is every frame's."""
+    return os.path.basename(clip).split("-")[-1].startswith("p")
+
+
 def array_path(clip, frame, buffer):
+    if buffer == "reference" and paused(clip):
+        frame = 0
     return os.path.join(clip, f"f{frame:04d}-{buffer}.npy")
 
 

@@ -1,5 +1,5 @@
 - [Neural denoiser status, Oct 2026](neural-denoiser-status-2026-10.md) — our own denoising upscaler: built, verified, next steps; how-to in Tools/neural/README.md
-- [Dev Macs: M1 Max and M4 Max](dev-macs.md) — M1 Max has no hardware RT (Metal 4 RT untestable); M4 Max from Oct 2026, check its capability line
+- [Dev Macs: M1 Max and M4 Max](dev-macs.md) — M1 Max has no hardware RT (Metal 4 RT untestable); M4 Max from Oct 2026: hardware RT, Metal 4 RT verified, dataset refs 6-54 s
 - [Stress scene in the dataset](feedback-no-stress-references.md) — old hall out; new stress building in (4 zones x 8 frames); time new scenes first
 - [Ping when training starts](feedback-ping-training.md) — push notification when a long training run starts or a waited-on job ends
 - [Disk: count purgeable space](feedback-disk-purgeable.md) — df understates free space; check Finder's important-usage figure
@@ -8,3 +8,4 @@
 - [Render offscreen only](feedback-render-offscreen.md) — METALRENDERER_BENCH runs are headless; offscreen skill; never open the window unasked
 - [Related tests only](feedback-related-tests-only.md) — run the tests skill's related.sh, never the full swift test unless asked
 - [MegaLights status, Oct 2026](megalights-status-2026-10.md) — optional mode beats ReSTIR on quality, 2–4 ms slower at 256+ lights; half-res next
+- [GitHub push account](github-push-account.md) — only IIMrFreemanII can push; 403 means the wrong gh account is active

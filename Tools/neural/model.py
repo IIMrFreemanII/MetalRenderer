@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 GUIDES = 14          # log colour 3, albedo 3, specular albedo 3, normal 3, depth 1, roughness 1
 HIDDEN = 8           # recurrent state per output pixel, next to the output's 3 (log) colour channels
-WIDTHS = (32, 48, 64)
+WIDTHS = (32, 48, 64)   # the default; a checkpoint keeps its own ("widths")
 
 
 def prepare(color, albedo, specular, normal, roughness, exposure):
@@ -40,11 +40,11 @@ def conv(cin, cout):
 
 
 class DenoisingUpscaler(nn.Module):
-    def __init__(self, factor=3):
+    def __init__(self, factor=3, widths=WIDTHS):
         super().__init__()
-        self.factor = factor
+        self.factor, self.widths = factor, tuple(widths)
         f2 = factor * factor
-        w0, w1, w2 = WIDTHS
+        w0, w1, w2 = self.widths
         cin = GUIDES + 2 + f2 * (3 + HIDDEN)   # guides, jitter, last frame's output and state folded
         self.enc0 = nn.ModuleList([conv(cin, w0), conv(w0, w0)])
         self.enc1 = nn.ModuleList([conv(w0, w1), conv(w1, w1)])

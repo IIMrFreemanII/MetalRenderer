@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 
 import common
-from model import DenoisingUpscaler, prepare, to_linear
+from model import WIDTHS, DenoisingUpscaler, prepare, to_linear
 from train import device
 
 
@@ -50,7 +50,7 @@ def main():
     args = p.parse_args()
     dev = device()
     ck = torch.load(args.checkpoint, map_location=dev)
-    net = DenoisingUpscaler(ck["factor"]).to(dev)
+    net = DenoisingUpscaler(ck["factor"], ck.get("widths", WIDTHS)).to(dev)
     net.load_state_dict(ck["model"])
     net.eval()
     scenes = [s for s in args.scenes.split(",") if s] or None
