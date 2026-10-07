@@ -735,7 +735,7 @@ The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
 | Megaplants feature | Here |
 |---|---|
 | Nanite Assemblies | A third instancing level, by Metal's multi-level instancing (`max_levels<3>`). An assembly's parts are the instances of an instance structure of its own, a *variant*, and a plant's top-level instance names one; a part is a placed mesh. The forest stores 283k triangles instead of 2.25M. An assembly has a variant per phase of the wind (8, `PLANT_PHASES`) and, if it drops its leaves, per share of them still on it (5: none, a quarter, half, three quarters, all), so 40 for a deciduous assembly and 8 for an evergreen. A plant names the variant of its phase's bucket and of its quantised share. |
-| Skinning and wind | Every part has two rigid bones (its limb, and itself on that limb), and the plant leans about its foot. With wind, every frame `plantWindKernel` poses the variants' parts (the bones at the variant's phase and the mean gust) and Metal refits the variants plants name, each in an encoder of its own (several instance refits in one encoder crash the M1 Max's driver; two are no faster). Plants of the same bucket swing their boughs together; the whole plant's lean is each plant's own, in its instance's transform (`Wind.plant` mirrors the shader's `plantWind`). The shading turns the hit point at this frame's time and the last one's, so moving leaves have motion vectors. Grass and ferns have no bones: a patch's instance is sheared downwind by its height (`Wind.cover`). |
+| Skinning and wind | Every part has two rigid bones (its limb, and itself on that limb), and the plant leans about its foot. With wind, every frame `plantWindKernel` poses the variants' parts (the bones at the variant's phase and the mean gust) and Metal refits the variants plants name: under Metal 4 side by side in the frame's encoder, under Metal 3 two to an encoder (three or more instance refits in one encoder crash the M1 Max's driver). Only the plants within the sway reach (`swayReach`, "Sway reach", 40 m by default) name posed variants; farther ones name their assembly's variant at rest, built once and never refitted, and still lean as a whole. With time paused (and nothing else changed) nothing is posed, written or refitted. Plants of the same bucket swing their boughs together; the whole plant's lean is each plant's own, in its instance's transform (`Wind.plant` mirrors the shader's `plantWind`). The shading turns the hit point at this frame's time and the last one's, so moving leaves have motion vectors. Grass and ferns have no bones: a patch's instance is sheared downwind by its height (`Wind.cover`). |
 | Nanite Voxels | Each plant has a 32-voxel grid with two coarser levels (1.7 MB for the forest). A voxel holds its optical depth, its share of leaf and its mean normal. With "Far plants as voxels" (off by default, below), a plant whose voxels are about 2 traced pixels (the `lod` setting) names its grid's box at that level instead of its variant, and the ray queries march it; a ray stops in a voxel with the probability that it would have hit something there. Every ray sees a plant the same way, since the level goes by the camera. |
 | Seasons | The Season setting recolours the leaf materials, each shade of each species in its own time, and from late autumn drops leaves: in a variant for fewer leaves, a leafy part's structure is over a prefix of its mesh's triangles (the leaves are shuffled, and fall from the end). Conifers keep theirs. |
 | Two-sided foliage | A share of the leaves (35% for broad leaves) shows the light of its far side: for those, lighting, shadow rays and bounces use the flipped normal. Which leaves is fixed per leaf. It is an approximation: a leaf is lit from one side or the other, never both. The path-traced reference does the same, so the GI methods agree with it (below) without that proving it right. |
@@ -765,6 +765,20 @@ The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
 * **Not built: the camera's level picked in the shader** (the custom tracer's `cameraVoxelLevel`, which spared its prep pass writing a level into every plant's record). Here the CPU picks the levels and a changed pick builds the top-level structure instead of refitting it; with the shader picking among the voxel levels, only a plant's change between triangles and voxels would. The whole top-level structure's pass is 0.10 ms of the moving forest's frame, with voxels or without: there is nothing to save.
 
 **Cost** on an M1 Max with Metal's tracer (software ray tracing), the default shot (cascades, 3× from 640×400, wind 0.4; whole frames, `METALRENDERER_BENCH_SPLIT=0`): 53.3 ms in the wind, 42.2 ms without it, against 46.0 ms on the custom tracer before it was removed and 27.2 ms for the plants baked and still. The wind's pass, posing the variants and refitting the 232 the plants name, is about 11.6 ms of the GPU's frame. The M4 Max has not been measured since.
+
+Since then (M1 Max, `METALRENDERER_BENCH=forest`, 960×600 and 3× from 640×400, whole frames, fastest of 2 alternating rounds against the build before):
+
+| Setting | Before | Now | What did it |
+|---|---|---|---|
+| forest static (paused, wind 0.4) | 83.0 ms | 74.7 ms | nothing posed, written or refitted while time stands still |
+| forest closeup (paused) | 91.6 ms | 84.3 ms | the same |
+| forest 10k trees (paused) | 131.3 ms | 125.3 ms | the same |
+| forest moving | 83.1 ms | 77.7 ms | the sway reach (40 m), two refits to an encoder |
+| forest moving 3x | 52.9 ms | 45.9 ms | the same |
+
+* The wind's pass is 6.2 ms with a 40 m reach, 1.7 ms with 20 m (moving 3x: 41.7 ms a frame) and 0.6 ms with 10 m; posing every variant's parts is 0.08 ms of it, the rest is the refits. Two refits to an encoder alone are 3% of the moving frame.
+* With the reach, a plant's boughs stand at rest beyond it: from the air every crown does, and only whole trees lean. The pictures differ from before where those boughs were posed.
+* The plants' structures that never change (the leafy meshes' prefixes, the variants at rest, a still scene's one set of variants) are compacted.
 
 Before, on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METALRENDERER_BENCH=forest`, "forest moving 3x"), whole frame and the trace pass; every row but the last on the custom tracer:
 
@@ -809,11 +823,13 @@ Before, on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METAL
 * **Committing a voxel hit to Metal's ray query** (`commit_bounding_box_intersection`), so that the traversal skips what is behind it. The commit costs far more than the boxes it saves: on an M4 Max the open world's road views took 25–30 ms a frame with it and 9–12 ms without, the forest 5.6–13.8 ms against 4.7–9.6 ms. The shader keeps the nearest voxel hit and compares it with the query's triangle at the end. The forest's pictures are the same bit for bit.
 * **Padding the parts' boxes for the strongest wind** (the custom tracer). It cost 0.3 ms with no wind at all. The boxes are padded by the current strength, and the assemblies' nodes refitted when it changes.
 * **Keeping the leaf-fall limit in a register across the traversal loop** (the custom tracer). 0.7 ms a frame in the wind; it is computed where a leaf is tested.
+* **Posing only the variants plants name.** plantWindKernel poses all of them in 0.08 ms; the refits are the cost.
+* **Three or more refits to an encoder** crash the M1 Max's driver (SIGBUS), as four did before.
 
 **Limitations:**
 * The open world's plants stand still: they are in instance blocks, whose scene is still (its structure built once), so there is no wind there, and a change of season makes the scene again.
 * Plants of the same phase bucket swing their boughs together (each still leans on its own); a plant's share of leaves is one of five steps.
-* The wind refits every variant a plant names, each in an encoder of its own: on the M1 Max that is a fifth of the forest's frame.
+* The wind refits every variant a plant within the sway reach names: on the M1 Max (Metal 3, two to an encoder) that is 8% of the moving forest's frame at 40 m.
 * Swaying ground cover is left to the rays by the raster visibility buffer: it leans where the rays meet it.
 * A plant traced as voxels only leans with the wind; its boughs don't move. Far trunks are as grainy as far crowns.
 * Dead trees only lean. A patch of grass leans as one.
@@ -1810,7 +1826,7 @@ What didn't help:
 1. **Many lights, sharper:** ReSTIR scales flat but stays below the grouped picker's quality up to 1024 lights, because SVGF blurs noisy radiance where the shadow denoiser only blurs visibility. The light grid made the candidates 2.4 dB better in the Night market, but SVGF turns that into 0.3–0.6 dB; a denoiser built for ReSTIR (ReBLUR or ReLAX-style, with the reservoirs' confidence as input) would blur less. The grid's cell target ignores orientation (so it stays unbiased); a conservative cone and facing test over the whole cell would drop the spots and rects that can't reach it, and a per-cell normal estimate from last frame's G-buffer would do better still. With the grouped picker, still frames still flicker more than with one ray per light; a denoiser that tracks the variance of fractional visibility over time is the likelier fix there.
 2. **Metal's tracer, everywhere:**
    * Measure the M4 Max (hardware ray tracing, Metal 4's ray tracing): the assemblies, their wind and leaf fall, leaf cards, virtual geometry's BLASes and clusters mode have only been measured in software on the M1 Max.
-   * The wind's refits: 232 variants refitted one encoder each are a fifth of the forest's frame on the M1 Max. Fewer variants named (buckets shared by more plants), or refits spread over frames, would cut it.
+   * The wind's refits under Metal 3: the variants the plants within the sway reach name, two to an encoder, are 8% of the moving forest's frame on the M1 Max (a fifth before the reach). Fewer variants named (buckets shared by more plants), or refits spread over frames, would cut it more.
    * Leaf cards: every card triangle goes back to the shader for its alpha test (2.7 times as slow as the custom tracer's in software). Opaque card cores with only the edges alpha tested would hand back fewer.
    * Virtual geometry's BLASes: compaction would halve their memory, and the first, synchronous builds take 350 ms against the custom tracer's 50.
    * With 2000 objects the frame still costs more than with 400; sorting secondary rays by direction for coherence is the thing to try.

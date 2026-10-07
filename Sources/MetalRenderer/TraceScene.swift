@@ -17,6 +17,25 @@ struct WindFrame {
     var previousTime: Float = 0
     var lodBias: Float = 0          // plants' voxels: 0 = never, 1 = from where a voxel is a traced pixel, 2 = sooner
     var leafFall: Float = 0         // the share of the leaves that have fallen (deciduous plants; each in its own time)
+
+    /// Where the plants' limbs move in the wind (PlantTracing.writeDescriptors): the camera, on a grid, and how far from
+    /// it (FoliageSettings.swayReach); 0 = everywhere. Farther plants name their variants at rest.
+    var sway = SIMD4<Float>()
+
+    /// What the plants' variants are posed for: the wind and, while it blows, the clock. A frame with the pose a slot
+    /// was last posed for (time paused) has nothing to pose or refit.
+    var poseKey: SIMD8<Float> {
+        wind.z > 0 ? SIMD8(wind.x, wind.y, wind.z, wind.w, time, 0, 0, 0) : SIMD8<Float>()
+    }
+
+    /// What the plants' descriptors follow: the pose, the leaf fall and, in the wind, where the limbs move. A frame with
+    /// the key a slot was last written for has nothing to write.
+    struct PlantKey: Equatable {
+        var pose: SIMD8<Float>
+        var leafFall: Float
+        var sway: SIMD4<Float>
+    }
+    var plantKey: PlantKey { PlantKey(pose: poseKey, leafFall: leafFall, sway: wind.z > 0 ? sway : SIMD4()) }
 }
 
 /// Totals of the ray queries' counters (RT_STATS builds: Shaders/Intersect.metal, `countedHit`), per class of ray (what

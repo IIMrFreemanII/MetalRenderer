@@ -303,6 +303,8 @@ enum SettingsTable {
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
                 .env(.foliage, "dir").when(plants).enabled(assemblies),
             S.slider("Gusts", \.foliage.gusts, FoliageSettings.gustRange, step: 0.05, fmt("%.2f")).env(.foliage, "gusts").when(plants).enabled(assemblies),
+            S.slider("Sway reach", \.foliage.swayReach, FoliageSettings.swayRange, step: 5, fmt("%.0f m"))
+                .env(.foliage, "sway").when(plants).enabled(assemblies),
             S.slider("Season", \.foliage.season, FoliageSettings.seasonRange, step: 0.02, fmt("%.2f")).env(.foliage, "season").when(plants),
             S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
                 .env(.foliage, "translucency").when(plants),

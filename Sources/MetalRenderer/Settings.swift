@@ -858,6 +858,10 @@ struct FoliageSettings: Equatable, Codable {
     /// Far plants are traced as voxels (FoliageVoxels) from where a voxel is this many traced pixels: 0 = never.
     /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
     var lod: Float = 2
+    /// How far from the camera the plants' limbs move in the wind, in metres (0 = everywhere). Farther plants still lean
+    /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 40 m the moving forest is
+    /// 10-13% faster (M1 Max); from above, where every crown is farther, only whole trees lean.
+    var swayReach: Float = 40
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
     var season: Float = 0.3
     /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
@@ -867,6 +871,7 @@ struct FoliageSettings: Equatable, Codable {
     static let directionRange: ClosedRange<Float> = -180...180
     static let gustRange: ClosedRange<Float> = 0...1
     static let lodRange: ClosedRange<Float> = 0...4
+    static let swayRange: ClosedRange<Float> = 0...200
     static let seasonRange: ClosedRange<Float> = 0...1
     static let translucencyRange: ClosedRange<Float> = 0...1
 
