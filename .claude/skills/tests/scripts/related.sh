@@ -53,7 +53,8 @@ if [[ $suites == " " ]]; then
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;
           Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
           Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
-          ShaderSource.swift|Pipelines.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
+          ShaderSource.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
+          Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;
           BVH.swift) add BVHTests CacheTests ;;
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;
           Building*.swift|MeshBuilder.swift) add BuildingTests CityTests ;;
@@ -76,6 +77,7 @@ if [[ $suites == " " ]]; then
           MeshSDFBuilder.swift|LumenScene.swift) add MeshSDFBuilderTests ;;
           LumenGlobalSDF.swift) add GlobalSDFTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
+          LoadActivity.swift) add LoadActivityTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;

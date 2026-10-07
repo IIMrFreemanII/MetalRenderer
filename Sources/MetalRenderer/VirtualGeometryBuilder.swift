@@ -330,11 +330,12 @@ enum VirtualGeometryBuilder {
     // MARK: Cache files
 
     /// The virtual meshes for `model`'s meshes `indices`: read from the cache file, or built (and cached) if the
-    /// file is missing or stale.
-    static func meshes(for url: URL, model: GLTFModel, indices: [Int]) -> [Int: VirtualMesh] {
+    /// file is missing or stale. `load`: the step to say so in (the loading overlay).
+    static func meshes(for url: URL, model: GLTFModel, indices: [Int], load: LoadStep? = nil) -> [Int: VirtualMesh] {
         let cache = cacheURL(for: url)
         if let cached = try? read(cache), indices.allSatisfy({ cached[$0] != nil }) { return cached }
         print("Virtual geometry: building \(model.name) (first load; cached in \(cache.path))")
+        load?.set(detail: "\(model.name): building virtual geometry (first load)")
         let built = indices.map { i -> (index: Int, mesh: VirtualMesh) in
             let m = model.meshes[i]
             return (i, build(positions: m.positions, normals: m.normals, uvs: m.uvs, indices: m.indices, name: "\(model.name)#\(i)"))

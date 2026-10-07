@@ -369,6 +369,8 @@ final class Scene {
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     var defaultCamera = Camera()
     let settings: SceneSettings
+    /// While `init` builds the scene: the load's step that the builders report models to (the loading overlay).
+    private(set) var loadStep: LoadStep?
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
     private(set) var hasGlass = false
     /// The open world: what counts as the scene for the sun's light map, the fog and the clouds' shadows is what is
@@ -419,9 +421,11 @@ final class Scene {
     /// of ordinary full-detail meshes.
     /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
     /// `voxelBoxes`: far baked plants are traced as their voxels (VoxelLOD).
+    /// `load`: the load to report the build to; a gallery stops loading models when it is cancelled.
     init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
-         building: ((Scene) -> Void)? = nil) {
+         load: LoadJob? = nil, building: ((Scene) -> Void)? = nil) {
         self.settings = settings
+        loadStep = load?.step("Scene", detail: settings.kind.title)
         self.usesVirtualGeometry = virtualGeometry
         self.usesAssemblies = assemblies && !settings.bakedPlants
         self.usesCards = assemblies && settings.leafCards
@@ -453,7 +457,13 @@ final class Scene {
         case .softBodies: buildSoftBodies(settings.physics)
         }
         }
-        for extra in settings.extraModels { addExtraModel(extra) }
+        if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
+        for extra in settings.extraModels {
+            loadStep?.set(detail: URL(fileURLWithPath: extra.path).lastPathComponent)
+            addExtraModel(extra)
+            loadStep?.advance()
+        }
+        loadStep?.set(detail: "lights")
         finishCrowd()
         finishDeforming()
         finishHair()
@@ -511,6 +521,8 @@ final class Scene {
         lightTreeChanges = (moved: changingLights.filter { !lights[$0].kind.isSun && (lights[$0].isMesh || moves(lights[$0])) },
                             scaled: changingLights.filter { !lights[$0].isMesh && !moves(lights[$0]) })
         materialsDirty = nil
+        loadStep?.finish()
+        loadStep = nil
     }
 
     // MARK: - Animation
@@ -1693,7 +1705,7 @@ final class Scene {
             ? model.meshes.indices.filter { model.meshes[$0].indices.count / 3 >= VirtualGeometryBuilder.minTriangles } : []
         var meshOf: [Int: (mesh: Int, virtual: Int)] = [:]
         if !virtualIndices.isEmpty {
-            let built = VirtualGeometryBuilder.meshes(for: url, model: model, indices: virtualIndices)
+            let built = VirtualGeometryBuilder.meshes(for: url, model: model, indices: virtualIndices, load: loadStep)
             for i in virtualIndices {
                 guard let vm = built[i] else { continue }
                 virtualMeshes.append(vm)
@@ -1786,7 +1798,11 @@ final class Scene {
         let plinthHeight: Float = 0.3
         let start = CFAbsoluteTimeGetCurrent()
         var triangles = 0
+        loadStep?.set(done: 0, total: files.count)
         for (i, url) in files.enumerated() {
+            if loadStep?.isCancelled == true { break }   // another scene was asked for: this one is thrown away
+            loadStep?.set(detail: url.deletingPathExtension().lastPathComponent)
+            defer { loadStep?.advance() }
             let model: GLTFModel
             do {
                 model = try GLTFLoader.load(url)

@@ -93,6 +93,7 @@ final class KernelVariants {
     private let lock = NSLock()
     private var states: [Key: MTLComputePipelineState] = [:]
     private var started: Set<Key> = []   // being built, or failed: not asked for again
+    private var building = 0             // asked for and not ready yet (in the background)
     // Below the frame loop's priority: several variants compile at once after a settings change, and the frame has a
     // pipeline to run in the meantime.
     private static let queue = DispatchQueue(label: "MetalRenderer.variants", qos: .utility, attributes: .concurrent)
@@ -106,6 +107,8 @@ final class KernelVariants {
 
     /// How many variants are ready.
     var count: Int { lock.lock(); defer { lock.unlock() }; return states.count }
+    /// How many are being made in the background.
+    var pending: Int { lock.lock(); defer { lock.unlock() }; return building }
 
     /// The variant of `kernel` for these flags, or nil while it is being made (`wait`: make it now). Called every frame
     /// for every dispatch of a kernel that has variants: a dictionary lookup under a lock that is never held for long.
@@ -117,7 +120,11 @@ final class KernelVariants {
         lock.unlock()
         guard start else { return nil }
         if wait { return make(key) }
-        KernelVariants.queue.async { _ = self.make(key) }
+        lock.lock(); building += 1; lock.unlock()
+        KernelVariants.queue.async {
+            _ = self.make(key)
+            self.lock.lock(); self.building -= 1; self.lock.unlock()
+        }
         return nil
     }
 
@@ -145,6 +152,43 @@ final class KernelVariants {
 /// specialised for one set of light types (function constant 0, see Scene.lightTypeMask). A value, so a scene load or a
 /// hot reload builds the next set in the background while frames keep using this one, and the renderer swaps the whole
 /// set between two frames.
+/// The pipeline sets made lately, by what they were made for: a scene switch back to light types seen before takes
+/// their set instead of specialising all the kernels again (1.5–3 s on an M1 Max). Any thread. (Generic for the tests.)
+final class PipelineCache<Value> {
+    struct Key: Hashable {
+        var api: RenderAPI
+        var stats: Bool
+        var lightTypes: UInt32
+        var generation: Int        // the shaders' (Renderer.shaderGeneration): a reload makes every older set stale
+    }
+    /// How many sets are kept (each is the kernels' pipelines and the variants made for them since).
+    let capacity: Int
+    private let lock = NSLock()
+    private var sets: [(key: Key, pipelines: Value)] = []   // the most recently used last
+
+    init(capacity: Int = 6) { self.capacity = capacity }
+
+    var count: Int { lock.lock(); defer { lock.unlock() }; return sets.count }
+
+    func get(_ key: Key) -> Value? {
+        lock.lock(); defer { lock.unlock() }
+        guard let i = sets.firstIndex(where: { $0.key == key }) else { return nil }
+        let set = sets.remove(at: i)
+        sets.append(set)
+        return set.pipelines
+    }
+
+    /// Keeps `pipelines` for `key`; sets of older shaders go, then the least recently used beyond `capacity`. A set of
+    /// older shaders than those kept (a scene load that started before a reload) isn't kept.
+    func put(_ key: Key, _ pipelines: Value) {
+        lock.lock(); defer { lock.unlock() }
+        if let newest = sets.map(\.key.generation).max(), key.generation < newest { return }
+        sets.removeAll { $0.key == key || $0.key.generation < key.generation }
+        sets.append((key, pipelines))
+        if sets.count > capacity { sets.removeFirst(sets.count - capacity) }
+    }
+}
+
 struct Pipelines {
     let stats: Bool                // compiled with the ray queries' counters (RT_STATS)
     let api: RenderAPI             // Metal 4: compiled and specialised by its compiler (MTL4Compiler)
@@ -190,13 +234,15 @@ struct Pipelines {
 
     /// Compiles `source` unless `library` already is that, then makes every pipeline, in parallel. Safe to call from
     /// any thread; `stats` (the ray queries' counters, RT_STATS) is read by the caller for that reason.
-    /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`.
+    /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`. `load`: the load to report the pipelines to.
     init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
-         lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil) throws {
+         lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil, load: LoadJob? = nil) throws {
         let start = CACurrentMediaTime()
+        let kernels = Kernel.allCases
+        let step = load?.step("Shaders", total: kernels.count + 4, detail: library == nil ? "compiling the source" : "")
         let library = try library ?? Pipelines.compile(device: device, source: source, stats: stats, compiler: compiler)
         let compiled = CACurrentMediaTime()
-        let kernels = Kernel.allCases
+        step?.set(detail: "pipelines")
         var states = [MTLComputePipelineState?](repeating: nil, count: Kernel.allCases.count)
         var failure: Error?
         let lock = NSLock()
@@ -208,6 +254,7 @@ struct Pipelines {
                     constants.setConstantValue(&types, type: .uint, index: 0)
                     slots[kernels[i].rawValue] = try Pipelines.makeState(device: device, library: library, compiler: compiler,
                                                                          kernel: kernels[i], constants: constants)   // its own slot: no lock
+                    step?.advance()
                 } catch {
                     lock.lock(); failure = failure ?? error; lock.unlock()
                 }
@@ -222,6 +269,7 @@ struct Pipelines {
                                             vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
         vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                  vertex: "vsmClearVertex", fragment: "vsmFragment", color: nil)
+        step?.finish()
         self.stats = stats
         self.api = api
         self.lightTypes = lightTypes
