@@ -33,6 +33,21 @@ struct BuildingSpec {
     var lit: Float = 0.35
     /// The share of windows with a room behind the glass instead of a blind.
     var rooms: Float = 0.15
+    /// Its windows' shells are modules (`Building.modules`): made once and placed at each window, for a tracer that
+    /// instances them (the custom tracer's assemblies).
+    var modules = false
+    /// How much of it to make: in full, or plainly (seen from further away). Every level draws the same numbers, so
+    /// the same windows are lit at each.
+    var detail = Detail.full
+
+    enum Detail: Int {
+        /// Windows with frames, sills, lintels and shutters, rooms behind some, balconies with their balustrades.
+        case full
+        /// What stands out of the walls as its front faces alone (frames, sills, lintels, shutters, railings: their
+        /// colours stay where they were, their depth goes), and a room as the dark it looks from afar unless its lamp
+        /// is on (the same mesh lights at both levels).
+        case flat
+    }
 
     init(size: SIMD2<Float>) { self.size = size }
     init(lot: CityPlan.Lot, city: CitySettings, night: Bool) {
@@ -73,6 +88,18 @@ struct Building {
     /// How many windows it has, and how many of them have rooms and lights.
     var windows = 0, rooms = 0, lights = 0
 
+    /// What is made once and placed many times (BuildingSpec.modules): a window's shell (its reveal, frame, sill,
+    /// lintel, shutters), a mesh per slot in its own frame, its texture coordinates from its own corner. `key`: its
+    /// triangles, said in full, so that the same module of any building is the same mesh.
+    struct Module {
+        var meshes: [MeshBuilder]
+        var key: Data
+    }
+    private(set) var modules: [Module] = []
+    /// Each place a module is at: into the lot's frame.
+    private(set) var placements: [(module: Int, transform: float4x4)] = []
+    private var moduleIndex: [Data: Int] = [:]
+
     /// The used parts.
     var parts: [(slot: Slot, material: SurfaceMaterial, mesh: MeshBuilder)] {
         Slot.allCases.compactMap { slot in
@@ -96,6 +123,47 @@ struct Building {
     /// Sets every part's frame (a facade's; the identity for what is given in the lot's frame).
     mutating func setFrame(_ frame: float4x4) {
         for i in meshes.indices { meshes[i].frame = frame }
+    }
+
+    /// From here to `endModule`, what is added is a module's, at `anchor` in the current frame (a facade's). Returns
+    /// the building's own meshes, for `endModule`.
+    mutating func beginModule(at anchor: SIMD3<Float>) -> [MeshBuilder] {
+        let kept = meshes
+        for i in meshes.indices {
+            var m = MeshBuilder(uvScale: meshes[i].uvScale)
+            m.frame = float4x4(columns: (SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(-anchor, 1)))
+            m.uvOrigin = anchor
+            meshes[i] = m
+        }
+        return kept
+    }
+
+    /// What was made since `beginModule`, the building's own meshes back.
+    mutating func endModule(_ kept: [MeshBuilder]) -> [MeshBuilder] {
+        let made = meshes
+        meshes = kept
+        return made
+    }
+
+    /// Module `made` (a mesh per slot, in its own frame): the same one as an earlier module if it has the same
+    /// triangles, placed at its anchor (`placement`: the anchor's frame, into the lot's).
+    mutating func addModule(_ made: [MeshBuilder], placement: float4x4) {
+        var made = made
+        for i in made.indices { made[i].snap(1e-4) }
+        guard made.contains(where: { !$0.isEmpty }) else { return }
+        var key = Data()
+        for (slot, mesh) in made.enumerated() where !mesh.isEmpty {
+            withUnsafeBytes(of: UInt32(slot)) { key.append(contentsOf: $0) }
+            mesh.positions.withUnsafeBytes { key.append(contentsOf: $0) }
+            mesh.uvs.withUnsafeBytes { key.append(contentsOf: $0) }
+            mesh.indices.withUnsafeBytes { key.append(contentsOf: $0) }
+        }
+        let index = moduleIndex[key] ?? {
+            modules.append(Module(meshes: made, key: key))
+            moduleIndex[key] = modules.count - 1
+            return modules.count - 1
+        }()
+        placements.append((index, placement))
     }
 }
 

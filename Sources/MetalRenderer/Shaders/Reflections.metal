@@ -44,7 +44,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         if (b >= bounces) return L;
         float3 d = sampleBounce(hn, hng, rng.next2());
         throughput *= albedo;
-        h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+        h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
         dir = d;
         if (!h.hit) return L + throughput * skyRadiance(u, s, dir, 2.0f);
     }
@@ -156,7 +156,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             float spread = mix(2.0f * u.camUp.w / float(u.height), GI_RAY_SPREAD * 4.0f, roughness);
             // No texture feedback from reflections: their footprint ignores curvature, so self-reflections at close
             // range would ask for the finest mips.
-            Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, spread);
+            Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, spread);
             float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect);
             bool fogged = (fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS);
             if (passOn(fogged ? REFLECT_FOG : 0u, REFLECT_FOG)) {

@@ -391,8 +391,8 @@ final class Renderer: NSObject {
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
     private var virtualTracing: VirtualTracing?
-    /// Per slot: the wind's strength and the leaf fall its plants' descriptors were last written for.
-    private var plantsWritten = [SIMD2<Float>?](repeating: nil, count: Renderer.maxFramesInFlight)
+    /// Per slot: the wind, time, leaf fall and sway its plants' descriptors were last written for (WindFrame.plantKey).
+    private var plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
     /// What the ray-tracing kernels get at buffer 1 (MSL TraceScene), per slot.
     private var traceScene: TraceSceneArgs!
     /// The API the frames go through, the pipelines were compiled for and the TLAS's instance descriptors are written for.
@@ -870,7 +870,7 @@ final class Renderer: NSObject {
     private func createSceneResources(_ prepared: PreparedScene? = nil) throws {
         builtAPI = prepared?.api ?? settings.api
         virtualTracing = nil
-        plantsWritten = [SIMD2<Float>?](repeating: nil, count: Renderer.maxFramesInFlight)
+        plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
         physicsGPU = nil
         holding = nil
@@ -1486,10 +1486,16 @@ final class Renderer: NSObject {
         }
         // The plants and the ground cover in the wind, and the plants' variants for the season: every frame it blows.
         if let plants = sceneBuffers.plants, !still {
-            let wind = windFrame, state = SIMD2(wind.wind.z, wind.leafFall)
+            var wind = windFrame
+            // Limbs move near the camera only: it is placed on a grid, so that the plants' choices (and the top-level
+            // structure's build they take) change only as it crosses a cell.
+            if settings.foliage.swayReach > 0 {
+                wind.sway = SIMD4((lod.camPos / Renderer.swayStep).rounded(.down) * Renderer.swayStep, settings.foliage.swayReach)
+            }
+            let state = wind.plantKey
             // Far plants as voxels: their levels follow the view the virtual geometry is cut for (Freeze LOD holds it).
             let voxels = plants.voxels != nil && settings.foliage.lod > 0
-            if first || wind.wind.z > 0 || voxels || plantsWritten[slot] != state {
+            if first || voxels || plantsWritten[slot] != state {
                 let view = voxels ? SIMD4(lod.camPos, settings.foliage.lod / max(lod.pixelScale, 1e-6)) : nil
                 if plants.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride, scene: scene,
                                            wind: wind, view: view) {
@@ -1884,6 +1890,8 @@ final class Renderer: NSObject {
     private var voxelLevels = VoxelLevels()
     private let voxelQueue = DispatchQueue(label: "voxel levels", qos: .utility)
     /// A rebuild once the view has moved this far (m), at most this often (s): METALRENDERER_VOXEL_STEP / _INTERVAL.
+    /// The grid the camera is placed on for the plants' sway reach (WindFrame.sway), in metres.
+    private static let swayStep: Float = 2
     private static let voxelStep = Float(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_STEP"] ?? "") ?? 1
     private static let voxelInterval = Double(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_INTERVAL"] ?? "") ?? 0.25
     /// METALRENDERER_VOXEL_ASYNC=1: benchmarks rebuild in the background too, as the app does (its pictures then
@@ -2304,7 +2312,7 @@ final class Renderer: NSObject {
         }
         if deformed, let primitiveRefit { passes.updatePrimitives(primitiveRefit, pass: "blas") }
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
-        if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, strength: windFrame.wind.z) {
+        if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
             if let enc = passes.compute("wind", serial: true) {
                 plants.encodeWind(enc, slot: slot, pipeline: pipelines[.plantWind], wind: windFrame)
                 passes.endCompute()
@@ -3300,10 +3308,10 @@ final class Renderer: NSObject {
         inst.isGeometry && !inst.deforms && !lumenFoliage(inst)
     }
 
-    /// Plants: assemblies, leaf cards, ground cover.
+    /// Plants: assemblies (but buildings of modules), leaf cards, ground cover.
     private func lumenFoliage(_ inst: Scene.Instance) -> Bool {
         guard inst.isGeometry else { return false }
-        if inst.assembly >= 0 { return true }
+        if inst.assembly >= 0 { return !scene.assemblies[inst.assembly].rigid }
         guard inst.mesh >= 0 else { return false }
         let m = scene.meshes[inst.mesh]
         return m.cutout != 0 || m.sways != 0

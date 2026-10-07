@@ -305,6 +305,8 @@ enum SettingsTable {
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
                 .env(.foliage, "dir").when(plants).enabled(assemblies),
             S.slider("Gusts", \.foliage.gusts, FoliageSettings.gustRange, step: 0.05, fmt("%.2f")).env(.foliage, "gusts").when(plants).enabled(assemblies),
+            S.slider("Sway reach", \.foliage.swayReach, FoliageSettings.swayRange, step: 5, fmt("%.0f m"))
+                .env(.foliage, "sway").when(plants).enabled(assemblies),
             S.slider("Season", \.foliage.season, FoliageSettings.seasonRange, step: 0.02, fmt("%.2f")).env(.foliage, "season").when(plants),
             S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
                 .env(.foliage, "translucency").when(plants),
@@ -342,6 +344,7 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
             S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
                 .env(.scene, "bodies").when { $0.scene.kind == .physics },
             S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
