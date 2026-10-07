@@ -106,7 +106,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
     const float3 grey = float3(0.45f);  // geometry without levels; in the cluster and group views, what isn't virtual
     float3 lodColor = grey;
     if (isVirtual) lodColor = debugHeat(0.05f + float(level) / 10.0f);
-    else if (FOLIAGE && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
+    else if (ASSEMBLIES && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
     else if (s.meshes[inst.meshIndex].lod != 0) lodColor = debugHeat(0.05f + 0.3f * float(s.meshes[inst.meshIndex].lod - 1));
 
     uint instanceSeed = pcgHash(res.instance + 0x51ED27u);

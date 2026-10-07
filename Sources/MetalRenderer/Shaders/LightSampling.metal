@@ -234,13 +234,13 @@ kernel void lightMapKernel(constant Uniforms&                     u         [[bu
         tangentFrame(w, t, b);
         float R = light.params.w;
         float3 origin = light.params.xyz + w * (R * 1.05f) + (t * f.x + b * f.y) * R;
-        float d = intersectDistance(makeRay(origin, -w, 0.0f, INFINITY), MASK_GEOMETRY, accel);
+        float d = intersectDistance(makeRay(origin, -w, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_LIGHTMAP), accel);
         lightMap.write(float4(isFar(d) ? FAR_DISTANCE : d), tid.xy, tid.z);
         return;
     }
     float3 dir = equalAreaOctDecode(f);
     float start = lightMapStart(light);
-    float t = intersectDistance(makeRay(lightMapCenter(light) + dir * start, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel);
+    float t = intersectDistance(makeRay(lightMapCenter(light) + dir * start, dir, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_LIGHTMAP), accel);
     lightMap.write(float4(isFar(t) ? FAR_DISTANCE : start + t), tid.xy, tid.z);
 }
 

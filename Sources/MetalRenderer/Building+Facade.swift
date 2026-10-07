@@ -127,6 +127,17 @@ extension BuildingAssembler {
         b[slot].box([o.x0, o.y0, -thickness], [o.x1, o.y1, 0], faces: [.left, .right, .top, .bottom])
     }
 
+    /// What `body` adds, as a module of the building (Building.Module) at `anchor` in the facade if its windows are
+    /// modules, or in place. (A storey's row of shells as one module traced no faster and shared a quarter as much.)
+    private mutating func module(at anchor: SIMD3<Float>, _ body: (inout BuildingAssembler) -> Void) {
+        guard spec.modules else { body(&self); return }
+        let facade = b[.wall].frame
+        let kept = b.beginModule(at: anchor)
+        body(&self)
+        b.addModule(b.endModule(kept),
+                    placement: facade * float4x4(columns: (SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(anchor, 1))))
+    }
+
     /// A frame in opening `o`, with its glass: members `width` wide around it, `mullions` upright bars and maybe a
     /// transom; the glass `recess` behind the wall's face. The uprights run the full height and the others between
     /// them, so no two members' faces overlap.
@@ -233,6 +244,20 @@ extension BuildingAssembler {
         let o = Opening(x0: cell.center - width / 2, x1: cell.center + width / 2, y0: y0, y1: y1)
         let thickness = w.recess + 0.08
         let mullions = width > 1.0 ? w.mullions : 0, transom = w.transom && !balcony
+        if spec.modules && !plain {
+            // Its shell a module: the same window elsewhere is the same mesh, placed there. The wall around it, its
+            // glass and what is behind it are the building's own.
+            wallAround(cell, o, slot: wall)
+            b[.glass].wall(x0: o.x0, x1: o.x1, y0: o.y0, y1: o.y1, z: -w.recess)
+            module(at: [o.x0, o.y0, 0]) {
+                $0.reveal(o, slot: wall, thickness: thickness)
+                $0.frameMembers(o, recess: w.recess, width: w.frame, mullions: mullions, transom: transom)
+                $0.windowTrim(o, cell, w, width: width, balcony: balcony)
+            }
+            behind(o, cell, floor: floor, thickness: thickness, room: room, lit: lit)
+            if balcony { self.balcony(cell, floor: floor) }
+            return
+        }
         cutWall(cell, o, slot: wall, thickness: thickness)
         glaze(o, recess: w.recess, width: w.frame, mullions: mullions, transom: transom, frame: !plain)
         behind(o, cell, floor: floor, thickness: thickness, room: room, lit: lit)

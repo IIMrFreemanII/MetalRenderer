@@ -422,6 +422,9 @@ struct CitySettings: Equatable, Codable {
     var rooms: Float = 0.15
     /// Generated brick, plaster, concrete, tile and paving textures (ProceduralTextures); off: flat colours.
     var textures = true
+    /// A window's shell (reveal, frame, sill, lintel, shutters) is made once and placed at every window like it
+    /// (Building.Module), a building an assembly of them (Scene.Assembly.rigid); off: every building one mesh of its own.
+    var modules = false
 
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1

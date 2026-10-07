@@ -6,8 +6,8 @@ description: Build graphify's knowledge graph with `graphify update .` when this
 # Build the graph when it's missing
 
 CLAUDE.md answers codebase questions with `graphify query`, `path` and `explain` first. They read
-`graphify-out/graph.json`, which is gitignored, so every new worktree under `.claude/worktrees/` starts without it, and
-the query fails with `graph file not found`. The `graphify hook-guard` hook can still say the graph exists: it sees the
+`graphify-out/graph.json`. It is committed, so a checkout normally has it, but a branch from before it was committed,
+or a checkout whose `graphify-out/` was deleted, starts without it, and the query fails with `graph file not found`. The `graphify hook-guard` hook can still say the graph exists: it sees the
 main checkout's. Trust the query's error, not the hook.
 
 ## Rules

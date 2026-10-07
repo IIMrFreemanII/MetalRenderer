@@ -3308,10 +3308,10 @@ final class Renderer: NSObject {
         inst.isGeometry && !inst.deforms && !lumenFoliage(inst)
     }
 
-    /// Plants: assemblies, leaf cards, ground cover.
+    /// Plants: assemblies (but buildings of modules), leaf cards, ground cover.
     private func lumenFoliage(_ inst: Scene.Instance) -> Bool {
         guard inst.isGeometry else { return false }
-        if inst.assembly >= 0 { return true }
+        if inst.assembly >= 0 { return !scene.assemblies[inst.assembly].rigid }
         guard inst.mesh >= 0 else { return false }
         let m = scene.meshes[inst.mesh]
         return m.cutout != 0 || m.sways != 0

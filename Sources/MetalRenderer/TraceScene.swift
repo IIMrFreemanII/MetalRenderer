@@ -38,22 +38,41 @@ struct WindFrame {
     var plantKey: PlantKey { PlantKey(pose: poseKey, leafFall: leafFall, sway: wind.z > 0 ? sway : SIMD4()) }
 }
 
-/// Totals of the ray queries' counters (RT_STATS builds: Shaders/Intersect.metal, `rtStat`): 0 rays, 1 triangles and
-/// 2 boxes Metal's traversal handed to the queries' loop (every triangle counts as a candidate in those builds:
-/// Metal can't count its nodes, so the candidates are what the counters can see of its work).
+/// Totals of the ray queries' counters (RT_STATS builds: Shaders/Intersect.metal, `countedHit`), per class of ray (what
+/// it is for: MSL `rayMask`): 0 rays, 1 triangles and 2 boxes Metal's traversal handed to the queries' loop (every
+/// triangle counts as a candidate in those builds: Metal can't count its nodes, so the candidates are what the counters
+/// can see of its work), 3 unused.
 struct TraversalStats {
-    static let count = 4
+    /// MSL RAY_CAMERA ... RAY_LIGHTMAP.
+    static let classes = ["camera", "shadow", "GI", "specular", "far", "light map"]
+    static let counters = 4
+    static let count = counters * classes.count
     var counts = [UInt64](repeating: 0, count: TraversalStats.count)
 
     static func + (a: TraversalStats, b: TraversalStats) -> TraversalStats {
         TraversalStats(counts: zip(a.counts, b.counts).map { $0 + $1 })
     }
-    var rays: Double { Double(counts[0]) }
+    /// Counter `i` over every class.
+    func total(_ i: Int) -> UInt64 { (0..<Self.classes.count).reduce(0) { $0 + counts[$1 * Self.counters + i] } }
+    var rays: Double { Double(total(0)) }
     /// Counter `i` per ray.
-    func perRay(_ i: Int) -> Double { Double(counts[i]) / max(rays, 1) }
+    func perRay(_ i: Int) -> Double { Double(total(i)) / max(rays, 1) }
+    /// Class `c`'s counters alone.
+    func of(_ c: Int) -> TraversalStats {
+        var one = TraversalStats()
+        for i in 0..<Self.counters { one.counts[c * Self.counters + i] = counts[c * Self.counters + i] }
+        return one
+    }
 
-    var description: String {
+    private var line: String {
         String(format: "rays %.0fk: per ray %.1f triangle candidates, %.2f box candidates", max(rays, 1) / 1000, perRay(1), perRay(2))
+    }
+    /// All rays, then each class that traced any.
+    var description: String {
+        ([line] + Self.classes.indices.compactMap { c in
+            let one = of(c)
+            return one.rays > 0 ? "  \(Self.classes[c]): " + one.line : nil
+        }).joined(separator: "\n")
     }
 }
 

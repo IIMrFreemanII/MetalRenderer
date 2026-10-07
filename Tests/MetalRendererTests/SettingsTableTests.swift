@@ -231,6 +231,22 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s, defaults)
     }
 
+    /// Settings saved before the custom tracer went still carry `"rayTracer"`: the removed key is ignored and the
+    /// rest loads (SettingsStore lays the saved JSON over the defaults).
+    func testRemovedKeysDoNotResetSavedSettings() throws {
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
+        saved["rayTracer"] = 1
+        saved["api"] = RenderAPI.metal4.rawValue
+        saved["bounces"] = defaults.bounces + 1
+        let store = UserDefaults.standard, key = "renderSettings"
+        let before = store.data(forKey: key)
+        defer { store.set(before, forKey: key) }
+        store.set(try JSONSerialization.data(withJSONObject: saved), forKey: key)
+        let s = try XCTUnwrap(SettingsStore.load(over: defaults))
+        XCTAssertEqual(s.api, .metal4)
+        XCTAssertEqual(s.bounces, defaults.bounces + 1)
+    }
+
     func testLumenIsRead() {
         var s = defaults
         SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
