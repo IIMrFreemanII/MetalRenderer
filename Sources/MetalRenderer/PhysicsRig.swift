@@ -51,8 +51,9 @@ struct FleshFigure {
 }
 
 /// A character's bones as kinematic bodies (PhysicsWorld.addKinematicBody) and the table of their poses, a row a
-/// step, that its clips move them through: idle, a walk, a run and a walk again round a circle, with half-second
-/// crossfades, over `seconds` and round again (the last idle runs on into the first: the table repeats).
+/// step, that its clips move them through: an idle, then three hip hop dances and two breakdance freezes on the spot,
+/// each once and whole, with half-second crossfades, over `seconds` and round again (the last idle runs on into the
+/// first: the table repeats).
 ///
 /// The bones are the skeleton's joints that matter to the flesh (the hips, the spine, the neck and head, each arm's
 /// upper arm, forearm and hand, each leg's thigh, shin and foot); every other joint is the nearest of them up its
@@ -89,10 +90,22 @@ struct CharacterRig {
     private(set) var bones: [Bone] = []
     /// Per joint, the bone it moves with (its own, or the nearest one up its chain).
     private(set) var boneOf: [Int] = []
+    /// The routine's clips (indices into the character's) and when each starts (s), and how long it is.
+    let programme: [(clip: Int, start: Float)]
+    let seconds: Float
 
     init?(_ character: SkinnedCharacter) {
         self.character = character
         bind = character.bindPoses
+        // A dance lasts its clip less a crossfade, so the fade into the next ends as it does (it never starts over).
+        var programme: [(clip: Int, start: Float)] = [], t: Float = 0
+        for step in CharacterRig.routine {
+            guard let c = character.clip(named: step.clip) else { continue }
+            programme.append((c, t))
+            t += step.seconds ?? character.clips[c].duration - CharacterRig.fade
+        }
+        self.programme = programme.isEmpty ? [(0, 0)] : programme
+        seconds = max(t, 1)
         let names = character.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }
         func joint(_ name: String) -> Int? { names.firstIndex(of: name) }
         var boneOfJoint = [Int](repeating: -1, count: names.count)
@@ -171,55 +184,58 @@ struct CharacterRig {
 
     // MARK: The programme
 
-    /// The clips it goes through and when each starts (s), and how long a crossfade into one takes.
-    static let programme: [(clip: String, start: Float)] = [("Idle", 0), ("Walking", 4), ("Running", 9.5), ("Walking", 15),
-                                                             ("Idle", 18.5)]
+    /// The clips it goes through, each for its `seconds` (nil: its clip's length, once), and how long a crossfade into
+    /// one takes. The dances' travel (SkinnedCharacter.Clip.velocity) is put back as they dance.
+    static let routine: [(clip: String, seconds: Float?)] = [
+        ("Idle", 2.5), ("Hip Hop Dancing", nil), ("Breakdance Freeze Var 2", nil), ("Hip Hop Dancing (1)", nil),
+        ("Breakdance Freeze Var 3", nil), ("Hip Hop Dancing (2)", nil), ("Idle", 2),
+    ]
     static let fade: Float = 0.5
-    static let seconds: Float = 20
 
-    /// Its pose at `t` (s, within the programme): the clips' blend, and where it is round the circle (m along it).
-    func pose(at t: Float) -> (clipA: Int, timeA: Float, clipB: Int, timeB: Float, blend: Float, speed: Float) {
-        let clips = CharacterRig.programme.map { character.clip(named: $0.clip) ?? 0 }
-        let count = CharacterRig.programme.count
-        let s = (0..<count).last { CharacterRig.programme[$0].start <= t } ?? 0
+    /// Its pose at `t` (s, within the programme): the clips' blend.
+    func pose(at t: Float) -> (clipA: Int, timeA: Float, clipB: Int, timeB: Float, blend: Float) {
+        let count = programme.count
+        let s = (0..<count).last { programme[$0].start <= t } ?? 0
         // A clip's time (keys) since its segment started; the last segment's runs on into the first's.
         func keys(_ k: Int) -> Float {
-            let c = character.clips[clips[k]]
-            let since = k == count - 1 && clips[k] == clips[0] ? t - CharacterRig.seconds : t - CharacterRig.programme[k].start
+            let c = character.clips[programme[k].clip]
+            let since = k == count - 1 && programme[k].clip == programme[0].clip ? t - seconds : t - programme[k].start
             let loop = Float(c.loopKeys)
             return (since * c.rate).truncatingRemainder(dividingBy: loop) + (since < 0 ? loop : 0)
         }
-        func speed(_ k: Int) -> Float { CharacterRig.programme[k].clip == "Idle" ? 0 : simd_length(character.clips[clips[k]].velocity) }
-        let into = t - CharacterRig.programme[s].start
-        guard s > 0, into < CharacterRig.fade else { return (clips[s], keys(s), clips[s], keys(s), 0, speed(s)) }
-        let blend = into / CharacterRig.fade
-        return (clips[s - 1], keys(s - 1), clips[s], keys(s), blend, speed(s - 1) + (speed(s) - speed(s - 1)) * blend)
+        let into = t - programme[s].start
+        guard s > 0, into < CharacterRig.fade else { return (programme[s].clip, keys(s), programme[s].clip, keys(s), 0) }
+        return (programme[s - 1].clip, keys(s - 1), programme[s].clip, keys(s), into / CharacterRig.fade)
     }
 
     /// The table (PhysicsWorld.kinematicTable): every step of the programme, each bone's body's pose (`bodyPose` from
-    /// its shape's placement) with the character going round a circle about `centre` (as many times as makes it
-    /// 2 to 3.5 m across), facing along it.
-    func table(centre: SIMD3<Float>, bodyPose: (Int, float4x4) -> (SIMD3<Float>, SIMD4<Float>)) -> (rows: [SIMD4<Float>], radius: Float) {
-        let rows = Int((CharacterRig.seconds / PhysicsWorld.stepLength).rounded())
+    /// its shape's placement) with the character on `spot`, facing +x, moved by its clips' travel as it dances. What
+    /// that adds up to over the programme is taken back a little at every step, so the last row runs into the first.
+    /// Returns the rows and how far the character strays from its spot.
+    func table(spot: SIMD3<Float>, bodyPose: (Int, float4x4) -> (SIMD3<Float>, SIMD4<Float>)) -> (rows: [SIMD4<Float>], reach: Float) {
+        let rows = Int((seconds / PhysicsWorld.stepLength).rounded())
         let poses = (0..<rows).map { pose(at: Float($0) * PhysicsWorld.stepLength) }
-        // How far along the circle at each step, and the circle that brings it round whole times.
-        var along = [Float](repeating: 0, count: rows)
-        for k in 1..<rows { along[k] = along[k - 1] + (poses[k - 1].speed + poses[k].speed) / 2 * PhysicsWorld.stepLength }
-        let total = along[rows - 1] + poses[rows - 1].speed * PhysicsWorld.stepLength
-        let laps = max((total / (2 * .pi * 2.5)).rounded(), 1)
-        let radius = total / (2 * .pi * laps)
-        var out: [SIMD4<Float>] = []
+        let facing = rotate(.pi / 2, [0, 1, 0])
+        func velocity(_ k: Int) -> SIMD3<Float> {
+            let p = poses[k], a = character.clips[p.clipA].velocity, b = character.clips[p.clipB].velocity
+            return PhysicsMath.xyz(facing * SIMD4(a + (b - a) * p.blend, 0))
+        }
+        var offset = [SIMD3<Float>](repeating: .zero, count: rows)
+        for k in 1..<rows { offset[k] = offset[k - 1] + (velocity(k - 1) + velocity(k)) / 2 * PhysicsWorld.stepLength }
+        let drift = offset[rows - 1] + velocity(rows - 1) * PhysicsWorld.stepLength
+        var out: [SIMD4<Float>] = [], reach: Float = 0
         out.reserveCapacity(rows * bones.count * 2)
         for k in 0..<rows {
             let p = poses[k]
             let joints = character.jointPoses(clipA: p.clipA, timeA: p.timeA, clipB: p.clipB, timeB: p.timeB, blend: p.blend)
-            let phi = radius > 0 ? along[k] / radius : 0
-            let root = translate(centre + radius * SIMD3(sin(phi), 0, cos(phi))) * rotate(phi + .pi / 2, [0, 1, 0])
+            let at = offset[k] - drift * (Float(k) / Float(rows))
+            reach = max(reach, simd_length(at))
+            let root = translate(spot + at) * facing
             for b in bones.indices {
                 let (x, q) = bodyPose(b, root * placement(b, joints))
                 out += [SIMD4(x, 0), q]
             }
         }
-        return (out, radius)
+        return (out, reach)
     }
 }

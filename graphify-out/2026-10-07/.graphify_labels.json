@@ -35,7 +35,7 @@
   "33": "restirTemporalKernel",
   "34": "restirGIInitialKernel",
   "35": "RadianceCascades",
-  "36": "GPUTypes.swift",
+  "36": "PhysicsWorld",
   "37": "3D Scene Composition",
   "38": "SectionFile",
   "39": "Physics.metal",
@@ -101,7 +101,7 @@
   "99": "Footprint",
   "100": "float3",
   "101": "ClusterBox",
-  "102": "PhysicsWorld",
+  "102": "SoftModel",
   "103": "uint4",
   "104": "Building",
   "105": "SurfaceMaterial",
@@ -166,7 +166,7 @@
   "164": "related.sh",
   "165": ".used",
   "166": "RTVoxels",
-  "167": "FleshFigure",
+  "167": "SkinShell",
   "168": "VGParams",
   "169": "LumenRadiosityParams",
   "170": "Float",
@@ -200,6 +200,8 @@
   "198": "SDFBox",
   "199": "LumenSDFHit",
   "200": ".meshes",
+  "201": "RagdollTests",
+  "202": ".transmittance",
   "204": "PhysicsGrab",
   "205": "PhysPush",
   "206": "Shape",
@@ -222,5 +224,5 @@
   "224": ".end",
   "225": "AABB",
   "226": "LightMotion",
-  "227": "Side"
+  "227": "FleshFigure"
 }
