@@ -17,7 +17,7 @@ extension Benchmark {
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
         "pathref": pathref,
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
-        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo,
+        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1072,6 +1072,100 @@ extension Benchmark {
             out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.softBodies = bodies; $0.scene.physics.backend = .cpu })
         }
         return out
+    }
+
+    /// A camera at `from` looking at `to`.
+    private static func look(_ from: SIMD3<Float>, _ to: SIMD3<Float>) -> Camera {
+        let d = to - from
+        return Scene.camera(from, yaw: atan2(d.x, -d.z), pitch: atan2(d.y, (d.x * d.x + d.z * d.z).squareRoot()))
+    }
+
+    /// The muscles scene (Scene+Muscles.swift) at the physics look: wide at 2 and 5 s, at 5 s on each API, with the
+    /// CPU's steps, in its normals and direct light; close to the character as it idles (1 s) and as it dances
+    /// (15 s), and to the ragdolls on the steps; each skin; then the first 5 s moving for timing at a few lattice
+    /// spacings and ragdoll counts, and the sliding skin.
+    private static func muscles() -> [Config] {
+        let scene = SceneSettings(kind: .muscles)
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        var out: [Config] = [base.named("2s").still(at: 2)]
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still()) }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        out.append(base.named("normals").view(3).still())
+        out.append(base.named("direct").view(1).still())
+        for skin in PhysicsSettings.Skin.allCases {
+            var start = base.named("character \(skin.envName)").with { $0.scene.physics.skin = skin }.still(at: 1)
+            start.camera = look([3.0, 1.5, 4.9], [1.2, 1.0, 3.1])
+            var close = base.named("character normals \(skin.envName)").with { $0.scene.physics.skin = skin }.view(3).still(at: 1)
+            close.camera = start.camera
+            out += [start, close]
+        }
+        // The character as its muscles and bones (MuscleAtlas.swift, SkeletonAtlas.swift): from its front, its back and
+        // its side as it idles, close up, in its normals, and as it dances.
+        let ecorche = base.with { $0.scene.physics.body = .muscles }
+        for (name, from, to) in [("front", SIMD3<Float>(3.4, 1.3, 3.1), SIMD3<Float>(1.2, 1.0, 3.1)), ("back", [-1.0, 1.3, 3.1], [1.2, 1.0, 3.1]),
+                                 ("side", [3.0, 1.5, 4.9], [1.2, 1.0, 3.1]), ("chest", [2.3, 1.3, 3.1], [1.2, 1.2, 3.1]),
+                                 ("hips", [0.2, 1.05, 3.1], [1.2, 0.95, 3.1]), ("shoulder", [0.5, 1.55, 2.4], [1.2, 1.4, 2.95]),
+                                 ("skull", [1.75, 1.7, 3.3], [1.2, 1.66, 3.1]), ("knee", [2.0, 0.55, 3.0], [1.2, 0.4, 3.1]),
+                                 ("hand", [1.6, 0.95, 2.3], [1.2, 0.85, 2.9]), ("spine", [0.2, 1.35, 3.1], [1.2, 1.25, 3.1])] {
+            var still = ecorche.named("ecorche \(name)").still(at: 1)
+            still.camera = look(from, to)
+            out.append(still)
+        }
+        var ecorcheNormals = ecorche.named("ecorche normals").view(3).still(at: 1)
+        ecorcheNormals.camera = look([3.4, 1.3, 3.1], [1.2, 1.0, 3.1])
+        out.append(ecorcheNormals)
+        var dancing = ecorche.named("ecorche dancing").still(at: 15)
+        dancing.camera = look([4.6, 1.6, 4.2], [2.2, 1.0, 2.9])
+        out.append(dancing)
+        var ragdolls = base.named("ragdolls").still()
+        ragdolls.camera = look([-1.6, 2.4, -0.8], [-4.6, 0.7, -4.0])
+        out.append(ragdolls)
+        for cell: Float in [5, 4, 3.5, 3] {
+            out.append(base.named(String(format: "gpu flesh %.1f cm moving", cell)).with { $0.scene.physics.fleshCell = cell; $0.scene.physics.backend = .gpu })
+        }
+        for count in [0, 6] {
+            out.append(base.named("gpu \(count) ragdolls moving").with { $0.scene.physics.muscleRagdolls = count; $0.scene.physics.backend = .gpu })
+        }
+        out.append(base.named("gpu sliding moving").with { $0.scene.physics.skin = .sliding; $0.scene.physics.backend = .gpu })
+        out.append(base.named("gpu ecorche moving").with { $0.scene.physics.body = .muscles; $0.scene.physics.backend = .gpu })
+        out.append(base.named("cpu moving").with { $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The muscles scene's demo video: its first 48.3 s (the character's whole routine, PhysicsRig.swift) along a camera
+    /// track at the physics look with the showcase's lens but no depth of field (`recording`;
+    /// `.claude/skills/offscreen/scripts/video.sh -m musclesdemo`): close as the character idles and starts its hip hop,
+    /// back over it and the ragdolls tumbling down the steps, low for the first breakdance freeze, round it through
+    /// the long hip hop, low again for the second freeze, wide round the last hip hop, and back out as it idles. The
+    /// clock starts at -1 s, as the physics demo's does.
+    private static func musclesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [3.4, 1.4, 4.6], [1.2, 1.0, 3.1]),
+            key(2.5, [3.8, 1.6, 4.2], [1.3, 1.0, 3.0]),
+            key(5, [5.2, 2.4, 6.4], [-0.6, 0.8, 0.0]),
+            key(8, [2.6, 1.1, 5.6], [2.2, 0.5, 2.3]),
+            key(10.5, [3.8, 1.0, 4.6], [2.0, 0.6, 2.0]),
+            key(14, [4.6, 1.6, 4.2], [2.2, 1.0, 2.9]),
+            key(18, [2.2, 1.7, 6.0], [2.0, 1.0, 2.6]),
+            key(22, [-0.6, 1.8, 3.6], [2.0, 1.0, 2.3]),
+            key(25, [0.4, 1.0, 1.0], [1.9, 0.5, 2.6]),
+            key(28.5, [2.0, 0.9, 5.8], [1.6, 0.5, 3.4]),
+            key(32, [5.0, 2.0, 5.6], [1.4, 1.0, 3.4]),
+            key(38, [4.0, 1.8, 1.4], [1.6, 1.0, 3.3]),
+            key(43, [-1.8, 2.2, 1.8], [1.0, 1.0, 3.5]),
+            key(48.3, [3.4, 1.8, 6.4], [1.2, 1.0, 3.2]),
+        ])
+        var demo = Config("muscles demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .muscles)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        // The same with the character drawn as its muscles (MuscleAtlas.swift).
+        var ecorche = demo.named("ecorche demo").with { $0.scene.physics.body = .muscles }
+        return [demo, ecorche]
     }
 
     /// The soft body scene's demo video: its first 20 s along a camera track at the physics look with the showcase's
