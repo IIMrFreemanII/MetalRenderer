@@ -134,6 +134,7 @@ extension Scene {
         heat.colors = ([1, 1, 1, 0], [1, 1, 1, 1], [1, 1, 1, 0])
         heat.midpoint = 0.25
         heat.distortion = 0.0025
+        heat.field = (index: 1, strength: 0.6, follow: false)   // it rides the fire's hot air, as the smoke does
 
         var smoke = ParticleEmitter("smoke", capacity: 300, at: fire + SIMD3(0, 0.55, 0))
         smoke.shape = .disc(radius: 0.2)
@@ -148,6 +149,7 @@ extension Scene {
         smoke.curlFrequency = 0.8
         smoke.curlSpeed = 0.3
         smoke.bakedCurl = true
+        smoke.field = (index: 1, strength: 1, follow: false)   // carried up the fire's hot air (ParticleField.plume)
         smoke.size = (0.22, 0.9)
         smoke.sizeJitter = 0.3
         smoke.colors = ([0.8, 0.78, 0.75, 0.0], [0.85, 0.84, 0.82, 0.75], [0.9, 0.9, 0.9, 0])
@@ -311,7 +313,8 @@ extension Scene {
                                     colliders: [.plane(normal: [0, 1, 0], point: [0, 0.001, 0]), .box(center: crate.center, halfExtents: crate.half),
                                                 .shape(instance: bowl, shape: bowlShape), .shape(instance: stand, shape: standShape),
                                                 .shape(instance: plinthInstance, shape: plinthShape)],
-                                    fields: [.vortex(center: rubbleAt, radius: 0.7, height: 1.6, swirl: 1.2, lift: 0.6)]))
+                                    fields: [.vortex(center: rubbleAt, radius: 0.7, height: 1.6, swirl: 1.2, lift: 0.6),
+                                             .plume(center: fire + SIMD3(0, 0.01, 0), radius: 0.3, height: 2.8, lift: 1.4)]))
         defaultCamera = Scene.demoCamera(.particles)!
     }
 

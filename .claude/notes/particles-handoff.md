@@ -40,6 +40,8 @@ Phase 2:
 - The grinder's wheel faces the room with a steel bar on its rim; the sparks leave the contact along the rim, with a
   glow of short-lived emissive dots there. No light at the contact: a fifth light takes the scene to the many-lights
   path (about 2 ms more, and its particle light pass leaves lit particles only the sky's).
+- The fire's hot air: `ParticleField.plume`, a push up a widening column (drawn in low, spread out high), which the
+  smoke and the heat haze both ride.
 
 ## To do on the M4 Max
 

@@ -271,6 +271,24 @@ struct ParticleField {
         }
     }
 
+    /// The hot air over a fire, as a push (m/s^2 at strength 1; ParticleEmitter.field without `follow`): up the
+    /// column from `center` at up to `lift`, fading with height to nothing at `height` and widening as it rises (its
+    /// radius `radius` at the foot, two and a half times that at the top); air drawn in toward it low down and spread
+    /// out high up. Outside it nothing, so what leaves it keeps its own way.
+    static func plume(center: SIMD3<Float>, radius: Float, height: Float, lift: Float, dims: Int32 = 16) -> ParticleField {
+        ParticleField(center: center + SIMD3(0, height / 2, 0), halfExtents: SIMD3(radius * 3, height / 2, radius * 3),
+                      dims: SIMD3(dims, dims, dims)) { p in
+            let h = min(max((p.y - center.y) / height, 0), 1)       // 0 at its foot, 1 at its top
+            let r = SIMD3(p.x - center.x, 0, p.z - center.z), d = length(r)
+            let width = radius * (1 + 1.5 * h)
+            let core = exp(-pow(d / width, 2))
+            let up = lift * core * pow(1 - h, 1.5)
+            guard d > 1e-4 else { return SIMD3(0, up, 0) }
+            let out = (r / d) * lift * core * (d / width) * (h - 0.35) * 0.8   // in below a third of the way, out above
+            return SIMD3(0, up, 0) + out
+        }
+    }
+
     var gpu: GPUParticleField {
         GPUParticleField(lo: SIMD4(lo, periodic ? 1 : 0), size: SIMD4(size, 0), dims: SIMD4(UInt32(dims.x), UInt32(dims.y), UInt32(dims.z), 0))
     }
