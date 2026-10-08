@@ -608,6 +608,8 @@ struct SceneBuffers {
         }
         // The crowd's pose slots deform: their structures are built to be refitted every frame, and stay as built.
         var refitted: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
+        // A liquid's surface changes its triangles: its structure is built again every frame (fast to build).
+        var rebuilt: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
         var jobs: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, sizes: MTLAccelerationStructureSizes, deforms: Bool)] = []
         // The poses that take another's tree: (its place in `refitted`, the mesh whose tree it takes).
         var copies: [(refit: Int, of: Int)] = []
@@ -669,6 +671,13 @@ struct SceneBuffers {
             descriptor.geometryDescriptors = [geometry]
             // The meshes never change, so their structures are built once, for the fastest traversal Metal offers.
             let deforms = mesh.prevOffset != 0
+            if scene.rebuiltMeshes.contains(i) {
+                descriptor.usage = .preferFastBuild
+                let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+                rebuilt.append((i, descriptor, max(sizes.buildScratchBufferSize, 16)))
+                jobs.append((i, descriptor, sizes, true))
+                continue
+            }
             if deforms { descriptor.usage = .refit }
             else if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
@@ -741,10 +750,12 @@ struct SceneBuffers {
             print(String(format: "Metal BLAS: %d meshes (%d the last scene's), %.1f MB compacted to %.1f MB", structures.count,
                          structures.count - new.count, Double(before) / 1_048_576, Double(after) / 1_048_576))
         }
-        if !refitted.isEmpty {
-            // One scratch buffer, a range per structure: the refits of a frame may run side by side.
+        if !refitted.isEmpty || !rebuilt.isEmpty {
+            // One scratch buffer, a range per structure: the refits (and builds) of a frame may run side by side.
             var offsets: [Int] = [], length = 0
             for r in refitted { offsets.append(length); length += (r.scratch + 255) & ~255 }
+            var rebuiltOffsets: [Int] = []
+            for r in rebuilt { rebuiltOffsets.append(length); length += (r.scratch + 255) & ~255 }
             guard let scratch = device.makeBuffer(length: length, options: .storageModePrivate) else {
                 throw RendererError.resourceCreation("refit scratch buffer")
             }
@@ -774,7 +785,9 @@ struct SceneBuffers {
                 cmd.waitUntilCompleted()
             }
             primitiveRefit = PrimitiveRefit(structures: refitted.map { structures[$0.index]! }, descriptors: refitted.map(\.descriptor),
-                                            scratch: scratch, scratchOffsets: offsets)
+                                            scratch: scratch, scratchOffsets: offsets,
+                                            rebuilt: rebuilt.indices.map { (structures[rebuilt[$0].index]!, rebuilt[$0].descriptor, rebuiltOffsets[$0]) },
+                                            rebuiltMeshes: rebuilt.map(\.index))
         }
         primitives = structures.map { $0! }
         for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }

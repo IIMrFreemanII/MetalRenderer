@@ -177,17 +177,32 @@ extension PrimitiveWork {
 }
 
 /// This frame's refit of the per-mesh structures that deform (the crowd's pose slots): each keeps its tree and takes
-/// its boxes from the vertices its descriptor points at, which the skinning has just rewritten.
+/// its boxes from the vertices its descriptor points at, which the skinning has just rewritten. And the build of those
+/// whose triangles change (a liquid's surface: FluidSurface.swift), from scratch, into the same structure.
 struct PrimitiveRefit: PrimitiveWork {
     let structures: [MTLAccelerationStructure]
     let descriptors: [MTLPrimitiveAccelerationStructureDescriptor]
     let scratch: MTLBuffer
     let scratchOffsets: [Int]
+    var rebuilt: [(structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratchOffset: Int)] = []
+    /// The mesh each rebuilt structure is of.
+    var rebuiltMeshes: [Int] = []
+
+    /// How many of rebuilt structure `i`'s triangles the next builds take (the rest are left out: a liquid's surface
+    /// holds room for far more than it needs): at most what it was made for.
+    func setTriangles(_ i: Int, _ count: Int) {
+        guard let geometry = rebuilt[i].descriptor.geometryDescriptors?.first as? MTLAccelerationStructureTriangleGeometryDescriptor
+        else { return }
+        geometry.triangleCount = count
+    }
 
     func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
         for (i, structure) in structures.enumerated() {
             enc.refit(sourceAccelerationStructure: structure, descriptor: descriptors[i], destinationAccelerationStructure: structure,
                       scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
+        }
+        for r in rebuilt {
+            enc.build(accelerationStructure: r.structure, descriptor: r.descriptor, scratchBuffer: scratch, scratchBufferOffset: r.scratchOffset)
         }
     }
 }
@@ -213,8 +228,9 @@ struct FrameTimes {
 /// pass timings in its own encoder. `Metal3Frame` encodes for an `MTLCommandQueue`, `Metal4Frame` for Metal 4's.
 protocol FrameEncoder: AnyObject {
     /// The compute pass for `name`: the open one, unless passes are timed apart. `serial`: its dispatches run in order
-    /// even in a frame whose stages overlap (the TLAS and the sky, ahead of them).
-    func compute(_ name: String, serial: Bool) -> ComputePass?
+    /// even in a frame whose stages overlap (the TLAS and the sky, ahead of them). `concurrent`: they overlap even in a
+    /// frame whose stages don't, and the pass sets its own barriers (the physics: the liquids side by side).
+    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass?
     /// Closes the open pass: at the end of the frame, or ahead of work that isn't a compute dispatch.
     func endCompute()
     func generateMipmaps(_ textures: [MTLTexture], pass: String)
@@ -235,7 +251,8 @@ protocol FrameEncoder: AnyObject {
 }
 
 extension FrameEncoder {
-    func compute(_ name: String) -> ComputePass? { compute(name, serial: false) }
+    func compute(_ name: String) -> ComputePass? { compute(name, serial: false, concurrent: false) }
+    func compute(_ name: String, serial: Bool) -> ComputePass? { compute(name, serial: serial, concurrent: false) }
 
     /// Runs stages in order, each in its named pass (consecutive stages of one pass share it).
     func run(_ stages: [ComputeStage]) {
@@ -257,6 +274,7 @@ final class Metal3Frame: FrameEncoder {
     private var buffers: [(name: String, cmd: MTLCommandBuffer)] = []   // split only, in the order they run
     private var open: MTLComputeCommandEncoder?
     private var openPass = ""
+    private var openConcurrent = false
 
     init?(queue: MTLCommandQueue, profile: GPUProfiler.Frame?, split: Bool, overlap: Bool) {
         guard let cmd = queue.makeCommandBuffer() else { return nil }
@@ -271,12 +289,15 @@ final class Metal3Frame: FrameEncoder {
         return cb
     }
 
-    func compute(_ name: String, serial: Bool) -> ComputePass? {
-        if let open, !split, profile == nil || name == openPass { return Metal3Pass(enc: open) }
+    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
+        if let open, !split, profile == nil || name == openPass, !concurrent || openConcurrent { return Metal3Pass(enc: open) }
         endCompute()
         openPass = name
+        openConcurrent = concurrent || overlap && !serial
         if let profile {
-            open = profile.compute(cmd, name)
+            open = profile.compute(cmd, name, concurrent: concurrent)
+        } else if concurrent {
+            open = buffer(name).makeComputeCommandEncoder(dispatchType: .concurrent)
         } else {
             open = overlap && !serial ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent) : buffer(name).makeComputeCommandEncoder()
         }

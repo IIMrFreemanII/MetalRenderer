@@ -576,6 +576,15 @@ final class Renderer: NSObject {
     private var accumulating: Bool { referenceMode == .accumulated }
     // Reference "Path traced": pathTraceKernel's running mean, the paths in it per pixel, and the view it was made from.
     private var pathTraceAccum: MTLTexture?
+    /// What liquidKernel leaves the trace and liquidApplyKernel (Shaders/Liquid.metal): per pixel the bent ray (its
+    /// origin, w = 1 where it is bent; its direction, w = how far the liquid is), what comes through and the reflection.
+    struct LiquidTargets {
+        let ray: MTLTexture
+        let direction: MTLTexture
+        let through: MTLTexture
+        let reflection: MTLTexture
+    }
+    private var liquidTextures: LiquidTargets?
     private var pathTraceCount: UInt32 = 0
     private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
     private var referenceView: [SIMD4<Float>] = []
@@ -941,7 +950,8 @@ final class Renderer: NSObject {
         // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
         // from the GPU's buffers).
         if let physics = scene.physics {
-            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count)
+            let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
+            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
@@ -2021,6 +2031,7 @@ final class Renderer: NSObject {
         var raster: (scene: RasterScene, targets: RasterTargets)?   // primary hits from the raster visibility buffer
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
+        var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
@@ -2077,6 +2088,7 @@ final class Renderer: NSObject {
         p.megaLights = directMode == .megalights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
+        if scene.hasLiquid { p.liquid = liquidTargets(width: width, height: height) }
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
@@ -2146,7 +2158,8 @@ final class Renderer: NSObject {
 
         // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
         // (the frames swap them in instance by instance, which the raster doesn't follow).
-        if settings.primary == .raster, !scene.hasVoxelBoxes, let rs = currentRasterScene(),
+        // Nor with liquids (a pixel seen through one isn't the triangle the raster drew there).
+        if settings.primary == .raster, !scene.hasVoxelBoxes, !scene.hasLiquid, let rs = currentRasterScene(),
            let rt = rasterTargets(width: width, height: height, scene: rs) {
             p.raster = (rs, rt)
             p.uniforms.flags |= UniformFlags.visBuffer
@@ -2330,9 +2343,13 @@ final class Renderer: NSObject {
         // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
         // Cloths too: their vertices, from where the physics (or the CPU's) left them.
         var deformed = false
-        if let physicsGPU, let enc = passes.compute("physics", serial: true) {
+        if let physicsGPU, let enc = passes.compute("physics", serial: true, concurrent: physicsGPU.hasFluid) {
+            physicsGPU.concurrent = physicsGPU.hasFluid   // (its own barriers: the liquids' steps side by side)
             if physicsGPU.simulates {
-                let (steps, restart) = scene.takePhysicsSteps()
+                // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
+                // buffer, past the watchdog: it catches up over the next frames instead.
+                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid ? 20 : .max)
+                if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
                 physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
                 let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
@@ -2342,7 +2359,13 @@ final class Renderer: NSObject {
             physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
-            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair
+            // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
+            let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0
+            if liquids {
+                physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
+                physicsGPU.liquidFrames -= 1
+            }
+            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
             passes.endCompute()
         }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
@@ -2356,7 +2379,19 @@ final class Renderer: NSObject {
             }
             deformed = true
         }
-        if deformed, let primitiveRefit { passes.updatePrimitives(primitiveRefit, pass: "blas") }
+        if deformed, let primitiveRefit {
+            // A liquid's surface: built over as many triangles as it last needed (read back a few frames late), with
+            // room to grow by a fifth (a pour's surface grows by a few percent over those frames; past it, the
+            // triangles left out wait a frame). The build's time is its triangles': on the M1 Max about 5 ms for 100k.
+            if let fluid = physicsGPU?.fluid {
+                for (i, m) in primitiveRefit.rebuiltMeshes.enumerated() {
+                    guard let s = scene.liquidMeshes.first(where: { $0.mesh == m })?.system else { continue }
+                    let room = Int(fluid.systems[s].system.surface.triangles.x), used = Int(fluid.readSurfaceStats(s).y)
+                    primitiveRefit.setTriangles(i, min(room, (used * 6 / 5 + 2048 + 1023) / 1024 * 1024))
+                }
+            }
+            passes.updatePrimitives(primitiveRefit, pass: "blas")
+        }
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
             if let enc = passes.compute("wind", serial: true) {
@@ -2602,6 +2637,7 @@ final class Renderer: NSObject {
                   + (Renderer.voxelAsync ? ", \(voxelLevels.swaps) background rebuilds swapped in" : ""))
         }
         if let benchmark, benchmark.shouldCapture, plan.raster != nil || plan.vsm != nil, let rc = rasterClusters { print("  " + rc.summary) }
+        if let benchmark, benchmark.shouldCapture, let fluid = physicsGPU?.fluid { print("  Fluids: " + fluid.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
             print("  " + ts.summary)
             if ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_DEBUG"] != nil { print(ts.details) }
@@ -2719,6 +2755,14 @@ final class Renderer: NSObject {
                                     threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
             })
         }
+        // Liquids: the camera rays bent through them, which the trace goes on with.
+        if let liquid = plan.liquid {
+            stages.append(ComputeStage(pass: "liquid") { [self] enc in
+                bind(enc, .liquid, uniforms, sceneSlot: slot)
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture])
+                dispatch(enc, .liquid, width: size.width, height: size.height)
+            })
+        }
         stages.append(ComputeStage(pass: "trace") { [self] enc in
             bind(enc, .trace, uniforms, pass: uniforms.tracePassFlags, sceneSlot: slot)
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
@@ -2728,6 +2772,10 @@ final class Renderer: NSObject {
                 enc.setTexture(raster.targets.visibility, index: 15)
                 enc.setBuffer(raster.targets.counters, offset: 0, index: 13)
             }
+            if let liquid = plan.liquid {
+                enc.setTexture(liquid.ray, index: 16)
+                enc.setTexture(liquid.direction, index: 17)
+            }
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
         if plan.glass {
@@ -2735,6 +2783,13 @@ final class Renderer: NSObject {
                 bind(enc, .glass, uniforms, sceneSlot: slot)
                 setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.material, blueNoiseTexture])
                 dispatch(enc, .glass, width: size.width, height: size.height)
+            })
+        }
+        if let liquid = plan.liquid {
+            stages.append(ComputeStage(pass: "liquid") { [self] enc in
+                bind(enc, .liquidApply, uniforms)
+                setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection])
+                dispatch(enc, .liquidApply, width: size.width, height: size.height)
             })
         }
         return stages
@@ -3539,6 +3594,22 @@ final class Renderer: NSObject {
         pathTraceAccum = device.makeTexture(descriptor: d)
         pathTraceCount = 0
         return pathTraceAccum
+    }
+
+    private func liquidTargets(width: Int, height: Int) -> LiquidTargets? {
+        if let t = liquidTextures, t.ray.width == width, t.ray.height == height { return t }
+        func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            let t = device.makeTexture(descriptor: d)
+            t?.label = label
+            return t
+        }
+        guard let ray = make(.rgba32Float, "liquidRay"), let direction = make(.rgba32Float, "liquidDirection"),
+              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection") else { return nil }
+        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection)
+        return liquidTextures
     }
 
     private func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)? {

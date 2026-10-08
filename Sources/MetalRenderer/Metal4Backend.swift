@@ -194,10 +194,10 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     // MARK: - FrameEncoder
 
-    func compute(_ name: String, serial: Bool) -> ComputePass? {
+    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
         let wasSerial = self.serial
         guard encoder(name, newBuffer: true) != nil else { return nil }
-        self.serial = serial || !overlap
+        self.serial = !concurrent && (serial || !overlap)
         if wasSerial != self.serial { barrier() }
         return self
     }

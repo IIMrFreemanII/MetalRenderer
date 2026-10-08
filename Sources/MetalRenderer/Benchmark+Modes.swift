@@ -18,6 +18,7 @@ extension Benchmark {
         "pathref": pathref,
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
+        "fluids": fluids, "fluidsdemo": fluidsDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1072,6 +1073,57 @@ extension Benchmark {
             out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.softBodies = bodies; $0.scene.physics.backend = .cpu })
         }
         return out
+    }
+
+    /// The fluids scene (Scene+Fluids.swift) at the physics look: paused at 2, 4 and 6 s (the boxes dropped at 4 and
+    /// 5 s), at 6 s on each API, each liquid alone, all by one solver, in its normals and albedo, and path traced (the
+    /// reference: refraction and absorption as they are); then 5 s moving for timing: the first on the GPU, from 12 s
+    /// (the pours longer) at a few particle counts a liquid, and the first small on the CPU.
+    private static func fluids() -> [Config] {
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) { $0.usePhysicsLook() }
+        var out: [Config] = []
+        for time: Float in [2, 4, 6] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 6)) }
+        for liquids in [PhysicsSettings.Liquids.water, .blood, .honey] {
+            out.append(base.named(liquids.envName).with { $0.scene.physics.liquids = liquids }.still(at: 6))
+        }
+        out.append(base.named("all pbf").with { $0.scene.physics.solver = .pbf }.still(at: 6))
+        out.append(base.named("all mpm").with { $0.scene.physics.solver = .mpm }.still(at: 6))
+        out.append(base.named("normals").view(3).still(at: 6))
+        out.append(base.named("albedo").view(4).still(at: 6))
+        out.append(base.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 6).frames(256))
+        out.append(base.named("gpu moving").with { $0.scene.physics.backend = .gpu })
+        for particles in [16384, 32768, 65536] {
+            var c = base.named("gpu \(particles / 1024)k moving").with { $0.scene.physics.fluidParticles = particles; $0.scene.physics.backend = .gpu }
+            c.startTime = 12   // by then the pours have filled 16k a liquid (the warm-up catches up 19 steps a frame)
+            out.append(c)
+        }
+        out.append(base.named("cpu 2k moving").with { $0.scene.physics.fluidParticles = 2048; $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The fluids scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens
+    /// but no depth of field (`recording`; `.claude/skills/offscreen/scripts/video.sh -m fluidsdemo` makes the mp4). Wide
+    /// as the three start pouring, down to the water as it runs off the steps, along to the blood and the honey as the
+    /// boxes drop in, across the basins from the right as they float and sink, and back out. The clock starts at -1 s.
+    private static func fluidsDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 1.25, 1.05], [0, 0.15, -0.45]),
+            key(4, [-0.9, 0.75, 0.55], [-0.64, 0.15, -0.5]),
+            key(8, [0.1, 0.65, 0.6], [0.1, 0.1, -0.35]),
+            key(12, [0.95, 0.55, 0.45], [0.55, 0.1, -0.3]),
+            key(16, [1.45, 0.62, 0.25], [0.05, 0.05, -0.45]),
+            key(20, [0, 1.25, 1.05], [0, 0.15, -0.45]),
+        ])
+        var demo = Config("fluids demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
     }
 
     /// A camera at `from` looking at `to`.

@@ -634,6 +634,49 @@ struct GPUSkinAttach {
     var pad1: UInt32 = 0
 }
 
+/// A liquid's particle (PhysicsFluid.swift): MSL FluidParticle.
+struct GPUFluidParticle {
+    var position = SIMD4<Float>()            // w = MPM: its volume now over its volume at rest (J)
+    var velocity = SIMD4<Float>()            // w = 0
+    var affine0 = SIMD4<Float>()             // MPM: its velocity's gradient (APIC's C), by rows; PBF: row 0 is its
+    var affine1 = SIMD4<Float>()             // vorticity
+    var affine2 = SIMD4<Float>()
+}
+
+/// What a liquid's kernels are told (PhysicsFluid.swift): MSL FluidParams. Written once.
+struct GPUFluidParams {
+    var gravity = SIMD4<Float>()             // w = the solver's substep (s)
+    var lo = SIMD4<Float>()                  // the domain's low corner; w = the grid's cell (PBF: the kernel's radius h;
+                                             // MPM: dx)
+    var hi = SIMD4<Float>()                  // its high corner; w = 1 / the cell
+    var dims = SIMD4<UInt32>()               // the grid's cells (PBF) or nodes (MPM) along x, y, z; w = all of them
+    var counts = SIMD4<UInt32>()             // x = capacity (particles), y = substeps a group, z = static colliders it
+                                             // meets, w = solver (0 PBF, 1 MPM)
+    var material = SIMD4<Float>()            // x = rest density (PBF: sum of W over a rest lattice, 1/m^3; MPM: kg/m^3),
+                                             // y = a particle's mass (kg), z = bulk modulus K (Pa), w = Tait's gamma
+    var viscosity = SIMD4<Float>()           // Carreau: x = mu0, y = mu infinity (Pa s), z = lambda (s), w = n
+    var pbf = SIMD4<Float>()                 // x = h, y = relaxation (CFM), z = s_corr k, w = 1 / W(dq)
+    var pbf2 = SIMD4<Float>()                // x = XSPH c, y = vorticity confinement, z = wall friction, w = stickiness
+    var fixed = SIMD4<Float>()               // fixed point: x = mass, y = momentum, z = a body's impulse (per N s);
+                                             // w = the top speed (m/s)
+    var nozzle = SIMD4<Float>()              // where it pours from; w = the nozzle's radius
+    var direction = SIMD4<Float>()           // which way (unit); w = how fast (m/s)
+    var emission = SIMD4<UInt32>()           // x = particles a layer, y = ticks between layers x 256, z = the tick it
+                                             // starts at, w = PBF iterations
+    var extra = SIMD4<Float>()               // x = a particle's radius against colliders, y = the spacing it pours at,
+                                             // z = particle volume (m^3, MPM), w = the group's length (s)
+}
+
+/// A liquid's drawn surface (FluidSurface.swift): MSL FluidSurface. Written once the scene's meshes are in.
+struct GPUFluidSurface {
+    var lo = SIMD4<Float>()                  // the grid's first node; w = its cell (m)
+    var dims = SIMD4<UInt32>()               // nodes along x, y, z; w = all of them
+    var field = SIMD4<Float>()               // x = the iso level (particles a cell), y = the splat's fixed point, z = 1 / cell
+    var mesh = SIMD4<UInt32>()               // x = its first vertex in the scene's vertex buffer, y = its first index,
+                                             // z = its last-frame offset (GPUMesh.prevOffset), w = vertices it holds
+    var triangles = SIMD4<UInt32>()          // x = triangles it holds
+}
+
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
@@ -693,5 +736,8 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUHairVertex>.stride == 64, "GPUHairVertex layout mismatch")
     precondition(MemoryLayout<GPUHairParams>.stride == 64, "GPUHairParams layout mismatch")
     precondition(MemoryLayout<GPUHairGroup>.stride == 64, "GPUHairGroup layout mismatch")
+    precondition(MemoryLayout<GPUFluidParticle>.stride == 80, "GPUFluidParticle layout mismatch")
+    precondition(MemoryLayout<GPUFluidParams>.stride == 224, "GPUFluidParams layout mismatch")
+    precondition(MemoryLayout<GPUFluidSurface>.stride == 80, "GPUFluidSurface layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

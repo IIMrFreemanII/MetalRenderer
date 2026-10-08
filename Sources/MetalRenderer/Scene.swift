@@ -245,6 +245,8 @@ final class Scene {
     static let maskGlass: UInt32 = 4
     /// A far plant as its voxels (VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
+    /// A liquid's surface (FluidSurface.swift): only liquidKernel's rays meet it, which bend the camera's through it.
+    static let maskLiquid: UInt32 = 32
     /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
     /// sways, SDF shapes), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
     /// trace a ray that meets only this (MASK_SHADOW_TRACED). Always with `geometry`.
@@ -456,6 +458,7 @@ final class Scene {
         case .hair: buildHair(settings.physics)
         case .softBodies: buildSoftBodies(settings.physics)
         case .muscles: buildMuscles(settings.physics)
+        case .fluids: buildFluids(settings.physics)
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
@@ -469,6 +472,7 @@ final class Scene {
         finishDeforming()
         finishHair()
         finishSoftBodies()
+        finishLiquids()
         physics?.finish()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
@@ -620,10 +624,11 @@ final class Scene {
         physicsPending = (physics.stepIndex, true)
     }
 
-    /// The steps to encode this frame (the renderer's), which are then forgotten.
-    func takePhysicsSteps() -> (steps: Int, restart: Bool) {
-        defer { physicsPending = (0, false) }
-        return physicsPending
+    /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.
+    func takePhysicsSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+        let taken = (steps: min(physicsPending.steps, limit), restart: physicsPending.restart)
+        physicsPending = (physicsPending.steps - taken.steps, false)
+        return taken
     }
 
     private func setTransform(_ i: Int, _ transform: float4x4) {
@@ -745,12 +750,13 @@ final class Scene {
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
         // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
-        // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. (Shaders/Types.metal.)
+        // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
+        // liquid's surface. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
-            | (hasRigidAssemblies ? 0x0008_0000 : 0)
+            | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1322,6 +1328,52 @@ final class Scene {
         }
     }
 
+    /// A liquid (PhysicsFluid.swift) held in `domain`, poured from `nozzle` (straight down) until it has `capacity`
+    /// particles. After the static colliders it meets.
+    /// Its surface is a mesh the GPU makes again every frame (FluidSurface.swift), whose structure is built again every
+    /// frame (`rebuiltMeshes`): it holds a fixed number of vertices (one spare) and triangles. It is drawn as the
+    /// liquid it is (`addLiquidMaterial`), or with `material` as an opaque surface.
+    func addLiquid(_ kind: LiquidKind, solver: PhysicsSettings.Solver, domain: AABB, nozzle: SIMD3<Float>, capacity: Int,
+                   material: Int? = nil) {
+        let world = physicsWorld()
+        world.addLiquid(kind, solver: solver, domain: domain, nozzle: nozzle, capacity: capacity)
+        let system = world.fluid!.systems.count - 1, s = world.fluid!.systems[system]
+        let bounds = s.surfaceBounds(s.surface), middle = (bounds.lo + bounds.hi) / 2
+        let v = Int(s.surface.mesh.w) + 1, t = Int(s.surface.triangles.x)
+        let mesh = addDeformingMesh(([SIMD3<Float>](repeating: middle, count: v), [SIMD3<Float>](repeating: SIMD3(0, 1, 0), count: v),
+                                     [UInt32](repeating: UInt32(v - 1), count: 3 * t)), bounds: bounds)
+        rebuiltMeshes.insert(mesh)
+        if let material {
+            addDeformingInstance(mesh, material)
+        } else {
+            let i = addInstance(mesh, addLiquidMaterial(kind.look), matrix_identity_float4x4, mask: Scene.maskLiquid)
+            instances[i].deforms = true
+        }
+        liquidMeshes.append((system, mesh, deforming.last!.first))
+    }
+
+    /// The last body added held where it is until `time` (s), then dropped (PhysicsWorld.hold).
+    func holdBody(until time: Float) {
+        let world = physicsWorld()
+        world.hold(body: world.bodies.count - 1, until: time)
+    }
+
+    /// The liquids' surfaces: each system's mesh (its system, its mesh), and the meshes whose structures are built
+    /// again every frame (their triangles change).
+    private(set) var liquidMeshes: [(system: Int, mesh: Int, first: Int)] = []
+    private(set) var rebuiltMeshes: Set<Int> = []
+
+    /// The liquids' surfaces: where their meshes' vertices, indices and last-frame vertices are (once
+    /// `finishDeforming` put them).
+    private func finishLiquids() {
+        guard let physics else { return }
+        for (system, m, first) in liquidMeshes {
+            physics.fluid!.systems[system].surface.mesh.x = UInt32(first)   // (its indices are the buffer's, as every mesh's)
+            physics.fluid!.systems[system].surface.mesh.y = meshes[m].firstIndex
+            physics.fluid!.systems[system].surface.mesh.z = meshes[m].prevOffset
+        }
+    }
+
     /// Something bodies bounce off that never moves: SDF shape `sdf` at `transform` (draw it, or not, apart).
     func addStaticCollider(sdf: Int, _ transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
         let world = physicsWorld()
@@ -1343,6 +1395,15 @@ final class Scene {
                                      params: SIMD4(1, 1, 0, 0)))
         return materials.count - 1
     }
+
+    /// A liquid (Shaders/Liquid.metal), for instances with `maskLiquid`: its absorption in the albedo's colour, its index
+    /// of refraction in its alpha, its roughness in the emission's alpha.
+    func addLiquidMaterial(_ look: LiquidKind.Look) -> Int {
+        hasLiquid = true
+        return addMaterial(GPUMaterial(albedo: SIMD4(look.absorption, look.ior), emission: SIMD4(.zero, look.roughness), params: SIMD4(0, 1, 0, 0)))
+    }
+    /// Some instance is a liquid's surface (maskLiquid). Set by `addLiquidMaterial`.
+    private(set) var hasLiquid = false
 
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
     func addGlassMaterial(tint: SIMD3<Float>) -> Int {

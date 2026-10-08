@@ -339,6 +339,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     case softBodies         // `softBodies` soft bodies (PhysicsSoft.swift): jellies dropped onto steps, pegs and a bowl
     case muscles            // flesh, muscles and skin (PhysicsFlesh.swift) on a character walking and running round a
                             // circle among balls, and on ragdolls tumbling down steps
+    case fluids             // liquids (PhysicsFluid.swift): water, blood and honey poured side by side down steps into a
+                            // tray, boxes floating and sinking in them, a paddle in each to stir it
 
     var title: String {
         switch self {
@@ -366,11 +368,14 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .hair: return "Hair and fur"
         case .softBodies: return "Soft bodies"
         case .muscles: return "Muscles and skin"
+        case .fluids: return "Fluids"
         }
     }
 
     /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
-    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles }
+    var simulates: Bool {
+        self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles || self == .fluids
+    }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -535,6 +540,28 @@ struct PhysicsSettings: Equatable, Codable {
         var title: String { ["Skin", "Muscles"][rawValue] }
     }
     var body = Body.skin
+    /// The fluids scene (Scene+Fluids.swift): which liquids it pours, the solver each is stepped by (PhysicsFluid.swift),
+    /// or one for all of them, and how many particles each pours at most. Honey by MPM (its viscosity is what MPM is
+    /// for), water and blood by PBF: MPM's push on a body is weak in a thin liquid (a light box bobbed and sank in MPM
+    /// water and blood; PBF's boundary density holds it up).
+    enum Liquids: Int, CaseIterable, Codable {
+        case all, water, blood, honey
+        var title: String { ["All three", "Water", "Blood", "Honey"][rawValue] }
+    }
+    var liquids = Liquids.all
+    enum Solver: Int, CaseIterable, Codable {
+        case pbf, mpm
+        var title: String { ["Position based (PBF)", "Material point (MLS-MPM)"][rawValue] }
+    }
+    enum Solvers: Int, CaseIterable, Codable {
+        case auto, pbf, mpm
+        var title: String { ["Each liquid's own", "PBF for all", "MPM for all"][rawValue] }
+    }
+    var solver = Solvers.auto
+    var waterSolver = Solver.pbf
+    var bloodSolver = Solver.pbf
+    var honeySolver = Solver.mpm
+    var fluidParticles = 32768
 
     static let substepRange = 1...32
     static let bodyRange = 0...4096
@@ -548,6 +575,7 @@ struct PhysicsSettings: Equatable, Codable {
     static let muscleRagdollRange = 0...12
     static let fleshCellRange: ClosedRange<Float> = 2...6
     static let muscleGainRange: ClosedRange<Float> = 0...2
+    static let fluidRange = 1024...262144
     static let gpuFrom = 64
 
     /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
@@ -699,7 +727,7 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -798,7 +826,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles:
+             .softBodies, .muscles, .fluids:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

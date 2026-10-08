@@ -81,6 +81,9 @@ extension CityStyle: EnvNamed {}
 extension PhysicsSettings.Backend: EnvNamed {}
 extension PhysicsSettings.Skin: EnvNamed {}
 extension PhysicsSettings.Body: EnvNamed {}
+extension PhysicsSettings.Liquids: EnvNamed {}
+extension PhysicsSettings.Solver: EnvNamed {}
+extension PhysicsSettings.Solvers: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -371,6 +374,16 @@ enum SettingsTable {
                 .when { $0.scene.kind == .muscles && $0.scene.physics.body == .skin },
             S.slider("Muscle strength", \.scene.physics.muscleGain, PhysicsSettings.muscleGainRange, step: 0.05, live: false) { String(format: "%.2f", $0) }
                 .env(.scene, "muscle").when { $0.scene.kind == .muscles },
+            S.popup("Liquids", \.scene.physics.liquids, titled(\.title)).env(.scene, "liquid").when { $0.scene.kind == .fluids },
+            S.popup("Solver", \.scene.physics.solver, titled(\.title)).env(.scene, "solver").when { $0.scene.kind == .fluids },
+            S.popup("Water", \.scene.physics.waterSolver, titled(\.title)).env(.scene, "water")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.popup("Blood", \.scene.physics.bloodSolver, titled(\.title)).env(.scene, "blood")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.popup("Honey", \.scene.physics.honeySolver, titled(\.title)).env(.scene, "honey")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.slider("Particles per liquid", \.scene.physics.fluidParticles, PhysicsSettings.fluidRange, log: true, live: false)
+                .env(.scene, "fluid").when { $0.scene.kind == .fluids },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
