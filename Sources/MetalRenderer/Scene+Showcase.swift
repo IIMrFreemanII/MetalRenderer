@@ -329,92 +329,23 @@ extension Scene {
 
     // MARK: - Particles
 
-    /// What drifts in the air: GPU particle effects (Particles.swift), ray traced as the camera sees them. None casts a
-    /// shadow; embers, bubbles and runes glow (unlit), the dust is lit by the beams (particleLightKernel).
+    /// What drifts in the air: GPU particle effects (VFXLibrary's graphs), ray traced as the camera sees them. None
+    /// casts a shadow; embers, bubbles and runes glow (unlit), the dust is lit by the beams (particleLightKernel).
     private func addMotes(_ s: Stand) {
-        var e: ParticleEmitter
         switch s.look.particles {
         case .none:
             return
         case .embers:   // from the pit (Forge), rising and swaying in curl noise, shrinking as they cool
-            e = ParticleEmitter("embers", capacity: 600, at: [-(s.radius + 1.6), 0.4, -1.6])
-            e.shape = .box(halfExtents: [0.6, 0, 0.6])
-            e.rate = 30
-            e.lifetime = 4...7
-            e.speed = 0.35...0.9
-            e.spread = 0.3
-            e.gravity = -0.06
-            e.drag = 0.3
-            e.curl = 0.8
-            e.curlFrequency = 0.9
-            e.curlSpeed = 0.3
-            e.size = (0.016, 0.005)
-            e.sizeJitter = 0.5
-            e.colors = ([1, 0.5, 0.15, 1], [1, 0.42, 0.1, 1], [0.8, 0.2, 0.05, 1])
-            e.emission = 30
-            e.atlas = .spark
-            e.orientation = .velocity(stretch: 0.03)
+            addEffect(effect(VFXLibrary.embers(at: [-(s.radius + 1.6), 0.4, -1.6])))
         case .bubbles:   // from the sea floor round the model, up and wobbling
-            e = ParticleEmitter("bubbles", capacity: 800, at: .zero)
-            e.shape = .disc(radius: s.radius + 3)
-            e.rate = 12
-            e.lifetime = 8...20
-            e.speed = 0.4...1
-            e.gravity = -0.12
-            e.drag = 1
-            e.curl = 1.5
-            e.curlFrequency = 4
-            e.curlSpeed = 1
-            e.size = (0.03, 0.045)
-            e.sizeJitter = 0.5
-            e.colors = ([0.6, 0.9, 1, 1], [0.6, 0.9, 1, 1], [0.6, 0.9, 1, 1])
-            e.emission = 0.6
-            e.atlas = .bubble
+            addEffect(effect(VFXLibrary.bubbles(radius: s.radius + 3)))
         case .dust:   // motes drifting round the model, lit by the beams
-            e = ParticleEmitter("dust", capacity: 1500, at: s.target + [0, 0.3, -0.25])
-            e.shape = .box(halfExtents: [3, 1.5, 2.75])
-            e.rate = 120
-            e.lifetime = 10...14
-            e.speed = 0.01...0.05
-            e.spread = .pi
-            e.gravity = 0
-            e.drag = 0.4
-            e.curl = 0.12
-            e.curlFrequency = 0.6
-            e.curlSpeed = 0.1
-            e.size = (0.012, 0.012)
-            e.sizeJitter = 0.5
-            e.colors = ([1, 1, 1, 0], [1, 1, 1, 1], [1, 1, 1, 0])
-            e.midpoint = 0.3
-            e.atlas = .dot
+            addEffect(effect(VFXLibrary.dust(at: s.target + [0, 0.3, -0.25], half: [3, 1.5, 2.75])))
         case .runes:   // glowing tablets circling the model low, below its knees: never in front of its face
             let radius = s.radius + 0.35, height = s.base + 0.2 * s.extent.y, speed: Float = 0.3 * radius
-            e = ParticleEmitter("runes", capacity: 12, at: [0, height, 0])
-            e.shape = .ring(radius: radius)
-            e.burst = (0, 12, 0, 0)
-            e.lifetime = 1e6...1e6
-            e.gravity = 0
-            // Held on the circle: the vortex against the drag keeps them going round at `speed`, the pull toward the
-            // centre turns them (v^2 / r); the drag damps any drift off it.
-            e.drag = 1
-            e.vortex = speed
-            e.attraction = speed * speed / radius
-            e.curl = 0.04
-            e.curlFrequency = 1
-            e.curlSpeed = 0.2
-            e.size = (0.07, 0.07)
-            e.colors = (SIMD4(Scene.hue(s.look.accent), 1), SIMD4(Scene.hue(s.look.accent), 1), SIMD4(Scene.hue(s.look.accent), 1))
-            e.emission = 3
-            e.atlas = .rune
-            e.frames = ParticleTextures.frames
-            e.randomFrame = true
-            e.frameBlend = false
-            e.fps = 0.0001   // each keeps its glyph
-            e.orientation = .axis([0, 1, 0])
+            addEffect(effect(VFXLibrary.runes(height: height, radius: radius, speed: speed, color: Scene.hue(s.look.accent))))
         }
-        e.castsShadows = false
-        e.soft = 0.05
-        addParticles(ParticleSystem(emitters: [e]))
+        addEffects()
     }
 
     // MARK: - Meshes

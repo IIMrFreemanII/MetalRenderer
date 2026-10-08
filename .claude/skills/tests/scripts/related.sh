@@ -38,6 +38,7 @@ if [[ $suites == " " ]]; then
     name=${f##*/}
     case $f in
       Tests/MetalRendererTests/FoliageTests.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;   # three suites in one file
+      Tests/MetalRendererTests/LegacyEffects.swift) add VFXTests ;;   # the golden test's fixture
       Tests/MetalRendererTests/*Tests.swift) add "${name%.swift}" ;;
       Tests/*) add MetalRendererTests ;;                     # a shared helper: every suite uses it
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
@@ -48,9 +49,11 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Fluid.metal|Sources/MetalRenderer/Shaders/FluidSurface.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Liquid.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/Particles.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;
@@ -74,7 +77,7 @@ if [[ $suites == " " ]]; then
           SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
           Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ;;
           FluidSurface.swift|Scene+Fluids.swift) add FluidTests ;;
-          Particle*.swift|Scene+Particles.swift) add ParticleTests ;;
+          Particle*.swift|Scene+Particles.swift|Scene+Effects.swift) add ParticleTests VFXTests ;;
           MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests ;;
           HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;

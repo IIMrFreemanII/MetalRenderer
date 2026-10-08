@@ -345,6 +345,8 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // smoke, magic motes in curl noise, rain that splashes
     case plants             // the plant workshop (Scene+Plants.swift): one species' plants on a lawn under the sun, as the
                             // plant editor shapes them (`SceneSettings.plants`)
+    case vfxStage           // the VFX stage (Scene+Stage.swift): effects (`SceneSettings.stage`) lined up in a studio, as
+                            // the VFX editor shapes them
 
     var title: String {
         switch self {
@@ -375,6 +377,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .fluids: return "Fluids"
         case .particles: return "Particles"
         case .plants: return "Plant workshop"
+        case .vfxStage: return "VFX stage"
         }
     }
 
@@ -665,6 +668,11 @@ struct SceneSettings: Equatable, Codable {
     /// The species the plants are grown from: a key of PlantCatalog's registry, which the plant editor sets as it
     /// edits; "" the saved species (Assets/Plants), "builtin" the built-in ones. Session state, not a preference.
     var plantCatalog = ""
+    /// The effects that replace the scenes' own of the same name (VFXCatalog): "" the saved ones (Assets/Effects),
+    /// "builtin" none, otherwise a key of the registry the VFX editor fills as it edits. Session state.
+    var effects = ""
+    /// The VFX stage: the effects it shows.
+    var stage = VFXStageSettings()
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -690,6 +698,11 @@ struct SceneSettings: Equatable, Codable {
         (a.worldLit, b.worldLit) = (false, false)
         return kind.isWorld && a == b
     }
+}
+
+/// The VFX stage (Scene+Stage.swift): the effects it lines up, by name (VFXLibrary's, or the catalog's: Scene.effect).
+struct VFXStageSettings: Equatable, Codable {
+    var effects = ["fireworks"]
 }
 
 /// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
@@ -804,7 +817,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles, .plants:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants, .vfxStage:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -903,7 +916,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids, .particles:
+             .softBodies, .muscles, .fluids, .particles, .vfxStage:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

@@ -3,7 +3,7 @@ import Metal
 import simd
 @testable import MetalRenderer
 
-/// Particles.swift, ParticlesCPU.swift, ParticlesGPU.swift and Shaders/Particles.metal: what emitters ask for, the
+/// Particles.swift, ParticleMath.swift, VFXInterpreter.swift, ParticlesGPU.swift and Shaders/ParticleSim.metal: what emitters ask for, the
 /// pool's invariants (every slot alive or on its emitter's dead list, once), the GPU's step against the CPU's
 /// (compared as sets: the GPU's lists are in its atomics' order), a GPU run against another, curl noise's divergence.
 final class ParticleTests: XCTestCase {
@@ -145,7 +145,7 @@ final class ParticleTests: XCTestCase {
         XCTAssertEqual(seen.count, system.capacity, "\(label): every slot alive or dead", file: file, line: line)
     }
 
-    private func checkCPU(_ cpu: ParticlesCPU, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
+    private func checkCPU(_ cpu: VFXInterpreter, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
         let system = cpu.system
         checkPool(system: system, alive: cpu.alive[cpu.stepIndex & 1], particles: cpu.particles, dead: { e in
             let base = system.bases[e]
@@ -155,7 +155,7 @@ final class ParticleTests: XCTestCase {
 
     func testThePoolHoldsEverySlotOnce() {
         for system in [swirl(), sparks(capacity: 300)] {
-            let cpu = ParticlesCPU(system)
+            let cpu = VFXInterpreter(system)
             for k in 0..<240 {
                 cpu.step(wind: [1, 0, 0.5, 0])
                 checkCPU(cpu, "step \(k)")
@@ -168,7 +168,7 @@ final class ParticleTests: XCTestCase {
         var e = ParticleEmitter("flood", capacity: 50, at: .zero)
         e.rate = 6000
         e.lifetime = 5...5
-        let cpu = ParticlesCPU(ParticleSystem(emitters: [e]))
+        let cpu = VFXInterpreter(ParticleSystem(emitters: [e]))
         cpu.advance(steps: 30)
         XCTAssertEqual(cpu.current.count, 50, "the pool full, the rest dropped")
         XCTAssertEqual(cpu.deadCount[0], 0)
@@ -176,7 +176,7 @@ final class ParticleTests: XCTestCase {
     }
 
     func testChildrenSpawnWhereTheirParentsDie() {
-        let cpu = ParticlesCPU(sparks())
+        let cpu = VFXInterpreter(sparks())
         var children = 0, splashes = 0
         for _ in 0..<180 {
             cpu.step()
@@ -298,7 +298,7 @@ final class ParticleTests: XCTestCase {
     func testGPUMatchesTheCPU() throws {
         let system = swirl()
         let (g, run) = try gpu(system)
-        let cpu = ParticlesCPU(system)
+        let cpu = VFXInterpreter(system)
         let wind: SIMD4<Float> = [0.6, 0.8, 0.7, 0]
         var worst: [Float] = []
         for steps in [1, 10, 120] {
@@ -326,7 +326,7 @@ final class ParticleTests: XCTestCase {
     func testGPUEventsMatchTheCPUsCounts() throws {
         let system = sparks()
         let (g, run) = try gpu(system)
-        let cpu = ParticlesCPU(system)
+        let cpu = VFXInterpreter(system)
         run(150, .zero)
         cpu.advance(steps: 150)
         let a = gpuAlive(g), b = cpu.current
@@ -704,7 +704,7 @@ final class ParticleTests: XCTestCase {
     /// splashes too, and isn't the pool when the pool is larger than the effect.
     func testTheAliveBoundHolds() {
         for system in [swirl(), sparks(capacity: 900)] {
-            let cpu = ParticlesCPU(system)
+            let cpu = VFXInterpreter(system)
             var slack = [Int](repeating: Int.max, count: system.emitters.count)
             for _ in 0..<400 {
                 cpu.step(wind: [1, 0, 0.5, 0])

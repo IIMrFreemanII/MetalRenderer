@@ -19,7 +19,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "particles": particles, "particlesdemo": particlesDemo, "plants": plants,
+        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "vfx": vfx, "vfxdemo": vfxDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1178,6 +1178,42 @@ extension Benchmark {
             $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
         }.track(track).recording()
         demo.startTime = 2   // 3 s in at the first recorded frame, after Benchmark.warmupFrames
+        return [demo]
+    }
+
+    /// The VFX stage (Scene+Stage.swift) at the particles mode's settings: the fireworks alone (generated code:
+    /// VFXProgram) paused at 1, 2.5 and 4 s, then beside the campfire and the magic (the fixed emitters' code), paused and
+    /// moving for timing. Benchmarks wait for the VFX library's compile.
+    private static func vfx() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .vfxStage))
+        var out: [Config] = []
+        for time: Float in [1, 2.5, 4] { out.append(base.named(String(format: "fireworks %gs", time)).still(at: time)) }
+        let lineUp = base.with { $0.scene.stage.effects = ["campfire", "fireworks", "magic"] }
+        out.append(lineUp.named("line-up").still(at: 4))
+        out.append(lineUp.named("line-up moving"))
+        return out
+    }
+
+    /// The VFX stage's demo video: 16 s of the line-up (the campfire, the fireworks, the magic) along a camera track
+    /// from 1 s in (`recording`; `video.sh -m vfxdemo`): wide, in to the fireworks' bursts from below, across to the
+    /// fire, round to the motes, and back out.
+    private static func vfxDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 2.4, 10.5], [0, 2.6, 0]),
+            key(4, [1.2, 1.2, 5.5], [0, 3.8, 0]),
+            key(8, [-2.2, 1.6, 4.2], [-4, 1.4, 0]),
+            key(12, [2.6, 1.7, 3.6], [4, 1.2, 0]),
+            key(16, [0, 2.4, 10.5], [0, 2.6, 0]),
+        ])
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        var demo = Config("vfx demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage) {
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+        }.track(track).recording()
+        demo.startTime = 0
         return [demo]
     }
 

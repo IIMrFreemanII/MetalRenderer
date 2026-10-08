@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// A particle effect's source (Particles.swift, Shaders/Particles.metal): where its particles are born and how, the
+/// A particle effect's source (Particles.swift, Shaders/ParticleSim.metal): where its particles are born and how, the
 /// forces on them, what they bounce off, and how they look. Its particles live in a fixed range of the system's pool:
 /// `capacity` is a hard budget, and births past it are dropped.
 ///
@@ -55,8 +55,9 @@ struct ParticleEmitter {
         }
     }
 
-    /// What makes a parent's particle an event for its children.
-    enum Trigger { case death, collision }
+    /// What makes a parent's particle an event for its children: its death, a collision, or a condition its own
+    /// code raises (an effect's Trigger Event block: VFXProgram).
+    enum Trigger { case death, collision, condition }
 
     /// GPUParticleEmitter.ids.w; the low 8 bits reach the rays (GPUParticleRender.info.x >> 24; bits 3 and 4 hold the
     /// orientation there).
@@ -81,6 +82,9 @@ struct ParticleEmitter {
     var shape: Shape = .point
     /// Particles a second, from `start` to `stop`.
     var rate: Float = 0
+    /// The rate times a curve over time (an effect's Rate block): its keys as its program has them (VFXProgram
+    /// .rateIntegral), for the bound on how many can be alive; nil: the rate alone.
+    var rateCurve: [SIMD4<Float>]?
     var start: Float = 0
     var stop: Float = .greatestFiniteMagnitude
     /// `count` at `time`, then every `period` (0: once), `repeats` times (0: no end).
@@ -164,9 +168,13 @@ struct ParticleEmitter {
     var shadowDensity: Float = 1
     /// Heat haze: its particles are never drawn, but bend the camera's rays through them by up to this much
     /// (radians), each a disc that faces the ray, its opacity over life (`colors`' alpha) how much of it there is
-    /// (Shaders/Particles.metal particleDistortKernel). 0: an ordinary emitter. Its slots aren't boxes: no ray but the
+    /// (Shaders/ParticleLight.metal particleDistortKernel). 0: an ordinary emitter. Its slots aren't boxes: no ray but the
     /// camera's meets it.
     var distortion: Float = 0
+
+    /// What its particles' random numbers start from (with each one's spawn id): nil, its place in the system. An
+    /// effect's emitters keep theirs wherever it is placed (VFXEmitter.seed), so it looks the same in any scene.
+    var seed: UInt32?
 
     // A child.
     var parent: Int?
@@ -298,7 +306,7 @@ struct ParticleField {
 /// a fixed 1/60 s, counted from the start (as the physics': `claim`); the GPU runs them (ParticlesGPU), and
 /// ParticlesCPU is the same step on the CPU, the tests' reference.
 ///
-/// Each step, as GPU particle systems do it (Shaders/Particles.metal): `begin` clamps what each emitter asks for
+/// Each step, as GPU particle systems do it (Shaders/ParticleSim.metal): `begin` clamps what each emitter asks for
 /// (its rate and bursts over the step, or its parent's events) to its free slots, pops them off its dead list and
 /// writes the indirect arguments; `emit` writes the newborns and appends them to the alive list; `simulate` ages and
 /// moves every alive particle, pushes the dead back on their emitter's dead list and appends the rest to the other
@@ -311,6 +319,13 @@ final class ParticleSystem {
     static let maxPerEvent = 8          // a child's spawn id is its parent's x 8 + which
 
     let emitters: [ParticleEmitter]
+    /// Per emitter, the generated code that does what its effect's graph asks past the fixed emitter (VFXLowering);
+    /// nil: none (every built-in effect's).
+    let programs: [VFXProgram?]
+    /// The programs' Metal and dispatchers (VFXCodegen.source; the VFX library's), nil without programs.
+    let programSource: String?
+    /// The attributes (float4s) each slot keeps for the programs that set and read them.
+    let attributeStride: Int
     let colliders: [ParticleCollider]
     /// The vector fields (ParticleEmitter.field), and last the baked curl tile if an emitter asks for it.
     let fields: [ParticleField]
@@ -343,7 +358,7 @@ final class ParticleSystem {
     /// Steps run (or claimed by the GPU).
     private(set) var stepIndex = 0
 
-    init(emitters: [ParticleEmitter], colliders: [ParticleCollider] = [], fields: [ParticleField] = []) {
+    init(emitters: [ParticleEmitter], colliders: [ParticleCollider] = [], fields: [ParticleField] = [], programs: [VFXProgram?] = []) {
         precondition(!emitters.isEmpty && emitters.count <= ParticleSystem.maxEmitters, "1 to \(ParticleSystem.maxEmitters) emitters")
         precondition(colliders.count <= 32, "a mask holds 32 colliders")
         for (i, e) in emitters.enumerated() {
@@ -362,6 +377,11 @@ final class ParticleSystem {
         trailCount = t
         trailPoints = trails.first ?? 0
         self.emitters = emitters
+        precondition(programs.isEmpty || programs.count == emitters.count, "a program (or none) an emitter")
+        self.programs = programs.isEmpty ? Array(repeating: nil, count: emitters.count) : programs
+        let made = self.programs.compactMap { $0 }
+        programSource = made.isEmpty ? nil : VFXCodegen.source(made)
+        attributeStride = made.map(\.attributes).max() ?? 0
         self.colliders = colliders
         for e in emitters { if let f = e.field { precondition(f.index >= 0 && f.index < fields.count, "\(e.name): no such field") } }
         precondition(fields.count < 16, "16 fields at most")
@@ -409,7 +429,13 @@ final class ParticleSystem {
     var gpuEmitters: [GPUParticleEmitter] {
         emitters.enumerated().map { i, e in
             var flags = e.flags
-            for c in emitters where c.parent == i { flags.insert(c.trigger == .death ? .eventsOnDeath : .eventsOnCollision) }
+            for c in emitters where c.parent == i {
+                switch c.trigger {
+                case .death: flags.insert(.eventsOnDeath)
+                case .collision: flags.insert(.eventsOnCollision)
+                case .condition: break   // its code raises them
+                }
+            }
             let axis = simd_length(e.direction) > 0 ? normalize(e.direction) : SIMD3<Float>(0, 1, 0)
             var extent = SIMD3<Float>.zero
             if case .box(let h) = e.shape { extent = h }
@@ -443,13 +469,28 @@ final class ParticleSystem {
                             UInt32(e.atlas.rawValue) | UInt32((min(max(e.shadowDensity, 0), 1) * 255).rounded()) << 8),
                 ids3: SIMD4(meshInstances[i].map(UInt32.init) ?? ParticleSystem.none, UInt32(e.trail?.points ?? 0),
                             trailBases[i].map(UInt32.init) ?? ParticleSystem.none, UInt32(e.trail?.every ?? 1)),
-                extra: SIMD4(e.collisionRadius, e.trailWidth, e.distortion, 0),
+                extra: SIMD4(e.collisionRadius, e.trailWidth, e.distortion, Float(bitPattern: e.seed ?? UInt32(i))),
                 field: SIMD4(e.field.map { Float($0.index) } ?? -1, e.field?.strength ?? 0, e.field?.follow == true ? 1 : 0,
                              e.bakedCurl ? Float(bakedCurlField ?? -1) : -1))
         }
     }
 
     var gpuColliders: [GPUParticleCollider] { colliders.map(\.gpu) }
+
+    /// The programs' table (an entry an emitter) and their parameters, one after another.
+    var gpuPrograms: (table: [GPUVFXEmitter], params: [SIMD4<Float>]) {
+        var table: [GPUVFXEmitter] = [], params: [SIMD4<Float>] = []
+        for p in programs {
+            var g = GPUVFXEmitter()
+            g.attributes.x = UInt32(attributeStride)
+            if let p {
+                g.ids = SIMD4(UInt32(p.number), UInt32(params.count), p.hooks.rawValue, UInt32(params.count + (p.rate ?? 0)))
+                params += p.params
+            }
+            table.append(g)
+        }
+        return (table, params)
+    }
 
     /// The baked curl tile (made once: 32^3 nodes of three noise channels' curl).
     static let curlTile = ParticleField.curl()
@@ -502,6 +543,36 @@ final class ParticleSystem {
         return UInt32(max(n, 0))
     }
 
+    /// What a root emitter whose rate a curve scales asks for over step `s` (MSL vfxRequests): its rate's births by
+    /// the step's end less those by its start, the curve's integral times the rate, and its bursts.
+    static func requests(_ e: GPUParticleEmitter, _ s: GPUParticleStep, curve: [SIMD4<Float>]) -> UInt32 {
+        var bursts = e
+        bursts.life.z = 0
+        var n = Float(requests(bursts, s))
+        if e.life.z > 0 {
+            let k = Float(s.step), span = max(e.life.w - e.speed.w, 0)
+            let a = min(max(k - e.speed.w, 0), span), b = min(max(k + 1 - e.speed.w, 0), span)
+            n += floorCount(VFXProgram.rateIntegral(curve, 0, b) * e.life.z) - floorCount(VFXProgram.rateIntegral(curve, 0, a) * e.life.z)
+        }
+        return UInt32(max(n, 0))
+    }
+
+    /// `requests(_:_:curve:)` over steps a..<b (it telescopes, as `requests(_:from:to:)` does).
+    static func requests(_ e: GPUParticleEmitter, curve: [SIMD4<Float>], from a: Int, to b: Int) -> Int {
+        guard b > a else { return 0 }
+        var bursts = e
+        bursts.life.z = 0
+        var n = Float(requests(bursts, from: a, to: b))
+        if e.life.z > 0 {
+            let span = max(e.life.w - e.speed.w, 0)
+            func births(_ k: Int) -> Float {
+                floorCount(VFXProgram.rateIntegral(curve, 0, min(max(Float(k) - e.speed.w, 0), span)) * e.life.z)
+            }
+            n += births(b) - births(a)
+        }
+        return Int(max(n, 0))
+    }
+
     // MARK: - How many can be alive (the structures' sizes)
 
     /// What a root emitter asks for over steps a..<b: `requests` summed. Each step's count is a difference of a
@@ -545,8 +616,11 @@ final class ParticleSystem {
         let a = max(a, 0)
         guard b > a else { return 0 }
         let em = emitters[e]
-        guard let p = em.parent else { return min(ParticleSystem.requests(gpu[e], from: a, to: b), cap) }
-        if em.trigger == .collision && !emitters[p].dieOnCollision { return cap }
+        guard let p = em.parent else {
+            if let curve = em.rateCurve { return min(ParticleSystem.requests(gpu[e], curve: curve, from: a, to: b), cap) }
+            return min(ParticleSystem.requests(gpu[e], from: a, to: b), cap)
+        }
+        if em.trigger == .condition || (em.trigger == .collision && !emitters[p].dieOnCollision) { return cap }
         let per = em.perEvent
         let parents = births(p, from: a - 1 - lifeSteps(p), to: b, cap: (cap + per - 1) / per, gpu: gpu)
         return min(parents * per, cap)

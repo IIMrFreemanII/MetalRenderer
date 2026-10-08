@@ -1,7 +1,7 @@
 import Metal
 import simd
 
-/// A scene's particle effects on the GPU (Shaders/Particles.metal): the pool, its dead and alive lists, the events
+/// A scene's particle effects on the GPU (Shaders/ParticleSim.metal): the pool, its dead and alive lists, the events
 /// children spawn from, and the steps (`encodeSteps`). Written once but for the counters the kernels keep and each
 /// step's parameters, which the CPU writes per frame slot (a replay can take hundreds of steps in one frame: more
 /// than Metal 4's inline constants hold).
@@ -15,7 +15,7 @@ final class ParticlesGPU {
     let deadList: MTLBuffer
     let alive: [MTLBuffer]
     let events: [MTLBuffer]
-    /// ParticleCounts (Shaders/Particles.metal).
+    /// ParticleCounts (Shaders/ParticleSim.metal).
     let counts: MTLBuffer
     /// The indirect arguments `begin` writes: emit's threadgroups at 0, simulate's at 16.
     let args: MTLBuffer
@@ -69,6 +69,14 @@ final class ParticlesGPU {
     var sdfScene: MTLBuffer?
     /// The flipbooks (ParticleTextures).
     let atlas: MTLTexture
+    /// The programs' (VFXProgram): their table (GPUVFXEmitter an emitter), parameters, and the attributes each slot
+    /// keeps; and the VFX library's kernels that run them once compiled (VFXCompiler: until then, the fixed emitters').
+    let programTable: MTLBuffer
+    let programParams: MTLBuffer
+    let attributes: MTLBuffer
+    var programKernels: ParticleKernels?
+    /// Whether it has programs (and so wants the VFX library's kernels).
+    var hasPrograms: Bool { system.programSource != nil }
     /// Per pool slot the light its particle scatters, averaged over the frames, and whose it is (particleLightKernel).
     let lighting: MTLBuffer
 
@@ -199,6 +207,13 @@ final class ParticlesGPU {
         scratch = try buffer(scratchBytes, "particlesScratch")
         lighting = try buffer(n * 48, "particleLighting")
         self.atlas = try atlas ?? ParticleTextures.atlas(device: device)
+        let programs = system.gpuPrograms
+        let table = try buffer(programs.table.count * MemoryLayout<GPUVFXEmitter>.stride, "vfxPrograms")
+        programs.table.withUnsafeBytes { table.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        let params = try buffer(programs.params.count * 16, "vfxParams")
+        programs.params.withUnsafeBytes { if !$0.isEmpty { params.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
+        (programTable, programParams) = (table, params)
+        attributes = try buffer(n * system.attributeStride * 16, "vfxAttributes")
     }
 
     /// The kernels' buffers at 13 and up: the simulate pass has the scene at 1 to 12 (its collisions).
@@ -217,7 +232,19 @@ final class ParticlesGPU {
         enc.setBuffer(fields, offset: 0, index: 24)
         enc.setBuffer(fieldSamples, offset: 0, index: 25)
         enc.setBuffer(sdfScene ?? fields, offset: 0, index: 26)
+        bindPrograms(enc)
     }
+
+    /// The programs' buffers, for the VFX library's kernels.
+    private func bindPrograms(_ enc: ComputePass) {
+        guard programKernels != nil else { return }
+        enc.setBuffer(programParams, offset: 0, index: 27)
+        enc.setBuffer(programTable, offset: 0, index: 28)
+        enc.setBuffer(attributes, offset: 0, index: 29)
+    }
+
+    /// The step's and pose's kernels: the VFX library's once it is compiled for its programs, else the main one's.
+    func kernels(_ pipelines: Pipelines) -> ParticleKernels { programKernels ?? ParticleKernels(pipelines) }
 
     /// Back to the start: every slot free, the clock at 0.
     func encodeReset(_ enc: ComputePass, pipelines: Pipelines, slot: Int) {
@@ -245,7 +272,7 @@ final class ParticlesGPU {
         for k in 0..<steps { p[k] = system.stepParams(stepIndex + k, wind: wind, scene: scene != nil) }
         scene?(enc)
         bind(enc)
-        let begin = pipelines[.particleBegin], emit = pipelines[.particleEmit], simulate = pipelines[.particleSimulate]
+        let k = kernels(pipelines), begin = k.begin, emit = k.emit, simulate = k.simulate
         let group = MTLSize(width: 64, height: 1, depth: 1)
         for k in 0..<steps {
             enc.setBuffer(params, offset: k * MemoryLayout<GPUParticleStep>.stride, index: 0)
@@ -285,7 +312,7 @@ final class ParticlesGPU {
     /// their structure's range, as many as the CPU's bound at most, then the rest emptied. After the steps (in the
     /// same serial pass).
     /// `camera`: where the camera is, and its layer's texel a unit away (radians): the boxes hold the billboards as
-    /// its rays widen them (PARTICLE_WIDEN in Shaders/Particles.metal).
+    /// its rays widen them (PARTICLE_WIDEN in Shaders/ParticleSim.metal).
     func encodePose(_ enc: ComputePass, pipelines: Pipelines, slot: Int, camera: SIMD4<Float> = .zero) {
         // The pose's parameters have a place of their own (the steps' and the reset's are this frame's too).
         let bounds = system.partBounds(after: stepIndex)
@@ -307,7 +334,8 @@ final class ParticlesGPU {
         enc.setBuffer(render[slot], offset: 0, index: 23)
         enc.setBuffer(boxes[slot], offset: 0, index: 24)
         let grid = MTLSize(width: max(system.billboardCapacity, 1), height: 1, depth: 1), group = MTLSize(width: 64, height: 1, depth: 1)
-        enc.setComputePipelineState(pipelines[.particlePose])
+        bindPrograms(enc)
+        enc.setComputePipelineState(kernels(pipelines).pose)
         enc.dispatchThreads(grid, threadsPerThreadgroup: group)
         enc.setComputePipelineState(pipelines[.particlePoseTail])
         enc.dispatchThreads(grid, threadsPerThreadgroup: group)

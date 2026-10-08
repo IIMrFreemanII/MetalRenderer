@@ -732,9 +732,17 @@ struct GPUParticleEmitter {
                                              // w = atlas layer | shadow density x 255 << 8
     var ids3 = SIMD4<UInt32>()               // x = a mesh emitter's first instance (ParticleSystem.none: billboards),
                                              // y = a trail's places (0: none), z = its first trail, w = steps apart
-    var extra = SIMD4<Float>()               // x = collision radius (m), y = a trail's width (of the particle's), z = distortion (rad)
+    var extra = SIMD4<Float>()               // x = collision radius (m), y = a trail's width (of the particle's),
+                                             // z = distortion (rad), w = its seeds' salt (bits: ParticleEmitter.seed)
     var field = SIMD4<Float>()               // x = its vector field (-1: none), y = strength, z = 1: a velocity it
                                              // follows (else an acceleration), w = the baked curl's field (-1: none)
+}
+
+/// An emitter's program as the VFX library's kernels read it (VFXProgram; MSL VFXEmitterInfo).
+struct GPUVFXEmitter {
+    var ids = SIMD4<UInt32>()                // x = program (0: none), y = its parameters' first float4, z = hooks
+                                             // (VFXProgram.Hooks), w = its rate curve's first float4
+    var attributes = SIMD4<UInt32>()         // x = the attributes a slot keeps (the system's)
 }
 
 /// A vector field as the kernels read it (ParticleField): MSL ParticleFieldInfo.

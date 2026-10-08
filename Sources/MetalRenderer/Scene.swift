@@ -397,6 +397,11 @@ final class Scene {
     /// The scene's particle effects, if it has any (Particles.swift): always on the GPU (ParticlesGPU), which the rays
     /// meet through a structure of their own (Shaders/ParticleTrace.metal).
     private(set) var particles: ParticleSystem?
+    /// The effects placed in it (Scene+Effects.swift: addEffect), and the colliders of its own their Collide blocks
+    /// name; what of them couldn't be done (VFXLowering's notes).
+    var effects: [VFXInstance] = []
+    var effectColliders: [(name: String, collider: ParticleCollider)] = []
+    var effectNotes: [String] = []
     /// Reflection rays see them (ParticleSettings.reflections).
     var particlesReflected: Bool { particles != nil && settings.particles.reflections }
     /// The steps `update` asked for since the renderer last took them, and whether from the start.
@@ -475,6 +480,7 @@ final class Scene {
         case .fluids: buildFluids(settings.physics)
         case .particles: buildParticles()
         case .plants: buildPlantWorkshop()
+        case .vfxStage: buildVFXStage()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
@@ -664,7 +670,8 @@ final class Scene {
     func addParticles(_ system: ParticleSystem) {
         precondition(particles == nil, "a scene has one particle system")
         let p = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders,
-                               fields: Array(system.fields.prefix(system.bakedCurlField ?? system.fields.count)))
+                               fields: Array(system.fields.prefix(system.bakedCurlField ?? system.fields.count)),
+                               programs: system.programs)
         for (i, e) in p.emitters.enumerated() {
             guard let (mesh, material) = e.mesh else { continue }
             let hidden = translate(e.position) * scale(1e-4)

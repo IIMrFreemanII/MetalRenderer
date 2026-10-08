@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// The particles' maths (Shaders/Particles.metal's twin, line for line): the hash, the random stream, gradient noise
+/// The particles' maths (Shaders/ParticleSim.metal's twin, line for line; VFXInterpreter runs them): the hash, the random stream, gradient noise
 /// and its curl, a particle's birth and step, the colliders.
 enum ParticleMath {
     @inline(__always) static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
@@ -22,7 +22,7 @@ enum ParticleMath {
         }
     }
 
-    /// A root particle's seed: its emitter's and its spawn id's (MSL particleSeed).
+    /// A root particle's seed: its emitter's salt (ParticleEmitter.seed) and its spawn id's (MSL particleSeed).
     static func seed(emitter: UInt32, spawn: UInt32) -> UInt32 { hash(spawn &+ hash(emitter &* 0x9E3779B9 &+ 0x7F4A7C15)) }
     /// A child's: its parent's and which child it is (MSL particleChildSeed).
     static func childSeed(parent: UInt32, k: UInt32) -> UInt32 { hash(parent ^ hash(k &+ 0x632BE5AB)) }
@@ -117,6 +117,15 @@ enum ParticleMath {
     /// share of it (MSL particleSpawn).
     static func spawn(_ e: GPUParticleEmitter, emitter: UInt32, seed: UInt32, spawn: UInt32, at: SIMD3<Float>,
                       parentVelocity: SIMD3<Float>, dt: Float) -> GPUParticle {
+        let b = birth(e, seed: seed, spawn: spawn, parentVelocity: parentVelocity, dt: dt)
+        return GPUParticle(position: SIMD4(at + b.offset + b.v * b.pre, b.pre), velocity: SIMD4(b.v, b.life),
+                           info: SIMD4(spawn, seed, emitter, ParticleSystem.alive))
+    }
+
+    /// A newborn in parts (MSL particleBirth): where from its origin, its velocity, its life, the share of the step
+    /// it is born into.
+    static func birth(_ e: GPUParticleEmitter, seed: UInt32, spawn: UInt32, parentVelocity: SIMD3<Float>, dt: Float)
+        -> (offset: SIMD3<Float>, v: SIMD3<Float>, life: Float, pre: Float) {
         var r = Rng(state: seed)
         let u0 = r.next(), u1 = r.next(), u2 = r.next(), u3 = r.next(), u4 = r.next(), u5 = r.next(), u6 = r.next(), u7 = r.next()
         let axis = xyz(e.axis)
@@ -149,9 +158,7 @@ enum ParticleMath {
         let speed = e.speed.x + (e.speed.y - e.speed.x) * u5
         let v = dir * speed + xyz(e.velocity) + parentVelocity * e.velocity.w
         let life = e.life.x + (e.life.y - e.life.x) * u6
-        let pre = u7 * dt
-        return GPUParticle(position: SIMD4(at + offset + v * pre, pre), velocity: SIMD4(v, life),
-                           info: SIMD4(spawn, seed, emitter, ParticleSystem.alive))
+        return (offset, v, life, u7 * dt)
     }
 
     /// Pushes a ball of `radius` at `x` out of collider `c` and bounces `v` off it: the speed it hit at (0: it didn't)
@@ -247,107 +254,6 @@ struct ParticleEvent {
     init(a: SIMD4<Float>, b: SIMD4<Float>) { self.a = a; self.b = b }
     var seed: UInt32 { a.w.bitPattern }
     var spawn: UInt32 { b.w.bitPattern }
-}
-
-/// The particles' step on the CPU, in the GPU's order (begin, emit, simulate): the reference ParticleTests check the
-/// kernels against. The same pool, dead lists and alive lists; the alive lists' order is the CPU's (the GPU's is
-/// whatever its atomics give), so the two are compared as sets, by emitter and spawn id.
-final class ParticlesCPU {
-    let system: ParticleSystem
-    private let emitters: [GPUParticleEmitter]
-    private let colliders: [GPUParticleCollider]
-    private let fields: [GPUParticleField]
-    private let samples: [SIMD4<Float>]
-    private(set) var particles: [GPUParticle] = []
-    private(set) var deadList: [UInt32] = []
-    private(set) var deadCount: [Int] = []
-    private(set) var alive: [[UInt32]] = [[], []]
-    /// Per parity, per emitter: the events its particles left.
-    private(set) var events: [[[ParticleEvent]]] = []
-    private(set) var emitted: [UInt32] = []
-    private(set) var stepIndex = 0
-
-    init(_ system: ParticleSystem) {
-        self.system = system
-        emitters = system.gpuEmitters
-        colliders = system.gpuColliders
-        (fields, samples) = system.gpuFields
-        reset()
-    }
-
-    func reset() {
-        particles = Array(repeating: GPUParticle(), count: system.capacity)
-        deadList = (0..<system.capacity).map(UInt32.init)
-        deadCount = emitters.map { Int($0.ids.y) }
-        alive = [[], []]
-        events = [Array(repeating: [], count: emitters.count), Array(repeating: [], count: emitters.count)]
-        emitted = Array(repeating: 0, count: emitters.count)
-        stepIndex = 0
-    }
-
-    /// The particles alive after the last step (the list the next one reads).
-    var current: [GPUParticle] { alive[stepIndex & 1].map { particles[Int($0)] } }
-
-    func step(wind: SIMD4<Float> = .zero) {
-        let s = system.stepParams(stepIndex, wind: wind)
-        let p = Int(s.parity & 1)
-        // begin
-        var counts = [Int](), tops = [Int](), first = [UInt32]()
-        for (i, e) in emitters.enumerated() {
-            let want: Int
-            if e.ids.z == ParticleSystem.none {
-                want = Int(ParticleSystem.requests(e, s))
-            } else {
-                want = events[1 - p][Int(e.ids.z)].count * Int(e.ids2.x)
-            }
-            let n = min(want, deadCount[i])
-            tops.append(deadCount[i])
-            deadCount[i] -= n
-            counts.append(n)
-            first.append(emitted[i])
-            emitted[i] &+= UInt32(n)
-        }
-        let consumed = events[1 - p]
-        events[p] = Array(repeating: [], count: emitters.count)
-        // emit
-        for (i, e) in emitters.enumerated() {
-            let base = Int(e.ids.x)
-            for j in 0..<counts[i] {
-                let slot = deadList[base + tops[i] - 1 - j]
-                if e.ids.z == ParticleSystem.none {
-                    let id = first[i] &+ UInt32(j)
-                    particles[Int(slot)] = ParticleMath.spawn(e, emitter: UInt32(i), seed: ParticleMath.seed(emitter: UInt32(i), spawn: id),
-                                                              spawn: id, at: ParticleMath.xyz(e.origin), parentVelocity: .zero, dt: s.dt)
-                } else {
-                    let per = Int(e.ids2.x), ev = consumed[Int(e.ids.z)][j / per], k = UInt32(j % per)
-                    particles[Int(slot)] = ParticleMath.spawn(e, emitter: UInt32(i), seed: ParticleMath.childSeed(parent: ev.seed, k: k),
-                                                              spawn: ev.spawn &* 8 &+ k, at: ParticleMath.xyz(ev.a),
-                                                              parentVelocity: ParticleMath.xyz(ev.b), dt: s.dt)
-                }
-                alive[p].append(slot)
-            }
-        }
-        // simulate
-        var out: [UInt32] = []
-        for slot in alive[p] {
-            var q = particles[Int(slot)]
-            let ei = Int(q.info.z), e = emitters[ei]
-            let (keep, event) = ParticleMath.step(&q, e, colliders, s, fields: fields, samples: samples)
-            if event && events[p][ei].count < Int(e.ids.y) { events[p][ei].append(ParticleEvent(q)) }
-            if keep {
-                particles[Int(slot)] = q
-                out.append(slot)
-            } else {
-                particles[Int(slot)].info.w = 0
-                deadList[Int(e.ids.x) + deadCount[ei]] = slot
-                deadCount[ei] += 1
-            }
-        }
-        alive[1 - p] = out
-        stepIndex += 1
-    }
-
-    func advance(steps: Int, wind: SIMD4<Float> = .zero) { for _ in 0..<steps { step(wind: wind) } }
 }
 
 // MARK: - What rays meet (ParticleTrace.metal's twins, for the tests)

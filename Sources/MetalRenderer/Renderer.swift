@@ -392,6 +392,11 @@ final class Renderer: NSObject {
     /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
     /// (a still frame has nothing to pose or build).
     private var particlesGPU: ParticlesGPU?
+    /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
+    private var vfxSetup: VFXCompiler.Setup {
+        VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
+                          lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4)
+    }
     private var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
     private var particlesVersion = 0
     private var particlesCamera = SIMD4<Float>.zero
@@ -2495,6 +2500,14 @@ final class Renderer: NSObject {
         //    frame's TLAS), then this slot's records and boxes and the structures over them, which only the particle
         //    queries trace (not in the TLAS). A slot built at these steps already (time paused) keeps its structures.
         if let particlesGPU {
+            // An effect's programs (VFXProgram): the VFX library's kernels once compiled (benchmarks wait for them), then
+            // a replay from the start with them, so what is drawn doesn't depend on when the compile finished.
+            if particlesGPU.hasPrograms, particlesGPU.programKernels == nil, let source = particlesGPU.system.programSource,
+               let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                                                        wait: benchmark != nil) {
+                particlesGPU.programKernels = kernels
+                scene.replayParticles()
+            }
             let (steps, restart) = scene.takeParticleSteps(limit: ParticlesGPU.maxStepsPerFrame)
             // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
             let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
@@ -2908,7 +2921,7 @@ final class Renderer: NSObject {
         return stages
     }
 
-    /// 1c. The particles' light, once a particle (Shaders/Particles.metal): it needs only the structures.
+    /// 1c. The particles' light, once a particle (Shaders/ParticleLight.metal): it needs only the structures.
     private func particleLightStages(_ plan: FramePlan) -> [ComputeStage] {
         guard plan.particles != nil, let gpu = particlesGPU else { return [] }
         let uniforms = plan.uniforms, slot = plan.slot

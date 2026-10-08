@@ -7,7 +7,7 @@ built and checked on the M1 Max. The plan: ~/.claude/plans/implement-modern-part
 
 Phase 1:
 - Emitters, pools, dead lists, alive lists, begin/emit/simulate, events and children, curl noise, colliders (analytic
-  and the scene's by a ray a step): `Particles.swift`, `ParticlesGPU.swift`, `Shaders/Particles.metal`; the CPU
+  and the scene's by a ray a step): `Particles.swift`, `ParticlesGPU.swift`, `Shaders/ParticleSim.metal`; the CPU
   reference `ParticlesCPU.swift`.
 - Rays: two primitive structures of boxes a frame (shadow casters, others), billboards per ray, a k-buffer of 4 for
   the camera's layer, 2 for reflections, stochastic transmittance in `isVisibleBlocker`, a light pass a particle, the

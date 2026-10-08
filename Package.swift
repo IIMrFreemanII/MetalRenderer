@@ -10,7 +10,7 @@ let package = Package(
             path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process them: the entry file and its pieces.
-            exclude: ["Shaders.metal", "Shaders"]
+            exclude: ["Shaders.metal", "ShadersVFX.metal", "Shaders"]
         ),
         .testTarget(
             name: "MetalRendererTests",

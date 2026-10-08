@@ -1412,7 +1412,7 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
 
 ### Particles
 
-GPU particle effects as modern engines run them (Niagara, VFX Graph), but **ray traced**: their particles show in the camera's view, in reflections and in shadows (`Particles.swift`, `ParticlesGPU.swift`, `Shaders/Particles.metal`, `Shaders/ParticleTrace.metal`), with the same steps on the CPU as their reference (`ParticlesCPU.swift`). The **Particles** scene (`METALRENDERER_SCENE=particles`, `Scene+Particles.swift`) is a dark studio with a glossy floor:
+GPU particle effects as modern engines run them (Niagara, VFX Graph), but **ray traced**: their particles show in the camera's view, in reflections and in shadows (`Particles.swift`, `ParticlesGPU.swift`, `Shaders/ParticleSim.metal`, `Shaders/ParticleTrace.metal`), with the same steps on the CPU as their reference (`ParticleMath.swift`, `VFX/VFXInterpreter.swift`). Its effects are graphs (VFX graphs, below). The **Particles** scene (`METALRENDERER_SCENE=particles`, `Scene+Particles.swift`) is a dark studio with a glossy floor:
 * a brazier's fire (flames, and a flickering light in them), the heat haze over it, and its smoke carried up the fire's column of hot air (`ParticleField.plume`: drawn in low down, spread out high up), as the haze is;
 * a grinder's wheel throwing sparks off its rim where a steel bar is pressed on it (a hot glow at the contact), sparks that bounce off the floor, a crate and whatever else they meet, leaving puffs of smoke where they die;
 * a swirl of magic motes in curl noise round a plinth, and wisps trailing glowing ribbons through it;
@@ -1424,7 +1424,7 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
 * `particleshadows=1`, `particlereflections=1`;
 * the view's `particlescale=1`: the camera's layer at the traced size, or 0.5 for half.
 
-* **An emitter** (`ParticleEmitter`) holds:
+* **An emitter** (`ParticleEmitter`, what an effect's graph lowers to: VFX graphs, below) holds:
   * where particles are born (a point, a sphere or its surface, a disc, a box, a ring), how many (a rate, and bursts that can repeat), how long they live and how fast they leave;
   * the forces on them: gravity's share, drag toward the air, the scene's wind, **curl noise** (analytic, or the baked tile), a vortex and a pull toward a point, and a **vector field** (`ParticleField`: a grid of velocities it follows or accelerations; `ParticleField.vortex` is a rising whirl);
   * what they bounce off, as a ball of `collisionRadius`: the system's planes, spheres and boxes; **SDF shapes** (`ParticleCollider.shape`: an instance of one of the scene's SDF shapes, by its distance and gradient); and with `collidesWithScene` the scene's own geometry, by a ray along each step;
@@ -1498,6 +1498,25 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
   * Mesh particles are a frame behind; every trail emitter keeps the same number of places.
   * The heat haze is a screen-space bend: it can only show what the frame has. It is undone where the bent ray looks at something nearer than the haze. Reflections and the path tracer don't see it, and without MetalFX it needs the lens (it runs on post's input).
   * Metal 4 is untested (the M1 Max has no Metal 4 ray tracing); the builds (boxes and curves) go into the frame's own encoder there (`PrimitiveWork4`).
+
+### VFX graphs
+
+Every particle effect is a graph (`Sources/MetalRenderer/VFX`), as Unity's VFX Graph and Niagara have them: an effect is emitters, each four **contexts** of **blocks** run in order (Spawn: rate and bursts, or a parent's events; Initialize: shape, velocity, lifetime; Update: gravity, drag, curl noise, a field, a vortex, collisions; Output: billboard, mesh, trail or distortion, then size, colour, flipbook, orientation, lighting), and **operator nodes** wired into the blocks' pins (`VFXNodes.swift`: math and logic, vectors, the particle's inputs, per-particle random numbers, curves and gradients of up to 8 keys, noise and curl noise, a field's value, attributes). A scene places effects (`Scene.addEffect`) and names the colliders of its own their Collide blocks meet (`addParticleCollider`); one particle system runs them all.
+* **Two tiers, one model.** An emitter whose blocks and pins all fit the fixed emitter is **lowered** to its descriptor (`VFXLowering.swift`) and runs the hand-written kernels: every built-in effect (`VFXLibrary.swift`: the particles scene's campfire, grinder, magic, rain and rubble; the showcase's embers, bubbles, dust and runes) renders as before. One that asks for more (a wired pin, a curve or gradient of other keys, an attribute, a Kill, a Trigger) gets **generated Metal** for what the fixed one can't do (`VFXProgram.swift`, `VFXCodegen.swift`): its birth, step and look as the fixed kernels have them, statement for statement, with the graph's expressions in their place. Its values are read from a parameter buffer, never written in as literals, so editing one needs no compile.
+* **The VFX library.** A system with programs runs the step and pose kernels from a library of their own (`ShadersVFX.metal`: the pieces they need and `VFX_PROGRAMS` hooks in `Shaders/ParticleSim.metal`, with the generated code spliced after): compiled in the background the first time (1.2 s cold on the M1 Max), kept for the last 6 sources (`VFXCompiler.swift`). Until it is ready the system runs the fixed code, then replays from the start with it; benchmarks wait. Under fast math the compiler fuses the fixed emitters' statements a little differently there: in a system with programs they are the main library's to an ulp (397 of 440 motes bit for bit after 120 steps, the rest in their lifetime's last bit).
+* **The CPU's interpreter** (`VFXInterpreter`, formerly ParticlesCPU) runs the same plans the Metal was written from: the tests check the generated code against it.
+* **Kept as** `Assets/Effects/<name>.vfx.json` (`VFXStore.swift`; `METALRENDERER_EFFECTS=builtin` leaves them out), which replace the built-in effect of their name in every scene, or as Swift (`VFXBuilder.swift`: a block a call, as `VFXLibrary` is written; `VFXEffect.swiftSource` writes one).
+* **Seeds and the pool.** Each emitter keeps its seed wherever it is placed (an effect looks the same in any scene); the built-in ones keep the places they had in their scenes' lists, and the pool is laid out by seed, so their particles sit in the slots they had.
+* **The VFX stage** (`METALRENDERER_SCENE=vfxstage`, `Scene+Stage.swift`): effects lined up in a dark studio by name (`SceneSettings.stage.effects`). `VFXLibrary.fireworks` is the example graph: rockets climb on a trail; a Trigger Event while one slows past 1.5 m/s up bursts it into stars (its children on that condition), a Kill as it starts to fall; a star's colour is its rocket's (its spawn id over 8, through the golden ratio into a rainbow gradient), dimming as it burns out. `METALRENDERER_BENCH=vfx` and `vfxdemo` (the video) render it.
+* **Checked:** `VFXTests`:
+  * the particles scene's effects lower to the emitters it had before, byte for byte (every descriptor, the pool's layout, the colliders and fields: `LegacyEffects.swift` keeps the old definitions);
+  * a graph with every kind of hook (a rate curve, a wired lifetime, an attribute, a wired gravity, a curl-noise force, a Kill, a Trigger for a child, a smooth size curve, a 4-key gradient) on the GPU against the interpreter: within 9.4e-6 m after 120 steps, the same lifetimes and attributes, the size and colour the pose writes;
+  * a rate curve's births and the alive bound; JSON and Copy as Swift.
+
+  The particles scene times the same as before (`ab.sh`, 3 alternating rounds against the build before graphs: 15.40 → 15.39 ms
+  paused, 17.52 → 17.52 ms moving), and its frames and the showcase's match the old build's within what two runs of one
+  build differ by (the GPU's atomics hand out pool slots in their own order, and each slot's light is averaged over frames).
+* **Limits** (so far): the meshes', trails' and haze's size and colour are the fixed emitter's (a curve's ends, a gradient's ends and middle); a Sample Field node isn't known in Output; children don't read their parents' attributes; every child of a parent takes all its events (the fixed emitters' rule).
 
 ### Geometry debug views
 

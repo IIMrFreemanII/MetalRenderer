@@ -49,7 +49,7 @@ struct ParticleEmitter {
     uint4  ids2;       // children an event, colliders, orientation, atlas layer | shadow density x 255 << 8
     uint4  ids3;       // a mesh emitter's first instance (PARTICLE_NONE: billboards), a trail's places (0: none), its
                        // first trail, steps between its places
-    float4 extra;      // collision radius, a trail's width (of the particle's), distortion (rad)
+    float4 extra;      // collision radius, a trail's width (of the particle's), distortion (rad), its seeds' salt (bits)
     float4 field;      // its vector field (-1: none), strength, 1: a velocity it follows, the baked curl's field (-1: none)
 };
 static_assert(sizeof(ParticleEmitter) == 352, "ParticleEmitter: GPUParticleEmitter");
@@ -391,6 +391,147 @@ inline bool particleStep(thread Particle& p, uint slot, ParticleEmitter e, devic
     return true;
 }
 
+#ifdef VFX_PROGRAMS
+// MARK: - The effects' generated code (the VFX library: VFXCompiler, VFXCodegen)
+
+// Built only in the VFX library: these kernels then call an emitter's program (VFXProgram) where it has one, and the
+// fixed emitter's code where it doesn't. The programs and their dispatchers (vfxSpawn, vfxStep, vfxOutput) are
+// generated, spliced in after this piece.
+
+// An emitter's program (GPUVFXEmitter): which (0: none), its parameters' first float4, its hooks, its rate curve's
+// first float4 (with VFX_RATE), and the attributes a slot keeps (the system's: the same in every emitter's).
+struct VFXEmitterInfo {
+    uint program, params, hooks, rate;
+    uint attributes, pad0, pad1, pad2;
+};
+static_assert(sizeof(VFXEmitterInfo) == 32, "VFXEmitterInfo: GPUVFXEmitter");
+constant uint VFX_SPAWN = 1u, VFX_STEP = 2u, VFX_OUTPUT = 4u, VFX_RATE = 8u;
+
+inline float3 vfxNormalize(float3 v) { float l = length(v); return l > 1e-12f ? v / l : float3(0.0f); }
+
+// A curve's value at t (VFXCurve; VFXProgram.curve): P[0] its keys' count and smoothness, then (t, value) each.
+inline float vfxCurve(device const float4* P, float t) {
+    uint n = uint(P[0].x);
+    if (n == 0u) return 0.0f;
+    float4 first = P[1], last = P[n];
+    if (t <= first.x) return first.y;
+    if (t >= last.x) return last.y;
+    for (uint j = 2u; j <= n; ++j) {
+        float4 b = P[j];
+        if (t <= b.x) {
+            float4 a = P[j - 1u];
+            float u = (t - a.x) / max(b.x - a.x, 1e-6f);
+            if (P[0].y > 0.0f) u = u * u * (3.0f - 2.0f * u);
+            return a.y + (b.y - a.y) * u;
+        }
+    }
+    return last.y;
+}
+
+// A gradient's colour at t (VFXGradient; VFXProgram.gradient): P[0].x its keys, then each one's t and colour.
+inline float4 vfxGradient(device const float4* P, float t) {
+    uint n = uint(P[0].x);
+    if (n == 0u) return float4(0.0f);
+    if (t <= P[1].x) return P[2];
+    if (t >= P[2u * n - 1u].x) return P[2u * n];
+    for (uint j = 1u; j < n; ++j) {
+        float tb = P[1u + 2u * j].x;
+        if (t <= tb) {
+            float ta = P[1u + 2u * (j - 1u)].x;
+            float u = (t - ta) / max(tb - ta, 1e-6f);
+            float4 a = P[2u * j], b = P[2u + 2u * j];
+            return a + (b - a) * u;
+        }
+    }
+    return P[2u * n];
+}
+
+// A rate curve's integral over the emitter's first `steps` steps (VFXProgram.rateIntegral): its keys over P[0].z
+// steps, its last key's value past them; a negative value counts as none.
+inline float vfxRateIntegral(device const float4* P, float steps) {
+    uint n = uint(P[0].x);
+    if (n == 0u) return steps;
+    float span = max(P[0].z, 1e-6f);
+    bool smooth = P[0].y > 0.0f;
+    float tau = min(steps / span, 1.0f), sum = 0.0f;
+    float4 first = P[1], last = P[n];
+    sum += max(first.y, 0.0f) * min(tau, first.x);
+    for (uint j = 1u; j < n; ++j) {
+        float4 a = P[j], b = P[j + 1u];
+        if (!(tau > a.x)) break;
+        float width = max(b.x - a.x, 1e-6f), w = min((tau - a.x) / width, 1.0f);
+        float ya = max(a.y, 0.0f), yb = max(b.y, 0.0f);
+        float h = smooth ? w * w * w - w * w * w * w / 2.0f : w * w / 2.0f;
+        sum += width * (ya * w + (yb - ya) * h);
+    }
+    if (tau > last.x) sum += max(last.y, 0.0f) * (tau - last.x);
+    return sum * span + max(steps - span, 0.0f) * max(last.y, 0.0f);
+}
+
+// particleRequests for a root emitter whose rate a curve scales (VFX_RATE; ParticleSystem.requests(_:_:curve:)).
+inline uint vfxRequests(ParticleEmitter e, constant ParticleStep& s, device const float4* P) {
+    ParticleEmitter bursts = e;
+    bursts.life.z = 0.0f;
+    float n = float(particleRequests(bursts, s));
+    if (e.life.z > 0.0f) {
+        float k = float(s.step), span = max(e.life.w - e.speed.w, 0.0f);
+        float a = clamp(k - e.speed.w, 0.0f, span), b = clamp(k + 1.0f - e.speed.w, 0.0f, span);
+        n += particleFloor(vfxRateIntegral(P, b) * e.life.z) - particleFloor(vfxRateIntegral(P, a) * e.life.z);
+    }
+    return uint(max(n, 0.0f));
+}
+
+// particleSpawn's newborn in parts (ParticleMath.birth): where from the origin, its velocity, its life, the share of
+// the step it is born into; a program changes them before they make the particle.
+inline void particleBirth(ParticleEmitter e, uint seed, uint spawn, float3 parentVelocity, float dt, thread float3& offset,
+                          thread float3& v, thread float& life, thread float& pre) {
+    Rng r;
+    r.state = seed;
+    float u0 = r.next(), u1 = r.next(), u2 = r.next(), u3 = r.next(), u4 = r.next(), u5 = r.next(), u6 = r.next(), u7 = r.next();
+    float3 axis = e.axis.xyz, t, b;
+    particleBasis(axis, t, b);
+    float shape = e.extent.w, radius = e.origin.w;
+    offset = float3(0.0f);
+    if (shape == 1.0f || shape == 2.0f) {
+        float z = 2.0f * u0 - 1.0f, phi = 2.0f * M_PI_F * u1, s = sqrt(max(1.0f - z * z, 0.0f));
+        float3 d = float3(s * cos(phi), s * sin(phi), z);
+        offset = d * (shape == 2.0f ? radius : radius * pow(u2, 1.0f / 3.0f));
+    } else if (shape == 3.0f) {
+        float rr = radius * sqrt(u0), phi = 2.0f * M_PI_F * u1;
+        offset = t * (rr * cos(phi)) + b * (rr * sin(phi));
+    } else if (shape == 4.0f) {
+        offset = (float3(u0, u1, u2) * 2.0f - 1.0f) * e.extent.xyz;
+    } else if (shape == 5.0f) {
+        float g = float(spawn % 4096u) * 0.618034f + u1 * 0.05f;
+        float phi = 2.0f * M_PI_F * (g - floor(g));
+        offset = t * (radius * cos(phi)) + b * (radius * sin(phi));
+    }
+    float3 dir;
+    if (e.speed.z > 0.0f) {
+        float l = length(offset);
+        dir = l > 1e-6f ? offset / l : axis;
+    } else {
+        float cosT = 1.0f - u3 * (1.0f - cos(e.axis.w)), sinT = sqrt(max(1.0f - cosT * cosT, 0.0f)), phi = 2.0f * M_PI_F * u4;
+        dir = axis * cosT + (t * cos(phi) + b * sin(phi)) * sinT;
+    }
+    float speed = e.speed.x + (e.speed.y - e.speed.x) * u5;
+    v = dir * speed + e.velocity.xyz + parentVelocity * e.velocity.w;
+    life = e.life.x + (e.life.y - e.life.x) * u6;
+    pre = u7 * dt;
+}
+
+// The generated dispatchers (VFXCodegen.source): an emitter's program, else the fixed emitter's code.
+Particle vfxSpawn(uint program, ParticleEmitter e, uint emitter, uint seed, uint spawn, float3 at, float3 parentVelocity,
+                  constant ParticleStep& s, device const float4* P, device float4* A,
+                  device const ParticleFieldInfo* fields, device const float4* samples);
+bool vfxStep(uint program, thread Particle& p, uint slot, ParticleEmitter e, device const ParticleCollider* colliders,
+             constant ParticleStep& s, device const ParticleFieldInfo* fields, device const float4* samples,
+             SCENE_ACCEL sc, thread const SceneData& sd, device const SDFScene& sdf, thread bool& event,
+             device const float4* P, device float4* A);
+void vfxOutput(uint program, Particle q, float x, constant ParticleStep& s, ParticleEmitter e, thread float& size,
+               thread float4& color, device const float4* P, device const float4* A);
+#endif
+
 // MARK: - The step's kernels
 
 // Every slot free (on its emitter's dead list), nothing alive, no events, no spawn ids used. A thread a slot.
@@ -423,6 +564,10 @@ kernel void particleBeginKernel(constant ParticleStep&          s         [[buff
                                 device const ParticleEmitter*   emitters  [[buffer(13)]],
                                 device ParticleCounts&          c         [[buffer(14)]],
                                 device uint*                    args      [[buffer(15)]],
+#ifdef VFX_PROGRAMS
+                                device const float4*            vfxParams [[buffer(27)]],
+                                device const VFXEmitterInfo*    vfx       [[buffer(28)]],
+#endif
                                 uint e [[thread_position_in_grid]])
 {
     uint p = s.parity & 1u, n = 0u;
@@ -431,6 +576,9 @@ kernel void particleBeginKernel(constant ParticleStep&          s         [[buff
         uint want;
         if (em.ids.z == PARTICLE_NONE) {
             want = particleRequests(em, s);
+#ifdef VFX_PROGRAMS
+            if ((vfx[e].hooks & VFX_RATE) != 0u) want = vfxRequests(em, s, vfxParams + vfx[e].rate);
+#endif
         } else {
             uint events = min(atomic_load_explicit(&c.events[1u - p][em.ids.z], memory_order_relaxed), emitters[em.ids.z].ids.y);
             want = events * em.ids2.x;
@@ -467,6 +615,13 @@ kernel void particleEmitKernel(constant ParticleStep&          s         [[buffe
                                device const ParticleEvent*     events0   [[buffer(20)]],
                                device const ParticleEvent*     events1   [[buffer(21)]],
                                device float4*                  history   [[buffer(23)]],   // the trails' places
+#ifdef VFX_PROGRAMS
+                               device const ParticleFieldInfo* fields    [[buffer(24)]],
+                               device const float4*            samples   [[buffer(25)]],
+                               device const float4*            vfxParams [[buffer(27)]],
+                               device const VFXEmitterInfo*    vfx       [[buffer(28)]],
+                               device float4*                  vfxAttributes [[buffer(29)]],
+#endif
                                uint i [[thread_position_in_grid]])
 {
     if (i >= c.emits) return;
@@ -477,13 +632,30 @@ kernel void particleEmitKernel(constant ParticleStep&          s         [[buffe
     ParticleEmitter em = emitters[e];
     uint j = i - c.emitFirst[e];
     uint slot = deadList[em.ids.x + c.deadTop[e] - 1u - j];
+#ifdef VFX_PROGRAMS
+    VFXEmitterInfo vi = vfx[e];
+    device float4* A = vfxAttributes + slot * vi.attributes;
+    for (uint k = 0; k < vi.attributes; ++k) A[k] = float4(0.0f);   // a newborn's start at nothing
+#endif
     Particle q;
     if (em.ids.z == PARTICLE_NONE) {
         uint id = c.spawnFirst[e] + j;
-        q = particleSpawn(em, e, particleSeed(e, id), id, em.origin.xyz, float3(0.0f), s.dt);
+#ifdef VFX_PROGRAMS
+        if ((vi.hooks & VFX_SPAWN) != 0u) {
+            q = vfxSpawn(vi.program, em, e, particleSeed(as_type<uint>(em.extra.w), id), id, em.origin.xyz, float3(0.0f), s,
+                         vfxParams + vi.params, A, fields, samples);
+        } else
+#endif
+        q = particleSpawn(em, e, particleSeed(as_type<uint>(em.extra.w), id), id, em.origin.xyz, float3(0.0f), s.dt);
     } else {
         uint per = em.ids2.x, k = j % per;
         ParticleEvent ev = ((s.parity & 1u) == 0u ? events1 : events0)[emitters[em.ids.z].ids.x + j / per];
+#ifdef VFX_PROGRAMS
+        if ((vi.hooks & VFX_SPAWN) != 0u) {
+            q = vfxSpawn(vi.program, em, e, particleChildSeed(as_type<uint>(ev.a.w), k), as_type<uint>(ev.b.w) * 8u + k, ev.a.xyz,
+                         ev.b.xyz, s, vfxParams + vi.params, A, fields, samples);
+        } else
+#endif
         q = particleSpawn(em, e, particleChildSeed(as_type<uint>(ev.a.w), k), as_type<uint>(ev.b.w) * 8u + k, ev.a.xyz, ev.b.xyz, s.dt);
     }
     particles[slot] = q;
@@ -514,6 +686,11 @@ kernel void particleSimulateKernel(constant ParticleStep&          s         [[b
                                    device const InstanceData*      instances [[buffer(6)]],
                                    constant SceneShading&          shading   [[buffer(7)]],
                                    device const Light*             lights    [[buffer(8)]],
+#ifdef VFX_PROGRAMS
+                                   device const float4*            vfxParams [[buffer(27)]],
+                                   device const VFXEmitterInfo*    vfx       [[buffer(28)]],
+                                   device float4*                  vfxAttributes [[buffer(29)]],
+#endif
                                    uint i [[thread_position_in_grid]])
 {
     // (Built only with the scene bound: it reads the shading's buffer.)
@@ -529,6 +706,13 @@ kernel void particleSimulateKernel(constant ParticleStep&          s         [[b
         uint e = q.info.z;
         ParticleEmitter em = emitters[e];
         bool event = false;
+#ifdef VFX_PROGRAMS
+        VFXEmitterInfo vi = vfx[e];
+        if ((vi.hooks & VFX_STEP) != 0u) {
+            keep = vfxStep(vi.program, q, slot, em, colliders, s, fields, samples, sc, sd, sdf, event, vfxParams + vi.params,
+                           vfxAttributes + slot * vi.attributes);
+        } else
+#endif
         keep = particleStep(q, slot, em, colliders, s, fields, samples, sc, sd, sdf, event);
         if (event) {
             uint k = atomic_fetch_add_explicit(&c.events[p][e], 1u, memory_order_relaxed);
@@ -536,6 +720,10 @@ kernel void particleSimulateKernel(constant ParticleStep&          s         [[b
                 ParticleEvent ev;
                 ev.a = float4(q.position.xyz, as_type<float>(q.info.y));
                 ev.b = float4(q.velocity.xyz, as_type<float>(q.info.x));
+#ifdef VFX_PROGRAMS
+                // A program's condition can hold for many steps: each step's children are seeded apart (VFXInterpreter).
+                if ((vi.hooks & VFX_STEP) != 0u) ev.a.w = as_type<float>(q.info.y ^ pcgHash(s.step + 0x2545F491u));
+#endif
                 (p == 0u ? events0 : events1)[em.ids.x + k] = ev;
             }
         }
@@ -580,6 +768,11 @@ kernel void particlePoseKernel(constant ParticleStep&          s         [[buffe
                                device const Particle*          particles [[buffer(16)]],
                                device ParticleRender*          render    [[buffer(23)]],
                                device float*                   boxes     [[buffer(24)]],
+#ifdef VFX_PROGRAMS
+                               device const float4*            vfxParams [[buffer(27)]],
+                               device const VFXEmitterInfo*    vfx       [[buffer(28)]],
+                               device const float4*            vfxAttributes [[buffer(29)]],
+#endif
                                uint i [[thread_position_in_grid]])
 {
     Particle q = particles[min(i, s.capacity - 1u)];
@@ -605,6 +798,10 @@ kernel void particlePoseKernel(constant ParticleStep&          s         [[buffe
     float x = saturate(q.position.w / max(q.velocity.w, 1e-6f));
     float size = mix(e.size.x, e.size.y, x) * (1.0f - e.size.z * particleRandom(seed, 1u));
     float4 color = particleColor(e, x);
+#ifdef VFX_PROGRAMS
+    VFXEmitterInfo vi = vfx[min(q.info.z, s.emitters - 1u)];
+    if ((vi.hooks & VFX_OUTPUT) != 0u) vfxOutput(vi.program, q, x, s, e, size, color, vfxParams + vi.params, vfxAttributes + i * vi.attributes);
+#endif
     if ((flags & PARTICLE_EMISSIVE) != 0u) color.rgb *= e.look.y;
     float spin = particleRandom(seed, 2u) * 2.0f * M_PI_F + (particleRandom(seed, 3u) * 2.0f - 1.0f) * e.look.w * q.position.w;
     // The box holds the billboard as the camera's rays widen it too (s.wind: the camera, how much a unit away).
@@ -806,318 +1003,4 @@ kernel void particleMeshPoseKernel(constant ParticleMeshPose&      m           [
             for (uint row = 0; row < 3; ++row) d[c * 3 + row] = now[c][row];
         }
     }
-}
-
-// MARK: - Light
-
-// The light a lit particle scatters, once per particle per frame (rays per pixel would cost far more): from each of
-// the first lights (PARTICLE_LIGHTS), scattered isotropically (E / 4 pi per unit albedo, as the path tracer's
-// particles do), its visibility the opaque scene's and the particles' transmittance between (so smoke shades
-// itself), plus the sky's mean (what an isotropic scatterer sends in a uniform sky). Averaged
-// over the frames (the shadow rays aim at random points of the lights): each frame weighs in at a third, a newborn's
-// first frame alone. `lighting`: per slot three: that average of the light from all round (rgb) and whose it is (w:
-// the particle's seed); of its brightest light (which six-way smoke shades apart: particleLit); where that comes from
-// (summed by its brightness, so the average leans toward the brighter frames').
-constant uint PARTICLE_LIGHTS = 8;
-
-kernel void particleLightKernel(constant Uniforms&               u          [[buffer(0)]],
-                                SCENE_ACCEL                      accel      [[buffer(1)]],
-                                device const float3*             positions  [[buffer(2)]],
-                                device const float3*             normals    [[buffer(3)]],
-                                device const uint*               indices    [[buffer(4)]],
-                                device const MeshData*           meshes     [[buffer(5)]],
-                                device const InstanceData*       instances  [[buffer(6)]],
-                                constant SceneShading&           shading    [[buffer(7)]],
-                                device const Light*              lights     [[buffer(8)]],
-                                device ParticleRender*           render     [[buffer(13)]],
-                                device float4*                   lighting   [[buffer(14)]],
-                                constant uint&                   capacity   [[buffer(15)]],
-                                uint i [[thread_position_in_grid]])
-{
-    if (i >= capacity) return;
-    ParticleRender r = render[i];
-    if (r.centerRadius.w <= 0.0f || (particleFlags(r) & PARTICLE_EMISSIVE) != 0u) return;
-    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
-    float3 p = r.centerRadius.xyz;
-    float3 sum = skyAmbient(u, s), key = float3(0.0f), keyDir = float3(0.0f);
-    float keyLum = 0.0f;
-    Rng rng;
-    rng.state = pcgHash(r.info.w ^ pcgHash(u.frameIndex * 0x9E3779B9u + 0x2545F491u));
-    uint count = LIGHT_TABLE ? 0u : min(u.lightCount, PARTICLE_LIGHTS);
-    for (uint l = 0; l < count; ++l) {
-        Light light = lights[l];
-        float3 toward = lightType(light) == LIGHT_SUN ? light.axis.xyz : normalize(light.positionRadius.xyz - p);
-        float3 e = lightUnshadowed(light, p, toward, toward);
-        if (all(e <= 0.0f)) continue;
-        float3 target = lightShadowTarget(light, p, rng.next2());
-        float3 d = target - p;
-        float dist = length(d);
-        float t;
-        if (intersectAny(makeRay(p, d / dist, RAY_EPSILON, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_GEOMETRY, RAY_SHADOW), accel, t)) continue;
-        // lightUnshadowed facing the light is its irradiance / pi: a quarter of it is E / 4 pi. Through the particles
-        // between, light scattered on inside a dense column gets further than single scattering lets it: octaves of
-        // weaker extinction (Wrenninge's multiple-scattering approximation), the same through thin smoke.
-        float T = particleTransmittance(p, d / dist, r.centerRadius.w * 0.5f, dist, accel);
-        float through = (T + 0.5f * sqrt(T) + 0.25f * sqrt(sqrt(T))) * (1.0f / 1.75f);
-        float3 c = 0.25f * e * through * sunVisibilityScale(light, p, s);
-        float lum = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
-        if (lum > keyLum) {
-            sum += key;   // the brightest so far is the key; the one before joins the rest
-            key = c;
-            keyLum = lum;
-            keyDir = toward;
-        } else {
-            sum += c;
-        }
-    }
-    uint slot = min(r.info.x & 0xFFFFFFu, capacity - 1u);
-    float4 last = lighting[3u * slot], lastKey = lighting[3u * slot + 1u], lastDir = lighting[3u * slot + 2u];
-    bool same = as_type<uint>(last.w) == r.info.w;
-    float3 now = same ? mix(last.rgb, sum, 1.0f / 3.0f) : sum;
-    float3 keyNow = same ? mix(lastKey.rgb, key, 1.0f / 3.0f) : key;
-    float3 dirNow = same ? mix(lastDir.xyz, keyDir * keyLum, 1.0f / 3.0f) : keyDir * keyLum;
-    lighting[3u * slot] = float4(now, as_type<float>(r.info.w));
-    lighting[3u * slot + 1u] = float4(keyNow, 0.0f);
-    lighting[3u * slot + 2u] = float4(dirNow, 0.0f);
-    float l = length(dirNow);
-    render[i].radiance = half4(half3(min(now, 65000.0f)), 1.0h);
-    render[i].keyLight = half4(half3(min(keyNow, 65000.0f)), 1.0h);
-    render[i].keyDir = half4(half3(l > 1e-8f ? dirNow / l : float3(0.0f, 1.0f, 0.0f)), 0.0h);
-}
-
-// MARK: - The camera's layer
-
-// The camera's billboards' least half-size, in texels of the layer (ParticlesGPU.widen).
-constant float PARTICLE_WIDEN = 0.5f;
-// ...and under how many texels across (half-size) a particle is too thin for them: the overlay traces it again.
-constant float PARTICLE_DETAIL = 2.0f;
-
-// The layer's size and how its rays leave the camera (Renderer.particleLayerStages): `jitter`, as the frame's (the
-// layer is the frame's size, composited pixel for pixel); otherwise through its own texels' centres, steady from frame
-// to frame (it goes over MetalFX's output, which doesn't filter it over time, or is smaller than the frame).
-// `detail`: the overlay traces the thin particles again (particleLayerRay leaves them out).
-struct ParticleLayerParams {
-    uint2 size;
-    uint  jitter;
-    uint  detail;
-};
-
-// What the camera's ray along `dir` (through `uv` of the view) sees of the particles in front of the surface at
-// `depth` (0: none): rgb = the light they send (fogged), a = how much of what is behind them they hide. Soft where
-// they near that surface, and faded right in front of the camera. `footprint`: the ray's pixel across, a unit away
-// (radians): the billboards are at least about that wide. `detail`: the ones under PARTICLE_DETAIL of them are left
-// out, and set `thin` (particleCollect).
-inline float4 particleLayerRay(constant Uniforms& u, SCENE_ACCEL sc, constant FogParams& fog, texture3d<float> fogGrid, float3 dir,
-                               float2 uv, float depth, float footprint, bool detail, thread bool& thin) {
-    float along = dot(dir, u.camForward.xyz);
-    float tOpaque = depth > 0.0f ? depth / max(along, 1e-4f) : 1.0e5f;
-    float meanT;
-    float4 gathered = particleGather<4>(u.camPos.xyz, dir, tOpaque, depth > 0.0f, sc, meanT, PARTICLE_WIDEN * footprint,
-                                        detail ? PARTICLE_DETAIL * footprint : 0.0f, thin);
-    float3 c = gathered.rgb;
-    float hidden = gathered.a;
-    if (hidden > 1e-4f && flagOn(u.flags, FLAG_FOG) && !flagOn(u.flags, FLAG_FOG_REFERENCE)) {
-        // The fog in front of them, at their mean distance: what they send dims, and the fog's own light takes the
-        // share of the view they hide (the composite fogs the rest to the surface).
-        float tMean = meanT / hidden;
-        float4 fogged = fogFromGrid(fog, fogGrid, uv, tMean * along);
-        c = c * fogged.a + hidden * fogged.rgb;
-    }
-    return float4(c, hidden);
-}
-
-// The depth a steady ray through `uv` stops its particles at, from the traced frame's depths `nd` (jittered: its
-// samples sit up to half a texel off where `uv` looks). On a surface seen at a grazing angle that is centimetres a
-// texel, so the nearest sample hid what lies on it (a splash ring a millimetre over the floor) in the frames whose
-// jitter put it nearer, and showed it in the rest: it flickered. On one surface (the 3x3 samples round `uv`'s texel
-// within 5 % of each other: the jitter can take the next one's half a texel past `uv`) the farthest of them; across an
-// edge the nearest sample, as before. 0: the sky.
-inline float particleClipDepth(texture2d<float, access::read> nd, float2 uv) {
-    int2 n = int2(nd.get_width(), nd.get_height());
-    int2 c = min(int2(uv * float2(n)), n - 1);
-    float nearest = nd.read(uint2(c)).w;
-    if (nearest <= 0.0f) return nearest;
-    float lo = 1.0e30f, hi = 0.0f;
-    for (int k = 0; k < 9; ++k) {
-        float d = nd.read(uint2(clamp(c + int2(k % 3 - 1, k / 3 - 1), int2(0), n - 1))).w;
-        if (d <= 0.0f) return nearest;
-        lo = min(lo, d);
-        hi = max(hi, d);
-    }
-    return hi - lo <= 0.05f * lo ? hi : nearest;
-}
-
-// A pixel's footprint at `uv` of a view `height` pixels high (radians across it, a unit away).
-inline float particleFootprint(constant Uniforms& u, float2 uv, float height) {
-    return length(normalize(viewDirection(u, uv + float2(0.0f, 1.0f / height))) - normalize(viewDirection(u, uv)));
-}
-
-// The camera's layer (particleLayerRay a texel): the composite puts it over the scene, or particleOverlayKernel over
-// MetalFX's output. `layerDepth`: x = the depth of the surface each texel's particles stand in front of, which the
-// upsampling weighs by (particleUpsample); y = 1 where some are too thin for its texels.
-kernel void particleLayerKernel(constant Uniforms&               u          [[buffer(0)]],
-                                SCENE_ACCEL                      sc         [[buffer(1)]],
-                                constant FogParams&              fog        [[buffer(9)]],
-                                constant ParticleLayerParams&    lp         [[buffer(10)]],
-                                texture2d<float, access::read>   nd         [[texture(0)]],
-                                texture2d<float, access::write>  layer      [[texture(1)]],
-                                texture3d<float>                 fogGrid    [[texture(2)]],
-                                texture2d<float, access::write>  layerDepth [[texture(3)]],
-                                uint2 tid [[thread_position_in_grid]])
-{
-    if (tid.x >= lp.size.x || tid.y >= lp.size.y) return;
-    float2 uv = (float2(tid) + 0.5f) / float2(lp.size);
-    uint2 pixel = min(uint2(uv * float2(u.width, u.height)), uint2(u.width - 1, u.height - 1));
-    float3 dir = lp.jitter != 0u ? primaryDirection(u, pixel) : normalize(viewDirection(u, uv));
-    float depth = lp.jitter != 0u ? nd.read(pixel).w : particleClipDepth(nd, uv);
-    bool thin;
-    float4 c = particleLayerRay(u, sc, fog, fogGrid, dir, uv, depth, particleFootprint(u, uv, float(lp.size.y)), lp.detail != 0u, thin);
-    layer.write(c, tid);
-    layerDepth.write(float4(depth, thin ? 1.0f : 0.0f, 0.0f, 0.0f), tid);
-}
-
-// The particles' layer over MetalFX's output (at its size, in place), before the lens and the tone curve: MetalFX
-// would filter it over time with the scene's motion, which isn't theirs (sparks smeared into streaks), so it takes
-// only the scene. Upsampled (particleUpsample; `nd`: the traced frame's depths, for its weights), but where the
-// layer's texels are too coarse for the particles there (sparks, rain, motes: `thin`) traced again for the pixel.
-kernel void particleOverlayKernel(constant Uniforms&                   u          [[buffer(0)]],
-                                  SCENE_ACCEL                          sc         [[buffer(1)]],
-                                  constant FogParams&                  fog        [[buffer(9)]],
-                                  texture2d<float, access::read_write> out        [[texture(0)]],
-                                  texture2d<float, access::read>       layer      [[texture(1)]],
-                                  texture2d<float, access::read>       layerDepth [[texture(2)]],
-                                  texture2d<float, access::read>       nd         [[texture(3)]],
-                                  texture3d<float>                     fogGrid    [[texture(4)]],
-                                  uint2 tid [[thread_position_in_grid]])
-{
-    uint2 size = uint2(out.get_width(), out.get_height());
-    if (tid.x >= size.x || tid.y >= size.y) return;
-    float2 uv = (float2(tid) + 0.5f) / float2(size);
-    uint2 ndSize = uint2(nd.get_width(), nd.get_height());
-    float depth = nd.read(min(uint2(uv * float2(ndSize)), ndSize - 1u)).w;
-    bool thin;
-    float4 l = particleUpsample(layer, layerDepth, uv, depth, thin);
-    if (thin) {
-        bool again;
-        l = particleLayerRay(u, sc, fog, fogGrid, normalize(viewDirection(u, uv)), uv, particleClipDepth(nd, uv), particleFootprint(u, uv, float(size.y)),
-                             false, again);
-    }
-    float4 c = out.read(tid);
-    out.write(float4(l.rgb + (1.0f - l.a) * c.rgb, c.a), tid);
-}
-
-// MARK: - Heat haze
-
-// Distortion particles (ParticleEmitter.distortion), never drawn: each bends the camera's rays that cross it in front
-// of the surface behind, by up to its emitter's strength (radians) times its opacity over life, (1 - r^2)^2 across its
-// disc. The bend's direction is curl noise rising through the air where they are met (their hits' mean, by how much
-// each bends: no seam where one's edge crosses another), across the ray: hot air's shimmer, the same for every
-// particle there so that overlapping ones bend together. Over the frame's linear
-// light before the lens (bloom and depth of field see the bent light): `src` read where the bent ray looks, into
-// `dst`; where that is nearer than the haze, the pixel's own light instead (no foreground smeared into it).
-struct ParticleDistortParams {
-    uint first;      // the distorters' slots (ParticleSystem.distortRange)
-    uint count;
-    uint emitters;
-    float time;      // the particles' clock (s)
-};
-
-constant float PARTICLE_HAZE_FREQUENCY = 7.0f;   // the shimmer's noise cells a metre
-constant float PARTICLE_HAZE_RISE = 1.4f;        // how fast they climb (m/s)
-constant float PARTICLE_HAZE_MOST = 0.008f;      // the most bend overlapping particles add up to (rad)
-
-// The distorters' discs for the pass, once a frame, in one threadgroup (particleDistortDiscsKernel): for each, xyz
-// its centre and w its radius, then its bend (its strength times its opacity now; 0: dead); after them the part of
-// the view they can cover (uv: x, y the least, z, w the most; empty when there are none), outside which the pass
-// only copies.
-kernel void particleDistortDiscsKernel(constant Uniforms&                u         [[buffer(0)]],
-                                       constant ParticleDistortParams&   dp        [[buffer(1)]],
-                                       device const ParticleEmitter*     emitters  [[buffer(13)]],
-                                       device const Particle*            particles [[buffer(16)]],
-                                       device float4*                    discs     [[buffer(17)]],
-                                       uint i [[thread_index_in_threadgroup]], uint n [[threads_per_threadgroup]],
-                                       uint lane [[thread_index_in_simdgroup]], uint group [[simdgroup_index_in_threadgroup]])
-{
-    float4 rect = float4(1.0f, 1.0f, 0.0f, 0.0f);
-    for (uint k = i; k < dp.count; k += n) {
-        Particle q = particles[dp.first + k];
-        if ((q.info.w & PARTICLE_ALIVE) == 0u) {
-            discs[2u * k] = float4(0.0f, -1.0e5f, 0.0f, 0.0f);
-            discs[2u * k + 1u] = float4(0.0f);
-            continue;
-        }
-        ParticleEmitter e = emitters[min(q.info.z, dp.emitters - 1u)];
-        float x = saturate(q.position.w / max(q.velocity.w, 1e-6f));
-        float r = mix(e.size.x, e.size.y, x) * (1.0f - e.size.z * particleRandom(q.info.y, 1u));
-        discs[2u * k] = float4(q.position.xyz, r);
-        discs[2u * k + 1u] = float4(particleColor(e, x).a * e.extra.z, 0.0f, 0.0f, 0.0f);
-        // Where it shows: its centre's place in the view, as wide as its radius at its depth (and half again: a
-        // disc off the view's axis looks wider). Close to the camera, anywhere.
-        float3 p = q.position.xyz - u.camPos.xyz;
-        float z = dot(p, u.camForward.xyz);
-        if (z <= 1.5f * r) { rect = float4(0.0f, 0.0f, 1.0f, 1.0f); continue; }
-        float2 c = float2(dot(p, u.camRight.xyz) / (z * u.camRight.w), dot(p, u.camUp.xyz) / (z * u.camUp.w));
-        float2 h = 1.5f * r / z / float2(u.camRight.w, u.camUp.w);
-        float2 lo = (float2(c.x - h.x, -(c.y + h.y)) + 1.0f) * 0.5f, hi = (float2(c.x + h.x, -(c.y - h.y)) + 1.0f) * 0.5f;
-        rect = float4(min(rect.xy, lo), max(rect.zw, hi));
-    }
-    threadgroup float4 parts[32];
-    rect = float4(simd_min(rect.x), simd_min(rect.y), simd_max(rect.z), simd_max(rect.w));
-    if (lane == 0u) parts[group] = rect;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (i == 0u) {
-        for (uint g = 1; g < (n + 31u) / 32u; ++g) rect = float4(min(rect.xy, parts[g].xy), max(rect.zw, parts[g].zw));
-        discs[2u * dp.count] = rect;
-    }
-}
-
-kernel void particleDistortKernel(constant Uniforms&                u         [[buffer(0)]],
-                                  constant ParticleDistortParams&   dp        [[buffer(1)]],
-                                  constant float4*                  discs     [[buffer(17)]],
-                                  texture2d<float, access::sample>  src       [[texture(0)]],
-                                  texture2d<float, access::write>   dst       [[texture(1)]],
-                                  texture2d<float, access::read>    nd        [[texture(2)]],
-                                  uint2 tid [[thread_position_in_grid]])
-{
-    uint2 size = uint2(dst.get_width(), dst.get_height());
-    if (tid.x >= size.x || tid.y >= size.y) return;
-    float2 uv = (float2(tid) + 0.5f) / float2(size);
-    float3 o = u.camPos.xyz, d = normalize(viewDirection(u, uv));
-    float along = max(dot(d, u.camForward.xyz), 1e-4f);
-    // Most pixels meet none: outside the discs' part of the view, a copy; the surface's depth only where one is met.
-    float4 rect = discs[2u * dp.count];
-    if (any(uv < rect.xy) || any(uv > rect.zw)) {
-        dst.write(src.read(tid), tid);
-        return;
-    }
-    float tOpaque = -1.0f;
-    float amount = 0.0f, tNear = 1.0e5f, tMean = 0.0f;
-    for (uint k = 0; k < dp.count; ++k) {
-        float4 c = discs[2u * k];
-        float t = dot(c.xyz - o, d);
-        float rho2 = length_squared(o + d * t - c.xyz) / max(c.w * c.w, 1e-8f);
-        if (t <= 0.05f || rho2 >= 1.0f) continue;
-        if (tOpaque < 0.0f) {
-            float depth = particleClipDepth(nd, uv);
-            tOpaque = depth > 0.0f ? depth / along : 1.0e5f;
-        }
-        if (t >= tOpaque) continue;
-        float w = (1.0f - rho2) * (1.0f - rho2) * discs[2u * k + 1u].x;
-        amount += w;
-        tMean += w * t;
-        tNear = min(tNear, t);
-    }
-    if (amount <= 0.0f) {
-        dst.write(src.read(tid), tid);
-        return;
-    }
-    float3 n = particleCurl(o + d * (tMean / amount), PARTICLE_HAZE_FREQUENCY, -dp.time * PARTICLE_HAZE_RISE * PARTICLE_HAZE_FREQUENCY)
-             * (1.0f / PARTICLE_HAZE_FREQUENCY);
-    float3 bent = normalize(d + (n - d * dot(n, d)) * min(amount, PARTICLE_HAZE_MOST));
-    float f = max(dot(bent, u.camForward.xyz), 1e-4f);
-    float2 to = float2(dot(bent, u.camRight.xyz) / (f * u.camRight.w) + 1.0f, 1.0f - dot(bent, u.camUp.xyz) / (f * u.camUp.w)) * 0.5f;
-    float there = particleClipDepth(nd, saturate(to));
-    if (there > 0.0f && there < tNear * along) to = uv;
-    constexpr sampler linear(filter::linear, address::clamp_to_edge);
-    dst.write(src.sample(linear, to), tid);
 }

@@ -31,7 +31,7 @@ enum Kernel: Int, CaseIterable {
     case fluidMpmClear, fluidMpmKeys, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
     case fluidSurfaceClear, fluidSurfaceSplat, fluidSurfaceBlur, fluidSurfaceCount, fluidSurfaceVertex, fluidSurfaceQuad, fluidSurfaceTail
     case plantWind              // the plants' variants in the wind (PlantTracing)
-    // Particle effects (ParticlesGPU, Shaders/Particles.metal): a step's begin, emit and simulate, then the frame's
+    // Particle effects (ParticlesGPU, Shaders/ParticleSim.metal): a step's begin, emit and simulate, then the frame's
     // records and boxes for the rays.
     case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
     case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
@@ -378,7 +378,11 @@ struct Pipelines {
     }
 
     static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
-        let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
+        try compile(device: device, text: ShaderSource.load(url), stats: stats, compiler: compiler)   // Shaders.metal with the pieces in Shaders/ spliced in
+    }
+
+    /// `source` compiled as Shaders.metal is (the VFX library's: VFXCompiler).
+    static func compile(device: MTLDevice, text source: String, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
         let options = MTLCompileOptions()
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
         options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0)]

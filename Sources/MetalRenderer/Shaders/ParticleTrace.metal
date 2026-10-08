@@ -10,7 +10,7 @@
 // A box holds a billboard that each ray computes for itself (particleBillboard): a disc square to the ray, or a quad
 // along an axis turned to face it, or one fixed in the world. Camera, shadow and reflection rays all see the same
 // particle, which a camera-facing quad wouldn't give (edge-on to the light). Nothing is committed: the loops gather
-// what they meet (particleTransmittance; the camera's layer, Particles.metal).
+// what they meet (particleTransmittance; the camera's layer, ParticleLight.metal).
 
 // ParticleEmitter.Flags as the rays get them (ParticleRender.info.x >> 24): the low three, then the orientation.
 constant uint PARTICLE_EMISSIVE = 1u, PARTICLE_SHADOWS = 2u, PARTICLE_FRAME_BLEND = 4u, PARTICLE_SIXWAY = 32u, PARTICLE_MOTION = 64u;
