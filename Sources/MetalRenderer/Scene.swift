@@ -376,7 +376,8 @@ final class Scene {
     /// Made again at every edit (the workshop): its structures are built to be ready soon, not to trace fastest or
     /// keep least (uncompacted), and its plants keep all their leaves (no leaf fall's variants).
     var remadeOften = false
-    let settings: SceneSettings
+    /// Its settings; only the effects' key changes after it is made (`adoptEffects`).
+    private(set) var settings: SceneSettings
     /// While `init` builds the scene: the load's step that the builders report models to (the loading overlay).
     private(set) var loadStep: LoadStep?
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
@@ -402,6 +403,8 @@ final class Scene {
     var effects: [VFXInstance] = []
     var effectColliders: [(name: String, collider: ParticleCollider)] = []
     var effectNotes: [String] = []
+    /// Per emitter of `particles`, the effect it is one of (the editor's status).
+    var effectOwners: [String] = []
     /// Reflection rays see them (ParticleSettings.reflections).
     var particlesReflected: Bool { particles != nil && settings.particles.reflections }
     /// The steps `update` asked for since the renderer last took them, and whether from the start.
@@ -679,6 +682,18 @@ final class Scene {
             for _ in 0..<e.capacity { instances[addInstance(mesh, material, hidden)].simulated = true }
         }
         particles = p
+    }
+
+    /// The VFX editor's edit, run in place of the scene's particles (VFXLive.swift): `system` (made `continuing` the
+    /// one it replaces) from `effects`, as `key` names them (SceneSettings.effects), so the scene isn't made again.
+    /// Without `system` only the key: the edit's code compiles meanwhile.
+    func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
+        settings.effects = key
+        guard let system else { return }   // the running ones until their new code is ready (Renderer.editEffects)
+        particles = system
+        self.effects = effects
+        effectOwners = owners
+        effectNotes = notes
     }
 
     /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.

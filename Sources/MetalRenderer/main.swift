@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
     private var plantEditor: PlantEditorPanel?
+    private var vfxEditor: VFXEditorPanel?
     private var loadingOverlay: LoadingOverlay?
     private var offscreen: OffscreenSurface?
 
@@ -92,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           P            show or hide the loading overlay (what loads in the background, and how far it is)
           K / Cmd-E    show or hide the Plant Editor (the plant workshop: drag orbits, scroll zooms, F frames, hold C compares)
+          V / Shift-Cmd-E   show the VFX Editor (particle effects as node graphs; its window: Tab adds a node, Delete removes)
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
     }
@@ -109,6 +111,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         plantEditor = plants
         if PlantEditorPanel.wasVisible || controller.settings.scene.kind == .plants { plants.show(nextTo: window) }
         controller.onTogglePlants = { [weak self] in self?.togglePlants(nil) }
+        let vfx = VFXEditorPanel(controller: controller)
+        vfxEditor = vfx
+        if VFXEditorPanel.wasVisible { vfx.show(nextTo: window) }
+        controller.onToggleVFX = { [weak self] in self?.toggleVFX(nil) }
+        VFXEditorScript.run(vfx, main: window)
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
         controller.observeSettings { [weak self] s in
@@ -118,8 +125,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// The main window's undo is the plant editor's (its edits are what can be undone).
-    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { plantEditor?.model.undo }
+    /// The main window's undo is an editor's (its edits are what can be undone): the VFX editor's while it is open
+    /// and the plant workshop isn't shown, else the plant editor's.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        if let vfx = vfxEditor, vfx.isVisible, controller.settings.scene.kind != .plants { return vfx.model.undo }
+        return plantEditor?.model.undo
+    }
+
+    @objc private func toggleVFX(_ sender: Any?) {
+        vfxEditor?.toggle(nextTo: window)
+    }
 
     @objc private func togglePlants(_ sender: Any?) {
         plantEditor?.toggle(nextTo: window)
@@ -165,6 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appMenu.addItem(withTitle: "Render Settings…", action: #selector(toggleSettings(_:)), keyEquivalent: ",").target = self
         appMenu.addItem(withTitle: "Debug Window", action: #selector(toggleDebug(_:)), keyEquivalent: "i").target = self
         appMenu.addItem(withTitle: "Plant Editor…", action: #selector(togglePlants(_:)), keyEquivalent: "e").target = self
+        let vfx = appMenu.addItem(withTitle: "VFX Editor…", action: #selector(toggleVFX(_:)), keyEquivalent: "e")
+        vfx.keyEquivalentModifierMask = [.command, .shift]
+        vfx.target = self
         if !Benchmark.isEnabled {
             let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
             item.target = self

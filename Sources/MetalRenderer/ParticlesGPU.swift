@@ -6,9 +6,10 @@ import simd
 /// step's parameters, which the CPU writes per frame slot (a replay can take hundreds of steps in one frame: more
 /// than Metal 4's inline constants hold).
 final class ParticlesGPU {
-    let system: ParticleSystem
-    let emitters: MTLBuffer
-    let colliders: MTLBuffer
+    /// The system it runs; the VFX editor's edits put another of the same layout in its place (`adopt`).
+    private(set) var system: ParticleSystem
+    private(set) var emitters: MTLBuffer
+    private(set) var colliders: MTLBuffer
     let particles: MTLBuffer
     /// The heat haze's discs, two float4s a distorter, and the part of the view they cover (particleDistortDiscsKernel).
     let distortDiscs: MTLBuffer
@@ -64,16 +65,16 @@ final class ParticlesGPU {
     }
     /// The vector fields' table and nodes (ParticleSystem.gpuFields); the scene's SDF shapes (SDFBuffers.scene) for
     /// the colliders that are their instances (bound with the scene; a placeholder until the renderer sets it).
-    let fields: MTLBuffer
-    let fieldSamples: MTLBuffer
+    private(set) var fields: MTLBuffer
+    private(set) var fieldSamples: MTLBuffer
     var sdfScene: MTLBuffer?
     /// The flipbooks (ParticleTextures).
     let atlas: MTLTexture
     /// The programs' (VFXProgram): their table (GPUVFXEmitter an emitter), parameters, and the attributes each slot
     /// keeps; and the VFX library's kernels that run them once compiled (VFXCompiler: until then, the fixed emitters').
-    let programTable: MTLBuffer
-    let programParams: MTLBuffer
-    let attributes: MTLBuffer
+    private(set) var programTable: MTLBuffer
+    private(set) var programParams: MTLBuffer
+    private(set) var attributes: MTLBuffer
     var programKernels: ParticleKernels?
     /// Whether it has programs (and so wants the VFX library's kernels).
     var hasPrograms: Bool { system.programSource != nil }
@@ -93,29 +94,38 @@ final class ParticlesGPU {
     /// The steps encoded since the start (the GPU's clock, as the CPU counts it).
     private(set) var stepIndex = 0
 
-    init(device: MTLDevice, system: ParticleSystem, slots: Int, atlas: MTLTexture? = nil) throws {
-        func buffer(_ length: Int, _ label: String) throws -> MTLBuffer {
-            guard let b = device.makeBuffer(length: max(length, 256), options: .storageModeShared) else {
-                throw RendererError.resourceCreation("buffer \(label)")
-            }
-            memset(b.contents(), 0, b.length)
-            b.label = label
-            return b
+    /// A shared buffer of `length` bytes (256 at least), zeroed.
+    private static func buffer(_ device: MTLDevice, _ length: Int, _ label: String) throws -> MTLBuffer {
+        guard let b = device.makeBuffer(length: max(length, 256), options: .storageModeShared) else {
+            throw RendererError.resourceCreation("buffer \(label)")
         }
+        memset(b.contents(), 0, b.length)
+        b.label = label
+        return b
+    }
+
+    /// A buffer holding `items`.
+    private static func buffer<T>(_ device: MTLDevice, _ items: [T], _ label: String) throws -> MTLBuffer {
+        let b = try buffer(device, items.count * MemoryLayout<T>.stride, label)
+        items.withUnsafeBytes { if !$0.isEmpty { b.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
+        return b
+    }
+
+    /// What the kernels read of `system` but its pool: its descriptors, colliders, fields and programs.
+    private static func values(_ device: MTLDevice, _ system: ParticleSystem)
+        throws -> (emitters: MTLBuffer, colliders: MTLBuffer, fields: MTLBuffer, samples: MTLBuffer, table: MTLBuffer, params: MTLBuffer) {
+        let f = system.gpuFields, programs = system.gpuPrograms
+        return (try buffer(device, system.gpuEmitters, "particleEmitters"), try buffer(device, system.gpuColliders, "particleColliders"),
+                try buffer(device, f.table, "particleFields"), try buffer(device, f.samples, "particleFieldSamples"),
+                try buffer(device, programs.table, "vfxPrograms"), try buffer(device, programs.params, "vfxParams"))
+    }
+
+    init(device: MTLDevice, system: ParticleSystem, slots: Int, atlas: MTLTexture? = nil) throws {
+        func buffer(_ length: Int, _ label: String) throws -> MTLBuffer { try ParticlesGPU.buffer(device, length, label) }
         self.system = system
         let n = system.capacity
-        let gpuEmitters = system.gpuEmitters, gpuColliders = system.gpuColliders
-        let emitters = try buffer(gpuEmitters.count * MemoryLayout<GPUParticleEmitter>.stride, "particleEmitters")
-        gpuEmitters.withUnsafeBytes { emitters.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
-        let colliders = try buffer(gpuColliders.count * MemoryLayout<GPUParticleCollider>.stride, "particleColliders")
-        gpuColliders.withUnsafeBytes { if !$0.isEmpty { colliders.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
-        (self.emitters, self.colliders) = (emitters, colliders)
-        let f = system.gpuFields
-        let fields = try buffer(f.table.count * MemoryLayout<GPUParticleField>.stride, "particleFields")
-        f.table.withUnsafeBytes { if !$0.isEmpty { fields.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
-        let fieldSamples = try buffer(f.samples.count * 16, "particleFieldSamples")
-        f.samples.withUnsafeBytes { if !$0.isEmpty { fieldSamples.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
-        (self.fields, self.fieldSamples) = (fields, fieldSamples)
+        let v = try ParticlesGPU.values(device, system)
+        (emitters, colliders, fields, fieldSamples, programTable, programParams) = (v.emitters, v.colliders, v.fields, v.samples, v.table, v.params)
         particles = try buffer(n * MemoryLayout<GPUParticle>.stride, "particles")
         deadList = try buffer(n * 4, "particleDead")
         distortDiscs = try buffer(system.distortCapacity * 32 + 16, "particleDistortDiscs")
@@ -207,13 +217,20 @@ final class ParticlesGPU {
         scratch = try buffer(scratchBytes, "particlesScratch")
         lighting = try buffer(n * 48, "particleLighting")
         self.atlas = try atlas ?? ParticleTextures.atlas(device: device)
-        let programs = system.gpuPrograms
-        let table = try buffer(programs.table.count * MemoryLayout<GPUVFXEmitter>.stride, "vfxPrograms")
-        programs.table.withUnsafeBytes { table.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
-        let params = try buffer(programs.params.count * 16, "vfxParams")
-        programs.params.withUnsafeBytes { if !$0.isEmpty { params.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
-        (programTable, programParams) = (table, params)
         attributes = try buffer(n * system.attributeStride * 16, "vfxAttributes")
+    }
+
+    /// Runs `new` in its system's place (an edit of the same layout: ParticleSystem.edit), with `kernels` for its
+    /// programs (nil: it has none). Its values go into new buffers: the frames in flight keep reading the old ones.
+    /// The particles go on as they are; new code wants them replayed (the caller's).
+    func adopt(_ new: ParticleSystem, kernels: ParticleKernels?, device: MTLDevice) throws {
+        let v = try ParticlesGPU.values(device, new)
+        (emitters, colliders, fields, fieldSamples, programTable, programParams) = (v.emitters, v.colliders, v.fields, v.samples, v.table, v.params)
+        if new.attributeStride != system.attributeStride {
+            attributes = try ParticlesGPU.buffer(device, new.capacity * new.attributeStride * 16, "vfxAttributes")
+        }
+        if new.programSource != system.programSource { programKernels = kernels }
+        system = new
     }
 
     /// The kernels' buffers at 13 and up: the simulate pass has the scene at 1 to 12 (its collisions).

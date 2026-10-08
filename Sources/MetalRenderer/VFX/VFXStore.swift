@@ -80,7 +80,9 @@ struct VFXCatalog: Equatable {
 
     /// A key for `catalog` (its content's), kept among the last 64.
     static func register(_ catalog: VFXCatalog) -> String {
-        let data = (try? JSONEncoder().encode(catalog.effects.keys.sorted().map { catalog.effects[$0]! })) ?? Data()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys   // a block's parameters are a dictionary: the same catalog, the same key
+        let data = (try? encoder.encode(catalog.effects.keys.sorted().map { catalog.effects[$0]! })) ?? Data()
         var h: UInt64 = 14_695_981_039_346_656_037
         for b in data { h = (h ^ UInt64(b)) &* 1_099_511_628_211 }
         let key = String(h, radix: 36)

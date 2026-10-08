@@ -336,14 +336,14 @@ extension Scene {
         case .none:
             return
         case .embers:   // from the pit (Forge), rising and swaying in curl noise, shrinking as they cool
-            addEffect(effect(VFXLibrary.embers(at: [-(s.radius + 1.6), 0.4, -1.6])))
+            addEffect(builtIn: VFXLibrary.embers(at: [-(s.radius + 1.6), 0.4, -1.6]))
         case .bubbles:   // from the sea floor round the model, up and wobbling
-            addEffect(effect(VFXLibrary.bubbles(radius: s.radius + 3)))
+            addEffect(builtIn: VFXLibrary.bubbles(radius: s.radius + 3))
         case .dust:   // motes drifting round the model, lit by the beams
-            addEffect(effect(VFXLibrary.dust(at: s.target + [0, 0.3, -0.25], half: [3, 1.5, 2.75])))
+            addEffect(builtIn: VFXLibrary.dust(at: s.target + [0, 0.3, -0.25], half: [3, 1.5, 2.75]))
         case .runes:   // glowing tablets circling the model low, below its knees: never in front of its face
             let radius = s.radius + 0.35, height = s.base + 0.2 * s.extent.y, speed: Float = 0.3 * radius
-            addEffect(effect(VFXLibrary.runes(height: height, radius: radius, speed: speed, color: Scene.hue(s.look.accent))))
+            addEffect(builtIn: VFXLibrary.runes(height: height, radius: radius, speed: speed, color: Scene.hue(s.look.accent)))
         }
         addEffects()
     }

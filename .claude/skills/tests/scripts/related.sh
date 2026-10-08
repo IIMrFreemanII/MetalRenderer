@@ -53,7 +53,9 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
       Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
+      Sources/MetalRenderer/VFXEditor/*.swift) add VFXEditorTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;

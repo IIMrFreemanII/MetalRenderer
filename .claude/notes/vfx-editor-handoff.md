@@ -31,12 +31,28 @@ The particle effects as node graphs, and an editor for them (README "VFX graphs"
 - Benchmarks: `vfx` (the stage's stills and timing), `vfxdemo` (16 s video).
 - Tests: `VFXTests` (8).
 
-## Next: phase 2 (the editor window), then phase 3 (preview tools, the stage's backdrops, gizmos)
+## Phase 2 (the editor window): done, at check-in 2
 
-See the plan. The Plant Editor (`PlantEditor/`, from main) is the pattern: an NSPanel with an NSHostingView, a host protocol for
-tests, an UndoManager with snapshots, the catalog registry for live scene rebuilds. Live value edits rewrite the descriptor
-(`ParticlesGPU.emitters`) and the programs' parameters (`programParams`, slots: `VFXProgram.slots`); a frame slot's copy is
-needed so frames in flight don't read a half-written buffer.
+- `Sources/MetalRenderer/VFXEditor/`:
+  - `VFXEditorModel` (behind `VFXEditorHost`, testable without a window): the catalog as edited and as saved, undo by snapshots
+    (a drag is one step), the draft, Save, Revert, Copy as Swift, the graph's edits, copy and paste of nodes;
+  - `VFXLayout` (the canvas's geometry; arranges effects never laid out);
+  - `VFXCanvasView`, `VFXInspector` (with curve and gradient editors), `VFXEditorView`, `VFXEditorPanel` (an NSWindow; its
+    `VFXHostingView` takes the scroll, pinch and keys);
+  - `VFXEditorScript` (`METALRENDERER_VFX_SCRIPT`: the editor driven in the app, printing the renderer's report).
+- `VFX/VFXLive.swift` + `Renderer.editEffects`: an edit changes only `SceneSettings.effects`.
+  - Values: `ParticlesGPU.adopt` writes them into new buffers, so the frames in flight keep the old ones.
+  - New code: it compiles while the old code runs (`pendingEffects`), then is swapped in and replayed.
+  - Otherwise the scene is made again.
+  - Benchmarks take the same path (`applyBenchmarkConfig`; mode `vfxedit`).
+- `Scene.addEffect(builtIn:)`: a catalog's copy of a built-in effect is moved from its origin to the scene's place.
+- V / ⇧⌘E opens it (`RendererController.onToggleVFX`, main.swift).
+- Not clicked through by hand: no tool here sends clicks to a native window. The scripted session and the offscreen pictures
+  stand in for it.
+
+## Next: phase 3 (preview tools, the stage's backdrops, gizmos)
+
+See the plan: transport and scrub, stats (alive counts, the GPU ms, per-emitter profile), gizmos, backdrops.
 
 ## Traps found
 

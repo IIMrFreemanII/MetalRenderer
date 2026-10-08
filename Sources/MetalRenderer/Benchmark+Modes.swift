@@ -19,7 +19,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "vfx": vfx, "vfxdemo": vfxDemo,
+        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1192,6 +1192,25 @@ extension Benchmark {
         out.append(lineUp.named("line-up").still(at: 4))
         out.append(lineUp.named("line-up moving"))
         return out
+    }
+
+    /// The VFX editor's edits reaching the running stage (Renderer.editEffects), the fireworks paused at 3 s: as built in;
+    /// the stars brighter and heavier (values: in place, the same particles); their size wired to a node (code: compiled,
+    /// then replayed from the start); the magic (the scene made again); the wired fireworks made from scratch, which
+    /// "code" should match within the run-to-run noise.
+    private static func vfxEdit() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .vfxStage)).still(at: 3)
+        var fireworks = VFXLibrary.named("fireworks")!
+        fireworks.setParam("starColor", "emission", .float(20))
+        fireworks.setParam("stars.gravity", "share", .float(1))
+        let values = VFXCatalog.register(VFXCatalog(effects: ["fireworks": fireworks]))
+        fireworks.nodes.append(VFXNode(.float, ["value": .float(0.12)], id: "big", at: [40, 520]))
+        fireworks.links.append(VFXLink("big", to: "stars.size", "size"))
+        let code = VFXCatalog.register(VFXCatalog(effects: ["fireworks": fireworks]))
+        return [base.named("before"), base.named("values").with { $0.scene.effects = values },
+                base.named("code").with { $0.scene.effects = code },
+                base.named("other").with { $0.scene.stage.effects = ["magic"] },
+                base.named("code fresh").with { $0.scene.effects = code }]
     }
 
     /// The VFX stage's demo video: 16 s of the line-up (the campfire, the fireworks, the magic) along a camera track

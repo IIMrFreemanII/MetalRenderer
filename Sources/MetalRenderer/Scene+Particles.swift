@@ -88,11 +88,11 @@ extension Scene {
         // effects were graphs. The particles step the same either way, but the buffers' layout sways the order the GPU's
         // atomics hand out pool slots in, and with it which samples each slot's light averages: the frames would differ
         // by a little noise.)
-        addEffect(effect(VFXLibrary.rubble(at: rubbleAt)), meshes: ["rock": (rock, stone)])
-        addEffect(effect(VFXLibrary.campfire(fire: fire)))
-        addEffect(effect(VFXLibrary.grinder(contact: contact, out: out)))
-        addEffect(effect(VFXLibrary.magic(at: plinth + SIMD3(0, 1.1, 0))))
-        addEffect(effect(VFXLibrary.rain(center: rainArea.center, half: rainArea.half)))
+        addEffect(builtIn: VFXLibrary.rubble(at: rubbleAt), meshes: ["rock": (rock, stone)])
+        addEffect(builtIn: VFXLibrary.campfire(fire: fire))
+        addEffect(builtIn: VFXLibrary.grinder(contact: contact, out: out))
+        addEffect(builtIn: VFXLibrary.magic(at: plinth + SIMD3(0, 1.1, 0)))
+        addEffect(builtIn: VFXLibrary.rain(center: rainArea.center, half: rainArea.half))
         addEffects()
         defaultCamera = Scene.demoCamera(.particles)!
     }

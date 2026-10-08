@@ -399,6 +399,8 @@ final class Renderer: NSObject {
     }
     private var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
     private var particlesVersion = 0
+    /// The VFX editor's last edit that needs new code (VFXLive.swift), until its library is compiled.
+    private var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
     private var particlesCamera = SIMD4<Float>.zero
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
@@ -945,6 +947,7 @@ final class Renderer: NSObject {
         crowdSkinner = nil
         physicsGPU = nil
         particlesGPU = nil
+        pendingEffects = nil
         particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
         holding = nil
         lightBuffers = []
@@ -1000,6 +1003,71 @@ final class Renderer: NSObject {
         guard let lm = device.makeTexture(descriptor: lmd) else { throw RendererError.resourceCreation("texture lightMap") }
         lm.label = "lightMap"
         lightMap = lm
+    }
+
+    /// The VFX editor's edit (`settings.scene.effects`, a catalog's key): run in the scene's particles' place when only
+    /// the effects differ and their layout stays (VFXLive.swift): their values at once, new code once it compiles (the
+    /// old running meanwhile). Otherwise the scene is made again, as for any other change of its settings.
+    private func editEffects() {
+        var same = settings.scene
+        same.effects = scene.settings.effects
+        guard same == scene.settings, let gpu = particlesGPU,
+              let next = scene.particleSystem(replacing: VFXCatalog.resolve(scene.settings.effects),
+                                              with: VFXCatalog.resolve(settings.scene.effects)) else { return }
+        let running = pendingEffects?.system ?? gpu.system
+        let kind = running.edit(to: next.system)
+        if benchmark != nil { print("Effects: the edit is \(kind == .values ? "run in place" : kind == .code ? "new code" : "a new scene")") }
+        guard kind != .rebuild else { pendingEffects = nil; return }
+        _ = next.system.continuing(gpu.system)
+        let key = settings.scene.effects
+        if kind == .values && pendingEffects == nil {
+            do {
+                try gpu.adopt(next.system, kernels: nil, device: device)
+            } catch {
+                print("Effects: the edit isn't run in place (\(error)); the scene is made again")
+                return
+            }
+            scene.adoptEffects(key, system: next.system, effects: next.effects, owners: next.owners, notes: next.notes)
+            particlesVersion += 1   // posed again, paused too
+        } else {
+            pendingEffects = next   // compiled while the running ones go on (the frame's particles step adopts it)
+            scene.adoptEffects(key, system: nil, effects: [], owners: [], notes: [])
+        }
+    }
+
+    /// The pending edit's system in the particles' place, with its code's `kernels`, replayed from the start.
+    private func adoptEffects(_ pending: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String]),
+                              kernels: ParticleKernels?) {
+        pendingEffects = nil
+        guard let gpu = particlesGPU else { return }
+        do {
+            try gpu.adopt(pending.system.continuing(gpu.system), kernels: kernels, device: device)
+        } catch {
+            print("Effects: the edit isn't run (\(error))")
+            return
+        }
+        scene.adoptEffects(scene.settings.effects, system: pending.system, effects: pending.effects, owners: pending.owners, notes: pending.notes)
+        scene.replayParticles()
+        particlesVersion += 1
+    }
+
+    /// What the VFX editor shows of the scene's effects (nil: it has none).
+    private func effectsStatus() -> VFXStatus? {
+        guard let gpu = particlesGPU else { return nil }
+        var s = VFXStatus()
+        let system = gpu.system
+        s.emitters = system.emitters.indices.map { i in
+            VFXStatus.Emitter(effect: scene.effectOwners[safe: i] ?? "", name: system.emitters[i].name,
+                              program: system.programs[i] != nil, capacity: system.emitters[i].capacity)
+        }
+        if let source = pendingEffects?.system.programSource ?? system.programSource {
+            s.failure = VFXCompiler.shared.failure(for: source, setup: vfxSetup)
+            s.compiling = s.failure == nil && (pendingEffects != nil || gpu.programKernels == nil)
+        }
+        s.compileMs = VFXCompiler.shared.lastMilliseconds
+        s.notes = scene.effectNotes
+        s.key = scene.settings.effects
+        return s
     }
 
     /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
@@ -1778,6 +1846,7 @@ final class Renderer: NSObject {
         }
         if scene.worldPlace != nil { scene.follow(camera.position) }
         setWorldLights()
+        if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
@@ -2500,6 +2569,19 @@ final class Renderer: NSObject {
         //    frame's TLAS), then this slot's records and boxes and the structures over them, which only the particle
         //    queries trace (not in the TLAS). A slot built at these steps already (time paused) keeps its structures.
         if let particlesGPU {
+            // The editor's edit whose code was compiling: in once it is ready.
+            if let pending = pendingEffects {
+                if let source = pending.system.programSource {
+                    if let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                                                                wait: benchmark != nil) {
+                        adoptEffects(pending, kernels: kernels)
+                    } else if VFXCompiler.shared.failure(for: source, setup: vfxSetup) != nil {
+                        pendingEffects = nil   // the old code keeps running; the editor says why
+                    }
+                } else {
+                    adoptEffects(pending, kernels: nil)
+                }
+            }
             // An effect's programs (VFXProgram): the VFX library's kernels once compiled (benchmarks wait for them), then
             // a replay from the start with them, so what is drawn doesn't depend on when the compile finished.
             if particlesGPU.hasPrograms, particlesGPU.programKernels == nil, let source = particlesGPU.system.programSource,
@@ -3625,6 +3707,7 @@ final class Renderer: NSObject {
         animTime = c.startTime
         previousAnimTime = c.startTime
         setWorldLights()   // the scene it starts with is the one its time of day asks for
+        if settings.scene.effects != scene.settings.effects { editEffects() }   // the VFX editor's edits, as the app runs them
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }
@@ -4347,6 +4430,7 @@ final class Renderer: NSObject {
         var status = RendererStatus(directMode: activeDirectMode, traversalCounters: traversalCounters,
                                     debugInfo: debugActive ? debugInfo() : nil)
         status.plantStats = scene.plantStats
+        status.effects = effectsStatus()
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }

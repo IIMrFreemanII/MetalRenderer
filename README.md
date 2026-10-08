@@ -244,6 +244,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | I, ⌘I | Show or hide the Debug window |
 | P | Show or hide the loading overlay (see "The loading overlay" below) |
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
+| V, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
 | F | Plant workshop: frame the plants (drag orbits about them, scroll zooms, W A S D pan) |
 | C (hold) | Plant workshop: the saved plant in place of the edited one |
 | ⌘Z, ⇧⌘Z | Undo, redo the plant editor's edits |
@@ -1517,6 +1518,43 @@ Every particle effect is a graph (`Sources/MetalRenderer/VFX`), as Unity's VFX G
   paused, 17.52 → 17.52 ms moving), and its frames and the showcase's match the old build's within what two runs of one
   build differ by (the GPU's atomics hand out pool slots in their own order, and each slot's light is averaged over frames).
 * **Limits** (so far): the meshes', trails' and haze's size and colour are the fixed emitter's (a curve's ends, a gradient's ends and middle); a Sample Field node isn't known in Output; children don't read their parents' attributes; every child of a parent takes all its events (the fixed emitters' rule).
+
+### The VFX editor
+
+The VFX Editor (V or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effects' graphs while they run.
+* **The canvas:** a dark grid with the effect's emitters as columns of their four contexts' blocks and its operator nodes,
+  each header coloured by its family. Pins are coloured by type (float, vector, colour, bool) and the wires are curves.
+  * Drag from an output to an input to wire them; drag a wired input to move its wire elsewhere or let it go.
+  * A wire goes only into a pin that takes one and never makes a loop; a second wire into a pin replaces the first.
+  * Drag a header to move a node or an emitter; drag on the grid to select a box (Shift adds).
+  * Scroll pans, pinch or ⌘-scroll zooms, F frames the graph; a minimap shows where the view is.
+  * Tab (or a right-click) opens a searchable list of nodes, or of blocks over a context; a context's + adds a block.
+  * Delete removes the selection; ⌘C / ⌘V copy and paste nodes with the wires between them; ⌘Z undoes (a drag is one step).
+* **The inspector:** the selected block's, node's or emitter's values, or, with nothing selected, the effect's own
+  (its origin, emitters, fields and colliders). It has sliders, number fields, colour wells with a brightness past
+  white, and curve and gradient editors of up to 8 keys: drag a key, double-click to add one, Option-click to remove one.
+* **Edits run as they are made** (`VFX/VFXLive.swift`, `Renderer.editEffects`). The edited effects go to the scenes as a
+  catalog's key (`SceneSettings.effects`), and the renderer takes the cheapest way:
+  * a value (a slider, a key, a colour) is written into the running system's buffers, and the particles go on as they are;
+  * a wire or a node needs new code: it compiles in the background while the old code runs, then is swapped in and
+    replayed from the start;
+  * a capacity, a renderer, shadows on or off, or an emitter more makes the scene again.
+  * Every scene that places an effect of that name runs the edit: the VFX stage, the particles scene, the showcase.
+    A scene's own copy of a built-in effect is moved from the edited one's origin to its place.
+* **Effects:** New (a spray of sparks), Duplicate, rename, Delete; a built-in effect's edits can go back to it as built in.
+  * Save writes `Assets/Effects/<name>.vfx.json`; Revert brings back the saved one.
+  * Unsaved edits are kept as a draft between launches; Copy as Swift puts the effect on the clipboard as Swift.
+  * Show on Stage puts the selected effect alone on the VFX stage, and the stage follows the selection.
+* **The status line** says where the effect runs (the stage, the scene, or not here), how many of its emitters run
+  generated code, the compile and its time, a compile's error, and what the lowering left out.
+* **Checked:**
+  * `VFXEditorTests`: undo steps, edits reaching the scenes, the wiring rules and types, adding, deleting, copying and
+    pasting, saving, reverting and Copy as Swift, which edits run in place, need code or make the scene again, and the
+    layout (no two boxes overlap, every wire's ends have places). With `VFX_EDITOR_PNG=<folder>` it draws the window.
+  * `METALRENDERER_BENCH=vfxedit`: on the GPU, a value edit runs in place (the same particles, brighter) and a wired
+    edit's code is swapped in, matching the same graph made from scratch within run-to-run noise.
+  * `METALRENDERER_VFX_SCRIPT=<folder>` drives the editor in the app, step by step, printing the renderer's report and
+    saving the window.
 
 ### Geometry debug views
 
