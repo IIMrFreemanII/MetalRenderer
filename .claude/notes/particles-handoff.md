@@ -37,6 +37,9 @@ Phase 2:
 - Heat haze over the fire: distortion particles (`ParticleEmitter.distortion`), their slots between the billboards'
   and the meshes' (`distortRange`, never boxes); `particleDistortDiscsKernel` then `particleDistortKernel` bend the
   frame's light before post (0.24 ms). `ParticleTests` 22.
+- The grinder's wheel faces the room with a steel bar on its rim; the sparks leave the contact along the rim, with a
+  glow of short-lived emissive dots there. No light at the contact: a fifth light takes the scene to the many-lights
+  path (about 2 ms more, and its particle light pass leaves lit particles only the sky's).
 
 ## To do on the M4 Max
 

@@ -1368,7 +1368,7 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
 
 GPU particle effects as modern engines run them (Niagara, VFX Graph), but **ray traced**: their particles show in the camera's view, in reflections and in shadows (`Particles.swift`, `ParticlesGPU.swift`, `Shaders/Particles.metal`, `Shaders/ParticleTrace.metal`), with the same steps on the CPU as their reference (`ParticlesCPU.swift`). The **Particles** scene (`METALRENDERER_SCENE=particles`, `Scene+Particles.swift`) is a dark studio with a glossy floor:
 * a brazier's fire (flames, and a flickering light in them), the heat haze over it and its smoke;
-* a grinder throwing sparks that bounce off the floor, a crate and whatever else they meet, leaving puffs of smoke where they die;
+* a grinder's wheel throwing sparks off its rim where a steel bar is pressed on it (a hot glow at the contact), sparks that bounce off the floor, a crate and whatever else they meet, leaving puffs of smoke where they die;
 * a swirl of magic motes in curl noise round a plinth, and wisps trailing glowing ribbons through it;
 * rain on the right under a lamp in the ceiling (a spot light): lit along its fall, splashing in the pool of light where it lands;
 * bursts of rubble on the left: stone chunks (mesh particles, real geometry) that tumble, bounce off the floor, the crate, the brazier and the plinth, and kick up dust that a little whirl of air carries.

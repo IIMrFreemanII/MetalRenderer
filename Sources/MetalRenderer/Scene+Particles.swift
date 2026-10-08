@@ -2,8 +2,8 @@ import Foundation
 import simd
 
 /// The particles scene (Particles.swift): GPU particle effects, ray traced, in a dark studio with a glossy floor that
-/// mirrors them. A brazier's fire (flames, a flickering light inside) and the smoke above it; a grinder throwing
-/// sparks that bounce off the floor, the crate (analytic colliders) and whatever else they meet (a ray a step), and
+/// mirrors them. A brazier's fire (flames, a flickering light inside) and the smoke above it; a grinder's wheel
+/// throwing sparks off its rim where a steel bar is pressed on it, that bounce off the floor, the crate (analytic colliders) and whatever else they meet (a ray a step), and
 /// leave puffs of smoke where they die; a swirl of magic motes in curl noise round a plinth; rain falling on the
 /// right under a lamp in the ceiling, lit along its fall and splashing in the pool of light where it lands; and bursts of rubble on the left, stone chunks (mesh particles: real geometry)
 /// that tumble, bounce and kick up dust. Over the fire, heat haze bends the view (distortion particles).
@@ -22,12 +22,14 @@ extension Scene {
         let wood = addPBRMaterial(baseColor: [0.55, 0.38, 0.22], metallic: 0, roughness: 0.6)
         let steel = addPBRMaterial(baseColor: [0.6, 0.62, 0.65], metallic: 1, roughness: 0.25)
 
-        // The brazier: a bowl on a stand.
+        // The brazier: a deep bowl on a stand. Deep enough to hold the flames' lower halves (a young flame's picture
+        // reaches 0.34 m below where it is born, on the rim): in a shallow one they hung in the air under it, seen
+        // from below and in the floor.
         let fire = SIMD3<Float>(-2.6, 0.95, -0.5)
-        let standShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.42, radius: 0.06, rounding: 0.01)))
-        let stand = addInstance(sdf: standShape, iron, translate([fire.x, 0.42, fire.z]))
-        let bowlShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.08, radius: 0.42, rounding: 0.04)))
-        let bowl = addInstance(sdf: bowlShape, iron, translate([fire.x, 0.88, fire.z]))
+        let standShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.3, radius: 0.06, rounding: 0.01)))
+        let stand = addInstance(sdf: standShape, iron, translate([fire.x, 0.3, fire.z]))
+        let bowlShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.19, radius: 0.44, rounding: 0.04)))
+        let bowl = addInstance(sdf: bowlShape, iron, translate([fire.x, 0.77, fire.z]))
         // The fire's light; the flames are what shows it (its proxy is a point: nothing to see).
         let hidden = addMesh((positions: [.zero, .zero, .zero], normals: [[0, 1, 0], [0, 1, 0], [0, 1, 0]], indices: [0, 1, 2]))
         addLight(.sphere(radius: 0.15), color: SIMD3<Float>(1.0, 0.55, 0.2) * 12, proxyMesh: hidden, motion: .scaleOnly) { t in
@@ -35,11 +37,21 @@ extension Scene {
             return LightPose(position: fire + SIMD3(0, 0.35, 0), scale: SIMD3(repeating: flicker))
         }
 
-        // The grinder's wheel, the crate the sparks hit, the plinth the motes swirl round.
+        // The grinder: its housing, and on a shaft in front of it the wheel, facing the room, a steel bar pressed on
+        // its rim. The wheel turns the other way to a clock as seen from the front (its top moving left; a real one
+        // turns too fast to show, so it stands still), and the sparks leave the rim at the bar along it.
         let grinder = SIMD3<Float>(1.4, 1.1, 0.6)
         addInstance(sdf: addSDFShape(SDFShape(.box(halfExtents: [0.25, 0.5, 0.2], rounding: 0.02))), steel, translate([grinder.x + 0.3, 0.5, grinder.z]))
-        addInstance(sdf: addSDFShape(SDFShape(.cylinder(halfHeight: 0.03, radius: 0.16, rounding: 0.005))), steel,
-                    translate([grinder.x + 0.15, grinder.y, grinder.z]) * rotate(.pi / 2, [0, 0, 1]))
+        let wheel = SIMD3<Float>(1.62, 1.12, 0.88), wheelRadius: Float = 0.16
+        addInstance(sdf: addSDFShape(SDFShape(.cylinder(halfHeight: 0.03, radius: wheelRadius, rounding: 0.005))), stone,
+                    translate(wheel) * rotate(.pi / 2, [1, 0, 0]))
+        addInstance(sdf: addSDFShape(SDFShape(.cylinder(halfHeight: 0.035, radius: 0.02))), steel,
+                    translate([wheel.x, wheel.y, 0.82]) * rotate(.pi / 2, [1, 0, 0]))
+        let at = Scene.degrees(66), out = SIMD3<Float>(cos(at), sin(at), 0)   // where the bar meets the rim, outward
+        let contact = wheel + out * wheelRadius
+        let bar = normalize(SIMD3<Float>(0.75, 0.66, 0))                       // held from the upper right
+        addInstance(sdf: addSDFShape(SDFShape(.box(halfExtents: [0.15, 0.012, 0.012], rounding: 0.003))), iron,
+                    translate(contact + bar * 0.148) * rotate(atan2(bar.y, bar.x), [0, 0, 1]))
         let crate = (center: SIMD3<Float>(-0.4, 0.3, 1.0), half: SIMD3<Float>(0.3, 0.3, 0.3))
         addInstance(sdf: addSDFShape(SDFShape(.box(halfExtents: crate.half, rounding: 0.02))), wood, translate(crate.center))
         let plinth = SIMD3<Float>(0, 0, -2.6)
@@ -63,7 +75,7 @@ extension Scene {
         }
 
         var flames = ParticleEmitter("flames", capacity: 200, at: fire + SIMD3(0, 0.02, 0))
-        flames.shape = .disc(radius: 0.26)
+        flames.shape = .disc(radius: 0.22)
         flames.rate = 180
         flames.lifetime = 0.35...0.7
         flames.speed = 0.3...0.7
@@ -87,6 +99,21 @@ extension Scene {
         flames.orientation = .axis([0, 1, 0])
         flames.soft = 0.15
         flames.castsShadows = false
+
+        // The glow where the bar grinds: hot points that flare and go, many at once. (No light there: a fifth would
+        // take the scene to the many-lights path, whose light pass leaves lit particles only the sky's.)
+        var glow = ParticleEmitter("grind glow", capacity: 16, at: contact + out * 0.005 + SIMD3(0, 0, 0.02))
+        glow.shape = .sphere(radius: 0.008)
+        glow.rate = 90
+        glow.lifetime = 0.05...0.12
+        glow.gravity = 0
+        glow.size = (0.06, 0.03)
+        glow.sizeJitter = 0.4
+        glow.colors = ([1, 0.9, 0.7, 1], [1, 0.65, 0.3, 0.8], [1, 0.4, 0.1, 0])
+        glow.emission = 60
+        glow.atlas = .dot
+        glow.soft = 0.01
+        glow.castsShadows = false
 
         // The hot air over the fire: never drawn, it bends the view through it (ParticleEmitter.distortion), strongest
         // just over the flames and gone as it rises and cools.
@@ -132,11 +159,12 @@ extension Scene {
         smoke.soft = 0.4
         smoke.shadowDensity = 0.12
 
-        var sparks = ParticleEmitter("sparks", capacity: 1200, at: grinder)
+        // Off the wheel's rim at the bar, along the rim's way there (a little outward and toward the room).
+        var sparks = ParticleEmitter("sparks", capacity: 1200, at: contact + out * 0.01)
         sparks.rate = 260
         sparks.burst = (2, 300, 3, 0)
-        sparks.direction = normalize(SIMD3<Float>(-1, 0.45, 0.3))
-        sparks.spread = 0.35
+        sparks.direction = normalize(SIMD3<Float>(-out.y, out.x, 0) + out * 0.15 + SIMD3(0, 0, 0.15))
+        sparks.spread = 0.22
         sparks.lifetime = 0.7...1.5
         sparks.speed = 3...6
         sparks.drag = 0.3
@@ -279,7 +307,7 @@ extension Scene {
         dust.castsShadows = false
         dust.field = (index: 0, strength: 1.5, follow: true)   // the air the rubble stirs: a little whirl rising
 
-        addParticles(ParticleSystem(emitters: [flames, smoke, sparks, puffs, motes, rain, splashes, rubble, dust, wisps, heat],
+        addParticles(ParticleSystem(emitters: [flames, smoke, sparks, puffs, motes, rain, splashes, rubble, dust, wisps, heat, glow],
                                     colliders: [.plane(normal: [0, 1, 0], point: [0, 0.001, 0]), .box(center: crate.center, halfExtents: crate.half),
                                                 .shape(instance: bowl, shape: bowlShape), .shape(instance: stand, shape: standShape),
                                                 .shape(instance: plinthInstance, shape: plinthShape)],
