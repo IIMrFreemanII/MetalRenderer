@@ -10,6 +10,8 @@ struct RendererStatus {
     var debugInfo: DebugInfo?
     /// The GPU pass timings averaged since the last tick, if passes are being profiled.
     var passTimes: [(name: String, ms: Double)]?
+    /// The plant workshop's plant: what it costs (Scene.plantStats).
+    var plantStats: PlantStats?
 }
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the
@@ -42,6 +44,9 @@ final class RendererController: InputHandler {
     var onTogglePanel: (() -> Void)?            // Tab key
     var onToggleDebug: (() -> Void)?            // I key
     var onToggleLoading: (() -> Void)?          // P key
+    var onTogglePlants: (() -> Void)?           // K key
+    /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
+    var onCompare: ((Bool) -> Void)?
     /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
     let loadActivity: LoadActivity
 
@@ -129,6 +134,9 @@ final class RendererController: InputHandler {
     func addModels(_ urls: [URL]) { renderer.perform { $0.addModels(urls) } }
 
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
+    /// The plant workshop's camera at its plants again (F).
+    func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
+
     func setTraversalCounters(_ on: Bool, then done: @escaping () -> Void) {
         renderer.perform { [weak self] r in
             r.setTraversalCounters(on) {
@@ -145,9 +153,15 @@ final class RendererController: InputHandler {
 
     func keyDown(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+        // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
+        if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" {
-            if !event.isARepeat { (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : onToggleLoading)?() }
+        if key == "\t" || key == "i" || key == "p" || key == "k" {
+            if !event.isARepeat { (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : onTogglePlants)?() }
+            return
+        }
+        if key == "c", settings.scene.kind == .plants {
+            if !event.isARepeat { onCompare?(true) }
             return
         }
         let isRepeat = event.isARepeat
@@ -156,6 +170,7 @@ final class RendererController: InputHandler {
 
     func keyUp(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+        if key == "c", settings.scene.kind == .plants { onCompare?(false) }
         renderer.perform { $0.keyUp(key) }
     }
 

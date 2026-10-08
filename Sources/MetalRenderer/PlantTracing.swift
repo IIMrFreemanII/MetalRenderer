@@ -165,7 +165,8 @@ final class PlantTracing {
         for assembly in scene.assemblies {
             bases.append(records.count)
             counts.append(assembly.parts.count)
-            keeps.append(!assembly.rigid && !assembly.evergreen && assembly.parts.contains { $0.leafCount > 0 } ? PlantTracing.keepLevels.count : 1)
+            keeps.append(!assembly.rigid && !assembly.evergreen && !scene.remadeOften && assembly.parts.contains { $0.leafCount > 0 }
+                         ? PlantTracing.keepLevels.count : 1)
             for part in assembly.parts {
                 let inv = part.transform.inverse
                 records.append(RTPart(row0: SIMD4(inv[0][0], inv[1][0], inv[2][0], inv[3][0]),
@@ -244,7 +245,7 @@ final class PlantTracing {
             cmd.commit()
             cmd.waitUntilCompleted()
             // They never change: compacted, before any descriptor names them.
-            built = try SceneBuffers.copyAndCompact(built, device: device, queue: queue)
+            if !scene.remadeOften { built = try SceneBuffers.copyAndCompact(built, device: device, queue: queue) }
         }
         guard built.count == jobs.count, let pad = built.last else { throw RendererError.resourceCreation("the plants' structures") }
         for (k, job) in jobs.enumerated().dropLast() { prefixes[job.key] = built[k] }
@@ -377,7 +378,7 @@ final class PlantTracing {
         if setCount == 1 {
             sets[0] = try SceneBuffers.copyAndCompact(sets[0], device: device, queue: queue)
         }
-        if setCount > 1 { try buildRest(device: device, queue: queue) }
+        if setCount > 1 { try buildRest(device: device, queue: queue, compact: !scene.remadeOften) }
         print(String(format: "Plants: %d assemblies, %d parts, %d variants (%d structures), %.1f MB of variants",
                      scene.assemblies.count, records.count, variantCount, variantCount * sets.count,
                      Double(sets.joined().reduce(0) { $0 + $1.size } + rest.reduce(0) { $0 + $1.size }
@@ -386,7 +387,7 @@ final class PlantTracing {
 
     /// The variants at rest (`rest`), from the first set's descriptors while they are still at rest: each share kept's
     /// phase 0 (the phases differ only once posed).
-    private func buildRest(device: MTLDevice, queue: MTLCommandQueue) throws {
+    private func buildRest(device: MTLDevice, queue: MTLCommandQueue, compact: Bool) throws {
         var made: [MTLInstanceAccelerationStructureDescriptor] = [], sizes: [MTLAccelerationStructureSizes] = []
         for a in variantBase.indices {
             restBase.append(made.count)
@@ -415,7 +416,7 @@ final class PlantTracing {
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
-        rest = try SceneBuffers.copyAndCompact(rest, device: device, queue: queue)
+        if compact { rest = try SceneBuffers.copyAndCompact(rest, device: device, queue: queue) }
     }
 
     /// The set a frame slot traces: its own, or the one of a still scene.

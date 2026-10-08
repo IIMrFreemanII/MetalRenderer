@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791459135.1074183,
-    "seen": 1791459268.6462028,
-    "ast_hash": "aea31fe52f7b360ffc0dfc0b7f8965cd",
+    "mtime": 1791459361.531756,
+    "seen": 1791459558.2637591,
+    "ast_hash": "4dd158a926a2a89269b0ad4733a10884",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {

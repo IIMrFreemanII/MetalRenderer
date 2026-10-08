@@ -343,6 +343,8 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // tray, boxes floating and sinking in them, a paddle in each to stir it
     case particles          // GPU particle effects (Particles.swift), ray traced: fire and smoke, sparks that bounce and
                             // smoke, magic motes in curl noise, rain that splashes
+    case plants             // the plant workshop (Scene+Plants.swift): one species' plants on a lawn under the sun, as the
+                            // plant editor shapes them (`SceneSettings.plants`)
 
     var title: String {
         switch self {
@@ -372,6 +374,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .muscles: return "Muscles and skin"
         case .fluids: return "Fluids"
         case .particles: return "Particles"
+        case .plants: return "Plant workshop"
         }
     }
 
@@ -393,9 +396,9 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase }   // the showcase's frames its model
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || self == .plants }   // these frame what they hold
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
-    var hasPlants: Bool { self == .forest || self == .valley || isWorld }
+    var hasPlants: Bool { self == .forest || self == .valley || isWorld || self == .plants }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
     var hasForest: Bool { self == .forest || isWorld }
 }
@@ -657,6 +660,11 @@ struct SceneSettings: Equatable, Codable {
     /// The physics scene: its bodies and how they are simulated.
     var physics = PhysicsSettings()
     var particles = ParticleSettings()
+    /// The plant workshop: what it shows.
+    var plants = PlantSceneSettings()
+    /// The species the plants are grown from: a key of PlantCatalog's registry, which the plant editor sets as it
+    /// edits; "" the saved species (Assets/Plants), "builtin" the built-in ones. Session state, not a preference.
+    var plantCatalog = ""
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -668,6 +676,13 @@ struct SceneSettings: Equatable, Codable {
     static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 
+    /// The plant workshop both, showing the same species the same way (only the species' definitions and which of its
+    /// plants differ): what an edit changes.
+    func isSameWorkshop(as other: SceneSettings) -> Bool {
+        kind == .plants && other.kind == .plants && plants.layout == other.plants.layout && plants.view == other.plants.view
+            && plants.species == other.plants.species && leafCards == other.leafCards && bakedPlants == other.bakedPlants
+    }
+
     /// The same open world, whatever tile the scene is made around, wherever its origin is and whatever the time of day.
     func isSameWorld(as other: SceneSettings) -> Bool {
         var a = self, b = other
@@ -675,6 +690,39 @@ struct SceneSettings: Equatable, Codable {
         (a.worldLit, b.worldLit) = (false, false)
         return kind.isWorld && a == b
     }
+}
+
+/// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
+struct PlantSceneSettings: Equatable, Codable {
+    /// The species' id (PlantCatalog), and the age and seeded variant of the one plant shown.
+    var species = "oak"
+    var age = Foliage.Age.mature
+    var variant = 0
+    /// What the variants are grown from: the library's seed (SceneSettings.seed), so the workshop's oak 2 at seed 1 is
+    /// the forest's.
+    var seed = 1
+    var layout = Layout.single
+    var view = View.plant
+    /// Registry keys (PlantCatalog.register), session state: the editor's variations of the species to show beside it
+    /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the one plant
+        case lineup         // every age (rows) and variant (columns)
+        case mutate         // the plant and the editor's variations of it, in a row
+
+        var title: String { ["One plant", "Ages and variants", "Variations"][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case plant
+        case skeleton       // the stems as thin lines, a colour to a level; no leaves
+
+        var title: String { ["Plant", "Skeleton"][rawValue] }
+    }
+
+    static let variantRange = 0...7
 }
 
 /// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
@@ -756,7 +804,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -876,6 +924,8 @@ struct SkySettings: Equatable, Codable {
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
+        case .plants:   // a few high clouds, no shadows of them: the plant is what is looked at
+            s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }
         if let o = override {
             switch o {
@@ -961,6 +1011,7 @@ struct FoliageSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FoliageSettings {
         var f = FoliageSettings()
         if kind.hasPlants { f.wind = 0.4 }
+        if kind == .plants { f.lod = 0 }   // the workshop's plants are never voxels
         return f
     }
 }

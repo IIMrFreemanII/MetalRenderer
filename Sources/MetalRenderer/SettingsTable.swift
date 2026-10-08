@@ -84,6 +84,9 @@ extension PhysicsSettings.Body: EnvNamed {}
 extension PhysicsSettings.Liquids: EnvNamed {}
 extension PhysicsSettings.Solver: EnvNamed {}
 extension PhysicsSettings.Solvers: EnvNamed {}
+extension Foliage.Age: EnvNamed {}
+extension PlantSceneSettings.Layout: EnvNamed {}
+extension PlantSceneSettings.View: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -322,6 +325,7 @@ enum SettingsTable {
         let assemblies: When = { !$0.scene.bakedPlants }
         let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
+        let workshop: When = { $0.scene.kind == .plants }
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
@@ -401,6 +405,12 @@ enum SettingsTable {
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
+            S.value(\.scene.plants.species).env(.scene, "species"),
+            S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
+            S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),
+            S.slider("Workshop seed", \.scene.plants.seed, SceneSettings.seedRange, live: false).env(.scene, "plantseed").when(workshop),
+            S.popup("Layout", \.scene.plants.layout, titled(\.title)).env(.scene, "layout").when(workshop),
+            S.popup("View", \.scene.plants.view, titled(\.title)).env(.scene, "view").when(workshop),
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
             S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),

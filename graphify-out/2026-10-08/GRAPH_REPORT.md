@@ -1,7 +1,7 @@
 # Graph Report - init-branch-94ae07  (2026-10-08)
 
 ## Corpus Check
-- 230 files · ~1,270,312 words
+- 230 files · ~1,270,322 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 28 file(s) not represented in the graph (top: .fbx 12, .glb 11, (none) 4)
 

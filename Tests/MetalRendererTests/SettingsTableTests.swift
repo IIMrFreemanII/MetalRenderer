@@ -124,7 +124,8 @@ final class SettingsTableTests: XCTestCase {
     /// to RenderSettings without a line in the table fails here.
     func testEverySettingRoundTrips() {
         // Session state, like the camera; and what the renderer sets by the time of day.
-        let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit"]
+        let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
+                                         "scene.plants.compare"]
         let changes = singleChanges()
         XCTAssertGreaterThan(changes.count, 120)
         for (path, s) in changes where !unexported.contains(path) {

@@ -13210,7 +13210,7 @@
       "file_type": "code",
       "norm_label": ".city()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1466"
+      "source_location": "L1465"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_configs",
@@ -13234,7 +13234,7 @@
       "file_type": "code",
       "norm_label": ".crowd()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1450"
+      "source_location": "L1449"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_debugviews",
@@ -13246,7 +13246,7 @@
       "file_type": "code",
       "norm_label": ".debugviews()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1510"
+      "source_location": "L1509"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_denoise",
@@ -13282,7 +13282,7 @@
       "file_type": "code",
       "norm_label": ".fluidsdemo()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1158"
+      "source_location": "L1157"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_fog",
@@ -13306,7 +13306,7 @@
       "file_type": "code",
       "norm_label": ".fogcheck()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1413"
+      "source_location": "L1412"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_forest",
@@ -13438,7 +13438,7 @@
       "file_type": "code",
       "norm_label": ".lightcheck()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1385"
+      "source_location": "L1384"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_lumen",
@@ -13474,7 +13474,7 @@
       "file_type": "code",
       "norm_label": ".muscles()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1188"
+      "source_location": "L1187"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_musclesdemo",
@@ -13486,7 +13486,7 @@
       "file_type": "code",
       "norm_label": ".musclesdemo()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1242"
+      "source_location": "L1241"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_noise",
@@ -13618,7 +13618,7 @@
       "file_type": "code",
       "norm_label": ".ragdollsdemo()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1302"
+      "source_location": "L1301"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_raster",
@@ -13750,7 +13750,7 @@
       "file_type": "code",
       "norm_label": ".shapesdemo()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1327"
+      "source_location": "L1326"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_shot",
@@ -13810,7 +13810,7 @@
       "file_type": "code",
       "norm_label": ".skycheck()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1427"
+      "source_location": "L1426"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_soft",
@@ -13834,7 +13834,7 @@
       "file_type": "code",
       "norm_label": ".softdemo()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1277"
+      "source_location": "L1276"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_speccheck",
@@ -13846,7 +13846,7 @@
       "file_type": "code",
       "norm_label": ".speccheck()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1397"
+      "source_location": "L1396"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_standard",
@@ -13882,7 +13882,7 @@
       "file_type": "code",
       "norm_label": ".stressdemo()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1357"
+      "source_location": "L1356"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_stresshall",
@@ -13918,7 +13918,7 @@
       "file_type": "code",
       "norm_label": ".vgdebug()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1492"
+      "source_location": "L1491"
     },
     {
       "id": "sources_metalrenderer_benchmark_modes_benchmark_vsm",
@@ -16710,7 +16710,7 @@
       "file_type": "code",
       "norm_label": ".look()",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1179"
+      "source_location": "L1178"
     },
     {
       "id": "sources_metalrenderer_mathutil_camera_viewtoclip",
@@ -86955,7 +86955,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1521",
+      "source_location": "L1520",
       "weight": 1.0
     },
     {
@@ -86967,7 +86967,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1522",
+      "source_location": "L1521",
       "weight": 1.0
     },
     {
@@ -87003,7 +87003,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1414",
+      "source_location": "L1413",
       "weight": 1.0
     },
     {
@@ -87159,7 +87159,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1181",
+      "source_location": "L1180",
       "weight": 1.0
     },
     {
@@ -87219,7 +87219,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1198",
+      "source_location": "L1197",
       "weight": 1.0
     },
     {
@@ -87411,7 +87411,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1435",
+      "source_location": "L1434",
       "weight": 1.0
     },
     {
@@ -87423,7 +87423,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1398",
+      "source_location": "L1397",
       "weight": 1.0
     },
     {
@@ -87435,7 +87435,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1399",
+      "source_location": "L1398",
       "weight": 1.0
     },
     {
@@ -87447,7 +87447,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1402",
+      "source_location": "L1401",
       "weight": 1.0
     },
     {
@@ -130395,7 +130395,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1477",
+      "source_location": "L1476",
       "weight": 1.0
     },
     {
@@ -130407,7 +130407,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1515",
+      "source_location": "L1514",
       "weight": 1.0
     },
     {
@@ -130419,7 +130419,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1172",
+      "source_location": "L1171",
       "weight": 1.0
     },
     {
@@ -130455,7 +130455,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1264",
+      "source_location": "L1263",
       "weight": 1.0
     },
     {
@@ -130467,7 +130467,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1148",
+      "source_location": "L1147",
       "weight": 1.0
     },
     {
@@ -130491,7 +130491,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1316",
+      "source_location": "L1315",
       "weight": 1.0
     },
     {
@@ -130515,7 +130515,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1291",
+      "source_location": "L1290",
       "weight": 1.0
     },
     {
@@ -130527,7 +130527,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1497",
+      "source_location": "L1496",
       "weight": 1.0
     },
     {
@@ -163719,7 +163719,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1179",
+      "source_location": "L1178",
       "weight": 1.0
     },
     {
@@ -177231,7 +177231,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1179",
+      "source_location": "L1178",
       "weight": 1.0
     },
     {
@@ -228171,7 +228171,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1179",
+      "source_location": "L1178",
       "weight": 1.0
     },
     {
@@ -237033,7 +237033,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1466",
+      "source_location": "L1465",
       "weight": 1.0
     },
     {
@@ -237057,7 +237057,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1450",
+      "source_location": "L1449",
       "weight": 1.0
     },
     {
@@ -237069,7 +237069,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1510",
+      "source_location": "L1509",
       "weight": 1.0
     },
     {
@@ -237105,7 +237105,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1158",
+      "source_location": "L1157",
       "weight": 1.0
     },
     {
@@ -237129,7 +237129,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1413",
+      "source_location": "L1412",
       "weight": 1.0
     },
     {
@@ -237249,7 +237249,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1385",
+      "source_location": "L1384",
       "weight": 1.0
     },
     {
@@ -237297,7 +237297,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1188",
+      "source_location": "L1187",
       "weight": 1.0
     },
     {
@@ -237309,7 +237309,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1242",
+      "source_location": "L1241",
       "weight": 1.0
     },
     {
@@ -237441,7 +237441,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1302",
+      "source_location": "L1301",
       "weight": 1.0
     },
     {
@@ -237573,7 +237573,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1327",
+      "source_location": "L1326",
       "weight": 1.0
     },
     {
@@ -237633,7 +237633,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1427",
+      "source_location": "L1426",
       "weight": 1.0
     },
     {
@@ -237657,7 +237657,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1277",
+      "source_location": "L1276",
       "weight": 1.0
     },
     {
@@ -237669,7 +237669,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1397",
+      "source_location": "L1396",
       "weight": 1.0
     },
     {
@@ -237705,7 +237705,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1357",
+      "source_location": "L1356",
       "weight": 1.0
     },
     {
@@ -237729,7 +237729,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1492",
+      "source_location": "L1491",
       "weight": 1.0
     },
     {
@@ -272847,7 +272847,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1158",
+      "source_location": "L1157",
       "weight": 1.0
     },
     {
@@ -272858,7 +272858,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1179",
+      "source_location": "L1178",
       "weight": 1.0
     },
     {
@@ -272880,7 +272880,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1188",
+      "source_location": "L1187",
       "weight": 1.0
     },
     {
@@ -272891,7 +272891,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1242",
+      "source_location": "L1241",
       "weight": 1.0
     },
     {
@@ -272902,7 +272902,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1277",
+      "source_location": "L1276",
       "weight": 1.0
     },
     {
@@ -272924,7 +272924,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1302",
+      "source_location": "L1301",
       "weight": 1.0
     },
     {
@@ -272935,7 +272935,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1327",
+      "source_location": "L1326",
       "weight": 1.0
     },
     {
@@ -272946,7 +272946,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1357",
+      "source_location": "L1356",
       "weight": 1.0
     },
     {
@@ -272957,7 +272957,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1385",
+      "source_location": "L1384",
       "weight": 1.0
     },
     {
@@ -272968,7 +272968,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1397",
+      "source_location": "L1396",
       "weight": 1.0
     },
     {
@@ -272979,7 +272979,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1413",
+      "source_location": "L1412",
       "weight": 1.0
     },
     {
@@ -272990,7 +272990,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1427",
+      "source_location": "L1426",
       "weight": 1.0
     },
     {
@@ -273012,7 +273012,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1450",
+      "source_location": "L1449",
       "weight": 1.0
     },
     {
@@ -273023,7 +273023,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1466",
+      "source_location": "L1465",
       "weight": 1.0
     },
     {
@@ -273034,7 +273034,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1492",
+      "source_location": "L1491",
       "weight": 1.0
     },
     {
@@ -273045,7 +273045,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1510",
+      "source_location": "L1509",
       "weight": 1.0
     },
     {
@@ -300000,7 +300000,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1417",
+      "source_location": "L1416",
       "weight": 1.0
     },
     {
@@ -300084,7 +300084,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1191",
+      "source_location": "L1190",
       "weight": 1.0
     },
     {
@@ -300096,7 +300096,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1205",
+      "source_location": "L1204",
       "weight": 1.0
     },
     {
@@ -300264,7 +300264,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1436",
+      "source_location": "L1435",
       "weight": 1.0
     },
     {
@@ -300288,7 +300288,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1401",
+      "source_location": "L1400",
       "weight": 1.0
     },
     {
@@ -300300,7 +300300,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1402",
+      "source_location": "L1401",
       "weight": 1.0
     },
     {
@@ -312864,7 +312864,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1162",
+      "source_location": "L1161",
       "weight": 1.0
     },
     {
@@ -312900,7 +312900,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1246",
+      "source_location": "L1245",
       "weight": 1.0
     },
     {
@@ -312960,7 +312960,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1306",
+      "source_location": "L1305",
       "weight": 1.0
     },
     {
@@ -313008,7 +313008,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1331",
+      "source_location": "L1330",
       "weight": 1.0
     },
     {
@@ -313056,7 +313056,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1281",
+      "source_location": "L1280",
       "weight": 1.0
     },
     {
@@ -313068,7 +313068,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1400",
+      "source_location": "L1399",
       "weight": 1.0
     },
     {
@@ -313080,7 +313080,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Benchmark+Modes.swift",
-      "source_location": "L1361",
+      "source_location": "L1360",
       "weight": 1.0
     },
     {
