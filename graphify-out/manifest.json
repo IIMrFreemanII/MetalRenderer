@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark.swift": {
-    "mtime": 1791459932.8014429,
-    "seen": 1791465500.218229,
-    "ast_hash": "d055217c302157db2f671e2f4cec24ad",
+    "mtime": 1791478269.1549287,
+    "seen": 1791481810.241931,
+    "ast_hash": "15b00d6eb3db27b0f051d50932920764",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BlueNoise.swift": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791464312.1155238,
-    "seen": 1791465500.2183208,
-    "ast_hash": "70d0444b080866c9170cab63b976cac9",
+    "mtime": 1791478172.528229,
+    "seen": 1791481810.242031,
+    "ast_hash": "fad1b6c6f56e1ea259ffcab7e1af81ef",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -444,15 +444,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791464717.3856814,
-    "seen": 1791465500.2182279,
-    "ast_hash": "f9a3755ae01b76b31e6872c09027aa9f",
+    "mtime": 1791478351.9550462,
+    "seen": 1791481810.24193,
+    "ast_hash": "a161fcdcc5289fd354d88848a57744fd",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
-    "mtime": 1791442236.374859,
-    "seen": 1791448639.676639,
-    "ast_hash": "3a5aaddc38b15340853a164937cdd86b",
+    "mtime": 1791479132.768158,
+    "seen": 1791481810.2421172,
+    "ast_hash": "477440a94b4c7ceabea4677b9625e9c0",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/KernelVariantsTests.swift": {
@@ -630,9 +630,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/SKILL.md": {
-    "mtime": 1791465387.750271,
-    "seen": 1791465500.218461,
-    "ast_hash": "dbc1928e5c4c5fed7acec9f9ea48e266",
+    "mtime": 1791479970.6898062,
+    "seen": 1791481810.242178,
+    "ast_hash": "1c5edccf81019de1dbf2505ae51f8c35",
     "semantic_hash": ""
   },
   ".claude/skills/refactor/scripts/baseline.sh": {
@@ -1668,9 +1668,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/InteriorControls.swift": {
-    "mtime": 1791469807.5716388,
-    "seen": 1791473171.706433,
-    "ast_hash": "510df46d5d6d749958253b88209ea79d",
+    "mtime": 1791478161.5811293,
+    "seen": 1791481810.241976,
+    "ast_hash": "1d2267eea3e441549e180dec6d24cfb1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/InteriorLifts.swift": {
@@ -1743,6 +1743,12 @@
     "mtime": 1791453950.7990637,
     "seen": 1791465500.218459,
     "ast_hash": "b07bd632cc110ff9f082b27ec7b28847",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/Benchmark+BuildingsDemo.swift": {
+    "mtime": 1791480709.4683194,
+    "seen": 1791481810.2419279,
+    "ast_hash": "10b7988c88f88356ad437505662708fc",
     "semantic_hash": ""
   }
 }

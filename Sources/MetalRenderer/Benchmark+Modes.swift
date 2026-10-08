@@ -20,7 +20,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "plants": plants, "buildings": buildings,
+        "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -377,6 +377,14 @@ extension Benchmark {
 
     /// The open world with the building nearest where it starts walkable: from inside it (its tile without its shell).
     private static func worldInterior(_ inside: (BuildingSpec, RoomType, Int, Bool, float4x4) -> Camera) -> [Config] {
+        guard let (scene, spec, transform) = worldInteriorLot() else { return [] }
+        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            .from(inside(spec, .living, 1, false, transform))]
+    }
+
+    /// The open world's scene with the building (3 floors or more) nearest where the world starts walkable, that
+    /// building's spec (with its interior), and its lot's place in the scene.
+    static func worldInteriorLot() -> (scene: SceneSettings, spec: BuildingSpec, transform: float4x4)? {
         var scene = SceneSettings(kind: .world)
         let world = World(seed: UInt64(max(scene.seed, 0)))
         let side = Double(World.tileSize), begin = world.start.place
@@ -396,14 +404,12 @@ extension Benchmark {
                 }
             }
         }
-        guard let (_, ref, lot, city) = best else { return [] }
+        guard let (_, ref, lot, city) = best else { return nil }
         scene.interior = ref.key
         var spec = BuildingSpec(lot: lot, city: scene.city, night: true, catalog: .builtIn)
         spec.interior = true
         let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
-        let transform = translate([c.x, city.level, c.y]) * lot.transform
-        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
-            .from(inside(spec, .living, 1, false, transform))]
+        return (scene, spec, translate([c.x, city.level, c.y]) * lot.transform)
     }
 
     /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:

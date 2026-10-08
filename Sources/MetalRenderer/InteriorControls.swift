@@ -144,6 +144,15 @@ final class InteriorControls {
         }
     }
 
+    /// The switches within `reach` of `point` turned on or off (and their lights).
+    func setSwitches(near point: SIMD3<Float>, within reach: Float, on: Bool) {
+        for i in switches.indices where simd_distance(switches[i].position, point) < reach && switches[i].on != on {
+            switches[i].on = on
+            for l in switches[i].lights { lights[l] = on ? 1 : 0 }
+            moving = true
+        }
+    }
+
     /// The loose furniture as the walker meets it: each body's box (turned as it lies) as the box round it.
     func propObstacles(_ physics: PhysicsWorld?) -> [Walker.Moving] {
         guard let physics, !props.isEmpty else { return [] }
