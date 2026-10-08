@@ -26,6 +26,9 @@ enum SettingsStore {
         s.scene.extraModels = []
         s.scene.plantCatalog = ""
         s.scene.buildingCatalog = ""
+        s.scene.characterCatalog = ""
+        s.scene.characterWorkshop.mutants = ""
+        s.scene.characterWorkshop.compare = ""
         s.scene.interior = nil
         s.scene.buildings.mutants = ""
         s.scene.buildings.compare = ""

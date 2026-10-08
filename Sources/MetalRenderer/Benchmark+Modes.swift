@@ -20,7 +20,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "plants": plants, "buildings": buildings,
+        "plants": plants, "buildings": buildings, "characters": characters, "charactercrowd": characterCrowd,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -409,6 +409,48 @@ extension Benchmark {
     /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:
     /// an oak, a birch's ages and variants, a conifer's skeleton, a bush, ferns, grass, and a species of a catalog of
     /// its own (a willow: a birch whose twigs hang). `METALRENDERER_PLANTS=builtin` leaves out what Assets/Plants holds.
+    /// The character workshop: each built-in character in the A pose, the first's face close, everyone side by side,
+    /// and the first walking and in a clip of the library.
+    private static func characters() -> [Config] {
+        func shown(_ name: String, _ change: (inout CharacterSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .characters)
+            scene.characterCatalog = "builtin"
+            change(&scene.characterWorkshop)
+            return Config("characters \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+        }
+        return BuiltInCharacters.all.map { def in shown(def.id) { $0.character = def.id } } + [
+            shown("man face") { $0.view = .face },
+            shown("woman face") { $0.character = "woman"; $0.view = .face },
+            shown("everyone") { $0.layout = .lineup },
+            shown("man t pose") { $0.pose = .tPose },
+            shown("man walking") { $0.pose = .walk },
+            shown("woman dancing") { $0.character = "woman"; $0.pose = .clip; $0.clip = "Hip Hop Dancing" },
+            viewed(shown("man side") { $0.pose = .tPose }, look(from: [3.2, 1.1, 0], at: [0, 1.0, 0])),
+            viewed(shown("man back") { $0.pose = .tPose }, look(from: [0.3, 1.3, -3.4], at: [0, 1.0, 0])),
+            viewed(shown("man hand") { $0.pose = .tPose }, look(from: [0.75, 1.75, 0.35], at: [0.75, 1.42, 0])),
+            viewed(shown("man hand below") { $0.pose = .tPose }, look(from: [0.72, 1.1, 0.25], at: [0.75, 1.42, 0])),
+            viewed(shown("woman waist") { $0.character = "woman"; $0.pose = .tPose }, look(from: [0.55, 1.15, 0.75], at: [0.1, 1.08, 0])),
+            viewed(shown("woman shoulder") { $0.character = "woman"; $0.pose = .tPose }, look(from: [0.35, 1.75, 0.6], at: [0.1, 1.42, 0])),
+        ]
+    }
+
+    /// `config` seen from `camera`.
+    static func viewed(_ config: Config, _ camera: Camera) -> Config {
+        var c = config
+        c.camera = camera
+        return c
+    }
+
+    /// A camera at `from` looking at `at`.
+    static func look(from: SIMD3<Float>, at: SIMD3<Float>) -> Camera {
+        let d = simd_normalize(at - from)
+        var c = Camera()
+        c.position = from
+        c.yaw = atan2(d.x, -d.z)
+        c.pitch = asin(d.y)
+        return c
+    }
+
     private static func plants() -> [Config] {
         func shown(_ name: String, _ change: (inout PlantSceneSettings) -> Void = { _ in }) -> Config {
             var scene = SceneSettings(kind: .plants)
@@ -1523,6 +1565,17 @@ extension Benchmark {
     /// structures), against the number of characters on them ("tlas", "trace", and the CPU's share in "cpu") and
     /// against the poses' level of detail. Then the frames to look at: a still with the frame before it, and the
     /// camera moving through the crowd. `METALRENDERER_CROWD_CHECK=1` compares what the GPU skinned with the CPU's.
+    /// The crowd of generated people (SceneSettings.crowdBodies): the catalog's built-in characters on the square.
+    private static func characterCrowd() -> [Config] {
+        func square(_ name: String, characters: Int, poses: Int = 64, detail: Int = 3) -> Config {
+            var scene = SceneSettings(kind: .crowd, characters: characters, poses: poses, detail: detail, crowdBodies: .generated)
+            scene.characterCatalog = "builtin"
+            return Config("generated crowd \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+        }
+        return [square("256", characters: 256), square("2048", characters: 2048), square("2048 detail 1", characters: 2048, detail: 1),
+                square("still", characters: 2048).still(previous: true)]
+    }
+
     private static func crowd() -> [Config] {
         func square(_ name: String, characters: Int = 2048, poses: Int = 64, detail: Int = 3) -> Config {
             Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades,

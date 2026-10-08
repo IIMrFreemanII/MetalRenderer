@@ -878,6 +878,59 @@ buildings are made in, and single buildings' own floor plans; the **Building wor
   are coarser than a partition (radiance cascades, ReSTIR GI or path tracing are the methods for interiors);
   hand-edited plans keep rooms rectangular.
 
+### The character editor
+
+The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes people. The **Character workshop** scene
+(`METALRENDERER_SCENE=people`, `Scene+Characters.swift`) shows what it edits; entering the workshop opens the editor.
+
+* **A character is data** (`CharacterDNA.swift`): a seed, six macro sliders (male … female, age, thin … heavy, slight …
+  muscular, height, stocky … long-limbed), morph offsets by name, bone-group lengths and the skin's look. The editor and
+  (later) the NPC generator only write DNA; `CharacterBuilder` makes the mesh, skeleton and materials from it. Six
+  built-in people (`BuiltInCharacters`, in `CharacterStore.swift`) show what the sliders reach.
+* **One base body for everyone** (`CharacterBase.swift`), made once from the library's Y Bot and kept in a cache file
+  next to the character library's (about 7 s to make on an M1 Max, 3 ms to read):
+  * The Y Bot's skin as a distance field (`BodySurface`, flooded from outside so its joint pieces don't count,
+    smoothed so the grooves between its panels close), its hollow elbows filled by its bones' shapes.
+  * Its trunk mostly an **anatomical loft** (`TrunkLoft`): rounded cross-sections from the crotch to the neck, a man's
+    average widths and depths, meeting the Y Bot's limbs, neck and head over a few centimetres. The mannequin's narrow
+    waist, deep pelvis and panel edges go.
+  * **Hands made again** from the finger joints: a palm and five fingers of round cones, on the forearm's end (the Y Bot
+    has mittens).
+  * Meshed by **sparse surface nets** (`SurfaceNets.sparseMesh`, 2.5 mm, only the bricks near the skin), simplified to
+    80k triangles (`MeshSimplifier`), smoothed without shrinking (Taubin). One closed surface.
+  * **Skinned to the Y Bot's skeleton**, so every clip of the library plays on it: each vertex takes the weights of the
+    Y Bot's skin under it (facing the same way, within 3 cm), the hands' from their bones, the rest from their
+    neighbours; then smoothed twelve times (the Y Bot's panels each ride one bone, and a neck there tears).
+* **Morphs** (`CharacterMorphs.swift`) are sparse deltas on the base, generated rather than sculpted: smooth bumps on the
+  body's own coordinates (which bone, how far along it, at what angle round it) for fat (where men and women carry it),
+  muscle, thinness, age, and ten shape sliders (chest, belly, waist, hips, seat, shoulders, neck, arms, thighs, calves).
+  A woman is the female loft (wider hips, a narrower waist, ribcage and shoulders, breasts) less the male one, plus the
+  X Bot's skeleton.
+* **The macro rig** (`MacroRig`, in `CharacterBuilder.swift`) turns the macros into morph weights and bone scales: sex
+  blends toward the female shape and the X Bot's skeleton (and 7% shorter), weight into the male or female fat, age into
+  sag, less muscle and (past 60) a little height. Bone scales lengthen bones along their axis (the skin across them
+  less), or scale a head, hands or feet whole; the skin is carried by the joints it hangs on, and the clips' root travel
+  scales with the hips' height.
+* **The workshop** shows the character, everyone (*Everyone*), or it and five **Mutate** variations (*Use 1–5* takes
+  one), in a T pose, an A pose, idling, walking or any clip of the library, whole or its face close. Each slider has a
+  **lock**: the dice on a group (or *Randomize all*) draw the unlocked sliders again, from near the middle of their
+  ranges; Mutate leaves locked ones alone. Holding *Compare* (or C) shows the saved character.
+* **Edits are live:** the workshop is made again at each edit: 11 ms for one character on an M1 Max (morphs and
+  skeleton 5 ms on the CPU, its structures 6 ms), 35 ms for all six. An edit is one undo step; a drag is one.
+* **Saving:** *Save* writes changed characters to `Assets/CharacterDefs/<id>.json` (`CharacterStore`); a file with a
+  built-in's id replaces it. Unsaved edits are a draft, kept between launches. `METALRENDERER_CHARACTERS=builtin` ignores
+  the files, `=<folder>` reads and saves another folder.
+* **Crowds of them:** `METALRENDERER_SCENE=crowd,cast=generated` fills the crowd scene with the catalog's people
+  instead of the mannequins (`METALRENDERER_BENCH=charactercrowd`: 2048 of them on 64 poses, 17 ms a frame on an M1 Max;
+  the GPU's skinning within 2 µm of the CPU's).
+* `METALRENDERER_SCENE=people,person=woman,pose=walk,cview=face,clayout=lineup`; `METALRENDERER_BENCH=characters`
+  renders each built-in character, two faces, everyone, poses and clips, and close-ups of hands, waist and shoulders.
+* **Tests:** `CharacterDNATests` (JSON, defaults, sanitizing, the catalog and store), `CharacterBaseTests` (a closed
+  skin, weights, stretch over every clip, symmetric morphs, height by its slider, repeatable builds, the cache, the
+  workshop and its remake time), `CharacterEditorTests` (the parameter table, Randomize, Mutate, undo, saving).
+* **Next** (one pull request each): a sculpted face with eyes and expressions; skin shading and hair; clothes and
+  cloth; NPC archetypes, crowds in the city and generated bodies in the physics scenes.
+
 ### Generated plants
 
 The plants are made at load time from a seed (`Foliage*.swift`) and their species' definitions (the built-in ones, or

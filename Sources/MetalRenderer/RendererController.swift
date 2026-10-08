@@ -15,6 +15,8 @@ struct RendererStatus {
     /// The building workshop's building: what it costs, and its plan (the Floor Plan window).
     var buildingStats: BuildingStats?
     var buildingPlan: BuildingPlan?
+    /// The character workshop's character (Scene.characterStats).
+    var characterStats: CharacterStats?
     /// Walking: where (the Floor Plan window's you-are-here).
     var walker: WalkerStatus?
     /// Where the camera is (the building editor's Pin: the city's building nearest it).
@@ -65,8 +67,11 @@ final class RendererController: InputHandler {
     var onToggleLoading: (() -> Void)?          // P key
     var onTogglePlants: (() -> Void)?           // K key
     var onToggleBuildings: (() -> Void)?        // J key
+    var onToggleCharacters: (() -> Void)?       // H key
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
     var onCompare: ((Bool) -> Void)?
+    /// ...and in the character workshop: the saved character.
+    var onCompareCharacter: ((Bool) -> Void)?
     /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
     let loadActivity: LoadActivity
 
@@ -176,14 +181,15 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" {
             if !event.isARepeat {
-                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants : onToggleBuildings)?()
+                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
+                    : key == "h" ? onToggleCharacters : onToggleBuildings)?()
             }
             return
         }
-        if key == "c", settings.scene.kind == .plants {
-            if !event.isARepeat { onCompare?(true) }
+        if key == "c", settings.scene.kind == .plants || settings.scene.kind == .characters {
+            if !event.isARepeat { (settings.scene.kind == .plants ? onCompare : onCompareCharacter)?(true) }
             return
         }
         let isRepeat = event.isARepeat
@@ -193,6 +199,7 @@ final class RendererController: InputHandler {
     func keyUp(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
         if key == "c", settings.scene.kind == .plants { onCompare?(false) }
+        if key == "c", settings.scene.kind == .characters { onCompareCharacter?(false) }
         renderer.perform { $0.keyUp(key) }
     }
 

@@ -376,6 +376,8 @@ final class Scene {
     /// The building workshop's: what its building is, and its plan (the building editor's Floor Plan window).
     var buildingStats: BuildingStats?
     var buildingPlan: BuildingPlan?
+    /// The character workshop's: what its character is (Scene+Characters.swift).
+    var characterStats: CharacterStats?
     /// What the walker (Walker.swift) meets: the interiors' walls, floors, stairs and furniture, the ground round
     /// them; and the buildings that can be walked in, where they stand.
     var walkColliders: [Interior.Collider] = []
@@ -486,6 +488,7 @@ final class Scene {
         case .fluids: buildFluids(settings.physics)
         case .plants: buildPlantWorkshop()
         case .buildings: buildBuildingWorkshop()
+        case .characters: buildCharacterWorkshop()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }

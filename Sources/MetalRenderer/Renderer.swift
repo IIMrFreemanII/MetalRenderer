@@ -4351,6 +4351,7 @@ final class Renderer: NSObject {
                                     debugInfo: debugActive ? debugInfo() : nil)
         status.plantStats = scene.plantStats
         status.buildingStats = scene.buildingStats
+        status.characterStats = scene.characterStats
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
         status.cameraPosition = camera.position

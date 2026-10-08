@@ -328,3 +328,136 @@ enum SurfaceNets {
         return (positions, indices)
     }
 }
+
+extension SurfaceNets {
+    /// Surface nets on a sparse grid: the grid of `counts` samples `size` apart from `lo` in bricks of `brick` cells a
+    /// side, of which only those whose middle is within half their diagonal (and two cells) of the surface are
+    /// sampled. `distance` must not overstate how far the surface is (a distance field, or one clamped below it). The
+    /// same surface as `mesh`, without a dense field: a body's skin at 2.5 mm samples a sixtieth of its box.
+    static func sparseMesh(lo: SIMD3<Float>, size: Float, counts n: SIMD3<Int>, brick: Int = 8,
+                           distance: (SIMD3<Float>) -> Float, gradient: (SIMD3<Float>) -> SIMD3<Float>)
+        -> (positions: [SIMD3<Float>], indices: [UInt32]) {
+        let b = brick, side = b + 1, samples = side * side * side, cells = b * b * b
+        let nb = SIMD3<Int>((n.x - 2) / b + 1, (n.y - 2) / b + 1, (n.z - 2) / b + 1)
+        @inline(__always) func brickIndex(_ x: Int, _ y: Int, _ z: Int) -> Int { (z * nb.y + y) * nb.x + x }
+        // The bricks the surface may pass through.
+        let reach = Float(b) * size * 0.8661 + 2 * size
+        var slabs = [[Int32]](repeating: [], count: nb.z)
+        slabs.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: nb.z) { z in
+                for y in 0..<nb.y {
+                    for x in 0..<nb.x {
+                        let middle = lo + (SIMD3(Float(x), Float(y), Float(z)) + 0.5) * Float(b) * size
+                        if abs(distance(middle)) <= reach { out[z].append(Int32(brickIndex(x, y, z))) }
+                    }
+                }
+            }
+        }
+        // ...and their neighbours: a quad needs the four cells round its edge, which may be in the next brick.
+        var marked = [Bool](repeating: false, count: nb.x * nb.y * nb.z)
+        for i in slabs.joined() {
+            let c = SIMD3(Int(i) % nb.x, (Int(i) / nb.x) % nb.y, Int(i) / (nb.x * nb.y))
+            for z in max(c.z - 1, 0)...min(c.z + 1, nb.z - 1) {
+                for y in max(c.y - 1, 0)...min(c.y + 1, nb.y - 1) {
+                    for x in max(c.x - 1, 0)...min(c.x + 1, nb.x - 1) { marked[brickIndex(x, y, z)] = true }
+                }
+            }
+        }
+        let active = marked.indices.filter { marked[$0] }.map(Int32.init)
+        var slot = [Int32](repeating: -1, count: nb.x * nb.y * nb.z)
+        for (k, i) in active.enumerated() { slot[Int(i)] = Int32(k) }
+        func origin(_ i: Int) -> SIMD3<Int> { SIMD3(i % nb.x, (i / nb.x) % nb.y, i / (nb.x * nb.y)) &* b }
+        // Each brick's samples, its corners shared with its neighbours' (sampled twice).
+        var field = [Float](repeating: 0, count: active.count * samples)
+        field.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: active.count) { k in
+                let o = origin(Int(active[k]))
+                for z in 0...b { for y in 0...b { for x in 0...b {
+                    let p = lo + SIMD3(Float(o.x + x), Float(o.y + y), Float(o.z + z)) * size
+                    out[k * samples + (z * side + y) * side + x] = distance(p)
+                } } }
+            }
+        }
+        // A vertex per cell the surface passes through, at the mean of where it crosses the cell's edges.
+        let corners = (0..<8).map { SIMD3<Int>($0 & 1, ($0 >> 1) & 1, ($0 >> 2) & 1) }
+        let edges = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)]
+        var local = [[(cell: Int32, p: SIMD3<Float>)]](repeating: [], count: active.count)
+        local.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: active.count) { k in
+                let o = origin(Int(active[k]))
+                var v = [Float](repeating: 0, count: 8)
+                for z in 0..<b { for y in 0..<b { for x in 0..<b {
+                    var inside = 0
+                    for c in 0..<8 {
+                        v[c] = field[k * samples + ((z + corners[c].z) * side + y + corners[c].y) * side + x + corners[c].x]
+                        if v[c] < 0 { inside += 1 }
+                    }
+                    guard inside > 0 && inside < 8 else { continue }
+                    var sum = SIMD3<Float>(), count: Float = 0
+                    for (a, e) in edges where (v[a] < 0) != (v[e] < 0) {
+                        let t = v[a] / (v[a] - v[e])
+                        sum += SIMD3<Float>(corners[a]) + (SIMD3<Float>(corners[e]) - SIMD3<Float>(corners[a])) * t
+                        count += 1
+                    }
+                    out[k].append((Int32((z * b + y) * b + x), lo + (SIMD3(Float(o.x + x), Float(o.y + y), Float(o.z + z)) + sum / count) * size))
+                } } }
+            }
+        }
+        var vertexOf = [Int32](repeating: -1, count: active.count * cells)
+        var positions: [SIMD3<Float>] = []
+        positions.reserveCapacity(local.reduce(0) { $0 + $1.count })
+        for k in local.indices {
+            for v in local[k] {
+                vertexOf[k * cells + Int(v.cell)] = Int32(positions.count)
+                positions.append(v.p)
+            }
+        }
+        local = []
+        // Onto the surface (two Newton steps).
+        positions.withUnsafeMutableBufferPointer { ps in
+            DispatchQueue.concurrentPerform(iterations: ps.count) { i in
+                var p = ps[i]
+                for _ in 0..<2 {
+                    let g = gradient(p), len2 = dot(g, g)
+                    guard len2 > 1e-12 else { break }
+                    p -= g * (distance(p) / len2)
+                }
+                ps[i] = p
+            }
+        }
+        // The vertex of the cell at grid coordinates `c`, if its brick was sampled and the surface passes through it.
+        func vertex(_ c: SIMD3<Int>) -> Int32 {
+            guard c.x >= 0, c.y >= 0, c.z >= 0 else { return -1 }
+            let bc = SIMD3(c.x / b, c.y / b, c.z / b)
+            guard bc.x < nb.x, bc.y < nb.y, bc.z < nb.z else { return -1 }
+            let k = slot[brickIndex(bc.x, bc.y, bc.z)]
+            guard k >= 0 else { return -1 }
+            let l = c &- bc &* b
+            return vertexOf[Int(k) * cells + (l.z * b + l.y) * b + l.x]
+        }
+        // A quad for each grid edge the surface crosses (each edge is its first sample's brick's), wound to face out.
+        var quads = [[UInt32]](repeating: [], count: active.count)
+        quads.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: active.count) { k in
+                let o = origin(Int(active[k]))
+                for z in 0..<b { for y in 0..<b { for x in 0..<b {
+                    let here = field[k * samples + (z * side + y) * side + x]
+                    for axis in 0..<3 {
+                        let next = axis == 0 ? field[k * samples + (z * side + y) * side + x + 1]
+                                 : axis == 1 ? field[k * samples + (z * side + y + 1) * side + x]
+                                             : field[k * samples + ((z + 1) * side + y) * side + x]
+                        guard (here < 0) != (next < 0) else { continue }
+                        let (u, w) = axis == 0 ? (SIMD3(0, 1, 0), SIMD3(0, 0, 1)) : axis == 1 ? (SIMD3(0, 0, 1), SIMD3(1, 0, 0))
+                                                                                             : (SIMD3(1, 0, 0), SIMD3(0, 1, 0))
+                        let c = o &+ SIMD3(x, y, z)
+                        let q = [c &- u &- w, c &- w, c, c &- u].map(vertex)
+                        guard q.allSatisfy({ $0 >= 0 }) else { continue }
+                        let v = q.map { UInt32($0) }
+                        out[k] += here < 0 ? [v[0], v[1], v[2], v[0], v[2], v[3]] : [v[0], v[2], v[1], v[0], v[3], v[2]]
+                    }
+                } } }
+            }
+        }
+        return (positions, quads.flatMap { $0 })
+    }
+}

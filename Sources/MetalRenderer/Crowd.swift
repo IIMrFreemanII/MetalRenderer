@@ -98,15 +98,7 @@ final class Crowd {
     /// clips that travel (walking and running), if there are two. `level`: the detail the poses are skinned at.
     init(characters: [SkinnedCharacter], poses: Int, level: Int = 0) {
         self.characters = characters
-        for c in characters {
-            jointBase.append(joints.count)
-            joints += c.joints
-            clipBase.append(c.clips.map { clip in
-                defer { rotationKeys += clip.rotations; rootKeys += clip.root }
-                return (rotationKeys.count, rootKeys.count)
-            })
-            parts.append(Part(character: parts.count, level: level, vertexCount: c.level(level).positions.count))
-        }
+        loadKeys(level: level)
         // The motions in the order the slots are dealt: with few slots the first ones get them.
         let most = characters.map { $0.clips.count }.max() ?? 0
         for rank in 0...most {
@@ -142,6 +134,34 @@ final class Crowd {
         }
         pose(at: 0)
         for i in slots.indices { slots[i].previousDistance = slots[i].distance }
+    }
+
+    /// One slot for each character, playing its clip `clips[c]` (a workshop's characters, each in the pose asked for).
+    init(characters: [SkinnedCharacter], clips: [Int], level: Int = 0) {
+        precondition(clips.count == characters.count, "a clip for each character")
+        self.characters = characters
+        loadKeys(level: level)
+        for (c, clip) in clips.enumerated() {
+            states.append(State(character: c, motion: Motion(clipA: clip, clipB: clip), slots: [slots.count], travels: false))
+            parts[c].firstSlot = slots.count
+            parts[c].slotCount = 1
+            slots.append(Slot(part: c, state: c, phase: 0))
+        }
+        pose(at: 0)
+        for i in slots.indices { slots[i].previousDistance = slots[i].distance }
+    }
+
+    /// The key tables and a part per character.
+    private func loadKeys(level: Int) {
+        for c in characters {
+            jointBase.append(joints.count)
+            joints += c.joints
+            clipBase.append(c.clips.map { clip in
+                defer { rotationKeys += clip.rotations; rootKeys += clip.root }
+                return (rotationKeys.count, rootKeys.count)
+            })
+            parts.append(Part(character: parts.count, level: level, vertexCount: c.level(level).positions.count))
+        }
     }
 
     /// The states that have slots: the ones members can be given.

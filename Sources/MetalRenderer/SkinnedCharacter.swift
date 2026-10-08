@@ -26,6 +26,9 @@ struct SkinnedCharacter: Equatable {
         var uvs: [SIMD2<Float>]
         var indices: [UInt32]
         var skin: [GPUSkinVertex]
+        /// Each vertex's at full detail (`coarser`'s levels keep some of its vertices): a generated character's levels
+        /// are gathered from its full mesh through it (CharacterBuilder).
+        var source: [UInt32] = []
         var triangleCount: Int { indices.count / 3 }
     }
 
@@ -749,6 +752,7 @@ enum CharacterImporter {
                     level.normals.append(character.normals[v])
                     level.uvs.append(character.uvs[v])
                     level.skin.append(character.skin[v])
+                    level.source.append(UInt32(v))
                 }
                 next[i] = UInt32(remap[v])
             }
@@ -895,13 +899,13 @@ struct CharacterLibrary {
     // MARK: Cache file
 
     private static let magic: UInt32 = 0x3143_474D   // "MGC1"
-    static let version: UInt32 = 2
+    static let version: UInt32 = 3
     /// Levels of detail below the full mesh: 1/2, 1/4, 1/8 and 1/16 of its triangles.
     static let coarserLevels = 4
 
     /// The cache file for these FBX files (by their names, sizes and modification times): in `.metalrenderer-cache`
     /// of the assets folder, or in ~/Library/Caches/MetalRenderer if that isn't writable.
-    static func cacheURL(for files: [URL], in directory: URL) -> URL {
+    static func cacheURL(for files: [URL], in directory: URL, prefix: String = "characters", version: UInt32 = version) -> URL {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         func mix(_ text: String) { for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 } }
         for file in files {
@@ -909,7 +913,7 @@ struct CharacterLibrary {
             mix(file.lastPathComponent)
             mix("\((attrs[.size] as? NSNumber)?.intValue ?? 0)-\(Int((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0))")
         }
-        let name = String(format: "characters-%016llx-v%d.mgc", hash, version)
+        let name = String(format: "%@-%016llx-v%d.mgc", prefix, hash, version)
         let local = directory.deletingLastPathComponent().appendingPathComponent(".metalrenderer-cache")
         if (try? FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)) != nil,
            FileManager.default.isWritableFile(atPath: local.path) {
@@ -927,7 +931,7 @@ struct CharacterLibrary {
             w.put(c.name)
             w.put(c.positions); w.put(c.normals); w.put(c.uvs); w.put(c.indices); w.put(c.skin); w.put(c.joints)
             w.put(UInt32(c.coarser.count))
-            for l in c.coarser { w.put(l.positions); w.put(l.normals); w.put(l.uvs); w.put(l.indices); w.put(l.skin) }
+            for l in c.coarser { w.put(l.positions); w.put(l.normals); w.put(l.uvs); w.put(l.indices); w.put(l.skin); w.put(l.source) }
             w.put(UInt32(c.jointNames.count))
             for name in c.jointNames { w.put(name) }
             w.put(c.color); w.put(c.boundsMin); w.put(c.boundsMax)
@@ -951,7 +955,7 @@ struct CharacterLibrary {
                                      color: .zero, boundsMin: .zero, boundsMax: .zero, clips: [])
             for _ in 0..<Int(try r.get(UInt32.self)) {
                 let level = SkinnedCharacter.Level(positions: try r.array(), normals: try r.array(), uvs: try r.array(),
-                                                   indices: try r.array(), skin: try r.array())
+                                                   indices: try r.array(), skin: try r.array(), source: try r.array())
                 guard level.normals.count == level.positions.count, level.skin.count == level.positions.count,
                       level.indices.allSatisfy({ Int($0) < level.positions.count }) else {
                     throw FBXError.invalid("a character cache that doesn't add up")

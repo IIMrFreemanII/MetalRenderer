@@ -75,7 +75,8 @@ extension ShadowMethod: EnvNamed {
     var envName: String { ["rays", "vsm"][rawValue] }
 }
 extension SceneKind: EnvNamed {
-    var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
+    // cityNight is read back without regard to case; the character workshop is `people` (`characters=` is the crowd's count).
+    var envName: String { self == .characters ? "people" : "\(self)".lowercased() }
 }
 extension CityStyle: EnvNamed {}
 extension PhysicsSettings.Backend: EnvNamed {}
@@ -90,6 +91,10 @@ extension PlantSceneSettings.View: EnvNamed {}
 extension BuildingSceneSettings.Sides: EnvNamed { var envName: String { "\(self)".lowercased() } }
 extension BuildingSceneSettings.Layout: EnvNamed {}
 extension BuildingSceneSettings.View: EnvNamed {}
+extension CharacterSceneSettings.Layout: EnvNamed {}
+extension CrowdBodies: EnvNamed {}
+extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension CharacterSceneSettings.View: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -330,6 +335,7 @@ enum SettingsTable {
         let city: When = { $0.scene.kind.isCity }
         let workshop: When = { $0.scene.kind == .plants }
         let buildings: When = { $0.scene.kind == .buildings }
+        let characters: When = { $0.scene.kind == .characters }
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
@@ -346,6 +352,7 @@ enum SettingsTable {
                 .env(.scene, "poses").when { $0.scene.kind == .crowd },
             S.slider("Detail level", \.scene.detail, SceneSettings.detailRange, live: false)
                 .env(.scene, "detail").when { $0.scene.kind == .crowd },
+            S.popup("Characters", \.scene.crowdBodies, titled(\.title)).env(.scene, "cast").when { $0.scene.kind == .crowd },
             S.slider("City seed", \.scene.seed, SceneSettings.seedRange, live: false).when(city),   // `seed`, as the plants'
             S.slider("City blocks", \.scene.city.blocks, CitySettings.blockRange, live: false) { "\($0) x \($0)" }
                 .env(.scene, "blocks").when(city),
@@ -371,6 +378,11 @@ enum SettingsTable {
             S.popup("View", \.scene.buildings.view, titled(\.title)).env(.scene, "bview").when(buildings),
             S.slider("Cut above floor", \.scene.buildings.cut, 0...40, live: false).env(.scene, "cut").when(buildings),
             S.check("Night", \.scene.buildings.night).env(.scene, "night").when(buildings),
+            S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
+            S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
+            S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),
+            S.value(\.scene.characterWorkshop.clip).env(.scene, "clip"),
+            S.popup("View", \.scene.characterWorkshop.view, titled(\.title)).env(.scene, "cview").when(characters),
             S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
                 .env(.scene, "bodies").when { $0.scene.kind == .physics },
             S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)

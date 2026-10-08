@@ -6,6 +6,20 @@ import simd
 /// at one size, so the members of a walking row keep their distances, and each takes one of the motion's slots, so
 /// they are out of step with their neighbours. Seeded: every run builds the same crowd.
 extension Scene {
+    /// The character catalog's people (the one `key` names, SceneSettings.characterCatalog), made from their DNA.
+    static func generatedPeople(_ key: String) -> CharacterLibrary {
+        guard let kit = CharacterKit.shared() else { return CharacterLibrary() }
+        let dna = CharacterCatalog.resolve(key).characters
+        var built = [SkinnedCharacter](repeating: kit.base.character, count: dna.count)
+        built.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: dna.count) { out[$0] = CharacterBuilder.build(dna[$0], kit: kit) }
+        }
+        // The workshop's still poses aren't motions a crowd plays.
+        let still = Set(CharacterKit.poseClips(kit.base.character).map(\.name))
+        for i in built.indices { built[i].clips.removeAll { still.contains($0.name) } }
+        return CharacterLibrary(characters: built)
+    }
+
     func buildCrowd(characters count: Int, poses: Int, detail: Int) {
         let quad = addMesh(Scene.quadMesh())
         let cube = addMesh(Scene.cubeMesh())
@@ -40,7 +54,7 @@ extension Scene {
         camera.pitch = -0.26
         defaultCamera = camera
 
-        let library = CharacterLibrary.load()
+        let library = settings.crowdBodies == .generated ? Scene.generatedPeople(settings.characterCatalog) : CharacterLibrary.load()
         guard !library.characters.isEmpty else { return }
         let crowd = Crowd(characters: library.characters, poses: poses, level: detail)
         adopt(crowd)
@@ -51,7 +65,10 @@ extension Scene {
         let hues: [SIMD3<Float>] = [[0.75, 0.2, 0.15], [0.85, 0.6, 0.15], [0.2, 0.5, 0.25], [0.2, 0.3, 0.7], [0.55, 0.25, 0.6],
                                     [0.75, 0.75, 0.75], [0.12, 0.12, 0.14]]
         let tints: [[Int]] = library.characters.map { c in
-            ([c.color] + hues).map { addMaterial(albedo: $0) }
+            // Generated people in their own skin (shades of it, until they have clothes), mannequins in colours.
+            let colors = settings.crowdBodies == .generated ? (0...hues.count).map { c.color * (0.85 + 0.3 * Float($0) / Float(hues.count)) }
+                                                            : [c.color] + hues
+            return colors.map { addMaterial(albedo: $0) }
         }
 
         // Rows: two in three walk or run, the rest stand.
