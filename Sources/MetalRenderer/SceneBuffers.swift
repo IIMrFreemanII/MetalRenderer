@@ -679,6 +679,7 @@ struct SceneBuffers {
                 continue
             }
             if deforms { descriptor.usage = .refit }
+            else if scene.remadeOften { descriptor.usage = .preferFastBuild }
             else if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
             if deforms { refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16))) }
@@ -708,7 +709,7 @@ struct SceneBuffers {
                     throw RendererError.resourceCreation("primitive acceleration structure")
                 }
                 encoder.build(accelerationStructure: accel, descriptor: job.descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
-                if options.compact && !job.deforms {
+                if options.compact && !scene.remadeOften && !job.deforms {
                     // Its size once compacted (a UInt32), written by the GPU after the build.
                     encoder.writeCompactedSize(accelerationStructure: accel, buffer: compactedSizes,
                                                offset: k * MemoryLayout<UInt32>.stride, sizeDataType: .uint)
@@ -720,7 +721,7 @@ struct SceneBuffers {
             encoder.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
-            guard options.compact else { return }
+            guard options.compact && !scene.remadeOften else { return }
             let kept = (0..<batch.count).filter { !jobs[batch.lowerBound + $0].deforms }
             let small = try SceneBuffers.copyAndCompact(kept.map { built[$0] }, sizes: compactedSizes, at: kept, device: device, queue: queue)
             for (n, k) in kept.enumerated() {
@@ -746,7 +747,7 @@ struct SceneBuffers {
             }
         }
         try buildBatch(first..<jobs.count)
-        if options.compact, !jobs.isEmpty {
+        if options.compact && !scene.remadeOften, !jobs.isEmpty {
             print(String(format: "Metal BLAS: %d meshes (%d the last scene's), %.1f MB compacted to %.1f MB", structures.count,
                          structures.count - new.count, Double(before) / 1_048_576, Double(after) / 1_048_576))
         }

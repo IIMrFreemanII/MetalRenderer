@@ -65,8 +65,10 @@ if [[ $suites == " " ]]; then
           SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests ;;   # (the muscles' rig poses its bones by it)
           Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
           FBXReader.swift) add FBXTests ;;
-          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
+          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ;;
           PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
+          Plant*.swift|BuiltInPlants.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests FoliageTests ForestTests ;;
+          Scene+Plants.swift) add PlantWorkshopTests PlantGoldenTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
           SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
           Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ;;

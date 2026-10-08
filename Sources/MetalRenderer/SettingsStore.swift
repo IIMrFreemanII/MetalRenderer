@@ -24,6 +24,9 @@ enum SettingsStore {
         s.scene.worldTile = nil
         s.scene.worldAnchor = nil
         s.scene.extraModels = []
+        s.scene.plantCatalog = ""
+        s.scene.plants.mutants = ""
+        s.scene.plants.compare = ""
         s.virtualGeometry.freeze = false
         if let path = s.sky.imagePath, !FileManager.default.fileExists(atPath: path) {
             s.sky.imagePath = nil

@@ -82,7 +82,9 @@ extension Scene {
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
         let lit = settings.worldLit
         world.lit = settings.city.lit
-        let flora = Flora(self, seed: world.seed, borrowing: true)
+        let catalog = PlantCatalog.resolve(settings.plantCatalog)
+        if !catalog.placesAsBuiltIn { world.plants = catalog.placementFingerprint }
+        let flora = Flora(self, seed: world.seed, catalog: catalog, borrowing: true)
         // Every plant and its materials, first and in the library's order: every scene of the world then has the same
         // textures (the renderer keeps them) and the same numbers for its plants (so it keeps the tiles' trees too).
         // (The tiles' meshes stay in their files and the baked plants' in the library, `addMesh(borrowing:)`: the
@@ -211,7 +213,7 @@ extension Scene {
             // Its trees, the same at every level: a group, which the renderer keeps from scene to scene. (Where they
             // are from this scene's origin is in the group's name.)
             let standing = tile.trees
-            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species))! }
+            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species)) }
             trees += standing.count
             guard Scene.groupsTrees else {
                 for t in standing {
@@ -237,7 +239,7 @@ extension Scene {
         for (c, placements) in cover.enumerated() {
             let corner = SIMD3(Float(lo.x + Double(c % cells) * cell - anchor.x), 0, Float(lo.y + Double(c / cells) * cell - anchor.y))
             for p in placements {
-                flora.place(Foliage.Species(rawValue: Int(p.species))!, Int(p.plant), at: corner + SIMD3(p.x, p.y, p.z), yaw: p.yaw,
+                flora.place(Foliage.Species(rawValue: Int(p.species)), Int(p.plant), at: corner + SIMD3(p.x, p.y, p.z), yaw: p.yaw,
                             size: p.size, shade: Int(p.shade))
             }
             plants += placements.count

@@ -23,6 +23,9 @@ struct World {
     var treeDensity: Float = 244
     /// Bushes, ferns and grass: 1 = the Forest scene's.
     var undergrowth: Float = 1
+    /// Where the plants grow, if not as the built-in species do: the catalog's placement fingerprint (PlantCatalog),
+    /// part of the tiles' names.
+    var plants = ""
     /// The share of the 4 km cells with a city in them. (The cell around the origin always has one.)
     var cityShare: Float = 0.5
     /// The share of the cities' windows with a light behind them, which is on at night.
@@ -216,9 +219,15 @@ struct World {
     /// The library's plants by species and age, as their indices: all the placing needs to know of it.
     struct Flora {
         private var byAge: [[[Int]]]    // species, age, plants
+        /// The species, where they grow.
+        let catalog: PlantCatalog
+        let trees: Foliage.TreePicker
 
-        init(_ sets: [Foliage.SpeciesSet]) {
-            byAge = Foliage.Species.allCases.map { _ in Foliage.Age.allCases.map { _ in [] } }
+        init(_ sets: [Foliage.SpeciesSet], catalog: PlantCatalog = .builtIn) {
+            self.catalog = catalog
+            trees = Foliage.TreePicker(catalog)
+            let species = (sets.map(\.species.rawValue).max() ?? -1) + 1
+            byAge = (0..<max(species, Foliage.Species.allCases.count)).map { _ in Foliage.Age.allCases.map { _ in [] } }
             for set in sets {
                 for age in Foliage.Age.allCases { byAge[set.species.rawValue][age.rawValue] = set.plants(of: age) }
             }
@@ -269,16 +278,9 @@ struct World {
             let density = cover * World.smoothstep(0.72, 0.86, 1 - slope) * (0.6 + 0.6 * Terrain.noise(x / 23, z / 23, seed: standSeed &+ 7))
             guard chance < density else { return }
             let y = height(x, z, city: city), high = (y - broad(x, z)) / 9, mix = Terrain.noise(x / 55, z / 55, seed: standSeed)
-            let conifer = max(0.05, 0.3 + 1.1 * World.smoothstep(-0.1, 0.7, high) + 3 * slope + 1.6 * mix)
-            let oak = max(0.05, 0.9 - 0.7 * World.smoothstep(0, 0.7, high) - 1.6 * mix)
-            let birch = 0.25 + 1.6 * (1 - World.smoothstep(0.15, 0.6, cover))
-            var p = pick * (conifer + oak + birch) * 1.035
-            let species: Foliage.Species
-            if p < conifer { species = .conifer } else {
-                p -= conifer
-                if p < oak { species = .oak } else { species = p - oak < birch ? .birch : .dead }
-            }
-            let age: Foliage.Age = u < 0.12 ? .sapling : u < 0.4 ? .young : .mature
+            guard let species = flora.trees.pick(pick, high: high, slope: slope, stand: mix,
+                                                 light: [SIMD2<Float>(1.6, 1 - World.smoothstep(0.15, 0.6, cover))]) else { return }
+            let age = Foliage.TreePicker.age(u, flora.catalog[species].habitat)
             let plants = flora.plants(species, age)
             guard !plants.isEmpty else { return }
             out.append(Placement(x: Float(x - x0), y: y - 0.12, z: Float(z - z0), yaw: yaw, size: size, species: UInt16(species.rawValue),
@@ -309,14 +311,14 @@ struct World {
             }
         }
         let thick = Double(max(undergrowth, 1).squareRoot())   // more than the Forest's: a finer grid
-        scatter(.bush, cell: 6.1 / thick, what: 0xB05, sizes: 0.8...1.3, sink: 0.05) { x, z in
-            woods(x, z) * World.smoothstep(-0.25, 0.35, Terrain.noise(x / 28, z / 28, seed: standSeed &+ 31))
-        }
-        scatter(.fern, cell: 4 / thick, what: 0xFE2, sizes: 0.9...1.7, sink: 0.02) { x, z in
-            woods(x, z) * World.smoothstep(-0.25, 0.35, Terrain.noise(x / 17, z / 17, seed: standSeed &+ 47))
-        }
-        scatter(.grass, cell: 2 / thick, what: 0x62A, sizes: 1.05...1.2, sink: 0) { x, z in
-            (1 - 0.9 * woods(x, z)) * World.smoothstep(0.8, 0.9, up(x, z, city: city))
+        for species in flora.catalog.covers {
+            let habitat = flora.catalog[species].habitat, cover = habitat.cover!
+            scatter(species, cell: cover.cell / thick, what: cover.what, sizes: cover.size, sink: cover.sink) { x, z in
+                // In the open (grass), or in patches under the trees (bushes, ferns).
+                (cover.open ? (1 - 0.9 * woods(x, z)) * World.smoothstep(0.8, 0.9, up(x, z, city: city))
+                            : woods(x, z) * World.smoothstep(-0.25, 0.35, Terrain.noise(x / Double(cover.patch), z / Double(cover.patch),
+                                                                                         seed: standSeed &+ cover.salt))) * habitat.frequency
+            }
         }
         return out
     }

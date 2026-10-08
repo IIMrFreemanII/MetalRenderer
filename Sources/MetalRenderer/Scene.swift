@@ -370,6 +370,12 @@ final class Scene {
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     var defaultCamera = Camera()
+    /// The plant workshop's: what its camera orbits and frames, and what its plant costs (Scene+Plants.swift).
+    var focus: AABB?
+    var plantStats: PlantStats?
+    /// Made again at every edit (the workshop): its structures are built to be ready soon, not to trace fastest or
+    /// keep least (uncompacted), and its plants keep all their leaves (no leaf fall's variants).
+    var remadeOften = false
     let settings: SceneSettings
     /// While `init` builds the scene: the load's step that the builders report models to (the loading overlay).
     private(set) var loadStep: LoadStep?
@@ -459,6 +465,7 @@ final class Scene {
         case .softBodies: buildSoftBodies(settings.physics)
         case .muscles: buildMuscles(settings.physics)
         case .fluids: buildFluids(settings.physics)
+        case .plants: buildPlantWorkshop()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }

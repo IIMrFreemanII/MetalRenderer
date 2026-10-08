@@ -17,25 +17,35 @@ enum Foliage {
     /// its species' set (World.Placement), so a change of the sets makes other tile files.
     static let version = 1
 
-    enum Species: Int, CaseIterable {
-        case oak, birch, conifer, dead, bush, fern, grass
+    /// A species: its place in a catalog (PlantCatalog), where its definition (SpeciesDef) says how it grows. The
+    /// first seven are the built-in ones, in this order; a catalog's own species follow them.
+    struct Species: Hashable, RawRepresentable, Codable, CustomStringConvertible {
+        let rawValue: Int
+        init(rawValue: Int) { self.rawValue = rawValue }
 
-        /// Has a palette of boughs, so its plants are assemblies.
-        var hasBoughs: Bool { self == .oak || self == .birch || self == .conifer || self == .bush }
-        var isTree: Bool { self == .oak || self == .birch || self == .conifer || self == .dead }
+        static let oak = Species(rawValue: 0), birch = Species(rawValue: 1), conifer = Species(rawValue: 2)
+        static let dead = Species(rawValue: 3), bush = Species(rawValue: 4), fern = Species(rawValue: 5), grass = Species(rawValue: 6)
+        /// The built-in species.
+        static let allCases = (0..<7).map(Species.init(rawValue:))
+        private static let names = ["oak", "birch", "conifer", "dead", "bush", "fern", "grass"]
+
+        var description: String { rawValue < Species.names.count ? Species.names[rawValue] : "species \(rawValue)" }
+        /// (Of the built-in species.) Has a palette of boughs, so its plants are assemblies.
+        var hasBoughs: Bool { PlantCatalog.builtIn.species.indices.contains(rawValue) && PlantCatalog.builtIn[self].paletteSize > 0 }
+        var isTree: Bool { PlantCatalog.builtIn.species.indices.contains(rawValue) && PlantCatalog.builtIn[self].role == .tree }
     }
 
-    /// Growth stage: the same recipe at a fraction of its height, with fewer limbs and levels.
-    enum Age: Int, CaseIterable { case sapling, young, mature }
+    /// Growth stage: the same recipe at a fraction of its height, with fewer limbs and levels (SpeciesDef.Ages).
+    enum Age: Int, CaseIterable, Codable { case sapling, young, mature }
 
-    /// How long a limb is by its place along the trunk (`crownRatio`).
-    enum Crown { case conical, spherical, hemispherical, cylindrical, flame }
-    enum Phyllotaxis {
+    /// How long a limb is by its place along the trunk (`crownRatio`): the presets of a crown's curve.
+    enum Crown: String, CaseIterable, Codable { case conical, spherical, hemispherical, cylindrical, flame }
+    enum Phyllotaxis: Equatable {
         case spiral            // each leaf 137.5 degrees round from the last
         case distichous        // alternating sides, in the plane across `up`
         case whorled(Int)      // rings of n
     }
-    enum LeafShape {
+    enum LeafShape: String, CaseIterable, Codable {
         case kite              // 2 triangles, folded along the midrib
         case blade             // 4 triangles, rounder
         case needle            // 1 triangle
@@ -44,12 +54,12 @@ enum Foliage {
     static let goldenAngle: Float = 2.39996
 
     /// One level of stems: how many grow from each stem of the level before, and how they run.
-    struct Level {
+    struct Level: Codable, Equatable {
         var count = 1                       // per parent stem (level 0: stems from the ground)
         var length: Float = 1               // of the parent's length (level 0: metres)
         var lengthV: Float = 0.1            // relative variation
-        var downAngle: Float = 0.8          // from the parent's direction (level 0: from `up`), at the parent's base
-        var downAngleEnd: Float? = nil      // ... at the parent's tip (nil: the same)
+        /// From the parent's direction (level 0: from `up`, its start only), by where along the parent the stem grows.
+        var down: Curve = .linear(0.8, 0.8)
         var downAngleV: Float = 0.15
         var rotate: Float = Foliage.goldenAngle   // around the parent, from one child to the next
         var rotateV: Float = 0.3
@@ -59,10 +69,32 @@ enum Foliage {
         var tropism: Float = 0              // steady pull toward `up` (+: light) or away (-: weight)
         var segments = 5
         var radial = 5                      // sides of the tube; 1 = a flat ribbon
-        var taper: Float = 0.9              // 0 = a cylinder, 1 = to a point
+        /// The radius along the stem, of its radius at its foot (a taper of 0 = a cylinder, 1 = to a point).
+        var radius: Curve = .taper(0.9)
+        /// How long the stems are by where along the parent they grow, of `length` (level 1's: the crown's shape).
+        var along: Curve = .taper(0.5)
+
+        init(count: Int = 1, length: Float = 1, lengthV: Float = 0.1, downAngle: Float = 0.8, downAngleEnd: Float? = nil,
+             downAngleV: Float = 0.15, rotate: Float = Foliage.goldenAngle, rotateV: Float = 0.3, start: Float = 0.2, curve: Float = 0,
+             curveV: Float = 0.3, tropism: Float = 0, segments: Int = 5, radial: Int = 5, taper: Float = 0.9) {
+            self.count = count
+            self.length = length
+            self.lengthV = lengthV
+            down = .linear(downAngle, downAngleEnd ?? downAngle)
+            self.downAngleV = downAngleV
+            self.rotate = rotate
+            self.rotateV = rotateV
+            self.start = start
+            self.curve = curve
+            self.curveV = curveV
+            self.tropism = tropism
+            self.segments = segments
+            self.radial = radial
+            radius = .taper(taper)
+        }
     }
 
-    struct LeafRecipe {
+    struct LeafRecipe: Codable, Equatable {
         var shape = LeafShape.kite
         var length: Float = 0.1
         var width: Float = 0.06
@@ -73,13 +105,32 @@ enum Foliage {
         var angleV: Float = 0.3
         var phyllotaxis = Phyllotaxis.spiral
         var fold: Float = 0.15              // the sides' lift over the midrib, in widths
-        var tipScale: Float = 1             // size at the twig's tip relative to its base (fern pinnae shrink)
+        /// Size along the twig, of the size at its base (its end: the tip's leaf; fern pinnae shrink).
+        var size: Curve = .linear(1, 1)
         var flutter: Float = 0.4            // how far the faces turn away from `up`, at random
         var fromLevel = 0                   // leaves only on stems of this level and deeper
+
+        init(shape: LeafShape = .kite, length: Float = 0.1, width: Float = 0.06, sizeV: Float = 0.25, perMetre: Float = 30,
+             start: Float = 0.1, angle: Float = 0.9, angleV: Float = 0.3, phyllotaxis: Phyllotaxis = .spiral, fold: Float = 0.15,
+             tipScale: Float = 1, flutter: Float = 0.4, fromLevel: Int = 0) {
+            self.shape = shape
+            self.length = length
+            self.width = width
+            self.sizeV = sizeV
+            self.perMetre = perMetre
+            self.start = start
+            self.angle = angle
+            self.angleV = angleV
+            self.phyllotaxis = phyllotaxis
+            self.fold = fold
+            size = .linear(1, tipScale)
+            self.flutter = flutter
+            self.fromLevel = fromLevel
+        }
     }
 
     /// Where boughs hang on the scaffold.
-    struct Graft {
+    struct Graft: Codable, Equatable {
         var spacing: Float = 0.45           // metres between boughs along a stem
         var fromLevel = 1                   // stems of this level and deeper carry boughs ...
         var start: Float = 0.5              // ... from this far along (the last level: from `lastStart`)
@@ -92,24 +143,40 @@ enum Foliage {
     }
 
     /// Stems end where they leave this ellipsoid (pruning to a shape).
-    struct Carve {
+    struct Carve: Codable, Equatable {
         var center: SIMD3<Float>
         var radii: SIMD3<Float>
         var fromLevel = 1
     }
 
-    struct Recipe {
+    struct Recipe: Codable, Equatable {
         var levels: [Level]
         var ratio: Float = 0.03             // the first stem's radius over its length
         var ratioPower: Float = 1.2         // child radius = parent radius x (length ratio)^power
         var flare: Float = 0.5              // widening at the foot
-        var crown = Crown.spherical
         var spread: Float = 0               // level 0 stems start within this radius
         var carve: Carve? = nil
         var axis = SIMD3<Float>(0, 1, 0)    // level 0 grows this way
         var up = SIMD3<Float>(0, 1, 0)      // the sky: boughs are grown lying down, along +Y with +Z up
         var leaf: LeafRecipe? = nil         // leaves on this plant's own stems (boughs, ferns)
         var graft: Graft? = nil
+
+        /// `crown`: level 1's lengths along the trunk (its `along` curve).
+        init(levels: [Level], ratio: Float = 0.03, ratioPower: Float = 1.2, flare: Float = 0.5, crown: Crown = .spherical,
+             spread: Float = 0, carve: Carve? = nil, axis: SIMD3<Float> = [0, 1, 0], up: SIMD3<Float> = [0, 1, 0],
+             leaf: LeafRecipe? = nil, graft: Graft? = nil) {
+            self.levels = levels
+            if levels.count > 1 { self.levels[1].along = .crown(crown) }
+            self.ratio = ratio
+            self.ratioPower = ratioPower
+            self.flare = flare
+            self.spread = spread
+            self.carve = carve
+            self.axis = axis
+            self.up = up
+            self.leaf = leaf
+            self.graft = graft
+        }
     }
 
     // MARK: - Skeleton
@@ -220,7 +287,7 @@ enum Foliage {
             for _ in 0..<level.count {
                 azimuth += level.rotate + rng.range(-1, 1) * level.rotateV
                 let down = level.count == 1 ? rng.range(0, 1) * level.downAngleV
-                                            : max(0, level.downAngle + rng.range(-1, 1) * level.downAngleV)
+                                            : max(0, level.down.start + rng.range(-1, 1) * level.downAngleV)
                 let side = Foliage.perpendicular(recipe.axis, up: SIMD3(0.36, 0.48, 0.8))
                 let across = cross(recipe.axis, side)
                 let radial = side * cos(azimuth) + across * sin(azimuth)
@@ -249,7 +316,7 @@ enum Foliage {
             var p = origin, t = direction
             for i in 0...segments {
                 let f = Float(i) * inv
-                var r = radius * (1 - level.taper * f)
+                var r = radius * level.radius.value(f)
                 if l == 0 { let foot = max(0, 1 - f * 8); r *= 1 + recipe.flare * foot * foot }
                 skeleton.nodes.append(SIMD4(p, max(r, Foliage.minRadius)))
                 if i == segments { break }
@@ -274,11 +341,9 @@ enum Foliage {
                 let u = (Float(k) + 0.5 + rng.range(-0.3, 0.3)) / Float(children)
                 let at = skeleton.sample(skeleton.stems[Int(index)], next.start + (1 - next.start) * u)
                 azimuth += next.rotate + rng.range(-1, 1) * next.rotateV
-                let down = next.downAngle + ((next.downAngleEnd ?? next.downAngle) - next.downAngle) * u
-                    + rng.range(-1, 1) * next.downAngleV
+                let down = next.down.value(u) + rng.range(-1, 1) * next.downAngleV
                 let dir = Foliage.direction(from: at.tangent, down: down, azimuth: azimuth, up: up)
-                var childLength = l == 0 ? length * next.length * Foliage.crownRatio(recipe.crown, 1 - u)
-                                         : length * next.length * (1 - 0.5 * u)
+                var childLength = length * next.length * next.along.value(u)
                 childLength *= 1 + rng.range(-1, 1) * next.lengthV
                 let r = min(at.radius * 0.7, radius * pow(childLength / length, recipe.ratioPower))
                 let childLimb: Int32
@@ -329,11 +394,11 @@ enum Foliage {
                 }
                 let down = max(0.05, leaf.angle + rng.range(-1, 1) * leaf.angleV)
                 let dir = Foliage.direction(from: at.tangent, down: down, azimuth: azimuth, up: up)
-                let size = leaf.length * (1 + rng.range(-1, 1) * leaf.sizeV) * (1 + (leaf.tipScale - 1) * u)
+                let size = leaf.length * (1 + rng.range(-1, 1) * leaf.sizeV) * leaf.size.value(u)
                 place(at.position, dir, size, &rng)
             }
             let tip = skeleton.sample(s, 1)
-            place(tip.position, tip.tangent, leaf.length * leaf.tipScale * (1 + rng.range(-1, 1) * leaf.sizeV), &rng)
+            place(tip.position, tip.tangent, leaf.length * leaf.size.end * (1 + rng.range(-1, 1) * leaf.sizeV), &rng)
         }
         for i in stride(from: anchors.count - 1, to: 0, by: -1) { anchors.swapAt(i, rng.int(i + 1)) }
         return anchors
@@ -429,16 +494,21 @@ enum Foliage {
         return float4x4(columns: (SIMD4(x * s, 0), SIMD4(dir * s, 0), SIMD4(zr * s, 0), SIMD4(p, 1)))
     }
 
-    /// Grows one plant. `palette`: the species' bough meshes (their bounds place the plant's).
+    /// Grows one plant of a built-in species. `palette`: the species' bough meshes (their bounds place the plant's).
     static func plant(_ species: Species, age: Age, seed: UInt64, palette: [Mesh]) -> Plant {
-        if species == .grass {
-            let patch = grassPatch(seed: seed)
+        plant(PlantCatalog.builtIn[species], species, age: age, seed: seed, palette: palette)
+    }
+
+    /// Grows one plant of `def` (the species `species` of its catalog).
+    static func plant(_ def: SpeciesDef, _ species: Species, age: Age, seed: UInt64, palette: [Mesh]) -> Plant {
+        if let grass = def.grass {
+            let patch = grassPatch(seed: seed, size: grass.size, blades: grass.blades)
             return Plant(species: species, age: age, meshes: [patch], parts: [Part(mesh: 0, shared: false,
                          transform: matrix_identity_float4x4, bone: 0)],
                          bones: [Bone(pivot: .zero, axis: [0, 1, 0], parent: -1, length: 0.4, radius: 0.004, phase: 0)],
                          bounds: patch.bounds)
         }
-        let recipe = Foliage.recipe(species, age: age)
+        let recipe = def.recipe(age)
         var rng = SplitMix64(seed: seed)
         let skeleton = grow(recipe, seed: rng.nextUInt64())
         let trunk = skeleton.stems[0]
@@ -452,7 +522,7 @@ enum Foliage {
             // No boughs: one mesh, the stems and whatever leaves grow on them (ferns, dead trees).
             let anchors = recipe.leaf.map { leaves(on: skeleton, $0, up: recipe.up, rng: &rng) } ?? []
             let mesh = Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: recipe.leaf?.shape ?? .kite,
-                                    fold: recipe.leaf?.fold ?? 0, up: recipe.up, allLeaves: species == .fern)
+                                    fold: recipe.leaf?.fold ?? 0, up: recipe.up, allLeaves: def.stemsAreLeaves)
             return Plant(species: species, age: age, meshes: [mesh],
                          parts: [Part(mesh: 0, shared: false, transform: matrix_identity_float4x4, bone: 0)],
                          bones: bones, bounds: mesh.bounds)
@@ -508,7 +578,10 @@ enum Foliage {
     /// One bough of a species' palette: a twig with side twigs and leaves, lying along +Y with +Z up. `cards`: its
     /// leaves as cards (a few rectangles with the leaves' picture) instead of a mesh each.
     static func bough(_ species: Species, variant: Int, seed: UInt64, cards: Bool = false) -> Mesh {
-        let recipe = boughRecipe(species, variant: variant)
+        bough(boughRecipe(species, variant: variant), seed: seed, cards: cards)
+    }
+
+    static func bough(_ recipe: Recipe, seed: UInt64, cards: Bool = false) -> Mesh {
         var rng = SplitMix64(seed: seed)
         let skeleton = grow(recipe, seed: rng.nextUInt64())
         if cards, let leaf = recipe.leaf {
@@ -535,24 +608,27 @@ enum Foliage {
         }
     }
 
-    /// Every species' palette and plants. The same seed gives the same library, built in parallel or not.
+    /// Every species' palette and plants (of `catalog`; `species`: only these). The same seed gives the same
+    /// library, built in parallel or not; a species' plants are the same whatever else is built with it.
     /// `cards`: the boughs' leaves as cards.
-    static func library(seed: UInt64, species: [Species] = Species.allCases, parallel: Bool = true, cards: Bool = false) -> [SpeciesSet] {
+    static func library(seed: UInt64, catalog: PlantCatalog = .builtIn, species: [Species]? = nil, parallel: Bool = true,
+                        cards: Bool = false) -> [SpeciesSet] {
+        let species = species ?? catalog.all
         struct Job { var species: Species; var age: Age; var index: Int }
         var boughJobs: [Job] = [], plantJobs: [Job] = []
         for s in species {
-            for i in 0..<paletteSize(s) { boughJobs.append(Job(species: s, age: .mature, index: i)) }
-            for age in Age.allCases { for i in 0..<variants(s, age) { plantJobs.append(Job(species: s, age: age, index: i)) } }
+            for i in 0..<catalog[s].paletteSize { boughJobs.append(Job(species: s, age: .mature, index: i)) }
+            for age in Age.allCases { for i in 0..<catalog[s].variants(age) { plantJobs.append(Job(species: s, age: age, index: i)) } }
         }
         let boughs = slots(boughJobs.count, parallel: parallel) { j -> Mesh in
-            let job = boughJobs[j]
-            return bough(job.species, variant: job.index, seed: Foliage.seed(seed, job.species.rawValue, -1, job.index), cards: cards)
+            let job = boughJobs[j], def = catalog[job.species]
+            return bough(def.boughRecipe(variant: job.index)!, seed: Foliage.seed(seed, def.seedIndex, -1, job.index), cards: cards)
         }
-        var palettes = [[Mesh]](repeating: [], count: Species.allCases.count)
+        var palettes = [[Mesh]](repeating: [], count: catalog.count)
         for (j, job) in boughJobs.enumerated() { palettes[job.species.rawValue].append(boughs[j]) }
         let plants = slots(plantJobs.count, parallel: parallel) { j -> Plant in
-            let job = plantJobs[j]
-            return plant(job.species, age: job.age, seed: Foliage.seed(seed, job.species.rawValue, job.age.rawValue, job.index),
+            let job = plantJobs[j], def = catalog[job.species]
+            return plant(def, job.species, age: job.age, seed: Foliage.seed(seed, def.seedIndex, job.age.rawValue, job.index),
                          palette: palettes[job.species.rawValue])
         }
         return species.map { s in
