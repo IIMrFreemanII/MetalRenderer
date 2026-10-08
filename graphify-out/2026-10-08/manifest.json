@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791391575.52055,
-    "seen": 1791404102.849324,
-    "ast_hash": "a491cbc70a5e6156ef89a22ce8ab52a3",
+    "mtime": 1791407356.0882652,
+    "seen": 1791407659.75713,
+    "ast_hash": "598e85a15de975f6bd9c7d8f5bd2831f",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791397809.4458542,
-    "seen": 1791404102.849207,
-    "ast_hash": "7996e022bda181fbe2555ce6997432f7",
+    "mtime": 1791407195.1476173,
+    "seen": 1791407659.7569869,
+    "ast_hash": "1f4f7294c427b9029065cc5c4cbf30bd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -420,9 +420,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1791397042.9085693,
-    "seen": 1791404102.8492,
-    "ast_hash": "adfb09f5da5a11287312b262944159b7",
+    "mtime": 1791405609.2817585,
+    "seen": 1791407659.756979,
+    "ast_hash": "c3f28407d5bc5beab1c48e6eae36d807",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791403490.3824759,
-    "seen": 1791404102.849152,
-    "ast_hash": "0ea8469a8de90fc8b820f3c8b2431362",
+    "mtime": 1791407448.3272672,
+    "seen": 1791407659.756916,
+    "ast_hash": "d7a1b9eb8f6f773f85d870985629b9f0",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -654,15 +654,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ComputePass.swift": {
-    "mtime": 1791396727.003838,
-    "seen": 1791404102.849161,
-    "ast_hash": "58b608c5c3b46bffee505589b09b81a5",
+    "mtime": 1791406109.5595434,
+    "seen": 1791407659.756928,
+    "ast_hash": "fafe372b299523423319f42090728e34",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1791391575.5547972,
-    "seen": 1791404102.849189,
-    "ast_hash": "d5ce72f53a8c50288bc8fe3ac108d120",
+    "mtime": 1791406109.5597675,
+    "seen": 1791407659.756962,
+    "ast_hash": "8667c4a4285aa395a5031d8e96c683e1",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
@@ -1044,9 +1044,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsGPU.swift": {
-    "mtime": 1791396238.13141,
-    "seen": 1791404102.849196,
-    "ast_hash": "9ca5fc7161adfcdabb0ebb2ef7c348e7",
+    "mtime": 1791407195.1478248,
+    "seen": 1791407659.756974,
+    "ast_hash": "1a41e7c7f061c756198ea5ec3d80950e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsHair.swift": {
@@ -1416,21 +1416,21 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFluid.swift": {
-    "mtime": 1791403276.126505,
-    "seen": 1791404102.849194,
-    "ast_hash": "b189df9ab360cec6c43f0dd54bc5c2b5",
+    "mtime": 1791405153.7072544,
+    "seen": 1791407659.756968,
+    "ast_hash": "88b6ddd24919e4ae7d503979550a6245",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFluidCPU.swift": {
-    "mtime": 1791403276.1269543,
-    "seen": 1791404102.849194,
-    "ast_hash": "7896e4a17b74edf12031d3c114675725",
+    "mtime": 1791405609.2815218,
+    "seen": 1791407659.756969,
+    "ast_hash": "827c1384b0c2d4466ee33e7944d13b14",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFluidGPU.swift": {
-    "mtime": 1791401487.1671581,
-    "seen": 1791404102.849195,
-    "ast_hash": "69a3b42613ce4a01c06e8293a5442644",
+    "mtime": 1791406228.932564,
+    "seen": 1791407659.756973,
+    "ast_hash": "556019f1e5557af96a27e5dc351505a0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Fluids.swift": {
@@ -1440,9 +1440,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Fluid.metal": {
-    "mtime": 1791403651.7048059,
-    "seen": 1791404102.849232,
-    "ast_hash": "54a6daad7d70f637786a8e6ac81a6fc0",
+    "mtime": 1791405614.986811,
+    "seen": 1791407659.7570171,
+    "ast_hash": "bf117cc79196731eaaaa1aa7a556c000",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/FluidSurface.metal": {
@@ -1461,6 +1461,12 @@
     "mtime": 1791403276.1287582,
     "seen": 1791404102.84928,
     "ast_hash": "48264d5f7c5159d8d1220b0c8ab03a75",
+    "semantic_hash": ""
+  },
+  ".claude/notes/fluids-handoff.md": {
+    "mtime": 1791407402.382161,
+    "seen": 1791407659.757118,
+    "ast_hash": "8d126c034d511c9e71f59e89047b4ecf",
     "semantic_hash": ""
   }
 }

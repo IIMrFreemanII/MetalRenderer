@@ -668,6 +668,19 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                     }
                 }
             }
+            // The particles on the way (PARTICLES): the emitters' light up to the first that stops the path, and that
+            // one: an emissive one ends it, a lit one is a scattering point (isotropic, as the fog's).
+            ParticleScatter particle;
+            particle.hit = false;
+            if (PARTICLES) {
+                particle = particleScatter(origin, dir, isFar(tNear) ? FAR_DISTANCE : tNear, rng.nextUint(), accel);
+                L_ += throughput * particle.emission;
+                if (particle.hit) {
+                    tNear = particle.t;
+                    kind = 6u;
+                    if (particle.emissive) break;
+                }
+            }
             // The fog on the way: a collision there is a scattering point in the medium.
             if (fogOn) {
                 float4 m;
@@ -716,6 +729,51 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 }
             }
 
+            if (kind == 6u) {
+                // A lit particle: next-event estimation with the isotropic phase, then on in a random direction.
+                float3 p = origin + dir * tNear;
+                throughput *= particle.albedo;
+                PTVertex x = { p, float3(0.0f), float3(0.0f), true };
+                float2 rPick = ptRandom(smp, bounce, PT_SLOT_PICK, rng);
+                float2 rLight = ptRandom(smp, bounce, PT_SLOT_LIGHT, rng);
+                const float phase = 1.0f / (4.0f * M_PI_F);
+                if (u.lightCount > 0) {
+                    float pick;
+                    uint li = ptPickLight(L, x, rPick.x, rng.next(), pick);
+                    if (li < u.lightCount && pick > 0.0f) {
+                        PTLightSample ls = ptSampleLight(lights[li], p, rLight, s, u.flags);
+                        if (ls.pdf > 0.0f) {
+                            float3 T = ptTransmittance(p, p + ls.dir * ls.dist, accel, s, fogOn, fog, rng);
+                            if (any(T > 0.0f)) {
+                                float lightPdf = pick * ls.pdf;
+                                bool found = lightHits && !ls.delta && !ls.mesh && (!treeLights || lightType(lights[li]) == LIGHT_SUN
+                                    || ptProxyReaches(p, ls.dir, ls.dist, li, accel, proxies, params.config.y, lights));
+                                float w = found ? ptPowerHeuristic(lightPdf, phase) : 1.0f;
+                                L_ += throughput * ls.Le * T * (phase * sunVisibilityScale(lights[li], p, s) * w / lightPdf);
+                            }
+                        }
+                    }
+                }
+                // The sky's light, which the real-time light pass gives the particles too (skyAmbient), is found by the
+                // bounce that leaves.
+                if (bounce >= params.samples.z) break;
+                float3 l = ptSampleHG(dir, 0.0f, ptRandom(smp, bounce, PT_SLOT_DIRECTION, rng));
+                prev = x;
+                prevPdf = phase;
+                prevDelta = false;
+                cameraRay = false;
+                emitterThroughput = float3(0.0f);
+                origin = p;
+                dir = l;
+                spread = GI_RAY_SPREAD;
+                ++bounce;
+                if (bounce >= 3) {
+                    float q = min(max(throughput.x, max(throughput.y, throughput.z)), 0.95f);
+                    if (ptRandom(smp, bounce - 1, PT_SLOT_ROULETTE, rng).x >= q) break;
+                    throughput /= q;
+                }
+                continue;
+            }
             // Inside a liquid, what it absorbed on the way here.
             if (LIQUID && medium.a > 0.0f) {
                 float3 kept = exp(-medium.rgb * (isFar(tNear) ? 1e3f : tNear));

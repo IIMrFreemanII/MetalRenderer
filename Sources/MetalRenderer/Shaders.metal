@@ -14,6 +14,7 @@ using namespace metal::raytracing;
 #include "Shaders/Foliage.metal"           // generated plants: the wind that turns their parts
 #include "Shaders/SDF.metal"               // SDF shapes: their distance fields and the march through them
 #include "Shaders/Intersect.metal"         // Ray, Hit, TraceScene and the ray queries (Metal's intersector)
+#include "Shaders/ParticleTrace.metal"     // particles as rays meet them: billboards, flipbooks, their transmittance
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
 #include "Shaders/Raster.metal"            // the raster visibility buffer: culling, the pyramid, the draw, visibilityHit
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
@@ -44,3 +45,4 @@ using namespace metal::raytracing;
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
 #include "Shaders/Fluid.metal"             // liquids: PBF and MLS-MPM, their pour and their pushes on bodies (fluid* kernels)
 #include "Shaders/FluidSurface.metal"      // liquids' surfaces: splat, blur, surface nets into the scene's buffers
+#include "Shaders/Particles.metal"         // particle effects: a step's begin, emit and simulate (particle* kernels)

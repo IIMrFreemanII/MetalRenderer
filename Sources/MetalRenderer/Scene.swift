@@ -388,6 +388,14 @@ final class Scene {
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
+    /// The scene's particle effects, if it has any (Particles.swift): always on the GPU (ParticlesGPU), which the rays
+    /// meet through a structure of their own (Shaders/ParticleTrace.metal).
+    private(set) var particles: ParticleSystem?
+    /// Reflection rays see them (ParticleSettings.reflections).
+    var particlesReflected: Bool { particles != nil && settings.particles.reflections }
+    /// The steps `update` asked for since the renderer last took them, and whether from the start.
+    private var particlesPending = (steps: 0, restart: true)
+    var hasParticles: Bool { particles != nil }
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).
@@ -459,6 +467,7 @@ final class Scene {
         case .softBodies: buildSoftBodies(settings.physics)
         case .muscles: buildMuscles(settings.physics)
         case .fluids: buildFluids(settings.physics)
+        case .particles: buildParticles()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
@@ -581,6 +590,10 @@ final class Scene {
                 placeBodies()
             }
         }
+        if let particles {
+            let claim = particles.claim(to: t)
+            particlesPending = claim.restart ? (claim.steps, true) : (particlesPending.steps + claim.steps, particlesPending.restart)
+        }
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
@@ -622,6 +635,26 @@ final class Scene {
         guard let physics else { return }
         physicsOnGPU = true
         physicsPending = (physics.stepIndex, true)
+    }
+
+    /// The particles' steps to encode this frame, `limit` at most (the rest wait for the next frames), and whether
+    /// from the start (a new scene, or time run back).
+    func takeParticleSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+        let taken = (steps: min(particlesPending.steps, limit), restart: particlesPending.restart)
+        particlesPending = (particlesPending.steps - taken.steps, false)
+        return taken
+    }
+
+    /// The renderer made the particles' buffers anew: it replays them from the start up to where they are.
+    func replayParticles() {
+        guard let particles else { return }
+        particlesPending = (particles.stepIndex, true)
+    }
+
+    /// The scene's particle effects (a builder's, once): see `particles`.
+    func addParticles(_ system: ParticleSystem) {
+        precondition(particles == nil, "a scene has one particle system")
+        particles = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders)
     }
 
     /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.
@@ -751,12 +784,12 @@ final class Scene {
         // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
-        // liquid's surface. (Shaders/Types.metal.)
+        // liquid's surface. Bit 17: PARTICLES, it has particle effects. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
-            | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0)
+            | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasParticles ? 0x0002_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {

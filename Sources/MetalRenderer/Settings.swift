@@ -341,6 +341,8 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // circle among balls, and on ragdolls tumbling down steps
     case fluids             // liquids (PhysicsFluid.swift): water, blood and honey poured side by side down steps into a
                             // tray, boxes floating and sinking in them, a paddle in each to stir it
+    case particles          // GPU particle effects (Particles.swift), ray traced: fire and smoke, sparks that bounce and
+                            // smoke, magic motes in curl noise, rain that splashes
 
     var title: String {
         switch self {
@@ -369,6 +371,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .softBodies: return "Soft bodies"
         case .muscles: return "Muscles and skin"
         case .fluids: return "Fluids"
+        case .particles: return "Particles"
         }
     }
 
@@ -494,6 +497,30 @@ struct ExtraModel: Equatable, Codable {
     var path: String
     var position: SIMD3<Float>
     var yaw: Float
+}
+
+/// A scene's particle effects (Particles.swift; the particles scene's, the showcase's motes). Changing any of it
+/// rebuilds the scene, which starts them again.
+struct ParticleSettings: Equatable, Codable {
+    /// Every emitter's rate, bursts and pool times this: the effects thinner or denser (timing).
+    var budget: Float = 1
+    /// The particles that cast shadows do (shadow rays look through them); off, none does.
+    var shadows = true
+    /// Reflection rays see the particles in front of what they reflect (particleGather); off, mirrors miss them.
+    var reflections = true
+    static let budgetRange: ClosedRange<Float> = 0.25...4
+
+    /// `emitters` as these settings make them.
+    func applied(to emitters: [ParticleEmitter]) -> [ParticleEmitter] {
+        emitters.map { e in
+            var e = e
+            e.capacity = max(Int((Float(e.capacity) * budget).rounded()), 1)
+            e.rate *= budget
+            if let b = e.burst { e.burst = (b.time, max(Int((Float(b.count) * budget).rounded()), 1), b.period, b.repeats) }
+            if !shadows { e.castsShadows = false }
+            return e
+        }
+    }
 }
 
 /// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
@@ -629,6 +656,7 @@ struct SceneSettings: Equatable, Codable {
     var voxelBoxes = false
     /// The physics scene: its bodies and how they are simulated.
     var physics = PhysicsSettings()
+    var particles = ParticleSettings()
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -727,7 +755,8 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
+             .particles:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -826,7 +855,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids:
+             .softBodies, .muscles, .fluids, .particles:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

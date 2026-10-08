@@ -48,6 +48,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Fluid.metal|Sources/MetalRenderer/Shaders/FluidSurface.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Liquid.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Particles.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
@@ -71,6 +72,7 @@ if [[ $suites == " " ]]; then
           SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
           Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ;;
           FluidSurface.swift|Scene+Fluids.swift) add FluidTests ;;
+          Particle*.swift|Scene+Particles.swift) add ParticleTests ;;
           MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests ;;
           HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;

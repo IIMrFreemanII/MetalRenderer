@@ -534,7 +534,7 @@ final class PlantTracing {
     }
 
     /// The refit of `slot`'s variants around their posed parts: the ones its plants name.
-    struct Refit: PrimitiveWork {
+    struct Refit: PrimitiveWork4 {
         let structures: [MTLAccelerationStructure]
         let descriptors: [MTLInstanceAccelerationStructureDescriptor]
         let used: [Int]

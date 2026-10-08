@@ -34,6 +34,15 @@ bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& b
     float dist = length(d);
     float t;
     bool hit = intersectAny(makeRay(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_GEOMETRY, cls), accel, t);
+    if (PARTICLES && !hit) {
+        // The particles that cast shadows let T of the light through: the ray gets through with that chance (the
+        // denoisers and the averages make it a soft shadow, as the voxels' stochastic leaves are).
+        float T = particleTransmittance(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f), accel);
+        if (T < 1.0f) {
+            uint h = pcgHash(as_type<uint>(from.x) ^ pcgHash(as_type<uint>(from.y) + pcgHash(as_type<uint>(to.z) ^ pcgHash(accel.frame))));
+            if (float(h >> 8) * (1.0f / 16777216.0f) >= T) { blocker = 0.5f * dist; return false; }
+        }
+    }
     blocker = hit ? max(t, 1e-3f) : 0.0f;
     return !hit;
 }

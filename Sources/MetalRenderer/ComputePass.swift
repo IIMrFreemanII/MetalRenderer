@@ -176,6 +176,14 @@ extension PrimitiveWork {
     var encoderCount: Int { 1 }
 }
 
+/// Per-mesh work Metal 4 encodes in the frame's own encoder (Metal4Frame.updatePrimitives), side by side, rather
+/// than through the Metal 3 queue between the frame's command buffers: the plants' refits, the particles' build.
+protocol PrimitiveWork4: PrimitiveWork {
+    /// Encodes all of it into `enc`; `keep` makes what it touches resident.
+    @available(macOS 26.0, *)
+    func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void)
+}
+
 /// This frame's refit of the per-mesh structures that deform (the crowd's pose slots): each keeps its tree and takes
 /// its boxes from the vertices its descriptor points at, which the skinning has just rewritten. And the build of those
 /// whose triangles change (a liquid's surface: FluidSurface.swift), from scratch, into the same structure.
@@ -214,6 +222,8 @@ struct UpscaleInputs {
     let view: Upscaler.View
     let jitter: SIMD2<Float>
     let reset: Bool
+    /// The particles' layer (particleLayerKernel), which MetalFX puts over what it denoises.
+    var overlay: MTLTexture? = nil
 }
 
 /// When a frame's GPU work ran: the whole frame, and with a benchmark's split passes each pass's command buffer.

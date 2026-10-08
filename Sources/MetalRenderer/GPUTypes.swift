@@ -58,6 +58,7 @@ enum UniformFlags {
     static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
     static let vsm: UInt32 = 2097152         // the camera's surfaces' shadows through virtual shadow maps (VSM.swift)
     static let giRadiance: UInt32 = 4194304  // the composite keeps the lit diffuse light for Lumen's screen traces
+    static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
 /// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.
@@ -677,6 +678,78 @@ struct GPUFluidSurface {
     var triangles = SIMD4<UInt32>()          // x = triangles it holds
 }
 
+/// A particle effect's particle (Particles.swift): MSL Particle. Its slot in the pool is its emitter's until it dies.
+struct GPUParticle {
+    var position = SIMD4<Float>()            // w = age (s)
+    var velocity = SIMD4<Float>()            // w = lifetime (s)
+    var info = SIMD4<UInt32>()               // x = spawn id (its emitter's count, or its parent's x 8 + which child),
+                                             // y = seed, z = emitter, w = flags (ParticleSystem.alive)
+}
+
+/// What rays meet of a particle this frame (Shaders/ParticleTrace.metal): MSL ParticleRender. One per frame slot,
+/// written by particlePoseKernel, its radiance by particleLightKernel.
+struct GPUParticleRender {
+    var centerRadius = SIMD4<Float>()        // w = radius (0: no particle)
+    var axis = SIMD4<Float>()                // velocity / axis: the long axis's half (its length the half length);
+                                             // world: the normal; w = spin (rad)
+    var color = SIMD4<Float16>()             // rgb: albedo (lit) or emitted light (emissive), a: opacity
+    var radiance = SIMD4<Float16>()          // rgb: the light it scatters to the eye (particleLightKernel), a: unused
+    var info = SIMD4<UInt32>()               // x = emitter | atlas layer << 16 | ParticleEmitter.Flags << 24,
+                                             // y = flipbook frames (ParticleTrace.metal), z = half2(soft distance (m),
+                                             // shadow density), w = seed
+}
+
+/// An emitter as the kernels read it (Particles.swift): MSL ParticleEmitter. Written once.
+struct GPUParticleEmitter {
+    var origin = SIMD4<Float>()              // w = the shape's radius
+    var axis = SIMD4<Float>()                // the shape's and the velocity's axis (unit); w = the velocity's spread
+                                             // about it (half angle, rad)
+    var extent = SIMD4<Float>()              // a box's half extents; w = the shape (ParticleEmitter.Shape.code)
+    var velocity = SIMD4<Float>()            // added to every particle's; w = a child's share of its parent's
+    var speed = SIMD4<Float>()               // x...y = speed (m/s), z = 1: outward from the origin, w = the step it starts
+                                             // at (steps count from the start, ParticleSystem.stepLength each)
+    var life = SIMD4<Float>()                // x...y = lifetime (s), z = particles a step, w = the step it stops at
+    var burst = SIMD4<Float>()               // x = the step it bursts at, y = how many, z = every (steps, 0: once),
+                                             // w = bursts (0: no end)
+    var forces = SIMD4<Float>()              // x = gravity's share, y = drag (1/s), z = the wind's share, w = curl noise (m/s^2)
+    var noise = SIMD4<Float>()               // x = curl noise's frequency (1/m), y = its scroll (1/s), z = vortex
+                                             // (m/s^2), w = attraction (m/s^2)
+    var attractor = SIMD4<Float>()           // the vortex's and attraction's centre; w = restitution
+    var size = SIMD4<Float>()                // x = radius at birth, y = at death (m), z = random shrink (0...1),
+                                             // w = stretch (velocity: s; the long axis's half grows by speed x it)
+    var color0 = SIMD4<Float>()              // rgba at birth
+    var color1 = SIMD4<Float>()              // at `look.x`
+    var color2 = SIMD4<Float>()              // at death
+    var look = SIMD4<Float>()                // x = color1's place in the life (0...1), y = emitted light's scale
+                                             // (0: lit), z = soft distance (m), w = most spin (rad/s)
+    var flip = SIMD4<Float>()                // x = frames, y = frames a second (0: the whole life), z = 1: random first
+                                             // frame, w = the atlas kind's trim (its picture's radius, 0...1)
+    var lock = SIMD4<Float>()                // axis: the axis (unit); world: the normal; w = friction
+    var ids = SIMD4<UInt32>()                // x = first slot, y = capacity, z = parent (ParticleSystem.none), w = flags
+    var ids2 = SIMD4<UInt32>()               // x = children an event, y = colliders (mask), z = orientation code,
+                                             // w = atlas layer | shadow density x 255 << 8
+}
+
+/// An analytic shape particles bounce off (Particles.swift): MSL ParticleCollider.
+struct GPUParticleCollider {
+    var a = SIMD4<Float>()                   // plane: normal, w = offset (n.x = w on it); sphere: centre, w = radius;
+                                             // box: centre
+    var b = SIMD4<Float>()                   // box: half extents; w = kind (ParticleCollider.code)
+}
+
+/// One step of the particles (ParticlesGPU.encodeSteps): MSL ParticleStep, set as bytes.
+struct GPUParticleStep {
+    var wind = SIMD4<Float>()                // the air's velocity (m/s); w = the curl noise's clock (s)
+    var time: Float = 0                      // the step's start (s)
+    var dt: Float = 0
+    var step: UInt32 = 0                     // from the start
+    var parity: UInt32 = 0                   // the alive list it reads (step & 1); bit 1: the scene is bound
+    var emitters: UInt32 = 0
+    var colliders: UInt32 = 0
+    var capacity: UInt32 = 0
+    var gravity: Float = 9.81
+}
+
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
@@ -739,5 +812,10 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUFluidParticle>.stride == 80, "GPUFluidParticle layout mismatch")
     precondition(MemoryLayout<GPUFluidParams>.stride == 224, "GPUFluidParams layout mismatch")
     precondition(MemoryLayout<GPUFluidSurface>.stride == 80, "GPUFluidSurface layout mismatch")
+    precondition(MemoryLayout<GPUParticle>.stride == 48, "GPUParticle layout mismatch")
+    precondition(MemoryLayout<GPUParticleRender>.stride == 64, "GPUParticleRender layout mismatch")
+    precondition(MemoryLayout<GPUParticleEmitter>.stride == 304, "GPUParticleEmitter layout mismatch")
+    precondition(MemoryLayout<GPUParticleCollider>.stride == 32, "GPUParticleCollider layout mismatch")
+    precondition(MemoryLayout<GPUParticleStep>.stride == 48, "GPUParticleStep layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

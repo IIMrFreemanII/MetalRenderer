@@ -19,6 +19,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
+        "particles": particles,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1099,6 +1100,27 @@ extension Benchmark {
             out.append(c)
         }
         out.append(base.named("cpu 2k moving").with { $0.scene.physics.fluidParticles = 2048; $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The particles scene (Scene+Particles.swift) as the app shows it (cascades, MetalFX 3x from 0.5x): paused at 2, 5
+    /// and 8 s, at 5 s on each API, natively at 0.75x without MetalFX (the composite puts the particles' layer over the
+    /// scene, SVGF denoises), and path traced at 0.75x (the reference: its particles stop paths by their opacity, scatter
+    /// or glow); without particle shadows, without particles in reflections; then 5 s moving for timing at a quarter,
+    /// once and four times the particles (ParticleSettings.budget).
+    private static func particles() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+        var out: [Config] = []
+        for time: Float in [2, 5, 8] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 5)) }
+        let native = Config("", scale: 0.75, upscale: 0, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+        out.append(native.named("native").still(at: 5))
+        out.append(native.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 5).frames(256))
+        out.append(base.named("no shadows").with { $0.scene.particles.shadows = false }.still(at: 5))
+        out.append(base.named("no reflections").with { $0.scene.particles.reflections = false }.still(at: 5))
+        for budget: Float in [0.25, 1, 4] {
+            out.append(base.named(String(format: "moving %gx", budget)).with { $0.scene.particles.budget = budget })
+        }
         return out
     }
 

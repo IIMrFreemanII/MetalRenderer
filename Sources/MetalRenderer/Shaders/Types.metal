@@ -157,6 +157,9 @@ constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
 constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
 // Bit 18 = LIQUID: some instances are a liquid's surface (MASK_LIQUID), which camera rays are bent through (liquidKernel).
 constant bool LIQUID = (LIGHT_SPEC & 0x00040000u) != 0;
+// Bit 17 = PARTICLES: the scene has particle effects (ParticleTrace.metal), whose own structure the camera's layer,
+// shadow rays, reflections and the path tracer look through.
+constant bool PARTICLES = (LIGHT_SPEC & 0x00020000u) != 0;
 constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
@@ -278,6 +281,7 @@ constant uint FLAG_POST          = 524288; // the lens effects follow (Post.meta
 constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
 constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
 constant uint FLAG_GI_RADIANCE   = 4194304; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
+constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
