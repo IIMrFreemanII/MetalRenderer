@@ -59,7 +59,12 @@ if [[ $suites == " " ]]; then
           Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;
           BVH.swift) add BVHTests CacheTests ;;
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;
-          Building*.swift|MeshBuilder.swift) add BuildingTests CityTests ;;
+          Building*.swift|MeshBuilder.swift|BuiltInBuildings.swift) add BuildingTests CityTests BuildingPlanTests BuildingEditorTests BuildingWorkshopTests WalkerTests ;;
+          PlanEdits.swift|FloorPlanView.swift|PropLibrary.swift) add BuildingEditorTests BuildingPlanTests ;;
+          FurnitureKit.swift) add BuildingPlanTests BuildingWorkshopTests ;;
+          Walker.swift|InteriorControls.swift|InteriorLifts.swift) add WalkerTests BuildingWorkshopTests ;;
+          Scene+Buildings.swift|Scene+Interiors.swift) add BuildingWorkshopTests CityTests WorldTests WalkerTests ;;
+          CatalogRegistry.swift) add PlantCatalogTests PlantEditorTests BuildingEditorTests ;;
           CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
           Scene+Stress.swift) add StressSceneTests ;;
           SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests ;;   # (the muscles' rig poses its bones by it)

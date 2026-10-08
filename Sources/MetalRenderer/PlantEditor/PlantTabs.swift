@@ -33,7 +33,7 @@ struct LevelEditor: View {
                 Button { addLevel() } label: { Image(systemName: "plus") }.disabled(count >= 6).help("Add a level of stems")
                 Button { removeLevel() } label: { Image(systemName: "minus") }.disabled(count <= 1).help("Remove the last level")
             }
-            EditorGroup(title: l == 0 ? (bough ? "Twig" : "Stems from the ground") : "Level \(l)", clip: .level, bough: bough) {
+            EditorGroup(title: l == 0 ? (bough ? "Twig" : "Stems from the ground") : "Level \(l)", copy: { model.copy(.level, bough: bough) }, paste: { model.paste(.level, bough: bough) }) {
                 ParamRows(table: l == 0 ? PlantParams.trunk : PlantParams.level, root: level(l))
                 if l == 0 {
                     ValueRow(title: "Lean (several stems)", value: Binding(get: { recipe.levels[0].down.start },
@@ -151,7 +151,7 @@ struct LeavesTab: View {
                 }
             } else {
                 if model.def.bough != nil {
-                    EditorGroup(title: "On the boughs", clip: .leaves, bough: true) {
+                    EditorGroup(title: "On the boughs", copy: { model.copy(.leaves, bough: true) }, paste: { model.paste(.leaves, bough: true) }) {
                         if model.def.bough?.leaf != nil {
                             LeafEditor(leaf: Binding(get: { model.def.bough?.leaf ?? Foliage.LeafRecipe() },
                                                      set: { l in if model.def.bough?.leaf != nil { model.def.bough?.leaf = l } }))
@@ -160,7 +160,7 @@ struct LeavesTab: View {
                         }
                     }
                 }
-                EditorGroup(title: "On the plant's own stems", clip: .leaves) {
+                EditorGroup(title: "On the plant's own stems", copy: { model.copy(.leaves) }, paste: { model.paste(.leaves) }) {
                     Toggle("Leaves on its stems", isOn: Binding(get: { model.def.recipe.leaf != nil }, set: { on in
                         model.def.recipe.leaf = on ? Foliage.LeafRecipe(fromLevel: max(model.def.recipe.levels.count - 1, 0)) : nil
                     })).font(.system(size: 11))
@@ -182,7 +182,7 @@ struct BoughsTab: View {
                                                                            set: { on in setBoughs(on) }))
                 .font(.system(size: 11)).disabled(model.def.grass != nil)
             if model.def.bough != nil, model.def.recipe.graft != nil {
-                EditorGroup(title: "Where they hang", clip: .graft) {
+                EditorGroup(title: "Where they hang", copy: { model.copy(.graft) }, paste: { model.paste(.graft) }) {
                     ParamRows(table: PlantParams.graft, root: Binding($model.def.recipe.graft, or: Foliage.Graft()))
                     ParamRows(table: PlantParams.palette, root: $model.def.palette)
                 }
@@ -210,7 +210,7 @@ struct LookTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            EditorGroup(title: "Colours", clip: .look) {
+            EditorGroup(title: "Colours", copy: { model.copy(.look) }, paste: { model.paste(.look) }) {
                 LinearColorPicker(title: "Bark", color: $model.def.look.bark)
                 ForEach(model.def.look.leaves.indices, id: \.self) { i in
                     HStack {
@@ -255,7 +255,7 @@ struct HabitatTab: View {
             }
             .pickerStyle(.segmented).font(.system(size: 11))
             if model.def.role == .tree {
-                EditorGroup(title: "Its weight against the other trees", clip: .habitat) {
+                EditorGroup(title: "Its weight against the other trees", copy: { model.copy(.habitat) }, paste: { model.paste(.habitat) }) {
                     Toggle("A fixed share of all trees", isOn: Binding(get: { model.def.habitat.share != nil },
                                                                        set: { model.def.habitat.share = $0 ? 0.03 : nil })).font(.system(size: 11))
                     if model.def.habitat.share != nil {
@@ -269,7 +269,7 @@ struct HabitatTab: View {
                 Text("Height: 0 on low ground, 1 up the hills. Stand: −1…1 patches. Light: clearings, edges, the trail.")
                     .font(.system(size: 10)).foregroundColor(.secondary)
             } else if model.def.habitat.cover != nil {
-                EditorGroup(title: "How thickly it grows", clip: .habitat) {
+                EditorGroup(title: "How thickly it grows", copy: { model.copy(.habitat) }, paste: { model.paste(.habitat) }) {
                     ParamRows(table: Array(PlantParams.tree.prefix(1)), root: $model.def.habitat)
                     ParamRows(table: PlantParams.cover, root: Binding($model.def.habitat.cover, or: Foliage.Habitat.Cover()))
                     Toggle("In the open (not under the trees)", isOn: Binding(get: { model.def.habitat.cover?.open ?? false },

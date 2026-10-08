@@ -30,9 +30,16 @@ struct World {
     var cityShare: Float = 0.5
     /// The share of the cities' windows with a light behind them, which is on at night.
     var lit: Float = 0.35
+    /// The building styles and single buildings (BuildingCatalog), and their fingerprint if they aren't the built-in
+    /// ones (part of the tiles' names).
+    var buildingCatalog = BuildingCatalog.builtIn
+    var buildings = ""
+    /// The building whose interior the scene has (LotRef.key): its tile is made without it (Scene+World adds it).
+    var interior: String?
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
-    static let version = 6
+    /// 7: buildings with thick walls, made from their floor plans.
+    static let version = 7
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.
@@ -514,6 +521,25 @@ struct World {
     }
 
     /// The blocks whose middle is in the square from (x0, z0), `side` across, in the order of their rows.
+    /// A block's lot's name (LotRef): the city's cell, the block's place in its grid, the lot's in the block.
+    func lotRef(_ city: City, _ block: Block, _ k: Int) -> LotRef {
+        let lot = block.plan.lots[k]
+        return LotRef(context: "world \(seed) city \(city.cell.x),\(city.cell.y) block \(block.index.x),\(block.index.y)", lot: k, seed: lot.seed,
+                      size: lot.size)
+    }
+
+    /// The middle (the world's x, z) of the block a lot's name is in, if it is a world's lot.
+    func blockMiddle(of key: String) -> SIMD2<Double>? {
+        let words = key.replacingOccurrences(of: "#", with: " ").split(separator: " ")
+        guard words.count >= 7, words[0] == "world", words[2] == "city", words[4] == "block" else { return nil }
+        let cell = words[3].split(separator: ","), block = words[5].split(separator: ",")
+        guard cell.count == 2, block.count == 2, let cx = Int(cell[0]), let cz = Int(cell[1]), let i = Int(block[0]), let j = Int(block[1]),
+              let city = city(cell: SIMD2(cx, cz)) else { return nil }
+        let corner = SIMD2(Float(i), Float(j)) * World.blockPitch + (World.blockPitch - World.blockSize) / 2
+        let middle = corner + World.blockSize / 2
+        return city.center + SIMD2(Double(middle.x), Double(middle.y))
+    }
+
     func blocks(x0: Double, z0: Double, side: Double) -> (city: City, blocks: [Block])? {
         guard let city = city(near: x0 + side / 2, z0 + side / 2) else { return nil }
         let pitch = World.blockPitch, size = World.blockSize

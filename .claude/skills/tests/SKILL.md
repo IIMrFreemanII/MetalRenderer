@@ -47,7 +47,12 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `Shaders/Intersect.metal` (the ray queries) | ShaderSourceTests, KernelVariantsTests, PlantTracingTests |
 | `BVH.swift` (the SAH builder over boxes, the clusters' trees) | BVHTests, CacheTests |
 | `CacheFile`, `SectionFile`, `BlueNoise` | CacheTests |
-| `Building*.swift`, `MeshBuilder` | BuildingTests, CityTests |
+| `Building*.swift` (the generator, its floor plans, interiors, styles as data, the store, the editor's parameters and Mutate), `BuiltInBuildings`, `MeshBuilder` | BuildingTests, CityTests, BuildingPlanTests, BuildingEditorTests, BuildingWorkshopTests, WalkerTests |
+| `PlanEdits`, `PropLibrary`, `BuildingEditor/FloorPlanView` (hand edits, glTF props) | BuildingEditorTests, BuildingPlanTests |
+| `FurnitureKit` | BuildingPlanTests, BuildingWorkshopTests |
+| `Walker`, `InteriorControls`, `InteriorLifts` (walking, doors, switches, lifts) | WalkerTests, BuildingWorkshopTests |
+| `Scene+Buildings` (the building workshop), `Scene+Interiors` (buildings into scenes, interiors on demand) | BuildingWorkshopTests, CityTests, WorldTests, WalkerTests |
+| `BuildingEditor/*` (the SwiftUI panel, the Floor Plan window) | BuildingEditorTests covers its model; the views: prove with the app |
 | `CityPlan`, `Scene+City` | CityTests, BuildingTests |
 | `Scene+Stress` | StressSceneTests |
 | `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests (`SkinnedCharacter`: + MuscleTests, the rig's poses) |

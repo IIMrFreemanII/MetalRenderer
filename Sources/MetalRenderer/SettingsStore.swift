@@ -25,6 +25,10 @@ enum SettingsStore {
         s.scene.worldAnchor = nil
         s.scene.extraModels = []
         s.scene.plantCatalog = ""
+        s.scene.buildingCatalog = ""
+        s.scene.interior = nil
+        s.scene.buildings.mutants = ""
+        s.scene.buildings.compare = ""
         s.scene.plants.mutants = ""
         s.scene.plants.compare = ""
         s.virtualGeometry.freeze = false
@@ -63,7 +67,7 @@ enum SettingsStore {
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: key) }
     }
 
-    private static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
+    static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
         var out = base
         for (k, v) in over {
             if let b = base[k] as? [String: Any], let o = v as? [String: Any] { out[k] = merge(b, o) } else { out[k] = v }

@@ -84,6 +84,10 @@ extension Scene {
         world.lit = settings.city.lit
         let catalog = PlantCatalog.resolve(settings.plantCatalog)
         if !catalog.placesAsBuiltIn { world.plants = catalog.placementFingerprint }
+        let buildings = BuildingCatalog.resolve(settings.buildingCatalog)
+        world.buildingCatalog = buildings
+        if buildings != .builtIn { world.buildings = buildings.fingerprint }
+        world.interior = settings.interior
         let flora = Flora(self, seed: world.seed, catalog: catalog, borrowing: true)
         // Every plant and its materials, first and in the library's order: every scene of the world then has the same
         // textures (the renderer keeps them) and the same numbers for its plants (so it keeps the tiles' trees too).
@@ -244,6 +248,34 @@ extension Scene {
             }
             plants += placements.count
         }
+
+        // The buildings next to the camera, for the renderer to choose the one whose interior to make (lotAreas), and
+        // that one with its interior (its tile left it out): still (the world's scenes are), its doors open.
+        let kit = BuildingKit(self, mapIndex: mapIndex)
+        kit.still = true
+        for (k, job) in jobs.enumerated() where job.level == 0 && tiles[k] != nil {
+            let o = WorldTile.origin(job.x, job.z)
+            guard let (city, blocks) = world.blocks(x0: o.x, z0: o.y, side: side) else { continue }
+            for block in blocks {
+                for (i, lot) in block.plan.lots.enumerated() {
+                    let ref = world.lotRef(city, block, i)
+                    let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
+                    lotAreas.append((ref.key, CityPlan.Rect(lo: lot.rect.lo + c, hi: lot.rect.hi + c), Float(lot.floors) * 3.4 + 6))
+                    guard ref.key == settings.interior else { continue }
+                    var spec = BuildingSpec(lot: lot, city: settings.city, night: true, catalog: buildings)
+                    if let o = buildings.override(for: ref) { spec.apply(o, catalog: buildings) }
+                    spec.interior = true
+                    let building = BuildingGenerator.generate(spec)
+                    let transform = translate([c.x, city.level, c.y]) * lot.transform
+                    kit.addBuilding(building, at: transform)
+                    walkAreas.append(WalkArea(rect: CityPlan.Rect(lo: lot.rect.lo + c, hi: lot.rect.hi + c), building: building, at: transform))
+                }
+            }
+        }
+        walkColliders = kit.colliders
+        let terrain = world, from = anchor
+        walkGround = { x, z in terrain.height(Double(x) + from.x, Double(z) + from.y) }
+        kit.addFlashlight()
 
         // The light from the sky: the sun, and once it has set the moon (its colour is the atmosphere's to say).
         addLight(.sun(angularRadius: Heavens.discRadius), color: [1, 1, 1]) { t in

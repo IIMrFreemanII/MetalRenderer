@@ -87,6 +87,9 @@ extension PhysicsSettings.Solvers: EnvNamed {}
 extension Foliage.Age: EnvNamed {}
 extension PlantSceneSettings.Layout: EnvNamed {}
 extension PlantSceneSettings.View: EnvNamed {}
+extension BuildingSceneSettings.Sides: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension BuildingSceneSettings.Layout: EnvNamed {}
+extension BuildingSceneSettings.View: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -326,6 +329,7 @@ enum SettingsTable {
         let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
         let workshop: When = { $0.scene.kind == .plants }
+        let buildings: When = { $0.scene.kind == .buildings }
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
@@ -352,6 +356,21 @@ enum SettingsTable {
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
             S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
+            S.check("Interiors near the camera", \.scene.city.interiors).env(.scene, "interiors").when(city),
+            S.slider("Interior reach", \.scene.city.interiorReach, 10...80, step: 5, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "reach").when(city),
+            S.value(\.scene.buildings.style).env(.scene, "bstyle"),
+            S.slider("Lot width", \.scene.buildings.lot.x, BuildingSceneSettings.widthRange, step: 0.5, live: false) { String(format: "%.1f m", $0) }
+                .env(.scene, "width").when(buildings),
+            S.slider("Lot depth", \.scene.buildings.lot.y, BuildingSceneSettings.depthRange, step: 0.5, live: false) { String(format: "%.1f m", $0) }
+                .env(.scene, "depth").when(buildings),
+            S.popup("Its sides", \.scene.buildings.sides, titled(\.title)).env(.scene, "sides").when(buildings),
+            S.slider("Floors", \.scene.buildings.floors, BuildingSceneSettings.floorRange, live: false).env(.scene, "floors").when(buildings),
+            S.slider("Building seed", \.scene.buildings.seed, SceneSettings.seedRange, live: false).env(.scene, "bseed").when(buildings),
+            S.popup("Layout", \.scene.buildings.layout, titled(\.title)).env(.scene, "blayout").when(buildings),
+            S.popup("View", \.scene.buildings.view, titled(\.title)).env(.scene, "bview").when(buildings),
+            S.slider("Cut above floor", \.scene.buildings.cut, 0...40, live: false).env(.scene, "cut").when(buildings),
+            S.check("Night", \.scene.buildings.night).env(.scene, "night").when(buildings),
             S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
                 .env(.scene, "bodies").when { $0.scene.kind == .physics },
             S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)

@@ -46,7 +46,7 @@ final class Benchmark {
             s.giMode = gi ?? .pathTraced
             s.scene = scene
             s.fog = FogSettings.preset(for: scene)
-            s.sky = SkySettings.preset(for: scene.kind)
+            s.sky = SkySettings.preset(for: scene)
             s.foliage = FoliageSettings.preset(for: scene.kind)
             s.post = PostSettings.preset(for: scene)
             change(&s)
@@ -111,7 +111,7 @@ final class Benchmark {
             if s.scene.kind.simulates && !settings.scene.kind.simulates { s.usePhysicsLook() }
             // The fog and sky of the scene the run ends up with, unless this config set its own.
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
-            if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }
+            if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
             if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase { s.post = PostSettings.preset(for: s.scene) }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }

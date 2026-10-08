@@ -154,6 +154,26 @@ final class WorldTests: XCTestCase {
         XCTAssertTrue(SceneKind.world.hasPlants && SceneKind.world.cameraFromScene)
     }
 
+    /// The building whose interior the scene has: its tile is made without it (another file, another name), and only
+    /// its tile; a lot's name finds its block again.
+    func testATileWithoutTheBuildingThatHasItsInterior() throws {
+        let city = try XCTUnwrap(world.city(cell: SIMD2(0, 0)))
+        let side = Double(World.tileSize)
+        let tx = Int((city.center.x / side).rounded(.down)), tz = Int((city.center.y / side).rounded(.down))
+        let found = try XCTUnwrap(world.blocks(x0: Double(tx) * side, z0: Double(tz) * side, side: side))
+        let block = try XCTUnwrap(found.blocks.first { !$0.plan.lots.isEmpty })
+        let ref = world.lotRef(found.city, block, 0)
+        let middle = try XCTUnwrap(world.blockMiddle(of: ref.key))
+        XCTAssertEqual(middle.x, city.center.x + Double(block.plan.blocks[0].rect.center.x), accuracy: 0.01)
+        var without = world
+        without.interior = ref.key
+        XCTAssertNotEqual(WorldTile.key(without, x: tx, z: tz, level: 0), WorldTile.key(world, x: tx, z: tz, level: 0))
+        XCTAssertEqual(WorldTile.key(without, x: tx + 1, z: tz, level: 0), WorldTile.key(world, x: tx + 1, z: tz, level: 0))
+        XCTAssertEqual(WorldTile.key(without, x: tx, z: tz, level: 1), WorldTile.key(world, x: tx, z: tz, level: 1))
+        let all = WorldTile.build(world, x: tx, z: tz, level: 0, flora: flora), less = WorldTile.build(without, x: tx, z: tz, level: 0, flora: flora)
+        XCTAssertLessThan(less.triangles, all.triangles)
+    }
+
     /// A city's tile: blocks with their buildings and glass at level 0, less at each level after it; a block belongs
     /// to one tile only; nothing is built off the level ground.
     func testCityTiles() throws {

@@ -142,8 +142,7 @@ extension PlantCatalog {
     }
 
     private static let lock = NSLock()
-    private static var registry: [String: PlantCatalog] = [:]
-    private static var registered: [String] = []          // oldest first
+    private static let registry = CatalogRegistry<PlantCatalog>()
     private static var launchCatalog: PlantCatalog?
 
     /// What scenes are built with unless the editor says otherwise: the built-in species with the saved files.
@@ -167,23 +166,12 @@ extension PlantCatalog {
     @discardableResult
     static func register(_ catalog: PlantCatalog) -> String {
         let key = catalog.fingerprint
-        lock.lock()
-        if registry[key] == nil {
-            registry[key] = catalog
-            registered.append(key)
-            if registered.count > 64 { registry[registered.removeFirst()] = nil }
-        }
-        lock.unlock()
+        registry.register(catalog, key: key)
         return key
     }
 
     /// The registered catalog of `key`, if it is still kept ("" or another: nil).
-    static func registered(_ key: String) -> PlantCatalog? {
-        guard !key.isEmpty else { return nil }
-        lock.lock()
-        defer { lock.unlock() }
-        return registry[key]
-    }
+    static func registered(_ key: String) -> PlantCatalog? { registry.registered(key) }
 
     /// The catalog a scene's settings name: "" the launch one, "builtin" the built-in species, otherwise a registered
     /// one (the launch one if it is no longer kept).
@@ -192,10 +180,7 @@ extension PlantCatalog {
         case "": return launch
         case "builtin": return .builtIn
         default:
-            lock.lock()
-            let found = registry[key]
-            lock.unlock()
-            if let found { return found }
+            if let found = registry.registered(key) { return found }
             print("Plants: catalog \(key) is not kept; the saved one instead")
             return launch
         }

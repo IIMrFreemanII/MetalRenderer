@@ -13,48 +13,13 @@ extension Scene {
         let start = CFAbsoluteTimeGetCurrent()
         let plan = CityPlan(city, seed: seed)
 
-        // The generated textures, each kind's added the first time a material asks for it.
-        let maps = city.textures ? ProceduralTextures.sources(SurfaceKind.allCases) : [:]
-        var mapIndex: [SurfaceKind: SIMD4<UInt32>] = [:]
-        func textures(_ kind: SurfaceKind) -> SIMD4<UInt32>? {
-            if let index = mapIndex[kind] { return index }
-            guard let m = maps[kind] else { return nil }
-            let index = SIMD4(addTexture(m.base), m.roughness.map { addTexture($0) } ?? .max, addTexture(m.normal), .max)
-            mapIndex[kind] = index
-            return index
-        }
-        func gpuMaterial(_ m: SurfaceMaterial) -> GPUMaterial {
-            var gpu = GPUMaterial(albedo: SIMD4(m.color, m.metallic), emission: SIMD4(m.emission, m.roughness),
-                                  params: SIMD4(m.specular ? 1 : 0, 1, 0, 0))
-            if let kind = m.surface, let index = textures(kind) { gpu.textures = index }
-            return gpu
-        }
-        // Glass and lights are instances of their own (their mask, a mesh light each): those materials are shared.
-        var shared: [SurfaceMaterial: Int] = [:]
-        func sharedMaterial(_ m: SurfaceMaterial) -> Int {
-            if let i = shared[m] { return i }
-            let i = m.glass ? addGlassMaterial(tint: m.color) : addMaterial(gpuMaterial(m))
-            shared[m] = i
-            return i
-        }
+        let kit = BuildingKit(self, textures: city.textures)
+        let catalog = BuildingCatalog.resolve(settings.buildingCatalog)
+        func gpuMaterial(_ m: SurfaceMaterial) -> GPUMaterial { kit.gpuMaterial(m) }
+        func sharedMaterial(_ m: SurfaceMaterial) -> Int { kit.sharedMaterial(m) }
         var triangles = 0
-        /// Adds meshes that belong together (a building's parts) at `transform`: everything opaque and unlit as one
-        /// mesh of several materials, so a ray that meets the building walks one tree, not one per material.
         func add(_ parts: [(material: SurfaceMaterial, mesh: MeshBuilder)], at transform: float4x4 = matrix_identity_float4x4) {
-            var merged = MeshBuilder(), offsets: [UInt8] = [], first = -1
-            for (m, mesh) in parts where !mesh.isEmpty {
-                triangles += mesh.triangleCount
-                if m.glass || m.emission != .zero {
-                    addInstance(addMesh(mesh.geometry, uvs: mesh.uvs), sharedMaterial(m), transform,
-                                mask: m.glass ? Scene.maskGlass : Scene.maskGeometry)
-                } else {
-                    let index = addMaterial(gpuMaterial(m))
-                    if first < 0 { first = index }
-                    offsets += [UInt8](repeating: UInt8(index - first), count: mesh.triangleCount)
-                    merged.append(mesh)
-                }
-            }
-            if first >= 0 { addInstance(addMesh(merged.geometry, uvs: merged.uvs, materials: offsets), first, transform) }
+            kit.add(parts, at: transform)
         }
         func builder(_ m: SurfaceMaterial) -> MeshBuilder { MeshBuilder(uvScale: m.uvScale) }
 
@@ -67,7 +32,7 @@ extension Scene {
         /// modules. A triangle's material is its slot's: the building's materials are its slots' in their order.
         func addBuilding(_ building: Building, at transform: float4x4) {
             func opaque(_ m: SurfaceMaterial) -> Bool { !m.glass && m.emission == .zero }
-            for (_, m, mesh) in building.parts where !opaque(m) {
+            for (_, m, mesh) in building.parts where !opaque(m) && !mesh.isEmpty {
                 triangles += mesh.triangleCount
                 addInstance(addMesh(mesh.geometry, uvs: mesh.uvs), sharedMaterial(m), transform, mask: m.glass ? Scene.maskGlass : Scene.maskGeometry)
             }
@@ -178,11 +143,16 @@ extension Scene {
         // The buildings: generated in parallel a batch at a time (each lot has its own seed, so the order they are
         // made in doesn't matter), then added in the lots' order.
         // With modules, each building is an assembly of its windows' shells and the rest of it.
-        let specs = plan.lots.map { lot in
-            var spec = BuildingSpec(lot: lot, city: city, night: night)
+        let refs = plan.lots.enumerated().map { LotRef.city(city, seed: seed, lot: $0, $1) }
+        let specs = plan.lots.enumerated().map { i, lot in
+            var spec = BuildingSpec(lot: lot, city: city, night: night, catalog: catalog)
             spec.modules = city.modules
+            if let o = catalog.override(for: refs[i]) { spec.apply(o, catalog: catalog) }
+            // The building the camera is near: its interior, and no windows as modules (its own meshes).
+            if settings.interior == refs[i].key { (spec.interior, spec.modules) = (true, false) }
             return spec
         }
+        var solids: [Interior.Collider] = []
         let batch = 96
         var tallest: Float = 0, windows = 0, rooms = 0
         for first in stride(from: 0, to: specs.count, by: batch) {
@@ -194,8 +164,25 @@ extension Scene {
             for (i, building) in built.enumerated() {
                 guard let building else { continue }
                 tallest = max(tallest, building.height)
+                let lot = plan.lots[first + i]
+                let a = lot.transform * SIMD4(-lot.size.x / 2, 0, -lot.size.y / 2, 1), b = lot.transform * SIMD4(lot.size.x / 2, 0, lot.size.y / 2, 1)
+                lotAreas.append((refs[first + i].key, CityPlan.Rect(lo: SIMD2(min(a.x, b.x), min(a.z, b.z)), hi: SIMD2(max(a.x, b.x), max(a.z, b.z))),
+                                 building.height))
+                if building.interior != nil {
+                    walkAreas.append(WalkArea(rect: lot.rect, building: building, at: lot.transform))
+                } else {
+                    // What the walker meets of a building without its interior: a box over each part of its plan.
+                    for tier in building.tiers {
+                        for r in tier.footprint.cover {
+                            let a = lot.transform * SIMD4(r.lo.x, 0, r.lo.y, 1), b = lot.transform * SIMD4(r.hi.x, 0, r.hi.y, 1)
+                            solids.append(Interior.Collider(lo: SIMD3(min(a.x, b.x), 0, min(a.z, b.z)), hi: SIMD3(max(a.x, b.x), tier.top, max(a.z, b.z))))
+                        }
+                    }
+                }
                 if building.placements.isEmpty {
-                    add(building.parts.map { ($0.material, $0.mesh) }, at: plan.lots[first + i].transform)
+                    // Named: another scene of the same city (another building's interior in it) keeps its structures.
+                    kit.addBuilding(building, at: plan.lots[first + i].transform,
+                                    name: building.interior == nil ? "city \(refs[first + i].key) \(catalog.fingerprint)" : nil)
                 } else {
                     addBuilding(building, at: plan.lots[first + i].transform)
                 }
@@ -203,6 +190,14 @@ extension Scene {
                 rooms += building.rooms
             }
         }
+
+        // The walker's ground: the roads, the blocks' raised pavements.
+        solids.append(Interior.Collider(lo: SIMD3(e.lo.x - far, -2, e.lo.y - far), hi: SIMD3(e.hi.x + far, 0, e.hi.y + far)))
+        for block in plan.blocks {
+            solids.append(Interior.Collider(lo: SIMD3(block.rect.lo.x, 0, block.rect.lo.y), hi: SIMD3(block.rect.hi.x, 0.15, block.rect.hi.y)))
+        }
+        walkColliders = kit.colliders + solids
+        kit.addFlashlight()
 
         if night {
             skyColor = [0.006, 0.009, 0.02]
@@ -225,7 +220,7 @@ extension Scene {
         defaultCamera = plan.camera(.overview)
 
         print(String(format: "City: %d x %d blocks, %d buildings up to %.0f m, %d windows (%d with rooms), %d triangles in %d instances, "
-                     + "%d materials, built in %.2f s", city.blocks, city.blocks, specs.count, tallest, windows, rooms, triangles,
+                     + "%d materials, built in %.2f s", city.blocks, city.blocks, specs.count, tallest, windows, rooms, triangles + kit.triangles,
                      instances.count, materials.count, CFAbsoluteTimeGetCurrent() - start)
               + (placed > 0 ? String(format: "; %d modules of %d triangles placed %d times", moduleMeshes.count, moduleTriangles, placed) : ""))
     }
