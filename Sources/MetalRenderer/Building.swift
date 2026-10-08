@@ -25,7 +25,11 @@ struct BuildingSpec {
     var size: SIMD2<Float>
     /// front (+z), right (+x), back (-z), left (-x).
     var edges: [CityPlan.Edge] = [.street, .party, .open, .party]
-    var style = CityStyle.residential
+    /// Its district (the city's), and the style it is built in (that district's own unless a catalog says otherwise).
+    var style = CityStyle.residential {
+        didSet { def = BuiltInBuildings.style(style) }
+    }
+    var def = BuiltInBuildings.residential
     var floors = 5
     var seed: UInt64 = 1
     /// Night: `lit` of the windows have a light on behind them (emissive blinds, lamps in the rooms).
@@ -39,6 +43,14 @@ struct BuildingSpec {
     /// How much of it to make: in full, or plainly (seen from further away). Every level draws the same numbers, so
     /// the same windows are lit at each.
     var detail = Detail.full
+    /// Make its interior too (Building.interior): the inside of its walls, its floors, rooms, stairs, furniture.
+    var interior = false
+    /// The plan's hand edits (a single building's, LotOverride).
+    var edits: [PlanEdit] = []
+    /// The workshop's cutaway: no roof, and nothing above this storey (nil: all of it).
+    var cut: Int? = nil
+    /// ...and its dollhouse: no front wall either (the facades facing +z).
+    var dollhouse = false
 
     enum Detail: Int {
         /// Windows with frames, sills, lintels and shutters, rooms behind some, balconies with their balustrades.
@@ -50,11 +62,16 @@ struct BuildingSpec {
     }
 
     init(size: SIMD2<Float>) { self.size = size }
-    init(lot: CityPlan.Lot, city: CitySettings, night: Bool) {
+    init(lot: CityPlan.Lot, city: CitySettings, night: Bool, catalog: BuildingCatalog? = nil) {
         size = lot.size
         edges = lot.edges
         style = lot.style
+        def = catalog?.style(for: lot.style, seed: lot.seed) ?? BuiltInBuildings.style(lot.style)
         floors = lot.floors
+        if let f = def.massing.floors, catalog != nil {
+            var g = SplitMix64(seed: lot.seed ^ 0xF100_25)
+            floors = max(1, Int(f.draw(g.next()).rounded()))
+        }
         seed = lot.seed
         self.night = night
         lit = city.lit
@@ -75,11 +92,18 @@ struct Building {
         case dark           // ...and the dark of the unlit room under it
         case roof
         case metal          // rooftop equipment, loading doors
-        case accent         // doors, shutters, shop signs and awnings, furniture
-        case interior       // the rooms' walls and ceilings
+        case accent         // shutters, shop signs and awnings
+        case interior       // the room boxes' walls and ceilings
         case floor          // ...and their floors
         case lit            // at night: the blinds with a light on behind them
         case lamp           // ...and the rooms' ceiling lamps
+        case roomProp       // what stands in a room box
+        case leaf           // a closed door's leaf
+        case leafGlass      // ...a glazed one's glass
+        case leafDark       // ...and the dark behind it
+
+        /// What stands behind the glass of a building without its interior: dropped when the interior is there.
+        var isFill: Bool { [.blind, .dark, .interior, .floor, .lit, .lamp, .roomProp, .leaf, .leafGlass, .leafDark].contains(self) }
     }
 
     private(set) var materials: [SurfaceMaterial?] = Array(repeating: nil, count: Slot.allCases.count)
@@ -87,6 +111,24 @@ struct Building {
     var height: Float = 0
     /// How many windows it has, and how many of them have rooms and lights.
     var windows = 0, rooms = 0, lights = 0
+    /// Its floor plans, and the storeys' tiers.
+    var plan = BuildingPlan()
+    var tiers: [BuildingTier] = []
+    /// The style it was drawn in.
+    var style = BuildingStyle()
+    /// Its interior, if the spec asked for it.
+    var interior: Interior?
+
+    /// A hole through an outer wall: a window's or a door's. From `a` to `c` along the wall's face (x, z in the lot),
+    /// `normal` out of it, from `y0` to `y1`, on `storey`.
+    struct WallOpening {
+        var storey: Int
+        var a: SIMD2<Float>, c: SIMD2<Float>
+        var normal: SIMD2<Float>
+        var y0: Float, y1: Float
+        var glass: Bool
+    }
+    var openings: [WallOpening] = []
 
     /// What is made once and placed many times (BuildingSpec.modules): a window's shell (its reveal, frame, sill,
     /// lintel, shutters), a mesh per slot in its own frame, its texture coordinates from its own corner. `key`: its
@@ -325,6 +367,10 @@ struct BuildingAssembler {
     let style: BuildingStyle
     var rng: SplitMix64
     var b = Building()
+    /// The floor plans (made before the facades, which follow them).
+    var plan = BuildingPlan()
+    /// The wall being made: its start, its direction and its outward normal (x, z).
+    var currentWall: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>)?
     /// The lot: x and z from -half to half.
     let half: SIMD2<Float>
     /// What the building stands on: the lot, less the style's setback if it stands free (set by `massing`).
@@ -340,9 +386,8 @@ struct BuildingAssembler {
 
     init(_ spec: BuildingSpec) {
         self.spec = spec
-        var rng = SplitMix64(seed: spec.seed)
-        style = BuildingStyle.preset(spec.style, &rng)
-        self.rng = rng
+        style = BuildingStyle.draw(spec.def, seed: spec.seed)
+        rng = SplitMix64(seed: spec.seed &* 0x9E37_79B9_7F4A_7C15 ^ 0xFACADE)
         half = spec.size / 2
         site = CityPlan.Rect(lo: -half, hi: half)
     }
@@ -351,17 +396,24 @@ struct BuildingAssembler {
         let slots: [(Building.Slot, SurfaceMaterial)] = [
             (.wall, style.wall), (.base, style.base), (.trim, style.trim), (.frame, style.frame), (.glass, style.glass),
             (.blind, style.blind), (.dark, style.dark), (.roof, style.roofing), (.metal, style.metal), (.accent, style.accent),
-            (.interior, style.interior), (.floor, style.flooring), (.lit, style.lit), (.lamp, style.lamp)]
+            (.interior, style.interior), (.floor, style.flooring), (.lit, style.lit), (.lamp, style.lamp), (.roomProp, style.accent),
+            (.leaf, style.accent), (.leafGlass, style.glass), (.leafDark, style.dark)]
         for (slot, material) in slots { b.setMaterial(slot, material) }
 
         let tiers = massing()
         b.height = tiers.map(\.top).max() ?? 0
+        b.tiers = tiers
+        b.style = style
+        plan = makePlan(tiers)
+        b.plan = plan
         limitDetail(tiers)
         for (k, tier) in tiers.enumerated() {
             storeysBelow = tiers[..<k].reduce(0) { $0 + $1.heights.count }
+            if let cut = spec.cut, storeysBelow > cut { break }
             walls(tier)
-            roof(tier, under: k + 1 < tiers.count ? tiers[k + 1].footprint : nil)
+            if spec.cut == nil { roof(tier, under: k + 1 < tiers.count ? tiers[k + 1].footprint : nil) }
         }
+        if spec.interior { b.interior = InteriorBuilder.build(self) }
     }
 
     // MARK: - Massing
@@ -390,7 +442,7 @@ struct BuildingAssembler {
         site = CityPlan.Rect(lo: -half + SIMD2(back, back), hi: half - SIMD2(back, back))
         let size = site.size
         let floors = max(spec.floors, 1)
-        let tower = style.kind == .office && floors >= 10
+        let tower = style.tower > 0 && floors >= style.tower
 
         // The plan: one of the style's shapes that fits. Wings need room behind the bar, a court room inside it.
         var shape = Footprint.Shape.rect
@@ -490,36 +542,48 @@ struct BuildingAssembler {
     /// A tier's facades, and the bands that run around it: the ledges between its storeys and its cornice.
     private mutating func walls(_ tier: BuildingTier) {
         let top = tier.top
+        // The cutaway's top, if it is in this tier: the top of storey `cut`.
+        var cutTop: Float?
+        if let cut = spec.cut, cut - storeysBelow < tier.heights.count - 1 {
+            cutTop = tier.y0 + tier.heights.prefix(max(cut - storeysBelow + 1, 0)).reduce(0, +)
+        }
         for loop in tier.footprint.loops {
             let count = loop.count
             let kinds = loop.indices.map { edgeKind(loop[$0], loop[($0 + 1) % count]) }
             let normals = Footprint.normals(loop)
             // The main front: the street or open wall facing +z that is furthest forward (the door is in it).
             let front = loop.indices.filter { normals[$0].y > 0.5 && kinds[$0] != .party }.max { loop[$0].y < loop[$1].y }
-            for i in loop.indices {
+            // The dollhouse: no wall facing +z.
+            let open = loop.indices.map { spec.dollhouse && normals[$0].y > 0.5 }
+            for i in loop.indices where !open[i] {
                 let a = loop[i], c = loop[(i + 1) % count]
                 let before = (i + count - 1) % count, after = (i + 1) % count
                 // A neighbouring wall that has rooms behind it too and turns away at the corner: no rooms near it.
                 func crowded(_ other: Int, _ turn: SIMD2<Float>) -> Bool { kinds[other] != .party && dot(turn, normals[i]) < 0 }
                 facade(from: a, to: c, tier: tier, kind: kinds[i], front: tier.ground && i == front,
                        depth: tier.footprint.depth(behind: a, c),
-                       crowdedStart: crowded(before, loop[before] - a), crowdedEnd: crowded(after, loop[(after + 1) % count] - c))
+                       crowdedStart: crowded(before, loop[before] - a), crowdedEnd: crowded(after, loop[(after + 1) % count] - c),
+                       cutTop: cutTop)
             }
             // The bands, on every wall that isn't a party wall.
-            let on = kinds.map { $0 != .party }
+            let on = loop.indices.map { kinds[$0] != .party && !open[$0] }
             b.setFrame(matrix_identity_float4x4)
+            let below = cutTop ?? .infinity
             if tier.ground && style.ledge && tier.heights.count > 1 {
                 let y = tier.y0 + tier.heights[0]
-                band(loop, on: on, y0: y - 0.1, y1: y + 0.12, depth: 0.12, slot: .trim)
+                if y + 0.12 < below { band(loop, on: on, y0: y - 0.1, y1: y + 0.12, depth: 0.12, slot: .trim) }
             }
             if style.floorLedges {
                 var y = tier.y0 + tier.heights[0]
                 for h in tier.heights.dropFirst().dropLast() {
                     y += h
-                    band(loop, on: on, y0: y - 0.06, y1: y + 0.06, depth: 0.06, slot: .trim)
+                    if y + 0.06 < below { band(loop, on: on, y0: y - 0.06, y1: y + 0.06, depth: 0.06, slot: .trim) }
                 }
             }
-            if style.cornice > 0 {
+            if let cutTop {
+                // The walls' tops, cut: the thickness of the wall seen from above.
+                band(loop, on: open.map { !$0 }, y0: cutTop - 0.02, y1: cutTop, depth: -outerThickness, slot: .wall, underside: false)
+            } else if style.cornice > 0 {
                 band(loop, on: on, y0: top - 0.32, y1: top, depth: style.cornice, slot: .trim)
             }
         }

@@ -67,7 +67,8 @@ final class SDFBuffers {
     /// One structure per shape, each a single box, built side by side on `queue` (a Metal 3 one,
     /// whatever the frames are encoded with), and waited for.
     func buildBoxes(device: MTLDevice, queue: MTLCommandQueue, scene sdf: Scene) throws {
-        guard shapeCount > 0, boxes.isEmpty else { return }
+        // (Shapes only the physics has, an interior's loose furniture's boxes, are traced by nothing: no structures.)
+        guard shapeCount > 0, boxes.isEmpty, sdf.hasSDFShapes else { return }
         func buffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
             guard let made = array.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }) else {
                 throw RendererError.resourceCreation("buffer \(label)")

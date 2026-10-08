@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import simd
 
 /// The benchmark modes: `METALRENDERER_BENCH=<name>` runs that mode's list of settings (`Benchmark.Config`).
 /// Setting names become PNG names and the scorers in Tools/eval look them up, so they are part of the interface.
@@ -19,7 +20,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "plants": plants,
+        "plants": plants, "buildings": buildings,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -313,6 +314,98 @@ extension Benchmark {
         ]
     }
 
+    /// The building workshop (Scene+Buildings.swift) as the building editor shows it (cascades, MetalFX 3x from 0.5x),
+    /// paused: each style's building from outside, a street of them, the cutaway and the dollhouse, and inside: a
+    /// living room by day and by night, the stair, an office floor.
+    private static func buildings() -> [Config] {
+        func shown(_ name: String, _ change: (inout BuildingSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .buildings)
+            change(&scene.buildings)
+            return Config("buildings \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+        }
+        /// Standing in a corner of the first room of `type` on `storey` (a lit one, if `lit`), looking across it to the
+        /// far corner; `transform`: the lot's into the world.
+        func inside(_ spec: BuildingSpec, _ type: RoomType, storey: Int, lit: Bool = false, transform: float4x4 = matrix_identity_float4x4) -> Camera {
+            let plan = BuildingGenerator.generate(spec).plan
+            let f = plan.storeys[min(storey, plan.storeys.count - 1)]
+            let rooms = f.rooms.filter { $0.type == type }
+            let r = ((lit ? rooms.first { $0.lit } : nil) ?? rooms.max { $0.area < $1.area } ?? f.rooms.max { $0.area < $1.area }!).rect
+            let a = transform * SIMD4(r.lo.x + 0.5, f.floor + 1.6, r.lo.y + 0.5, 1), b = transform * SIMD4(r.hi.x - 0.3, f.floor + 1.0, r.hi.y - 0.3, 1)
+            let v = SIMD3(b.x - a.x, b.y - a.y, b.z - a.z), d = v / (v * v).sum().squareRoot()
+            var c = Camera()
+            c.position = SIMD3(a.x, a.y, a.z)
+            c.yaw = atan2(d.x, -d.z)
+            c.pitch = asin(d.y)
+            return c
+        }
+        func inside(_ p: BuildingSceneSettings, _ type: RoomType, storey: Int, lit: Bool = false) -> Camera {
+            inside(Scene.workshopSpec(p, catalog: .builtIn).spec, type, storey: storey, lit: lit)
+        }
+        // A city, and the building of its first residential lot on a street with its interior: from inside it.
+        var city = CitySettings()
+        (city.blocks, city.style) = (2, .residential)
+        let cityPlan = CityPlan(city, seed: 1)
+        let lotIndex = cityPlan.lots.firstIndex { $0.edges[0] == .street } ?? 0
+        let lot = cityPlan.lots[lotIndex]
+        var inCity = SceneSettings(kind: .city, city: city, seed: 1)
+        inCity.interior = LotRef.city(city, seed: 1, lot: lotIndex, lot).key
+        var citySpec = BuildingSpec(lot: lot, city: city, night: false, catalog: .builtIn)
+        citySpec.interior = true
+        var home = BuildingSceneSettings()
+        (home.style, home.lot, home.floors) = ("residential", SIMD2(22, 14), 5)
+        var office = BuildingSceneSettings()
+        (office.style, office.lot, office.sides, office.floors) = ("office", SIMD2(34, 30), .free, 12)
+        var night = home
+        night.night = true
+        return [
+            shown("residential") { $0 = home },
+            shown("oldtown") { $0.style = "oldtown"; $0.lot = SIMD2(9, 12); $0.floors = 3 },
+            shown("modern street") { $0.style = "modern"; $0.lot = SIMD2(24, 15); $0.floors = 6; $0.layout = .street },
+            shown("office") { $0 = office },
+            shown("warehouse") { $0.style = "warehouse"; $0.lot = SIMD2(34, 28); $0.sides = .free; $0.floors = 2 },
+            shown("cutaway") { $0 = home; $0.view = .cutaway; $0.cut = 1 },
+            shown("dollhouse") { $0 = home; $0.view = .dollhouse; $0.cut = 1 },
+            shown("living room") { $0 = home }.from(inside(home, .living, storey: 1)),
+            shown("living room night") { $0 = night }.from(inside(night, .living, storey: 1, lit: true)),
+            shown("bedroom night") { $0 = night }.from(inside(night, .bedroom, storey: 2, lit: true)),
+            shown("stair") { $0 = home }.from(inside(home, .corridor, storey: 1)),
+            shown("office floor") { $0 = office }.from(inside(office, .openOffice, storey: 3)),
+            Config("buildings city interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: inCity).still().frames(30)
+                .from(inside(citySpec, .living, storey: 1, transform: lot.transform)),
+        ] + worldInterior { inside($0, $1, storey: $2, lit: $3, transform: $4) }
+    }
+
+    /// The open world with the building nearest where it starts walkable: from inside it (its tile without its shell).
+    private static func worldInterior(_ inside: (BuildingSpec, RoomType, Int, Bool, float4x4) -> Camera) -> [Config] {
+        var scene = SceneSettings(kind: .world)
+        let world = World(seed: UInt64(max(scene.seed, 0)))
+        let side = Double(World.tileSize), begin = world.start.place
+        let home = SIMD2(Int((begin.x / side).rounded(.down)), Int((begin.z / side).rounded(.down)))
+        let anchor = WorldTile.origin(world.anchorTile.x, world.anchorTile.y)
+        var best: (distance: Double, ref: LotRef, lot: CityPlan.Lot, city: World.City)?
+        for j in -1...1 {
+            for i in -1...1 {
+                let o = WorldTile.origin(home.x + i, home.y + j)
+                guard let (city, blocks) = world.blocks(x0: o.x, z0: o.y, side: side) else { continue }
+                for block in blocks {
+                    for (k, lot) in block.plan.lots.enumerated() where lot.floors >= 3 && lot.style != .warehouse {
+                        let c = city.center + SIMD2(Double(lot.rect.center.x), Double(lot.rect.center.y))
+                        let d = ((c.x - begin.x) * (c.x - begin.x) + (c.y - begin.z) * (c.y - begin.z)).squareRoot()
+                        if d < best?.distance ?? .infinity { best = (d, world.lotRef(city, block, k), lot, city) }
+                    }
+                }
+            }
+        }
+        guard let (_, ref, lot, city) = best else { return [] }
+        scene.interior = ref.key
+        var spec = BuildingSpec(lot: lot, city: scene.city, night: true, catalog: .builtIn)
+        spec.interior = true
+        let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
+        let transform = translate([c.x, city.level, c.y]) * lot.transform
+        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            .from(inside(spec, .living, 1, false, transform))]
+    }
+
     /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:
     /// an oak, a birch's ages and variants, a conifer's skeleton, a bush, ferns, grass, and a species of a catalog of
     /// its own (a willow: a birch whose twigs hang). `METALRENDERER_PLANTS=builtin` leaves out what Assets/Plants holds.
@@ -469,7 +562,8 @@ extension Benchmark {
         }
         // The block with a courtyard nearest the city's middle.
         let around = w.blocks(x0: cx - 400, z0: cz - 400, side: 800)?.blocks ?? []
-        let court = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }.min { ($0 * $0).sum() < ($1 * $1).sum() } ?? .zero
+        let centers: [SIMD2<Float>] = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }
+        let court: SIMD2<Float> = centers.min { (a: SIMD2<Float>, b: SIMD2<Float>) -> Bool in (a * a).sum() < (b * b).sum() } ?? .zero
         return [
             view("ground crossing", cx, cz + 22, up: 30, pitch: -0.95),
             view("ground corner", cx + 4.5, cz + 14, up: 1.7, yaw: -0.5, pitch: -0.12),

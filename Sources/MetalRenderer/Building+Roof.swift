@@ -22,7 +22,7 @@ extension BuildingAssembler {
             rooftop(tier, under: next)
         case .gabled:
             let cover = plan.cover
-            let pitch: Float = style.kind == .warehouse ? rng.range(0.22, 0.34) : rng.range(0.6, 0.95)   // rise over run
+            let pitch = style.roofPitch   // rise over run
             // Along the front (the eaves to the street) more often than not; a wide, shallow plan along its length.
             let bar = cover[0]
             let alongX = bar.size.x >= bar.size.y * 1.6 || (bar.size.y < bar.size.x * 1.6 && rng.next() < 0.7)
@@ -133,7 +133,7 @@ extension BuildingAssembler {
 
     /// One or two chimneys through a pitched roof over `r`, near its ridge.
     private mutating func chimneys(_ r: Rect, y: Float, rise: Float, alongX: Bool) {
-        guard style.kind == .oldtown || style.kind == .residential else { return }
+        guard style.chimneys > 0, rng.next() < style.chimneys else { return }
         for _ in 0..<(1 + rng.int(2)) {
             let t = rng.range(0.15, 0.85), off = rng.range(-0.8, 0.8)
             let c = alongX ? SIMD2(r.lo.x + r.size.x * t, r.center.y + off) : SIMD2(r.center.x + off, r.lo.y + r.size.y * t)
@@ -166,9 +166,11 @@ extension BuildingAssembler {
         }
         let topmost = next == nil
         let area = plan.area
-        if topmost, let r = place(SIMD2(rng.range(2.6, 3.4), rng.range(3.2, 4.2))) {
-            // The stair's head: a small house with its own roof slab.
-            let h: Float = rng.range(2.4, 2.9)
+        let h: Float = rng.range(2.4, 2.9)
+        if topmost, let stair = self.plan.storeys.last?.stair?.rect {
+            // The stair's head: a small house over the stair, with its own roof slab.
+            let r = Rect(lo: stair.lo - SIMD2(0.2, 0.2), hi: stair.hi + SIMD2(0.2, 0.2))
+            taken.append(r)
             b[.wall].box([r.lo.x, top, r.lo.y], [r.hi.x, top + h, r.hi.y], faces: [.sides])
             b[.trim].box([r.lo.x - 0.15, top + h, r.lo.y - 0.15], [r.hi.x + 0.15, top + h + 0.15, r.hi.y + 0.15])
         }
@@ -179,7 +181,7 @@ extension BuildingAssembler {
             b[.metal].box([r.lo.x, top + 0.15, r.lo.y], [r.hi.x, top + 0.15 + h, r.hi.y], faces: [.sides, .top])
             b[.metal].cylinder([r.center.x, top + 0.15 + h, r.center.y], radius: min(r.size.x, r.size.y) * 0.32, height: 0.18, segments: 10)
         }
-        if topmost && (style.kind == .residential || style.kind == .warehouse) && rng.next() < 0.45, let r = place(SIMD2(3, 3)) {
+        if topmost && rng.next() < style.waterTank, let r = place(SIMD2(3, 3)) {
             // A water tank on legs, with a conical lid.
             let c = SIMD3<Float>(r.center.x, top, r.center.y), legs: Float = rng.range(1.6, 2.4), radius: Float = 1.25
             for (dx, dz) in [(Float(-1), Float(-1)), (1, -1), (1, 1), (-1, 1)] {
@@ -190,7 +192,7 @@ extension BuildingAssembler {
             b[.accent].cylinder(c + [0, legs + 2.2, 0], radius: radius + 0.08, topRadius: 0.05, height: 0.7, segments: 14)
             b[.accent].floor(x0: c.x - radius * 0.7, x1: c.x + radius * 0.7, z0: c.z - radius * 0.7, z1: c.z + radius * 0.7, y: legs + top, up: false)
         }
-        if topmost && style.kind == .office, let r = place(SIMD2(1.2, 1.2)) {
+        if topmost && rng.next() < style.mast, let r = place(SIMD2(1.2, 1.2)) {
             // A mast.
             let h: Float = rng.range(8, 18)
             b[.metal].cylinder([r.center.x, top, r.center.y], radius: 0.14, topRadius: 0.04, height: h, segments: 6)

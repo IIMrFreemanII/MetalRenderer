@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
     private var plantEditor: PlantEditorPanel?
+    private var buildingEditor: BuildingEditorPanel?
     private var loadingOverlay: LoadingOverlay?
     private var offscreen: OffscreenSurface?
 
@@ -92,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           P            show or hide the loading overlay (what loads in the background, and how far it is)
           K / Cmd-E    show or hide the Plant Editor (the plant workshop: drag orbits, scroll zooms, F frames, hold C compares)
+          J / Cmd-B    show or hide the Building Editor and its Floor Plan window (the building workshop)
+          V            walk (in the building workshop, the city): W A S D, Shift runs, Space jumps, C or Control
+                       crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
     }
@@ -109,20 +113,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         plantEditor = plants
         if PlantEditorPanel.wasVisible || controller.settings.scene.kind == .plants { plants.show(nextTo: window) }
         controller.onTogglePlants = { [weak self] in self?.togglePlants(nil) }
+        let buildings = BuildingEditorPanel(controller: controller)
+        buildingEditor = buildings
+        if BuildingEditorPanel.wasVisible || controller.settings.scene.kind == .buildings { buildings.show(nextTo: window) }
+        controller.onToggleBuildings = { [weak self] in self?.toggleBuildings(nil) }
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
         controller.observeSettings { [weak self] s in
             guard let self, s.scene.kind != kind else { return }
             kind = s.scene.kind
             if kind == .plants, self.plantEditor?.isVisible == false { self.plantEditor?.show(nextTo: self.window) }
+            if kind == .buildings, self.buildingEditor?.isVisible == false { self.buildingEditor?.show(nextTo: self.window) }
         }
     }
 
-    /// The main window's undo is the plant editor's (its edits are what can be undone).
-    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { plantEditor?.model.undo }
+    /// The main window's undo is an editor's (their edits are what can be undone): the building editor's in its
+    /// workshop or while only it is open, the plant editor's otherwise.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        let buildings = controller.settings.scene.kind == .buildings || (buildingEditor?.isVisible == true && plantEditor?.isVisible != true)
+        return buildings ? buildingEditor?.model.undo : plantEditor?.model.undo
+    }
 
     @objc private func togglePlants(_ sender: Any?) {
         plantEditor?.toggle(nextTo: window)
+    }
+
+    @objc private func toggleBuildings(_ sender: Any?) {
+        buildingEditor?.toggle(nextTo: window)
+    }
+
+    @objc private func showFloorPlan(_ sender: Any?) {
+        if buildingEditor?.isVisible != true { buildingEditor?.show(nextTo: window) }
+        buildingEditor?.showPlan()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -165,6 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appMenu.addItem(withTitle: "Render Settings…", action: #selector(toggleSettings(_:)), keyEquivalent: ",").target = self
         appMenu.addItem(withTitle: "Debug Window", action: #selector(toggleDebug(_:)), keyEquivalent: "i").target = self
         appMenu.addItem(withTitle: "Plant Editor…", action: #selector(togglePlants(_:)), keyEquivalent: "e").target = self
+        appMenu.addItem(withTitle: "Building Editor…", action: #selector(toggleBuildings(_:)), keyEquivalent: "b").target = self
+        appMenu.addItem(withTitle: "Floor Plan", action: #selector(showFloorPlan(_:)), keyEquivalent: "").target = self
         if !Benchmark.isEnabled {
             let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
             item.target = self

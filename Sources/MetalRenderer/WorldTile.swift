@@ -142,7 +142,7 @@ struct WorldTile {
         var opaque = Assembler(glass: false), glass = Assembler(glass: true)
         ground(world, origin: origin, level: level, into: &opaque)
         if let (city, blocks) = world.blocks(x0: origin.x, z0: origin.y, side: side) {
-            for block in blocks { add(block, of: city, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
+            for block in blocks { add(block, of: city, in: world, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
         }
         if let (city, from, roads) = world.roads(x0: origin.x, z0: origin.y, side: side) {
             add(roads, of: city, from: from, level: level, into: &opaque)
@@ -252,7 +252,7 @@ struct WorldTile {
 
     /// A block of a city: its sidewalk and what stands on it. `lit`: the share of its windows with a light behind
     /// them. (What emits has a colour too: what it looks like by day, with its light off.)
-    private static func add(_ block: World.Block, of city: World.City, level: Int, lit: Float, opaque: inout Assembler,
+    private static func add(_ block: World.Block, of city: World.City, in world: World, level: Int, lit: Float, opaque: inout Assembler,
                             glass: inout Assembler) {
         let plan = block.plan
         let place = translate([block.origin.x, city.level, block.origin.y])
@@ -321,14 +321,18 @@ struct WorldTile {
         settings.lit = lit
         // Beyond the camera's ring, made flat: what that leaves out is a fraction of a pixel there (and a box at
         // level 2 is the flat building's).
-        let specs = plan.lots.map { lot in
-            var spec = BuildingSpec(lot: lot, city: settings, night: true)
+        // Each in its style (and with its own plan's edits); the one whose interior the scene has is the scene's to add.
+        let catalog = world.buildingCatalog
+        let specs = plan.lots.indices.map { k in
+            var spec = BuildingSpec(lot: plan.lots[k], city: settings, night: true, catalog: catalog)
+            if let o = catalog.override(for: world.lotRef(city, block, k)) { spec.apply(o, catalog: catalog) }
             if level > 0 { spec.detail = .flat }
             return spec
         }
+        let skipped = plan.lots.indices.map { k in level == 0 && world.interior == world.lotRef(city, block, k).key }
         var built = [Building?](repeating: nil, count: specs.count)
         built.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: specs.count) { i in out[i] = BuildingGenerator.generate(specs[i]) }
+            DispatchQueue.concurrentPerform(iterations: specs.count) { i in if !skipped[i] { out[i] = BuildingGenerator.generate(specs[i]) } }
         }
         for (i, building) in built.enumerated() {
             guard let building else { continue }
@@ -558,7 +562,14 @@ struct WorldTile {
 
     /// What the file was made for: the world's settings and the plants' library too.
     static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
-        "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
+        var key = "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
+        if hasCity(world, x: x, z: z) && !world.buildings.isEmpty { key += " buildings \(world.buildings)" }
+        // The tile with the building whose interior the scene has: made without it.
+        if level == 0, let interior = world.interior, let m = world.blockMiddle(of: interior) {
+            let o = origin(x, z), side = Double(World.tileSize)
+            if m.x >= o.x && m.x < o.x + side && m.y >= o.y && m.y < o.y + side { key += " without \(interior)" }
+        }
+        return key
     }
 
     /// The same without the level: what a tile's trees are made for (every level has the same ones).

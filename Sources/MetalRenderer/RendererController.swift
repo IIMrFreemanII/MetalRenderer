@@ -12,6 +12,25 @@ struct RendererStatus {
     var passTimes: [(name: String, ms: Double)]?
     /// The plant workshop's plant: what it costs (Scene.plantStats).
     var plantStats: PlantStats?
+    /// The building workshop's building: what it costs, and its plan (the Floor Plan window).
+    var buildingStats: BuildingStats?
+    var buildingPlan: BuildingPlan?
+    /// Walking: where (the Floor Plan window's you-are-here).
+    var walker: WalkerStatus?
+    /// Where the camera is (the building editor's Pin: the city's building nearest it).
+    var cameraPosition: SIMD3<Float>?
+}
+
+/// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).
+struct WalkerStatus: Equatable {
+    var position: SIMD3<Float>
+    var yaw: Float
+    var building: Int?
+    var storey: Int?
+    var local: SIMD3<Float>?
+    var message: String?
+    var flashlight: Bool
+    var crouched: Bool
 }
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the
@@ -45,6 +64,7 @@ final class RendererController: InputHandler {
     var onToggleDebug: (() -> Void)?            // I key
     var onToggleLoading: (() -> Void)?          // P key
     var onTogglePlants: (() -> Void)?           // K key
+    var onToggleBuildings: (() -> Void)?        // J key
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
     var onCompare: ((Bool) -> Void)?
     /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
@@ -156,8 +176,10 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" {
-            if !event.isARepeat { (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : onTogglePlants)?() }
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" {
+            if !event.isARepeat {
+                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants : onToggleBuildings)?()
+            }
             return
         }
         if key == "c", settings.scene.kind == .plants {
@@ -175,8 +197,8 @@ final class RendererController: InputHandler {
     }
 
     func flagsChanged(_ event: NSEvent) {
-        let shift = event.modifierFlags.contains(.shift)
-        renderer.perform { $0.setShift(shift) }
+        let shift = event.modifierFlags.contains(.shift), control = event.modifierFlags.contains(.control)
+        renderer.perform { $0.setShift(shift); $0.setControl(control) }
     }
 
     func mouseDown(at cursor: SIMD2<Float>) {

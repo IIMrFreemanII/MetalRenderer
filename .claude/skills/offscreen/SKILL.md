@@ -43,6 +43,13 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
     `,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`);
     the plant workshop, `plants`: `,species=oak|birch|…,age=…,variant=…,plantseed=…,layout=single|lineup|mutate,view=plant|skeleton`
     (`-m plants` renders seven of them);
+    the building workshop, `buildings`: `,bstyle=residential|oldtown|office|…,width=…,depth=…,sides=row|backtoback|corner|free,floors=…,bseed=…,blayout=single|street|mutate,bview=full|cutaway|dollhouse,cut=…,night=…`
+    (`-m buildings` renders each style outside, the cutaway and dollhouse, rooms by day and night, an office floor, and
+    a city's and the open world's building from inside); the city's interiors near the camera: `,interiors=…,reach=…`
+    (benchmarks never make one by themselves: a config sets `SceneSettings.interior`);
+  * buildings: `METALRENDERER_BUILDINGS=builtin` leaves out the styles and single buildings saved in `Assets/Buildings`
+    (the building editor's), `=<folder>` reads another; `METALRENDERER_PROPS=none` leaves out the glTF props of
+    `Assets/Props/props.json`;
   * plants: `METALRENDERER_PLANTS=builtin` leaves out the species saved in `Assets/Plants` (the plant editor's), for
     comparisons between builds; `=<folder>` reads another folder;
   * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);

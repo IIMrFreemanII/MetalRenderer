@@ -119,14 +119,40 @@ final class CityTests: XCTestCase {
             if offsets.max() ?? 0 > 0 { several += 1 }
         }
         XCTAssertGreaterThan(several, 5, "a building is one mesh of several materials")
-        // Fewer instances than a mesh per material would make: at most opaque + glass per building, and the streets.
-        XCTAssertLessThanOrEqual(s.instances.count, 2 * CityPlan(settings()).lots.count + 1)
+        // Fewer instances than a mesh per material would make: at most opaque + glass per building, its fill (what is
+        // behind its glass when it has no interior: opaque, and a glazed door's glass), and the streets.
+        XCTAssertLessThanOrEqual(s.instances.count, 4 * CityPlan(settings()).lots.count + 1)
+    }
+
+    /// The city with one building's interior in it (the one the camera came near): that building can be walked in,
+    /// with its doors, lights and colliders; every other building is the same named meshes as without it (their
+    /// structures carry over), and the scene is the same city (Renderer: streamed, GI kept).
+    func testACityWithAnInterior() {
+        let city = settings()
+        let plan = CityPlan(city, seed: 1)
+        let ref = LotRef.city(city, seed: 1, lot: 3, plan.lots[3])
+        var with = SceneSettings(kind: .city, city: city, seed: 1)
+        with.interior = ref.key
+        let plain = Scene(SceneSettings(kind: .city, city: city, seed: 1)), inside = Scene(with)
+        XCTAssertTrue(with.isSameCity(as: plain.settings))
+        XCTAssertTrue(plain.walkAreas.isEmpty)
+        XCTAssertEqual(inside.walkAreas.count, 1)
+        XCTAssertEqual(inside.lotAreas.count, plan.lots.count)
+        XCTAssertGreaterThan(inside.walkColliders.count, plain.walkColliders.count + 100)
+        XCTAssertFalse(inside.interiorControls?.doors.isEmpty ?? true)
+        let names = Set(plain.meshNames.values), kept = Set(inside.meshNames.values)
+        let lot3 = names.filter { $0.contains(ref.key + " ") }
+        XCTAssertFalse(lot3.isEmpty)
+        XCTAssertTrue(names.subtracting(lot3).isSubset(of: kept), "the other buildings are the same meshes")
+        XCTAssertTrue(kept.intersection(lot3).isEmpty, "the building with its interior is new")
     }
 
     func testDayHasOneLightAndNightItsLamps() {
         let day = scene()
-        XCTAssertEqual(day.lights.count, 1)
-        XCTAssertTrue(day.lights[0].kind.isSun)
+        // The sun, and the walker's flashlight (off, drawn as nothing).
+        XCTAssertEqual(day.lights.count, 2)
+        XCTAssertEqual(day.lights.filter(\.kind.isSun).count, 1)
+        XCTAssertTrue(day.lights.allSatisfy { $0.kind.isSun || $0.proxyInstance == -1 })
         XCTAssertTrue(day.materials.allSatisfy { $0.emission.x + $0.emission.y + $0.emission.z == 0 }, "nothing glows by day")
 
         let night = scene(night: true)

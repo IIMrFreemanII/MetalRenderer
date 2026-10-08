@@ -506,6 +506,14 @@ final class PhysicsWorld {
         for _ in 0..<steps { step() }
     }
 
+    /// ...`atMost` steps a call: further behind (a slow frame), the world skips the rest of the time.
+    func advance(to time: Float, atMost limit: Int) {
+        var (steps, restart) = stepsTo(time)
+        if restart { reset() }
+        if steps > limit { stepIndex += steps - limit; steps = limit }
+        for _ in 0..<steps { step() }
+    }
+
     /// For the GPU: the steps that reach `time` (from the start, `restart`), counted as run.
     func claim(to time: Float) -> (steps: Int, restart: Bool) {
         let (steps, restart) = stepsTo(time)

@@ -373,6 +373,20 @@ final class Scene {
     /// The plant workshop's: what its camera orbits and frames, and what its plant costs (Scene+Plants.swift).
     var focus: AABB?
     var plantStats: PlantStats?
+    /// The building workshop's: what its building is, and its plan (the building editor's Floor Plan window).
+    var buildingStats: BuildingStats?
+    var buildingPlan: BuildingPlan?
+    /// What the walker (Walker.swift) meets: the interiors' walls, floors, stairs and furniture, the ground round
+    /// them; and the buildings that can be walked in, where they stand.
+    var walkColliders: [Interior.Collider] = []
+    var walkAreas: [WalkArea] = []
+    /// The ground under what the colliders don't cover (the open world's terrain: its height at x, z).
+    var walkGround: ((Float, Float) -> Float)?
+    /// The city's buildings: which (LotRef.key), where (the world's x, z) and how tall: the renderer makes the interior
+    /// of the one the camera comes near (SceneSettings.interior).
+    var lotAreas: [(key: String, rect: CityPlan.Rect, height: Float)] = []
+    /// What moves and switches in its interiors (doors, lights, lifts, the flashlight): read by their poses.
+    var interiorControls: InteriorControls?
     /// Made again at every edit (the workshop): its structures are built to be ready soon, not to trace fastest or
     /// keep least (uncompacted), and its plants keep all their leaves (no leaf fall's variants).
     var remadeOften = false
@@ -394,6 +408,11 @@ final class Scene {
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
+    /// The interiors' loose furniture (Scene+Interiors.swift): its clock starts at the scene's first update, not at the
+    /// renderer's zero (a scene made ten minutes in doesn't step ten minutes first), and a slow frame skips time rather
+    /// than catching up.
+    var physicsFromInstall = false
+    private var physicsOrigin: Float?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).
@@ -466,6 +485,7 @@ final class Scene {
         case .muscles: buildMuscles(settings.physics)
         case .fluids: buildFluids(settings.physics)
         case .plants: buildPlantWorkshop()
+        case .buildings: buildBuildingWorkshop()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
@@ -542,9 +562,19 @@ final class Scene {
     /// Poses everything at time `t`; suns and the sky colour follow `dayTime` instead (Time of day offsets it).
     func update(time t: Float, dayTime: Float? = nil) {
         let day = dayTime ?? t
+        var changed = false
         func move(_ i: Int) {
             instances[i].prevTransform = instances[i].transform
-            if let animation = instances[i].animation { setTransform(i, animation(t)) }
+            if let animation = instances[i].animation {
+                let now = animation(t)
+                if now != instances[i].transform { changed = true; setTransform(i, now) }
+            }
+        }
+        defer {
+            // (The loose furniture of an interior: only while some of it is awake.)
+            let bodies = physics.map { p in p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty || !p.cloths.isEmpty
+                || !p.softVertices.isEmpty || !p.hairGroups.isEmpty || settings.kind.simulates } ?? false
+            motionThisFrame = changed || crowd != nil || bodies || !deforming.isEmpty || animated == nil
         }
         // A light's pose; `placed`: its position and direction too (otherwise only its scale is taken).
         func pose(_ l: Int, placed: Bool) {
@@ -583,6 +613,10 @@ final class Scene {
             if physicsOnGPU {
                 let claim = physics.claim(to: t)
                 physicsPending = claim.restart ? claim : (physicsPending.steps + claim.steps, physicsPending.restart)
+            } else if physicsFromInstall {
+                if physicsOrigin.map({ t < $0 }) ?? true { physicsOrigin = t }
+                physics.advance(to: t - (physicsOrigin ?? t), atMost: 8)
+                placeBodies()
             } else {
                 physics.advance(to: t)
                 placeBodies()
@@ -642,6 +676,10 @@ final class Scene {
         instances[i].transform = transform
         instances[i].normalMatrix = transform.inverse.transpose
     }
+
+    /// Something moved in the last `update` (the renderer refits the top level only then: a door that stands still,
+    /// a lift that waits, don't cost a refit every frame).
+    private(set) var motionThisFrame = true
 
     /// The instances whose transform changes from frame to frame.
     var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
@@ -1234,6 +1272,30 @@ final class Scene {
         return i
     }
 
+    /// A loose piece of furniture (Scene+Interiors.swift): an instance of `mesh` (drawn as it is) that the physics moves
+    /// as a box of `halfExtents` round the mesh's origin, `mass` kg. The box is the physics' alone: nothing draws it.
+    @discardableResult
+    func addMeshBody(_ mesh: Int, _ material: Int, _ transform: float4x4, halfExtents: SIMD3<Float>, mass: Float, friction: Float = 0.55) -> Int {
+        let i = addInstance(mesh, material, transform)
+        instances[i].simulated = true
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        let shape = SDFShape(.box(halfExtents: halfExtents, rounding: min(0.008, halfExtents.min() * 0.2)))
+        let sdf = addSDFShape(shape)
+        let volume = 8 * halfExtents.x * halfExtents.y * halfExtents.z
+        return world.addBody(sdf: sdf, shape, transform: transform, instance: i, density: mass / max(volume, 1e-4), friction: friction,
+                             restitution: 0.1)
+    }
+
+    /// A box the physics' bodies meet (a wall, a floor, a cupboard), from `lo` to `hi`; nothing draws it.
+    func addStaticBox(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, friction: Float = 0.6) {
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        let half = simd_max((hi - lo) / 2, SIMD3(repeating: 0.005))
+        let shape = SDFShape(.box(halfExtents: half))
+        world.addStatic(sdf: addSDFShape(shape), shape, transform: translate((lo + hi) / 2), friction: friction, restitution: 0.1)
+    }
+
     /// A kinematic body (PhysicsFlesh.swift): an instance of SDF shape `sdf` that its column of the physics' pose table
     /// moves, starting at `transform`; `mask` 0 to keep it out of sight (a bone under flesh). Returns its body.
     @discardableResult
@@ -1588,10 +1650,15 @@ final class Scene {
     /// the radiance itself for a rect, 2 I / (pi r length) for a tube (a cylinder whose broadside intensity per unit
     /// length, radiance x 2r, is the 4 I / (pi length) the shaders give it).
     @discardableResult
-    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, motion: LightMotion = .animated,
+    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, motion: LightMotion = .animated, proxy: Bool = true,
                   pose: @escaping (Float) -> LightPose) -> Int {
         var light = Light(kind: kind, color: color, pose: pose, motion: motion)
         var mesh = -1, emission = SIMD3<Float>(repeating: 0)
+        if !proxy {
+            // Nothing drawn where it is (the walker's flashlight, at the eye).
+            lights.append(light)
+            return lights.count - 1
+        }
         switch kind {
         case .sphere(let r), .spot(let r, _, _):
             if proxyMesh == nil && lightSphereMesh < 0 { lightSphereMesh = addMesh(Scene.icosphere(subdivisions: 2)) }

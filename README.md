@@ -244,9 +244,14 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | I, ⌘I | Show or hide the Debug window |
 | P | Show or hide the loading overlay (see "The loading overlay" below) |
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
-| F | Plant workshop: frame the plants (drag orbits about them, scroll zooms, W A S D pan) |
+| J, ⌘B | Show or hide the Building Editor and its Floor Plan window (see "The building editor" below) |
+| F | Workshops: frame the plants or the building (drag orbits about them, scroll zooms, W A S D pan) |
 | C (hold) | Plant workshop: the saved plant in place of the edited one |
-| ⌘Z, ⇧⌘Z | Undo, redo the plant editor's edits |
+| V | Walk (the building workshop, the city, the open world) or fly again |
+| Walking: W A S D, Shift, Space, C or Control | Walk, run, jump, crouch (Space no longer pauses while walking) |
+| Walking: E or a click | Open or shut the door, flip the light switch, call the lift you look at |
+| Walking: F, 0–9 | The flashlight; in a lift, its floor (0 the ground floor) |
+| ⌘Z, ⇧⌘Z | Undo, redo the plant editor's or the building editor's edits |
 
 The window title and the Debug window show the resolution, frame rate and GPU time. The panels never take keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
 
@@ -783,6 +788,96 @@ opens the editor.
   placement as they were before the editor; `PlantCatalogTests` (curves, ages, JSON, habitats, files, keys),
   `PlantWorkshopTests`, `PlantEditorTests` (the parameter table, Mutate, the editor's model).
 
+### The building editor
+
+The Building Editor (J or ⌘B, a SwiftUI panel and a Floor Plan window: `BuildingEditor/`) shapes the styles the city's
+buildings are made in, and single buildings' own floor plans; the **Building workshop** scene
+(`METALRENDERER_SCENE=buildings`, `Scene+Buildings.swift`) shows what it edits, inside and out, and can be walked in.
+
+* **Buildings have insides.** A building's floor plans are made first (`BuildingPlanner.swift`), then its facades
+  from them, then (on demand) its interior (`Building+Interior.swift`):
+  * **The plan** is laid out storey by storey around one core: a dog-leg stair (and a lift from a few floors up),
+    placed in the topmost tier so it runs from the ground to the top. Partitions stand on the facades' bay lines, so
+    none meets a window. *Apartments*: a corridor past the core and flats either side of it (a flat a floor in a
+    narrow building), each with rooms on its windows and a hall and bathroom along its door. *A house*: the stair
+    against a side wall, a hall beside it, rooms in front and behind, a shop in front if the street has shops.
+    *Offices*: open floors round the core and toilets, meeting rooms and offices along the windows, a lobby below.
+    *A warehouse*: a hall with racks and pallets, an office and a WC in a back corner. Doors join every room to the
+    stair (a breadth-first search adds what is missing); a flat opens onto the corridor by one door only.
+  * **The facades follow the plan:** the doors are where the plan's are (the front door, a shop's own), a window
+    lights up with its room at night, a bathroom's is small and high, only living rooms and bedrooms have balconies,
+    the stair's head on the roof is over the stair. Walls are as thick as they are (0.3 m and more), every opening
+    goes through them, and what is behind the glass of a building without its interior (blinds, the dark, room
+    boxes, closed doors) is its *fill*, dropped when the interior is there.
+  * **The interior:** the walls' inside faces cut round the windows, partitions with doorways and frames, floors and
+    ceilings in each room's finish (wood, tile, carpet, concrete, paint), the stair's flights and landings and the
+    spine between them, the lift's shaft; furniture by room type (`FurnitureKit.swift`, `BuildingFurnish.swift`:
+    beds, sofas, tables and chairs, kitchens, bathrooms, desks, shelves of books, wardrobes, office desk clusters,
+    meeting tables, toilets' cubicles, shop counters and racks, warehouse racks and pallets), clutter on them,
+    house plants, pictures; ceiling lights, and a switch by each room's door. A tower's identical storeys share one
+    mesh (in threes, furnished alike). Nothing is laid flat on anything else.
+* **Walking** (V, `Walker.swift`): a person 1.8 m tall who falls, climbs stairs, slides along walls and doesn't pass
+  glass, at 120 Hz on the scenes' box colliders. Doors' leaves swing (`InteriorControls.swift`): they open as you
+  come up to them and shut a while after, or with E or a click; switches turn a room's lights on and off; lifts
+  (`InteriorLifts.swift`) come when called (the button by each landing door) and go to the floor a number key names
+  while you stand in them; F is a flashlight. Chairs, office chairs and boxes are rigid bodies (the physics world's,
+  on the CPU, asleep at rest): walking into one shoves it, a click and drag carries it, and they tip and fall.
+* **Styles are data** (`BuildingStyleDef.swift`): ranges and choices a building draws from, each value from its own
+  stream of the building's seed, so changing one range changes that value alone. The five built-in ones are
+  `BuiltInBuildings.swift`. The tabs: **Massing** (plan shapes, floors, storey heights, bays, towers' podiums and
+  setbacks, roofs), **Facade** (windows, balconies, shops, ledges), **Floors** (walls' thickness, the stair, the lift,
+  the corridor, and the shown building's hand edits), **Rooms** (what it is for, and the sizes rooms aim for),
+  **Furnish** (clutter, plants, lights, the finishes' colours, glTF props), **Look** (the outside's materials, the
+  glow of lit blinds), **Site** (the workshop's lot, night, a city building pinned, the shown building's own style
+  and floors, and the districts a style is built in).
+* **The Floor Plan window** shows the shown building's plan a floor at a time (its front at the bottom) and edits it:
+  *Wall* drags a wall (and every room along it), *Door* adds, turns, moves or (Option) removes a door, *Split* and
+  *Merge* rooms, *Type* sets what a room is for; for this floor, the upper floors or every floor. An edit is saved
+  with its building (`LotOverride`, `PlanEdits.swift`): it names what it changes by where it is, so it survives a
+  change of the style, the floors or the seed while what it changed is still there, and one that finds nothing is
+  kept and marked. While walking, a red dot and arrow show where you are.
+* **Single buildings:** the workshop's own building (its lot's size and sides, floors, seed), or, with *Pin* in the
+  city, the city's building nearest the camera, with its own plan's edits; its own style or floors (Site).
+* **The workshop** shows the building, the building between two neighbours of its style, or six **Mutate**
+  variations along a street; *Whole*, *Cutaway* (no roof and nothing above a floor) or *Dollhouse* (no front wall
+  either); by day or at night. *Seed* tries another building of the style; holding *Compare* shows the saved
+  styles. Edits rebuild it live (M1 Max, `BuildingWorkshopTests`, scene and structures: a house 8 ms, six storeys of
+  flats 40 ms, a twelve-storey office tower 57 ms); the city and the open world take them when a slider is let go.
+* **Interiors on demand.** A city of 868 buildings can't hold all their interiors: the building you come near
+  (within `interiorReach`, 30 m, and not while flying past) gets its interior, made in the background and swapped
+  in like the open world's next tile (its other buildings keep their structures: their meshes are named), and
+  loses it when you leave. In the open world the building's tile is made without it and the scene adds it with its
+  interior, still (the world's scenes are: doors stand open, the lifts wait at the ground floor, the furniture
+  doesn't move, the lights come on at dusk), and the terrain is the walker's ground everywhere.
+* **Saving:** *Save* writes every changed style to `Assets/Buildings/Styles/<id>.json` and single buildings'
+  plans to `Assets/Buildings/overrides.json` (`BuildingStore.swift`); a file with a built-in style's id replaces it,
+  any other is a style of its own (built now and then in the districts it names). Files are read over a plain
+  style's defaults, so a field added later keeps its default. Unsaved edits are a draft until saved or reverted.
+  `METALRENDERER_BUILDINGS=builtin` ignores the files, `=<folder>` reads and saves another folder.
+* **glTF props:** `Assets/Props/props.json` (`PropLibrary.swift`) lists models to stand in for generated pieces:
+  `{"props": [{"file": "Props/armchair.glb", "replaces": "armchair", "rooms": ["living"], "chance": 0.5}]}`. Each is
+  fitted into the piece's box wherever the furnishing put it (scaled evenly, its front, +z, into the room).
+  `METALRENDERER_PROPS=none` leaves them out.
+* **Costs** (M1 Max, 640×400 upscaled 3×, cascades GI, `METALRENDERER_BENCH=buildings`): a building from outside or a
+  room by day 6–8 ms a frame; at night, with every room's lights there to switch (190–420 rect lights), 18–21 ms,
+  ReSTIR DI most of it. By day only lit rooms have lights (an off light still costs its sampling); a scene's
+  doors and lifts cost a refit of the top level only on the frames they move.
+* `METALRENDERER_SCENE=buildings,bstyle=office,width=34,depth=30,sides=free,floors=12,bview=cutaway,cut=3,night=1`;
+  the city's `interiors=0` turns interiors off, `reach=` sets how near. `METALRENDERER_BENCH=buildings` renders each
+  style, the cutaway and the dollhouse, rooms by day and at night, an office floor and a city's and the open world's
+  building from inside.
+* **Tests:** `BuildingPlanTests` (rooms tile every storey, nothing overlaps, everything is reached from the stair,
+  the stair is the same on every storey; interiors' meshes are sound), `BuildingEditorTests` (styles round-trip and
+  fit their sliders, districts, undo, pushes, copy and paste, Mutate, saving, hand edits change the plan and survive
+  regeneration, glTF props), `BuildingWorkshopTests` (what the workshop holds, its loose furniture, reload times),
+  `WalkerTests` (in through the door, up every flight, walls and glass hold, jump and crouch, doors and lifts),
+  `CityTests` (a city with one interior keeps the other buildings' meshes), `WorldTests` (a tile without the building
+  that has its interior).
+* **Limits:** the open world's interiors are still (no switches, lifts or loose furniture there: the world's
+  instance groups need a still scene); interiors on demand are one building at a time; Lumen's mesh distance fields
+  are coarser than a partition (radiance cascades, ReSTIR GI or path tracing are the methods for interiors);
+  hand-edited plans keep rooms rectangular.
+
 ### Generated plants
 
 The plants are made at load time from a seed (`Foliage*.swift`) and their species' definitions (the built-in ones, or
@@ -987,7 +1082,8 @@ The **City** and **City at night** scenes are generated: a seeded street grid of
   * At night it is 192 mesh lights of 8,900 triangles (1,706 and 58,000 at 10 × 10), and ReSTIR DI is most of the frame, as in the Night market.
   * On Metal's tracer, the only one now, 10 × 10 is 1,737 structures, 485 MB after compaction, 6.6 ms a frame, and Metal 4 draws the same images as Metal 3 (but see the limits).
 * **Checked** by `CityTests`, `BuildingTests`, `PlantTracingTests` and `ProceduralTextureTests`: the plan's lots stand inside their blocks and apart; every style's meshes are valid over many seeds and lots (finite, unit normals, no triangle without area or, where textured, without UV area, inside the lot, under the limit); a building of modules is the whole building's triangles, slot by slot, and shares its windows' shells; a flat building has fewer triangles and as many windows; a city of modules is still, has rigid assemblies of one variant each and doesn't compile the plants' code; outlines close around their plans; a seed always builds the same city; the textures tile.
-* **Limits:** every building is unique but for its windows' shells (modules), so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
+* **Interiors:** every building has floor plans and the one you come near its interior (see "The building editor").
+* **Limits:** every building is unique but for its windows' shells (modules), so memory and load time grow with the city; the street grid is a grid; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
 
 ### Open world
 
