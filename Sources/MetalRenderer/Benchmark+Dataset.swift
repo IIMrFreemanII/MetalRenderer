@@ -26,7 +26,7 @@ extension Benchmark {
         var frames = 32         // saved per clip, after the warm-up
         var showcaseFrames: Int? = nil  // fewer of the showcase's, if set: its references are the slowest (fog, full-detail models)
         var stressFrames: Int? = nil    // ...and of the stress building's (32 lights, each traced at every bounce)
-        var pausedClips = 1     // per scene, paused clips: long, still views (a model or room of their own)
+        var pausedClips = 3     // per scene, paused clips: long, still views (a model or room of their own)
         var pausedFrames = 100  // ...each this many frames, and one reference
         var spp = 1024          // frames averaged per reference
         var seed = 1
@@ -96,10 +96,12 @@ extension Benchmark {
             let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : kind == .stress ? 0.6 : 1
             let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
             let frames = paused ? pausedFrames : (kind == .showcase ? showcaseFrames : kind == .stress ? stressFrames : nil) ?? frames
-            let views = DatasetSpec.stressViews
+            // The stress building's paused clips: a zone, another, then the building's own camera high over the aisle.
+            let views = DatasetSpec.stressViews, pausedViews: [Camera?] = [views[1], views[2], nil, views[3], views[0]]
             return DatasetClip(name: "\(kind)-\(seed)-\(paused ? "p" : "")\(c)", index: c, scene: scene, startTime: start,
                                drift: paused ? nil : drift, frames: frames,
-                               camera: kind == .stress ? views[(paused ? c + 1 : c) % views.count] : nil, paused: paused)
+                               camera: kind == .stress ? (paused ? pausedViews[c % pausedViews.count] : views[c % views.count]) : nil,
+                               paused: paused)
         }
     }
 

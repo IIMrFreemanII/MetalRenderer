@@ -79,6 +79,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `shadow` | `Tools/eval/shadow.py` |
 | `hwrtq` | `Tools/eval/hwrt.py` |
 | `neuralq` | `Tools/eval/neural.py` |
+| `denoisedemo` | `Tools/neural/demo-video.sh` (a video, not a score) |
 | `noise` (references) + `denoise` | `Tools/eval/noise.py` |
 | `gallery` | `Tools/eval/gallery.py` |
 | `quality`, `fogcheck`, `skycheck`, `lightcheck`, `vgdebug` | inspect the PNGs; `pngdiff.py` between runs |

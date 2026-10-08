@@ -27,6 +27,8 @@ final class Benchmark {
         var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
         var record = false                  // also save every other measured frame (30 fps), as JPEGs in a folder of its own
         var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
+        var cameraPan: Float = 0            // with cameraPath: turn from this many radians right of the path's view to as
+                                            // many left, so what it looks at crosses the frame (denoisedemo's thirds)
         var camera: Camera? = nil           // a fixed camera instead of the scene's default
         var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
         var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
@@ -67,7 +69,13 @@ final class Benchmark {
         func frames(_ count: Int?) -> Config { var c = self; c.frames = count; return c }
         func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
         func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
-        func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
+        func cameraMove(pan: Float = 0) -> Config { var c = self; c.cameraPath = true; c.cameraPan = pan; return c }
+        /// The camera at `progress` (0...1) along cameraPose's path, turned by `cameraPan`.
+        func pathPose(progress: Float, scene: SceneKind, sceneCamera: Camera) -> Camera {
+            var c = Benchmark.cameraPose(progress: progress, scene: scene, sceneCamera: sceneCamera)
+            c.yaw += cameraPan * (1 - 2 * progress)
+            return c
+        }
         /// Saves every other measured frame (30 fps of the 60 Hz clock) for a video: `<NN-name>/f0001.jpg` and on.
         func recording() -> Config { var c = self; c.record = true; return c }
         func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }

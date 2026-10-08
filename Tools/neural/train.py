@@ -67,14 +67,14 @@ def display(log_light):
     return torch.where(c <= 0.0031308, c * 12.92, 1.055 * c.clamp(min=0.0031308) ** (1 / 2.4) - 0.055)
 
 
-def loss_fn(out, ref, valid, display_weight=0.0):
+def loss_fn(out, ref, valid, display_weight=0.0, temporal_weight=0.5):
     spatial = masked_l1(out, ref, valid)
     temporal = masked_l1(out[1:] - out[:-1], ref[1:] - ref[:-1], valid[1:] & valid[:-1])
     grad = lambda x: (x[..., :, 1:] - x[..., :, :-1], x[..., 1:, :] - x[..., :-1, :])
     both = lambda m: (m[..., :, 1:] & m[..., :, :-1], m[..., 1:, :] & m[..., :-1, :])
     (ox, oy), (rx, ry), (mx, my) = grad(out), grad(ref), both(valid)
     gradient = masked_l1(ox, rx, mx) + masked_l1(oy, ry, my)
-    loss = spatial + 0.5 * temporal + 0.25 * gradient
+    loss = spatial + temporal_weight * temporal + 0.25 * gradient
     if display_weight:
         loss = loss + display_weight * masked_l1(display(out), display(ref), valid)
     return loss
@@ -133,6 +133,8 @@ def main():
     p.add_argument("--display-weight", type=float, default=0.0, help="weight of the L1 on the displayed picture")
     p.add_argument("--paused-every", type=int, default=4, help="a batch of paused clips after this many (0: none)")
     p.add_argument("--paused-length", type=int, default=80, help="frames of a paused sample, warm-up included")
+    p.add_argument("--paused-temporal", type=float, default=0.5,
+                   help="weight of the frame-to-frame term on paused batches (their reference holds still: it is flicker)")
     args = p.parse_args()
 
     clips = common.clip_dirs(args.dataset, exclude=[s for s in args.exclude.split(",") if s])
@@ -178,9 +180,9 @@ def main():
         net.load_state_dict(ck["model"]); opt.load_state_dict(ck["opt"]); sched.load_state_dict(ck["sched"])
         start, best = ck["epoch"] + 1, ck.get("best", -1.0)
 
-    def step(batch, warm=0):
+    def step(batch, warm=0, temporal_weight=0.5):
         out, ref, valid = run_sequence(net, batch, dev, warm)
-        loss = loss_fn(out, ref, valid, args.display_weight)
+        loss = loss_fn(out, ref, valid, args.display_weight, temporal_weight)
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
@@ -197,7 +199,7 @@ def main():
                 pb = next(paused_batches, None)
                 if pb is not None:
                     warm = random.randint(0, args.paused_length - args.length)
-                    total_paused += step({k: v[:, :warm + args.length] for k, v in pb.items()}, warm)
+                    total_paused += step({k: v[:, :warm + args.length] for k, v in pb.items()}, warm, args.paused_temporal)
                     n_paused += 1
         v = validate(net, val_loader, dev)
         if paused_val_loader:

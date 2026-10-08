@@ -1742,7 +1742,7 @@ final class Renderer: NSObject {
             benchmark.noteDraw(resolution: size.upscaling ? "\(width)×\(height) → \(size.outWidth)×\(size.outHeight)" : "\(width)×\(height)")
             dt = benchmark.fixedDt   // deterministic animation so every setting renders the same frames
             if benchmark.current.cameraPath {
-                camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
+                camera = benchmark.current.pathPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
             if let track = benchmark.current.track { camera = track.camera(at: benchmark.trackTime) }
             if let drift = benchmark.current.drift {
@@ -2996,7 +2996,7 @@ final class Renderer: NSObject {
             rebuildScene(resetCamera: false)
         }
         camera = c.track?.camera(at: 0)
-            ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
+            ?? (c.cameraPath ? c.pathPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         driftStart = camera
         prevCamera = camera
         accumulating = c.accumulate
@@ -3024,11 +3024,15 @@ final class Renderer: NSObject {
         var row: Data?
         switch dataset {
         case .inputs(let clip):
-            guard benchmark.isMeasuring, let t = targets, let upscaler else { return nil }
+            // The upscaler's output: MetalFX's (the baseline), or with METALRENDERER_GI=upscaler=neural ours ("neural",
+            // to check the kernels against PyTorch on real frames).
+            guard benchmark.isMeasuring, let t = targets,
+                  let output = upscaler.map({ ($0.hdrOutput, "metalfx") }) ?? neuralUpscaler.map({ ($0.hdrOutput, "neural") })
+            else { return nil }
             (dir, frame) = (clip, benchmark.frameInConfig - benchmark.warmupFrames)
             arrays = [(t.upscaleColor, 3, "color"), (t.albedo, 3, "albedo"), (t.specularAlbedo, 3, "specular"),
                       (t.normalDepth[plan.cur], 4, "normal"), (t.deviceDepth, 1, "depth"), (t.pixelMotion, 2, "motion"),
-                      (t.roughness, 1, "roughness"), (upscaler.hdrOutput, 3, "metalfx")]
+                      (t.roughness, 1, "roughness"), (output.0, 3, output.1)]
             let u = plan.uniforms, size = plan.size
             row = try? JSONEncoder().encode(Benchmark.DatasetFrame(
                 frame: frame, time: animTime,

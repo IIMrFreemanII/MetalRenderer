@@ -46,6 +46,44 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertEqual(Benchmark.datasetReferences().map(\.startTime), [4], "frame 0 has its reference")
     }
 
+    /// denoisedemo records each scene's camera move three times, alike but for what upscales and denoises: the net's
+    /// input (no upscaler, no denoiser), MetalFX's and ours.
+    func testDenoiseDemoSettingsDifferOnlyInTheUpscaler() {
+        let configs = Benchmark.modes["denoisedemo"]!()
+        XCTAssertEqual(configs.count % 3, 0)
+        XCTAssertTrue(configs.allSatisfy(\.record))
+        for i in stride(from: 0, to: configs.count, by: 3) {
+            let (noisy, metalfx, neural) = (configs[i], configs[i + 1], configs[i + 2])
+            let tag = String(noisy.name.dropLast(" noisy".count))
+            XCTAssertEqual([noisy.name, metalfx.name, neural.name], ["\(tag) noisy", "\(tag) metalfx", "\(tag) neural"])
+            for c in [metalfx, neural] {
+                XCTAssertEqual(c.frames, noisy.frames, tag)
+                XCTAssertEqual(c.startTime, noisy.startTime, tag)
+                XCTAssertEqual(c.cameraPath, noisy.cameraPath, tag)
+                XCTAssertEqual(c.cameraPan, noisy.cameraPan, tag)
+                XCTAssertEqual(c.track?.camera(at: 1).position, noisy.track?.camera(at: 1).position, tag)
+                XCTAssertEqual(c.settings.scene, noisy.settings.scene, tag)
+                XCTAssertEqual(c.settings.giMode, noisy.settings.giMode, tag)
+            }
+            XCTAssertTrue(noisy.settings.upscaleFactor == 0 && !noisy.settings.denoiser.enabled, tag)
+            XCTAssertEqual(metalfx.settings.upscaler, RenderSettings().upscaler, tag)
+            XCTAssertEqual(neural.settings.upscaler, .neural, tag)
+            XCTAssertTrue(metalfx.settings.upscaleFactor == 3 && neural.settings.upscaleFactor == 3, tag)
+        }
+    }
+
+    /// cameraMove(pan:) turns the path's view from right to left: none halfway, the path's own pose without a pan.
+    func testCameraPanTurnsAcrossThePath() {
+        let still = Benchmark.Config("").cameraMove(), panned = Benchmark.Config("").cameraMove(pan: 0.5)
+        let camera = Camera()
+        for p: Float in [0, 0.5, 1] {
+            XCTAssertEqual(panned.pathPose(progress: p, scene: .cornell, sceneCamera: camera).yaw,
+                           still.pathPose(progress: p, scene: .cornell, sceneCamera: camera).yaw + 0.5 * (1 - 2 * p), accuracy: 1e-6)
+        }
+        XCTAssertEqual(still.pathPose(progress: 0.3, scene: .cornell, sceneCamera: camera).yaw,
+                       Benchmark.cameraPose(progress: 0.3, scene: .cornell, sceneCamera: camera).yaw)
+    }
+
     /// neuralq scores both upscalers against references traced as deep as the neural dataset's, not the app's 2 bounces.
     func testNeuralQualityReferencesTraceTheDatasetsBounces() {
         let configs = Benchmark.modes["neuralq"]!()
@@ -56,6 +94,7 @@ final class BenchmarkModesTests: XCTestCase {
         let shown = configs.filter { !$0.accumulate }
         XCTAssertEqual(shown.filter { $0.settings.upscaler == .neural }.count, 6)
         XCTAssertTrue(shown.allSatisfy { $0.settings.bounces == RenderSettings().bounces })
+        XCTAssertTrue(shown.allSatisfy { $0.settings.giMode == RenderSettings().giMode }, "the app's GI, as the dataset's frames")
     }
 
     /// Paused clips: a still camera on a paused scene, as long as `pausedframes=`, at a moment of their own, after the
@@ -64,7 +103,7 @@ final class BenchmarkModesTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dataset-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir); unsetenv("METALRENDERER_DATASET_DIR"); unsetenv("METALRENDERER_DATASET") }
         setenv("METALRENDERER_DATASET_DIR", dir.path, 1)
-        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=2,frames=20,pausedframes=50", 1)
+        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=2,frames=20,pausedframes=50,pausedclips=1", 1)
         let clips = Benchmark.DatasetSpec().clipList
         XCTAssertEqual(clips.map(\.name), ["cornell-1-0", "cornell-1-1", "cornell-1-p0", "stress-1-0", "stress-1-1", "stress-1-p0"])
         let paused = clips.filter(\.paused)
@@ -75,7 +114,13 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertEqual(Benchmark.DatasetSpec().clipList.map(\.startTime), clips.filter { !$0.paused }.map(\.startTime),
                        "the moving clips are as they were without paused ones")
 
-        setenv("METALRENDERER_DATASET", "scenes=cornell,clips=0,pausedframes=3,spp=8", 1)
+        setenv("METALRENDERER_DATASET", "scenes=stress,clips=0,pausedclips=3", 1)
+        let stress = Benchmark.DatasetSpec().clipList
+        XCTAssertEqual(stress.map(\.name), ["stress-1-p0", "stress-1-p1", "stress-1-p2"])
+        XCTAssertEqual(stress[0].camera?.position, Benchmark.DatasetSpec.stressViews[1].position, "p0 as it was")
+        XCTAssertNil(stress[2].camera, "the building's own camera over the aisle")
+
+        setenv("METALRENDERER_DATASET", "scenes=cornell,clips=0,pausedframes=3,pausedclips=1,spp=8", 1)
         let noisy = Benchmark.dataset()
         XCTAssertEqual(noisy.map(\.name), ["cornell-1-p0"])
         XCTAssertTrue(noisy[0].settings.paused && noisy[0].drift == nil && noisy[0].frames == 3)

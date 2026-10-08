@@ -34,11 +34,11 @@ and the showcase's 11 models, each on its own set; 20 frames a clip (`stressfram
 spp; keys in `Benchmark.DatasetSpec`). Scenes with glTF models trace them at full detail and every clip
 runs without the lens (bloom, depth of field), in both runs (`DatasetClip.shared`).
 
-Each scene also has a **paused clip** (`<scene>-<seed>-p0`; `pausedclips=`, `pausedframes=`, default 1 × 100 frames):
-a still camera on the paused scene, at a moment (room, model, stress zone) of its own. Every frame is new noise over
+Each scene also has **paused clips** (`<scene>-<seed>-p<n>`; `pausedclips=`, `pausedframes=`, default 3 × 100 frames):
+a still camera on the paused scene, at a moment (room, model, stress zone or the building's own camera) of its own. Every frame is new noise over
 the same image, so it needs one reference, frame 0's, for all 100: long, still views cost almost nothing to add, and
-they are what teaches the net to keep accumulating while a view holds still, as MetalFX does. 14 of them: ~1,400 noisy
-frames (30 GB, half a minute) and 14 references.
+they are what teaches the net to keep accumulating while a view holds still, as MetalFX does. 42 of them: ~4,200 noisy
+frames (~95 GB, a few minutes) and 42 references.
 
 `METALRENDERER_RT=metal` is for Macs with hardware ray tracing (M3 and later): on an M4 Max it renders the same reference
 as the custom tracer (92 dB apart) in ~60% of the time. On an M1 Max leave it out. To time a new scene first:
@@ -67,8 +67,9 @@ cd Tools/neural
 `METALRENDERER_DATASET="scenes=market|forest,clips=2,frames=20,seed=2" make-dataset.sh`): the app runs these scenes, so
 validating on new clips of them measures what it will show. Each epoch prints the net's PSNR and flicker next to
 MetalFX's on the same frames, and with paused clips held out, "still" scores: the last 20 of `--paused-length` (80)
-frames. Paused clips train in a batch every `--paused-every` (4): a random warm-up of up to 60 frames without
-gradients, then `--length` frames with. Checkpoints: `best.pt` (moving and still validation alike), `last.pt`
+frames. Paused clips train in a batch every `--paused-every` (4; the shipped net 3): a random warm-up of up to 60 frames
+without gradients, then `--length` frames with. Their frame-to-frame term has its own weight, `--paused-temporal`
+(0.5): at 2 the net froze anything a still camera saw, moving objects included. Checkpoints: `best.pt` (moving and still validation alike), `last.pt`
 (`--resume`); `--init <checkpoint>` starts from another run's weights with a new schedule. The model (`model.py`): a
 recurrent U-Net at the render resolution over the noisy light, the guides and last frame's output (warped by the
 motion, folded 3×3 into the render resolution); `--widths` 32,48,64 is ~274k parameters, 64,96,128 ~968k.
@@ -88,6 +89,14 @@ Then choose "Neural (ours)" in the panel's Upscaler popup, or `METALRENDERER_GI=
 ```bash
 .claude/skills/offscreen/scripts/render.sh -m neuralq -o /tmp/nq && Tools/neural/.venv/bin/python Tools/eval/neural.py /tmp/nq
 ```
+Both upscale the app's own GI (radiance cascades, as the dataset's frames) against 4-bounce references. To check the
+kernels against PyTorch on real frames, run the dataset mode with `METALRENDERER_GI=upscaler=neural`: each frame then
+saves our net's output (`neural.npy`) where MetalFX's would go.
+
+**Demo video:** `Tools/neural/demo-video.sh` (→ `renders/denoiser-demo.mp4`, ~20 min) renders the `denoisedemo` mode
+offscreen, each scene's camera move three times (the net's input: 1 sample, 640×400, no denoiser; MetalFX's denoising
+scaler; ours), and puts them in one 1920×1200 frame, a third each, labelled: the stress building's tour, the Cornell
+room, the night market's street, a showcase model; the lens off, so nothing blurs what they differ in.
 
 ## Status (Oct 2026)
 

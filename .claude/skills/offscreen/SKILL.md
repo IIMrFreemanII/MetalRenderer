@@ -87,6 +87,8 @@ setting's frames:
 .claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
 ```
 `-m stressdemo` tours the stress building the same way (58 s).
+`Tools/neural/demo-video.sh` makes the neural denoiser's before/after video from `-m denoisedemo` (input, MetalFX,
+ours in thirds of one frame; ~20 min).
 It takes minutes (every frame of the track is rendered), so run it with `run_in_background`. To tune a track, look
 along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 

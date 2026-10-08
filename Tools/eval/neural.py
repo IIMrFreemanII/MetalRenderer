@@ -1,7 +1,8 @@
 """usage: neural.py <run-dir> ... — scores METALRENDERER_BENCH=neuralq against its supersampled 1920x1200 references in
 refs/neural/, traced as deep as the neural denoiser's dataset (4 bounces, not the app's 2: hwrt.py's references).
 
-MetalFX's denoising scaler ("denoiser") and ours ("neural", Tools/neural) in the Cornell room and the stress hall: PSNR
+MetalFX's denoising scaler ("denoiser") and ours ("neural", Tools/neural), upscaling the app's own GI (radiance
+cascades, as the dataset's frames; hwrtq's are path traced), in the Cornell room and the stress hall: PSNR
 of a still frame, its flicker against the frame before, and PSNR with the animation running and during the camera move."""
 import os, sys
 from evalcommon import *

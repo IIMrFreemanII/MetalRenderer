@@ -61,7 +61,23 @@ Cornell static 27.2 vs 27.1, moving 27.2 vs 27.1, camera 26.3 vs 27.0; stress st
 own references at `DatasetSpec.bounces` ("<scene> ref neural", Tools/eval/neural.py, refs/neural/); hwrtq/hwrt.py keep
 the app's 2. In the app against them: runs/still Cornell static 27.2 vs MetalFX 27.1, moving 27.1/27.1, camera
 26.3/27.0, stress 26.6/26.0, 26.3/25.8, 25.8/25.8; runs/display a little higher (stress static 26.8, Cornell camera
-26.9). Flicker is the open gap: net 1.7-2.5 vs MetalFX 0.7-1.2 (display's worse in Cornell).
+26.9). Flicker looked like the open gap (net 1.7-2.5 vs MetalFX 0.7-1.2), but that was neuralq's input: Config's
+default GI is path traced, the dataset's (and the app's) radiance cascades. The kernels are fine: on real app frames
+(dataset mode with METALRENDERER_GI=upscaler=neural now saves `neural.npy`) Metal matches PyTorch to 62 dB after 100
+frames and flickers the same; float16 PyTorch flickers like float32; no drift over 300 frames. With neuralq on the
+app's GI (2026-10-07): Cornell static 31.9/31.9, flicker 0.56 vs 0.97 (better), moving 31.5/31.3, camera 31.6/31.3;
+stress 24.3/24.5, flicker 1.43 vs 0.65, moving 24.2/24.5, camera 24.2/24.8 (its view, the building's camera high
+over the aisle, isn't in the dataset; flicker at thin edges, small lamps, far floors). 2026-10-08: 3 paused clips a scene
+(default `pausedclips=3`; the stress building's p2 uses that overview camera, so neuralq's stress view is no longer
+held out). `--paused-temporal 2` (runs/steady) froze still-camera content: static flicker 0.27-0.33 but moving
+objects ghost (in-app moving Cornell 24.6, stress 21.1): don't weight paused flicker up. `runs/morestill` (same data,
+`--paused-every 3 --paused-temporal 0.5`, 30 epochs from runs/still) is the shipped net (Assets/Neural/denoiser.nnw):
+in the app Cornell 32.5/31.9 static, flicker 0.57/0.97, moving 32.2/31.3, camera 31.8/31.3; stress 24.7/24.5,
+flicker 1.07/0.65, moving 24.6/24.5, camera 24.8/24.8. Dataset clips level with runs/still (market-2 25.6 vs 27.3,
+forest-2 24.4 vs 24.0). Left: the stress building's static flicker, market, speed (~120 ms a frame).
+Demo video (2026-10-08): `Tools/neural/demo-video.sh` -> renders/denoiser-demo.mp4 (88 s, ~20 min to render):
+`denoisedemo` mode records input / MetalFX / ours per scene (stress tour, Cornell, market street, a showcase model
+with `cameraMove(pan:)` so it crosses all three thirds), lens off; ffmpeg crops thirds, labels, concatenates.
 Not done: a net that beats MetalFX
 (only a 1-minute smoke model: 16.7 dB vs MetalFX 34.6), speed (plain kernels ~90 ms/frame at 1920×1200), the
 fallback for GPUs without MetalFX's denoiser.

@@ -14,7 +14,7 @@ extension Benchmark {
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "showcase": showcase, "shapes": shapes,
-        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo, "dataset": dataset,
+        "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo, "denoisedemo": denoiseDemo, "dataset": dataset,
         "datasetref": datasetReferences,
     ]
 
@@ -684,12 +684,13 @@ extension Benchmark {
 
     /// Our denoising upscaler (NeuralUpscaler) against MetalFX's, in the Cornell room and the stress hall, both scored
     /// (Tools/eval/neural.py) against references traced as deep as the dataset's (DatasetSpec.bounces, 4): ours learns
-    /// those, more light than the 2-bounce GI it is given and hwrtq's references have. Ours needs weights
+    /// those, more light than the 2-bounce GI it is given and hwrtq's references have. Both upscale the app's own GI
+    /// (radiance cascades), as the dataset's frames do, not hwrtq's path-traced GI. Ours needs weights
     /// (Assets/Neural/denoiser.nnw or METALRENDERER_NEURAL); without them MetalFX renders its frames too.
     private static func neuralq() -> [Config] {
         let bounces = DatasetSpec().bounces
         return [("cornell", SceneSettings()), ("stress", stressHall())].flatMap { sceneTag, scene -> [Config] in
-            let shown = Config("", scale: 0.5, upscale: 3, scene: scene)
+            let shown = Config("", scale: 0.5, upscale: 3, gi: RenderSettings().giMode, scene: scene)
             return references([Config("\(sceneTag) ref neural", scale: 1.5, scene: scene) { $0.bounces = bounces }
                                 .reference(frames: 1024, supersample: true)])
                 + scored(shown) { "\(sceneTag) final \($0) denoiser" }
@@ -877,10 +878,19 @@ extension Benchmark {
     /// over into the office, up to the garage's upper deck, and back out. The track keeps above the forklifts' masts
     /// and the arms, over the partitions and under the overhead conveyor (Scene+Stress.swift's `Hall`).
     private static func stressDemo() -> [Config] {
+        var demo = Config("stress demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .stress)) {
+            $0.post = ShowcaseLook.lens
+        }.track(stressTour).recording()
+        demo.startTime = 2
+        return [demo]
+    }
+
+    /// stressDemo's tour of the stress building (58 s).
+    private static let stressTour: CameraTrack = {
         func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
             CameraTrack.Key(time: time, position: position, target: target)
         }
-        let track = CameraTrack([
+        return CameraTrack([
             key(0, [0, 6.8, 19.3], [0, 1.5, 0]),
             key(5, [0, 3.2, 3.0], [-11.5, 1.5, -10]),
             key(10, [-11.5, 3.0, -3.0], [-11.5, 1.6, -15]),
@@ -896,11 +906,38 @@ extension Benchmark {
             key(52, [-9.5, 5.4, 18.6], [-9.5, 3.5, 4]),
             key(58, [0, 6.8, 19.3], [0, 1.5, 0]),
         ])
-        var demo = Config("stress demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .stress)) {
-            $0.post = ShowcaseLook.lens
-        }.track(track).recording()
-        demo.startTime = 2
-        return [demo]
+    }()
+
+    /// Our denoising upscaler's demo video (Tools/neural/demo-video.sh puts it together): each scene's camera move
+    /// three times, recorded (30 fps JPEGs) as the net's input ("noisy": 1 sample, 640x400, no denoiser), MetalFX's
+    /// denoising scaler's 3x and ours, at the app's look (cascades) without the lens (the showcase's depth of field would
+    /// blur what they differ in). The stress building's tour, the Cornell room's camera move, down the night market's
+    /// street, an orbit of a showcase model, turning so the model crosses all three thirds.
+    private static func denoiseDemo() -> [Config] {
+        let models = Scene.galleryFiles().map(Scene.showcaseName)
+        var market = SceneSettings(kind: .market)
+        market.lights = SceneSettings.marketLights   // as the dataset's
+        let marketWalk = CameraTrack([   // from its demo camera down the street, over the crowd
+            CameraTrack.Key(time: 0, position: [0.6, 3.0, 30], target: [0.4, 2.4, 0]),
+            CameraTrack.Key(time: 5, position: [0.2, 3.0, 22], target: [-1.5, 2.2, 4]),
+            CameraTrack.Key(time: 10, position: [0.0, 3.0, 14], target: [1.5, 2.2, -6]),
+        ])
+        var segments: [(String, Config)] = [
+            ("stress", Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .stress)).track(stressTour)),
+            ("cornell", Config("", scale: 0.5, upscale: 3, gi: .radianceCascades).cameraMove().frames(600)),
+            ("market", Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: market).track(marketWalk)),
+        ]
+        if let model = models.first {
+            segments.append(("showcase", Config("", scale: 0.5, upscale: 3, gi: .radianceCascades,
+                                                scene: SceneSettings(kind: .showcase, showcase: model)).cameraMove(pan: 0.55).frames(600)))
+        }
+        return segments.flatMap { tag, base -> [Config] in
+            var base = base.recording().with { $0.post = PostSettings() }
+            base.startTime = 2
+            return [base.named("\(tag) noisy").with { $0.upscaleFactor = 0; $0.denoiser.enabled = false },
+                    base.named("\(tag) metalfx"),
+                    base.named("\(tag) neural").with { $0.upscaler = .neural }]
+        }
     }
 
     /// Each analytic area light against its emissive-mesh twin (Scene.buildLightCheck), converged direct light.
