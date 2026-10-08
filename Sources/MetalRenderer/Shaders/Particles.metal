@@ -49,7 +49,7 @@ struct ParticleEmitter {
     uint4  ids2;       // children an event, colliders, orientation, atlas layer | shadow density x 255 << 8
     uint4  ids3;       // a mesh emitter's first instance (PARTICLE_NONE: billboards), a trail's places (0: none), its
                        // first trail, steps between its places
-    float4 extra;      // collision radius, a trail's width (of the particle's)
+    float4 extra;      // collision radius, a trail's width (of the particle's), distortion (rad)
     float4 field;      // its vector field (-1: none), strength, 1: a velocity it follows, the baked curl's field (-1: none)
 };
 static_assert(sizeof(ParticleEmitter) == 352, "ParticleEmitter: GPUParticleEmitter");
@@ -926,6 +926,27 @@ inline float4 particleLayerRay(constant Uniforms& u, SCENE_ACCEL sc, constant Fo
     return float4(c, hidden);
 }
 
+// The depth a steady ray through `uv` stops its particles at, from the traced frame's depths `nd` (jittered: its
+// samples sit up to half a texel off where `uv` looks). On a surface seen at a grazing angle that is centimetres a
+// texel, so the nearest sample hid what lies on it (a splash ring a millimetre over the floor) in the frames whose
+// jitter put it nearer, and showed it in the rest: it flickered. On one surface (the 3x3 samples round `uv`'s texel
+// within 5 % of each other: the jitter can take the next one's half a texel past `uv`) the farthest of them; across an
+// edge the nearest sample, as before. 0: the sky.
+inline float particleClipDepth(texture2d<float, access::read> nd, float2 uv) {
+    int2 n = int2(nd.get_width(), nd.get_height());
+    int2 c = min(int2(uv * float2(n)), n - 1);
+    float nearest = nd.read(uint2(c)).w;
+    if (nearest <= 0.0f) return nearest;
+    float lo = 1.0e30f, hi = 0.0f;
+    for (int k = 0; k < 9; ++k) {
+        float d = nd.read(uint2(clamp(c + int2(k % 3 - 1, k / 3 - 1), int2(0), n - 1))).w;
+        if (d <= 0.0f) return nearest;
+        lo = min(lo, d);
+        hi = max(hi, d);
+    }
+    return hi - lo <= 0.05f * lo ? hi : nearest;
+}
+
 // A pixel's footprint at `uv` of a view `height` pixels high (radians across it, a unit away).
 inline float particleFootprint(constant Uniforms& u, float2 uv, float height) {
     return length(normalize(viewDirection(u, uv + float2(0.0f, 1.0f / height))) - normalize(viewDirection(u, uv)));
@@ -948,7 +969,7 @@ kernel void particleLayerKernel(constant Uniforms&               u          [[bu
     float2 uv = (float2(tid) + 0.5f) / float2(lp.size);
     uint2 pixel = min(uint2(uv * float2(u.width, u.height)), uint2(u.width - 1, u.height - 1));
     float3 dir = lp.jitter != 0u ? primaryDirection(u, pixel) : normalize(viewDirection(u, uv));
-    float depth = nd.read(pixel).w;
+    float depth = lp.jitter != 0u ? nd.read(pixel).w : particleClipDepth(nd, uv);
     bool thin;
     float4 c = particleLayerRay(u, sc, fog, fogGrid, dir, uv, depth, particleFootprint(u, uv, float(lp.size.y)), lp.detail != 0u, thin);
     layer.write(c, tid);
@@ -978,9 +999,125 @@ kernel void particleOverlayKernel(constant Uniforms&                   u        
     float4 l = particleUpsample(layer, layerDepth, uv, depth, thin);
     if (thin) {
         bool again;
-        l = particleLayerRay(u, sc, fog, fogGrid, normalize(viewDirection(u, uv)), uv, depth, particleFootprint(u, uv, float(size.y)),
+        l = particleLayerRay(u, sc, fog, fogGrid, normalize(viewDirection(u, uv)), uv, particleClipDepth(nd, uv), particleFootprint(u, uv, float(size.y)),
                              false, again);
     }
     float4 c = out.read(tid);
     out.write(float4(l.rgb + (1.0f - l.a) * c.rgb, c.a), tid);
+}
+
+// MARK: - Heat haze
+
+// Distortion particles (ParticleEmitter.distortion), never drawn: each bends the camera's rays that cross it in front
+// of the surface behind, by up to its emitter's strength (radians) times its opacity over life, (1 - r^2)^2 across its
+// disc. The bend's direction is curl noise rising through the air where they are met (their hits' mean, by how much
+// each bends: no seam where one's edge crosses another), across the ray: hot air's shimmer, the same for every
+// particle there so that overlapping ones bend together. Over the frame's linear
+// light before the lens (bloom and depth of field see the bent light): `src` read where the bent ray looks, into
+// `dst`; where that is nearer than the haze, the pixel's own light instead (no foreground smeared into it).
+struct ParticleDistortParams {
+    uint first;      // the distorters' slots (ParticleSystem.distortRange)
+    uint count;
+    uint emitters;
+    float time;      // the particles' clock (s)
+};
+
+constant float PARTICLE_HAZE_FREQUENCY = 7.0f;   // the shimmer's noise cells a metre
+constant float PARTICLE_HAZE_RISE = 1.4f;        // how fast they climb (m/s)
+constant float PARTICLE_HAZE_MOST = 0.008f;      // the most bend overlapping particles add up to (rad)
+
+// The distorters' discs for the pass, once a frame, in one threadgroup (particleDistortDiscsKernel): for each, xyz
+// its centre and w its radius, then its bend (its strength times its opacity now; 0: dead); after them the part of
+// the view they can cover (uv: x, y the least, z, w the most; empty when there are none), outside which the pass
+// only copies.
+kernel void particleDistortDiscsKernel(constant Uniforms&                u         [[buffer(0)]],
+                                       constant ParticleDistortParams&   dp        [[buffer(1)]],
+                                       device const ParticleEmitter*     emitters  [[buffer(13)]],
+                                       device const Particle*            particles [[buffer(16)]],
+                                       device float4*                    discs     [[buffer(17)]],
+                                       uint i [[thread_index_in_threadgroup]], uint n [[threads_per_threadgroup]],
+                                       uint lane [[thread_index_in_simdgroup]], uint group [[simdgroup_index_in_threadgroup]])
+{
+    float4 rect = float4(1.0f, 1.0f, 0.0f, 0.0f);
+    for (uint k = i; k < dp.count; k += n) {
+        Particle q = particles[dp.first + k];
+        if ((q.info.w & PARTICLE_ALIVE) == 0u) {
+            discs[2u * k] = float4(0.0f, -1.0e5f, 0.0f, 0.0f);
+            discs[2u * k + 1u] = float4(0.0f);
+            continue;
+        }
+        ParticleEmitter e = emitters[min(q.info.z, dp.emitters - 1u)];
+        float x = saturate(q.position.w / max(q.velocity.w, 1e-6f));
+        float r = mix(e.size.x, e.size.y, x) * (1.0f - e.size.z * particleRandom(q.info.y, 1u));
+        discs[2u * k] = float4(q.position.xyz, r);
+        discs[2u * k + 1u] = float4(particleColor(e, x).a * e.extra.z, 0.0f, 0.0f, 0.0f);
+        // Where it shows: its centre's place in the view, as wide as its radius at its depth (and half again: a
+        // disc off the view's axis looks wider). Close to the camera, anywhere.
+        float3 p = q.position.xyz - u.camPos.xyz;
+        float z = dot(p, u.camForward.xyz);
+        if (z <= 1.5f * r) { rect = float4(0.0f, 0.0f, 1.0f, 1.0f); continue; }
+        float2 c = float2(dot(p, u.camRight.xyz) / (z * u.camRight.w), dot(p, u.camUp.xyz) / (z * u.camUp.w));
+        float2 h = 1.5f * r / z / float2(u.camRight.w, u.camUp.w);
+        float2 lo = (float2(c.x - h.x, -(c.y + h.y)) + 1.0f) * 0.5f, hi = (float2(c.x + h.x, -(c.y - h.y)) + 1.0f) * 0.5f;
+        rect = float4(min(rect.xy, lo), max(rect.zw, hi));
+    }
+    threadgroup float4 parts[32];
+    rect = float4(simd_min(rect.x), simd_min(rect.y), simd_max(rect.z), simd_max(rect.w));
+    if (lane == 0u) parts[group] = rect;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (i == 0u) {
+        for (uint g = 1; g < (n + 31u) / 32u; ++g) rect = float4(min(rect.xy, parts[g].xy), max(rect.zw, parts[g].zw));
+        discs[2u * dp.count] = rect;
+    }
+}
+
+kernel void particleDistortKernel(constant Uniforms&                u         [[buffer(0)]],
+                                  constant ParticleDistortParams&   dp        [[buffer(1)]],
+                                  constant float4*                  discs     [[buffer(17)]],
+                                  texture2d<float, access::sample>  src       [[texture(0)]],
+                                  texture2d<float, access::write>   dst       [[texture(1)]],
+                                  texture2d<float, access::read>    nd        [[texture(2)]],
+                                  uint2 tid [[thread_position_in_grid]])
+{
+    uint2 size = uint2(dst.get_width(), dst.get_height());
+    if (tid.x >= size.x || tid.y >= size.y) return;
+    float2 uv = (float2(tid) + 0.5f) / float2(size);
+    float3 o = u.camPos.xyz, d = normalize(viewDirection(u, uv));
+    float along = max(dot(d, u.camForward.xyz), 1e-4f);
+    // Most pixels meet none: outside the discs' part of the view, a copy; the surface's depth only where one is met.
+    float4 rect = discs[2u * dp.count];
+    if (any(uv < rect.xy) || any(uv > rect.zw)) {
+        dst.write(src.read(tid), tid);
+        return;
+    }
+    float tOpaque = -1.0f;
+    float amount = 0.0f, tNear = 1.0e5f, tMean = 0.0f;
+    for (uint k = 0; k < dp.count; ++k) {
+        float4 c = discs[2u * k];
+        float t = dot(c.xyz - o, d);
+        float rho2 = length_squared(o + d * t - c.xyz) / max(c.w * c.w, 1e-8f);
+        if (t <= 0.05f || rho2 >= 1.0f) continue;
+        if (tOpaque < 0.0f) {
+            float depth = particleClipDepth(nd, uv);
+            tOpaque = depth > 0.0f ? depth / along : 1.0e5f;
+        }
+        if (t >= tOpaque) continue;
+        float w = (1.0f - rho2) * (1.0f - rho2) * discs[2u * k + 1u].x;
+        amount += w;
+        tMean += w * t;
+        tNear = min(tNear, t);
+    }
+    if (amount <= 0.0f) {
+        dst.write(src.read(tid), tid);
+        return;
+    }
+    float3 n = particleCurl(o + d * (tMean / amount), PARTICLE_HAZE_FREQUENCY, -dp.time * PARTICLE_HAZE_RISE * PARTICLE_HAZE_FREQUENCY)
+             * (1.0f / PARTICLE_HAZE_FREQUENCY);
+    float3 bent = normalize(d + (n - d * dot(n, d)) * min(amount, PARTICLE_HAZE_MOST));
+    float f = max(dot(bent, u.camForward.xyz), 1e-4f);
+    float2 to = float2(dot(bent, u.camRight.xyz) / (f * u.camRight.w) + 1.0f, 1.0f - dot(bent, u.camUp.xyz) / (f * u.camUp.w)) * 0.5f;
+    float there = particleClipDepth(nd, saturate(to));
+    if (there > 0.0f && there < tNear * along) to = uv;
+    constexpr sampler linear(filter::linear, address::clamp_to_edge);
+    dst.write(src.sample(linear, to), tid);
 }

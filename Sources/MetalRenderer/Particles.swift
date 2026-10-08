@@ -162,6 +162,11 @@ struct ParticleEmitter {
     /// How much of its opacity a shadow ray takes (0...1): a billboard stands for a soft volume, and a ray through a
     /// column of them at their full opacity sees far denser smoke than there is.
     var shadowDensity: Float = 1
+    /// Heat haze: its particles are never drawn, but bend the camera's rays through them by up to this much
+    /// (radians), each a disc that faces the ray, its opacity over life (`colors`' alpha) how much of it there is
+    /// (Shaders/Particles.metal particleDistortKernel). 0: an ordinary emitter. Its slots aren't boxes: no ray but the
+    /// camera's meets it.
+    var distortion: Float = 0
 
     // A child.
     var parent: Int?
@@ -293,14 +298,17 @@ final class ParticleSystem {
     let fields: [ParticleField]
     let bakedCurlField: Int?
     /// Each emitter's first slot; the pool's size. The emitters that cast shadows have the pool's first
-    /// `casterCapacity` slots: shadow rays look only through their structure (ParticleTrace.metal). The mesh
-    /// emitters' slots are the last `meshCapacity`: they're instances in the scene's structure, not boxes.
+    /// `casterCapacity` slots: shadow rays look only through their structure (ParticleTrace.metal). Then the
+    /// distortion emitters' (`distortRange`: never boxes, the haze pass reads them), and last the mesh emitters', the
+    /// last `meshCapacity`: they're instances in the scene's structure, not boxes.
     let bases: [Int]
     let capacity: Int
     let casterCapacity: Int
+    let distortCapacity: Int
     let meshCapacity: Int
-    /// The billboards' slots (the casters' and the others'), ahead of the meshes'.
-    var billboardCapacity: Int { capacity - meshCapacity }
+    /// The billboards' slots (the casters' and the others'), ahead of the distorters' and the meshes'.
+    var billboardCapacity: Int { capacity - meshCapacity - distortCapacity }
+    var distortRange: Range<Int> { billboardCapacity..<(billboardCapacity + distortCapacity) }
     /// Per emitter, the first of its instances in the scene (a mesh emitter's: Scene.addParticles reserves them).
     var meshInstances: [Int?]
     /// The trails (ParticleEmitter.trail): per emitter its first (a trail a slot of a trail emitter), how many in all,
@@ -326,6 +334,7 @@ final class ParticleSystem {
             precondition((1...ParticleSystem.maxPerEvent).contains(e.perEvent), "\(e.name): 1 to 8 children an event")
             precondition(e.frames >= 1 && e.frames <= ParticleTextures.frames, "\(e.name): 1 to \(ParticleTextures.frames) frames")
             if let t = e.trail { precondition(t.points >= 3 && t.every >= 1 && e.mesh == nil, "\(e.name): 3 places or more, a billboard's") }
+            precondition(e.distortion >= 0 && (e.distortion == 0 || (e.mesh == nil && e.trail == nil)), "\(e.name): a distortion emitter is a billboard's, without a trail")
         }
         let trails = emitters.compactMap { $0.trail?.points }
         precondition(Set(trails).count <= 1, "every trail emitter keeps the same number of places")
@@ -346,9 +355,12 @@ final class ParticleSystem {
             self.fields = fields
         }
         var bases = [Int](repeating: 0, count: emitters.count), n = 0
-        for (i, e) in emitters.enumerated() where e.mesh == nil && e.castsShadows { bases[i] = n; n += e.capacity }
+        for (i, e) in emitters.enumerated() where e.mesh == nil && e.distortion == 0 && e.castsShadows { bases[i] = n; n += e.capacity }
         casterCapacity = n
-        for (i, e) in emitters.enumerated() where e.mesh == nil && !e.castsShadows { bases[i] = n; n += e.capacity }
+        for (i, e) in emitters.enumerated() where e.mesh == nil && e.distortion == 0 && !e.castsShadows { bases[i] = n; n += e.capacity }
+        let distorters = n
+        for (i, e) in emitters.enumerated() where e.distortion > 0 { bases[i] = n; n += e.capacity }
+        distortCapacity = n - distorters
         let meshes = n
         for (i, e) in emitters.enumerated() where e.mesh != nil { bases[i] = n; n += e.capacity }
         meshCapacity = n - meshes
@@ -413,7 +425,7 @@ final class ParticleSystem {
                             UInt32(e.atlas.rawValue) | UInt32((min(max(e.shadowDensity, 0), 1) * 255).rounded()) << 8),
                 ids3: SIMD4(meshInstances[i].map(UInt32.init) ?? ParticleSystem.none, UInt32(e.trail?.points ?? 0),
                             trailBases[i].map(UInt32.init) ?? ParticleSystem.none, UInt32(e.trail?.every ?? 1)),
-                extra: SIMD4(e.collisionRadius, e.trailWidth, 0, 0),
+                extra: SIMD4(e.collisionRadius, e.trailWidth, e.distortion, 0),
                 field: SIMD4(e.field.map { Float($0.index) } ?? -1, e.field?.strength ?? 0, e.field?.follow == true ? 1 : 0,
                              e.bakedCurl ? Float(bakedCurlField ?? -1) : -1))
         }
@@ -536,7 +548,7 @@ final class ParticleSystem {
     func partBounds(after steps: Int) -> SIMD2<Int> {
         let b = aliveBounds(after: steps)
         var s = SIMD2<Int>.zero
-        for (i, e) in emitters.enumerated() where e.mesh == nil { s[e.castsShadows ? 0 : 1] += b[i] }
+        for (i, e) in emitters.enumerated() where e.mesh == nil && e.distortion == 0 { s[e.castsShadows ? 0 : 1] += b[i] }
         return s
     }
 }

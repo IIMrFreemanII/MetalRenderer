@@ -32,6 +32,11 @@ Phase 2:
 - Vector fields (`ParticleField`, `ParticleEmitter.field`) and the baked curl tile (`bakedCurl`); SDF shape colliders
   (`ParticleCollider.shape`), GPU only.
 - `ParticleTests` (21).
+- The rain under a spot light in the ceiling (denser, wider streaks, brighter splashes), and `METALRENDERER_BENCH=particlesdemo`:
+  a 24 s camera track recorded for the demo video (`video.sh`; crop the 1920×1200 frames to 1080 for Full HD).
+- Heat haze over the fire: distortion particles (`ParticleEmitter.distortion`), their slots between the billboards'
+  and the meshes' (`distortRange`, never boxes); `particleDistortDiscsKernel` then `particleDistortKernel` bend the
+  frame's light before post (0.24 ms). `ParticleTests` 22.
 
 ## To do on the M4 Max
 
@@ -56,5 +61,9 @@ Phase 2:
 - Shadow rays through every particle's box: rain (4000 non-casting streaks) made the trace 8.7 ms. Hence the casters'
   structure apart.
 - A mesh particle's collision ray starts inside its own instance: it skips its own hits (`instanceId`).
+- Clipping at the traced frame's nearest depth: with MetalFX its samples are jittered, so on a floor seen at a
+  grazing angle the splash rings (a millimetre over it) were hidden in some frames and shown in others. The layer's
+  steady rays and the overlay's clip at the farthest of the 3x3 depths round them on one surface
+  (`particleClipDepth`).
 - The baked curl tile is a different noise from the analytic one (its lattice wraps): the same statistics, another
   plume.

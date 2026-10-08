@@ -1367,10 +1367,10 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
 ### Particles
 
 GPU particle effects as modern engines run them (Niagara, VFX Graph), but **ray traced**: their particles show in the camera's view, in reflections and in shadows (`Particles.swift`, `ParticlesGPU.swift`, `Shaders/Particles.metal`, `Shaders/ParticleTrace.metal`), with the same steps on the CPU as their reference (`ParticlesCPU.swift`). The **Particles** scene (`METALRENDERER_SCENE=particles`, `Scene+Particles.swift`) is a dark studio with a glossy floor:
-* a brazier's fire (flames, and a flickering light in them) and its smoke;
+* a brazier's fire (flames, and a flickering light in them), the heat haze over it and its smoke;
 * a grinder throwing sparks that bounce off the floor, a crate and whatever else they meet, leaving puffs of smoke where they die;
 * a swirl of magic motes in curl noise round a plinth, and wisps trailing glowing ribbons through it;
-* rain on the right, splashing where it lands;
+* rain on the right under a lamp in the ceiling (a spot light): lit along its fall, splashing in the pool of light where it lands;
 * bursts of rubble on the left: stone chunks (mesh particles, real geometry) that tumble, bounce off the floor, the crate, the brazier and the plinth, and kick up dust that a little whirl of air carries.
 
 The showcase's motes (embers, bubbles, dust, runes) are particle effects too. The scene's keys:
@@ -1409,11 +1409,15 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
   * The light comes from each of the first 8 lights, scattered isotropically (E / 4 pi per unit albedo), through the opaque scene and the shadow-casting particles between, plus the sky's mean, averaged over the frames.
   * Through the particles, an octave sum of weaker extinctions (Wrenninge's multiple-scattering approximation) lets a dense column pass on more than single scattering would.
   * The brightest light is kept apart: **six-way smoke** takes it through the maps of the directions it comes from (in the billboard's own frame) and the rest through their mean, so a dense puff is dark on its far side and glows lit from behind. Reflections take the isotropic answer.
+* **Heat haze** (`ParticleEmitter.distortion`): distortion particles, simulated like any others but never drawn. Their slots sit apart from the billboards', so no structure, shadow, reflection or light pass sees them.
+  * After the overlay (or the composite) and before the lens, `particleDistortKernel` bends each camera ray that crosses them in front of its surface. The bend is up to the emitter's strength (radians) times each disc's opacity over life, (1 - r^2)^2 across it.
+  * Its direction is curl noise rising through the air where they are met, across the ray. The pixel reads the frame's light where the bent ray looks, unless the surface there is nearer than the haze, which keeps foreground edges out.
+  * A prepass gathers the discs and the part of the view they cover; every pixel outside it is a copy (0.24 ms in all at 1920×1200, about 0.07 ms of it the copy). Bloom and depth of field take the bent light.
 * **Shadows and reflections.** A shadow ray (`isVisibleBlocker`) that misses the geometry takes the product of (1 - opacity) of the casters it crosses (any order) and gets through with that chance; the denoisers and averages make it soft, as the voxels' stochastic leaves are. A caster's `shadowDensity` scales what it blocks (a billboard stands for a soft volume: at full opacity a column of smoke shadowed itself black). Reflection rays gather the particles and trails in front of what they reflect (a k-buffer of 2). Mesh particles are geometry: they shadow and reflect as any does.
 * **The reference path tracer** stops a path at a particle or a trail's ribbon with the chance of its opacity (the nearest that does): an emissive one adds its light and ends it, a lit one scatters (isotropic, next-event estimation as the fog's), and the emitters before it add theirs. That is the layer's composite on average, so it checks the real-time image: the two agree on the fire, the sparks and their reflections. The smoke is brighter in it: there the flames light it, and light scatters on inside the column.
-* **Checked:** `ParticleTests` (21) covers:
+* **Checked:** `ParticleTests` (22) covers:
   * what an emitter asks for: a rate of 30 a second never two in a step, 270 over 9 s; bursts on their steps;
-  * the pool: every slot alive or on its emitter's dead list, once, for 240 steps on the CPU and on the GPU; births past the budget dropped;
+  * the pool: every slot alive or on its emitter's dead list, once, for 240 steps on the CPU and on the GPU; births past the budget dropped; a distortion emitter's slots apart from the billboards' and never posed;
   * children where their parents die, and splashes on the floor;
   * the noise's analytic gradient against differences, curl noise's divergence, fields read exactly at their nodes (and linear ones exactly between), the baked tile repeating and matching its curl;
   * the GPU against the CPU, with a vector field and the baked curl: the same particles alive, positions within 2e-7 m after 10 steps and 1.5e-5 after 120; with colliders and children, the same counts per emitter;
@@ -1427,7 +1431,7 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
   * a frame's reset, steps and pose each keeping their own parameters.
 
   Scenes without particles render bit-identically (the feature is a shader specialisation, `PARTICLES`, bit 17).
-* What it costs (M1 Max: no ray-tracing hardware, so every box and curve is the shader's work; 640×400 traced, MetalFX 3x, 1920×1200 out; `METALRENDERER_BENCH=particles`). The scene's pools hold 6,500 billboards, 90 trails and 120 chunks:
+* What it costs (M1 Max: no ray-tracing hardware, so every box and curve is the shader's work; 640×400 traced, MetalFX 3x, 1920×1200 out; `METALRENDERER_BENCH=particles`). The scene's pools hold 7,040 billboards, 90 trails and 120 chunks (the table is from before the rain's lamp and its denser rain, which made the paused frame 15.3 ms and the moving one 17.4 ms; the fire's heat haze then 15.6 ms paused, the moving frame the same):
 
   | Setting | Build | Light pass | Camera layer | Overlay | Trace (its shadow rays) | Reflections | Whole frame (GPU) |
   |---|---|---|---|---|---|---|---|
@@ -1446,6 +1450,7 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
   * Past 4 fragments a pixel the k-buffer merges the farthest; the path tracer is exact.
   * The CPU reference has no scene, so `collidesWithScene` and SDF shape colliders are the GPU's alone; children spawn exactly only while their pool has room (past that, which parents' events win is the GPU's order).
   * Mesh particles are a frame behind; every trail emitter keeps the same number of places.
+  * The heat haze is a screen-space bend: it can only show what the frame has. It is undone where the bent ray looks at something nearer than the haze. Reflections and the path tracer don't see it, and without MetalFX it needs the lens (it runs on post's input).
   * Metal 4 is untested (the M1 Max has no Metal 4 ray tracing); the builds (boxes and curves) go into the frame's own encoder there (`PrimitiveWork4`).
 
 ### Geometry debug views

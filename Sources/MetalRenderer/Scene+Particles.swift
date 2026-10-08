@@ -5,8 +5,8 @@ import simd
 /// mirrors them. A brazier's fire (flames, a flickering light inside) and the smoke above it; a grinder throwing
 /// sparks that bounce off the floor, the crate (analytic colliders) and whatever else they meet (a ray a step), and
 /// leave puffs of smoke where they die; a swirl of magic motes in curl noise round a plinth; rain falling on the
-/// right, splashing where it lands; and bursts of rubble on the left, stone chunks (mesh particles: real geometry)
-/// that tumble, bounce and kick up dust.
+/// right under a lamp in the ceiling, lit along its fall and splashing in the pool of light where it lands; and bursts of rubble on the left, stone chunks (mesh particles: real geometry)
+/// that tumble, bounce and kick up dust. Over the fire, heat haze bends the view (distortion particles).
 extension Scene {
     /// Each emitter's pool is its budget (Particles.swift): about its rate x its longest life (and its bursts), with
     /// room to spare. The structures are built over the whole pool every frame.
@@ -53,6 +53,14 @@ extension Scene {
         addLight(.sphere(radius: 0.08), color: SIMD3<Float>(0.4, 0.6, 1.0) * 2, proxyMesh: kit.sphere, motion: .constant) { _ in
             LightPose(position: plinth + SIMD3(0, 1.9, 0))
         }
+        // A lamp over the rain: a cone down through it, so the drops show along their whole fall and their splashes
+        // land in a pool of light on the floor.
+        let lamp = SIMD3<Float>(3.6, 6.82, 1.0)
+        kit.box([lamp.x, 6.97, lamp.z], [0.36, 0.06, 0.36], iron)
+        addLight(.spot(radius: 0.08, inner: Scene.degrees(14), outer: Scene.degrees(22)), color: SIMD3<Float>(0.75, 0.85, 1.0) * 150,
+                 proxyMesh: kit.sphere, motion: .constant) { _ in
+            LightPose(position: lamp, direction: [0, -1, 0])
+        }
 
         var flames = ParticleEmitter("flames", capacity: 200, at: fire + SIMD3(0, 0.02, 0))
         flames.shape = .disc(radius: 0.26)
@@ -79,6 +87,26 @@ extension Scene {
         flames.orientation = .axis([0, 1, 0])
         flames.soft = 0.15
         flames.castsShadows = false
+
+        // The hot air over the fire: never drawn, it bends the view through it (ParticleEmitter.distortion), strongest
+        // just over the flames and gone as it rises and cools.
+        var heat = ParticleEmitter("heat", capacity: 48, at: fire + SIMD3(0, 0.25, 0))
+        heat.shape = .disc(radius: 0.2)
+        heat.rate = 30
+        heat.lifetime = 0.8...1.3
+        heat.speed = 0.6...1.0
+        heat.spread = 0.2
+        heat.gravity = -0.4
+        heat.drag = 1
+        heat.curl = 1.5
+        heat.curlFrequency = 2
+        heat.curlSpeed = 1
+        heat.bakedCurl = true
+        heat.size = (0.3, 0.6)
+        heat.sizeJitter = 0.2
+        heat.colors = ([1, 1, 1, 0], [1, 1, 1, 1], [1, 1, 1, 0])
+        heat.midpoint = 0.25
+        heat.distortion = 0.0025
 
         var smoke = ParticleEmitter("smoke", capacity: 300, at: fire + SIMD3(0, 0.55, 0))
         smoke.shape = .disc(radius: 0.2)
@@ -176,9 +204,9 @@ extension Scene {
         wisps.trailWidth = 0.8
 
         let rainArea = (center: SIMD3<Float>(3.6, 6.5, 1.0), half: SIMD3<Float>(1.6, 0, 2.2))
-        var rain = ParticleEmitter("rain", capacity: 1600, at: rainArea.center)
+        var rain = ParticleEmitter("rain", capacity: 2000, at: rainArea.center)
         rain.shape = .box(halfExtents: rainArea.half)
-        rain.rate = 650
+        rain.rate = 900
         rain.lifetime = 2...2
         rain.speed = 0...0
         rain.velocity = [0.4, -7, 0]
@@ -186,20 +214,20 @@ extension Scene {
         rain.colliders = 0b01
         rain.collidesWithScene = true     // it splashes on the grinder's top too
         rain.dieOnCollision = true
-        rain.size = (0.006, 0.006)
-        rain.colors = ([0.9, 0.95, 1, 0.35], [0.9, 0.95, 1, 0.35], [0.9, 0.95, 1, 0.35])
+        rain.size = (0.009, 0.009)
+        rain.colors = ([0.9, 0.95, 1, 0.5], [0.9, 0.95, 1, 0.5], [0.9, 0.95, 1, 0.5])
         rain.atlas = .streak
         rain.orientation = .velocity(stretch: 0.03)
         rain.soft = 0
         rain.castsShadows = false
 
-        var splashes = ParticleEmitter("splashes", capacity: 500, at: .zero)
+        var splashes = ParticleEmitter("splashes", capacity: 640, at: .zero)
         splashes.parent = 5
         splashes.trigger = .collision
         splashes.lifetime = 0.35...0.5
         splashes.gravity = 0
-        splashes.size = (0.08, 0.14)
-        splashes.colors = ([0.9, 0.95, 1, 0.6], [0.9, 0.95, 1, 0.4], [0.9, 0.95, 1, 0])
+        splashes.size = (0.1, 0.18)
+        splashes.colors = ([0.9, 0.95, 1, 0.8], [0.9, 0.95, 1, 0.5], [0.9, 0.95, 1, 0])
         splashes.atlas = .ring
         splashes.frames = 64
         splashes.orientation = .world(normal: [0, 1, 0])
@@ -251,7 +279,7 @@ extension Scene {
         dust.castsShadows = false
         dust.field = (index: 0, strength: 1.5, follow: true)   // the air the rubble stirs: a little whirl rising
 
-        addParticles(ParticleSystem(emitters: [flames, smoke, sparks, puffs, motes, rain, splashes, rubble, dust, wisps],
+        addParticles(ParticleSystem(emitters: [flames, smoke, sparks, puffs, motes, rain, splashes, rubble, dust, wisps, heat],
                                     colliders: [.plane(normal: [0, 1, 0], point: [0, 0.001, 0]), .box(center: crate.center, halfExtents: crate.half),
                                                 .shape(instance: bowl, shape: bowlShape), .shape(instance: stand, shape: standShape),
                                                 .shape(instance: plinthInstance, shape: plinthShape)],

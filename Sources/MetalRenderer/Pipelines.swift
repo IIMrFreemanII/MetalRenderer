@@ -35,6 +35,7 @@ enum Kernel: Int, CaseIterable {
     // records and boxes for the rays.
     case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
     case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
+    case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
     // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.

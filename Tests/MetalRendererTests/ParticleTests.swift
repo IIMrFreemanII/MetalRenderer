@@ -504,6 +504,54 @@ final class ParticleTests: XCTestCase {
         XCTAssertEqual(g.readRender(slot: 0).filter { $0.centerRadius.w > 0 }.count, 12, "all twelve billboards posed")
     }
 
+    // MARK: Heat haze
+
+    /// A distortion emitter's slots sit between the billboards' and the meshes'; it is simulated like any other, but
+    /// never posed as a record or a box (no ray but the haze pass's meets it), nor counted in the builds' bounds.
+    func testDistortionEmittersAreNeverBoxes() throws {
+        var smoke = ParticleEmitter("smoke", capacity: 30, at: [0, 1, 0])
+        smoke.rate = 20
+        var sparks = ParticleEmitter("sparks", capacity: 20, at: [1, 1, 0])
+        sparks.rate = 15
+        sparks.castsShadows = false
+        var heat = ParticleEmitter("heat", capacity: 24, at: [0, 0.5, 0])
+        heat.rate = 30
+        heat.lifetime = 0.5...0.8
+        heat.speed = 0.5...1
+        heat.distortion = 0.003
+        var rocks = ParticleEmitter("rocks", capacity: 10, at: [2, 0.5, 0])
+        rocks.mesh = (0, 0)
+        rocks.burst = (0, 5, 0, 0)
+        let system = ParticleSystem(emitters: [heat, smoke, rocks, sparks])
+        XCTAssertEqual(system.casterCapacity, 30)
+        XCTAssertEqual(system.billboardCapacity, 50)
+        XCTAssertEqual(system.distortRange, 50..<74)
+        XCTAssertEqual(system.bases, [50, 0, 74, 30])
+        XCTAssertEqual(system.capacity, 84)
+        let bounds = system.aliveBounds(after: 120)
+        XCTAssertEqual(system.partBounds(after: 120), SIMD2(bounds[1], bounds[3]), "the haze isn't in the builds' bounds")
+        XCTAssertEqual(system.gpuEmitters[0].extra.z, 0.003)
+
+        let (g, run) = try gpu(system)
+        run(60, .zero)
+        let m = try metal()
+        let cmd = m.queue.makeCommandBuffer()!
+        let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+        g.encodePose(Metal3Pass(enc: enc), pipelines: m.pipelines, slot: 0)
+        enc.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let all = g.readParticles()
+        let hot = system.distortRange.filter { all[$0].info.w == ParticleSystem.alive }
+        XCTAssertGreaterThan(hot.count, 10, "the heat is simulated")
+        XCTAssertTrue(hot.allSatisfy { all[$0].info.z == 0 }, "its slots are its own")
+        let billboards = (0..<system.billboardCapacity).filter { all[$0].info.w == ParticleSystem.alive }.count
+        let render = g.readRender(slot: 0)
+        let drawn = render.filter { $0.centerRadius.w > 0 }
+        XCTAssertEqual(drawn.count, billboards, "a record for each alive billboard, none for the heat")
+        XCTAssertTrue(drawn.allSatisfy { Int($0.info.x & 0xFFFFFF) < system.billboardCapacity })
+    }
+
     // MARK: Mesh particles
 
     /// A mesh emitter's slots pose their instances: an alive one where its particle is, at its size, turned (a

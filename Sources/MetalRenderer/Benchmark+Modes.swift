@@ -19,7 +19,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "particles": particles,
+        "particles": particles, "particlesdemo": particlesDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1124,6 +1124,31 @@ extension Benchmark {
             out.append(base.named(String(format: "moving %gx", budget)).with { $0.scene.particles.budget = budget })
         }
         return out
+    }
+
+    /// The particles scene's demo video: 24 s along a camera track from 3 s in (the effects under way) at the
+    /// `particles` mode's settings with the showcase's lens but no depth of field (`recording`;
+    /// `.claude/skills/offscreen/scripts/video.sh -m particlesdemo` makes the mp4). Wide, then to the brazier's fire and
+    /// smoke, down to the rubble's bursts and dust, round to the plinth's motes and wisps, across the grinder's sparks
+    /// on the crate, over to the rain under its lamp, and back out.
+    private static func particlesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0.3, 1.9, 6.2], [0, 1.0, 0]),
+            key(4, [-1.2, 1.5, 1.9], [-2.6, 1.3, -0.5]),
+            key(8, [-0.6, 1.0, 4.0], [-1.9, 0.4, 2.2]),
+            key(12, [0.9, 1.6, -0.6], [0, 1.2, -2.6]),
+            key(16, [1.0, 1.3, 3.4], [0.5, 0.7, 0.8]),
+            key(20, [0.2, 2.0, 5.6], [3.4, 0.9, 0.6]),
+            key(24, [0.3, 1.9, 6.2], [0, 1.0, 0]),
+        ])
+        var demo = Config("particles demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles)) {
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = 2   // 3 s in at the first recorded frame, after Benchmark.warmupFrames
+        return [demo]
     }
 
     /// The fluids scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens

@@ -10,6 +10,8 @@ final class ParticlesGPU {
     let emitters: MTLBuffer
     let colliders: MTLBuffer
     let particles: MTLBuffer
+    /// The heat haze's discs, two float4s a distorter, and the part of the view they cover (particleDistortDiscsKernel).
+    let distortDiscs: MTLBuffer
     let deadList: MTLBuffer
     let alive: [MTLBuffer]
     let events: [MTLBuffer]
@@ -108,6 +110,7 @@ final class ParticlesGPU {
         (self.fields, self.fieldSamples) = (fields, fieldSamples)
         particles = try buffer(n * MemoryLayout<GPUParticle>.stride, "particles")
         deadList = try buffer(n * 4, "particleDead")
+        distortDiscs = try buffer(system.distortCapacity * 32 + 16, "particleDistortDiscs")
         alive = try (0..<2).map { try buffer(n * 4, "particleAlive\($0)") }
         events = try (0..<2).map { try buffer(n * MemoryLayout<ParticleEvent>.stride, "particleEvents\($0)") }
         counts = try buffer(ParticlesGPU.countsSize, "particleCounts")
@@ -254,6 +257,26 @@ final class ParticlesGPU {
             enc.dispatchThreadgroups(indirectBuffer: args, indirectBufferOffset: 16, threadsPerThreadgroup: group)
         }
         stepIndex += steps
+    }
+
+    // MARK: - The heat haze
+
+    /// The distorters' discs for the haze (particleDistortDiscsKernel, into `distortDiscs`; the caller binds it and the
+    /// uniforms first), leaving the main pass's buffers bound (1: the distorters and the clock, 17: the discs); the
+    /// caller then binds particleDistortKernel, the uniforms and the textures, and dispatches over the output. In a
+    /// serial pass. Only with distorters.
+    func encodeDistortDiscs(_ enc: ComputePass) {
+        struct Params { var first, count, emitters: UInt32; var time: Float }
+        let range = system.distortRange
+        var p = Params(first: UInt32(range.lowerBound), count: UInt32(range.count), emitters: UInt32(system.emitters.count),
+                       time: Float(stepIndex) * ParticleSystem.stepLength)
+        enc.setBytes(&p, length: MemoryLayout<Params>.stride, index: 1)
+        enc.setBuffer(emitters, offset: 0, index: 13)
+        enc.setBuffer(particles, offset: 0, index: 16)
+        enc.setBuffer(distortDiscs, offset: 0, index: 17)
+        // One threadgroup (it gathers the discs' part of the view), each thread a disc or more.
+        let threads = min(max((range.count + 31) / 32 * 32, 32), 1024)
+        enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: threads, height: 1, depth: 1))
     }
 
     // MARK: - What the rays meet

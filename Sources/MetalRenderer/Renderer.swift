@@ -592,6 +592,7 @@ final class Renderer: NSObject {
     }
     private var liquidTextures: LiquidTargets?
     private var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
+    private var particleHazeTexture: MTLTexture?
     private var pathTraceCount: UInt32 = 0
     private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
     private var referenceView: [SIMD4<Float>] = []
@@ -2612,7 +2613,8 @@ final class Renderer: NSObject {
         // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
         if let drawable, let post = plan.post, !size.upscaling {
-            encodePost(plan, post: post, input: post.color, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+            let light = encodeHaze(plan, input: post.color, normalDepth: t.normalDepth[cur], passes: passes)
+            encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
         }
         if let drawable, let upscaler {
@@ -2628,19 +2630,35 @@ final class Renderer: NSObject {
                 dispatch(enc, .particleOverlay, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
-            // It leaves linear, unbounded light: the lens and the finish, or only the exposure and the tone curve, into
-            // the drawable.
+            // It leaves linear, unbounded light (bent by the heat haze, if any): the lens and the finish, or only the
+            // exposure and the tone curve, into the drawable.
+            let light = encodeHaze(plan, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], passes: passes)
             if let post = plan.post {
-                encodePost(plan, post: post, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                            output: drawable.texture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
-                setTextures(enc, [upscaler.hdrOutput, drawable.texture])
+                setTextures(enc, [light, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
         }
         return (drawable, drawableWait)
+    }
+
+    /// 5b. The heat haze (distortion particles: particleDistortKernel): `input`, the frame's linear light at the output
+    /// size, bent where hot air is in front of it, into a texture of its own, which it returns for the lens to take;
+    /// `input` itself when the scene has no distorters (or no particles).
+    private func encodeHaze(_ plan: FramePlan, input: MTLTexture, normalDepth: MTLTexture, passes: FrameEncoder) -> MTLTexture {
+        guard let gpu = particlesGPU, gpu.system.distortCapacity > 0, let haze = particleHazeTarget(width: input.width, height: input.height),
+              let enc = passes.compute("particle distortion", serial: true) else { return input }
+        bind(enc, .particleDistortDiscs, plan.uniforms)
+        gpu.encodeDistortDiscs(enc)
+        bind(enc, .particleDistort, plan.uniforms)
+        setTextures(enc, [input, haze, normalDepth])
+        dispatch(enc, .particleDistort, width: input.width, height: input.height)
+        passes.endCompute()
+        return haze
     }
 
     /// 6. The lens and the finish (Shaders/Post.metal): `input`, the frame's linear light at the output size, through the
@@ -3715,6 +3733,16 @@ final class Renderer: NSObject {
         guard let color = make(.rgba16Float, "particleLayer"), let depth = make(.rg32Float, "particleLayerDepth") else { return nil }
         particleLayerTexture = (color, depth)
         return particleLayerTexture
+    }
+
+    private func particleHazeTarget(width: Int, height: Int) -> MTLTexture? {
+        if let t = particleHazeTexture, t.width == width, t.height == height { return t }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        particleHazeTexture = device.makeTexture(descriptor: d)
+        particleHazeTexture?.label = "particleHaze"
+        return particleHazeTexture
     }
 
     private func liquidTargets(width: Int, height: Int) -> LiquidTargets? {

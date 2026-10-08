@@ -732,7 +732,7 @@ struct GPUParticleEmitter {
                                              // w = atlas layer | shadow density x 255 << 8
     var ids3 = SIMD4<UInt32>()               // x = a mesh emitter's first instance (ParticleSystem.none: billboards),
                                              // y = a trail's places (0: none), z = its first trail, w = steps apart
-    var extra = SIMD4<Float>()               // x = collision radius (m), y = a trail's width (of the particle's)
+    var extra = SIMD4<Float>()               // x = collision radius (m), y = a trail's width (of the particle's), z = distortion (rad)
     var field = SIMD4<Float>()               // x = its vector field (-1: none), y = strength, z = 1: a velocity it
                                              // follows (else an acceleration), w = the baked curl's field (-1: none)
 }
