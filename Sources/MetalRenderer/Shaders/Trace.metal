@@ -20,6 +20,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         device const Light*              lights     [[buffer(8)]],
                         device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
                         constant RegirParams&       regir     [[buffer(12)]],
+                        device RasterCounters*      rasterCounters [[buffer(13)]],  // with FLAG_VIS_BUFFER: RasterTraced
                         texture2d<float, access::write>  outNormalDepth [[texture(0)]],
                         texture2d<float, access::write>  outAlbedo      [[texture(1)]],
                         texture2d<float, access::write>  outEmission    [[texture(2)]],
@@ -35,6 +36,9 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outVisibility  [[texture(12)]],  // per light group: visibility
                         texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
                         texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
+                        texture2d<uint, access::read>    visBuffer      [[texture(15)]],  // with FLAG_VIS_BUFFER: instance, triangle
+                        texture2d<float, access::read>   liquidRay      [[texture(16)]],  // LIQUID: the camera ray bent through
+                        texture2d<float, access::read>   liquidDir      [[texture(17)]],  // a liquid (liquidKernel)
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -45,15 +49,37 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 
     Sampler rng = makeSampler(blueNoise, u, tid, 0, pixelSeed(tid, u.frameIndex, SEED_TRACE));
 
-    // Primary ray (traced instead of rasterized to keep the sample small; a raster G-buffer works the same way).
+    // Primary ray: traced, or with FLAG_VIS_BUFFER met with the triangle the raster drew at this pixel (Raster.metal),
+    // and traced as well, up to that triangle, when something in view wasn't drawn (RasterTraced: the lists were full).
     float2 size = float2(u.width, u.height);
     float3 dir = primaryDirection(u, tid);
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
-    // Window glass isn't met here: glassKernel adds it over the surface behind it.
-    Surface sf = traceSurface(primary, GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL, accel, s, 2.0f * u.camUp.w / float(u.height),
-                              recordTextures);   // pixel angle
+    // Window glass isn't met here: glassKernel adds it over the surface behind it. Nor a liquid: where one is in view,
+    // the ray goes on from where liquidKernel bent it, and liquidApplyKernel adds the liquid over what it finds.
+    uint primaryMask = (GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL) & (LIQUID ? ~MASK_LIQUID : MASK_ALL);
+    float liquidEntry = -1.0f;
+    float3 eye = dir;   // the camera's ray (dir: the ray that reaches what this pixel shows)
+    if (LIQUID) {
+        float4 bent = liquidRay.read(tid);
+        if (bent.w > 0.0f) {
+            float4 along = liquidDir.read(tid);
+            liquidEntry = along.w;
+            dir = along.xyz;
+            primary = makeRay(bent.xyz, dir, 0.0f, INFINITY);
+        }
+    }
+    Hit hit;
+    if (!flagOn(u.flags, FLAG_VIS_BUFFER) || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
+        hit = intersectClosest(primary, primaryMask, accel);
+    } else if (atomic_load_explicit(rasterTraced(rasterCounters), memory_order_relaxed) != 0u) {
+        Ray nearer = primary;
+        nearer.tmax = hit.distance;
+        Hit traced = intersectClosest(nearer, primaryMask, accel);
+        if (traced.hit) hit = traced;
+    }
+    Surface sf = surfaceFromHit(hit, primary, accel, s, 2.0f * u.camUp.w / float(u.height), recordTextures);   // pixel angle
 
     bool upscale = flagOn(u.flags, FLAG_UPSCALE);
     if (!sf.hit) {
@@ -71,18 +97,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         // sky texture the disc darkens toward its limb and clouds in front of it dim it (the texture's alpha).
         float4 skyHere = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
         float3 sky = skyHere.rgb;
-        for (uint k = 0; k < (LIGHT_TABLE ? u.lightTable.y : u.lightGroupEnd.w); ++k) {
-            Light light = lights[LIGHT_TABLE ? (k == 0 ? u.lightTable.z : u.lightTable.w) : k];
-            float theta = light.positionRadius.w;
-            float c = dot(dir, light.axis.xyz);
-            if (lightType(light) != LIGHT_SUN || c < cos(theta)) continue;
-            float3 disc = light.color.rgb / (4.0f * M_PI_F * sin(0.5f * theta) * sin(0.5f * theta));   // irradiance / solid angle
-            if (flagOn(u.flags, FLAG_SKY_MAP)) {
-                float x = sqrt(max(1.0f - c * c, 0.0f)) / sin(theta), mu = sqrt(max(1.0f - x * x, 0.0f));
-                disc *= skyHere.a * (1.0f - 0.6f * (1.0f - mu)) / 0.8f;   // limb darkening (u = 0.6), mean 1
-            }
-            sky += disc;
-        }
+        for (uint k = 0; k < sunDiscCount(u); ++k) sky += sunDisc(lights[sunDiscLight(u, k)], dir, u.flags, skyHere.a);
         outEmission.write(float4(sky, 1.0f), tid);
         outMotion.write(float4(0.0f), tid);
         outDirect.write(float4(0.0f), tid);
@@ -100,19 +115,29 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     if (specular) outMaterial.write(float4(sf.f0, max(sf.roughness, MIN_ROUGHNESS)), tid);
     float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
     outNormalDepth.write(float4(n, viewDepth), tid);
-    outGeoNormal.write(float4(ng, 0.0f), tid);
-    outAlbedo.write(float4(sf.albedo, 1.0f), tid);
+    // A strand's (Hair.metal): its tangent in the alphas.
+    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent) : float2(1.0f, -2.0f);
+    outGeoNormal.write(float4(ng, tangentOct.y + 2.0f), tid);
+    outAlbedo.write(float4(sf.albedo, tangentOct.x), tid);
     outEmission.write(float4(sf.emission, 1.0f), tid);
 
     // Motion vector: project where this surface point was last frame into last frame's camera.
     // The denoiser wants the index of the previous frame's pixel, whose sample was taken at its center + that frame's jitter.
     float prevDepth;
     float2 prevPixel = projectToPixel(sf.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, prevDepth);
+    // Seen through a liquid, the surface isn't where this pixel looks: the pixel moves as the liquid's surface it looks
+    // through does (taken as still), its depth as the surface's.
+    float3 seen = sf.position;
+    if (LIQUID && liquidEntry > 0.0f) {
+        seen = u.camPos.xyz + eye * liquidEntry;
+        float ignored;
+        prevPixel = projectToPixel(seen - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, ignored);
+    }
     outMotion.write(float4(prevPixel - 0.5f - u.jitter.zw, prevDepth, prevDepth > 0.0f ? 1.0f : 0.0f), tid);
     if (upscale) {
         // MetalFX wants unjittered motion in pixels, from this pixel to where it was last frame.
         float curDepth;
-        float2 curPixel = projectToPixel(sf.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
+        float2 curPixel = projectToPixel(seen - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
         outDeviceDepth.write(float4(NEAR_PLANE / max(viewDepth, NEAR_PLANE)), tid);
         outPixelMotion.write(float4(prevDepth > 0.0f ? prevPixel - curPixel : float2(0.0f), 0.0f, 0.0f), tid);
     }
@@ -126,9 +151,25 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         outBlocker.write(float4(0.0f), tid);
         return;
     }
+    // A raster cluster's triangle (RasterClusters) is from the raster's cut, not the BLAS the rays meet. With
+    // METALRENDERER_RASTER_VG_BIAS (camForward.w; off by default) every ray from here, this kernel's and the later
+    // passes' (they start at surfacePos), leaves that many times the cluster's simplification error in front of it.
+    if (hit.cluster != HIT_NO_CLUSTER && u.camForward.w > 0.0f) {
+        float4x4 m = instanceRecord(s.instances, hit.instance).transform;
+        float scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
+        sf.position += ng * (u.camForward.w * scale * as_type<float>(accel.clusters[hit.cluster].x));
+    }
     outSurfacePos.write(float4(sf.position, float(sf.instanceId + 1)), tid);
 
     float3 p = sf.position + ng * RAY_EPSILON;   // offset along the true normal so the origin is never below the triangle
+    HairPoint hp = noHair();
+    if (sf.hair) {
+        hp.on = true;
+        hp.tangent = sf.tangent;
+        hp.view = -dir;
+        hp.h = sf.hairH;
+        hp.albedo = sf.albedo;
+    }
 
     // Direct light. The shadow denoiser filters visibility per light group (one rgba channel each; up to 4 lights,
     // each light is its own group) and multiplies it back onto the group's exact unshadowed light in the composite
@@ -144,10 +185,12 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         float4 unshadowedSum = float4(0.0f), blockerWeight = float4(0.0f);
         for (uint i = 0; i < analyticLights; ++i) {
             float2 r = rng.next2();
-            float3 unshadowed = lightUnshadowed(lights[i], p, n, ng);
+            float3 unshadowed = litUnshadowed(lights[i], p, n, ng, hp);
             if (all(unshadowed <= 0.0f)) continue;   // light behind the surface: it shadows itself
             float b;
-            float v = isVisibleBlocker(p, lightShadowTarget(lights[i], p, r), accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
+            float3 target = lightShadowTarget(lights[i], p, r);
+            float3 origin = hairOrSurface(hp, sf.position, n, p, target);
+            float v = shadowVisible(u.flags, s.vsm, i, lights[i], origin, ng, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
             direct += unshadowed * v;
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
@@ -174,7 +217,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         for (uint b = 0; b < u.bounces; ++b) {
             float3 d = sampleBounce(normal, geomNormal, rng.next2());
             Ray r = makeRay(origin, d, 0.0f, INFINITY);
-            Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+            Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
                 indirect += throughput * skyRadiance(u, s, d, 2.0f);
                 break;
@@ -239,14 +282,18 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
                              texture2d<float, access::write>  outDirect  [[texture(4)]],
                              texture2d<float, access::write>  outVisibility [[texture(5)]],
                              texture2d<float, access::write>  outBlocker [[texture(6)]],
+                             texture2d<float, access::read>   albedo     [[texture(13)]],   // a strand's tangent (Hair.metal)
                              constant uint&                   raysPerGroup [[buffer(9)]],   // 1 or 2
                              uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
     float4 sp = surfacePos.read(tid);
     if (sp.w <= 0.0f) return;   // sky and emitters: traceKernel wrote zeros
-    float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+    float3 n = normalDepth.read(tid).xyz;
+    float4 g = geoNormal.read(tid);
+    float3 ng = g.xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
+    HairPoint hp = hairFromGBuffer(albedo.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
 
     // Other blue-noise windows than traceKernel's.
     Sampler rng = makeSampler(blueNoise, u, tid, 64, pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS));
@@ -266,7 +313,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
         float2 s = min(float2(dot(sel0, channel), dot(sel1, channel)), 0.99999f), pickedWeight = float2(0.0f);
         uint2 picked = uint2(end);
         for (uint i = start; i < end; ++i) {
-            float w = luminance(lightUnshadowed(lights[i], p, n, ng));
+            float w = luminance(litUnshadowed(lights[i], p, n, ng, hp));
             if (w <= 0.0f) continue;
             total += w;
             float q = w / total;
@@ -281,11 +328,12 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
             if (pick >= end) continue;
             Light light = lights[pick];
             float b;
-            bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
+            float3 target = lightShadowTarget(light, p, r);
+            bool visible = shadowVisible(u.flags, shading.vsm, pick, light, hairOrSurface(hp, sp.xyz, n, p, target), ng, target, accel, b);
             float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
             visibility += channel * (cloud / float(rays));
             if (b > 0.0f) { blocker += channel * penumbraWidth(light, p, b); blockerCount += channel; }
-            if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * total / ((k == 0 ? pickedWeight.x : pickedWeight.y) * float(rays)));
+            if (visible) direct += litUnshadowed(light, p, n, ng, hp) * (cloud * total / ((k == 0 ? pickedWeight.x : pickedWeight.y) * float(rays)));
         }
         start = end;
     }
@@ -323,6 +371,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
                              texture2d<float, access::read>   prevReservoirW [[texture(10)]],
                              texture2d<uint, access::write>   outReservoir [[texture(11)]],
                              texture2d<float, access::write>  outReservoirW [[texture(12)]],
+                             texture2d<float, access::read>   albedo     [[texture(13)]],   // a strand's tangent (Hair.metal)
                              constant uint4&                  config     [[buffer(9)]],   // y = reuse frames, z = 1 if last frame stored picks
                              uint2 tid [[thread_position_in_grid]])
 {
@@ -334,8 +383,11 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         return;
     }
     float4 nd = normalDepth.read(tid);
-    float3 n = nd.xyz, ng = geoNormal.read(tid).xyz;
+    float3 n = nd.xyz;
+    float4 g = geoNormal.read(tid);
+    float3 ng = g.xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
+    HairPoint hp = hairFromGBuffer(albedo.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
 
     // Other blue-noise windows than traceKernel's.
     Sampler rng = makeSampler(blueNoise, u, tid, 64, pixelSeed(tid, u.frameIndex, SEED_MANY_LIGHTS));
@@ -365,7 +417,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         StreamPick pick = streamPick(dot(sel, channel));
         uint picked = end;
         for (uint i = start; i < end; ++i) {
-            float w = luminance(lightUnshadowed(lights[i], p, n, ng));
+            float w = luminance(litUnshadowed(lights[i], p, n, ng, hp));
             if (w <= 0.0f) continue;
             if (pick.offer(w)) { picked = i; pickedWeight = w; }
         }
@@ -378,7 +430,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         uint prevLight = prevG & 0xFFFFu;
         if (prevLight >= start && prevLight < end) {
             float Mp = min(float(prevG >> 16), float(maxM));
-            float targetP = luminance(lightUnshadowed(lights[prevLight], p, n, ng));
+            float targetP = luminance(litUnshadowed(lights[prevLight], p, n, ng, hp));
             float wp = Mp * targetP * dot(prevW, channel);
             M += Mp;
             if (wp > 0.0f) {
@@ -394,12 +446,13 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         float W = weightSum / (M * targetY);
         Light light = lights[y];
         float b;
-        bool visible = isVisibleBlocker(p, lightShadowTarget(light, p, r), accel, b);
+        float3 target = lightShadowTarget(light, p, r);
+        bool visible = shadowVisible(u.flags, shading.vsm, y, light, hairOrSurface(hp, sp.xyz, n, p, target), ng, target, accel, b);
         float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
         visibility = select(visibility, float4(visible && pick.total > 0.0f ? saturate(cloud * targetY * W / pick.total) : 0.0f), here);
         blocker = select(blocker, float4(penumbraWidth(light, p, b)), here);
-        if (visible) direct += lightUnshadowed(light, p, n, ng) * (cloud * W);
+        if (visible) direct += litUnshadowed(light, p, n, ng, hp) * (cloud * W);
         outPick = select(outPick, uint4(y | (uint(min(M, float(maxM))) << 16)), here);
         outW = select(outW, float4(W), here);
     }
@@ -431,14 +484,18 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
                              texture2d<float, access::read>        blueNoise  [[texture(3)]],
                              texture2d<float, access::read_write>  direct     [[texture(4)]],
                              texture2d<float, access::write>       outMeshDirect [[texture(5)]],
+                             texture2d<float, access::read>        albedo     [[texture(6)]],   // a strand's tangent (Hair.metal)
                              uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
     float4 sp = surfacePos.read(tid);
     uint first = u.lightGroupEnd.w, count = u.lightCount - first;
     if (sp.w <= 0.0f || count == 0) { outMeshDirect.write(float4(0.0f), tid); return; }   // sky and emitters
-    float3 n = normalDepth.read(tid).xyz, ng = geoNormal.read(tid).xyz;
+    float3 n = normalDepth.read(tid).xyz;
+    float4 g = geoNormal.read(tid);
+    float3 ng = g.xyz;
     float3 p = sp.xyz + ng * RAY_EPSILON;
+    HairPoint hp = hairFromGBuffer(albedo.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
 
     SceneData s = sceneLights(instances, shading, lights, u.lightCount);
     // Other blue-noise windows than the trace and many-lights kernels'.
@@ -450,7 +507,8 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
     StreamPick pick = streamPick(rng.next());
     uint picked = count;
     for (uint i = 0; i < count; ++i) {
-        float w = luminance(meshLightUnshadowed(lights[first + i], p, n, ng));
+        float3 l = hp.on ? hairLightDirection(lights[first + i], p) : n;   // a strand: as a surface facing the light
+        float w = luminance(meshLightUnshadowed(lights[first + i], p, hp.on ? l : n, hp.on ? l : ng));
         if (w <= 0.0f) continue;
         if (pick.offer(w)) { picked = i; pickedWeight = w; }
     }
@@ -458,8 +516,17 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
     float3 result = float3(0.0f);
     if (picked < count) {
         float3 target;
-        result = sampleMeshLight(lights[first + picked], p, n, ng, r, s, target) * (pick.total / pickedWeight);
-        if (any(result > 0.0f) && !isVisible(p, target, accel)) result = float3(0.0f);
+        Light light = lights[first + picked];
+        if (hp.on) {
+            // A strand: the light a surface facing the light would get, through the hair's BSDF toward the sample.
+            float3 l = hairLightDirection(light, p);
+            result = sampleMeshLight(light, p, l, l, r, s, target) * (pick.total / pickedWeight);
+            float3 wi = normalize(target - p);
+            result *= M_PI_F * (hairScatter(hp, wi) + hairMultiple(hp, wi)) / hp.albedo;
+        } else {
+            result = sampleMeshLight(light, p, n, ng, r, s, target) * (pick.total / pickedWeight);
+        }
+        if (any(result > 0.0f) && !isVisible(hairOrSurface(hp, sp.xyz, n, p, target), target, accel)) result = float3(0.0f);
     }
     result *= fireflyScale(u, luminance(result), 4.0f * FIREFLY_CLAMP);
     outMeshDirect.write(roundToHalf(float4(result, 1.0f)), tid);

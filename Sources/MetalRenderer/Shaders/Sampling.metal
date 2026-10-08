@@ -145,3 +145,44 @@ inline float3 sampleBounce(float3 n, float3 ng, float2 u) {
     if (dot(d, ng) <= 0.0f) d -= 2.0f * dot(d, ng) * ng;
     return d;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Owen-scrambled Sobol points (Burley 2020, "Practical Hash-based Owen Scrambling"), for estimates averaged over many
+// samples (the reference path tracer): 2D points from Sobol's first two dimensions, a (0, 2)-sequence, each pair of
+// dimensions with its own scramble and its own shuffle of the sample index (a "padded" sequence), so pairs don't
+// correlate. Sample i of a pixel's stream is point i of its own randomised sequence: any prefix is well spread.
+// ---------------------------------------------------------------------------------------------
+
+// Laine and Karras' hash: an approximate nested uniform (Owen) scramble of x's bits, from the low bit up.
+inline uint laineKarrasPermutation(uint x, uint seed) {
+    x += seed;
+    x ^= x * 0x6c50b47cu;
+    x ^= x * 0xb82f1e52u;
+    x ^= x * 0xc7afe638u;
+    x ^= x * 0x8d22f6e6u;
+    return x;
+}
+// Owen-scrambles the bits of x from the high bit down.
+inline uint nestedUniformScramble(uint x, uint seed) {
+    return reverse_bits(laineKarrasPermutation(reverse_bits(x), seed));
+}
+
+// Point i of Sobol's second dimension, as 32-bit fixed point: Pascal's matrix (the first is van der Corput:
+// reverse_bits(i)).
+inline uint sobolSecond(uint i) {
+    uint y = 0u;
+    for (uint v = 0x80000000u; i != 0u; i >>= 1, v ^= v >> 1) {
+        if ((i & 1u) != 0u) y ^= v;
+    }
+    return y;
+}
+
+// The 2D point of sample `index` in the scrambled sequence `seed` (a pixel's, for one pair of dimensions), in [0, 1)^2.
+inline float2 owenSobol2(uint index, uint seed) {
+    uint i = nestedUniformScramble(index, pcgHash(seed));                  // the shuffled index
+    uint x = reverse_bits(i);
+    uint y = sobolSecond(i);
+    x = nestedUniformScramble(x, pcgHash(seed ^ 0xa511e9b3u));
+    y = nestedUniformScramble(y, pcgHash(seed ^ 0x63d83595u));
+    return float2(uint2(x, y) >> 8u) * (1.0f / 16777216.0f);
+}

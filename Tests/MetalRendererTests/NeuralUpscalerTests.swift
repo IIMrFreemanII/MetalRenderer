@@ -28,7 +28,7 @@ final class NeuralUpscalerTests: XCTestCase {
     func testKernelsMatchThePyTorchModel() throws {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         let golden = try NeuralWeights(url: root.appendingPathComponent("Neural/golden.nnw"), device: device)
-        let pipelines = try Pipelines(device: device, source: shaders, kind: .custom, lightTypes: 0x3F, stats: false)
+        let pipelines = try Pipelines(device: device, source: shaders, lightTypes: 0x3F, stats: false)
         let queue = try XCTUnwrap(device.makeCommandQueue())
         let shape = golden.shape("f0.color")
         let (h, w, f) = (shape[0], shape[1], golden.factor)

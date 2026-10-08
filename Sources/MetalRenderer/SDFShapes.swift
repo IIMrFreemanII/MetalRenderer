@@ -228,13 +228,37 @@ struct SDFShape {
         let size = simd_reduce_max(box.hi - box.lo) / Float(cells)
         let lo = box.lo - size
         let n = SIMD3<Int>(((box.hi - box.lo) / size).rounded(.up)) &+ 3   // samples per axis
+        let (positions, indices) = SurfaceNets.mesh(lo: lo, size: size, counts: n, push: push,
+                                                    distance: { self.distance($0, volumes: volumes).d },
+                                                    gradient: { self.gradient($0, h: size * 0.1, volumes: volumes) })
+        var materials: [Int] = []
+        if nodes.contains(where: { $0.material != 0 }) {
+            for t in stride(from: 0, to: indices.count, by: 3) {
+                let centre = (positions[Int(indices[t])] + positions[Int(indices[t + 1])] + positions[Int(indices[t + 2])]) / 3
+                materials.append(distance(centre, volumes: volumes).material)
+            }
+        } else {
+            materials = [Int](repeating: 0, count: indices.count / 3)
+        }
+        return (positions, indices, materials)
+    }
+}
+
+/// Surface nets (Gibson 1998) of any distance function: a vertex in each cell of a grid the surface passes through,
+/// at the mean of where it crosses the cell's edges, moved onto the surface (two Newton steps) and then `push` x a cell
+/// out along the normal; a quad for each grid edge it crosses, wound to face out.
+enum SurfaceNets {
+    /// The surface where `distance` is 0 on the grid of `counts` samples `size` apart from `lo`; `gradient`: its.
+    static func mesh(lo: SIMD3<Float>, size: Float, counts n: SIMD3<Int>, push: Float = 0,
+                     distance: (SIMD3<Float>) -> Float, gradient: (SIMD3<Float>) -> SIMD3<Float>)
+        -> (positions: [SIMD3<Float>], indices: [UInt32]) {
         @inline(__always) func at(_ x: Int, _ y: Int, _ z: Int) -> Int { (z * n.y + y) * n.x + x }
         var field = [Float](repeating: 0, count: n.x * n.y * n.z)
         field.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: n.z) { z in
                 for y in 0..<n.y {
                     for x in 0..<n.x {
-                        out[at(x, y, z)] = distance(lo + SIMD3(Float(x), Float(y), Float(z)) * size, volumes: volumes).d
+                        out[at(x, y, z)] = distance(lo + SIMD3(Float(x), Float(y), Float(z)) * size)
                     }
                 }
             }
@@ -266,12 +290,12 @@ struct SDFShape {
             DispatchQueue.concurrentPerform(iterations: ps.count) { i in
                 var p = ps[i]
                 for _ in 0..<2 {
-                    let g = gradient(p, h: size * 0.1, volumes: volumes)
+                    let g = gradient(p)
                     let len2 = dot(g, g)
                     guard len2 > 1e-12 else { break }
-                    p -= g * (distance(p, volumes: volumes).d / len2)
+                    p -= g * (distance(p) / len2)
                 }
-                let g = gradient(p, h: size * 0.1, volumes: volumes)
+                let g = gradient(p)
                 if dot(g, g) > 1e-12 { p += normalize(g) * (push * size) }
                 ps[i] = p
             }
@@ -301,15 +325,6 @@ struct SDFShape {
                 }
             }
         }
-        var materials: [Int] = []
-        if nodes.contains(where: { $0.material != 0 }) {
-            for t in stride(from: 0, to: indices.count, by: 3) {
-                let centre = (positions[Int(indices[t])] + positions[Int(indices[t + 1])] + positions[Int(indices[t + 2])]) / 3
-                materials.append(distance(centre, volumes: volumes).material)
-            }
-        } else {
-            materials = [Int](repeating: 0, count: indices.count / 3)
-        }
-        return (positions, indices, materials)
+        return (positions, indices)
     }
 }

@@ -1,17 +1,14 @@
 import Foundation
 import simd
 
-/// Bounding volume hierarchies for the custom ray tracer (Shaders/Intersect.metal, "Custom BVH traversal").
+/// Bounding volume hierarchies: a binned-SAH builder over boxes (`BVHBuilder.build`: Lumen's mesh distance fields,
+/// SDF volumes), and the small trees over virtual geometry's clusters, stored in their pages (`buildCluster`), which
+/// the ray queries walk in the clusters' boxes (Shaders/Intersect.metal, `clusterWalk`).
 ///
-/// Every tree uses the same 64-byte node, which holds the boxes of *both* children, so one fetch tests two:
-///   child ref (`lo.w` bits): bit 31 clear = index of an internal node in the same buffer;
-///                            bit 31 set   = leaf: BLAS: (count - 1) << 28 | first triangle; TLAS: instance index.
-///   `hi.w` bits: TLAS = OR of the instance masks under the child (rays skip subtrees they can't hit); BLAS = 0.
-/// Levels:
-///   BLAS per mesh, object space, built once here (binned SAH, up to 4 triangles per leaf). Its root is always an
-///     internal node, so the union of the root's two child boxes is the mesh's bounds.
-///   static TLAS over the instances that never move, built once here.
-///   dynamic TLAS over moving instances, rebuilt every frame on the GPU (CustomRayTracer, LBVH).
+/// A cluster's tree uses a 64-byte node, which holds the boxes of *both* children, so one fetch tests two:
+///   child ref (`lo.w` bits): bit 31 clear = index of an internal node in the same tree;
+///                            bit 31 set   = leaf: (count - 1) << 28 | first triangle.
+/// Its root is always an internal node, so the union of the root's two child boxes is the cluster's bounds.
 struct BVHNode {
     var lo0 = SIMD4<Float>(repeating: 0)
     var hi0 = SIMD4<Float>(repeating: 0)
@@ -31,7 +28,7 @@ struct BVHNode {
     func lo(_ i: Int) -> SIMD3<Float> { let v = i == 0 ? lo0 : lo1; return SIMD3(v.x, v.y, v.z) }
     func hi(_ i: Int) -> SIMD3<Float> { let v = i == 0 ? hi0 : hi1; return SIMD3(v.x, v.y, v.z) }
 
-    static func blasLeaf(first: Int, count: Int) -> UInt32 {
+    static func leaf(first: Int, count: Int) -> UInt32 {
         precondition(count >= 1 && count <= 8 && first < 1 << 28)
         return leafBit | UInt32(count - 1) << 28 | UInt32(first)
     }
@@ -277,252 +274,12 @@ enum BVHBuilder {
         return UInt32(nodeBase + slot)
     }
 
-    struct BLASResult {
-        var nodes: [BVHNode] = []
-        var triangles: [SIMD4<Float>] = []   // 3 per triangle in leaf order: v0 (w = triangle index in mesh), e1, e2
-        var roots: [UInt32] = []             // per mesh
-        var bounds: [AABB] = []              // per mesh
-        var nodeBases: [Int] = []            // per mesh, and the end: its nodes are nodes[nodeBases[m] ..< nodeBases[m + 1]]
-        var maxDepth = 0
-    }
-
-    /// One BLAS per mesh, all in one node buffer and one triangle buffer. Meshes are built in parallel.
-    /// A card triangle's three UVs, 10 bits a coordinate (0...1023 of 1024), and its alpha layer + 1 (1...15), in two
-    /// words: rtCutout in Shaders/Intersect.metal reads them back. Two zero words: not a card.
-    static func cutoutBits(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ c: SIMD2<Float>, layer: UInt32) -> (UInt32, UInt32) {
-        func q(_ x: Float) -> UInt32 { UInt32(min(max((x * 1024).rounded(), 0), 1023)) }
-        return (q(a.x) | q(a.y) << 10 | q(b.x) << 20 | (layer & 3) << 30, q(b.y) | q(c.x) << 10 | q(c.y) << 20 | (layer >> 2) << 30)
-    }
-
-    /// A leaf card's triangles (`GPUMesh.cutout`) carry their corners' UVs and alpha layer in the edges' spare floats
-    /// (`cutoutBits`), for the traversal's alpha test; `uvs` is only read for those.
-    static func buildBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh], uvs: [SIMD2<Float>] = []) -> BLASResult {
-        positions.withUnsafeBufferPointer { pos in
-            indices.withUnsafeBufferPointer { idx in
-                uvs.withUnsafeBufferPointer { uv in buildBLAS(positions: pos, indices: idx, meshes: meshes, uvs: uv) }
-            }
-        }
-    }
-
-    /// ...from arrays that are someone else's (the renderer's buffers, for a scene that keeps none: Scene.BorrowedMesh).
-    static func buildBLAS(positions pos: UnsafeBufferPointer<SIMD3<Float>>, indices idx: UnsafeBufferPointer<UInt32>, meshes: [GPUMesh],
-                          uvs uv: UnsafeBufferPointer<SIMD2<Float>>) -> BLASResult {
-        var trees = [(nodes: [Node], order: [Int])](repeating: ([], []), count: meshes.count)
-        // Each mesh's first triangle in the shared triangle buffer (its triangles keep their count, reordered).
-        var triBases = [Int](repeating: 0, count: meshes.count + 1)
-        for (m, mesh) in meshes.enumerated() { triBases[m + 1] = triBases[m] + Int(mesh.indexCount) / 3 }
-        var result = BLASResult()
-        result.triangles = [SIMD4<Float>](repeating: .zero, count: 3 * triBases[meshes.count])
-        trees.withUnsafeMutableBufferPointer { slots in
-            result.triangles.withUnsafeMutableBufferPointer { tris in
-                DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
-                    let mesh = meshes[m]
-                    let triCount = Int(mesh.indexCount) / 3, first = Int(mesh.firstIndex)
-                    let offset = Int(mesh.vertexOffset)   // a pose slot's own vertices (Crowd)
-                    guard triCount > 0 else { return }   // (a mesh that is elsewhere: MeshBlock)
-                    let corners = pos.baseAddress! + offset, indices = UnsafeBufferPointer(rebasing: idx[first..<first + 3 * triCount])
-                    let tree = build(boxes: triangleBoxes(positions: corners, indices: indices), masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
-                    // The mesh's triangles in leaf order, into its own range of the buffer.
-                    writeTriangles(order: tree.order, positions: corners, uvs: uv.baseAddress, indices: indices, cutout: mesh.cutout,
-                                   into: tris.baseAddress! + 3 * triBases[m])
-                    slots[m] = tree   // its own slot: no lock
-                }
-            }
-        }
-        // Each mesh's nodes go to its own range of the node buffer: a tree of n leaves has n - 1 child-pair nodes (a
-        // lone leaf gets a root of its own), so the ranges are known up front and the meshes are written in parallel.
-        var nodeBases = [Int](repeating: 0, count: meshes.count + 1)
-        for m in meshes.indices {
-            let count = trees[m].nodes.count
-            nodeBases[m + 1] = nodeBases[m] + (count == 0 ? 0 : max((count - 1) / 2, 1))
-        }
-        result.nodes = [BVHNode](repeating: BVHNode(), count: nodeBases[meshes.count])
-        result.nodeBases = nodeBases
-        var roots = [UInt32](repeating: BVHNode.none, count: meshes.count)
-        var depths = [Int](repeating: 0, count: meshes.count)
-        result.nodes.withUnsafeMutableBufferPointer { out in
-            roots.withUnsafeMutableBufferPointer { rootSlots in
-            depths.withUnsafeMutableBufferPointer { depthSlots in
-                DispatchQueue.concurrentPerform(iterations: meshes.count) { m in
-                    let triBase = triBases[m]
-                    var local: [BVHNode] = []
-                    local.reserveCapacity(nodeBases[m + 1] - nodeBases[m])
-                    rootSlots[m] = emit(trees[m].nodes, nodeBase: nodeBases[m], into: &local, forceInternalRoot: true) { n in
-                        BVHNode.blasLeaf(first: triBase + n.start, count: n.count)
-                    }
-                    precondition(local.count == nodeBases[m + 1] - nodeBases[m])
-                    for (i, node) in local.enumerated() { out[nodeBases[m] + i] = node }
-                    depthSlots[m] = depth(trees[m].nodes)
-                }
-            }
-            }
-        }
-        for m in meshes.indices {
-            let tree = trees[m].nodes
-            let root = roots[m]
-            result.roots.append(root)
-            result.bounds.append(tree.first?.box ?? AABB())
-            result.maxDepth = max(result.maxDepth, depths[m])
-        }
-        return result
-    }
-
-    /// A mesh's triangles' boxes. `positions`: where the vertices its `indices` name start.
-    private static func triangleBoxes(positions pos: UnsafePointer<SIMD3<Float>>, indices idx: UnsafeBufferPointer<UInt32>) -> [AABB] {
-        var boxes: [AABB] = []
-        boxes.reserveCapacity(idx.count / 3)
-        for t in 0..<idx.count / 3 {
-            var b = AABB()
-            for k in 0..<3 { b.grow(pos[Int(idx[3 * t + k])]) }
-            boxes.append(b)
-        }
-        return boxes
-    }
-
-    /// A mesh's triangles as the traversal reads them, three vectors each (`BLASResult.triangles`), in `order`.
-    private static func writeTriangles(order: [Int], positions pos: UnsafePointer<SIMD3<Float>>, uvs uv: UnsafePointer<SIMD2<Float>>?,
-                                       indices idx: UnsafeBufferPointer<UInt32>, cutout: UInt32, into tris: UnsafeMutablePointer<SIMD4<Float>>) {
-        var out = 0
-        for t in order {
-            let base = 3 * t
-            let p0 = pos[Int(idx[base])], p1 = pos[Int(idx[base + 1])], p2 = pos[Int(idx[base + 2])]
-            var spare = (UInt32(0), UInt32(0))
-            if cutout != 0, t >= Int(cutout & 0xFF_FFFF), let uv {
-                spare = cutoutBits(uv[Int(idx[base])], uv[Int(idx[base + 1])], uv[Int(idx[base + 2])], layer: cutout >> 24)
-            }
-            tris[out] = SIMD4(p0, Float(bitPattern: UInt32(t)))
-            tris[out + 1] = SIMD4(p1 - p0, Float(bitPattern: spare.0))
-            tris[out + 2] = SIMD4(p2 - p0, Float(bitPattern: spare.1))
-            out += 3
-        }
-    }
-
-    /// One mesh's tree, into memory of its own (MeshBlock): `storage` is asked for it once the tree's size is known.
-    /// There: the nodes, the root first, then three vectors for each triangle; the leaves count their triangles from
-    /// the memory's start, so that the traversal needs one address for both (`nodes`, the count returned, is a
-    /// multiple of three: 4 nodes are as long as 3 triangles). `indices` are into `positions` and `uvs`. Returns nil
-    /// if `storage` does.
-    static func buildBLAS(positions: UnsafePointer<SIMD3<Float>>, uvs: UnsafePointer<SIMD2<Float>>, indices: UnsafeBufferPointer<UInt32>,
-                          cutout: UInt32, storage: (_ nodes: Int) -> UnsafeMutableRawPointer?) -> (nodes: Int, bounds: AABB, depth: Int)? {
-        let tree = build(boxes: triangleBoxes(positions: positions, indices: indices), masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
-        let used = tree.nodes.isEmpty ? 0 : max((tree.nodes.count - 1) / 2, 1), count = (used + 2) / 3 * 3
-        guard let memory = storage(count) else { return nil }
-        precondition(MemoryLayout<BVHNode>.stride * 3 == MemoryLayout<SIMD4<Float>>.stride * 3 * 4)
-        let firstTriangle = count / 3 * 4
-        writeTriangles(order: tree.order, positions: positions, uvs: uvs, indices: indices, cutout: cutout,
-                       into: (memory + count * MemoryLayout<BVHNode>.stride).bindMemory(to: SIMD4<Float>.self, capacity: indices.count))
-        var nodes: [BVHNode] = []
-        nodes.reserveCapacity(count)
-        let root = emit(tree.nodes, nodeBase: 0, into: &nodes, forceInternalRoot: true) { BVHNode.blasLeaf(first: firstTriangle + $0.start, count: $0.count) }
-        precondition(nodes.count == used && (used == 0 || root == 0), "a tree's root is its first node")
-        nodes += [BVHNode](repeating: BVHNode(), count: count - used)
-        let out = memory.bindMemory(to: BVHNode.self, capacity: count)
-        for (i, node) in nodes.enumerated() { out[i] = node }
-        return (count, tree.nodes.first?.box ?? AABB(), depth(tree.nodes))
-    }
-
-    /// Of `buildBLAS`'s output: a change of the builder makes other files in the cache.
-    static let version = 1
-    /// Scenes with fewer triangles aren't cached: building their trees is quicker than hashing and reading a file.
-    private static let cachedTriangles = 20_000
-    private enum Section {
-        static let nodes = SectionFile.id("node"), triangles = SectionFile.id("tris"), roots = SectionFile.id("root")
-        static let bounds = SectionFile.id("bnds"), nodeBases = SectionFile.id("base"), depth = SectionFile.id("dpth")
-    }
-
-    /// `buildBLAS`, from the cache if these meshes' trees are in it (GeneratedCache; the file is named by a hash of
-    /// the geometry, so other geometry is another file), and into it otherwise. `geometry`: that hash, for what else
-    /// is derived from the same meshes (nil: these aren't cached: an optimised build, or a scene too small for it).
-    static func cachedBLAS(positions: [SIMD3<Float>], indices: [UInt32], meshes: [GPUMesh], uvs: [SIMD2<Float>] = [])
-        -> (blas: BLASResult, geometry: String?, cached: Bool) {
-        positions.withUnsafeBufferPointer { pos in
-            indices.withUnsafeBufferPointer { idx in
-                uvs.withUnsafeBufferPointer { uv in cachedBLAS(positions: pos, indices: idx, meshes: meshes, uvs: uv) }
-            }
-        }
-    }
-
-    static func cachedBLAS(positions: UnsafeBufferPointer<SIMD3<Float>>, indices: UnsafeBufferPointer<UInt32>, meshes: [GPUMesh],
-                           uvs: UnsafeBufferPointer<SIMD2<Float>>) -> (blas: BLASResult, geometry: String?, cached: Bool) {
-        func build() -> BLASResult { buildBLAS(positions: positions, indices: indices, meshes: meshes, uvs: uvs) }
-        guard GeneratedCache.cachesTrees, indices.count / 3 >= cachedTriangles else { return (build(), nil, false) }
-        var hasher = GeneratedCache.Hasher()
-        hasher.add(positions)
-        hasher.add(indices)
-        hasher.add(meshes)
-        if meshes.contains(where: { $0.cutout != 0 }) { hasher.add(uvs) }   // only cards' UVs are in the trees
-        let geometry = hasher.name()
-        let name = "blas-\(geometry).sect", key = "blas v\(version)"
-        if let file = GeneratedCache.load(name, key: key),
-           let nodes: [BVHNode] = file.array(Section.nodes), let triangles: [SIMD4<Float>] = file.array(Section.triangles),
-           let roots: [UInt32] = file.array(Section.roots), let bounds: [AABB] = file.array(Section.bounds),
-           let nodeBases: [Int] = file.array(Section.nodeBases), let depth: [Int] = file.array(Section.depth),
-           triangles.count == indices.count, roots.count == meshes.count, bounds.count == meshes.count,
-           nodeBases.count == meshes.count + 1, nodeBases.last == nodes.count, depth.count == 1 {
-            return (BLASResult(nodes: nodes, triangles: triangles, roots: roots, bounds: bounds, nodeBases: nodeBases, maxDepth: depth[0]),
-                    geometry, true)
-        }
-        let built = build()
-        var writer = SectionFile.Writer()
-        writer.add(Section.nodes, built.nodes)
-        writer.add(Section.triangles, built.triangles)
-        writer.add(Section.roots, built.roots)
-        writer.add(Section.bounds, built.bounds)
-        writer.add(Section.nodeBases, built.nodeBases)
-        writer.add(Section.depth, [built.maxDepth])
-        GeneratedCache.store(name, key: key, writer)
-        return (built, geometry, false)
-    }
-
-    /// TLAS over instances with world-space `boxes`; leaves are the instance indices `ids`. Appends to `nodes`, whose
-    /// first element will sit at `nodeBase` in the GPU buffer, and returns the root ref (an instance leaf ref if there is only one, `none` if none).
-    static func buildTLAS(boxes: [AABB], ids: [Int], masks: [UInt32], nodeBase: Int,
-                          into nodes: inout [BVHNode]) -> (root: UInt32, depth: Int) {
-        let (tree, order) = build(boxes: boxes, masks: masks, maxLeaf: 1)
-        let root = emit(tree, nodeBase: nodeBase, into: &nodes, forceInternalRoot: false) { n in
-            BVHNode.leafBit | UInt32(ids[order[n.start]])
-        }
-        return (root, depth(tree))
-    }
-
-    /// A tree of its own over a group of instances with world-space `boxes` (InstanceBlock.Tree): the root is its
-    /// first node, a leaf an instance's place in the group.
-    static func buildGroup(boxes: [AABB], masks: [UInt32]) -> (nodes: [BVHNode], depth: Int) {
-        let (tree, order) = build(boxes: boxes, masks: masks, maxLeaf: 1)
-        var nodes: [BVHNode] = []
-        nodes.reserveCapacity(max(boxes.count - 1, 1))
-        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in BVHNode.leafBit | UInt32(order[n.start]) }
-        return (nodes, depth(tree))
-    }
-
-    /// A small BVH over one virtual-geometry cluster's triangles (≤ 128): node indices and leaf refs are local
-    /// (BLAS leaf refs with the first triangle in `order`'s numbering). The root is always an internal node.
+    /// A small BVH over one virtual-geometry cluster's triangles (≤ 128): node indices and leaf refs are local (leaf
+    /// refs with the first triangle in `order`'s numbering). The root is always an internal node.
     static func buildCluster(boxes: [AABB]) -> (nodes: [BVHNode], order: [Int]) {
         let (tree, order) = build(boxes: boxes, masks: nil, maxLeaf: BVHNode.maxLeafTriangles)
         var nodes: [BVHNode] = []
-        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in BVHNode.blasLeaf(first: n.start, count: n.count) }
+        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in BVHNode.leaf(first: n.start, count: n.count) }
         return (nodes, order)
-    }
-
-    /// An SAH tree over subtrees that already sit in the same node buffer, one per box: each leaf becomes the child ref
-    /// `subtreeRef(i)` (an internal node's index), with box `boxes[i]`. The root is node 0, and there are
-    /// max(count - 1, 1) nodes, so the subtrees can be placed right after them.
-    static func buildOverSubtrees(boxes: [AABB], subtreeRef: (Int) -> UInt32) -> [BVHNode] {
-        let (tree, order) = build(boxes: boxes, masks: nil, maxLeaf: 1)
-        var nodes: [BVHNode] = []
-        nodes.reserveCapacity(max(boxes.count - 1, 1))
-        _ = emit(tree, nodeBase: 0, into: &nodes, forceInternalRoot: true) { n in subtreeRef(order[n.start]) }
-        return nodes
-    }
-
-    private static func depth(_ tree: [Node]) -> Int {
-        guard !tree.isEmpty else { return 0 }
-        var best = 0
-        var stack = [(0, 1)]
-        while let (i, d) = stack.popLast() {
-            best = max(best, d)
-            if tree[i].left >= 0 { stack.append((tree[i].left, d + 1)); stack.append((tree[i].right, d + 1)) }
-        }
-        return best
     }
 }

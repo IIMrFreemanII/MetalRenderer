@@ -6,7 +6,7 @@ struct Uniforms {
     float4 camPos;          // xyz
     float4 camRight;        // xyz, w = tan(fovX/2)
     float4 camUp;           // xyz, w = tan(fovY/2)
-    float4 camForward;      // xyz
+    float4 camForward;      // xyz, w = rays leave a raster cluster this many times its error in front (RasterClusters.bias)
     float4 prevCamPos;
     float4 prevCamRight;
     float4 prevCamUp;
@@ -33,7 +33,7 @@ struct MeshData {
     uint vertexOffset;  // a skinned character's pose slot: its vertices are this far after the ones its indices name
     uint prevOffset;    // ...and its previous frame's positions this far after those (0 = the mesh doesn't deform)
     uint sways;         // 1 = ground cover that leans in the wind (FOLIAGE: coverLean in Shaders/Foliage.metal)
-    uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh; the traversal reads it from the triangles instead
+    uint cutout;        // leaf cards (ALPHA_TEST): see GPUMesh
     // STREAMED: a mesh in a buffer of its own (MeshBlock in SceneBuffers.swift) instead of the scene's, or null. There:
     // `vertexCount` positions, as many normals, as many UVs, `indexCount` indices into them, a material offset
     // (a byte) per triangle.
@@ -94,6 +94,8 @@ constant uint SKY_ATMOSPHERE = 1, SKY_IMAGE = 2;
 constant uint SKY_CLOUDS = 1, SKY_SHADOWS = 2, SKY_UPDATE_ALL = 4, SKY_CLOUDS_OVER_IMAGE = 8;
 
 // Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table; the sky.
+struct VSMScene;   // Shaders/VSM.metal
+
 struct SceneShading {
     device const Material*        materials;
     device const float2*          uvs;
@@ -106,8 +108,9 @@ struct SceneShading {
     texture2d_array<float>        sky;         // with FLAG_SKY_MAP: [0] upper, [1] lower hemisphere (skyKernel)
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
+    device const VSMScene*        vsm;         // with FLAG_VSM: the virtual shadow maps (VSMTargets.writeScene)
 };
-static_assert(sizeof(SceneShading) == 272, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset)");
+static_assert(sizeof(SceneShading) == 288, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -144,10 +147,18 @@ constant uint lightTypesConstant [[function_constant(0)]];
 constant uint LIGHT_SPEC = is_function_constant_defined(lightTypesConstant) ? lightTypesConstant : 0x7F00003Fu;
 constant uint LIGHT_TYPES = LIGHT_SPEC & 0x3Fu;
 constant bool LIGHT_TABLE = (LIGHT_SPEC & 0x80000000u) != 0;
-// Bit 30 = FOLIAGE: the scene has assemblies (generated plants as trees of shared parts; custom ray tracer). Without
-// it the traversal and the shading compile to what they were before assemblies.
+// Bit 30 = FOLIAGE: the scene has assemblies (generated plants as shared parts, each part an instance of its own that
+// the wind turns) or ground cover that leans. Without it the queries and the shading compile to what they were
+// before assemblies.
 constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
-// Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the traversal cuts out by an alpha mask (rtCutout).
+// Bit 19 = RIGID_ASSEMBLIES: some assemblies are buildings of window modules (Scene.Assembly.rigid). ASSEMBLIES: the
+// queries walk three levels and a hit names its part (FOLIAGE's plants or these); the wind, the leaves and the voxels
+// stay FOLIAGE's, so a city of modules doesn't trace the plants' code.
+constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
+// Bit 18 = LIQUID: some instances are a liquid's surface (MASK_LIQUID), which camera rays are bent through (liquidKernel).
+constant bool LIQUID = (LIGHT_SPEC & 0x00040000u) != 0;
+constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
+// Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
 // Only then does a hit read MeshData's offsets and a previous position (the offsets cost the trace 7% in the stress
@@ -158,32 +169,33 @@ constant bool GLASS = (LIGHT_SPEC & 0x08000000u) != 0;
 // Bit 26 = MULTI_MATERIAL: some meshes have several materials (SceneShading.triangleMaterials; the city's buildings).
 constant bool MULTI_MATERIAL = (LIGHT_SPEC & 0x04000000u) != 0;
 // Bit 25 = STREAMED: some meshes are in buffers of their own (MeshData.block; an open world's tiles), which a hit
-// reaches through the mesh table and the custom traversal through its instances' records (RT_OWN_TREE).
+// reaches through the mesh table.
 constant bool STREAMED = (LIGHT_SPEC & 0x02000000u) != 0;
 // Bit 24 = GROUPED: some instances are in blocks of their own (InstanceBlock in SceneBuffers.swift; the plants of an
 // open world's tiles), which the scenes that have them share.
-// TILED: on Metal's tracer each block's records are in a buffer of the block's. An instance's id is then its block's
+// TILED: each block's records are in a buffer of the block's. An instance's id is then its block's
 // number and its place in the block (the scene's own instances are block 0), the same in every scene; a hit names
 // its instance by it, and what is bound as the instances' records is a table of the blocks' addresses.
-// (The custom tracer's scene has all its records in one buffer, the blocks' copied into it, and a hit names an
-// instance by its place there, as in any scene: one more read to a hit showed in its frame; it doesn't in Metal's.)
 constant bool GROUPED = (LIGHT_SPEC & 0x01000000u) != 0;
-#if CUSTOM_RT
-constant bool TILED = false;
-#else
 constant bool TILED = GROUPED;
-#endif
-// Bit 23 = VOXEL_BOXES: on Metal's tracer, far plants are voxel boxes (VoxelLOD.swift): bounding boxes whose rays the
-// ray queries march through the plant's grid (rtVoxels). VOXELS: far plants can be voxels on this tracer.
+// Bit 23 = VOXEL_BOXES: far plants are voxel boxes (VoxelLOD.swift): bounding boxes whose rays the ray queries march
+// through the plant's grid (rtVoxels).
 constant bool VOXEL_BOXES = (LIGHT_SPEC & 0x00800000u) != 0;
-#if CUSTOM_RT
-constant bool VOXELS = FOLIAGE;
-#else
 constant bool VOXELS = VOXEL_BOXES;
-#endif
-// Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace: the
-// custom tracer where it meets such an instance, Metal's in its intersection queries' loop (their boxes).
+// Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace in
+// their intersection queries' loop (their boxes).
 constant bool SDF_SHAPES = (LIGHT_SPEC & 0x00400000u) != 0;
+// Bit 21 = VG_CLUSTERS: virtual geometry is traced as this frame's cut of clusters (METALRENDERER_VG_MODE=clusters,
+// VirtualGeometry.swift): boxes whose rays the ray queries walk through the cluster's own BVH.
+constant bool VG_CLUSTERS = (LIGHT_SPEC & 0x00200000u) != 0;
+// Bit 20 = HAIR_CURVES: some meshes are strands, round Catmull-Rom curves (Scene.addCurves) that the ray queries meet
+// (MSL 3.1 and later; before that none are drawn).
+#if __METAL_VERSION__ < 310
+constant bool HAIR_CURVES = false;
+#else
+#define HAS_CURVES 1
+constant bool HAIR_CURVES = (LIGHT_SPEC & 0x00100000u) != 0;
+#endif
 constant uint INSTANCE_BLOCK_SHIFT = 20, INSTANCE_IN_BLOCK = (1u << INSTANCE_BLOCK_SHIFT) - 1u;
 struct InstanceBlockRef { device const InstanceData* records; };
 inline InstanceData instanceRecord(device const InstanceData* instances, uint id) {
@@ -260,9 +272,12 @@ constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture 
 constant uint FLAG_RESTIR        = 32768; // direct light from a pass of its own: ReSTIR DI (restirTemporalKernel,
                                           // restirSpatialKernel) or MegaLights (megaLightsSampleKernel)
 constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
-constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (RTScene.wind.z > 0), the plants' parts turn
+constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (TraceScene.wind.z > 0), the plants' parts turn
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
+constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
+constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
+constant uint FLAG_GI_RADIANCE   = 4194304; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
@@ -287,9 +302,22 @@ constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser hand
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
 
 constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
+constant uint MASK_LIGHTS   = 2;     // the lights' visible shapes and the camera-only motes (Scene.maskLights)
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
+constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
+constant uint MASK_LIQUID   = 32;    // a liquid's surface (Scene.maskLiquid): only liquidKernel's rays meet it
 constant uint MASK_ALL      = 0xFF;
+// What a ray is for, in bits 8-11 of the mask it is traced with (rayMask): the traversal counters are kept per class
+// (RT_STATS, TraversalStats). Instances' masks never have these bits; the ray queries take them off.
+constant uint RAY_CLASS_SHIFT = 8;
+constant uint RAY_CAMERA = 0, RAY_SHADOW = 1, RAY_GI = 2, RAY_SPECULAR = 3, RAY_FAR = 4, RAY_LIGHTMAP = 5;
+constant uint RAY_CLASSES = 6;   // TraversalStats.classes
+inline uint rayMask(uint mask, uint cls) { return mask | (cls << RAY_CLASS_SHIFT); }
+inline uint rayClass(uint mask) { return (mask >> RAY_CLASS_SHIFT) & 0xFu; }
+// A ray cone's spread, radians per unit distance (no curvature), for GI rays: a coarse fixed one, since their hits get
+// integrated anyway. Texture filtering (traceSurface) uses it.
+constant float GI_RAY_SPREAD = 0.05f;
 
 constant float RAY_EPSILON  = 1e-3f;
 constant float FIREFLY_CLAMP = 10.0f;

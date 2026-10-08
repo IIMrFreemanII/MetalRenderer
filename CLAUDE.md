@@ -8,7 +8,7 @@ This project has a knowledge graph at graphify-out/ with god nodes, community st
 
 Rules:
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- When graphify-out/graph.json is missing (new worktrees: graphify-out/ is gitignored), build it with the `code-graph` skill (`.claude/skills/code-graph/scripts/ensure-graph.sh`, which runs `graphify update .`), then query. Don't skip the graph for grep.
+- graphify-out/ is committed, so a checkout has the graph as of its last commit; refresh it with `graphify update .` on a branch whose code has moved. When graphify-out/graph.json is missing, build it with the `code-graph` skill (`.claude/skills/code-graph/scripts/ensure-graph.sh`, which runs `graphify update .`), then query. Don't skip the graph for grep.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
@@ -21,3 +21,7 @@ Claude memory folder (`~/.claude/projects/<project>/memory/`) doesn't have these
 start of the session and copy the files there, so they load by themselves from then on. Keep both in step when a
 memory changes.
 
+## Handoff notes
+
+Status and next steps of work moved between Macs are in `.claude/notes/` (for example
+`metal-tracer-handoff.md`: the Metal-only tracer, to continue on the M4 Max). Read the one for your branch first.

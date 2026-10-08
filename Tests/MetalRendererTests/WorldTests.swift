@@ -43,51 +43,21 @@ final class WorldTests: XCTestCase {
         XCTAssertNotEqual(WorldTile.build(World(seed: 8), x: 3, z: -2, level: 1, flora: flora).chunks[0].positions.array, first.chunks[0].positions.array)
     }
 
-    /// A tile's file has the trees over its chunks once they were asked for (the custom tracer's scenes ask): each
-    /// the tree the tracer builds of the chunk's arrays, in the bytes its buffer has. A file without them is a tile
-    /// all the same, and gets them.
-    func testATilesFileHasItsTrees() throws {
+    /// A tile is made once: written to its file, and read back from it (its arrays mapped), the tile as it was built.
+    func testATileComesFromItsFile() throws {
         // (Where the cache's files go for this test only: `make` reads and writes there.)
         let world = World(seed: 7_000_000 + UInt64.random(in: 0..<1_000_000))
         let folder = WorldTile.url(world, x: 0, z: 0, level: 0).deletingLastPathComponent().deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: folder) }
         try XCTSkipUnless(GeneratedCache.enabled, "the cache is off")
 
-        let bare = WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora)
-        XCTAssertFalse(bare.hasTrees)
-        XCTAssertTrue(bare.chunks.allSatisfy { if case .mapped = $0.positions { return true } else { return false } }, "from its file")
-        var built = WorldTile.build(world, x: 3, z: -2, level: 1, flora: flora)
-        XCTAssertFalse(built.hasTrees)
-        built.addTrees()
-        XCTAssertTrue(built.hasTrees)
-
-        // The file had none: they are built from its arrays, and it is written again with them.
-        let stored = WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora, trees: true)
-        assertSame(built, stored, "with its trees")
+        let stored = WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora)
+        XCTAssertTrue(stored.chunks.allSatisfy { if case .mapped = $0.positions { return true } else { return false } }, "from its file")
+        let built = WorldTile.build(world, x: 3, z: -2, level: 1, flora: flora)
+        assertSame(built, stored, "from its file")
         let url = WorldTile.url(world, x: 3, z: -2, level: 1), key = WorldTile.key(world, x: 3, z: -2, level: 1)
         let again = try XCTUnwrap(WorldTile(url: url, key: key, x: 3, z: -2, level: 1))
-        XCTAssertTrue(stored.hasTrees && again.hasTrees)
-        XCTAssertTrue(WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora).hasTrees, "and has them for whoever asks for none")
-        for (c, chunk) in again.chunks.enumerated() {
-            let tree = try XCTUnwrap(chunk.tree), made = try XCTUnwrap(built.chunks[c].tree)
-            XCTAssertTrue(tree.fits(indexCount: chunk.indices.count))
-            XCTAssertEqual([tree.nodeCount, tree.depth], [made.nodeCount, made.depth])
-            XCTAssertEqual(tree.bounds.lo, made.bounds.lo)
-            XCTAssertEqual(tree.bounds.hi, made.bounds.hi)
-            XCTAssertEqual(tree.memory.data, made.memory.data, "chunk \(c)")
-            if case .made = tree.memory { XCTFail("the tree is the file's, mapped") }
-            // What the builder makes of the chunk's triangles: their box, and each triangle once after the nodes.
-            XCTAssertEqual(tree.bounds.lo, chunk.bounds.lo)
-            XCTAssertEqual(tree.bounds.hi, chunk.bounds.hi)
-            let triangles = tree.memory.array[(tree.nodeCount * Scene.BorrowedTree.vectorsPerNode)...]
-            XCTAssertEqual(triangles.count, chunk.indices.count)
-            XCTAssertEqual(Set(stride(from: triangles.startIndex, to: triangles.endIndex, by: 3).map { triangles[$0].w.bitPattern }).count,
-                           chunk.triangles)
-        }
-        // A tile made where there is no file comes with them at once.
-        let fresh = WorldTile.make(world, x: 4, z: -2, level: 2, flora: flora, trees: true)
-        XCTAssertTrue(fresh.hasTrees)
-        XCTAssertEqual(fresh.chunks[0].tree?.fits(indexCount: fresh.chunks[0].indices.count), true)
+        assertSame(built, again, "read again")
     }
 
     /// Neighbouring tiles' grounds meet: the same heights and normals along the side they share, near the origin
@@ -182,6 +152,26 @@ final class WorldTests: XCTestCase {
         XCTAssertEqual(place.wanted(for: SIMD3(Float(10.5 * 256 - place.anchor.x), 5, Float(-2.5 * 256))), SIMD2(10, -3))
         XCTAssertEqual(SceneKind.world.envName, "world")
         XCTAssertTrue(SceneKind.world.hasPlants && SceneKind.world.cameraFromScene)
+    }
+
+    /// The building whose interior the scene has: its tile is made without it (another file, another name), and only
+    /// its tile; a lot's name finds its block again.
+    func testATileWithoutTheBuildingThatHasItsInterior() throws {
+        let city = try XCTUnwrap(world.city(cell: SIMD2(0, 0)))
+        let side = Double(World.tileSize)
+        let tx = Int((city.center.x / side).rounded(.down)), tz = Int((city.center.y / side).rounded(.down))
+        let found = try XCTUnwrap(world.blocks(x0: Double(tx) * side, z0: Double(tz) * side, side: side))
+        let block = try XCTUnwrap(found.blocks.first { !$0.plan.lots.isEmpty })
+        let ref = world.lotRef(found.city, block, 0)
+        let middle = try XCTUnwrap(world.blockMiddle(of: ref.key))
+        XCTAssertEqual(middle.x, city.center.x + Double(block.plan.blocks[0].rect.center.x), accuracy: 0.01)
+        var without = world
+        without.interior = ref.key
+        XCTAssertNotEqual(WorldTile.key(without, x: tx, z: tz, level: 0), WorldTile.key(world, x: tx, z: tz, level: 0))
+        XCTAssertEqual(WorldTile.key(without, x: tx + 1, z: tz, level: 0), WorldTile.key(world, x: tx + 1, z: tz, level: 0))
+        XCTAssertEqual(WorldTile.key(without, x: tx, z: tz, level: 1), WorldTile.key(world, x: tx, z: tz, level: 1))
+        let all = WorldTile.build(world, x: tx, z: tz, level: 0, flora: flora), less = WorldTile.build(without, x: tx, z: tz, level: 0, flora: flora)
+        XCTAssertLessThan(less.triangles, all.triangles)
     }
 
     /// A city's tile: blocks with their buildings and glass at level 0, less at each level after it; a block belongs

@@ -63,32 +63,54 @@ extension EnvNamed {
     }
 }
 extension GIMode: EnvNamed {
-    var envName: String { ["pt", "cascades", "restir"][rawValue] }
+    var envName: String { ["pt", "cascades", "restir", "lumen"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
 extension UpscalerKind: EnvNamed {
     var envName: String { self == .metalFX ? "metalfx" : "neural" }
 }
 extension DirectLightMode: EnvNamed {}
-extension RayTracerKind: EnvNamed {}
 extension RenderAPI: EnvNamed {}
+extension PrimaryVisibility: EnvNamed {}
+extension RasterVirtual: EnvNamed {}
+extension LumenTrace: EnvNamed {}
+extension ShadowMethod: EnvNamed {
+    var envName: String { ["rays", "vsm"][rawValue] }
+}
 extension SceneKind: EnvNamed {
     var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
 }
 extension CityStyle: EnvNamed {}
+extension PhysicsSettings.Backend: EnvNamed {}
+extension PhysicsSettings.Skin: EnvNamed {}
+extension PhysicsSettings.Body: EnvNamed {}
+extension PhysicsSettings.Liquids: EnvNamed {}
+extension PhysicsSettings.Solver: EnvNamed {}
+extension PhysicsSettings.Solvers: EnvNamed {}
+extension Foliage.Age: EnvNamed {}
+extension PlantSceneSettings.Layout: EnvNamed {}
+extension PlantSceneSettings.View: EnvNamed {}
+extension BuildingSceneSettings.Sides: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension BuildingSceneSettings.Layout: EnvNamed {}
+extension BuildingSceneSettings.View: EnvNamed {}
+extension ReferenceMode: EnvNamed {
+    var envName: String { ["off", "accumulated", "pt"][rawValue] }
+}
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 enum EnvVariable: String, CaseIterable {
     // One value each.
-    case direct = "METALRENDERER_DIRECT", rt = "METALRENDERER_RT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
+    case direct = "METALRENDERER_DIRECT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
+    case primary = "METALRENDERER_PRIMARY", shadowMethod = "METALRENDERER_SHADOW_METHOD"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
+    case rasterVG = "METALRENDERER_RASTER_VG", rasterVGPool = "METALRENDERER_RASTER_VG_POOL"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
     // Lists of key=value.
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
     case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI", megaLights = "METALRENDERER_MEGALIGHTS"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
-    case foliage = "METALRENDERER_FOLIAGE", post = "METALRENDERER_POST"
+    case foliage = "METALRENDERER_FOLIAGE", vsm = "METALRENDERER_VSM", lumen = "METALRENDERER_LUMEN", post = "METALRENDERER_POST"
 
     var isList: Bool { self.index >= EnvVariable.scene.index }
     private var index: Int { EnvVariable.allCases.firstIndex(of: self)! }
@@ -289,24 +311,28 @@ enum SettingsTable {
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }
-        let assemblies: When = { $0.rayTracer == .custom }   // Metal's tracer has the plants baked: they stand still
+        let assemblies: When = { !$0.scene.bakedPlants }   // baked plants stand still
         return Section(title: "Foliage", rows: [
             S.slider("Wind", \.foliage.wind, FoliageSettings.windRange, step: 0.05, fmt("%.2f")).env(.foliage, "wind").when(plants).enabled(assemblies),
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
                 .env(.foliage, "dir").when(plants).enabled(assemblies),
             S.slider("Gusts", \.foliage.gusts, FoliageSettings.gustRange, step: 0.05, fmt("%.2f")).env(.foliage, "gusts").when(plants).enabled(assemblies),
+            S.slider("Sway reach", \.foliage.swayReach, FoliageSettings.swayRange, step: 5, fmt("%.0f m"))
+                .env(.foliage, "sway").when(plants).enabled(assemblies),
             S.slider("Season", \.foliage.season, FoliageSettings.seasonRange, step: 0.02, fmt("%.2f")).env(.foliage, "season").when(plants),
             S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
                 .env(.foliage, "translucency").when(plants),
             S.slider("Distance LOD (voxels)", \.foliage.lod, FoliageSettings.lodRange, step: 0.25, fmt("%.2g px"))
-                .env(.foliage, "lod").when(plants),   // both tracers (Metal's: VoxelLOD)
+                .env(.foliage, "lod").when(plants),
         ])
     }()
 
     private static let scene: Section = {
-        let customTracer: When = { $0.rayTracer == .custom }   // Metal would need its acceleration structures rebuilt per cut
-        let virtual: When = { $0.rayTracer == .custom && $0.virtualGeometry.enabled }
+        let assemblies: When = { !$0.scene.bakedPlants }
+        let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
+        let workshop: When = { $0.scene.kind == .plants }
+        let buildings: When = { $0.scene.kind == .buildings }
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
@@ -332,6 +358,61 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
+            S.check("Interiors near the camera", \.scene.city.interiors).env(.scene, "interiors").when(city),
+            S.slider("Interior reach", \.scene.city.interiorReach, 10...80, step: 5, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "reach").when(city),
+            S.value(\.scene.buildings.style).env(.scene, "bstyle"),
+            S.slider("Lot width", \.scene.buildings.lot.x, BuildingSceneSettings.widthRange, step: 0.5, live: false) { String(format: "%.1f m", $0) }
+                .env(.scene, "width").when(buildings),
+            S.slider("Lot depth", \.scene.buildings.lot.y, BuildingSceneSettings.depthRange, step: 0.5, live: false) { String(format: "%.1f m", $0) }
+                .env(.scene, "depth").when(buildings),
+            S.popup("Its sides", \.scene.buildings.sides, titled(\.title)).env(.scene, "sides").when(buildings),
+            S.slider("Floors", \.scene.buildings.floors, BuildingSceneSettings.floorRange, live: false).env(.scene, "floors").when(buildings),
+            S.slider("Building seed", \.scene.buildings.seed, SceneSettings.seedRange, live: false).env(.scene, "bseed").when(buildings),
+            S.popup("Layout", \.scene.buildings.layout, titled(\.title)).env(.scene, "blayout").when(buildings),
+            S.popup("View", \.scene.buildings.view, titled(\.title)).env(.scene, "bview").when(buildings),
+            S.slider("Cut above floor", \.scene.buildings.cut, 0...40, live: false).env(.scene, "cut").when(buildings),
+            S.check("Night", \.scene.buildings.night).env(.scene, "night").when(buildings),
+            S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
+                .env(.scene, "bodies").when { $0.scene.kind == .physics },
+            S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
+                .env(.scene, "particles").when { $0.scene.kind == .physics },
+            S.slider("Cloth vertices", \.scene.physics.cloth, PhysicsSettings.clothRange, step: 4, live: false) { $0 == 0 ? "none" : "\($0) x \($0)" }
+                .env(.scene, "cloth").when { $0.scene.kind == .physics },
+            S.slider("Ragdolls", \.scene.physics.ragdolls, PhysicsSettings.ragdollRange, live: false)
+                .env(.scene, "ragdolls").when { $0.scene.kind == .ragdolls },
+            S.slider("Strands per guide", \.scene.physics.hair, PhysicsSettings.hairRange, live: false)
+                .env(.scene, "hair").when { $0.scene.kind == .hair },
+            S.slider("Furry bodies", \.scene.physics.furBodies, PhysicsSettings.furBodyRange, live: false)
+                .env(.scene, "fur").when { $0.scene.kind == .hair },
+            S.slider("Soft bodies", \.scene.physics.softBodies, PhysicsSettings.softBodyRange, live: false)
+                .env(.scene, "soft").when { $0.scene.kind == .softBodies },
+            S.slider("Lattice cells", \.scene.physics.softCells, PhysicsSettings.softCellRange, live: false)
+                .env(.scene, "cells").when { $0.scene.kind == .softBodies },
+            S.check("Character", \.scene.physics.muscleCharacter).env(.scene, "character").when { $0.scene.kind == .muscles },
+            S.slider("Ragdolls with flesh", \.scene.physics.muscleRagdolls, PhysicsSettings.muscleRagdollRange, live: false)
+                .env(.scene, "fleshragdolls").when { $0.scene.kind == .muscles },
+            S.slider("Flesh lattice", \.scene.physics.fleshCell, PhysicsSettings.fleshCellRange, step: 0.5, live: false) { String(format: "%.1f cm", $0) }
+                .env(.scene, "flesh").when { $0.scene.kind == .muscles },
+            S.popup("Body", \.scene.physics.body, titled(\.title)).env(.scene, "body").when { $0.scene.kind == .muscles },
+            S.popup("Skin", \.scene.physics.skin, titled(\.title)).env(.scene, "skin")
+                .when { $0.scene.kind == .muscles && $0.scene.physics.body == .skin },
+            S.slider("Muscle strength", \.scene.physics.muscleGain, PhysicsSettings.muscleGainRange, step: 0.05, live: false) { String(format: "%.2f", $0) }
+                .env(.scene, "muscle").when { $0.scene.kind == .muscles },
+            S.popup("Liquids", \.scene.physics.liquids, titled(\.title)).env(.scene, "liquid").when { $0.scene.kind == .fluids },
+            S.popup("Solver", \.scene.physics.solver, titled(\.title)).env(.scene, "solver").when { $0.scene.kind == .fluids },
+            S.popup("Water", \.scene.physics.waterSolver, titled(\.title)).env(.scene, "water")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.popup("Blood", \.scene.physics.bloodSolver, titled(\.title)).env(.scene, "blood")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.popup("Honey", \.scene.physics.honeySolver, titled(\.title)).env(.scene, "honey")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.slider("Particles per liquid", \.scene.physics.fluidParticles, PhysicsSettings.fluidRange, log: true, live: false)
+                .env(.scene, "fluid").when { $0.scene.kind == .fluids },
+            S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
+                .env(.scene, "substeps").when { $0.scene.kind.simulates },
+            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
@@ -339,19 +420,24 @@ enum SettingsTable {
             S.slider("Room seed", \.scene.seed, SceneSettings.seedRange, live: false).when { $0.scene.kind == .randomRoom },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
-            S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(customTracer),
-            S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }
-                .enabled(customTracer).advanced(),
-            S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }
-                .enabled { $0.rayTracer == .metal }.advanced(),
-            S.popup("Ray tracing", \.rayTracer, titled(\.title)).env(.rt)
-                .available { RayTracerKind.allCases[$0] != .metal || Capabilities.current.metalRayTracing },
+            S.value(\.scene.plants.species).env(.scene, "species"),
+            S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
+            S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),
+            S.slider("Workshop seed", \.scene.plants.seed, SceneSettings.seedRange, live: false).env(.scene, "plantseed").when(workshop),
+            S.popup("Layout", \.scene.plants.layout, titled(\.title)).env(.scene, "layout").when(workshop),
+            S.popup("View", \.scene.plants.view, titled(\.title)).env(.scene, "view").when(workshop),
+            S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
+            S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
+            S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),
             S.popup("Graphics API", \.api, titled(\.title)).env(.api)
                 .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
-            S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg).enabled(customTracer),
+            S.popup("Primary visibility", \.primary, titled(\.title)).env(.primary),
+            S.popup("Raster virtual geometry", \.virtualGeometry.raster, titled(\.title)).env(.rasterVG)
+                .enabled { virtual($0) && $0.primary == .raster }.advanced(),
+            S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),
-            // It also holds the plants' voxel levels (both tracers).
+            // It also holds the plants' voxel levels.
             S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled { virtual($0) || $0.scene.kind.hasPlants },
             S.check("Specular (glTF PBR)", \.specular).env(.specular),
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
@@ -391,9 +477,20 @@ enum SettingsTable {
         let spatial: When = { restir($0) && $0.restir.spatialPasses > 0 }
         let grid: When = { restir($0) && $0.restir.grid.enabled }
         let megaLights: When = { $0.directLight == .megalights }
+        let vsm: When = { $0.shadowMethod == .virtualMaps }
         let passes = [("Off", 0), ("1 pass", 1), ("2 passes", 2)]
         return Section(title: "Direct light", rows: [
             S.popup("Method", \.directLight, titled { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }).env(.direct),
+            S.popup("Shadows", \.shadowMethod, titled(\.title)).env(.shadowMethod),
+            S.popup("Page pool", \.vsm.pool, counts: VSMSettings.poolOptions) { "\($0) pages (\($0 / 16) MB)" }
+                .env(.vsm, "pool").advanced().when(vsm),
+            S.slider("Pages a frame", \.vsm.budget, VSMSettings.budgetRange).env(.vsm, "budget").advanced().when(vsm),
+            S.slider("Sun levels", \.vsm.levels, VSMSettings.levelRange) { "\($0) (\(16 << ($0 - 1)) m)" }
+                .env(.vsm, "levels").advanced().when(vsm),
+            S.slider("Mapped lights", \.vsm.maxLights, VSMSettings.maxLightRange).env(.vsm, "lights").advanced().when(vsm),
+            S.slider("March steps", \.vsm.steps, VSMSettings.stepRange).env(.vsm, "steps").advanced().when(vsm),
+            S.slider("Depth bias", \.vsm.bias, VSMSettings.biasRange, step: 0.25, fmt("%.2f texels")).env(.vsm, "bias").advanced().when(vsm),
+            S.check("Virtual geometry as clusters", \.vsm.clusters).env(.vsm, "clusters").advanced().when(vsm),
             S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
             S.value(\.manyLightRays).env(.gi, "lightrays"),
             S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }
@@ -446,7 +543,8 @@ enum SettingsTable {
     }()
 
     private static let rendering: Section = {
-        Section(title: "Rendering", rows: [
+        let reference: When = { $0.reference.mode != .off }, pathTraced: When = { $0.reference.mode == .pathTraced }
+        return Section(title: "Rendering", rows: [
             S.slider("Render scale", \.renderScale, RenderSettings.renderScaleRange, step: Double(RenderSettings.renderScaleStep),
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (denoising)"),
@@ -454,13 +552,19 @@ enum SettingsTable {
             S.popup("Upscaler", \.upscaler, titled(\.title)).env(.gi, "upscaler").enabled { $0.upscaleFactor > 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
+            S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
+            S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),
+            S.slider("Ref. samples/frame", \.reference.samplesPerFrame, ReferenceSettings.samplesPerFrameRange)
+                .env(.view, "refspp").when(pathTraced),
+            S.popup("Ref. max samples", \.reference.maxSamples, ReferenceSettings.maxSampleOptions.map { ($0 == 0 ? "No limit" : "\($0)", $0) })
+                .env(.view, "refmax").when(reference),
         ])
     }()
 
     private static let globalIllumination: Section = {
         let on: When = { $0.giEnabled }
         let paths: When = { $0.giMode == .pathTraced }, cascades: When = { $0.giMode == .radianceCascades }
-        let restir: When = { $0.giMode == .restirGI }
+        let restir: When = { $0.giMode == .restirGI }, lumen: When = { $0.giMode == .lumen }
         let spatial: When = { restir($0) && $0.restirGI.spatialPasses > 0 }
         let feedback: When = { restir($0) && $0.restirGI.feedback }
         let denoised: When = { restir($0) && $0.restirGI.denoise }
@@ -477,6 +581,34 @@ enum SettingsTable {
                 .env(.gi, "b1").when(cascades).enabled(on),
             S.check("Multi-bounce", \.cascades.feedback).env(.gi, "feedback").when(cascades).enabled(on),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
+            S.popup("Probe spacing", \.lumen.probeSpacing, counts: LumenSettings.spacingOptions) { "\($0) px" }
+                .env(.lumen, "spacing").when(lumen).enabled(on),
+            S.check("Multi-bounce", \.lumen.feedback).env(.lumen, "feedback").when(lumen).enabled(on),
+            S.check("Probe filter", \.lumen.filter).env(.lumen, "filter").advanced().when(lumen),
+            S.check("Temporal accumulation", \.lumen.temporal).env(.lumen, "temporal").advanced().when(lumen),
+            S.slider("History length", \.lumen.history, LumenSettings.historyRange, step: 1, fmt("%.0f fr"))
+                .env(.lumen, "history").advanced().when(lumen),
+            S.check("Denoise Lumen GI", \.lumen.denoiseIndirect).env(.lumen, "denoise").advanced().when(lumen),
+            S.check("Screen traces", \.lumen.screenTraces).env(.lumen, "screen").when(lumen).enabled(on),
+            S.check("Surface cache (cards)", \.lumen.cards).env(.lumen, "cards").when(lumen).enabled(on),
+            S.popup("Trace", \.lumen.trace, [("Triangles", LumenTrace.triangles), ("Distance fields", .sdf)])
+                .env(.lumen, "trace").when(lumen).enabled(on),
+            S.slider("Distance field reach", \.lumen.meshReach, LumenSettings.meshReachRange, step: 0.25, fmt("%.2f m"))
+                .env(.lumen, "reach2").advanced().when(lumen),
+            S.slider("Global field voxel", \.lumen.globalVoxel, LumenSettings.globalVoxelRange, step: 0.025)
+                { $0 == 0 ? "auto" : String(format: "%.3f m", $0) }.env(.lumen, "gvoxel").advanced().when(lumen),
+            S.check("Radiosity", \.lumen.radiosity).env(.lumen, "radiosity").when(lumen).enabled { $0.giEnabled && $0.lumen.cards },
+            S.slider("Radiosity rays", \.lumen.radiosityRays, LumenSettings.radiosityRayRange).env(.lumen, "rrays").advanced().when(lumen),
+            S.slider("Radiosity budget", \.lumen.radiosityBudget, LumenSettings.radiosityBudgetRange) { "\($0)K texels" }
+                .env(.lumen, "rbudget").advanced().when(lumen),
+            S.check("Radiosity through distance fields", \.lumen.radiosityThroughSDF).env(.lumen, "rsdf").advanced().when(lumen),
+            S.slider("Screen steps", \.lumen.screenSteps, LumenSettings.screenStepRange).env(.lumen, "steps").advanced().when(lumen),
+            S.slider("Screen thickness", \.lumen.thickness, LumenSettings.thicknessRange, step: 0.005, fmt("%.3f × depth"))
+                .env(.lumen, "thickness").advanced().when(lumen),
+            S.slider("Screen reach", \.lumen.screenReach, LumenSettings.screenReachRange, step: 1, log: true, fmt("%.0f m"))
+                .env(.lumen, "reach").advanced().when(lumen),
+            S.popup("GI debug view", \.lumen.debug, LumenSettings.debugViews.enumerated().map { ($1, $0) })
+                .env(.lumen, "debug").advanced().when(lumen),
             S.popup("Rays", \.restirGI.quarterBudget, [("1 per pixel", false), ("1 per 2×2 pixels", true)])
                 .env(.restirGI, "quarter").when(restir).enabled(on),
             S.slider("Bounces", \.restirGI.bounces, RenderSettings.bounceRange).env(.restirGI, "bounces").when(restir).enabled(on),
@@ -594,6 +726,8 @@ enum SettingsTable {
 
     private static let memory = Section(title: "Memory", advanced: true, rows: [
         S.popup("Geometry pool", \.virtualGeometry.poolMB, VirtualGeometrySettings.poolOptions.map { ("\($0) MB", $0) }).env(.vgPool).advanced(),
+        S.popup("Raster clusters' pool", \.virtualGeometry.rasterPoolMB,
+                VirtualGeometrySettings.rasterPoolOptions.map { ("\($0) MB", $0) }).env(.rasterVGPool).advanced(),
         S.popup("Texture budget", \.textureBudgetMB, RenderSettings.textureBudgetOptions.map { ("\($0) MB", $0) }).env(.textureBudget).advanced(),
     ])
 }

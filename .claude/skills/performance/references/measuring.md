@@ -61,9 +61,8 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `stress` | the stress building (warehouse, factory, garage, office) against light count (1–256), object count (0–2000) and GI method |
 | `restir` | 1 to 16384 lights for each direct-light method, plus the Night market |
 | `city` | the generated city: stills from three viewpoints and of each style, flat against textured, night; then 1 to 100 blocks by day and at night ("glass" is the panes' pass) |
-| `rt` | custom BVH against Metal's intersector, alternating per setting |
-| `hwrt` | each tracer, through the MetalFX denoiser |
-| `api` | Metal 3 against Metal 4, each tracer (stills first, for a `pngdiff` between two runs) |
+| `hwrt` | ray tracing's cost per scene and GI method ("cornell pt", "stress cascades" …), through the MetalFX denoiser |
+| `api` | Metal 3 against Metal 4 ("<scene>, metal3\|metal4"; stills first, for a `pngdiff` between two runs) |
 | `gallery` | glTF gallery: full meshes against virtual geometry at 0.5/1/2 px, plus a fly-through (warm the caches first) |
 | `gi` | each GI method (plus the path-traced references, unless `GI_REFS=0`) |
 | `lights`, `fog`, `sky` | the light demo, fog and sky scenes, paused at t = 5 s and moving |
@@ -100,7 +99,8 @@ pure speed change.
   reads them and reports unknown keys:
   * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,on=0,…"`;
   * `METALRENDERER_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
-* Plain defaults: `METALRENDERER_RT=metal|custom`, `METALRENDERER_API=metal3|metal4`, `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,
+* Plain defaults: `METALRENDERER_API=metal3|metal4` (Metal 4 with Metal ray tracing needs Apple9, M3/M4: elsewhere
+  it falls back to Metal 3 with a line in the log), `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,
   `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
 * Performance knobs:
   * `METALRENDERER_TG="trace=16x8,atrous=16x16"` sets threadgroup sizes (a kernel by its `Kernel` case in
@@ -108,8 +108,8 @@ pure speed change.
   * `METALRENDERER_TLAS=<frames>` sets Metal's TLAS rebuild interval, `METALRENDERER_TLAS_BUILD=fast|default` what it
     is built for, and `METALRENDERER_BLAS=default|fast|compact` how the per-mesh structures are built;
   * `METALRENDERER_CAPS=rt,denoiser` keeps only the capabilities it names (to try the fallbacks and the skips);
-  * `METALRENDERER_RT_BUILD=cpu` builds the custom tracer's moving tree on the CPU with SAH;
-  * `METALRENDERER_RT_STATS=1` turns on the traversal counters, printed per setting;
+  * `METALRENDERER_RT_STATS=1` turns on the ray queries' counters (rays, triangle and box candidates per ray), printed
+    per setting; every triangle is non-opaque in those builds, so don't time them;
   * `METALRENDERER_VARIANTS=0` runs every kernel's general pipeline (no compiled-in flags), `=log` prints each variant
     as it is made;
   * `METALRENDERER_MATH=relaxed|safe` compiles the shaders without fast math (see "Kernel variants" below);

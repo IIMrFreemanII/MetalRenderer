@@ -3,8 +3,7 @@ import simd
 
 /// One tile of the open world (World.swift) at one level of detail: everything the world has in a 256 m square, made
 /// from the seed and the tile's place alone, in metres from the tile's corner (y is the world's height). A tile is
-/// kept as a file of its arrays (SectionFile), so it is made once; for the custom ray tracer, with the trees over its
-/// meshes (`addTrees`), which are then built once too.
+/// kept as a file of its arrays (SectionFile), so it is made once.
 ///
 ///   The ground     a grid of cells (1, 4 or 16 m by level) with a skirt down its sides, which hides the step to a
 ///                  neighbour of another level; each cell of one of the world's ground materials.
@@ -34,8 +33,6 @@ struct WorldTile {
         var materials: [GPUMaterial]
         var glass: Bool
         var bounds: AABB
-        /// The custom tracer's tree over it, where the tile has its trees.
-        var tree: Scene.BorrowedTree? = nil
 
         var triangles: Int { indices.count / 3 }
     }
@@ -71,31 +68,6 @@ struct WorldTile {
     /// From the world's origin to the tile's corner.
     static func origin(_ x: Int, _ z: Int) -> SIMD2<Double> { SIMD2(Double(x), Double(z)) * Double(World.tileSize) }
     var triangles: Int { chunks.reduce(0) { $0 + $1.triangles } }
-    var hasTrees: Bool { chunks.allSatisfy { $0.tree != nil } }
-
-    /// Builds the trees of the chunks that have none (what the tracer would build for each: `MeshBlock.tree`).
-    mutating func addTrees() {
-        for c in chunks.indices where chunks[c].tree == nil {
-            let chunk = chunks[c]
-            var memory: UnsafeMutableRawPointer?, bytes = 0
-            let shape = chunk.positions.withUnsafeBufferPointer { positions in
-                chunk.uvs.withUnsafeBufferPointer { uvs in
-                    chunk.indices.withUnsafeBufferPointer { indices in
-                        BVHBuilder.buildBLAS(positions: positions.baseAddress!, uvs: uvs.baseAddress!, indices: indices, cutout: 0) { nodes in
-                            bytes = nodes * MemoryLayout<BVHNode>.stride + indices.count * MemoryLayout<SIMD4<Float>>.stride
-                            memory = malloc(max(bytes, 16))
-                            return memory
-                        }
-                    }
-                }
-            }
-            guard let memory else { continue }
-            // (The tree's memory goes to the file from where it is, and is freed with this tile: once that is written.)
-            let own = Data(bytesNoCopy: memory, count: bytes, deallocator: .free)
-            guard let shape else { continue }
-            chunks[c].tree = Scene.BorrowedTree(memory: .mapped(own), nodeCount: shape.nodes, depth: shape.depth, bounds: shape.bounds)
-        }
-    }
 
     // MARK: - Putting meshes together
 
@@ -170,7 +142,7 @@ struct WorldTile {
         var opaque = Assembler(glass: false), glass = Assembler(glass: true)
         ground(world, origin: origin, level: level, into: &opaque)
         if let (city, blocks) = world.blocks(x0: origin.x, z0: origin.y, side: side) {
-            for block in blocks { add(block, of: city, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
+            for block in blocks { add(block, of: city, in: world, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
         }
         if let (city, from, roads) = world.roads(x0: origin.x, z0: origin.y, side: side) {
             add(roads, of: city, from: from, level: level, into: &opaque)
@@ -280,7 +252,7 @@ struct WorldTile {
 
     /// A block of a city: its sidewalk and what stands on it. `lit`: the share of its windows with a light behind
     /// them. (What emits has a colour too: what it looks like by day, with its light off.)
-    private static func add(_ block: World.Block, of city: World.City, level: Int, lit: Float, opaque: inout Assembler,
+    private static func add(_ block: World.Block, of city: World.City, in world: World, level: Int, lit: Float, opaque: inout Assembler,
                             glass: inout Assembler) {
         let plan = block.plan
         let place = translate([block.origin.x, city.level, block.origin.y])
@@ -347,10 +319,20 @@ struct WorldTile {
         // The buildings, each from its lot's own seed, in the lots' order.
         var settings = plan.settings
         settings.lit = lit
-        let specs = plan.lots.map { BuildingSpec(lot: $0, city: settings, night: true) }
+        // Beyond the camera's ring, made flat: what that leaves out is a fraction of a pixel there (and a box at
+        // level 2 is the flat building's).
+        // Each in its style (and with its own plan's edits); the one whose interior the scene has is the scene's to add.
+        let catalog = world.buildingCatalog
+        let specs = plan.lots.indices.map { k in
+            var spec = BuildingSpec(lot: plan.lots[k], city: settings, night: true, catalog: catalog)
+            if let o = catalog.override(for: world.lotRef(city, block, k)) { spec.apply(o, catalog: catalog) }
+            if level > 0 { spec.detail = .flat }
+            return spec
+        }
+        let skipped = plan.lots.indices.map { k in level == 0 && world.interior == world.lotRef(city, block, k).key }
         var built = [Building?](repeating: nil, count: specs.count)
         built.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: specs.count) { i in out[i] = BuildingGenerator.generate(specs[i]) }
+            DispatchQueue.concurrentPerform(iterations: specs.count) { i in if !skipped[i] { out[i] = BuildingGenerator.generate(specs[i]) } }
         }
         for (i, building) in built.enumerated() {
             guard let building else { continue }
@@ -558,18 +540,10 @@ struct WorldTile {
         var firstMaterial: UInt32, materialCount: UInt32, glass: UInt32, pad: UInt32 = 0
         var lo: SIMD4<Float>, hi: SIMD4<Float>
     }
-    /// A chunk's tree in the file: where it is among the tile's trees (in vectors), and the builder it is of.
-    private struct TreeRecord {
-        var first: UInt32, nodeCount: UInt32, depth: UInt32, builder: UInt32
-        var lo: SIMD4<Float>, hi: SIMD4<Float>
-    }
     private enum Section {
         static let chunks = SectionFile.id("chnk"), positions = SectionFile.id("posi"), normals = SectionFile.id("norm")
         static let uvs = SectionFile.id("uvco"), indices = SectionFile.id("indx"), triangleMaterials = SectionFile.id("tmat")
-        static let materials = SectionFile.id("matl"), trees = SectionFile.id("tree")
-        /// The chunks' trees (the plants above are `trees`): a record a chunk, and the trees one after the other.
-        /// A file may have none: it is then written again with them when a tile with trees is asked for.
-        static let chunkTrees = SectionFile.id("bvhr"), treeMemory = SectionFile.id("bvhm")
+        static let materials = SectionFile.id("matl"), trees = SectionFile.id("tree")   // the plants
         /// The tile's lights and their triangles, if it has any.
         static let lights = SectionFile.id("lite"), emissive = SectionFile.id("emtr")
     }
@@ -588,13 +562,20 @@ struct WorldTile {
 
     /// What the file was made for: the world's settings and the plants' library too.
     static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
-        "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
+        var key = "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
+        if hasCity(world, x: x, z: z) && !world.buildings.isEmpty { key += " buildings \(world.buildings)" }
+        // The tile with the building whose interior the scene has: made without it.
+        if level == 0, let interior = world.interior, let m = world.blockMiddle(of: interior) {
+            let o = origin(x, z), side = Double(World.tileSize)
+            if m.x >= o.x && m.x < o.x + side && m.y >= o.y && m.y < o.y + side { key += " without \(interior)" }
+        }
+        return key
     }
 
     /// The same without the level: what a tile's trees are made for (every level has the same ones).
     static func place(_ world: World, x: Int, z: Int) -> String {
         "tile v\(World.version) plants v\(Foliage.version) seed \(world.seed) trees \(world.treeDensity) under \(world.undergrowth) "
-            + "cities \(world.cityShare) at \(x) \(z)"
+            + "cities \(world.cityShare) at \(x) \(z)" + (world.plants.isEmpty ? "" : " habitat \(world.plants)")
     }
 
     func write(to url: URL, key: String) throws {
@@ -622,17 +603,6 @@ struct WorldTile {
             writer.add(Section.lights, lights)
             writer.add(Section.emissive, stride: MemoryLayout<GPUEmissiveTriangle>.stride, parts: [emissive.data])
         }
-        if hasTrees {
-            var treeRecords: [TreeRecord] = [], vectors = 0
-            for chunk in chunks {
-                let tree = chunk.tree!
-                treeRecords.append(TreeRecord(first: UInt32(vectors), nodeCount: UInt32(tree.nodeCount), depth: UInt32(tree.depth),
-                                              builder: UInt32(BVHBuilder.version), lo: SIMD4(tree.bounds.lo, 0), hi: SIMD4(tree.bounds.hi, 0)))
-                vectors += tree.memory.count
-            }
-            writer.add(Section.chunkTrees, treeRecords)
-            writer.add(Section.treeMemory, stride: MemoryLayout<SIMD4<Float>>.stride, parts: chunks.map { $0.tree!.memory.data })
-        }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try writer.write(to: url, key: key)
     }
@@ -642,7 +612,7 @@ struct WorldTile {
     }
 
     /// The tile in the file at `url`, if it is there, whole, and was written for `key`. Its chunks' arrays are the
-    /// file's, mapped; so are their trees, if the file has them and they are this builder's.
+    /// file's, mapped. (Files written for the custom tracer, which is gone, have trees too: nothing reads them.)
     init?(url: URL, key: String, x: Int, z: Int, level: Int) {
         guard let file = SectionFile(url: url, key: key),
               let records: [ChunkRecord] = file.array(Section.chunks), let positions = file.mapped(Section.positions, of: SIMD3<Float>.self),
@@ -675,17 +645,6 @@ struct WorldTile {
                                       && Int($0.first) + Int($0.count) <= count }) else { return nil }
             (self.lights, self.emissive) = (lights, .mapped(emissive))
         }
-        guard let treeRecords: [TreeRecord] = file.array(Section.chunkTrees), treeRecords.count == chunks.count,
-              let memory = file.mapped(Section.treeMemory, of: SIMD4<Float>.self) else { return }
-        var found: [Scene.BorrowedTree] = []
-        for (c, r) in treeRecords.enumerated() {
-            let vectors = Int(r.nodeCount) * Scene.BorrowedTree.vectorsPerNode + chunks[c].indices.count
-            guard r.builder == UInt32(BVHBuilder.version), r.nodeCount % 3 == 0,
-                  let own = slice(memory, Int(r.first)..<(Int(r.first) + vectors), stride: 16) else { return }
-            found.append(Scene.BorrowedTree(memory: .mapped(own), nodeCount: Int(r.nodeCount), depth: Int(r.depth),
-                                            bounds: AABB(lo: SIMD3(r.lo.x, r.lo.y, r.lo.z), hi: SIMD3(r.hi.x, r.hi.y, r.hi.z))))
-        }
-        for c in chunks.indices { chunks[c].tree = found[c] }
     }
 
     /// A tile's level for a viewer `rings` tiles away (the larger of the two distances along the axes): the viewer's
@@ -768,21 +727,14 @@ struct WorldTile {
     }
 
     /// The tile: from its file, or made now and written there, then taken from the file all the same (its arrays are
-    /// then the file's pages). Without the cache: made, and kept as made. `trees`: with its chunks' trees (the custom
-    /// tracer's); a file without them gets them.
-    static func make(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora, trees: Bool = false) -> WorldTile {
+    /// then the file's pages). Without the cache: made, and kept as made.
+    static func make(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora) -> WorldTile {
         let url = url(world, x: x, z: z, level: level), key = key(world, x: x, z: z, level: level)
-        var tile: WorldTile
         if GeneratedCache.enabled, let stored = WorldTile(url: url, key: key, x: x, z: z, level: level) {
-            if !trees || stored.hasTrees {
-                GeneratedCache.used(url)
-                return stored
-            }
-            tile = stored
-        } else {
-            tile = build(world, x: x, z: z, level: level, flora: flora)
+            GeneratedCache.used(url)
+            return stored
         }
-        if trees { tile.addTrees() }
+        let tile = build(world, x: x, z: z, level: level, flora: flora)
         guard GeneratedCache.enabled else { return tile }
         do { try tile.write(to: url, key: key) } catch { print("World: tile \(x) \(z) not written: \(error)") }
         GeneratedCache.written()

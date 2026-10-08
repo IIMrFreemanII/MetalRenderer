@@ -23,6 +23,7 @@ extension Scene {
         var model: GLTFModel?
         let url = Scene.showcaseFile(settings.showcase)
         if let url {
+            loadStep?.set(done: 0, total: 1, detail: url.deletingPathExtension().lastPathComponent)
             do { model = try GLTFLoader.load(url) } catch { print("Showcase: can't load \(url.lastPathComponent): \(error)") }
         } else {
             print("Showcase: no model matches \"\(settings.showcase)\" in \(Scene.assetsDirectory.path)")
@@ -49,6 +50,7 @@ extension Scene {
                 addModel(model, url: url, transform: base * place)
             }
             print(String(format: "Showcase: %@ (%d triangles), %@ set", model.name, model.triangleCount, "\(look.stage)"))
+            loadStep?.set(done: 1, detail: "\(look.stage) set")
         }
         if !floats { addPlinth(stand, height: plinth) }
         addKeyLight(stand)

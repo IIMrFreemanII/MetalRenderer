@@ -29,4 +29,4 @@ forest's wind pass (posing and refitting the plants) still takes ~11 ms of its ~
 
 **Why:** the M1 Max couldn't verify the Metal 4 ray-tracing path, and its GPU was the bottleneck for the dataset.
 **How to apply:** on the M1 Max, say a Metal-tracer + Metal 4 change wasn't run there, and don't count a "skipped"
-benchmark as a pass. On the M4 Max, render dataset references with `METALRENDERER_RT=metal`. See [[feedback-render-offscreen]] for how runs are made.
+benchmark as a pass. Dataset references use Metal's tracer, the only one now. See [[feedback-render-offscreen]] for how runs are made.

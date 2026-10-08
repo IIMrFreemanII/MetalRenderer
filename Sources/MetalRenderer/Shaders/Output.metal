@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------------------------
 // 3c. Geometry debug views (view modes 8-13), a pass of their own that runs only while one is shown: re-traces the
 //     primary rays and colours each pixel by what it hit. Virtual triangles carry their cluster, group, DAG level and
-//     index within the cluster (VirtualBLAS packs them into the free w components of e1 / e2; in cluster mode the
-//     cluster's pool header holds group and level, VirtualGeometry.upload). Other geometry with levels of detail
-//     carries its level in its mesh record (GPUMesh.lod), on both tracers.
+//     index within the cluster (VirtualBLAS packs them into the free w components of its triangles' second and third
+//     corners; in cluster mode the cluster's pool header holds group and level). Other geometry with levels of detail
+//     carries its level in its mesh record (GPUMesh.lod).
 // ---------------------------------------------------------------------------------------------
 
 constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;
@@ -36,6 +36,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 device const InstanceData*       instances  [[buffer(6)]],
                                 constant SceneShading&           shading    [[buffer(7)]],
                                 texture2d<float, access::write>  output     [[texture(0)]],
+                                texture2d<uint, access::read>    visBuffer  [[texture(1)]],   // with FLAG_VIS_BUFFER
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -43,17 +44,18 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 
     float3 dir = primaryDirection(u, tid);
     Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
-#if CUSTOM_RT
-    uint cost[7] = {0, 0, 0, 0, 0, 0, 0};
-    Hit res = intersectClosestCost(r, MASK_ALL, accel, cost);
-    // Work of the ray: node visits (both levels) plus triangle tests at half weight, log scale up to ~500.
-    float work = float(cost[1] + cost[2]) + 0.5f * float(cost[5]);
-    float3 costColor = debugHeat(log2(1.0f + work) / 9.0f);
-#else
-    Hit res = intersectClosest(r, MASK_ALL, accel);
-    float3 costColor = float3(1.0f, 0.0f, 1.0f);   // Metal's traversal can't be counted
-#endif
-    if (u.viewMode == VIEW_COST) { output.write(float4(costColor, 1.0f), tid); return; }
+    Hit res;
+    if (u.viewMode == VIEW_COST) {
+        // The ray's candidates (intersectClosestCost: what Metal's traversal handed over), log scale up to ~250.
+        uint candidates;
+        res = intersectClosestCost(r, MASK_ALL, accel, candidates);
+        output.write(float4(debugHeat(log2(1.0f + float(candidates)) / 8.0f), 1.0f), tid);
+        return;
+    }
+    res = intersectClosest(r, MASK_ALL, accel);
+    // With the raster visibility buffer, what it drew (virtual geometry: its own cut of clusters), as the frame sees it.
+    Hit drawn;
+    if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, r, accel, s, drawn)) res = drawn;
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
     if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level
@@ -82,7 +84,6 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 
     bool isVirtual = false;
     uint cluster = 0, local = 0, group = 0, level = 0;
-#if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         uint2 rc = accel.clusters[res.cluster];
         uint packed = ((device const uint*)(accel.pool + rc.y))[3];   // group | level << 24
@@ -100,15 +101,12 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
         group = b & 0xFFFFFFu;          // group | level << 24
         level = b >> 24;
     }
-#endif
     // The level of detail, 0 = finest: a virtual triangle's DAG level, else its mesh's (GPUMesh.lod: an open-world
     // tile's ring, a crowd character's detail, a baked plant). A plant's parts are its finest.
     const float3 grey = float3(0.45f);  // geometry without levels; in the cluster and group views, what isn't virtual
     float3 lodColor = grey;
     if (isVirtual) lodColor = debugHeat(0.05f + float(level) / 10.0f);
-#if CUSTOM_RT
-    else if (FOLIAGE && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
-#endif
+    else if (ASSEMBLIES && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
     else if (s.meshes[inst.meshIndex].lod != 0) lodColor = debugHeat(0.05f + 0.3f * float(s.meshes[inst.meshIndex].lod - 1));
 
     uint instanceSeed = pcgHash(res.instance + 0x51ED27u);
@@ -161,7 +159,7 @@ inline float3 agxFilm(float3 c) {
 
 /// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
 inline bool viewIsHDR(uint mode) {
-    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13));
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || mode == 15 || mode == 16);
 }
 
 /// Exposure, then the selected curve (RenderSettings.toneMap).
@@ -196,6 +194,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
+                            texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -224,7 +223,9 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
             illumination = meshDirect.read(tid).rgb * vis.r;
         } else {
-        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += lightUnshadowed(lights[l], p, n, ng) * dot(vis, groupMask(lightGroup(lights[l])));
+        float4 g = geoNormal.read(tid);
+        HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
         if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         }
         if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {
@@ -266,6 +267,11 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         }
     }
 
+    // Lumen's screen traces read this next frame: the diffuse light the surface sends, without specular or fog.
+    // Emitters (mesh lights) send none here: their light reaches GI as a light.
+    if (flagOn(u.flags, FLAG_GI_RADIANCE))
+        giRadiance.write(float4(surfacePos.read(tid).w > 0.0f ? albedo * illumination : float3(0.0f), 1.0f), tid);
+
     // Fog in front of the pixel: rgb = in-scattered light, a = transmittance.
     float4 fogged = float4(0.0f, 0.0f, 0.0f, 1.0f);
     if (flagOn(u.flags, FLAG_FOG)) {
@@ -296,6 +302,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
+        case 15: c = geometryDebug.read(tid).rgb; break;          // the visibility buffer (rasterDebugKernel)
+        case 16: c = geometryDebug.read(tid).rgb; break;          // the virtual shadow maps' pages (vsmDebugKernel)
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
     if (flagOn(u.flags, FLAG_HDR_OUTPUT)) {

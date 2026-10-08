@@ -15,18 +15,26 @@ enum SettingsEnv {
         // What a fresh launch would have: the code's defaults (not this process's env-derived ones) and the scene's presets.
         var d = defaults
         d.directLight = .auto
-        d.rayTracer = .custom
         d.api = .metal3
+        d.primary = .traced
+        d.shadowMethod = .rays
         d.specular = true
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true
         d.virtualGeometry.pixelError = 1
         d.virtualGeometry.poolMB = 768
+        d.virtualGeometry.raster = .blas
+        d.virtualGeometry.rasterPoolMB = 512
         d.scene = SceneSettings()
         d.scene.kind = s.scene.kind
         d.scene.showcase = s.scene.showcase   // the model's look: its fog and lens
         d.scene.emissiveLights = true
         d.applySceneDefaults(from: defaults)   // the scene's GI method, light count, fog, sky and lens
+        if s.scene.kind == .buildings && s.scene.buildings.night {   // its Night reads back first, with the night city's sky
+            var night = d.scene
+            night.buildings.night = true
+            d.sky = SkySettings.preset(for: night)
+        }
 
         var vars: [String] = []
         for variable in EnvVariable.allCases {

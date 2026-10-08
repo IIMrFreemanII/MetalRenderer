@@ -67,7 +67,13 @@ extension Scene {
         case .market: return camera([0.6, 1.7, 30], yaw: 0.02, pitch: 0.12)
         case .forest: return camera([1.5, 1.7, 10], yaw: 0.06, pitch: 0.1)
         case .shapes: return camera([0, 3.9, 4.4], pitch: -0.58)
-        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .randomRoom:
+        case .physics: return camera([0, 4.2, 8.2], pitch: -0.42)
+        case .ragdolls: return camera([3.2, 3.4, 7.6], yaw: -0.36, pitch: -0.3)
+        case .hair: return camera([0.1, 1.9, 4.8], yaw: -0.02, pitch: -0.21)
+        case .softBodies: return camera([0, 2.3, 3.0], pitch: -0.42)
+        case .muscles: return camera([0, 2.4, 8.2], pitch: -0.24)
+        case .fluids: return camera([0, 1.25, 1.05], pitch: -0.64)
+        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings, .randomRoom:
             return nil   // the crowd's, the city's, the world's, the showcase's and the random rooms' are their scenes' to say
         }
     }
@@ -524,7 +530,8 @@ extension Scene {
         addInstance(kit.cube, wall, translate([-8, 10, -24]) * scale([5, 20, 5]))                    // tower
         addInstance(kit.cube, slate, translate([-8, 22, -24]) * rotate(.pi / 4, [0, 1, 0]) * scale([3.2, 4, 3.2]))
         // Trees (Foliage): young oaks and birches along the road, grown trees in a copse and alone in the fields.
-        let flora = Flora(self, seed: UInt64(max(settings.seed, 0)), species: [.oak, .birch, .conifer])
+        let flora = Flora(self, seed: UInt64(max(settings.seed, 0)), catalog: PlantCatalog.resolve(settings.plantCatalog),
+                          species: [.oak, .birch, .conifer])
         var pick = SplitMix64(seed: 0x7EE5 &+ UInt64(max(settings.seed, 0)))
         func tree(_ x: Float, _ z: Float, _ species: Foliage.Species, _ age: Foliage.Age, _ size: Float) {
             let plants = flora.plants(species, age)

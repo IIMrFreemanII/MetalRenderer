@@ -400,6 +400,7 @@ final class SettingsPanel: NSObject {
                 case .pathTraced: if !combined { generic.append("indirect light") }
                 case .radianceCascades: if s.cascades.denoiseIndirect { generic.append("cascade GI (1 pass)") }
                 case .restirGI: if s.restirGI.denoise { own.append("ReSTIR GI (Global illumination, advanced)") }
+                case .lumen: if s.lumen.denoiseIndirect { generic.append("Lumen GI (1 pass)") }
                 }
             }
             var lines = ["Passes, σ, history and anti-lag filter: " + (generic.isEmpty ? "nothing in this mode." : generic.joined(separator: ", ") + ".")]
@@ -418,8 +419,7 @@ final class SettingsPanel: NSObject {
         let defaults = renderer.defaultSettings
         renderer.update { s in
             var reset = defaults
-            reset.scene = s.scene   // render settings only; the loaded scene and tracer stay
-            reset.rayTracer = s.rayTracer
+            reset.scene = s.scene   // render settings only; the loaded scene and API stay
             reset.api = s.api
             reset.applySceneDefaults(from: defaults)
             s = reset

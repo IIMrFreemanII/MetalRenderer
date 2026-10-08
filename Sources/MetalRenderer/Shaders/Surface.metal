@@ -19,6 +19,7 @@ struct SceneData {
     texture2d_array<float>     sky;
     texture2d<float>           cloudShadow;
     constant SkyParams*        skyParams;
+    device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -32,6 +33,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.sky = shading.sky;
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
+    s.vsm = shading.vsm;
 }
 
 // A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that
@@ -134,7 +136,26 @@ struct Surface {
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
     bool   backlit;       // a translucent leaf showing the light of its far side: orientNormals faces it away
+    bool   hair;          // a strand (HAIR_CURVES) whose material is hair (Material.params.z < 0): Hair.metal lights it
+    float3 tangent;       // a strand's direction there
+    float  hairH;         // where across the strand the ray met it, -1...1 (Hair.metal's h)
 };
+
+// Where across a strand along `tangent` its normal `n` is, seen from `view` (pbrt's h: in the strand's frame x =
+// tangent, y = the view across it, z = x cross y, the normal is (cos gamma) y - (sin gamma) z and h = sin gamma).
+inline float hairOffset(float3 n, float3 tangent, float3 view) {
+    float3 y = view - tangent * dot(view, tangent);
+    return length_squared(y) > 1e-12f ? clamp(-dot(n, cross(tangent, normalize(y))), -1.0f, 1.0f) : 0.0f;
+}
+
+// A uniform Catmull-Rom segment (Metal's curve_basis::catmull_rom) between c[1] and c[2], at t, and its derivative.
+inline float3 catmullRom(float3 c0, float3 c1, float3 c2, float3 c3, float t) {
+    float t2 = t * t, t3 = t2 * t;
+    return 0.5f * (2.0f * c1 + (c2 - c0) * t + (2.0f * c0 - 5.0f * c1 + 4.0f * c2 - c3) * t2 + (3.0f * c1 - c0 - 3.0f * c2 + c3) * t3);
+}
+inline float3 catmullRomTangent(float3 c0, float3 c1, float3 c2, float3 c3, float t) {
+    return 0.5f * ((c2 - c0) + 2.0f * (2.0f * c0 - 5.0f * c1 + 4.0f * c2 - c3) * t + 3.0f * (3.0f * c1 - c0 - 3.0f * c2 + c3) * t * t);
+}
 
 // Light through a leaf comes out yellower than what it reflects.
 constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
@@ -229,9 +250,8 @@ inline void orientNormals(thread const Surface& sf, float3 rayDir, thread float3
     if (sf.backlit) { ng = -ng; ns = -ns; }
 }
 
-// Pixel-footprint spreads for texture filtering (ray cones without curvature): radians of spread per unit distance.
-// Primary rays pass their pixel's angle; GI rays a coarse fixed spread, since their hits get integrated anyway.
-constant float GI_RAY_SPREAD = 0.05f;
+// Pixel-footprint spreads for texture filtering (ray cones without curvature): primary rays pass their pixel's angle,
+// GI rays GI_RAY_SPREAD (Types.metal).
 
 // The hit triangle's vertices (object space): from a cluster in the streaming pool, a virtual instance's BLAS over
 // its cut, or the indexed mesh buffers.
@@ -247,17 +267,6 @@ struct HitVertices {
     bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
 
-#if CUSTOM_RT
-// A part's point and direction in its plant's space. The part's rows are the inverse (plant -> part) of a rotation,
-// a uniform scale and a translation, so its transpose over the squared scale is the way back.
-inline float3 partPoint(RTPart part, float3 p) {
-    float3 q = p - float3(part.row0.w, part.row1.w, part.row2.w);
-    return (part.row0.xyz * q.x + part.row1.xyz * q.y + part.row2.xyz * q.z) / dot(part.row0.xyz, part.row0.xyz);
-}
-inline float3 partDirection(RTPart part, float3 v) {   // not unit length
-    return part.row0.xyz * v.x + part.row1.xyz * v.y + part.row2.xyz * v.z;
-}
-#endif
 // What a surface keeps of its instance, to tell it from its neighbours' (the trace writes it as a float): TILED, a
 // number of 24 bits, which a float holds exactly, made from its id, which may be any.
 inline uint surfaceInstance(uint id) { return TILED ? pcgHash(id) & 0xFFFFFFu : id; }
@@ -270,7 +279,6 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     v.triangle = ~0u;
     v.leaf = v.sways = false;
     uint meshIndex = inst.meshIndex;
-#if CUSTOM_RT
     if (res.cluster != HIT_NO_CLUSTER) {
         // Virtual geometry: the hit cluster's vertices, in the streaming pool.
         VGClusterView view = vgClusterView(accel.pool + accel.clusters[res.cluster].y);
@@ -287,8 +295,7 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     if (inst.pad1 != 0) {
         // Virtual geometry, per-instance BLAS over the cut: positions from its triangles, attributes alongside.
         VGBlas e = accel.vgBlas[inst.pad1 - 1];
-        float4 v0 = e.tris[3 * res.primitive], e1 = e.tris[3 * res.primitive + 1], e2 = e.tris[3 * res.primitive + 2];
-        v.p[0] = v0.xyz; v.p[1] = v0.xyz + e1.xyz; v.p[2] = v0.xyz + e2.xyz;
+        for (uint k = 0; k < 3; ++k) v.p[k] = e.tris[3 * res.primitive + k].xyz;
         device const uint* a = e.attrs + 6 * res.primitive;
         for (uint k = 0; k < 3; ++k) {
             v.n[k] = octDecode(a[k]);
@@ -297,14 +304,13 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         return v;
     }
     // An assembly's part: its mesh's triangle, brought into the plant's space (the instance's object space).
-    bool inPart = FOLIAGE && res.part != HIT_NO_PART;
+    bool inPart = ASSEMBLIES && res.part != HIT_NO_PART;
     RTPart part;
     if (inPart) {
         part = accel.parts[res.part];
         meshIndex = part.mesh;
         v.leaf = res.primitive >= part.firstLeaf;
     }
-#endif
     MeshData mesh = s.meshes[meshIndex];
     v.sways = mesh.sways != 0;
     if (STREAMED && mesh.block != nullptr) {
@@ -332,14 +338,12 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         }
         if (DEFORMING_MESHES) v.prevOffset = mesh.prevOffset;
     }
-#if CUSTOM_RT
     if (inPart) {
         for (uint k = 0; k < 3; ++k) {
             v.p[k] = partPoint(part, v.p[k]);
             v.n[k] = partDirection(part, v.n[k]);
         }
     }
-#endif
     return v;
 }
 
@@ -361,9 +365,9 @@ inline void surfaceSpecular(thread Surface& sf) {
     }
 }
 
-Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
-    Hit res = intersectClosest(r, mask, accel);
-
+// The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures. The
+// hit comes from the tracer (traceSurface) or from the raster visibility buffer (visibilityHit, Raster.metal).
+Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record) {
     Surface sf;
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
@@ -373,6 +377,9 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     sf.instanceId = 0;
     sf.lightEmitter = false;
     sf.backlit = false;
+    sf.hair = false;
+    sf.tangent = float3(0.0f);
+    sf.hairH = 0.0f;
     if (!res.hit) return sf;
 
     uint id = res.instance;
@@ -398,6 +405,46 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
             if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
         }
         sf.instanceId = surfaceInstance(id);
+        return sf;
+    }
+    if (HAIR_CURVES && res.part == HIT_CURVE) {
+        // A strand's segment (Scene.addCurves): its four control points, where they are now and where they were a
+        // frame ago (they deform, as a cloth's vertices do); the point on its axis at the hit's parameter, the
+        // normal out from there, and the same offset from last frame's axis point.
+        MeshData mesh = s.meshes[inst.meshIndex];
+        uint first = mesh.vertexOffset + s.indices[mesh.firstIndex + res.primitive];
+        float3 c0 = s.positions[first], c1 = s.positions[first + 1], c2 = s.positions[first + 2], c3 = s.positions[first + 3];
+        float t = res.barycentrics.x;
+        float3 axis = catmullRom(c0, c1, c2, c3, t);
+        float3 tangent = catmullRomTangent(c0, c1, c2, c3, t);
+        tangent = length_squared(tangent) > 1e-20f ? normalize(tangent) : float3(0, 1, 0);
+        float3 world = r.origin + r.direction * res.distance;
+        float3 radial = world - axis;
+        radial -= tangent * dot(radial, tangent);
+        float3 view = -normalize(r.direction);
+        float3 n = length_squared(radial) > 1e-20f ? normalize(radial) : normalize(view - tangent * dot(view, tangent) + 1e-6f);
+        float3 prevAxis = axis;
+        if (mesh.prevOffset != 0) {
+            uint q = first + mesh.prevOffset;
+            prevAxis = catmullRom(s.positions[q], s.positions[q + 1], s.positions[q + 2], s.positions[q + 3], t);
+        }
+        sf.hit = true;
+        sf.position = world;
+        sf.prevPosition = prevAxis + (world - axis);
+        sf.normal = sf.geomNormal = n;
+        Material mat = s.materials[inst.materialIndex];
+        surfaceMaterial(sf, mat);
+        sf.instanceId = surfaceInstance(id);
+        sf.hair = mat.params.z < 0.0f;
+        sf.tangent = tangent;
+        // pbrt's h: in the strand's frame x = tangent, y = the view across it, z = x cross y, the normal is
+        // (cos gamma) y - (sin gamma) z, and h = sin gamma.
+        sf.hairH = hairOffset(n, tangent, view);
+        if (sf.hair) {
+            sf.albedo = max(sf.albedo, float3(0.02f));   // HAIR_MIN_ALBEDO: the light on it is divided by its colour
+            sf.specular = 0.0f;
+        }
+        surfaceSpecular(sf);
         return sf;
     }
     if (SDF_SHAPES && res.part == HIT_SDF) {
@@ -452,8 +499,7 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         prevObjPos = s.positions[hv.i[0] + hv.prevOffset] * w0 + s.positions[hv.i[1] + hv.prevOffset] * bc.x
                    + s.positions[hv.i[2] + hv.prevOffset] * bc.y;
     }
-#if CUSTOM_RT
-    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f)) {
+    if (FOLIAGE && res.part != HIT_NO_PART && windOn(accel.wind.z > 0.0f) && accel.parts[res.part].pad != RT_PART_RIGID) {
         // An assembly's part in the wind: the triangle was hit where the wind has turned it to. Its point now and a
         // frame ago (the motion vector), and its normals now.
         RTPart part = accel.parts[res.part];
@@ -473,7 +519,6 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
         objN.y -= dot(lean, objN);
         objNg.y -= dot(lean, objNg);
     }
-#endif
     uint materialIndex = inst.materialIndex + (hv.leaf ? 1u : 0u);
     if (MULTI_MATERIAL && hv.triangle != ~0u) materialIndex += s.triangleMaterials[hv.triangle];
     if (STREAMED) materialIndex += hv.material;
@@ -536,4 +581,8 @@ Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData
     }
     surfaceSpecular(sf);
     return sf;
+}
+
+Surface traceSurface(Ray r, uint mask, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record = false) {
+    return surfaceFromHit(intersectClosest(r, mask, accel), r, accel, s, spread, record);
 }

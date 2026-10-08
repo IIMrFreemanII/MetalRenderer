@@ -6,8 +6,8 @@ struct DebugInfo {
         case off
         /// Per-instance BLAS over each instance's cut (VirtualBLAS, the default).
         case blas(meshes: Int, instances: Int, sourceTriangles: Int, triangles: Int, clusters: Int, megabytes: Double,
-                  rebuilds: Int, lastBuildMs: Double, lastRefineMs: Double, lastCutMs: Double, skipped: Int, builder: String, busy: Bool)
-        /// One tree over the frame's cut of clusters, streamed into a pool (VirtualGeometry, METALRENDERER_VG_MODE=clusters).
+                  rebuilds: Int, lastBuildMs: Double, lastCutMs: Double, skipped: Int, busy: Bool)
+        /// One structure over the frame's cut of clusters, streamed into a pool (VirtualGeometry, METALRENDERER_VG_MODE=clusters).
         case clusters(meshes: Int, instances: Int, clusters: Int, groups: Int, sourceTriangles: Int, triangles: Int, selected: Int,
                       capacity: Int, overflow: Bool, residentGroups: Int, residentMB: Double, poolMB: Int, pending: Int, loadedThisFrame: Int)
 
@@ -15,7 +15,7 @@ struct DebugInfo {
         var triangles: Int {
             switch self {
             case .off: 0
-            case let .blas(_, _, _, triangles, _, _, _, _, _, _, _, _, _): triangles
+            case let .blas(_, _, _, triangles, _, _, _, _, _, _, _): triangles
             case let .clusters(_, _, _, _, _, triangles, _, _, _, _, _, _, _, _): triangles
             }
         }
@@ -28,9 +28,11 @@ struct DebugInfo {
     var instances = 0, virtualInstances = 0, triangles = 0
     var analyticLights = 0, meshLights = 0, suns = 0
     var lightTable = false, lightTableEntries = 0
-    var directMode = "", giMode = "", rayTracer = ""
-    var customTracer = false
+    var directMode = "", giMode = ""
     var vg = VirtualGeometry.off
+    /// The raster's virtual geometry as clusters (RasterClusters), when it draws them.
+    var rasterClusters: (camera: Bool, drawn: Int, capacity: Int, overflow: Bool, retested: Int, triangles: Int, residentGroups: Int,
+                         groups: Int, residentMB: Double, poolMB: Int, pending: Int, loaded: Int)?
     var vgPixelError: Float = 1
     var vgFrozen = false
     var lodFreezes = false              // Freeze LOD does something here (Renderer.lodFreezes)
@@ -41,7 +43,7 @@ struct DebugInfo {
 }
 
 /// Floating panel with live debug data: a frame-time graph, GPU pass timings, the scene, virtual geometry, texture
-/// streaming, memory and the custom tracer's traversal counters. Like the settings panel it never becomes key, so
+/// streaming, memory and the ray queries' counters. Like the settings panel it never becomes key, so
 /// the keyboard keeps driving the renderer. I or Cmd-I shows or hides it.
 final class DebugPanel: NSObject {
     let panel: NSPanel
@@ -54,7 +56,7 @@ final class DebugPanel: NSObject {
     private let debugView = NSPopUpButton()
     private let freezeLOD = NSButton(checkboxWithTitle: "Freeze LOD (L)", target: nil, action: nil)
     private let viewNote = NSTextField(wrappingLabelWithString: "")
-    private let counters = NSButton(checkboxWithTitle: "Traversal counters (recompiles shaders)", target: nil, action: nil)
+    private let counters = NSButton(checkboxWithTitle: "Ray query counters (recompiles shaders, slower)", target: nil, action: nil)
     private let frame = Section("Frame")
     private let view = Section("View")
     private let passes = Section("GPU passes")
@@ -62,7 +64,7 @@ final class DebugPanel: NSObject {
     private let vg = Section("Virtual geometry")
     private let textures = Section("Texture streaming")
     private let memory = Section("Memory")
-    private let traversal = Section("Ray traversal (custom tracer)")
+    private let traversal = Section("Ray queries")
     private var lastRebuilds: (count: Int, time: CFTimeInterval)?
     private var rebuildRate = 0.0
 
@@ -210,19 +212,18 @@ final class DebugPanel: NSObject {
             ("Light table", d.lightTable ? "on, \(Self.count(d.lightTableEntries)) entries" : "off (256 lights or fewer)", nil),
             ("Direct light", d.directMode, nil),
             ("GI", d.giMode, nil),
-            ("Ray tracer", d.rayTracer, nil),
         ])
 
         var vgRows: [(String, String, NSColor?)] = []
         switch d.vg {
         case .off:
             lastRebuilds = nil
-        case let .blas(meshes, instances, source, triangles, clusters, megabytes, rebuilds, lastBuildMs, lastRefineMs, lastCutMs, skipped, builder, busy):
+        case let .blas(meshes, instances, source, triangles, clusters, megabytes, rebuilds, lastBuildMs, lastCutMs, skipped, busy):
             let now = CACurrentMediaTime()
             if let last = lastRebuilds, now > last.time { rebuildRate = Double(rebuilds - last.count) / (now - last.time) }
             lastRebuilds = (rebuilds, now)
             vgRows = [
-                ("Mode", "per-instance BLAS (\(builder))", nil),
+                ("Mode", "per-instance BLAS", nil),
                 ("Meshes", "\(meshes) in \(instances) instances", nil),
                 ("Traced triangles", Self.count(triangles), nil),
                 ("Finest level", Self.finest(source, cut: triangles), nil),
@@ -231,11 +232,10 @@ final class DebugPanel: NSObject {
                 ("Rebuilds", String(format: "%d total, %.1f/s", rebuilds, rebuildRate), nil),
                 ("Last cut", String(format: "%.1f ms, %d of %d instances unchanged", lastCutMs, skipped, instances), nil),
                 ("Last build", String(format: "%.1f ms", lastBuildMs) + (busy ? ", building" : ""), nil),
-                ("Last refine", builder == "hybrid" ? String(format: "%.0f ms (SAH, in the background)", lastRefineMs) : "—", nil),
             ]
         case let .clusters(meshes, instances, clusters, groups, source, triangles, selected, capacity, overflow, residentGroups, residentMB, poolMB, pending, loaded):
             vgRows = [
-                ("Mode", "cluster tree (streamed pool)", nil),
+                ("Mode", "clusters (streamed pool)", nil),
                 ("Meshes", "\(meshes) in \(instances) instances", nil),
                 ("Clusters drawn", "\(Self.count(selected)) of \(Self.count(capacity))" + (overflow ? ", capacity reached" : ""),
                  overflow ? .systemRed : nil),
@@ -246,6 +246,22 @@ final class DebugPanel: NSObject {
                 ("Pool", String(format: "%.0f of %d MB", residentMB, poolMB), residentMB > 0.95 * Double(poolMB) ? .systemOrange : nil),
                 ("Requests waiting", "\(pending)", nil),
                 ("Loaded this frame", "\(loaded) groups", nil),
+            ]
+        }
+        if let r = d.rasterClusters {
+            if r.camera {
+                vgRows += [
+                    ("Raster clusters", "\(Self.count(r.drawn)) of \(Self.count(r.capacity)), \(Self.count(r.retested)) looked at twice"
+                        + (r.overflow ? ", capacity reached" : ""), r.overflow ? .systemRed : nil),
+                    ("Raster triangles", Self.count(r.triangles), nil),
+                ]
+            } else {
+                vgRows.append(("Raster clusters", "the shadow maps' only", nil))
+            }
+            vgRows += [
+                ("Raster pool", String(format: "%.0f of %d MB, %@ of %@ groups", r.residentMB, r.poolMB, Self.count(r.residentGroups), Self.count(r.groups)),
+                 r.residentMB > 0.95 * Double(r.poolMB) ? .systemOrange : nil),
+                ("Raster streaming", "\(r.pending) waiting, \(r.loaded) loaded this frame", nil),
             ]
         }
         if !vgRows.isEmpty {
@@ -269,19 +285,13 @@ final class DebugPanel: NSObject {
             ("Working set limit", String(format: "%.0f MB", d.workingSetMB), nil),
         ])
 
-        traversal.isHidden = !d.customTracer
         counters.state = renderer.traversalCounters ? .on : .off
         if renderer.traversalCounters, let t = d.traversal, t.stats.rays > 0 {
             let s = t.stats
             traversal.set([
                 ("Rays per frame", Self.count(Int(s.rays) / max(t.frames, 1)), nil),
-                ("Top nodes", String(format: "%.1f per ray", s.perRay(1))
-                    + (s.counts[6] > 0 ? String(format: " (%.1f in cluster trees)", s.perRay(6)) : ""), nil),
-                ("Bottom nodes", String(format: "%.1f per ray", s.perRay(2)), nil),
-                ("Instance entries", String(format: "%.2f per ray", s.perRay(3)), nil),
-                ("Cluster entries", String(format: "%.2f per ray", s.perRay(4)), nil),
-                ("Triangle tests", String(format: "%.1f per ray", s.perRay(5)), nil),
-                ("Stack overflows", s.stackOverflows == 0 ? "none" : "\(s.stackOverflows): rays skip subtrees (RT_STACK)", nil),
+                ("Triangle candidates", String(format: "%.1f per ray", s.perRay(1)), nil),
+                ("Box candidates", String(format: "%.2f per ray", s.perRay(2)), nil),
             ])
         } else {
             traversal.set(renderer.traversalCounters ? [("", "waiting for frames…", nil)] : [])
@@ -328,7 +338,7 @@ final class DebugPanel: NSObject {
         counters.isEnabled = false
         counters.title = "Compiling shaders…"   // in the background: the view keeps drawing
         renderer.setTraversalCounters(counters.state == .on) { [self] in
-            counters.title = "Traversal counters (recompiles shaders)"
+            counters.title = "Ray query counters (recompiles shaders, slower)"
             counters.isEnabled = true
             refresh()
         }

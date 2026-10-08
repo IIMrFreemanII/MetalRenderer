@@ -19,10 +19,18 @@ enum SettingsStore {
         // Session state rather than preferences.
         s.paused = defaults.paused
         s.viewMode = defaults.viewMode
+        s.reference.mode = defaults.reference.mode
         s.scene.lightCheck = nil
         s.scene.worldTile = nil
         s.scene.worldAnchor = nil
         s.scene.extraModels = []
+        s.scene.plantCatalog = ""
+        s.scene.buildingCatalog = ""
+        s.scene.interior = nil
+        s.scene.buildings.mutants = ""
+        s.scene.buildings.compare = ""
+        s.scene.plants.mutants = ""
+        s.scene.plants.compare = ""
         s.virtualGeometry.freeze = false
         if let path = s.sky.imagePath, !FileManager.default.fileExists(atPath: path) {
             s.sky.imagePath = nil
@@ -59,7 +67,7 @@ enum SettingsStore {
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: key) }
     }
 
-    private static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
+    static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
         var out = base
         for (k, v) in over {
             if let b = base[k] as? [String: Any], let o = v as? [String: Any] { out[k] = merge(b, o) } else { out[k] = v }

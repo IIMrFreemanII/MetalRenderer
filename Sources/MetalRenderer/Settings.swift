@@ -153,7 +153,6 @@ struct RegirSettings: Equatable, Codable {
     }
 }
 
-/// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
 /// Which denoising upscaler upscales, with `upscaleFactor` > 1.
 enum UpscalerKind: Int, CaseIterable, Codable {
     case metalFX    // MetalFX's denoising scaler
@@ -162,6 +161,7 @@ enum UpscalerKind: Int, CaseIterable, Codable {
     var title: String { self == .metalFX ? "MetalFX" : "Neural (ours)" }
 }
 
+/// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
 enum ToneMap: Int, CaseIterable, Codable {
     case aces       // Narkowicz's ACES fit: contrasty, saturated highlights shift toward white
     case agx        // AgX (Troy Sobotka), polynomial fit: softer, keeps bright saturated lights from going flat
@@ -183,14 +183,44 @@ enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
     case restirGI           // ReSTIR GI: per-pixel paths whose first bounce is reused over time and space, + SVGF
+    case lumen              // Lumen-style: screen probes on the G-buffer, filtered, resolved through SH, accumulated
 
     var title: String {
         switch self {
         case .pathTraced: return "Path traced"
         case .radianceCascades: return "Radiance cascades"
         case .restirGI: return "ReSTIR GI"
+        case .lumen: return "Lumen"
         }
     }
+}
+
+/// A converged reference picture for debugging (README "Reference rendering"): samples averaged over frames, the
+/// average restarted whenever the picture would change (the camera, a setting, the scene animating).
+enum ReferenceMode: Int, CaseIterable, Codable {
+    case off
+    case accumulated    // the frame's own passes (path traced GI, exact direct light, raw specular) averaged: the benchmarks' references
+    case pathTraced     // one kernel traces whole paths (PathTrace.metal): glossy bounces, glass, lights met by rays
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .accumulated: return "Accumulated passes"
+        case .pathTraced: return "Path traced"
+        }
+    }
+}
+
+/// The reference modes' parameters.
+struct ReferenceSettings: Equatable, Codable {
+    var mode = ReferenceMode.off
+    var bounces = 8             // path length (both modes)
+    var samplesPerFrame = 1     // path traced: paths per pixel per frame
+    var maxSamples = 0          // stop adding samples at this many per pixel; 0 = never
+
+    static let bounceRange = 1...16
+    static let samplesPerFrameRange = 1...16
+    static let maxSampleOptions = [0, 64, 256, 1024, 4096, 16384]
 }
 
 /// ReSTIR GI (Shaders/RestirGI.metal): one path per pixel (or per 2x2 block) whose first bounce is resampled over
@@ -242,6 +272,51 @@ struct CascadeSettings: Equatable, Codable {
     static let firstIntervalRange: ClosedRange<Float> = 0.1...1.0
 }
 
+/// What Lumen's rays trace past the screen: triangles (the ray tracer's), or the meshes' distance fields near the
+/// probe and triangles beyond (software Lumen).
+enum LumenTrace: Int, CaseIterable, Codable {
+    case triangles
+    case sdf
+}
+
+/// Lumen-style GI (Lumen.swift, Shaders/Lumen.metal): a probe on the G-buffer in every tile of `probeSpacing` pixels,
+/// each tracing `probeSpacing`^2 octahedral directions (64 at 8 px), jittered every frame; the probes' radiance is
+/// filtered across their neighbours, projected onto SH, resolved per pixel and accumulated over frames.
+struct LumenSettings: Equatable, Codable {
+    var probeSpacing = 8            // screen-probe tile, traced pixels (its side is also the probe's direction tile)
+    var feedback = true             // multi-bounce: ray hits add last frame's indirect light where it was on screen
+    var filter = true               // spatial filter: each probe direction averaged with its neighbours' (plane-weighted)
+    var temporal = true             // per-pixel history, reprojected
+    var history: Float = 16         // the history's length at most (frames)
+    var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
+    var screenTraces = true         // rays march the screen first (last frame's lit surfaces), then the world
+    var screenSteps = 24            // the screen march's samples
+    var thickness: Float = 0.03     // a screen hit lies at most this fraction of the depth behind the surface
+    var screenReach: Float = 50     // the screen march's reach (m)
+    var debug = 0                   // "GI debug" view: 0 = probes, 1 = what answered the rays (screen, world, sky)
+    var cards = true                // the surface cache: world hits read cards lit ahead of time (else lit at the hit)
+    var radiosity = true            // the cards' own indirect light (rays from the cards), instead of screen feedback
+    var radiosityRays = 8           // a radiosity probe's rays a frame (a probe per 4x4 card texels)
+    var radiosityBudget = 256       // card texels (thousands) whose radiosity is updated a frame, new cards first: 1024
+                                    // (every card a frame) is 0.05 dB better still, 0.1-0.3 dB in motion, 3-24 ms slower
+    var radiosityThroughSDF = false // with `.sdf`: radiosity's rays trace the global field too (Lumen's way), not triangles:
+                                    // -1 dB in Cornell, -1.4 dB in the stress hall (it loses the near contact)
+    var trace = LumenTrace.sdf      // software Lumen; `.triangles` is ~0-2 dB closer to the references, as an A/B
+    var meshReach: Float = 2        // with `.sdf`: how far rays trace the mesh fields (m)
+    var globalVoxel: Float = 0      // the global field's finest voxel (m); 0: by the scene (0.1, or 0.2 outdoors)
+
+    static let spacingOptions = [4, 8, 16]
+    static let historyRange: ClosedRange<Float> = 1...64
+    static let screenStepRange = 4...64
+    static let radiosityRayRange = 1...32
+    static let radiosityBudgetRange = 16...1024
+    static let thicknessRange: ClosedRange<Float> = 0.005...0.2
+    static let screenReachRange: ClosedRange<Float> = 1...500
+    static let debugViews = ["Probes", "Trace kinds", "Card albedo", "Card light", "SDF normals", "SDF depth check", "Global SDF"]
+    static let meshReachRange: ClosedRange<Float> = 0.25...20
+    static let globalVoxelRange: ClosedRange<Float> = 0...1
+}
+
 /// Which scene is loaded.
 enum SceneKind: Int, CaseIterable, Codable {
     case cornell            // small Cornell-style room: 5 objects (2 moving), 3 moving lights
@@ -266,6 +341,20 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // volumetric beams, mist, accent lights, particles, with bloom and depth of field
     case shapes             // SDF shapes (SDFShapes.swift): primitives, cuts and blends, a baked mesh, glowing shapes as lights
     case randomRoom         // training data for the neural denoiser: a room made at random from `seed` (Scene+Training.swift)
+                            // (keep its place: the dataset seeds its clips from rawValue, DatasetSpec.clip)
+    case physics            // rigid SDF shapes (Physics.swift) poured into an arena: a ramp, a pile, a tower knocked over
+    case ragdolls           // `ragdolls` ragdolls (jointed bodies, Physics.swift) dropped down a staircase
+    case hair               // hair and fur (PhysicsHair.swift): furry bodies rolling down a ramp, a long-haired head
+                            // swinging, in a breeze; strands drawn as curves (Metal's ray tracer)
+    case softBodies         // `softBodies` soft bodies (PhysicsSoft.swift): jellies dropped onto steps, pegs and a bowl
+    case muscles            // flesh, muscles and skin (PhysicsFlesh.swift) on a character walking and running round a
+                            // circle among balls, and on ragdolls tumbling down steps
+    case fluids             // liquids (PhysicsFluid.swift): water, blood and honey poured side by side down steps into a
+                            // tray, boxes floating and sinking in them, a paddle in each to stir it
+    case plants             // the plant workshop (Scene+Plants.swift): one species' plants on a lawn under the sun, as the
+                            // plant editor shapes them (`SceneSettings.plants`)
+    case buildings          // the building workshop (Scene+Buildings.swift): one building, inside and out, on its lot, as
+                            // the building editor shapes it (`SceneSettings.buildings`)
 
     var title: String {
         switch self {
@@ -289,9 +378,21 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .showcase: return "Showcase (one model)"
         case .shapes: return "SDF shapes"
         case .randomRoom: return "Random room (training)"
+        case .physics: return "Physics"
+        case .ragdolls: return "Ragdolls"
+        case .hair: return "Hair and fur"
+        case .softBodies: return "Soft bodies"
+        case .muscles: return "Muscles and skin"
+        case .fluids: return "Fluids"
+        case .plants: return "Plant workshop"
+        case .buildings: return "Building workshop"
         }
     }
 
+    /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
+    var simulates: Bool {
+        self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles || self == .fluids
+    }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -306,9 +407,11 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase }   // the showcase's frames its model
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop }   // these frame what they hold
+    /// The editors' scenes: one thing (a plant, a building) made again at every edit, an orbit camera round it.
+    var isWorkshop: Bool { self == .plants || self == .buildings }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
-    var hasPlants: Bool { self == .forest || self == .valley || isWorld }
+    var hasPlants: Bool { self == .forest || self == .valley || isWorld || self == .plants }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
     var hasForest: Bool { self == .forest || isWorld }
 }
@@ -346,26 +449,67 @@ struct CitySettings: Equatable, Codable {
     var rooms: Float = 0.15
     /// Generated brick, plaster, concrete, tile and paving textures (ProceduralTextures); off: flat colours.
     var textures = true
+    /// A window's shell (reveal, frame, sill, lintel, shutters) is made once and placed at every window like it
+    /// (Building.Module), a building an assembly of them (Scene.Assembly.rigid); off: every building one mesh of its own.
+    var modules = false
+    /// The building the camera comes near (within `interiorReach` metres) has its interior made, in the background:
+    /// rooms, stairs, furniture, lights you can walk among (Scene+Interiors.swift). Off: every building a shell.
+    var interiors = true
+    var interiorReach: Float = 30
 
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1
     static let roomRange: ClosedRange<Float> = 0...0.5
 }
 
-/// What answers ray queries. Changing it recompiles the shaders (CUSTOM_RT macro) and rebuilds the scene's structures.
-enum RayTracerKind: Int, CaseIterable, Codable {
-    case custom             // this project's BVHs: per-mesh BLAS + static TLAS (CPU, once) + dynamic TLAS (every frame)
-    case metal              // Metal's acceleration structures and intersector
+/// Where the camera's surfaces come from: one traced ray per pixel, or a raster visibility buffer (Shaders/Raster.metal,
+/// in the manner of Unreal's Nanite: GPU-driven, culled by chunks of 128 triangles against the view and a depth pyramid),
+/// whose triangles the primary rays then only meet. The rest of the frame is the same.
+enum PrimaryVisibility: Int, CaseIterable, Codable {
+    case traced
+    case raster
 
-    var title: String {
-        switch self {
-        case .custom: return "Custom BVH"
-        case .metal: return Capabilities.current.hardwareRayTracing ? "Metal (hardware)" : "Metal (software)"
-        }
-    }
+    var title: String { self == .traced ? "Traced" : "Raster (visibility buffer)" }
 
-    /// `METALRENDERER_RT=metal|custom` picks the starting tracer (benchmarks: for every setting).
-    static let initial: RayTracerKind = ProcessInfo.processInfo.environment["METALRENDERER_RT"] == "metal" ? .metal : .custom
+    /// `METALRENDERER_PRIMARY=raster|traced` picks the starting one (benchmarks: for every setting).
+    static let initial: PrimaryVisibility = ProcessInfo.processInfo.environment["METALRENDERER_PRIMARY"] == "raster" ? .raster : .traced
+}
+
+/// What shadows the direct light of the camera's surfaces: a ray toward a point on the light per sample, or for suns,
+/// spot and sphere lights Virtual Shadow Maps (VSM.swift, Shaders/VSM.metal, in the manner of Unreal's: pages of a
+/// huge virtual depth map rendered where pixels look, cached while nothing moves), through which the same jittered
+/// segment is marched. What the raster can't draw (leaf cards, plants in the wind) is still traced; so is every sample
+/// whose pages aren't ready. Bounces, reflections and the fog keep their rays.
+enum ShadowMethod: Int, CaseIterable, Codable {
+    case rays
+    case virtualMaps
+
+    var title: String { self == .rays ? "Rays" : "Virtual shadow maps" }
+
+    /// `METALRENDERER_SHADOW_METHOD=vsm|rays` picks the starting one (benchmarks: for every setting).
+    static let initial: ShadowMethod = ProcessInfo.processInfo.environment["METALRENDERER_SHADOW_METHOD"] == "vsm" ? .virtualMaps : .rays
+}
+
+/// Virtual Shadow Maps' budgets and tuning (ShadowMethod.virtualMaps).
+struct VSMSettings: Equatable, Codable {
+    var pool = 1024                 // physical pages of 128 x 128 texels (depth32Float: 64 KB each)
+    var budget = 256                // pages rendered a frame at most (the rest: rays until their turn)
+    var levels = 12                 // the sun's clipmap levels, 16 m wide and doubling (32 km)
+    var maxLights = 64              // spot and sphere lights with maps (the others: rays)
+    var steps = 8                   // the march's steps toward the light
+    var bias: Float = 0.5           // depth bias, in texels of the page's level (x (1 + the slope)): 0.5 is nearest the
+                                    // rays (pixels > 8 levels off in the city: 1.6% against 3.0% at 1.5), no acne
+    /// Virtual geometry (with the per-instance BLAS) drawn as clusters with a cut of each view's own (RasterClusters),
+    /// whatever the camera draws it from: its pages then stay drawn while the camera moves. Off: the BLAS's triangles,
+    /// all of them into every page the instance covers, every frame.
+    var clusters = true
+
+    static let poolOptions = [256, 512, 1024, 2048]
+    static let budgetRange = 16...1024
+    static let levelRange = 1...12
+    static let maxLightRange = 0...256
+    static let stepRange = 1...16
+    static let biasRange: ClosedRange<Float> = 0...8
 }
 
 /// A glTF model the user opened or dropped into the scene.
@@ -373,6 +517,92 @@ struct ExtraModel: Equatable, Codable {
     var path: String
     var position: SIMD3<Float>
     var yaw: Float
+}
+
+/// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
+struct PhysicsSettings: Equatable, Codable {
+    /// Where the steps run: the GPU (Shaders/Physics.metal), the CPU (PhysicsCPU.swift), or whichever suits the
+    /// scene's size (the CPU below `PhysicsSettings.gpuFrom` bodies, where a dispatch costs more than the work).
+    enum Backend: Int, CaseIterable, Codable {
+        case auto, gpu, cpu
+        var title: String { ["Automatic", "GPU", "CPU"][rawValue] }
+    }
+    var backend = Backend.auto
+    /// Substeps a step (1/60 s): more hold stacks stiffer, for more work (8 lets a tower of 8 crossed layers sink
+    /// through the floor; 12 holds it to 3 mm).
+    var substeps = 16
+    /// Rigid bodies poured in, and particles poured into a bin.
+    var bodies = 96
+    var particles = 2048
+    /// The cloth's vertices along a side (0: no cloth).
+    var cloth = 36
+    /// Ragdolls dropped down the ragdoll scene's stairs (11 bodies each).
+    var ragdolls = 24
+    /// The hair scene: strands drawn around each simulated one (guide), and furry bodies dropped down its ramp.
+    var hair = 12
+    var furBodies = 6
+    /// The soft body scene: soft bodies dropped in, and their lattices' cubes along each one's longest side.
+    var softBodies = 16
+    var softCells = 6
+    /// The muscles scene (Scene+Muscles.swift): the character, the ragdolls with flesh, the flesh's lattice spacing
+    /// (cm), its skin, and how much its muscles contract.
+    var muscleCharacter = true
+    var muscleRagdolls = 3
+    var fleshCell: Float = 3.5
+    /// The skin: the drawn surface in the flesh's outer tets (stiffer: its tension), or on a shell of its own that
+    /// slides over the flesh (PhysicsSkin.swift; the character's).
+    enum Skin: Int, CaseIterable, Codable {
+        case embedded, sliding
+        var title: String { ["Embedded", "Sliding"][rawValue] }
+    }
+    var skin = Skin.embedded
+    var muscleGain: Float = 1
+    /// What the character is drawn as: its skin, or its muscles (an écorché: MuscleAtlas.swift) on the same flesh.
+    enum Body: Int, CaseIterable, Codable {
+        case skin, muscles
+        var title: String { ["Skin", "Muscles"][rawValue] }
+    }
+    var body = Body.skin
+    /// The fluids scene (Scene+Fluids.swift): which liquids it pours, the solver each is stepped by (PhysicsFluid.swift),
+    /// or one for all of them, and how many particles each pours at most. Honey by MPM (its viscosity is what MPM is
+    /// for), water and blood by PBF: MPM's push on a body is weak in a thin liquid (a light box bobbed and sank in MPM
+    /// water and blood; PBF's boundary density holds it up).
+    enum Liquids: Int, CaseIterable, Codable {
+        case all, water, blood, honey
+        var title: String { ["All three", "Water", "Blood", "Honey"][rawValue] }
+    }
+    var liquids = Liquids.all
+    enum Solver: Int, CaseIterable, Codable {
+        case pbf, mpm
+        var title: String { ["Position based (PBF)", "Material point (MLS-MPM)"][rawValue] }
+    }
+    enum Solvers: Int, CaseIterable, Codable {
+        case auto, pbf, mpm
+        var title: String { ["Each liquid's own", "PBF for all", "MPM for all"][rawValue] }
+    }
+    var solver = Solvers.auto
+    var waterSolver = Solver.pbf
+    var bloodSolver = Solver.pbf
+    var honeySolver = Solver.mpm
+    var fluidParticles = 32768
+
+    static let substepRange = 1...32
+    static let bodyRange = 0...4096
+    static let particleRange = 0...16384
+    static let clothRange = 0...96
+    static let ragdollRange = 1...256
+    static let hairRange = 1...32
+    static let furBodyRange = 0...32
+    static let softBodyRange = 1...128
+    static let softCellRange = 3...12
+    static let muscleRagdollRange = 0...12
+    static let fleshCellRange: ClosedRange<Float> = 2...6
+    static let muscleGainRange: ClosedRange<Float> = 0...2
+    static let fluidRange = 1024...262144
+    static let gpuFrom = 64
+
+    /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
+    func runsOnGPU(bodies: Int) -> Bool { backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom) }
 }
 
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
@@ -409,17 +639,32 @@ struct SceneSettings: Equatable, Codable {
     /// ...and whether its cities' lights are the scene's lights: the renderer's to set too, with the time of day
     /// (`World.lightsReady`). By day nothing samples them, and they are off.
     var worldLit = false
-    /// Plants baked into meshes of their own on the custom tracer too, as on Metal's, instead of assemblies: no wind,
-    /// voxels or leaf fall, and eight times the triangles (METALRENDERER_BENCH=forestcheck compares the two).
+    /// Plants baked into meshes of their own instead of assemblies: no wind or leaf fall, and eight times the
+    /// triangles (METALRENDERER_BENCH=forestcheck compares the two).
     var bakedPlants = false
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
-    /// by an alpha mask the custom tracer tests. Off: every leaf is a mesh of its own.
+    /// by an alpha mask the ray queries test. Off: every leaf is a mesh of its own.
     var leafCards = false
-    /// Metal's tracer: far plants as their voxel grids (VoxelLOD), as on the custom tracer, instead of their
-    /// triangles. Off: it is slower wherever it was measured. In software (M1 Max) the ray queries a voxel box needs
+    /// Far baked plants as their voxel grids (VoxelLOD) instead of their triangles. Off: it is slower wherever it was
+    /// measured. In software (M1 Max) the ray queries a voxel box needs
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
     /// forest takes 1.3 to 2.1 times as long, the open world 3 times.
     var voxelBoxes = false
+    /// The physics scene: its bodies and how they are simulated.
+    var physics = PhysicsSettings()
+    /// The plant workshop: what it shows.
+    var plants = PlantSceneSettings()
+    /// The species the plants are grown from: a key of PlantCatalog's registry, which the plant editor sets as it
+    /// edits; "" the saved species (Assets/Plants), "builtin" the built-in ones. Session state, not a preference.
+    var plantCatalog = ""
+    /// The building workshop: what it shows.
+    var buildings = BuildingSceneSettings()
+    /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
+    /// building editor sets as it edits; "" the saved ones (Assets/Buildings), "builtin" the built-in ones. Session state.
+    var buildingCatalog = ""
+    /// The city's building whose interior the scene has (LotRef.key; nil: none): the renderer's to set, as the camera
+    /// comes near a building and leaves it (Scene+Interiors.swift). Session state.
+    var interior: String? = nil
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -431,26 +676,151 @@ struct SceneSettings: Equatable, Codable {
     static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 
+    /// The plant workshop both, showing the same species the same way (only the species' definitions and which of its
+    /// plants differ): what an edit changes.
+    func isSameWorkshop(as other: SceneSettings) -> Bool {
+        if kind == .buildings && other.kind == .buildings {
+            return buildings.layout == other.buildings.layout && buildings.style == other.buildings.style
+                && buildings.pinned == other.buildings.pinned
+        }
+        return kind == .plants && other.kind == .plants && plants.layout == other.plants.layout && plants.view == other.plants.view
+            && plants.species == other.plants.species && leafCards == other.leafCards && bakedPlants == other.bakedPlants
+    }
+
+    /// The same city, with another building's interior in it (or none): the same streets and buildings, where they
+    /// were (Renderer: what the frames have gathered holds).
+    func isSameCity(as other: SceneSettings) -> Bool {
+        var a = self, b = other
+        (a.interior, b.interior) = (nil, nil)
+        return (kind.isCity || kind.isWorld) && a == b && interior != other.interior
+    }
+
     /// The same open world, whatever tile the scene is made around, wherever its origin is and whatever the time of day.
     func isSameWorld(as other: SceneSettings) -> Bool {
         var a = self, b = other
         (a.worldTile, b.worldTile, a.worldAnchor, b.worldAnchor) = (nil, nil, nil, nil)
         (a.worldLit, b.worldLit) = (false, false)
+        (a.interior, b.interior) = (nil, nil)
         return kind.isWorld && a == b
     }
 }
 
-/// Virtual geometry (custom ray tracer): big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
+/// The building workshop (Scene+Buildings.swift): which building it shows, and how.
+struct BuildingSceneSettings: Equatable, Codable {
+    /// The style's id (BuildingCatalog), the lot (its width across the front, its depth), what its sides look onto,
+    /// its floors and seed.
+    var style = "residential"
+    var lot = SIMD2<Float>(20, 14)
+    var sides = Sides.row
+    var floors = 5
+    var seed = 1
+    var layout = Layout.single
+    var view = View.full
+    /// The cutaway's and the dollhouse's top storey (0: the ground floor).
+    var cut = 1
+    var night = false
+    /// A single building of a city to show instead (the editor's Pin), nil: the workshop's own.
+    var pinned: LotRef? = nil
+    /// Registry keys (BuildingCatalog.register), session state: the editor's variations of the style to show beside it
+    /// (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Sides: Int, CaseIterable, Codable {
+        case row            // between neighbours, a yard behind
+        case backToBack     // between neighbours, a neighbour behind too
+        case corner         // a street in front and on its right
+        case free           // streets and open ground all round
+        var edges: [CityPlan.Edge] {
+            switch self {
+            case .row: return [.street, .party, .open, .party]
+            case .backToBack: return [.street, .party, .party, .party]
+            case .corner: return [.street, .street, .party, .party]
+            case .free: return [.street, .open, .open, .street]
+            }
+        }
+        var title: String { ["In a row", "Back to back", "On a corner", "Free-standing"][rawValue] }
+    }
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the building on its lot
+        case street         // between two neighbours of its style
+        case mutate         // it and the editor's variations of it, along a street
+        var title: String { ["One building", "In its street", "Variations"][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case full
+        case cutaway        // no roof and nothing above storey `cut`
+        case dollhouse      // ...and no front wall up to it either
+        var title: String { ["Whole", "Cutaway", "Dollhouse"][rawValue] }
+    }
+
+    static let floorRange = 1...40
+    static let widthRange: ClosedRange<Float> = 6...48
+    static let depthRange: ClosedRange<Float> = 8...48
+}
+
+/// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
+struct PlantSceneSettings: Equatable, Codable {
+    /// The species' id (PlantCatalog), and the age and seeded variant of the one plant shown.
+    var species = "oak"
+    var age = Foliage.Age.mature
+    var variant = 0
+    /// What the variants are grown from: the library's seed (SceneSettings.seed), so the workshop's oak 2 at seed 1 is
+    /// the forest's.
+    var seed = 1
+    var layout = Layout.single
+    var view = View.plant
+    /// Registry keys (PlantCatalog.register), session state: the editor's variations of the species to show beside it
+    /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the one plant
+        case lineup         // every age (rows) and variant (columns)
+        case mutate         // the plant and the editor's variations of it, in a row
+
+        var title: String { ["One plant", "Ages and variants", "Variations"][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case plant
+        case skeleton       // the stems as thin lines, a colour to a level; no leaves
+
+        var title: String { ["Plant", "Skeleton"][rawValue] }
+    }
+
+    static let variantRange = 0...7
+}
+
+/// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
 struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
+    /// How the raster visibility buffer draws it (with the per-instance BLAS; the cluster tree's mode traces it).
+    var raster = RasterVirtual(envText: ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG"] ?? "") ?? .blas
+    /// The raster clusters' own streaming pool (the rays keep the BLAS): 512 MB holds what the gallery's shadow maps and
+    /// camera ask for (about 390 MB settled).
+    var rasterPoolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG_POOL"] ?? "") ?? 512
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
     static let poolOptions = [256, 512, 768, 1024, 2048]
+    static let rasterPoolOptions = [128, 256, 512, 768]
+}
+
+/// How the raster visibility buffer draws virtual geometry: the triangles of its instance's BLAS over the CPU's cut,
+/// 128 at a time and culled by instance only; or Nanite's way, clusters of the DAG picked, culled and streamed on the GPU
+/// every frame (RasterClusters), drawn by vertex pulling or by mesh shaders.
+enum RasterVirtual: Int, CaseIterable, Codable {
+    case blas
+    case clusters
+    case mesh
+
+    var title: String { ["BLAS triangles", "Clusters", "Clusters (mesh shaders)"][rawValue] }
+    var drawsClusters: Bool { self != .blas }
 }
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
@@ -500,7 +870,8 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .randomRoom:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
+             .plants, .buildings, .randomRoom:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -595,10 +966,18 @@ struct SkySettings: Equatable, Codable {
     static let override: String? = ProcessInfo.processInfo.environment["METALRENDERER_SKY"]
 
     /// The sky that suits scene `kind`: the atmosphere for the outdoor and window-lit scenes, a constant colour inside.
+    /// ...and for the scene's own settings: the building workshop at night has the city's night sky.
+    static func preset(for scene: SceneSettings) -> SkySettings {
+        var s = preset(for: scene.kind)
+        if scene.kind == .buildings && scene.buildings.night { s = preset(for: .cityNight) }
+        return s
+    }
+
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .randomRoom:
+        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
+             .softBodies, .muscles, .fluids, .randomRoom:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -619,6 +998,8 @@ struct SkySettings: Equatable, Codable {
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
+        case .plants, .buildings:   // a few high clouds, no shadows of them: the plant is what is looked at
+            s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }
         if let o = override {
             switch o {
@@ -662,7 +1043,7 @@ struct PostSettings: Equatable, Codable {
     }
 }
 
-/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures, like the tracer.
+/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures.
 enum RenderAPI: Int, CaseIterable, Codable {
     case metal3             // MTLCommandQueue, one compute encoder per frame
     case metal4             // Metal 4: MTL4CommandQueue, argument tables, residency sets (macOS 26; Capabilities.metal4)
@@ -674,8 +1055,8 @@ enum RenderAPI: Int, CaseIterable, Codable {
 }
 
 /// Everything the settings panel and the keyboard shortcuts can change.
-/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (custom ray
-/// tracer: plants as assemblies; Metal's traces them baked and still).
+/// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (plants as
+/// assemblies; baked plants stand still).
 struct FoliageSettings: Equatable, Codable {
     var wind: Float = 0                 // 0 = still ... 1 = a strong wind
     var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
@@ -683,6 +1064,10 @@ struct FoliageSettings: Equatable, Codable {
     /// Far plants are traced as voxels (FoliageVoxels) from where a voxel is this many traced pixels: 0 = never.
     /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
     var lod: Float = 2
+    /// How far from the camera the plants' limbs move in the wind, in metres (0 = everywhere). Farther plants still lean
+    /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 20 m the moving forest is
+    /// 7-16% faster than with every limb moving (M1 Max, Metal 3); from above, where every crown is farther, only whole trees lean.
+    var swayReach: Float = 20
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
     var season: Float = 0.3
     /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
@@ -692,6 +1077,7 @@ struct FoliageSettings: Equatable, Codable {
     static let directionRange: ClosedRange<Float> = -180...180
     static let gustRange: ClosedRange<Float> = 0...1
     static let lodRange: ClosedRange<Float> = 0...4
+    static let swayRange: ClosedRange<Float> = 0...200
     static let seasonRange: ClosedRange<Float> = 0...1
     static let translucencyRange: ClosedRange<Float> = 0...1
 
@@ -699,6 +1085,7 @@ struct FoliageSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FoliageSettings {
         var f = FoliageSettings()
         if kind.hasPlants { f.wind = 0.4 }
+        if kind == .plants { f.lod = 0 }   // the workshop's plants are never voxels
         return f
     }
 }
@@ -712,6 +1099,7 @@ struct RenderSettings: Equatable, Codable {
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
     var paused = false
     var viewMode = 0
+    var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
     var denoiser = DenoiserSettings()
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
@@ -723,9 +1111,12 @@ struct RenderSettings: Equatable, Codable {
     var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
     var cascades = CascadeSettings()
+    var lumen = LumenSettings()
     var scene = SceneSettings()
-    var rayTracer = RayTracerKind.initial
     var api = RenderAPI.initial
+    var primary = PrimaryVisibility.initial
+    var shadowMethod = ShadowMethod.initial
+    var vsm = VSMSettings()
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
@@ -741,17 +1132,37 @@ struct RenderSettings: Equatable, Codable {
     var timeScale: Float = 1           // animation speed (Pause stops it too)
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
 
+    /// The physics scene's traced resolution (`usePhysicsLook`).
+    static let physicsScale: CGFloat = 0.375
+
+    /// The physics scene's look, which leaves the GPU to the simulation: no GI and no reflections, traced at 0.375 of
+    /// the window (3x upscaled, 1440x900 out). On the M1 Max its frame renders in 5 ms against the app look's 15
+    /// (reflections 4.7 ms, cascades 2.9, and the smaller frame halves the trace and the upscaler). The panel can turn
+    /// either back on.
+    mutating func usePhysicsLook() {
+        giEnabled = false
+        specular = false
+        renderScale = RenderSettings.physicsScale
+    }
+
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults): the GI method, the night market's light count, the fog, the sky and the lens (the showcase's
-    /// model brings its own fog and lens).
+    /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
+        if scene.kind.simulates {
+            usePhysicsLook()
+        } else if !giEnabled && !specular && renderScale == RenderSettings.physicsScale {
+            giEnabled = defaults.giEnabled
+            specular = defaults.specular
+            renderScale = defaults.renderScale
+        }
         if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
         fog = FogSettings.preset(for: scene)
         post = PostSettings.preset(for: scene)
         foliage = FoliageSettings.preset(for: scene.kind)
         let image = sky.mode == .image ? sky : nil   // an image the user opened stays
-        sky = SkySettings.preset(for: scene.kind)
+        sky = SkySettings.preset(for: scene)
         if let image { sky.mode = .image; sky.imagePath = image.imagePath; sky.imageExposure = image.imageExposure }
     }
 
@@ -767,10 +1178,17 @@ struct RenderSettings: Equatable, Codable {
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering"]
+                            "Fog scattering", "Visibility buffer", "Virtual shadow pages"]
+    /// The raster visibility buffer's chunks (rasterDebugKernel), with the primary visibility on raster.
+    static let visibilityBufferView = 15
+    /// The virtual shadow maps' pages (vsmDebugKernel), with the shadows through virtual shadow maps.
+    static let shadowPagesView = 16
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
-    /// is (normals, albedo, the geometry views...): viewIsHDR in Shaders/Output.metal.
-    static func showsLight(_ mode: Int) -> Bool { ![3, 4, 5].contains(mode) && !(7...13).contains(mode) }
+    /// is (normals, albedo, the geometry views, the visibility buffer's and the shadow pages' colours...): viewIsHDR in
+    /// Shaders/Output.metal.
+    static func showsLight(_ mode: Int) -> Bool {
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && ![visibilityBufferView, shadowPagesView].contains(mode)
+    }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13

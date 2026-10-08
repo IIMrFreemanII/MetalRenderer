@@ -2,12 +2,15 @@ import AppKit
 import Metal
 import UniformTypeIdentifiers
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var renderer: Renderer!
     private var controller: RendererController!
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
+    private var plantEditor: PlantEditorPanel?
+    private var buildingEditor: BuildingEditorPanel?
+    private var loadingOverlay: LoadingOverlay?
     private var offscreen: OffscreenSurface?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -39,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           defer: false)
         window.title = "MetalRenderer"
         window.center()
+        window.delegate = self
 
         // The window first, the renderer on the next turn of the run loop: its start (the scene, the textures) then
         // happens with the window on screen.
@@ -68,6 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // shaders failed to compile.)
             controller.onFirstFrame = { [weak self] in self?.showPanels() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.showPanels() }
+            // What loads in the background (the launch's shader compile is already running).
+            let overlay = LoadingOverlay(activity: controller.loadActivity)
+            overlay.attach(to: view)
+            loadingOverlay = overlay
+            controller.onToggleLoading = { [weak self] in self?.toggleLoading(nil) }
         }
         renderer.startRenderThread()
 
@@ -82,6 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           R            hot-reload the shaders (edit Shaders/*.metal while the app runs)
           Tab / Cmd-,  show or hide the Render Settings panel
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
+          P            show or hide the loading overlay (what loads in the background, and how far it is)
+          K / Cmd-E    show or hide the Plant Editor (the plant workshop: drag orbits, scroll zooms, F frames, hold C compares)
+          J / Cmd-B    show or hide the Building Editor and its Floor Plan window (the building workshop)
+          V            walk (in the building workshop, the city): W A S D, Shift runs, Space jumps, C or Control
+                       crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)
     }
@@ -95,6 +109,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugPanel = DebugPanel(renderer: controller)
         if DebugPanel.wasVisible { debugPanel?.show(nextTo: window, below: panel.panel) }
         controller.onToggleDebug = { [weak self] in self?.toggleDebug(nil) }
+        let plants = PlantEditorPanel(controller: controller)
+        plantEditor = plants
+        if PlantEditorPanel.wasVisible || controller.settings.scene.kind == .plants { plants.show(nextTo: window) }
+        controller.onTogglePlants = { [weak self] in self?.togglePlants(nil) }
+        let buildings = BuildingEditorPanel(controller: controller)
+        buildingEditor = buildings
+        if BuildingEditorPanel.wasVisible || controller.settings.scene.kind == .buildings { buildings.show(nextTo: window) }
+        controller.onToggleBuildings = { [weak self] in self?.toggleBuildings(nil) }
+        // The workshop is the editor's: entering it shows the editor.
+        var kind = controller.settings.scene.kind
+        controller.observeSettings { [weak self] s in
+            guard let self, s.scene.kind != kind else { return }
+            kind = s.scene.kind
+            if kind == .plants, self.plantEditor?.isVisible == false { self.plantEditor?.show(nextTo: self.window) }
+            if kind == .buildings, self.buildingEditor?.isVisible == false { self.buildingEditor?.show(nextTo: self.window) }
+        }
+    }
+
+    /// The main window's undo is an editor's (their edits are what can be undone): the building editor's in its
+    /// workshop or while only it is open, the plant editor's otherwise.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        let buildings = controller.settings.scene.kind == .buildings || (buildingEditor?.isVisible == true && plantEditor?.isVisible != true)
+        return buildings ? buildingEditor?.model.undo : plantEditor?.model.undo
+    }
+
+    @objc private func togglePlants(_ sender: Any?) {
+        plantEditor?.toggle(nextTo: window)
+    }
+
+    @objc private func toggleBuildings(_ sender: Any?) {
+        buildingEditor?.toggle(nextTo: window)
+    }
+
+    @objc private func showFloorPlan(_ sender: Any?) {
+        if buildingEditor?.isVisible != true { buildingEditor?.show(nextTo: window) }
+        buildingEditor?.showPlan()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -123,6 +173,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugPanel?.toggle(nextTo: window, below: settingsPanel?.panel)
     }
 
+    @objc private func toggleLoading(_ sender: Any?) {
+        loadingOverlay?.toggle()
+        loadingItem?.state = LoadingOverlay.isEnabled ? .on : .off
+    }
+    private var loadingItem: NSMenuItem?
+
     private func buildMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -130,6 +186,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Render Settings…", action: #selector(toggleSettings(_:)), keyEquivalent: ",").target = self
         appMenu.addItem(withTitle: "Debug Window", action: #selector(toggleDebug(_:)), keyEquivalent: "i").target = self
+        appMenu.addItem(withTitle: "Plant Editor…", action: #selector(togglePlants(_:)), keyEquivalent: "e").target = self
+        appMenu.addItem(withTitle: "Building Editor…", action: #selector(toggleBuildings(_:)), keyEquivalent: "b").target = self
+        appMenu.addItem(withTitle: "Floor Plan", action: #selector(showFloorPlan(_:)), keyEquivalent: "").target = self
+        if !Benchmark.isEnabled {
+            let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
+            item.target = self
+            item.state = LoadingOverlay.isEnabled ? .on : .off
+            loadingItem = item
+        }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit MetalRenderer",
                         action: #selector(NSApplication.terminate(_:)),
@@ -140,6 +205,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "Open…", action: #selector(openModels(_:)), keyEquivalent: "o").target = self
         fileItem.submenu = fileMenu
+        // Edit: the plant editor's undo, and the text fields' clipboard.
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
         NSApp.mainMenu = mainMenu
     }
 }

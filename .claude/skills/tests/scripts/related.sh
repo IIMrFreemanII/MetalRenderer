@@ -40,35 +40,63 @@ if [[ $suites == " " ]]; then
       Tests/MetalRendererTests/FoliageTests.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;   # three suites in one file
       Tests/MetalRendererTests/*Tests.swift) add "${name%.swift}" ;;
       Tests/*) add MetalRendererTests ;;                     # a shared helper: every suite uses it
-      Sources/MetalRenderer/Shaders/BVHBuild.metal) add BVHTests CacheTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/Foliage.metal) add FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Foliage.metal) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Intersect.metal) add ShaderSourceTests KernelVariantsTests PlantTracingTests ;;
+      Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests PhysicsTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Fluid.metal|Sources/MetalRenderer/Shaders/FluidSurface.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Liquid.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;
           Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
           Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
-          ShaderSource.swift|Pipelines.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
+          ShaderSource.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
+          Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;
           BVH.swift) add BVHTests CacheTests ;;
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;
-          Building*.swift|MeshBuilder.swift) add BuildingTests CityTests ;;
+          Building*.swift|MeshBuilder.swift|BuiltInBuildings.swift) add BuildingTests CityTests BuildingPlanTests BuildingEditorTests BuildingWorkshopTests WalkerTests ;;
+          PlanEdits.swift|FloorPlanView.swift|PropLibrary.swift) add BuildingEditorTests BuildingPlanTests ;;
+          FurnitureKit.swift) add BuildingPlanTests BuildingWorkshopTests ;;
+          Walker.swift|InteriorControls.swift|InteriorLifts.swift) add WalkerTests BuildingWorkshopTests ;;
+          Scene+Buildings.swift|Scene+Interiors.swift) add BuildingWorkshopTests CityTests WorldTests WalkerTests ;;
+          CatalogRegistry.swift) add PlantCatalogTests PlantEditorTests BuildingEditorTests ;;
           CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
           Scene+Stress.swift) add StressSceneTests ;;
-          Crowd*.swift|SkinnedCharacter.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
+          SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests ;;   # (the muscles' rig poses its bones by it)
+          Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
           FBXReader.swift) add FBXTests ;;
-          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
+          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ;;
+          PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
+          Plant*.swift|BuiltInPlants.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests FoliageTests ForestTests ;;
+          Scene+Plants.swift) add PlantWorkshopTests PlantGoldenTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
-          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests ;;
+          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
+          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ;;
+          FluidSurface.swift|Scene+Fluids.swift) add FluidTests ;;
+          MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests ;;
+          HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
+          RasterScene.swift) add RasterSceneTests ;;
+          VSM.swift) add VSMTests ;;
+          MeshSDFBuilder.swift|LumenScene.swift) add MeshSDFBuilderTests ;;
+          LumenGlobalSDF.swift) add GlobalSDFTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
+          LoadActivity.swift) add LoadActivityTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
-          VirtualGeometryBuilder.swift) add CacheTests ;;
+          VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
+          VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests VGCutTests ;;
+          VirtualBLAS.swift) add VGCutTests ;;
+          VirtualTracing.swift) add VGCutTests VGStreamerTests ;;   # and images: no suite traces it
+          TraceScene.swift|Renderer.swift) uncovered+=("$f") ;;    # images (the offscreen skill)
           *) uncovered+=("$f") ;;
         esac ;;
       Package.swift) add MetalRendererTests ;;

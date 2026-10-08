@@ -6,11 +6,13 @@ import simd
 enum RendererError: Error, CustomStringConvertible {
     case missingFunction(String)
     case resourceCreation(String)
+    case unsupported(String)
 
     var description: String {
         switch self {
         case .missingFunction(let name): return "Shader function '\(name)' not found in the shaders"
         case .resourceCreation(let what): return "Failed to create \(what)"
+        case .unsupported(let what): return "This GPU doesn't support \(what), which the renderer needs"
         }
     }
 }
@@ -317,7 +319,7 @@ final class Renderer: NSObject {
     /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
     /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
     /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
-    private var instanceDescriptorStride: Int { SceneBuffers.descriptorStride(builtAPI) }
+    private var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
 
     private let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -332,8 +334,18 @@ final class Renderer: NSObject {
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
     private var pipelines: Pipelines!
     private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
+    private let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
     private var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
+    private var lumen: Lumen?                         // ...and of the Lumen GI mode
+    private var lumenCards: LumenCards?               // Lumen's surface cache (for the scene it was made for)
+    private weak var lumenCardsScene: Scene?
+    private var lumenScene: LumenScene?               // the meshes' distance fields (for the scene it was made for)
+    private weak var lumenSceneOf: Scene?
+    private var lumenGlobal: LumenGlobalSDF?          // the global distance field (made with lumenScene)
+    /// What Lumen's bakes read of a scene that let go of its arrays (the open world's), kept when it did.
+    private var lumenKeptSource: LumenScene.Source?
+    private weak var lumenKeptScene: Scene?
 
     /// The scene's geometry, its instances' records and Metal's structures over them (SceneBuffers.swift).
     private var sceneBuffers: SceneBuffers!
@@ -368,19 +380,22 @@ final class Renderer: NSObject {
     private var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
     private var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
     private var feedbackDummy: MTLBuffer!
-    private var primitiveAS: [MTLAccelerationStructure] { sceneBuffers.primitives }   // Metal ray tracer only
+    private var primitiveAS: [MTLAccelerationStructure] { sceneBuffers.primitives }
     private var primitiveASResources: [MTLResource] = []
     private var namedPrimitives: [String: MTLAccelerationStructure] { sceneBuffers?.namedPrimitives ?? [:] }
     private var namedBlocks: [String: MeshBlock] { sceneBuffers?.namedBlocks ?? [:] }
     private var namedInstanceBlocks: [String: InstanceBlock] { sceneBuffers?.namedInstanceBlocks ?? [:] }
-    /// The crowd's pose slots, if the scene has a crowd: the skinning, and for the Metal tracer their structures' refit.
+    /// The crowd's pose slots, if the scene has a crowd: the skinning, then their structures' refit.
     private var crowdSkinner: CrowdSkinner?
+    /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
+    private var physicsGPU: PhysicsGPU?
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
-    private var customRT: CustomRayTracer? {                           // custom ray tracer only
-        didSet { traversalLast = nil }   // a new tracer's counters start at 0
-    }
-    /// The tracer the scene's structures were built for (and the pipelines compiled for).
-    private var builtRayTracer = RayTracerKind.initial
+    /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
+    private var virtualTracing: VirtualTracing?
+    /// Per slot: the wind, time, leaf fall and sway its plants' descriptors were last written for (WindFrame.plantKey).
+    private var plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
+    /// What the ray-tracing kernels get at buffer 1 (MSL TraceScene), per slot.
+    private var traceScene: TraceSceneArgs!
     /// The API the frames go through, the pipelines were compiled for and the TLAS's instance descriptors are written for.
     private var builtAPI = RenderAPI.metal3
     private var metal4Storage: AnyObject?       // Metal4Frame, made the first time Metal 4 is asked for
@@ -432,9 +447,10 @@ final class Renderer: NSObject {
     private var skyRefreshed: (sky: SkySettings, scene: ObjectIdentifier)?   // what the sky texture was fully drawn for
     private var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
-    /// (16-byte aligned).
+    /// (16-byte aligned), the virtual shadow maps' VSMScene.
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
-    private static let shadingArgsLength = 80 + MemoryLayout<GPUSkyParams>.stride   // 272: the shader asserts it
+    private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
+    private static let shadingArgsLength = shadingVSMOffset + 16   // 288: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
@@ -452,12 +468,33 @@ final class Renderer: NSObject {
     private var megaLightsWritten = false           // last frame's MegaLights pass left its tiles' visible-light hashes
     private var restirGIGrid: RestirGITargets?
     private var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
+    private var rasterScene: RasterScene?           // the raster visibility buffer's view of the scene (RasterScene.swift)
+    private var rasterTargets: RasterTargets?
+    private var rasterClusters: RasterClusters?     // virtual geometry drawn as Nanite's clusters (RasterClusters.swift)
+    private lazy var rasterDepthState: MTLDepthStencilState? = {
+        let d = MTLDepthStencilDescriptor()
+        d.depthCompareFunction = .greater   // reversed Z
+        d.isDepthWriteEnabled = true
+        return device.makeDepthStencilState(descriptor: d)
+    }()
+    private var vsmTargets: VSMTargets?             // the virtual shadow maps (VSM.swift)
+    private weak var vsmSource: MTLBuffer?          // ...made for the scene buffers with this mesh table
+    private var vsmFrame: VSMTargets?               // this frame's (bindScene declares what its samples reach)
+    private lazy var vsmClearState: MTLDepthStencilState? = {
+        let d = MTLDepthStencilDescriptor()
+        d.depthCompareFunction = .always    // a page's clear: the far end over whatever it held
+        d.isDepthWriteEnabled = true
+        return device.makeDepthStencilState(descriptor: d)
+    }()
     private var instanceAS: [MTLAccelerationStructure] {
         sceneBuffers.voxelLOD.map { [MTLAccelerationStructure](repeating: $0.current, count: Renderer.maxFramesInFlight) }
             ?? sceneBuffers.instanceStructures
     }
     private var instanceScratch: [MTLBuffer] { sceneBuffers.instanceScratch }
     private var instanceASBuilt = Set<Int>()
+    /// Per slot: its instances' descriptors changed this frame (something moved, a cut, the wind), so its top-level
+    /// structure is updated. One that stays as it is isn't refitted for nothing (a forest without wind).
+    private var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
     private let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
 
     private var targets: RenderTargets?
@@ -481,6 +518,8 @@ final class Renderer: NSObject {
                 return
             }
             if settings.giMode != oldValue.giMode { resetGIState() }
+            // Any change can change the picture: the reference starts over (a benchmark's starts with its config).
+            if !benchmarkAccumulating { resetReference() }
             publishSettings()
         }
     }
@@ -504,6 +543,14 @@ final class Renderer: NSObject {
     var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
     /// Called once, when the first frame has been drawn.
     var onFirstFrame: (() -> Void)?
+    /// What is loading in the background and how far it is, for the loading overlay (any thread reads it). The app
+    /// reports to it; benchmarks don't.
+    let loadActivity = LoadActivity()
+    private var loadJob: LoadJob?                   // the scene load running in the background
+    /// After a scene is installed: until when texture levels and virtual geometry pages count as loading (until they
+    /// settle; while the camera moves later they stream on without showing).
+    private var settlingStreams: (from: Double, until: Double)?
+    private var streamsPublished = 0.0
     /// Where frames are made, and what runs `perform`'s work (RenderThread.swift).
     private let renderThread = RenderThread()
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
@@ -521,11 +568,32 @@ final class Renderer: NSObject {
     private var prevJitter = SIMD2<Float>(repeating: 0)
     private var driftStart = Camera()   // a benchmark's camera drift starts here (Benchmark.Config.drift)
     // Benchmark reference: average raw frames of a paused scene instead of denoising.
-    private var accumulating = false
+    private var benchmarkAccumulating = false
     private var referenceGIMode: GIMode?                // benchmark references: accumulate this GI method instead of paths
     private var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
     private var accumCount: UInt32 = 0
     private var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
+    /// This frame's reference picture (Reference in the settings, or a benchmark's): what is averaged over frames.
+    private var referenceMode: ReferenceMode { benchmarkAccumulating ? .accumulated : settings.reference.mode }
+    /// Raw frames of the frame's own passes are averaged instead of denoised (a benchmark's reference, or Reference
+    /// "Accumulated passes").
+    private var accumulating: Bool { referenceMode == .accumulated }
+    // Reference "Path traced": pathTraceKernel's running mean, the paths in it per pixel, and the view it was made from.
+    private var pathTraceAccum: MTLTexture?
+    /// What liquidKernel leaves the trace and liquidApplyKernel (Shaders/Liquid.metal): per pixel the bent ray (its
+    /// origin, w = 1 where it is bent; its direction, w = how far the liquid is), what comes through and the reflection.
+    struct LiquidTargets {
+        let ray: MTLTexture
+        let direction: MTLTexture
+        let through: MTLTexture
+        let reflection: MTLTexture
+    }
+    private var liquidTextures: LiquidTargets?
+    private var pathTraceCount: UInt32 = 0
+    private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
+    private var referenceView: [SIMD4<Float>] = []
+    private var lightProxies: MTLBuffer?        // makeLightProxies
+    private var lightProxyCount = 0
     private(set) lazy var upscaleSupported = Capabilities.current.metalFXDenoiser
     private lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
     /// Upscale factors this GPU supports (for MetalFX's denoising scaler), with 0 meaning off.
@@ -547,6 +615,23 @@ final class Renderer: NSObject {
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
     private var shiftHeld = false
+    /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
+    private var holding: (cursor: SIMD2<Float>, depth: Float)?
+    /// The plant workshop's camera turns about what it shows: the point it looks at, and how far it is from it.
+    private var orbit: (target: SIMD3<Float>, distance: Float)?
+    /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
+    private var walker: Walker?
+    /// The frame something last moved in, and each slot's last top-level refit (`writeFrameData`).
+    private var lastMotionFrame = 0
+    private var slotRefitFrame = [Int](repeating: -1, count: 8)
+    private var walkGrid: ColliderGrid?
+    private var walkRemainder: Float = 0
+    private var crouchHeld = false, jumpPending = false
+    private var lastLiftY: [Float] = []
+    private var walkMessage: String?
+    private var clickAt: SIMD2<Float>?
+    /// The view's width over its height, for the cursor's ray.
+    private var viewAspect: Float = 1.6
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
@@ -565,7 +650,7 @@ final class Renderer: NSObject {
     /// The CPU's own work in `draw` (simulation, uploads, encoding; not the waits for a frame slot or the drawable),
     /// averaged over the stats interval. The frame interval is GPU-bound and hides it.
     private var encodeMs = 0.0, encodeSum = 0.0, encodeCount = 0
-    // Traversal counters (Debug window, custom tracer): summed per frame, averaged per stats interval.
+    // The ray queries' counters (Debug window, RT_STATS): summed per frame, averaged per stats interval.
     private var traversalSum = TraversalStats(), traversalFrames = 0
     private var traversalLast: [UInt32]?
     private(set) var traversal: (stats: TraversalStats, frames: Int)?
@@ -573,6 +658,8 @@ final class Renderer: NSObject {
     /// `surface`: the window's view (set up with `configureForRenderer`) or an `OffscreenSurface`; the caller keeps it.
     init(device: MTLDevice, surface: RenderSurface) throws {
         validateGPULayouts()
+        // Every ray is traced through Metal's acceleration structures: there is nothing to fall back to.
+        guard Capabilities.current.metalRayTracing else { throw RendererError.unsupported("Metal ray tracing") }
         guard let queue = device.makeCommandQueue() else {
             throw RendererError.resourceCreation("command queue")
         }
@@ -586,15 +673,15 @@ final class Renderer: NSObject {
         settings = supported
         defaultSettings = defaultSettings.clamped(to: Capabilities.current).settings
 
+        traceScene = try TraceSceneArgs(device: device, slots: Renderer.maxFramesInFlight)
         try createDummyTextures()
         try createSceneResources()
         try createBlueNoiseTexture()
         if benchmark != nil {
             // Benchmarks start with everything in place: the same frames every run.
-            pipelines = try Pipelines(device: device, source: shaderURL, kind: builtRayTracer, api: builtAPI,
-                                      compiler: compiler(for: builtAPI), lightTypes: scene.lightTypeMask,
-                                      stats: CustomRayTracer.statsEnabled)
-            customRT?.pipelines = pipelines.rt
+            pipelines = try Pipelines(device: device, source: shaderURL, api: builtAPI, compiler: compiler(for: builtAPI),
+                                      lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled)
+            keepPipelines(pipelines, generation: shaderGeneration)
         } else {
             // The app compiles them in the background: a second or two after a shader edit (Metal's cache has them
             // otherwise), during which the window is up and the scene, the textures and the noise load.
@@ -644,16 +731,15 @@ final class Renderer: NSObject {
     /// interactive switches run it in the background while the old scene keeps rendering.
     private struct PreparedScene {
         let scene: Scene
-        let rayTracer: RayTracerKind
         let api: RenderAPI
         let textures: [MTLTexture]
         let streamer: TextureStreamer?
-        let customRT: CustomRayTracer?
+        let virtualTracing: VirtualTracing?
         let buffers: SceneBuffers?  // of a scene made for this load (one being drawn gets them when it is installed)
-        let pipelines: Pipelines?   // for its tracer and light types, when the ones in use don't fit...
+        let pipelines: Pipelines?   // for its API and light types, when the ones in use don't fit...
         let shaderGeneration: Int   // ...built from this generation of the shaders
     }
-    private var loading: (scene: SceneSettings, rayTracer: RayTracerKind, api: RenderAPI)?   // being prepared in the background
+    private var loading: (scene: SceneSettings, api: RenderAPI)?   // being prepared in the background
     /// A scene that has been replaced and what it was drawn with, on their way out (`install`).
     private final class Replaced {
         var parts: PreparedScene?
@@ -681,13 +767,15 @@ final class Renderer: NSObject {
     /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
     private var virtualGeometryChanged: Bool {
         let hasModels = scene.settings.kind == .gallery || !scene.settings.extraModels.isEmpty
-        let poolChanged = customRT?.virtualGeometry.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
-        return hasModels && (scene.usesVirtualGeometry != wantsVirtualGeometry(settings.rayTracer) || poolChanged)
+        let poolChanged = virtualTracing?.clusters.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
+        return hasModels && (scene.usesVirtualGeometry != settings.virtualGeometry.enabled || poolChanged)
     }
 
-    /// Virtual geometry needs the custom tracer (Metal would need acceleration structures rebuilt for every cut).
-    private func wantsVirtualGeometry(_ rayTracer: RayTracerKind) -> Bool {
-        rayTracer == .custom && settings.virtualGeometry.enabled
+    /// A still scene's plants (the open world's) name the variants of the season they were built for: another season
+    /// is another scene.
+    private var plantSeasonChanged: Bool {
+        guard let buffers = sceneBuffers, buffers.still, buffers.plants != nil else { return false }
+        return buffers.leafFall != Scene.leafFall(season: settings.foliage.season)
     }
 
     /// What a scene load reads from the renderer, copied on the render thread: `prepareScene` runs in the background while
@@ -701,10 +789,11 @@ final class Renderer: NSObject {
         var traversalStats: Bool
         var api: RenderAPI
         var compiler: AnyObject?    // Metal 4's, for `api`
-        var primitives: [String: MTLAccelerationStructure]   // the scene's named meshes' structures (Metal's tracer)
+        var primitives: [String: MTLAccelerationStructure]   // the scene's named meshes' structures
         var blocks: [String: MeshBlock]                      // its borrowed meshes' buffers
         var instanceBlocks: [String: InstanceBlock]          // its instance groups' blocks
-        var voxelGrids: VoxelGrids?                          // its plants' voxel grids (Metal's tracer)
+        var voxelGrids: VoxelGrids?                          // its plants' voxel grids
+        var leafFall: Float                                  // the season's (a still scene's plants are built for it)
         /// The open world's next scene (`settings.scene`, if it is that) is drawn with the textures this one has: they
         /// stay as they are streamed. By the sources' identities.
         var worldTextures: (identities: [String], textures: [MTLTexture], streamer: TextureStreamer?)?
@@ -712,65 +801,101 @@ final class Renderer: NSObject {
     private var loadOptions: LoadOptions {
         LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
                     textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
-                    traversalStats: CustomRayTracer.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
-                    primitives: builtRayTracer == .metal && builtAPI == settings.api ? namedPrimitives : [:], blocks: namedBlocks,
+                    traversalStats: TraceSceneArgs.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
+                    primitives: builtAPI == settings.api ? namedPrimitives : [:], blocks: namedBlocks,
                     instanceBlocks: namedInstanceBlocks,
-                    voxelGrids: builtRayTracer == .metal && builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids : nil,
-                    worldTextures: settings.scene.isSameWorld(as: scene.settings) && builtAPI == settings.api
+                    voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels : nil,
+                    leafFall: Scene.leafFall(season: settings.foliage.season),
+                    worldTextures: (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameWorkshop(as: scene.settings)
+                                    || settings.scene.isSameCity(as: scene.settings))
+                        && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
-    private func bufferOptions(rayTracer: RayTracerKind, api: RenderAPI, known: [String: MTLAccelerationStructure],
-                               blocks: [String: MeshBlock], instanceBlocks: [String: InstanceBlock],
-                               voxelGrids: VoxelGrids? = nil) -> SceneBuffers.Options {
-        SceneBuffers.Options(rayTracer: rayTracer, api: api, slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
+    private func bufferOptions(api: RenderAPI, known: [String: MTLAccelerationStructure], blocks: [String: MeshBlock],
+                               instanceBlocks: [String: InstanceBlock], voxelGrids: VoxelGrids? = nil,
+                               extraInstances: Int = 0, leafFall: Float) -> SceneBuffers.Options {
+        SceneBuffers.Options(api: api, slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
                              compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known, blocks: blocks,
-                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids)
+                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, extraInstances: extraInstances, leafFall: leafFall)
     }
 
-    /// The pipelines for `kind` and `lightTypes`, compiled here (any thread) unless `current` already fits. Its
-    /// library is reused when only the light types differ.
-    private func makePipelines(kind: RayTracerKind, api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool,
-                               current: Pipelines) throws -> Pipelines? {
-        if current.kind == kind && current.api == api && current.lightTypes == lightTypes { return nil }
-        return try Pipelines(device: device, source: shaderURL, kind: kind, api: api, compiler: compiler, lightTypes: lightTypes,
-                             stats: stats, reusing: current.kind == kind && current.api == api ? current.library : nil)
+    /// The pipelines for `api`, `stats` and `lightTypes` of shader generation `generation`, unless `current` already fits:
+    /// a set made for them before (`pipelineCache`), or compiled here (any thread). Its library is reused when only the
+    /// light types differ.
+    private func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
+                               current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
+        if current.stats == stats && current.api == api && current.lightTypes == lightTypes { return nil }
+        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation)
+        if let kept = pipelineCache.get(key) {
+            load?.step("Shaders", detail: "kept from before").finish()
+            return kept
+        }
+        let made = try Pipelines(device: device, source: shaderURL, api: api, compiler: compiler, lightTypes: lightTypes,
+                                 stats: stats, reusing: current.stats == stats && current.api == api ? current.library : nil,
+                                 load: load)
+        pipelineCache.put(key, made)
+        return made
     }
 
-    /// `current`: the scene being drawn, reused when only the ray tracer changes; `instances` is then the render thread's
-    /// copy of its instances (the frame loop keeps animating the scene while this runs).
-    private func prepareScene(_ sceneSettings: SceneSettings, rayTracer: RayTracerKind, reuse current: Scene?,
-                              instances: [Scene.Instance]? = nil, options: LoadOptions) throws -> PreparedScene {
-        let virtual = rayTracer == .custom && options.virtualGeometry
-        // Generated plants are assemblies for the custom tracer and baked meshes for Metal's: another scene.
-        let assemblies = rayTracer == .custom
-        // Metal's: far plants as voxels if asked for (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
-        let voxelBoxes = rayTracer == .metal && sceneSettings.voxelBoxes
+    /// Keeps `made`, of shader generation `generation`, for a later scene with its light types.
+    private func keepPipelines(_ made: Pipelines, generation: Int) {
+        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation), made)
+    }
+
+    /// The scene's virtual geometry for the tracer, if it has virtual meshes (any thread).
+    private func makeVirtualTracing(_ scene: Scene, poolMB: Int) throws -> VirtualTracing? {
+        scene.virtualMeshes.isEmpty ? nil
+            : try VirtualTracing(device: device, queue: buildQueue, scene: scene, poolMB: poolMB, slots: Renderer.maxFramesInFlight)
+    }
+
+    /// `current`: the scene being drawn, reused when only the API changes; `instances` is then the render thread's copy
+    /// of its instances (the frame loop keeps animating the scene while this runs).
+    /// `load`: the load to report the steps to (the loading overlay).
+    private func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
+                              options: LoadOptions, load: LoadJob? = nil) throws -> PreparedScene {
+        let virtual = options.virtualGeometry
+        // Generated plants are assemblies (unless SceneSettings.bakedPlants); baked ones far away are voxels if asked for
+        // (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
+        let assemblies = true
+        let voxelBoxes = sceneSettings.voxelBoxes
         let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual
             && (!$0.hasPlants || ($0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants) && $0.usesVoxelBoxes == voxelBoxes)) ? $0 : nil }
-        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies, voxelBoxes: voxelBoxes)
+        let newScene = reused ?? Scene(sceneSettings, virtualGeometry: virtual, assemblies: assemblies, voxelBoxes: voxelBoxes,
+                                       load: load)
+        if load?.isCancelled == true { throw CancellationError() }   // another scene was asked for meanwhile
         let kept = options.worldTextures.flatMap { $0.identities == newScene.textures.map(\.identity) ? $0 : nil }
         let streamer = kept != nil ? kept?.streamer
             : newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
             : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
-                                  slots: Renderer.maxFramesInFlight, placement: options.api == .metal4)
-        let textures = try kept?.textures ?? streamer?.textures ?? MaterialTextures.load(newScene.textures, device: device, queue: queue)
+                                  slots: Renderer.maxFramesInFlight, placement: options.api == .metal4, load: load)
+        let textures = try kept?.textures ?? streamer?.textures
+            ?? MaterialTextures.load(newScene.textures, device: device, queue: queue, load: load)
         // The scene's buffers and structures, unless the frames are still animating it.
         let buffers = reused != nil ? nil : try autoreleasepool {
-            try SceneBuffers(device: device, queue: buildQueue, scene: newScene,
-                             options: bufferOptions(rayTracer: rayTracer, api: options.api, known: options.primitives, blocks: options.blocks,
-                                                    instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids))
+            var made = bufferOptions(api: options.api, known: options.primitives, blocks: options.blocks,
+                                     instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids,
+                                     extraInstances: newScene.tracesClusters ? 1 : 0, leafFall: options.leafFall)
+            made.load = load
+            return try SceneBuffers(device: device, queue: buildQueue, scene: newScene, options: made)
         }
-        let rt = rayTracer == .custom ? try CustomRayTracer(device: device, scene: newScene, instances: reused == nil ? nil : instances,
-                                                            geometry: buffers, slots: Renderer.maxFramesInFlight, poolMB: options.poolMB) : nil
-        // The shaders too, when the tracer changes (a recompile) or the new scene has other light types.
-        let pipelines = try makePipelines(kind: rayTracer, api: options.api, compiler: options.compiler,
-                                          lightTypes: newScene.lightTypeMask, stats: options.traversalStats, current: options.pipelines)
-        if let buffers { SceneBuffers.touch(buffers.buffers + (rt?.buffers ?? []), device: device, queue: buildQueue) }
+        if buffers != nil && !newScene.virtualMeshes.isEmpty {
+            load?.step("Virtual geometry", detail: "\(newScene.virtualMeshes.count) meshes")
+        }
+        let virtualTracing = buffers == nil ? nil : try makeVirtualTracing(newScene, poolMB: options.poolMB)
+        // The shaders too, when the API changes (a recompile) or the new scene has other light types.
+        let pipelines = try makePipelines(api: options.api, compiler: options.compiler, lightTypes: newScene.lightTypeMask,
+                                          stats: options.traversalStats, generation: options.shaderGeneration,
+                                          current: options.pipelines, load: load)
+        if let buffers { SceneBuffers.touch(buffers.buffers, device: device, queue: buildQueue) }
         // The open world's scene is made again for every tile the camera comes to, never built from twice: its vertex
         // arrays, now in the buffers, go.
-        if buffers != nil, newScene.worldPlace != nil, !CustomRayTracer.checked { newScene.releaseGeometry() }
-        return PreparedScene(scene: newScene, rayTracer: rayTracer, api: options.api, textures: textures, streamer: streamer, customRT: rt,
+        if buffers != nil, newScene.worldPlace != nil {
+            lumenKeptSource = LumenScene.Source(scene: newScene)   // Lumen's bakes still read them
+            lumenKeptScene = newScene
+            newScene.releaseGeometry()
+        }
+        return PreparedScene(scene: newScene, api: options.api, textures: textures, streamer: streamer, virtualTracing: virtualTracing,
                              buffers: buffers, pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
 
@@ -779,18 +904,28 @@ final class Renderer: NSObject {
         return parts.count >= 3 ? (SIMD3(parts[0], parts[1], parts[2]), parts.count > 3 ? Int(parts[3]) : 0) : nil
     }()
 
-    /// Starts preparing `settings.scene` / `settings.rayTracer` in the background; `install` swaps it in when done.
+    /// Starts preparing `settings.scene` / `settings.api` in the background; `install` swaps it in when done.
     private func startLoadingScene() {
-        let wanted = (scene: settings.scene, rayTracer: settings.rayTracer, api: settings.api)
+        let wanted = (scene: settings.scene, api: settings.api)
         if let loading, loading == wanted { return }
+        // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
+        if let loading, loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
+            return
+        }
         loading = wanted
-        let reuse = wanted.scene == scene.settings ? scene : nil   // only the tracer changes
+        let reuse = wanted.scene == scene.settings ? scene : nil   // only the API changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
+        // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
+        loadJob?.cancel()
+        let job = benchmark != nil || wanted.scene.isSameWorkshop(as: scene.settings) || wanted.scene.isSameCity(as: scene.settings)
+            ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
+            : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title)
+        loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let start = CACurrentMediaTime()
             let result = Result {
-                try self.prepareScene(wanted.scene, rayTracer: wanted.rayTracer, reuse: reuse, instances: instances, options: options)
+                try self.prepareScene(wanted.scene, reuse: reuse, instances: instances, options: options, load: job)
             }
             let preparedMs = (CACurrentMediaTime() - start) * 1000
             self.renderThread.perform {
@@ -798,14 +933,17 @@ final class Renderer: NSObject {
                     return   // superseded by a newer request
                 }
                 self.loading = nil
+                if self.loadJob === job { self.loadJob = nil }
                 switch result {
                 case .success(let prepared):
                     if self.benchmark?.isMeasuring == true { self.streaming.preparedMs.append(preparedMs) }
+                    job?.step("Install", detail: "waiting for the frames in flight")
                     self.install(prepared, resetCamera: prepared.scene.settings.kind != self.scene.settings.kind)
+                    job?.finish()
                 case .failure(let error):
+                    job?.fail()
                     print("Scene load failed, keeping the previous scene: \(error)")
                     self.settings.scene = self.scene.settings
-                    self.settings.rayTracer = self.builtRayTracer
                     self.settings.api = self.builtAPI
                 }
             }
@@ -814,10 +952,12 @@ final class Renderer: NSObject {
 
     /// Everything sized by the scene: geometry, acceleration structures, per-frame instance / light buffers, light maps.
     private func createSceneResources(_ prepared: PreparedScene? = nil) throws {
-        builtRayTracer = prepared?.rayTracer ?? settings.rayTracer
         builtAPI = prepared?.api ?? settings.api
-        customRT = nil
+        virtualTracing = nil
+        plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
+        physicsGPU = nil
+        holding = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
         lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
@@ -829,22 +969,33 @@ final class Renderer: NSObject {
         instanceASBuilt = []
         textureStreamer = prepared?.streamer
         let buffers = try prepared?.buffers ?? SceneBuffers(device: device, queue: buildQueue, scene: scene,
-                                                            options: bufferOptions(rayTracer: builtRayTracer, api: builtAPI,
-                                                                                   known: builtRayTracer == .metal ? namedPrimitives : [:],
-                                                                                   blocks: namedBlocks,
-                                                                                   instanceBlocks: namedInstanceBlocks))
+                                                            options: bufferOptions(api: builtAPI, known: namedPrimitives, blocks: namedBlocks,
+                                                                                   instanceBlocks: namedInstanceBlocks,
+                                                                                   extraInstances: scene.tracesClusters ? 1 : 0,
+                                                                                   leafFall: Scene.leafFall(season: settings.foliage.season)))
         sceneBuffers = buffers
+        makeLightProxies()
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
             crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
         }
-        try createLightBuffers()
-        if builtRayTracer == .custom {
-            customRT = try prepared?.customRT ?? CustomRayTracer(device: device, scene: scene, geometry: buffers, slots: Renderer.maxFramesInFlight,
-                                                                 poolMB: settings.virtualGeometry.poolMB)
-            if let pipelines { customRT?.pipelines = pipelines.rt }   // nil at launch: set when they arrive
+        // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
+        // from the GPU's buffers).
+        if let physics = scene.physics {
+            let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
+            // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
+            let onGPU = scene.settings.kind.simulates
+                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
+            if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
+                physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
+                                            slots: Renderer.maxFramesInFlight, simulates: onGPU,
+                                            clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
+                if onGPU { scene.runPhysicsOnGPU() }
+            }
         }
+        try createLightBuffers()
+        virtualTracing = try prepared?.virtualTracing ?? makeVirtualTracing(scene, poolMB: settings.virtualGeometry.poolMB)
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
         lmd.pixelFormat = .r32Float
@@ -864,12 +1015,10 @@ final class Renderer: NSObject {
         loading = nil   // a scene still loading is for settings this one replaces
         do {
             let reuse = settings.scene == scene.settings ? scene : nil
-            install(try prepareScene(settings.scene, rayTracer: settings.rayTracer, reuse: reuse, options: loadOptions),
-                    resetCamera: resetCamera)
+            install(try prepareScene(settings.scene, reuse: reuse, options: loadOptions), resetCamera: resetCamera)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             settings.scene = scene.settings
-            settings.rayTracer = builtRayTracer
             settings.api = builtAPI
         }
     }
@@ -878,11 +1027,11 @@ final class Renderer: NSObject {
     private func install(_ prepared: PreparedScene, resetCamera: Bool) {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
-        let oldRayTracer = builtRayTracer, oldAPI = builtAPI, oldPipelines = pipelines
+        let oldAPI = builtAPI, oldPipelines = pipelines
         // What the scene being replaced is drawn with: to go back to if this fails, and to let go of if it doesn't. In
         // a box, which is emptied off this thread: letting go of an open world's scene takes 13 ms.
-        let old = Replaced(PreparedScene(scene: scene, rayTracer: oldRayTracer, api: oldAPI, textures: materialTextures,
-                                         streamer: textureStreamer, customRT: customRT, buffers: sceneBuffers, pipelines: nil,
+        let old = Replaced(PreparedScene(scene: scene, api: oldAPI, textures: materialTextures, streamer: textureStreamer,
+                                         virtualTracing: virtualTracing, buffers: sceneBuffers, pipelines: nil,
                                          shaderGeneration: shaderGeneration))
         let oldSettings = scene.settings, oldPlace = scene.worldPlace
         let start = CACurrentMediaTime()
@@ -890,9 +1039,9 @@ final class Renderer: NSObject {
         do {
             if let ready = prepared.pipelines, prepared.shaderGeneration == shaderGeneration {
                 pipelines = ready
-            } else if let made = try makePipelines(kind: prepared.rayTracer, api: prepared.api, compiler: compiler(for: prepared.api),
-                                                   lightTypes: scene.lightTypeMask, stats: CustomRayTracer.statsEnabled,
-                                                   current: pipelines) {
+            } else if let made = try makePipelines(api: prepared.api, compiler: compiler(for: prepared.api),
+                                                   lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled,
+                                                   generation: shaderGeneration, current: pipelines) {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
@@ -900,14 +1049,17 @@ final class Renderer: NSObject {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old.parts!.scene
             settings.scene = oldSettings
-            settings.rayTracer = oldRayTracer
             settings.api = oldAPI
             pipelines = oldPipelines
             try? createSceneResources(old.parts)
         }
         // The open world made around another tile is the same world in the same place: what the frames have gathered
         // of it holds.
-        let sameWorld = scene.settings.isSameWorld(as: oldSettings)
+        // ...and the city with another building's interior in it: the same city where it was.
+        let sameWorld = scene.settings.isSameWorld(as: oldSettings) || scene.settings.isSameCity(as: oldSettings)
+        // The workshop edited: the same few plants a little changed, where they were. What the frames gathered of the
+        // light mostly holds (the plants are new, but the sky, the ground and the camera aren't).
+        let sameWorkshop = scene.settings.isSameWorkshop(as: oldSettings)
         var moved = SIMD2<Float>()
         if sameWorld, let was = oldPlace, let now = scene.worldPlace {
             // The scene's origin has moved: the camera is where it was in the world.
@@ -919,11 +1071,12 @@ final class Renderer: NSObject {
             // ...and so is where Freeze LOD holds the detail for.
             frozenLOD?.0 += SIMD3(moved.x, 0, moved.y)
         }
-        if !(sameWorld && moved == .zero && oldRayTracer == builtRayTracer) {
+        if sameWorkshop {
+            resetReference()
+        } else if !(sameWorld && moved == .zero) {
             resetGIState()
             upscalerReset = true
-            accumCount = 0
-            colorAccumCount = 0
+            resetReference()
         } else if !scene.meshLights.isEmpty || old.parts?.scene.meshLights.isEmpty == false {
             // At night the tiles' lights are other ones: what the pixels kept of the lights (a reservoir names its
             // light by its place in the scene's table) is of the scene before.
@@ -935,15 +1088,34 @@ final class Renderer: NSObject {
             camera = scene.defaultCamera
             prevCamera = camera
         }
+        // Walking: on in what it was on (the same workshop or city a little changed), off otherwise.
+        walkGrid = scene.walkColliders.isEmpty && scene.walkGround == nil ? nil : ColliderGrid(scene.walkColliders)
+        if walkGrid == nil || !(sameWorkshop || scene.settings.isSameCity(as: oldSettings)) { walker = nil }
+        lastLiftY = scene.interiorControls?.lifts.map(\.y) ?? []
+        if walker != nil {
+            orbit = nil
+        } else if !scene.settings.kind.isWorkshop {
+            orbit = nil
+        } else if resetCamera || !sameWorkshop || oldSettings.plants.layout != scene.settings.plants.layout
+                    || oldSettings.plants.species != scene.settings.plants.species
+                    || oldSettings.buildings.view != scene.settings.buildings.view {
+            frameWorkshop()
+        } else if orbit == nil, let focus = scene.focus {
+            orbit = (focus.centroid, length(camera.position - focus.centroid))
+        }
         // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
-        if sameWorld, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
+        if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
         if #available(macOS 26.0, *) { (metal4Storage as? Metal4Frame)?.noteSceneChange() }
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
         if sameWorld, benchmark?.isMeasuring == true { streaming.installedMs.append(installedMs) }
         if sameWorld { benchmark?.noteSwap() }
-        print(String(format: "Scene: %@, %d instances, %d lights, %@ ray tracing, %@ (installed in %.0f ms)", scene.settings.kind.title,
-                     sceneBuffers.instanceCount, scene.lights.count, builtRayTracer.title, builtAPI.title, installedMs))
+        if benchmark == nil {
+            let now = CACurrentMediaTime()
+            settlingStreams = (now, now + Renderer.settlingStreamsSeconds)
+        }
+        print(String(format: "Scene: %@, %d instances, %d lights, %@ (installed in %.0f ms)", scene.settings.kind.title,
+                     sceneBuffers.instanceCount, scene.lights.count, builtAPI.title, installedMs))
     }
 
     /// What shading reads besides the scene's buffers: the textures and their table, and each slot's arguments.
@@ -976,11 +1148,11 @@ final class Renderer: NSObject {
         // Metal 4's streamed ones are placement-sparse textures of the device's, each its own allocation: its
         // residency set forgets what no frame declares, and a texture whose levels have settled is never uploaded to.
         // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
-        // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through RTScene or
-        // their boxes' data.
+        // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through their boxes'
+        // data.
         shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
-        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? [])
+        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? [])
             + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
     }
 
@@ -1110,20 +1282,21 @@ final class Renderer: NSObject {
     }
 
     /// This frame's fog parameters for the shaders (flags 0 while fog is off).
-    private func makeFogParams(grid: FogTargets?, historyValid: Bool) -> GPUFogParams {
+    /// `requireGrid`: none without the froxel grid (the frame's fog); the path tracer reads the medium alone.
+    private func makeFogParams(grid: FogTargets?, historyValid: Bool, requireGrid: Bool = true) -> GPUFogParams {
         var p = GPUFogParams()
         let f = settings.fog
-        guard f.enabled, let grid else { return p }
+        guard f.enabled, grid != nil || !requireGrid else { return p }
         let near: Float = 0.2, far = max(f.maxDistance, 1)
         p.medium = SIMD4(FogSettings.densityRange.clamp(f.density) * (f.density > 0 ? 1 : 0), max(f.heightFalloff, 0),
                          f.baseHeight, FogSettings.anisotropyRange.clamp(f.anisotropy))
         p.albedo = SIMD4(f.albedo, max(f.ambient, 0))
         p.noise = SIMD4(f.noise, max(f.noiseScale, 0.1), animTime, 0.1)
         p.wind = SIMD4(f.wind, FogSettings.hazeRange.clamp(f.haze))
-        p.grid = SIMD4(near, far, log(far / near), Float(grid.slices))
+        p.grid = SIMD4(near, far, log(far / near), Float(grid?.slices ?? 0))
         let volumes = f.volumes ? Array(scene.fogVolumes.prefix(GPUFogParams.maxVolumes)) : []
         for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
-        p.counts = SIMD4(UInt32(grid.columns), UInt32(grid.rows), UInt32(volumes.count),
+        p.counts = SIMD4(UInt32(grid?.columns ?? 0), UInt32(grid?.rows ?? 0), UInt32(volumes.count),
                          GPUFogParams.enabled | (historyValid ? GPUFogParams.historyValid : 0)
                          | (f.reflections ? GPUFogParams.reflections : 0) | (f.lights ? 0 : GPUFogParams.skyLight))
         return p
@@ -1400,16 +1573,54 @@ final class Renderer: NSObject {
 
     // MARK: - Per-frame CPU work
 
-    private func writeFrameData(slot: Int) {
+    private func writeFrameData(slot: Int, lod: VGView) {
         // Instances: a slot's first frame of a scene writes every record, straight into its buffers; after that only
         // the ones that move, the rest being as they were (a crowd is tens of thousands of records).
         // (A still scene's were written with its buffers.)
         let first = !frameDataWritten[slot], still = sceneBuffers.still
-        if let customRT {
-            customRT.update(slot: slot, scene: scene)
-        } else if !still {
-            sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first)
+        // The GPU's bodies where they were when this slot's last frame was done: the CPU's copy (the frame's own
+        // records are the pose kernel's); and the body the mouse holds, for this frame's steps.
+        if let physicsGPU {
+            if physicsGPU.simulates {
+                scene.placeBodies(poses: physicsGPU.snapshot(slot: slot))
+                if let physics = scene.physics { physicsGPU.setGrab(slot: slot, physics.grab) }
+            } else {
+                physicsGPU.upload(slot: slot)
+            }
         }
+        if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
+        // Deforming meshes (the crowd's, cloths, soft bodies, hair) change their structures' bounds: the top level's too.
+        // (What moves only now and then, doors and lifts: only once each slot has caught up with its last move.)
+        if scene.motionThisFrame { lastMotionFrame = Int(frameIndex) }
+        let moved = !scene.movingInstances.isEmpty && slotRefitFrame[slot] <= lastMotionFrame
+        instanceASStale[slot] = first || moved || virtualTracing != nil || scene.hasDeformingMeshes
+        // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
+        if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
+                                                               first: sceneBuffers.instanceCount, scene: scene) {
+            instanceASBuilt.remove(slot)
+        }
+        // The plants and the ground cover in the wind, and the plants' variants for the season: every frame it blows.
+        if let plants = sceneBuffers.plants, !still {
+            var wind = windFrame
+            // Limbs move near the camera only: it is placed on a grid, so that the plants' choices (and the top-level
+            // structure's build they take) change only as it crosses a cell.
+            if settings.foliage.swayReach > 0 {
+                wind.sway = SIMD4((lod.camPos / Renderer.swayStep).rounded(.down) * Renderer.swayStep, settings.foliage.swayReach)
+            }
+            let state = wind.plantKey
+            // Far plants as voxels: their levels follow the view the virtual geometry is cut for (Freeze LOD holds it).
+            let voxels = plants.voxels != nil && settings.foliage.lod > 0
+            if first || voxels || plantsWritten[slot] != state {
+                let view = voxels ? SIMD4(lod.camPos, settings.foliage.lod / max(lod.pixelScale, 1e-6)) : nil
+                if plants.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride, scene: scene,
+                                           wind: wind, view: view) {
+                    instanceASBuilt.remove(slot)   // other variants or levels: a build
+                }
+                instanceASStale[slot] = true
+                plantsWritten[slot] = state
+            }
+        }
+        writeTraceScene(slot: slot)
         crowdSkinner?.write(slot: slot)
         if !scene.instances.isEmpty, !still {
             scene.writeInstanceData(into: instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count),
@@ -1464,6 +1675,19 @@ final class Renderer: NSObject {
     }
 
     private func updateCamera(dt: Float) {
+        if walker != nil {
+            walk(dt)
+            return
+        }
+        // (A benchmark's walking camera: a body for the doors and the furniture.)
+        let body = benchmark?.current.body == true ? camera.position - SIMD3(0, Walker.eyeStanding, 0) : nil
+        scene.interiorControls?.advance(dt, walker: body)
+        if let body {
+            if let last = benchmarkBody, dt > 0 {
+                scene.interiorControls?.push(scene.physics, feet: body, velocity: (body - last) / dt, height: Walker.standing)
+            }
+            benchmarkBody = body
+        }
         var move = SIMD3<Float>(repeating: 0)
         let forward = camera.forward, right = camera.right
         if heldKeys.contains("w") { move += forward }
@@ -1475,7 +1699,152 @@ final class Renderer: NSObject {
         if length(move) > 0 {
             let speed = settings.moveSpeed * (shiftHeld ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
+            orbit?.target += normalize(move) * speed * dt   // the workshop's: it moves what it turns about with it
         }
+    }
+
+    // MARK: - Interiors on demand
+
+    private var interiorWanted: (key: String?, since: Double)?
+    private var lastCameraPosition: SIMD3<Float>?
+
+    /// The city's building the camera is in or nearest (within reach, not far above it): its interior is made, in the
+    /// background (SceneSettings.interior); left behind, it is dropped. It waits a moment and while the camera flies
+    /// fast, so that passing by doesn't make one.
+    private func chooseInterior() {
+        let now = CACurrentMediaTime()
+        let p = camera.position, flat = SIMD2(p.x, p.z)
+        let speed = lastCameraPosition.map { length($0 - p) } ?? 0
+        lastCameraPosition = p
+        guard speed < 0.25 else { return }   // (a frame's way at 15 m/s and 60 fps)
+        let reach = settings.scene.city.interiorReach
+        func gap(_ r: CityPlan.Rect) -> Float { length(simd_max(simd_max(r.lo - flat, flat - r.hi), .zero)) }
+        let current = settings.scene.interior
+        var wanted = current
+        if let inside = scene.lotAreas.first(where: { gap($0.rect) == 0 && p.y < $0.height + 1 }) {
+            wanted = inside.key
+        } else if let near = scene.lotAreas.filter({ p.y < $0.height + 25 }).min(by: { gap($0.rect) < gap($1.rect) }) {
+            let held = scene.lotAreas.first { $0.key == current }
+            if held.map({ gap($0.rect) > reach + 15 }) ?? true { wanted = gap(near.rect) < reach ? near.key : nil }
+        } else {
+            wanted = nil
+        }
+        guard wanted != current else { interiorWanted = nil; return }
+        if interiorWanted?.key != wanted { interiorWanted = (wanted, now); return }
+        if let since = interiorWanted?.since, now - since > 0.4 || benchmark != nil {
+            settings.scene.interior = wanted
+            interiorWanted = nil
+        }
+    }
+
+    // MARK: - Walking
+
+    /// Walk mode on or off. On: the walker stands under the camera (in the building workshop, outside, at the
+    /// building's door, if the camera isn't in the building).
+    private func toggleWalk() {
+        if walker != nil {
+            walker = nil
+            scene.interiorControls?.flashlight.on = false
+            walkMessage = "Flying"
+            return
+        }
+        guard let grid = walkGrid else { walkMessage = "Nothing to walk on here"; return }
+        var feet = camera.position
+        let inside = scene.walkAreas.contains { area in
+            let p = area.at.inverse * SIMD4(camera.position, 1)
+            return area.rect.contains(SIMD2(p.x, p.z)) && p.y < area.building.height
+        }
+        if scene.settings.kind == .buildings, !inside, let area = scene.walkAreas.first,
+           let door = area.building.plan.outsideDoors(0).first {
+            // In front of the door, facing it.
+            let room = area.building.plan.storeys[0].rooms[door.a].rect.center
+            var out = door.alongX ? SIMD2<Float>(0, door.at.y > room.y ? 1 : -1) : SIMD2<Float>(door.at.x > room.x ? 1 : -1, 0)
+            let p = door.at + out * 1.6
+            let w = area.at * SIMD4(p.x, 1, p.y, 1)
+            feet = SIMD3(w.x, w.y, w.z)
+            let o4 = area.at * SIMD4(out.x, 0, out.y, 0)
+            out = SIMD2(o4.x, o4.z)
+            camera.yaw = atan2(-out.x, out.y)
+            camera.pitch = 0
+        }
+        if let down = grid.raycast(feet + SIMD3(0, 0.5, 0), [0, -1, 0], limit: 300) { feet.y += 0.5 - down }
+        else if let ground = scene.walkGround { feet.y = ground(feet.x, feet.z) }
+        else { feet.y -= Walker.eyeStanding }
+        walker = Walker(feet: feet)
+        orbit = nil
+        camera.pitch = min(max(camera.pitch, -0.7), 0.7)
+        walkMessage = "Walking: W A S D, Shift runs, Space jumps, C crouches, E or a click uses, F the flashlight, V flies"
+    }
+
+    /// A walking frame: the walker told what is held, the doors and lifts moved on, the camera at its eyes.
+    private func walk(_ dt: Float) {
+        guard var w = walker, let grid = walkGrid else { walker = nil; return }
+        let controls = scene.interiorControls
+        let fw = camera.forward
+        let ahead = length(SIMD2(fw.x, fw.z)) > 1e-4 ? normalize(SIMD2(fw.x, fw.z)) : SIMD2<Float>(0, -1)
+        let right = SIMD2(-ahead.y, ahead.x)
+        var move = SIMD2<Float>.zero
+        if heldKeys.contains("w") { move += ahead }
+        if heldKeys.contains("s") { move -= ahead }
+        if heldKeys.contains("d") { move += right }
+        if heldKeys.contains("a") { move -= right }
+        if length(move) > 0 { move = normalize(move) }
+        let input = Walker.Input(move: move, run: shiftHeld, crouch: crouchHeld || controlHeld, jump: jumpPending)
+        jumpPending = false
+        controls?.advance(dt, walker: w.feet)
+        let lifts = controls?.lifts.map(\.y) ?? []
+        var moved = zip(lifts, lastLiftY).map { $0 - $1 }
+        lastLiftY = lifts
+        controls?.push(scene.physics, feet: w.feet, velocity: w.velocity, height: w.height)
+        let obstacles = (controls?.obstacles ?? []) + (controls?.propObstacles(scene.physics) ?? [])
+        w.advance(dt, input: input, world: grid, moving: obstacles, carry: { p in
+            defer { if p < moved.count { moved[p] = 0 } }
+            return p < moved.count ? SIMD3(0, moved[p], 0) : .zero
+        }, terrain: scene.walkGround, remainder: &walkRemainder)
+        // Fallen out of the world: back where it started.
+        if w.feet.y < -50 { w = Walker(feet: camera.position) }
+        walker = w
+        camera.position = w.eyePosition
+        if let c = controls, c.flashlight.on {
+            c.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            c.flashlight.direction = camera.forward
+        }
+    }
+
+    /// Uses what is along `ray` from the eyes: a door, a switch, a lift's button.
+    private func use(_ ray: SIMD3<Float>) {
+        guard let c = scene.interiorControls else { return }
+        let blocked = walkGrid?.raycast(camera.position, ray, limit: 3)
+        if let what = c.use(from: camera.position, along: ray, blocked: blocked) { walkMessage = what }
+    }
+
+    /// The storey the walker is on, of the building it is in (its plan's), if it is in one.
+    var walkerStatus: WalkerStatus? {
+        guard let w = walker else { return nil }
+        var status = WalkerStatus(position: w.feet, yaw: camera.yaw, building: nil, storey: nil, local: nil, message: walkMessage,
+                                  flashlight: scene.interiorControls?.flashlight.on ?? false, crouched: w.crouched)
+        for (i, area) in scene.walkAreas.enumerated() {
+            let p = area.at.inverse * SIMD4(w.feet, 1)
+            guard area.rect.contains(SIMD2(p.x, p.z), margin: 0.5) else { continue }
+            status.building = i
+            status.local = SIMD3(p.x, p.y, p.z)
+            status.storey = area.building.plan.storeys.lastIndex { $0.floor <= p.y + 0.3 } ?? 0
+        }
+        return status
+    }
+
+    /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
+    func frameWorkshop() {
+        guard scene.settings.kind.isWorkshop, let focus = scene.focus else { return }
+        let framed = Camera.framing(focus, fovY: settings.fovDegrees * .pi / 180, aspect: viewAspect)
+        camera = framed.camera
+        prevCamera = camera
+        orbit = (framed.target, framed.distance)
+    }
+
+    private func placeOrbitingCamera() {
+        guard let orbit else { return }
+        camera.position = orbit.target - camera.forward * orbit.distance
     }
 
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
@@ -1496,7 +1865,9 @@ final class Renderer: NSObject {
         u.height = UInt32(height)
         u.frameIndex = frameIndex
         u.lightCount = UInt32(scene.lights.count)
-        u.bounces = settings.giEnabled && giMode == .pathTraced ? UInt32(settings.bounces) : 0
+        // (Reference "Accumulated passes" in the app: its own path length. A benchmark's: its settings'.)
+        let bounces = accumulating && !benchmarkAccumulating ? settings.reference.bounces : settings.bounces
+        u.bounces = settings.giEnabled && giMode == .pathTraced ? UInt32(bounces) : 0
         u.flags = (historyValid ? UniformFlags.historyValid : 0) | (denoiserOn ? UniformFlags.denoise : 0)
         if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
         if usesSpecular { u.flags |= UniformFlags.specular }
@@ -1568,11 +1939,14 @@ final class Renderer: NSObject {
             }
         }
         if scene.worldPlace != nil { scene.follow(camera.position) }
+        if settings.scene.kind.isCity || settings.scene.kind.isWorld, settings.scene.city.interiors, loading == nil, benchmark == nil {
+            chooseInterior()
+        }
         setWorldLights()
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
+        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
-            let streamed = settings.scene.isSameWorld(as: scene.settings) && settings.rayTracer == builtRayTracer && settings.api == builtAPI
+            let streamed = (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)) && settings.api == builtAPI
             if benchmark != nil && !streamed { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
@@ -1587,10 +1961,9 @@ final class Renderer: NSObject {
         let slot = Int(frameIndex) % Renderer.maxFramesInFlight
         let lod = detailView(height: size.height)
         updateVoxelLOD(lod)
-        customRT?.virtualGeometry?.update(frame: frameIndex, framesInFlight: Renderer.maxFramesInFlight)
-        customRT?.virtualBLAS?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight,
-                                      camPos: lod.camPos, pixelScale: lod.pixelScale, tau: lod.tau, sceneInstances: scene.instances)
-        writeFrameData(slot: slot)
+        currentRasterClusters()?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight)
+        virtualTracing?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, view: lod, scene: scene)
+        writeFrameData(slot: slot, lod: lod)
         // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
         // (Metal 3: the profiler times encoders, and a Metal 4 frame is a single one.)
         let profile = profilePasses && benchmark == nil && builtAPI == .metal3 ? profiler?.beginFrame(slot: slot) : nil
@@ -1602,30 +1975,38 @@ final class Renderer: NSObject {
         }
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
         if skyActive { encodeSky(passes) }
+        writeVSMArgument(plan)
+        if let vsm = plan.vsm { encodeVSM(plan, vsm, passes: passes) }
 
         // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
         // before it set).
         var composite = CompositeInputs(uniforms: plan.uniforms, illumination: [t.denoise[0].pingA], specular: t.specular,
                                         meshDirect: t.meshDirect)
         var stages = FrameStages()
-        stages.lightGrid = lightGridStages(plan)
-        stages.head = headStages(plan, targets: t)
-        stages.gi = giStages(plan, targets: t)
-        (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
-        stages.restir = restirStages(plan, targets: t) + megaLightsStages(plan, targets: t)
-        stages.denoise = sampledLightStages(plan, targets: t)
-        stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
-        stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
-        stages.denoise += svgfStages(plan, targets: t, composite: &composite)
-        stages.fog = fogStages(plan, targets: t, composite: &composite)
+        if plan.pathTrace != nil {
+            // Reference "Path traced": one kernel makes the whole picture.
+            stages.head = pathTraceStages(plan)
+        } else {
+            stages.lightGrid = lightGridStages(plan)
+            stages.head = headStages(plan, targets: t)
+            stages.gi = giStages(plan, targets: t)
+            (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
+            stages.restir = restirStages(plan, targets: t) + megaLightsStages(plan, targets: t)
+            stages.denoise = sampledLightStages(plan, targets: t)
+            stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
+            stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
+            stages.denoise += svgfStages(plan, targets: t, composite: &composite)
+            stages.fog = fogStages(plan, targets: t, composite: &composite)
+        }
 
+        if let raster = plan.raster { encodeRaster(plan, raster, passes: passes) }
         encode(stages, plan: plan, passes: passes)
         let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: passes)
         commit(plan, passes: passes, profile: profile, output: output.output, encodeStart: encodeStart + output.wait)
 
         finishFrame(plan)
         updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
-        if let benchmark { advanceBenchmark(benchmark) }
+        if let benchmark { advanceBenchmark(benchmark) } else { publishStreams() }
         return true
     }
 
@@ -1649,8 +2030,8 @@ final class Renderer: NSObject {
         if let benchmark, benchmark.isMeasuring, benchmark.frameInConfig > benchmark.warmupFrames {
             streaming.longestFrameMs = max(streaming.longestFrameMs, frameIntervalMs)
         }
-        if benchmark == nil, CustomRayTracer.statsEnabled, let customRT {
-            let counts = customRT.readCounters()   // what the frames finished since the last read added (in-flight ones in part)
+        if benchmark == nil, pipelines?.stats == true {
+            let counts = traceScene.readCounters()   // what the frames finished since the last read added (in-flight ones in part)
             if let last = traversalLast {
                 traversalSum = traversalSum + TraversalStats(counts: zip(counts, last).map { UInt64($0 &- $1) })
                 traversalFrames += 1
@@ -1666,7 +2047,8 @@ final class Renderer: NSObject {
         let width = max(64, Int((points.width * settings.renderScale).rounded()))
         let height = max(64, Int((points.height * settings.renderScale).rounded()))
         var outWidth = width, outHeight = height
-        if settings.upscaleFactor > 1 && upscaleSupported {
+        // (Not under a reference picture: the denoising scaler would blend in its own history.)
+        if settings.upscaleFactor > 1 && upscaleSupported && settings.reference.mode == .off {
             let backing = surface.backingScale
             let maxWidth = points.width * backing, maxHeight = points.height * backing
             let wanted = neuralChosen.map { CGFloat($0.factor) } ?? settings.upscaleFactor   // ours: its weights' factor
@@ -1748,6 +2130,7 @@ final class Renderer: NSObject {
             if let drift = benchmark.current.drift {
                 camera = drift.pose(at: Float(benchmark.frameInConfig) * dt, from: driftStart)
             }
+            benchmarkActs(benchmark)
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
             if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
@@ -1757,6 +2140,8 @@ final class Renderer: NSObject {
         }
         updateCamera(dt: dt)
         camera.fovY = settings.fovDegrees * .pi / 180
+        viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
+        moveGrab()
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
         scene.update(time: animTime, dayTime: dayTime)
@@ -1772,7 +2157,7 @@ final class Renderer: NSObject {
     /// The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
     private var dayTime: Float { animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0) }
 
-    /// The wind on the plants this frame (custom ray tracer: Shaders/Foliage.metal).
+    /// The wind on the plants this frame (Shaders/Foliage.metal).
     private var windFrame: WindFrame {
         let f = settings.foliage, a = f.windDirection * .pi / 180
         return WindFrame(wind: SIMD4(cos(a), sin(a), f.wind, f.gusts), time: animTime, previousTime: previousAnimTime, lodBias: f.lod,
@@ -1787,7 +2172,7 @@ final class Renderer: NSObject {
         return VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
     }
 
-    /// Metal's tracer: where the far baked plants' voxel levels are (VoxelLOD). A rebuild runs on `voxelQueue` and
+    /// Where the far baked plants' voxel levels are (VoxelLOD). A rebuild runs on `voxelQueue` and
     /// tells the render thread when it is done; the structure it built is swapped in at a frame's start, and the next
     /// may start once no frame in flight traces the structure it builds into: `maxFramesInFlight - 1` frames after a
     /// swap.
@@ -1802,6 +2187,8 @@ final class Renderer: NSObject {
     private var voxelLevels = VoxelLevels()
     private let voxelQueue = DispatchQueue(label: "voxel levels", qos: .utility)
     /// A rebuild once the view has moved this far (m), at most this often (s): METALRENDERER_VOXEL_STEP / _INTERVAL.
+    /// The grid the camera is placed on for the plants' sway reach (WindFrame.sway), in metres.
+    private static let swayStep: Float = 2
     private static let voxelStep = Float(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_STEP"] ?? "") ?? 1
     private static let voxelInterval = Double(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_INTERVAL"] ?? "") ?? 0.25
     /// METALRENDERER_VOXEL_ASYNC=1: benchmarks rebuild in the background too, as the app does (its pictures then
@@ -1866,6 +2253,8 @@ final class Renderer: NSObject {
         // Lighting
         var giMode = GIMode.pathTraced
         var cascades = false                    // radiance-cascade GI runs
+        var lumen = false                       // Lumen GI runs
+        var vsm: VSMTargets?                    // the camera's surfaces' shadows through virtual shadow maps
         var restirGI = false                    // ReSTIR GI runs...
         var restirGIGrid: RestirGITargets?      // ...on these reservoirs (nil if they couldn't be allocated: no stages)...
         var restirGIHistory = false             // ...which the last frame filled
@@ -1880,8 +2269,10 @@ final class Renderer: NSObject {
         var lightTree: (buffer: MTLBuffer, nodes: Int)?   // its far field, this frame's
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
         var lightMaps = false
+        var raster: (scene: RasterScene, targets: RasterTargets)?   // primary hits from the raster visibility buffer
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
+        var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
@@ -1899,6 +2290,11 @@ final class Renderer: NSObject {
         var directPasses = 0, indirectPasses = 0
         var accumulation: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?   // references
         var accumCount: UInt32 = 0              // frames averaged so far
+        var accumFull = false                   // ...as many as Reference's max samples: shown, not added to
+        // A reference frame made without what the picture needs yet (the fog's noise, made in the background): it
+        // replaces the average instead of joining it.
+        var provisional = false
+        var pathTrace: PathTracePlan?           // Reference "Path traced": nothing else runs
 
         // Volumetric fog
         var fog: (grid: FogTargets, noise: MTLTexture)?
@@ -1911,10 +2307,21 @@ final class Renderer: NSObject {
         var postParams = GPUPostParams()
     }
 
+    /// Reference "Path traced": pathTraceKernel adds `params.samples.y` paths per pixel to the mean of `samples.x` in
+    /// `accum` (none once it has max samples), and the frame is that mean tone mapped.
+    private struct PathTracePlan {
+        let accum: MTLTexture
+        var params = GPUPathTraceParams()
+        var fog = GPUFogParams()
+        var fogNoise: MTLTexture?
+        var lightTree: MTLBuffer?               // with more than PT_LIGHT_HITS lights
+    }
+
     /// Resolves this frame's modes and allocates what they need that isn't there yet.
     private func planFrame(size: FrameSize, slot: Int, profiling: Bool) -> FramePlan {
         let width = size.width, height = size.height
         var p = FramePlan(size: size, slot: slot, cur: Int(frameIndex & 1))
+        checkReferenceView(width: width, height: height)
         p.accumulating = accumulating
         p.giMode = activeGIMode
         let directMode = activeDirectMode
@@ -1922,6 +2329,7 @@ final class Renderer: NSObject {
         p.megaLights = directMode == .megalights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
+        if scene.hasLiquid { p.liquid = liquidTargets(width: width, height: height) }
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
@@ -1938,6 +2346,36 @@ final class Renderer: NSObject {
         if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
         p.uniforms = u
 
+        // Reference "Path traced": pathTraceKernel and the tone curve, nothing else.
+        if referenceMode == .pathTraced, let accum = pathTraceTexture(width: width, height: height) {
+            let r = settings.reference
+            var pt = PathTracePlan(accum: accum)
+            var flags = Renderer.pathTraceSobol ? GPUPathTraceParams.sobol : 0
+            // The fog's medium, everywhere (no froxel grid). Until its noise is made, the frames don't count.
+            if settings.fog.enabled {
+                pt.fog = makeFogParams(grid: nil, historyValid: false, requireGrid: false)
+                pt.fogNoise = fogNoise()
+                if pt.fogNoise != nil { flags |= GPUPathTraceParams.fog } else { p.provisional = true }
+            }
+            // Many lights: drawn from the light tree, and met by the bounce rays at their proxies.
+            var nodes: UInt32 = 0
+            if scene.lights.count > Renderer.pathTraceLightHits, let tree = lightTreeBuffer(slot: slot) {
+                pt.lightTree = tree.buffer
+                nodes = UInt32(tree.nodes)
+            }
+            let count = p.provisional ? 0 : pathTraceCount   // read after pathTraceTexture: a new one starts over
+            let left = r.maxSamples > 0 ? UInt32(r.maxSamples) - min(count, UInt32(r.maxSamples)) : UInt32.max
+            pt.params.samples = SIMD4(count, min(UInt32(ReferenceSettings.samplesPerFrameRange.clamp(r.samplesPerFrame)), left),
+                                      UInt32(ReferenceSettings.bounceRange.clamp(r.bounces)), nodes)
+            pt.params.config = SIMD4(flags, UInt32(lightProxyCount), referenceEpoch, 0)
+            pt.params.bounds = scene.sceneSphere
+            p.pathTrace = pt
+            p.uniforms.viewMode = 0   // the light, tone mapped
+            p.splitPasses = benchmark != nil && Benchmark.splitPasses
+            vsmFrame = nil
+            return p
+        }
+
         // Radiance cascades and the direct-light denoiser don't touch each other's textures (unless the denoiser also
         // filters the cascades' output), so their dispatches can overlap on the GPU: the shared encoder is then
         // concurrent, with explicit barriers between dependent stages. Per-pass timing (benchmark or panel) keeps
@@ -1953,17 +2391,41 @@ final class Renderer: NSObject {
         if settings.fog.enabled, let grid = fogTargets(width: width, height: height), let noise = fogNoise() { p.fog = (grid, noise) }
         let fogHistory = p.fog != nil && fogLastFrame == frameIndex &- 1 && fogLastFar == settings.fog.maxDistance
         p.fogParams = makeFogParams(grid: p.fog?.grid, historyValid: fogHistory)
+        // Reference "Accumulated passes" in the app: until the fog's noise is made, frames without the fog don't count.
+        // (Benchmarks make it before their first frame.)
+        p.provisional = accumulating && !benchmarkAccumulating && settings.fog.enabled && p.fog == nil
         p.fogSamples = accumCount
         if accumulating, p.fog != nil { p.fogReference = fogReferenceTexture(width: width, height: height) }
+
+        // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
+        // (the frames swap them in instance by instance, which the raster doesn't follow).
+        // Nor with liquids (a pixel seen through one isn't the triangle the raster drew there).
+        if settings.primary == .raster, !scene.hasVoxelBoxes, !scene.hasLiquid, let rs = currentRasterScene(),
+           let rt = rasterTargets(width: width, height: height, scene: rs) {
+            p.raster = (rs, rt)
+            p.uniforms.flags |= UniformFlags.visBuffer
+            if rs.virtualClusters { p.uniforms.camForward.w = RasterClusters.bias }
+        }
+
+        // Virtual shadow maps for the suns, spots and sphere lights. Not with virtual geometry traced as clusters, whose
+        // geometry neither the raster nor the rays that meet what it doesn't draw reach.
+        if settings.shadowMethod == .virtualMaps, !scene.tracesClusters, currentRasterScene() != nil,
+           let vsm = vsmTargets(slot: slot, analytic: Int(u.lightGroupEnd.w)) {
+            p.vsm = vsm
+            p.uniforms.flags |= UniformFlags.vsm
+        }
+        vsmFrame = p.vsm
 
         // GI. Light-visibility maps serve the GI techniques and the path tracer's light-map variant.
         p.lightMaps = usesLightMaps
         p.cascades = settings.giEnabled && p.giMode == .radianceCascades
         p.restirGI = settings.giEnabled && p.giMode == .restirGI
+        p.lumen = settings.giEnabled && p.giMode == .lumen
+        if p.lumen && settings.lumen.screenTraces { p.uniforms.flags |= UniformFlags.giRadiance }
         if p.restirGI { p.restirGIGrid = restirGITargets(width: width, height: height) }
         p.restirGIHistory = restirGIWritten   // read after restirGITargets: new reservoirs hold nothing
         // Only these write t.giDebug: with any other method the "GI debug" view would show what one of them left.
-        if p.cascades || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
+        if p.cascades || p.lumen || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
 
         // Denoising (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
         //   Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
@@ -2022,7 +2484,9 @@ final class Renderer: NSObject {
         p.megaLightsHistory = megaLightsWritten   // read after megaLightsTargets: new hashes hold nothing
 
         if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
-        p.accumCount = accumCount             // read after accumulationTextures: new textures start a new average
+        p.accumCount = p.provisional ? 0 : accumCount   // read after accumulationTextures: new textures start a new average
+        let maxSamples = settings.reference.maxSamples
+        p.accumFull = !benchmarkAccumulating && maxSamples > 0 && accumCount >= UInt32(maxSamples)
 
         // The lens and the finish, on the output: the composite's light, or the denoising scaler's.
         let lens = settings.post
@@ -2071,7 +2535,8 @@ final class Renderer: NSObject {
         restirWritten = plan.restirGrid != nil
         megaLightsWritten = plan.megaLightsGrid != nil
         reservoirsWritten = plan.lightReuse
-        if plan.accumulation != nil { accumCount += 1 }
+        if plan.accumulation != nil && !plan.accumFull && !plan.provisional { accumCount += 1 }
+        if let pt = plan.pathTrace, !plan.provisional { pathTraceCount += pt.params.samples.y }
         if plan.fog != nil && plan.fogReference == nil {   // the froxel grid was written
             fogLastFrame = frameIndex
             fogLastFar = settings.fog.maxDistance
@@ -2115,44 +2580,98 @@ final class Renderer: NSObject {
 
     /// The scene's structures for this frame, ahead of everything that traces rays.
     private func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
-        // 0. The crowd: this frame's poses and skinned vertices, then the pose slots' bottom-level structures around
-        //    them (a refit: a pose keeps its triangles, so its tree keeps its shape). Ahead of the top level, which
-        //    takes the new bounds.
+        // Rigid bodies: the steps since last frame (or a replay from the start), then every body's instance record,
+        // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
+        // Cloths too: their vertices, from where the physics (or the CPU's) left them.
+        var deformed = false
+        if let physicsGPU, let enc = passes.compute("physics", serial: true, concurrent: physicsGPU.hasFluid) {
+            physicsGPU.concurrent = physicsGPU.hasFluid   // (its own barriers: the liquids' steps side by side)
+            if physicsGPU.simulates {
+                // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
+                // buffer, past the watchdog: it catches up over the next frames instead.
+                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid ? 20 : .max)
+                if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
+                if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
+                physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
+                let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
+                physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
+                                      descriptorStride: instanceDescriptorStride)
+            }
+            physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
+            // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
+            let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0
+            if liquids {
+                physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
+                physicsGPU.liquidFrames -= 1
+            }
+            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
+            passes.endCompute()
+        }
+        // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
+        //    bottom-level structures around them (a refit: a pose keeps its triangles, so its tree keeps its shape).
+        //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
                 crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
-            if let primitiveRefit { passes.refitPrimitives(primitiveRefit, pass: "blas") }
-            if let customRT, let enc = passes.compute("blas", serial: true) {
-                customRT.encodeCrowdRefit(enc, positions: positionBuffer, indices: indexBuffer, meshes: meshBuffer)
+            deformed = true
+        }
+        if deformed, let primitiveRefit {
+            // A liquid's surface: built over as many triangles as it last needed (read back a few frames late), with
+            // room to grow by a fifth (a pour's surface grows by a few percent over those frames; past it, the
+            // triangles left out wait a frame). The build's time is its triangles': on the M1 Max about 5 ms for 100k.
+            if let fluid = physicsGPU?.fluid {
+                for (i, m) in primitiveRefit.rebuiltMeshes.enumerated() {
+                    guard let s = scene.liquidMeshes.first(where: { $0.mesh == m })?.system else { continue }
+                    let room = Int(fluid.systems[s].system.surface.triangles.x), used = Int(fluid.readSurfaceStats(s).y)
+                    primitiveRefit.setTriangles(i, min(room, (used * 6 / 5 + 2048 + 1023) / 1024 * 1024))
+                }
+            }
+            passes.updatePrimitives(primitiveRefit, pass: "blas")
+        }
+        // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
+        if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
+            if let enc = passes.compute("wind", serial: true) {
+                plants.encodeWind(enc, slot: slot, pipeline: pipelines[.plantWind], wind: windFrame)
                 passes.endCompute()
             }
+            passes.updatePrimitives(plants.refit(slot: slot), pass: "wind")
         }
-        // 1. Update the top-level acceleration structure with this frame's instance transforms. Metal: a refit (new bounds,
+        // Virtual geometry as clusters: this frame's cut and its boxes, then the structure over them.
+        if let clusters = virtualTracing?.clusters {
+            if let enc = passes.compute("vg", serial: true) {
+                clusters.encode(enc, slot: slot, vg: pipelines.vg, instanceData: instanceDataBuffers[slot], camPos: lod.camPos,
+                                pixelScale: lod.pixelScale, tau: lod.tau, frame: lod.frame)
+                passes.endCompute()
+            }
+            passes.updatePrimitives(clusters.build(slot: slot), pass: "vg")
+        }
+        // 1. Update the top-level acceleration structure with this frame's instance transforms. A refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the old stress hall (400 moving objects) rays got 35% slower after 256 refits. A rebuild
-        //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost.
+        //    every 16 frames (per slot) traces as fast as one every frame, for the refit's median cost. A new cut of
+        //    virtual geometry (another BLAS under an instance) is a rebuild too.
         //    A still scene's was built with its buffers, and stays.
-        if builtRayTracer == .metal, !sceneBuffers.still {
+        if !sceneBuffers.still, instanceASStale[slot] || !instanceASBuilt.contains(slot) {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
+            if virtualTracing?.clusters != nil { instanceASBuilt.remove(slot) }   // its boxes' structure is new every frame
             let refit = instanceASBuilt.contains(slot)
             passes.updateTLAS(TLASUpdate(structure: instanceAS[slot], scratch: instanceScratch[slot], refit: refit,
-                                         instanceCount: scene.instances.count, usage: Renderer.tlasUsage,
+                                         instanceCount: sceneBuffers.structureInstances, usage: Renderer.tlasUsage,
                                          instances: instanceDescBuffers[slot], instanceStride: instanceDescriptorStride,
-                                         primitives: primitiveAS), pass: "tlas")
+                                         primitives: primitiveAS + (virtualTracing?.structures(slot: slot) ?? [])
+                                            + (sceneBuffers.plants?.structures(slot: slot) ?? []),
+                                         indirect: sceneBuffers.indirect), pass: "tlas")
             instanceASBuilt.insert(slot)
+            slotRefitFrame[slot] = Int(frameIndex)
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
         if let textureStreamer {
             passes.streamTextures(textureStreamer, frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight)
-        }
-        // Custom ray tracer: rebuild the moving instances' TLAS (a few small dispatches, in order).
-        // Virtual geometry: this frame's level-of-detail cut and its cluster tree, in the same pass.
-        if let customRT, let enc = passes.compute("tlas", serial: true) {
-            customRT.encodeBuild(enc, slot: slot, instanceData: instanceDataBuffers[slot], view: lod, wind: windFrame)
-            passes.endCompute()
         }
     }
 
@@ -2195,12 +2714,49 @@ final class Renderer: NSObject {
     private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
                               passes: FrameEncoder) -> (output: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
+        // Reference "Path traced": the paths' mean, exposed and tone mapped into the drawable.
+        if let pt = plan.pathTrace {
+            let drawableStart = CACurrentMediaTime()
+            var drawable = surface.nextOutput()
+            let drawableWait = CACurrentMediaTime() - drawableStart
+            if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
+            if let drawable, let enc = passes.compute("composite") {
+                bind(enc, .tonemap, c.uniforms)
+                setTextures(enc, [pt.accum, drawable.texture])
+                dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+            return (drawable, drawableWait)
+        }
         // 3c. Geometry debug views: their own pass, only while one is shown.
         if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
             bind(enc, .geometryDebug, c.uniforms, sceneSlot: plan.slot)
             enc.setTexture(t.geometryDebug, index: 0)
+            enc.setTexture(plan.raster?.targets.visibility, index: 1)   // (the raster's triangles, where it drew them)
+            if let rs = plan.raster?.scene, rs.virtualClusters, let rc = rasterClusters { enc.useResources(rc.resources(slot: plan.slot), usage: .read) }
             dispatch(enc, .geometryDebug, width: size.width, height: size.height)
             if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
+        }
+
+        // The visibility buffer's view: its own pass too (black with the primary visibility traced).
+        if settings.viewMode == RenderSettings.visibilityBufferView, let enc = passes.compute("geometry debug") {
+            bind(enc, .rasterDebug, c.uniforms)
+            enc.setTexture(plan.raster?.targets.visibility, index: 0)
+            enc.setBuffer(plan.raster?.targets.counters, offset: 0, index: 13)
+            enc.setTexture(t.normalDepth[cur], index: 1)
+            enc.setTexture(t.geometryDebug, index: 2)
+            dispatch(enc, .rasterDebug, width: size.width, height: size.height)
+            if overlap { enc.memoryBarrier(scope: [.textures]) }
+        }
+
+        // The virtual shadow maps' pages: their own pass too (black with shadow rays).
+        if settings.viewMode == RenderSettings.shadowPagesView, let enc = passes.compute("geometry debug") {
+            bind(enc, .vsmDebug, c.uniforms, sceneSlot: plan.slot)
+            enc.setTexture(t.surfacePos, index: 0)
+            enc.setTexture(t.normalDepth[cur], index: 1)
+            enc.setTexture(t.geometryDebug, index: 2)
+            dispatch(enc, .vsmDebug, width: size.width, height: size.height)
+            if overlap { enc.memoryBarrier(scope: [.textures]) }
         }
 
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
@@ -2222,7 +2778,8 @@ final class Renderer: NSObject {
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
-                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness])
+                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
+                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -2331,13 +2888,14 @@ final class Renderer: NSObject {
                         encodeStart: CFTimeInterval) {
         let slot = plan.slot
         var writeCapture: (() -> Void)?
-        if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualGeometry { print("  " + vg.summary) }
+        if let benchmark, benchmark.shouldCapture, let summary = virtualTracing?.summary { print("  " + summary) }
         if let benchmark, benchmark.shouldCapture, let v = sceneBuffers.voxelLOD, !voxelLevels.running {
             print(String(format: "  Voxel levels: last rebuild picked in %.2f ms, built in %.2f ms, %d instances changed",
                          v.last.pickMs, v.last.buildMs, v.last.changed)
                   + (Renderer.voxelAsync ? ", \(voxelLevels.swaps) background rebuilds swapped in" : ""))
         }
-        if let benchmark, benchmark.shouldCapture, let vg = customRT?.virtualBLAS { print("  " + vg.summary) }
+        if let benchmark, benchmark.shouldCapture, plan.raster != nil || plan.vsm != nil, let rc = rasterClusters { print("  " + rc.summary) }
+        if let benchmark, benchmark.shouldCapture, let fluid = physicsGPU?.fluid { print("  Fluids: " + fluid.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
             print("  " + ts.summary)
             if ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_DEBUG"] != nil { print(ts.details) }
@@ -2345,9 +2903,9 @@ final class Renderer: NSObject {
         if let benchmark, benchmark.shouldCapture, !streaming.preparedMs.isEmpty, !streaming.installedMs.isEmpty {
             print("  " + streaming.summary(sceneBuffers))
         }
-        if let benchmark, benchmark.isMeasuring, CustomRayTracer.statsEnabled, let customRT {
+        if let benchmark, benchmark.isMeasuring, pipelines.stats {
             // One frame's counters: reset at the first measured frame, read at the capture frame (single-frame runs).
-            if benchmark.shouldCapture { print("  " + customRT.takeStats().description) } else { _ = customRT.takeStats() }
+            if benchmark.shouldCapture { print("  " + traceScene.takeStats().description) } else { _ = traceScene.takeStats() }
         }
         if let benchmark, let output, benchmark.shouldCapture || benchmark.shouldRecord,
            let capture = benchmark.capture(of: output.texture, device: device, sequence: !benchmark.shouldCapture) {
@@ -2362,7 +2920,10 @@ final class Renderer: NSObject {
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
-        let vg = customRT?.virtualGeometry, vgFrame = frameIndex, streamer = textureStreamer
+        let vg = virtualTracing?.clusters, vgFrame = frameIndex, streamer = textureStreamer
+        // The clusters' counters and requests are this frame's only from what drew them.
+        let vgCamera = plan.raster?.scene.virtualClusters == true, vgShadows = plan.vsm != nil && settings.vsm.clusters
+        let rasterVG = vgCamera || vgShadows ? rasterClusters : nil
         let cpuInterval = frameIntervalMs
         let encodeNow = (CACurrentMediaTime() - encodeStart) * 1000
         encodeSum += encodeNow
@@ -2370,7 +2931,11 @@ final class Renderer: NSObject {
         // Benchmark: finish this frame before encoding the next (`wait`), so passes from consecutive frames
         // never overlap on the GPU and inflate each other's timings.
         passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
-            if !Benchmark.isEnabled { vg?.collect(slot: slot, frame: vgFrame); streamer?.collect(slot: slot) }
+            if !Benchmark.isEnabled {
+                vg?.collect(slot: slot, frame: vgFrame)
+                rasterVG?.collect(slot: slot, frame: vgFrame, camera: vgCamera, shadows: vgShadows)
+                streamer?.collect(slot: slot)
+            }
             if let bench, recordFrame {
                 var passMs: [String: Double] = [:]
                 var start = Double.infinity, end = 0.0
@@ -2404,17 +2969,13 @@ final class Renderer: NSObject {
         sceneDeclaredIn = nil
         if benchmark != nil {
             vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
+            rasterVG?.collect(slot: slot, frame: vgFrame, camera: vgCamera, shadows: vgShadows)
             streamer?.collect(slot: slot)
         }
         if checkCrowd, let crowdSkinner {   // the frame is done (benchmarks wait for it)
             let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)
-            var line = String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
-                              crowdSkinner.crowd.slots.count, skin.position, skin.normal)
-            if let customRT {
-                let wrong = customRT.checkCrowdRefit(scene: scene, positions: positionBuffer)
-                line += ", refitted trees: \(wrong.triangles) wrong triangles, \(wrong.boxes) wrong boxes, \(wrong.bounds) wrong bounds"
-            }
-            print(line)
+            print(String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
+                         crowdSkinner.crowd.slots.count, skin.position, skin.normal))
         }
     }
 
@@ -2446,7 +3007,7 @@ final class Renderer: NSObject {
     /// 1b. Light-visibility maps. 2. Ray trace: primary visibility (G-buffer), direct light with shadow rays,
     /// path-traced indirect light.
     private func headStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
-        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size, raster = plan.raster
         var stages: [ComputeStage] = []
         if plan.lightMaps {
             stages.append(ComputeStage(pass: "lightmap") { [self] enc in
@@ -2456,11 +3017,27 @@ final class Renderer: NSObject {
                                     threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
             })
         }
+        // Liquids: the camera rays bent through them, which the trace goes on with.
+        if let liquid = plan.liquid {
+            stages.append(ComputeStage(pass: "liquid") { [self] enc in
+                bind(enc, .liquid, uniforms, sceneSlot: slot)
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture])
+                dispatch(enc, .liquid, width: size.width, height: size.height)
+            })
+        }
         stages.append(ComputeStage(pass: "trace") { [self] enc in
             bind(enc, .trace, uniforms, pass: uniforms.tracePassFlags, sceneSlot: slot)
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
                               t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
                               t.visibility, t.blocker, t.material])
+            if let raster {
+                enc.setTexture(raster.targets.visibility, index: 15)
+                enc.setBuffer(raster.targets.counters, offset: 0, index: 13)
+            }
+            if let liquid = plan.liquid {
+                enc.setTexture(liquid.ray, index: 16)
+                enc.setTexture(liquid.direction, index: 17)
+            }
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
         if plan.glass {
@@ -2470,6 +3047,13 @@ final class Renderer: NSObject {
                 dispatch(enc, .glass, width: size.width, height: size.height)
             })
         }
+        if let liquid = plan.liquid {
+            stages.append(ComputeStage(pass: "liquid") { [self] enc in
+                bind(enc, .liquidApply, uniforms)
+                setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection])
+                dispatch(enc, .liquidApply, width: size.width, height: size.height)
+            })
+        }
         return stages
     }
 
@@ -2477,6 +3061,7 @@ final class Renderer: NSObject {
     /// the trace (its G-buffer) and before the reflections (they read it).
     private func giStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         if plan.cascades { return radianceCascadeStages(plan, targets: t) }
+        if plan.lumen { return lumenStages(plan, targets: t) }
         if let grid = plan.restirGIGrid { return restirGIStages(plan, grid: grid, targets: t) }
         return []
     }
@@ -2625,7 +3210,7 @@ final class Renderer: NSObject {
                 enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
                 setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
                                   t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
-                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur]])
+                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur], t.albedo])
                 dispatch(enc, .manyLights, width: size.width, height: size.height)
             })
         }
@@ -2635,7 +3220,7 @@ final class Renderer: NSObject {
                 var addToDirect: UInt32 = shadowDenoiser ? 0 : 1
                 bind(enc, .meshLights, uniforms, sceneSlot: slot)
                 enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect])
+                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect, t.albedo])
                 dispatch(enc, .meshLights, width: size.width, height: size.height)
             })
         }
@@ -2676,6 +3261,23 @@ final class Renderer: NSObject {
         return stages
     }
 
+    /// Reference "Path traced": this frame's paths join the running mean (Shaders/PathTrace.metal), which encodeOutput
+    /// tone maps. Nothing to add once it has max samples.
+    private func pathTraceStages(_ plan: FramePlan) -> [ComputeStage] {
+        guard let pt = plan.pathTrace, pt.params.samples.y > 0 else { return [] }
+        let uniforms = plan.uniforms, size = plan.size, slot = plan.slot
+        return [ComputeStage(pass: "path trace") { [self] enc in
+            var params = pt.params, fog = pt.fog
+            bind(enc, .pathTrace, uniforms, sceneSlot: slot)
+            enc.setBytes(&fog, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            enc.setBytes(&params, length: MemoryLayout<GPUPathTraceParams>.stride, index: 13)
+            enc.setBuffer(lightProxies ?? lightBuffers[slot], offset: 0, index: 14)
+            enc.setBuffer(pt.lightTree ?? lightBuffers[slot], offset: 0, index: 15)   // (unread without the tree)
+            setTextures(enc, [pt.accum, pt.fogNoise ?? dummy3D])
+            dispatch(enc, .pathTrace, width: size.width, height: size.height)
+        }]
+    }
+
     /// Benchmark references: this frame's raw light joins the average, which the composite shows.
     private func accumulateStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard let accum = plan.accumulation else { return [] }
@@ -2684,6 +3286,7 @@ final class Renderer: NSObject {
         composite.specular = accum.specular
         // Tells the composite pass to read the illumination as separate direct + indirect light.
         composite.uniforms.flags |= UniformFlags.denoise | UniformFlags.separateSignals
+        if plan.accumFull { return [] }   // Reference's max samples: the average as it is
         return [ComputeStage(pass: "accumulate") { [self] enc in
             var count = averaged
             bind(enc, .accumulate, uniforms)
@@ -2788,6 +3391,7 @@ final class Renderer: NSObject {
         if let ref = plan.fogReference {
             composite.fogReference = ref
             composite.uniforms.flags |= UniformFlags.fog | UniformFlags.fogReference
+            if plan.accumFull { return [] }   // Reference's max samples: the march's average as it is
             return [ComputeStage(pass: "fog") { [self] enc in
                 var fp = fogParams, count = samples
                 bind(enc, .fogReference, uniforms, sceneSlot: slot)
@@ -2819,24 +3423,24 @@ final class Renderer: NSObject {
 
     // MARK: - GI techniques
 
-    /// Scene buffers at the indices every ray-tracing kernel uses (1 = TLAS, 2...8 = geometry, instances, lights).
+    /// Scene buffers at the indices every ray-tracing kernel uses (1 = TraceScene, 2...8 = geometry, instances, lights).
     private func bindScene(_ enc: ComputePass, slot: Int) {
         // What the scene's argument buffers point at is declared once per encoder (it holds for every dispatch in
         // it, and the frame's stages mostly share one); the bindings are set every time, since the kernels in
         // between use the same indices for their own buffers.
         let declare = sceneDeclaredIn !== enc.declarationScope
-        if let customRT {
-            customRT.bind(enc, slot: slot, declare: declare)
-        } else {
-            enc.setAccelerationStructure(instanceAS[slot], bufferIndex: 1)
-            if declare { enc.useResources(primitiveASResources, usage: .read) }   // BLASes referenced indirectly by the TLAS
+        enc.setBuffer(traceScene.buffers[slot], offset: 0, index: 1)
+        if declare {
+            // The top-level structure and what TraceScene points at; the BLASes it references by their IDs.
+            enc.useResources([instanceAS[slot], traceScene.stats] + primitiveASResources + traceSceneResources(slot: slot), usage: .read)
+            if pipelines.stats { enc.useResource(traceScene.stats, usage: [.read, .write]) }
         }
         enc.setBuffer(positionBuffer, offset: 0, index: 2)
         enc.setBuffer(normalBuffer, offset: 0, index: 3)
         enc.setBuffer(indexBuffer, offset: 0, index: 4)
         enc.setBuffer(meshBuffer, offset: 0, index: 5)
-        // (Metal's tracer in a scene with blocks of instances: the table a hit finds a record through, the scene's
-        // own records being its first.)
+        // (A scene with blocks of instances: the table a hit finds a record through, the scene's own records being its
+        // first.)
         enc.setBuffer(sceneBuffers.instanceTable ?? instanceDataBuffers[slot], offset: 0, index: 6)
         enc.setBuffer(shadingArgs[slot], offset: 0, index: 7)
         var gp = regirParams   // the light grid (ReGIR): ReSTIR DI's, GI's, the reflections' and the fog's candidates
@@ -2847,12 +3451,34 @@ final class Renderer: NSObject {
         sceneDeclaredIn = enc.declarationScope
         enc.useResources(shadingResources, usage: .read)
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
+        if let vsm = vsmFrame {
+            enc.useResources([vsm.pool, vsm.table, vsm.tags, vsm.lightTable, vsm.views[slot], vsm.sceneArgs[slot]], usage: .read)
+            enc.useResource(vsm.requests, usage: [.read, .write])
+        }
         if let textureStreamer {
             enc.useHeap(textureStreamer.heap)
             enc.useResource(textureStreamer.minLodBuffer(slot: slot), usage: .read)
             enc.useResource(textureStreamer.feedbackBuffer(slot: slot), usage: [.read, .write])
         }
     }
+    /// `slot`'s TraceScene: the top-level structure the frame traces, virtual geometry's tables (the cut's clusters, or
+    /// the raster's: a raster cluster's hit reads its pool offset there), the wind.
+    private func writeTraceScene(slot: Int) {
+        let clusters = virtualTracing?.selected(slot: slot) ?? rasterClusters?.listBuffers[slot]
+        let plants = sceneBuffers.plants
+        traceScene.write(slot: slot, TraceSceneArgs.Content(
+            tlas: instanceAS[slot], vgTable: virtualTracing?.vgTable(slot), clusters: clusters,
+            pool: virtualTracing?.pool ?? rasterClusters?.streamer.pool, parts: plants?.parts, meshes: sceneBuffers.meshes,
+            indices: sceneBuffers.indices, uvs: sceneBuffers.uvs, wind: windFrame, cutouts: plants?.cutouts,
+            clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max))
+    }
+
+    /// What `slot`'s TraceScene points at besides the structures.
+    private func traceSceneResources(slot: Int) -> [MTLResource] {
+        (virtualTracing?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? [])
+            + (sceneBuffers.plants?.resources(slot: slot) ?? [])
+    }
+
     /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
     /// be another's; dropped when the frame is committed).
     private var sceneDeclaredIn: AnyObject?
@@ -2864,7 +3490,7 @@ final class Renderer: NSObject {
         let wanted: Bool
         switch activeGIMode {
         case .pathTraced: wanted = settings.lightMaps
-        case .radianceCascades: wanted = true
+        case .radianceCascades, .lumen: wanted = true
         case .restirGI: wanted = settings.restirGI.lightMaps
         }
         return settings.giEnabled && !accumulating && wanted && !scene.usesLightTable
@@ -2879,6 +3505,7 @@ final class Renderer: NSObject {
         case .pathTraced: return true
         case .radianceCascades: return settings.cascades.denoiseIndirect
         case .restirGI: return settings.restirGI.denoise
+        case .lumen: return settings.lumen.denoiseIndirect
         }
     }
 
@@ -2974,6 +3601,101 @@ final class Renderer: NSObject {
                                         normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)
     }
 
+    /// Lumen's stages for this frame (they write t.indirect and t.giDebug); empty if allocation failed.
+    private func lumenStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        let slot = plan.slot, spacing = LumenSettings.spacingOptions.contains(settings.lumen.probeSpacing) ? settings.lumen.probeSpacing : 8
+        if lumen == nil || lumen!.width != t.width || lumen!.height != t.height || lumen!.spacing != spacing {
+            do {
+                lumen = try Lumen(device: device, width: t.width, height: t.height, spacing: spacing)
+            } catch {
+                print(error)
+                return []
+            }
+        }
+        var cards: LumenCards?
+        if settings.lumen.cards {
+            if lumenCards == nil || lumenCardsScene !== scene {
+                lumenCards = try? LumenCards(device: device, frameSlots: Renderer.maxFramesInFlight)
+                lumenCardsScene = scene
+            }
+            lumenCards?.update(scene: scene, eligible: lumenCardEligible, foliage: lumenFoliage, camera: camera,
+                               viewportHeight: t.height, slot: slot,
+                               radiosityBudget: LumenSettings.radiosityBudgetRange.clamp(settings.lumen.radiosityBudget) << 10)
+            cards = lumenCards
+        }
+        var sdfScene: LumenScene?
+        var global: (field: LumenGlobalSDF, levels: [GPULumenClipLevel])?
+        var bakeSeconds: Double?    // benchmarks: how long they waited for the bakes
+        if settings.lumen.trace == .sdf || settings.lumen.debug >= 4 {
+            if lumenScene == nil || lumenSceneOf !== scene {
+                lumenScene?.cancel()
+                let large: Set<SceneKind> = [.city, .cityNight, .forest, .valley, .world]
+                let layout = LumenGlobalSDF.layout(bounds: scene.bounds(), large: large.contains(settings.scene.kind),
+                                                   voxel: LumenSettings.globalVoxelRange.clamp(settings.lumen.globalVoxel))
+                lumenGlobal = try? LumenGlobalSDF(device: device, levels: layout.levels, voxel: layout.voxel,
+                                                  frameSlots: Renderer.maxFramesInFlight)
+                if lumenKeptScene == nil { lumenKeptSource = nil }   // the scene it was kept for is gone
+                let kept = lumenKeptScene === scene ? lumenKeptSource : nil
+                lumenScene = try? LumenScene(device: device, scene: scene, fields: lumenSDFFields(), source: kept,
+                                             frameSlots: Renderer.maxFramesInFlight)
+                lumenSceneOf = scene
+                if benchmark != nil {
+                    let start = CACurrentMediaTime()
+                    lumenScene?.waitForBakes()
+                    bakeSeconds = CACurrentMediaTime() - start
+                }
+            }
+            lumenScene?.update(scene: scene, eligible: lumenSDFEligible, slot: slot)
+            if let bakeSeconds, let lumenScene {
+                print(String(format: "Lumen: %d mesh fields in %.2f s; %d MB of fields, %d MB global field, %d MB cards",
+                             lumenScene.toBake, bakeSeconds, lumenScene.megabytes, lumenGlobal?.megabytes ?? 0,
+                             lumenCards?.megabytes ?? 0))
+            }
+            sdfScene = lumenScene
+            if let lumenGlobal, let lumenScene {
+                global = (lumenGlobal, lumenGlobal.update(camera: camera.position, changed: lumenScene.movedBoxes,
+                                                         everything: lumenScene.fieldsChanged, slot: slot))
+            }
+        }
+        return lumen!.stages(pipelines: pipelines.lumen, settings: settings.lumen, uniforms: plan.uniforms,
+                             bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
+                             normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev],
+                             cards: cards, cardInstances: scene.instances.count, scene: sdfScene, global: global, slot: slot,
+                             targets: t)
+    }
+
+    /// Instances with cards in the surface cache: geometry that doesn't deform, and not plants (assemblies, leaf cards,
+    /// ground cover). A card sees a canopy's outer, sunlit leaves, and the hits inside it read them: the backlit forest
+    /// was 2% too bright with them. Plants' hits are lit where they are.
+    private func lumenCardEligible(_ inst: Scene.Instance) -> Bool {
+        inst.isGeometry && !inst.deforms && !lumenFoliage(inst)
+    }
+
+    /// Plants: assemblies (but buildings of modules), leaf cards, ground cover.
+    private func lumenFoliage(_ inst: Scene.Instance) -> Bool {
+        guard inst.isGeometry else { return false }
+        if inst.assembly >= 0 { return !scene.assemblies[inst.assembly].rigid }
+        guard inst.mesh >= 0 else { return false }
+        let m = scene.meshes[inst.mesh]
+        return m.cutout != 0 || m.sways != 0
+    }
+
+    /// Instances traced through a distance field: geometry that doesn't deform (the crowd: screen traces only) or
+    /// sway (ground cover); meshes, virtual meshes and plants' assemblies. Not SDF shapes (cards and screen traces).
+    private func lumenSDFEligible(_ inst: Scene.Instance) -> Bool {
+        guard inst.isGeometry, !inst.deforms, inst.sdf < 0 else { return false }
+        guard inst.mesh >= 0 else { return true }
+        let m = scene.meshes[inst.mesh]
+        return m.sways == 0 && m.vertexOffset == 0
+    }
+
+    /// The fields to bake, the most used first.
+    private func lumenSDFFields() -> [Int] {
+        var uses: [Int: Int] = [:]
+        for inst in scene.instances where lumenSDFEligible(inst) { uses[LumenScene.field(of: inst, in: scene), default: 0] += 1 }
+        return uses.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
+    }
+
     /// Drops all temporal GI state (cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
@@ -2983,28 +3705,53 @@ final class Renderer: NSObject {
         skyRefreshed = nil
         fogLastFrame = nil
         radianceCascades?.reset()
+        lumen?.reset()
     }
 
     // MARK: - Benchmark
 
+    /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
+    private func benchmarkActs(_ benchmark: Benchmark) {
+        let c = benchmark.current
+        guard let controls = scene.interiorControls else { return }
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
+            benchmarkFired.insert(k)
+            switch e.event {
+            case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
+            case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
+            case .flashlight(let on): controls.flashlight.on = on
+            }
+        }
+        if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
+            camera.position.y += controls.lifts[n].y - base
+        }
+        if controls.flashlight.on {
+            controls.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            controls.flashlight.direction = camera.forward
+        }
+    }
+    private var benchmarkFired = Set<Int>()
+    private var benchmarkBody: SIMD3<Float>?
+
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
+        benchmarkFired = []
+        benchmarkBody = nil
         settings = c.resolvedSettings()
         animTime = c.startTime
         previousAnimTime = c.startTime
         setWorldLights()   // the scene it starts with is the one its time of day asks for
-        if settings.scene != scene.settings || settings.rayTracer != builtRayTracer || settings.api != builtAPI || virtualGeometryChanged {
+        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }
         camera = c.track?.camera(at: 0)
             ?? (c.cameraPath ? c.pathPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         driftStart = camera
         prevCamera = camera
-        accumulating = c.accumulate
+        benchmarkAccumulating = c.accumulate
         referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil
         referenceDirectMode = c.accumulate && [.exact, .restir, .megalights].contains(c.directLight) ? c.directLight : nil
-        accumCount = 0
         supersampling = c.accumulate && c.supersample
-        colorAccumCount = 0
+        resetReference()
         resetGIState()
         upscalerReset = true
         streaming = Streaming()
@@ -3058,6 +3805,7 @@ final class Renderer: NSObject {
     }
 
     private func advanceBenchmark(_ benchmark: Benchmark) {
+        if benchmark.hold(settled: streamingSettled) { return }
         guard benchmark.advance() else { return }
         guard benchmark.isFinished else {
             applyBenchmarkConfig(benchmark.current)
@@ -3071,6 +3819,62 @@ final class Renderer: NSObject {
         DispatchQueue.main.async { NSApp.terminate(nil) }   // drawFrame draws no more frames
     }
 
+    /// Virtual geometry has what the view asks for: no group waiting to stream in, no BLAS being built over a cut.
+    private var streamingSettled: Bool {
+        (virtualTracing?.clusters?.streamer.isSettled ?? true) && !(virtualTracing?.blas?.isBusy ?? false)
+            && (rasterClusters?.streamer.isSettled ?? true)
+    }
+
+    /// How long after a scene is installed its texture levels and virtual geometry pages may show as loading at most
+    /// (a texture budget too small for what the view wants never settles).
+    static let settlingStreamsSeconds = 20.0
+
+    /// What is still coming in now that the scene is installed, for the loading overlay (`loadActivity`), ten times a
+    /// second: texture levels and virtual geometry pages while a new scene settles; Lumen's bakes, the sky image, the
+    /// noise tiles and shader variants whenever they are being made.
+    private func publishStreams() {
+        let now = CACurrentMediaTime()
+        guard now - streamsPublished >= 0.1 else { return }
+        streamsPublished = now
+        typealias Stream = LoadActivity.Stream
+        var streams: [Stream] = []
+        if let settling = settlingStreams {
+            var settlers: [Stream] = []
+            if let ts = textureStreamer {
+                let p = ts.levelProgress
+                if p.done < p.total {
+                    settlers.append(Stream(name: "Texture levels", done: p.done, total: p.total,
+                                           detail: String(format: "%.0f MB resident", ts.stats.residentMB)))
+                }
+            }
+            for (name, streamer) in [("Virtual geometry pages", virtualTracing?.clusters?.streamer),
+                                     ("Raster cluster pages", rasterClusters?.streamer)] {
+                guard let streamer, !streamer.isSettled else { continue }
+                let st = streamer.stats
+                settlers.append(Stream(name: name, done: st.residentGroups, total: st.residentGroups + st.pending,
+                                       detail: String(format: "%d waiting, %.0f MB resident", st.pending, streamer.residentMB)))
+            }
+            if let blas = virtualTracing?.blas, blas.isBusy {
+                settlers.append(Stream(name: "Virtual geometry BLAS", done: 0, total: 0,
+                                       detail: String(format: "%.1fM triangles", Double(blas.stats.triangles) / 1e6)))
+            }
+            // (A streamer may not have asked for anything in the first frames: a moment before they count as settled.)
+            if (settlers.isEmpty && now - settling.from > 0.5) || now > settling.until { settlingStreams = nil }
+            else { streams += settlers }
+        }
+        if let lumen = lumenScene, lumenSceneOf === scene, lumen.isBaking {
+            streams.append(Stream(name: "Lumen SDF bakes", done: lumen.baked, total: lumen.toBake,
+                                  detail: "\(lumen.megabytes) MB"))
+        }
+        if skyImageLoading { streams.append(Stream(name: "Sky image", done: 0, total: 0, detail: "decoding")) }
+        if !blueNoiseReady { streams.append(Stream(name: "Blue noise tile", done: 0, total: 0, detail: "first launch")) }
+        if fogNoisePending { streams.append(Stream(name: "Fog noise", done: 0, total: 0)) }
+        if let pending = pipelines?.variants.pending, pending > 0 {
+            streams.append(Stream(name: "Shader variants", done: 0, total: 0, detail: "\(pending) compiling"))
+        }
+        loadActivity.setStreams(streams)
+    }
+
     private func colorAccumTexture(width: Int, height: Int) -> MTLTexture? {
         if let t = colorAccum, t.width == width, t.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
@@ -3079,6 +3883,67 @@ final class Renderer: NSObject {
         colorAccum = device.makeTexture(descriptor: d)
         colorAccumCount = 0
         return colorAccum
+    }
+
+    /// Reference "Path traced": for each of the scene's own instances, the light it is the visible shape of (its
+    /// index in the lights), ~1 for the other camera-only shapes (maskLights: the motes), ~0 for geometry. A bounce
+    /// ray that meets a light's shape asks this which light it met, and passes through the motes.
+    private func makeLightProxies() {
+        var map = scene.instances.map { $0.mask & Scene.maskLights != 0 ? UInt32.max - 1 : UInt32.max }
+        if map.isEmpty { map = [.max] }
+        for (i, light) in scene.lights.enumerated() where map.indices.contains(light.proxyInstance) {
+            map[light.proxyInstance] = UInt32(i)
+        }
+        lightProxies = device.makeBuffer(bytes: map, length: map.count * MemoryLayout<UInt32>.stride, options: .storageModeShared)
+        lightProxies?.label = "light proxies"
+        lightProxyCount = scene.instances.count
+    }
+
+    /// The reference picture starts over: no frame or path of it is kept.
+    private func resetReference() {
+        accumCount = 0
+        colorAccumCount = 0
+        pathTraceCount = 0
+        referenceEpoch &+= 1
+    }
+
+    /// Reference pictures in the app (not a benchmark's, which its config keeps still) start over when the view
+    /// changes (the camera, the field of view, the size) or the scene moves (its clock runs).
+    private func checkReferenceView(width: Int, height: Int) {
+        guard referenceMode != .off && !benchmarkAccumulating else {
+            referenceView = []
+            return
+        }
+        let view = [SIMD4(camera.position, camera.fovY), SIMD4(camera.forward, Float(width)), SIMD4(camera.up, Float(height))]
+        if view != referenceView || animTime != previousAnimTime { resetReference() }
+        referenceView = view
+    }
+
+    /// Reference "Path traced": the paths' running mean.
+    private func pathTraceTexture(width: Int, height: Int) -> MTLTexture? {
+        if let t = pathTraceAccum, t.width == width, t.height == height { return t }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        pathTraceAccum = device.makeTexture(descriptor: d)
+        pathTraceCount = 0
+        return pathTraceAccum
+    }
+
+    private func liquidTargets(width: Int, height: Int) -> LiquidTargets? {
+        if let t = liquidTextures, t.ray.width == width, t.ray.height == height { return t }
+        func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            let t = device.makeTexture(descriptor: d)
+            t?.label = label
+            return t
+        }
+        guard let ray = make(.rgba32Float, "liquidRay"), let direction = make(.rgba32Float, "liquidDirection"),
+              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection") else { return nil }
+        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection)
+        return liquidTextures
     }
 
     private func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)? {
@@ -3156,6 +4021,354 @@ final class Renderer: NSObject {
         }
         return (buffer, tree.nodes.count)
     }
+    // MARK: - Raster visibility buffer
+
+    /// The raster's view of the scene being drawn: made on the first raster frame of a scene's buffers.
+    private func currentRasterScene() -> RasterScene? {
+        let clusters = rasterClusters != nil && cameraClusters   // (the shadow maps may have them on their own)
+        if let r = rasterScene, r.source === sceneBuffers.meshes, r.virtualClusters == clusters { return r }
+        rasterScene = nil
+        do {
+            rasterScene = try RasterScene(device: device, scene: scene, buffers: sceneBuffers, virtualBLAS: virtualTracing?.blas != nil,
+                                          clusters: clusters)
+        } catch {
+            print("Raster visibility buffer: \(error); the primary rays are traced")
+        }
+        return rasterScene
+    }
+
+    /// Virtual geometry's clusters, when the raster or the shadow maps draw them (made on the first such frame of a
+    /// scene, with their own streaming pool): nil otherwise, which frees the pool.
+    @discardableResult
+    private func currentRasterClusters() -> RasterClusters? {
+        guard cameraClusters || shadowClusters, let blas = virtualTracing?.blas, !scene.hasVoxelBoxes else {
+            rasterClusters = nil
+            return nil
+        }
+        let poolBytes = max(settings.virtualGeometry.rasterPoolMB, 64) << 20
+        if let r = rasterClusters, r.source === blas, r.streamer.poolBytes == poolBytes { return r }
+        rasterClusters = nil
+        let instances = scene.instances.indices.filter { scene.instances[$0].virtualMesh >= 0 }.map { ($0, scene.instances[$0].virtualMesh) }
+        do {
+            let r = try RasterClusters(device: device, meshes: scene.virtualMeshes, instances: instances,
+                                       poolMB: settings.virtualGeometry.rasterPoolMB, slots: Renderer.maxFramesInFlight)
+            r.source = blas
+            rasterClusters = r
+        } catch {
+            print("Raster clusters: \(error); virtual geometry is drawn from its BLAS")
+        }
+        return rasterClusters
+    }
+
+    /// The camera's raster draws virtual geometry as clusters (VirtualGeometrySettings.raster).
+    private var cameraClusters: Bool { settings.primary == .raster && settings.virtualGeometry.raster.drawsClusters }
+    /// The shadow maps draw virtual geometry as clusters (VSMSettings.clusters).
+    private var shadowClusters: Bool {
+        settings.shadowMethod == .virtualMaps && settings.vsm.clusters && !scene.tracesClusters
+    }
+
+    private func rasterTargets(width: Int, height: Int, scene rs: RasterScene) -> RasterTargets? {
+        if let r = rasterTargets, r.width == width, r.height == height, r.maxGroups >= rs.instanceCount + r.maxDraws / 64 + 1,
+           r.maxDraws >= min(rs.chunkCount, 1 << 22) {
+            return r
+        }
+        rasterTargets = nil   // (the old ones go first: a size change can be large)
+        rasterTargets = try? RasterTargets(device: device, width: width, height: height, chunks: rs.chunkCount, instances: rs.instanceCount)
+        return rasterTargets
+    }
+
+    /// What the raster's vertices and culling reach through addresses: the borrowed meshes' buffers, the instance
+    /// blocks' records and the cut's BLASes.
+    private func rasterResources(slot: Int) -> [MTLResource] {
+        sceneBuffers.blockBuffers + sceneBuffers.instanceResources + (virtualTracing?.blas?.resources(slot: slot) ?? [])
+            + (rasterScene?.virtualClusters == true ? rasterClusters?.resources(slot: slot) ?? [] : [])
+    }
+
+    /// 1c. The raster visibility buffer (Shaders/Raster.metal), ahead of the trace that reads it. The chunks' bounds the
+    /// first time; then two culling passes (what was visible last frame, then the rest against the depth pyramid of the
+    /// first), each with its draw, and the pyramid between them.
+    private func encodeRaster(_ plan: FramePlan, _ raster: (scene: RasterScene, targets: RasterTargets), passes: FrameEncoder) {
+        let rs = raster.scene, rt = raster.targets, slot = plan.slot
+        guard let depthState = rasterDepthState else { return }
+        var u = plan.uniforms
+        var params = GPURasterParams(instanceCount: UInt32(rs.instanceCount), meshCount: UInt32(rs.meshCount),
+                                     chunkCount: UInt32(rs.chunkCount),
+                                     flags: (rs.ids != nil ? GPURasterParams.ids : 0) | GPURasterParams.hzb,
+                                     maxDraws: UInt32(rt.maxDraws), maxGroups: UInt32(rt.maxGroups), hzbLevels: UInt32(rt.hzb.mipmapLevelCount),
+                                     pass: 0, hzbSize: SIMD2(UInt32(rt.hzb.width), UInt32(rt.hzb.height)),
+                                     firstAssembly: UInt32(rs.firstAssembly))
+        let instances = sceneBuffers.instanceTable ?? instanceDataBuffers[slot]
+        let vgTable = virtualTracing?.blas?.table(slot: slot) ?? rs.meshes   // (a stand-in nothing reads)
+        let clusters = rs.virtualClusters ? rasterClusters : nil
+        params.virtualCount = UInt32(clusters?.instanceCount ?? 0)
+        let meshPipeline = settings.virtualGeometry.raster == .mesh ? pipelines.clusterMesh : nil
+        let vgParams = clusters?.params(view: detailView(height: plan.size.height), previous: rt.prevFrame == frameIndex &- 1,
+                                        mesh: meshPipeline != nil)
+        let pages = clusters?.streamer.bindPages(slot: slot)
+        let resources = rasterResources(slot: slot)
+        let group = MTLSize(width: 64, height: 1, depth: 1)
+
+        /// The buffers every raster kernel reads at the indices Raster.metal gives them, for `pass`.
+        func bind(_ enc: ComputePass, pass: Int) {
+            enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.setBuffer(positionBuffer, offset: 0, index: 2)
+            enc.setBuffer(indexBuffer, offset: 0, index: 4)
+            enc.setBuffer(meshBuffer, offset: 0, index: 5)
+            enc.setBuffer(instances, offset: 0, index: 6)
+            params.pass = UInt32(pass)
+            enc.setBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+            enc.setBuffer(rs.ids ?? rs.meshes, offset: 0, index: 10)
+            enc.setBuffer(rs.visible, offset: 0, index: 11)
+            enc.setBuffer(rt.groups, offset: pass * rt.maxGroups * 16, index: 12)
+            enc.setBuffer(rt.counters, offset: 0, index: 13)
+            enc.setBuffer(rs.meshes, offset: 0, index: 14)
+            enc.setBuffer(rs.chunkBounds, offset: 0, index: 15)
+            enc.setBuffer(vgTable, offset: 0, index: 16)
+            enc.setBuffer(rt.draws, offset: pass * rt.maxDraws * 16, index: 17)
+            enc.setBuffer(rs.chunkMeshes, offset: 0, index: 18)
+            enc.setBuffer(rt.records, offset: pass * rt.maxGroups * RasterTargets.recordSize, index: 19)
+            enc.setTexture(rt.hzb, index: 0)
+            enc.setTexture(rt.hzbPrev, index: 1)
+            // The raster clusters (Shaders/RasterClusters.metal); their state is cleared and set aside even without them.
+            enc.setBuffer(clusters?.state(slot: slot) ?? rs.noClusterState, offset: 0, index: 26)
+            if let clusters, let pages, var p = vgParams {
+                enc.setBuffer(clusters.streamer.pool, offset: 0, index: 20)
+                enc.setBytes(&p, length: MemoryLayout<RasterClusters.Params>.stride, index: 21)
+                enc.setBuffer(clusters.vinstances, offset: 0, index: 22)
+                enc.setBuffer(clusters.groupRecords, offset: 0, index: 23)
+                enc.setBuffer(clusters.streamer.clusterBuffer, offset: 0, index: 24)
+                enc.setBuffer(pages, offset: 0, index: 25)
+                enc.setBuffer(clusters.listBuffers[slot], offset: 0, index: 27)
+                enc.setBuffer(clusters.requests(slot: slot), offset: 0, index: 28)
+                enc.setBuffer(clusters.streamer.requestStamp, offset: 0, index: 29)
+                enc.setBuffer(clusters.streamer.lastUsed, offset: 0, index: 30)
+            }
+        }
+
+        for pass in 0..<2 {
+            guard let enc = passes.compute("raster cull", serial: true) else { return }
+            enc.useResources(resources, usage: .read)
+            bind(enc, pass: pass)
+            if pass == 0 {
+                if !rs.boundsReady && rs.chunkCount > 0 {
+                    enc.setComputePipelineState(pipelines[.rasterBounds])
+                    enc.dispatchThreads(MTLSize(width: rs.chunkCount, height: 1, depth: 1), threadsPerThreadgroup: group)
+                    rs.boundsReady = true
+                }
+                enc.setComputePipelineState(pipelines[.rasterReset])
+                enc.dispatchThreads(MTLSize(width: max(16, Int(params.virtualCount)), height: 1, depth: 1), threadsPerThreadgroup: group)
+            }
+            enc.setComputePipelineState(pipelines[.rasterCull])
+            enc.dispatchThreads(MTLSize(width: max(rs.instanceCount, 1), height: 1, depth: 1), threadsPerThreadgroup: group)
+            // Virtual geometry's clusters: the cut and what the last frame's depth doesn't hide, then what it did that
+            // this frame's (pass 1's) doesn't.
+            if let clusters, clusters.workCount > 0 {
+                enc.setComputePipelineState(pipelines[pass == 0 ? .rasterVGCut : .rasterVGRetest])
+                enc.dispatchThreads(MTLSize(width: pass == 0 ? clusters.workCount : RasterClusters.capacity, height: 1, depth: 1),
+                                    threadsPerThreadgroup: group)
+                if meshPipeline != nil {
+                    enc.setComputePipelineState(pipelines[.rasterVGMeshArgs])
+                    enc.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+                }
+            }
+            enc.setComputePipelineState(pipelines[.rasterChunks])
+            enc.dispatchThreadgroups(indirectBuffer: rt.counters, indirectBufferOffset: pass * RasterTargets.countersStride + 16,
+                                     threadsPerThreadgroup: group)
+            passes.endCompute()
+
+            let clear = MTLClearColor(red: Double(UInt32.max), green: Double(UInt32.max), blue: 0, alpha: 0)
+            passes.render("raster", RenderAttachments(color: rt.visibility, depth: rt.depth, clear: pass == 0, clearColor: clear)) { [self] r in
+                r.setRenderPipelineState(pipelines.visibility)
+                r.setDepthStencilState(depthState)
+                // (the records' corners and indices point into these)
+                r.useResources(resources + [positionBuffer, indexBuffer, rs.meshes])
+                r.setBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+                r.setBuffer(rt.draws, offset: pass * rt.maxDraws * 16, index: 17)
+                r.setBuffer(rt.records, offset: pass * rt.maxGroups * RasterTargets.recordSize, index: 19)
+                if let clusters {   // a cluster's vertices: its triangles and positions in the pool, its instances' records
+                    r.setBuffer(clusters.streamer.pool, offset: 0, index: 20)
+                    r.setBuffer(clusters.state(slot: slot), offset: 0, index: 26)
+                    r.setBuffer(clusters.listBuffers[slot], offset: RasterClusters.ownersOffset, index: 27)
+                }
+                r.drawTriangles(indirectBuffer: rt.counters, indirectBufferOffset: pass * RasterTargets.countersStride)
+                if let meshPipeline, let clusters, var p = vgParams {   // the pass's clusters, a threadgroup each
+                    r.setRenderPipelineState(meshPipeline)
+                    r.setMeshBytes(&params, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+                    r.setMeshBuffer(clusters.streamer.pool, offset: 0, index: 20)
+                    r.setMeshBytes(&p, length: MemoryLayout<RasterClusters.Params>.stride, index: 21)
+                    r.setMeshBuffer(clusters.state(slot: slot), offset: 0, index: 26)
+                    r.setMeshBuffer(clusters.listBuffers[slot], offset: 0, index: 27)
+                    r.drawMeshThreadgroups(indirectBuffer: clusters.state(slot: slot), indirectBufferOffset: RasterClusters.meshArgsOffset(pass: pass),
+                                           threads: RasterScene.chunk)
+                }
+            }
+
+            // The pyramid of pass 1's depth, which pass 2 tests against; with raster clusters, after pass 2 the final
+            // depth's, which the next frame's clusters test against first.
+            let pyramid = pass == 0 ? rt.hzb : clusters != nil ? rt.hzbPrev : nil
+            if let pyramid, let enc = passes.compute("hzb", serial: true) {
+                enc.setComputePipelineState(pipelines[.hzbInit])
+                enc.setTexture(rt.depth, index: 0)
+                enc.setTexture(pyramid, index: 1)
+                dispatch(enc, .hzbInit, width: pyramid.width, height: pyramid.height)
+                enc.setComputePipelineState(pipelines[.hzbReduce])
+                enc.setTexture(pyramid, index: 0)
+                for level in 1..<pyramid.mipmapLevelCount {
+                    var l = UInt32(level)
+                    enc.setBytes(&l, length: 4, index: 0)
+                    dispatch(enc, .hzbReduce, width: max(pyramid.width >> level, 1), height: max(pyramid.height >> level, 1))
+                }
+                passes.endCompute()
+            }
+        }
+        rt.prevFrame = clusters != nil ? frameIndex : .max
+    }
+
+    // MARK: - Virtual shadow maps
+
+    /// Drawn pages are kept until their light or something over them moves; `METALRENDERER_VSM_CACHE=0` draws every page
+    /// a sample asks for every frame (an A/B of the cache).
+    private static let vsmCache = ProcessInfo.processInfo.environment["METALRENDERER_VSM_CACHE"] != "0"
+
+    /// The scene's virtual shadow maps for this frame's lights (the first `analytic` of the slot's light buffer, as
+    /// writeFrameData left them): made again for other buffers, other mapped lights or other pool or level settings.
+    private func vsmTargets(slot: Int, analytic: Int) -> VSMTargets? {
+        let lights = Array(UnsafeBufferPointer(start: lightBuffers[slot].contents().bindMemory(to: GPULight.self, capacity: analytic),
+                                               count: analytic))
+        let s = settings.vsm
+        if let v = vsmTargets, vsmSource === sceneBuffers.meshes, v.settings.pool == s.pool, v.settings.levels == s.levels,
+           v.settings.maxLights == s.maxLights, v.lights == VSMTargets.mapped(lights, settings: s) {
+            return v
+        }
+        vsmTargets = nil   // (the old pool goes first)
+        vsmTargets = VSMTargets(device: device, lights: lights, settings: s, frameSlots: Renderer.maxFramesInFlight)
+        vsmSource = sceneBuffers.meshes
+        return vsmTargets
+    }
+
+    /// SceneShading.vsm: this frame's VSMScene, or none.
+    private func writeVSMArgument(_ plan: FramePlan) {
+        let slot = plan.slot
+        guard slot < shadingArgs.count else { return }
+        var address: UInt64 = 0
+        if let vsm = plan.vsm {
+            let analytic = Int(plan.uniforms.lightGroupEnd.w)
+            let lights = Array(UnsafeBufferPointer(start: lightBuffers[slot].contents().bindMemory(to: GPULight.self, capacity: analytic),
+                                                   count: analytic))
+            let u = plan.uniforms
+            vsm.writeViews(slot: slot, lights: lights, camera: SIMD3(u.camPos.x, u.camPos.y, u.camPos.z))
+            vsm.writeScene(slot: slot, lightCount: analytic, traced: scene.hasShadowTraced, settings: settings.vsm, uniforms: u)
+            address = vsm.sceneArgs[slot].gpuAddress
+        }
+        shadingArgs[slot].contents().storeBytes(of: address, toByteOffset: Renderer.shadingVSMOffset, as: UInt64.self)
+    }
+
+    /// 1b. The virtual shadow maps' pages (Shaders/VSM.metal), ahead of the trace whose shadow samples read them: the
+    /// pages last frame's samples asked for get physical pages and, if not drawn, their turn; the instances and chunks
+    /// in front of those are culled into a draw list; one render pass clears and draws the pages.
+    private func encodeVSM(_ plan: FramePlan, _ vsm: VSMTargets, passes: FrameEncoder) {
+        guard let rs = currentRasterScene(), let depthState = rasterDepthState, let clearState = vsmClearState else { return }
+        let slot = plan.slot
+        let instances = sceneBuffers.instanceTable ?? instanceDataBuffers[slot]
+        let vgTable = virtualTracing?.blas?.table(slot: slot) ?? rs.meshes   // (a stand-in nothing reads)
+        let resources = rasterResources(slot: slot)
+        var params = GPUVSMParams(entries: UInt32(vsm.entries), pool: UInt32(vsm.poolPages),
+                                  budget: UInt32(min(settings.vsm.budget, VSMSettings.budgetRange.upperBound)),
+                                  frame: plan.uniforms.frameIndex, keep: 30, instanceCount: UInt32(rs.instanceCount),
+                                  meshCount: UInt32(rs.meshCount), maxDraws: UInt32(VSMTargets.maxDraws),
+                                  maxGroups: UInt32(VSMTargets.maxGroups),
+                                  flags: (rs.ids != nil ? GPUVSMParams.ids : 0) | (Renderer.vsmCache ? GPUVSMParams.cache : 0),
+                                  views: UInt32(vsm.viewCount), moving: UInt32(rs.movingCount))
+        // Virtual geometry as the raster's clusters: their own cut a view (vsmVGCutKernel); else zeros (VSMClusterArgs).
+        let clusters = settings.vsm.clusters ? rasterClusters : nil
+        let clusterArgs = clusters?.shadowArgs(slot: slot, views: vsm.viewCount, tau: settings.virtualGeometry.pixelError)
+        var vgArgs = clusterArgs?.bytes ?? [UInt64](repeating: 0, count: 12)
+        let group = MTLSize(width: 64, height: 1, depth: 1), one = MTLSize(width: 1, height: 1, depth: 1)
+        guard let enc = passes.compute("vsm", serial: true) else { return }
+        enc.useResources(resources, usage: .read)
+        if let clusterArgs { enc.useResources(clusterArgs.resources, usage: [.read, .write]) }
+        if !rs.boundsReady && rs.chunkCount > 0 {   // the chunks' bounds, once a scene (as encodeRaster)
+            var rp = GPURasterParams(instanceCount: 0, meshCount: UInt32(rs.meshCount), chunkCount: UInt32(rs.chunkCount))
+            enc.setBytes(&rp, length: MemoryLayout<GPURasterParams>.stride, index: 9)
+            enc.setBuffer(positionBuffer, offset: 0, index: 2)
+            enc.setBuffer(indexBuffer, offset: 0, index: 4)
+            enc.setBuffer(meshBuffer, offset: 0, index: 5)
+            enc.setBuffer(rs.meshes, offset: 0, index: 14)
+            enc.setBuffer(rs.chunkBounds, offset: 0, index: 15)
+            enc.setBuffer(rs.chunkMeshes, offset: 0, index: 18)
+            enc.setComputePipelineState(pipelines[.rasterBounds])
+            enc.dispatchThreads(MTLSize(width: rs.chunkCount, height: 1, depth: 1), threadsPerThreadgroup: group)
+            rs.boundsReady = true
+        }
+        enc.setBuffer(positionBuffer, offset: 0, index: 2)
+        enc.setBuffer(indexBuffer, offset: 0, index: 4)
+        enc.setBuffer(meshBuffer, offset: 0, index: 5)
+        enc.setBuffer(instances, offset: 0, index: 6)
+        enc.setBytes(&vgArgs, length: vgArgs.count * 8, index: 7)
+        enc.setBytes(&params, length: MemoryLayout<GPUVSMParams>.stride, index: 9)
+        enc.setBuffer(rs.ids ?? rs.meshes, offset: 0, index: 10)
+        enc.setBuffer(rs.moving, offset: 0, index: 11)
+        enc.setBuffer(vsm.groups, offset: 0, index: 12)
+        enc.setBuffer(vsm.counters, offset: 0, index: 13)
+        enc.setBuffer(rs.meshes, offset: 0, index: 14)
+        enc.setBuffer(rs.chunkBounds, offset: 0, index: 15)
+        enc.setBuffer(vgTable, offset: 0, index: 16)
+        enc.setBuffer(vsm.records, offset: 0, index: 17)
+        enc.setBuffer(vsm.draws, offset: 0, index: 18)
+        enc.setBuffer(vsm.activeViews, offset: 0, index: 19)
+        enc.setBuffer(vsm.rects, offset: 0, index: 20)
+        enc.setBuffer(vsm.active, offset: 0, index: 21)
+        enc.setBuffer(vsm.views[slot], offset: 0, index: 22)
+        enc.setBuffer(vsm.entryView, offset: 0, index: 23)
+        enc.setBuffer(vsm.table, offset: 0, index: 24)
+        enc.setBuffer(vsm.tags, offset: 0, index: 25)
+        enc.setBuffer(vsm.pages, offset: 0, index: 26)
+        enc.setBuffer(vsm.freeList, offset: 0, index: 27)
+        enc.setBuffer(vsm.requests, offset: 0, index: 28)
+        enc.setBuffer(vsm.slots, offset: 0, index: 29)
+        enc.setBuffer(vsm.renderList, offset: 0, index: 30)
+        let entries = MTLSize(width: vsm.entries, height: 1, depth: 1)
+        enc.setComputePipelineState(pipelines[.vsmReset])
+        enc.dispatchThreads(one, threadsPerThreadgroup: one)
+        enc.setComputePipelineState(pipelines[.vsmViewReset])
+        enc.dispatchThreads(MTLSize(width: vsm.viewCount, height: 1, depth: 1), threadsPerThreadgroup: group)
+        enc.setComputePipelineState(pipelines[.vsmFree])
+        enc.dispatchThreads(entries, threadsPerThreadgroup: group)
+        if Renderer.vsmCache && rs.movingCount > 0 {
+            enc.setComputePipelineState(pipelines[.vsmInvalidate])
+            enc.dispatchThreads(MTLSize(width: rs.movingCount, height: vsm.viewCount, depth: 1), threadsPerThreadgroup: group)
+        }
+        enc.setComputePipelineState(pipelines[.vsmAlloc])
+        enc.dispatchThreads(entries, threadsPerThreadgroup: group)
+        enc.setComputePipelineState(pipelines[.vsmSettle])
+        enc.dispatchThreads(one, threadsPerThreadgroup: one)
+        enc.setComputePipelineState(pipelines[.vsmCull])
+        enc.dispatchThreadgroups(indirectBuffer: vsm.counters, indirectBufferOffset: 48, threadsPerThreadgroup: group)
+        if let clusters, clusters.workCount > 0 {   // (after the cull: it reads the records the cull left)
+            enc.setComputePipelineState(pipelines[.vsmVGCut])
+            enc.dispatchThreads(MTLSize(width: clusters.workCount, height: vsm.viewCount, depth: 1), threadsPerThreadgroup: group)
+        }
+        enc.setComputePipelineState(pipelines[.vsmChunks])
+        enc.dispatchThreadgroups(indirectBuffer: vsm.counters, indirectBufferOffset: 16, threadsPerThreadgroup: group)
+        passes.endCompute()
+
+        passes.render("vsm draw", RenderAttachments(color: nil, depth: vsm.pool, clear: false, layers: vsm.poolPages)) { [self] r in
+            r.useResources(resources + [positionBuffer, indexBuffer, rs.meshes] + (clusterArgs?.resources ?? []))   // (the records point into these)
+            r.setBytes(&vgArgs, length: vgArgs.count * 8, index: 7)
+            r.setBytes(&params, length: MemoryLayout<GPUVSMParams>.stride, index: 9)
+            r.setBuffer(vsm.records, offset: 0, index: 17)
+            r.setBuffer(vsm.draws, offset: 0, index: 18)
+            r.setBuffer(vsm.renderList, offset: 0, index: 30)
+            r.setRenderPipelineState(pipelines.vsmClear)
+            r.setDepthStencilState(clearState)
+            r.drawTriangles(indirectBuffer: vsm.counters, indirectBufferOffset: 32)
+            r.setRenderPipelineState(pipelines.vsm)
+            r.setDepthStencilState(depthState)
+            r.clampDepth()
+            r.drawTriangles(indirectBuffer: vsm.counters, indirectBufferOffset: 0)
+        }
+    }
+
     private func megaLightsTargets(width: Int, height: Int, capacity: Int) -> MegaLightsTargets? {
         if let m = megaLightsGrid, m.width == width, m.height == height, m.capacity == capacity { return m }
         megaLightsGrid = try? MegaLightsTargets(device: device, width: width, height: height, capacity: capacity)
@@ -3163,6 +4376,11 @@ final class Renderer: NSObject {
         return megaLightsGrid
     }
     private static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
+    /// Reference "Path traced": METALRENDERER_PT_SOBOL=0 draws white noise instead of Owen-scrambled Sobol (A/B).
+    private static let pathTraceSobol = ProcessInfo.processInfo.environment["METALRENDERER_PT_SOBOL"] != "0"
+    /// Reference "Path traced": up to this many lights (PT_LIGHT_HITS in PathTrace.metal), each is weighed at every
+    /// point and bounce rays test them one by one; above, the light tree draws them and rays meet their proxies.
+    static let pathTraceLightHits = 32
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
     private static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
     /// The Metal TLAS is refit most frames (see encodeSceneUpdate), so it is built for a fast build. A quality build
@@ -3233,21 +4451,25 @@ final class Renderer: NSObject {
             : s.giMode == .restirGI ? withBounces("ReSTIR", s.restirGI.bounces) : "GI \(s.giMode.title.lowercased())"
         let res = outWidth > width ? String(format: "%ld×%ld → MetalFX denoiser %ld×%ld", width, height, outWidth, outHeight)
                                    : String(format: "%ld×%ld", width, height)
-        let stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
+        var stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
+        switch referenceMode {
+        case .pathTraced: stats += " — reference: \(pathTraceCount) paths/pixel"
+        case .accumulated where benchmark == nil: stats += " — reference: \(accumCount) frames"
+        default: break
+        }
         var sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
         if scene.lights.count > 4 { sceneName += " — direct: \(activeDirectMode.title)" }
         if let loading { sceneName += " — loading \(loading.scene.kind.title)…" }
-        if let vg = customRT?.virtualGeometry {
+        if let vg = virtualTracing?.clusters {
             sceneName += String(format: " — %d clusters, %.0f MB", vg.stats.selected, vg.residentMB)
         }
-        if let vg = customRT?.virtualBLAS {
+        if let vg = virtualTracing?.blas {
             sceneName += String(format: " — VG %.1fM triangles, %.0f MB", Double(vg.stats.triangles) / 1e6, vg.stats.megabytes)
         }
         if let ts = textureStreamer { sceneName += String(format: " — textures %.0f MB", ts.stats.residentMB) }
         if frozenLOD != nil && lodFreezes { sceneName += " — LOD frozen" }
-        surface?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ RT — %@ noise — denoiser %@ — %@%@",
-                                sceneName, stats, gi, s.rayTracer == .custom ? "custom" : "Metal",
-                                s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
+        surface?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ noise — denoiser %@ — %@%@",
+                                sceneName, stats, gi, s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
                                 RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         statsLine = stats
         cpuMs = frameIntervalCount > 0 ? frameIntervalSum / Double(frameIntervalCount) : 0
@@ -3261,6 +4483,11 @@ final class Renderer: NSObject {
         traversalFrames = 0
         var status = RendererStatus(directMode: activeDirectMode, traversalCounters: traversalCounters,
                                     debugInfo: debugActive ? debugInfo() : nil)
+        status.plantStats = scene.plantStats
+        status.buildingStats = scene.buildingStats
+        status.buildingPlan = scene.buildingPlan
+        status.walker = walkerStatus
+        status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
@@ -3292,26 +4519,29 @@ final class Renderer: NSObject {
     func reloadShaders(then done: ((Bool) -> Void)? = nil) {
         // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
         let device = device, url = shaderURL
-        let kind = pipelines?.kind ?? builtRayTracer, lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
+        let lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
         let api = pipelines?.api ?? builtAPI, compiler = compiler(for: api)
-        let stats = CustomRayTracer.statsEnabled
+        let stats = TraceSceneArgs.statsEnabled
+        let job = benchmark != nil ? nil : loadActivity.begin("shaders", verbs: ("Compiling", "Compiled"))
         shaderQueue.async { [weak self] in
             let result = Result {
-                try Pipelines(device: device, source: url, kind: kind, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats)
+                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats,
+                              load: job)
             }
+            if case .failure = result { job?.fail() } else { job?.finish() }
             self?.renderThread.perform {
                 guard let self else { return }
                 switch result {
                 case .success(let made):
-                    // A scene with another tracer or other light types came in meanwhile: compile again, for that one.
-                    if let current = self.pipelines,
-                       made.kind != current.kind || made.api != current.api || made.lightTypes != current.lightTypes {
+                    // A scene with another API or other light types came in meanwhile: compile again, for that one.
+                    if let current = self.pipelines, made.api != current.api || made.lightTypes != current.lightTypes {
                         return self.reloadShaders(then: done)
                     }
                     self.pipelines = made
                     self.shaderGeneration += 1
-                    self.customRT?.pipelines = made.rt
+                    self.keepPipelines(made, generation: self.shaderGeneration)
                     self.resetGIState()
+                    if !self.benchmarkAccumulating { self.resetReference() }
                     self.upscalerReset = true
                     done?(true)
                 case .failure(let error):
@@ -3335,15 +4565,15 @@ final class Renderer: NSObject {
     }
     private let shaderQueue = DispatchQueue(label: "MetalRenderer.shaders", qos: .userInitiated)   // reloads, one at a time
 
-    /// The custom tracer's traversal counters (RT_STATS).
-    var traversalCounters: Bool { CustomRayTracer.statsEnabled }
+    /// The ray queries' counters (RT_STATS).
+    var traversalCounters: Bool { TraceSceneArgs.statsEnabled }
 
-    /// Turns the traversal counters on or off: that recompiles the shaders (in the background, `done` when ready).
+    /// Turns the ray queries' counters on or off: that recompiles the shaders (in the background, `done` when ready).
     func setTraversalCounters(_ on: Bool, then done: (() -> Void)? = nil) {
-        guard on != CustomRayTracer.statsEnabled else { done?(); return }
-        CustomRayTracer.statsEnabled = on
+        guard on != TraceSceneArgs.statsEnabled else { done?(); return }
+        TraceSceneArgs.statsEnabled = on
         reloadShaders { [weak self] ok in
-            if !ok { CustomRayTracer.statsEnabled = !on }
+            if !ok { TraceSceneArgs.statsEnabled = !on }
             self?.traversalLast = nil
             self?.traversal = nil
             self?.traversalSum = TraversalStats()
@@ -3352,11 +4582,9 @@ final class Renderer: NSObject {
         }
     }
 
-    /// Freeze LOD does something: it holds the custom tracer's cut of the virtual meshes and its plants' voxel levels
-    /// (`detailView`). The open world's tiles follow the camera regardless.
-    private var lodFreezes: Bool {
-        (customRT != nil && (scene.usesVirtualGeometry || (scene.hasPlants && scene.usesAssemblies))) || sceneBuffers?.voxelLOD != nil
-    }
+    /// Freeze LOD does something: it holds the cut of the virtual meshes and the plants' voxel levels (`detailView`).
+    /// The open world's tiles follow the camera regardless.
+    private var lodFreezes: Bool { virtualTracing != nil || sceneBuffers?.voxelLOD != nil }
 
     /// Why the view shown has nothing (or less than its name says) to show for this scene and these settings; nil if
     /// it shows what it says.
@@ -3367,16 +4595,16 @@ final class Renderer: NSObject {
             return "History length is the SVGF denoiser's: MetalFX's denoising scaler keeps its own history."
         case 5 where !denoiserOn:
             return "The denoiser is off: no history."
-        case 7 where !settings.giEnabled || ![.radianceCascades, .restirGI].contains(activeGIMode):
-            return "GI debug is drawn by radiance cascades and ReSTIR GI only."
+        case 7 where !settings.giEnabled || ![.radianceCascades, .restirGI, .lumen].contains(activeGIMode):
+            return "GI debug is drawn by radiance cascades, ReSTIR GI and Lumen only."
         case 9...10 where !virtual:
-            return "Clusters and groups belong to virtual geometry (custom tracer, glTF meshes of 64K+ triangles: the "
-                + "gallery or added models). Other geometry shows its level of detail, faded."
+            return "Clusters and groups belong to virtual geometry (glTF meshes of 64K+ triangles: the gallery or added "
+                + "models). Other geometry shows its level of detail, faded."
         case 11 where !virtual && !(scene.hasPlants && scene.usesAssemblies) && !scene.meshes.contains(where: { $0.lod != 0 }):
-            return "Nothing in this scene has levels of detail: virtual geometry needs the custom tracer and big glTF "
-                + "meshes; plants, crowds and the open world's tiles have theirs."
-        case 13 where builtRayTracer == .metal:
-            return "Metal's tracer can't count its traversal: magenta. Switch to the custom tracer for the cost."
+            return "Nothing in this scene has levels of detail: virtual geometry needs big glTF meshes; plants, crowds "
+                + "and the open world's tiles have theirs."
+        case 13:
+            return "Metal's traversal can't count its nodes: the cost is the triangles and boxes it hands each ray's query."
         case 14 where !settings.fog.enabled:
             return "Fog is off."
         default:
@@ -3407,19 +4635,21 @@ final class Renderer: NSObject {
         d.lightTableEntries = scene.lightTable.entries.count
         d.directMode = activeDirectMode == .grouped && scene.lightGroupEnd.w <= 4 ? "Exact (4 lights or fewer)" : activeDirectMode.title
         d.giMode = !settings.giEnabled ? "Off" : activeGIMode.title
-        d.rayTracer = builtRayTracer.title
-        d.customTracer = customRT != nil
-        if let vg = customRT?.virtualBLAS {
+        if let vg = virtualTracing?.blas {
             d.vg = .blas(meshes: vg.meshCount, instances: vg.instanceCount, sourceTriangles: vg.sourceTriangles,
                          triangles: vg.stats.triangles, clusters: vg.stats.clusters, megabytes: vg.stats.megabytes,
-                         rebuilds: vg.stats.rebuilds, lastBuildMs: vg.stats.lastBuildMs, lastRefineMs: vg.stats.lastRefineMs,
-                         lastCutMs: vg.stats.lastCutMs, skipped: vg.stats.skippedInstances,
-                         builder: VirtualBLAS.builder.rawValue, busy: vg.isBusy)
-        } else if let vg = customRT?.virtualGeometry {
+                         rebuilds: vg.stats.rebuilds, lastBuildMs: vg.stats.lastBuildMs, lastCutMs: vg.stats.lastCutMs,
+                         skipped: vg.stats.skippedInstances, busy: vg.isBusy)
+        } else if let vg = virtualTracing?.clusters {
             d.vg = .clusters(meshes: vg.meshCount, instances: vg.instanceCount, clusters: vg.clusterCount, groups: vg.groupCount,
                              sourceTriangles: vg.sourceTriangles, triangles: vg.stats.triangles, selected: vg.stats.selected, capacity: VirtualGeometry.capacity, overflow: vg.stats.overflow,
                              residentGroups: vg.stats.residentGroups, residentMB: vg.residentMB, poolMB: vg.poolBytes >> 20,
                              pending: vg.stats.pending, loadedThisFrame: vg.stats.loadedThisFrame)
+        }
+        if let rc = rasterClusters, rasterScene?.virtualClusters == true || shadowClusters {
+            let s = rc.stats
+            d.rasterClusters = (rc.drawnByCamera, s.drawn, RasterClusters.capacity, s.overflow, s.retested, s.triangles, s.residentGroups, rc.streamer.groupCount,
+                                rc.streamer.residentMB, rc.streamer.poolBytes >> 20, s.pending, s.loadedThisFrame)
         }
         d.vgPixelError = settings.virtualGeometry.pixelError
         d.vgFrozen = frozenLOD != nil && lodFreezes
@@ -3460,6 +4690,30 @@ final class Renderer: NSObject {
 
     /// A key went down: `key` is its character without modifiers, lowercased.
     func keyDown(_ key: String, isRepeat: Bool) {
+        if key == "v" && !isRepeat { toggleWalk(); return }
+        if let w = walker {
+            switch key {
+            case " ": jumpPending = true; return
+            case "c": crouchHeld = true; return
+            case "e": if !isRepeat { use(camera.forward) }; return
+            case "f":
+                if !isRepeat, let c = scene.interiorControls {
+                    c.flashlight.on.toggle()
+                    c.flashlight.position = camera.position
+                    c.flashlight.direction = camera.forward
+                    walkMessage = c.flashlight.on ? "Flashlight on" : "Flashlight off"
+                }
+                return
+            case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+                // In a lift: to that floor (0 the ground floor).
+                if let p = w.standingOn, let c = scene.interiorControls, c.lifts.indices.contains(p) {
+                    c.lifts[p].call(Int(key)!)
+                    walkMessage = "Lift to floor \(key)"
+                    return
+                }
+            default: break
+            }
+        }
         if ["w", "a", "s", "d", "q", "e"].contains(key) {
             heldKeys.insert(key)
             return
@@ -3484,22 +4738,86 @@ final class Renderer: NSObject {
                 ? settings.viewMode + 1 : views.lowerBound
         case "0": settings.viewMode = 0
         case "l": settings.virtualGeometry.freeze.toggle()
+        case "t":   // Reference: off, accumulated passes, path traced
+            settings.reference.mode = ReferenceMode(rawValue: (settings.reference.mode.rawValue + 1) % ReferenceMode.allCases.count) ?? .off
         case "u":
             guard upscaleSupported else { print("The MetalFX denoiser is not supported on this GPU or system"); break }
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r": reloadShaders { if $0 { print("Shaders reloaded") } }
+        case "f": frameWorkshop()
         default: break
         }
     }
 
-    func keyUp(_ key: String) { heldKeys.remove(key) }
+    func keyUp(_ key: String) {
+        heldKeys.remove(key)
+        if key == "c" { crouchHeld = false }
+    }
+
+    /// Control: crouching, while walking.
+    func setControl(_ held: Bool) { controlHeld = held }
+    private var controlHeld = false
 
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
 
-    func mouseDragged(dx: Float, dy: Float) {
+    /// A click on a body grabs it where the cursor meets it (Physics.swift's `grab`); anywhere else, the drag turns the
+    /// camera.
+    func mouseDown(at cursor: SIMD2<Float>) {
+        holding = nil
+        clickAt = cursor
+        guard let physics = scene.physics else { return }
+        let direction = cursorRay(cursor)
+        guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
+        let point = camera.position + direction * hit.distance
+        physics.grab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
+        holding = (cursor, dot(point - camera.position, camera.forward))
+    }
+
+    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if let c = clickAt, length(c - cursor) > 0.004 { clickAt = nil }
+        if holding != nil {
+            holding?.cursor = cursor
+            return
+        }
         camera.yaw += dx * 0.004
         camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
+        placeOrbitingCamera()
+    }
+
+    /// Lets go: the body keeps its speed (a flick throws it).
+    func mouseUp() {
+        // A click (no drag) while walking: use what is under the cursor.
+        if let c = clickAt, walker != nil, holding == nil { use(cursorRay(c)) }
+        clickAt = nil
+        holding = nil
+        scene.physics?.grab.target.w = 0
+    }
+
+    /// While holding: the body nearer (down) or farther (up).
+    func scrolled(dy: Float) {
+        if holding == nil, let o = orbit {   // the workshop: nearer (down) or farther (up)
+            orbit?.distance = min(max(o.distance * exp(dy * 0.05), 0.3), 1000)
+            placeOrbitingCamera()
+            return
+        }
+        guard let depth = holding?.depth else { return }
+        holding?.depth = max(depth * exp(dy * 0.05), 0.3)
+    }
+
+    /// The ray from the camera through `cursor` (0...1 across and down), unjittered.
+    private func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {
+        let t = tan(camera.fovY / 2)
+        return normalize(camera.forward + camera.right * ((2 * cursor.x - 1) * t * viewAspect) + camera.up * ((1 - 2 * cursor.y) * t))
+    }
+
+    /// The held body's target this frame: under the cursor, on the plane facing the camera at the grab's depth (so it
+    /// follows the camera as it moves too).
+    private func moveGrab() {
+        guard let holding, let physics = scene.physics, physics.grab.target.w > 0 else { return }
+        let direction = cursorRay(holding.cursor)
+        let along = holding.depth / max(dot(direction, camera.forward), 0.1)
+        physics.grab.target = SIMD4(camera.position + direction * along, 1)
     }
 }

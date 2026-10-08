@@ -34,6 +34,15 @@ final class Benchmark {
         var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
         var drift: CameraDrift? = nil       // the camera drifts from its start pose (the dataset's clips)
         var dataset: DatasetCapture? = nil  // what it saves as float arrays for training the denoiser (Benchmark+Dataset.swift)
+        var body = false                    // the camera is a walker's body: doors open for it, it shoves loose furniture
+        var ride: Int? = nil                // the camera rides lift `ride` (its track keyed at the lift's lowest floor)
+        var events: [(time: Float, event: Event)] = []   // what happens at times of its track (`at`)
+        /// Something done in a building at a moment of a setting's track, as the walker would (InteriorControls).
+        enum Event {
+            case callLift(Int, floor: Int)          // lift n to that floor
+            case lights(on: Bool, within: Float)    // the switches that near the camera, on or off
+            case flashlight(Bool)
+        }
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
@@ -50,7 +59,7 @@ final class Benchmark {
             s.giMode = gi ?? .pathTraced
             s.scene = scene
             s.fog = FogSettings.preset(for: scene)
-            s.sky = SkySettings.preset(for: scene.kind)
+            s.sky = SkySettings.preset(for: scene)
             s.foliage = FoliageSettings.preset(for: scene.kind)
             s.post = PostSettings.preset(for: scene)
             change(&s)
@@ -87,6 +96,12 @@ final class Benchmark {
             return c
         }
         func drifting(_ drift: CameraDrift) -> Config { var c = self; c.drift = drift; return c }
+        /// The camera walks: doors open as it comes up to them, it shoves the loose furniture it walks into.
+        func walking() -> Config { var c = self; c.body = true; return c }
+        /// The camera rides lift `n`: its track's heights are from the lift's lowest floor, carried up with the cab.
+        func riding(_ n: Int) -> Config { var c = self; c.ride = n; return c }
+        /// `event` at `time` seconds of the track.
+        func at(_ time: Float, _ event: Event) -> Config { var c = self; c.events.append((time, event)); return c }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
         func still(at time: Float = 5, previous: Bool = false) -> Config {
@@ -118,14 +133,16 @@ final class Benchmark {
         func resolvedSettings(env: [String: String] = ProcessInfo.processInfo.environment) -> RenderSettings {
             var s = settings
             SettingsEnv.apply(.scene, to: &s, from: env)
+            // A run moved to a physics scene takes its look (the METALRENDERER_GI list below can change it again).
+            if s.scene.kind.simulates && !settings.scene.kind.simulates { s.usePhysicsLook() }
             // The fog and sky of the scene the run ends up with, unless this config set its own.
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
-            if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }
+            if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
             if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase { s.post = PostSettings.preset(for: s.scene) }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.restir, .restirGI, .megaLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.restir, .restirGI, .megaLights, .vsm, .lumen, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }
@@ -276,6 +293,26 @@ final class Benchmark {
         resolutions[configIndex] = resolution
     }
 
+    /// Most frames the last warm-up frame is held while streaming settles (`hold(settled:)`).
+    static let maxHold = 600
+    private var held = 0
+    /// Whether to draw the last warm-up frame again instead of advancing: virtual geometry's streaming hasn't
+    /// loaded what the view asks for yet (`settled` false), so measuring would start on a coarser cut that a
+    /// later run, or a faster disk, wouldn't show. At most `maxHold` frames; the time stands still meanwhile.
+    func hold(settled: Bool) -> Bool {
+        guard frameInConfig == warmupFrames - 1, cut == nil else { return false }
+        if !settled && held < Benchmark.maxHold {
+            held += 1
+            return true
+        }
+        if held > 0 {
+            print(settled ? "  streaming settled after \(held) more warm-up frames"
+                          : "  streaming not settled after \(held) more warm-up frames: measuring anyway")
+        }
+        held = 0
+        return false
+    }
+
     /// Returns true when the config changed (the caller should reset its animation clock).
     func advance() -> Bool {
         frameInConfig += 1
@@ -376,10 +413,13 @@ struct CameraTrack {
         var target: SIMD3<Float>
     }
     var keys: [Key]
+    /// Straight from key to key at a steady pace (a walk's dense keys), not curved and eased at each.
+    var linear = false
 
-    init(_ keys: [Key]) {
+    init(_ keys: [Key], linear: Bool = false) {
         precondition(!keys.isEmpty && zip(keys, keys.dropFirst()).allSatisfy { $0.time < $1.time }, "a track's keys in time")
         self.keys = keys
+        self.linear = linear
     }
 
     var duration: Float { keys.last!.time }
@@ -390,6 +430,7 @@ struct CameraTrack {
         guard next > 0 else { return (keys[0].position, keys[0].target) }
         let a = keys[next - 1], b = keys[next]
         let u = (t - a.time) / (b.time - a.time), s = u * u * (3 - 2 * u)
+        if linear { return (a.position + (b.position - a.position) * u, a.target + (b.target - a.target) * u) }
         let before = keys[max(next - 2, 0)], after = keys[min(next + 1, keys.count - 1)]
         func curve(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>) -> SIMD3<Float> {
             let s2 = s * s, s3 = s2 * s

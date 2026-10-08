@@ -82,7 +82,13 @@ extension Scene {
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
         let lit = settings.worldLit
         world.lit = settings.city.lit
-        let flora = Flora(self, seed: world.seed, borrowing: true)
+        let catalog = PlantCatalog.resolve(settings.plantCatalog)
+        if !catalog.placesAsBuiltIn { world.plants = catalog.placementFingerprint }
+        let buildings = BuildingCatalog.resolve(settings.buildingCatalog)
+        world.buildingCatalog = buildings
+        if buildings != .builtIn { world.buildings = buildings.fingerprint }
+        world.interior = settings.interior
+        let flora = Flora(self, seed: world.seed, catalog: catalog, borrowing: true)
         // Every plant and its materials, first and in the library's order: every scene of the world then has the same
         // textures (the renderer keeps them) and the same numbers for its plants (so it keeps the tiles' trees too).
         // (The tiles' meshes stay in their files and the baked plants' in the library, `addMesh(borrowing:)`: the
@@ -107,13 +113,11 @@ extension Scene {
         Scene.keptLock.lock()
         let kept = Scene.keptTiles
         Scene.keptLock.unlock()
-        // (A tile kept by a scene of Metal's tracer has no trees: taken from its file again, and given them.)
-        let withTrees = borrowsTrees
-        var tiles = jobs.map { kept[$0.key].flatMap { !withTrees || $0.hasTrees ? $0 : nil } }
+        var tiles = jobs.map { kept[$0.key] }
         let shared = tiles.reduce(0) { $0 + ($1 == nil ? 0 : 1) }
         tiles.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: jobs.count) { k in
-                if out[k] == nil { out[k] = WorldTile.make(world, x: jobs[k].x, z: jobs[k].z, level: jobs[k].level, flora: index, trees: withTrees) }
+                if out[k] == nil { out[k] = WorldTile.make(world, x: jobs[k].x, z: jobs[k].z, level: jobs[k].level, flora: index) }
             }
         }
         Scene.keptLock.lock()
@@ -191,8 +195,7 @@ extension Scene {
                     }
                 }
                 let mesh = addMesh(borrowing: BorrowedMesh(positions: chunk.positions, normals: chunk.normals, uvs: chunk.uvs,
-                                                           indices: chunk.indices, materials: chunk.triangleMaterials,
-                                                           tree: withTrees ? chunk.tree : nil),
+                                                           indices: chunk.indices, materials: chunk.triangleMaterials),
                                    bounds: chunk.bounds, name: "\(jobs[k].key) chunk \(c)")
                 setDetailLevel(mesh, jobs[k].level)
                 placed.append(addInstance(mesh, first, translate(corner), mask: chunk.glass ? Scene.maskGlass : Scene.maskGeometry))
@@ -214,7 +217,7 @@ extension Scene {
             // Its trees, the same at every level: a group, which the renderer keeps from scene to scene. (Where they
             // are from this scene's origin is in the group's name.)
             let standing = tile.trees
-            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species))! }
+            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species)) }
             trees += standing.count
             guard Scene.groupsTrees else {
                 for t in standing {
@@ -240,11 +243,39 @@ extension Scene {
         for (c, placements) in cover.enumerated() {
             let corner = SIMD3(Float(lo.x + Double(c % cells) * cell - anchor.x), 0, Float(lo.y + Double(c / cells) * cell - anchor.y))
             for p in placements {
-                flora.place(Foliage.Species(rawValue: Int(p.species))!, Int(p.plant), at: corner + SIMD3(p.x, p.y, p.z), yaw: p.yaw,
+                flora.place(Foliage.Species(rawValue: Int(p.species)), Int(p.plant), at: corner + SIMD3(p.x, p.y, p.z), yaw: p.yaw,
                             size: p.size, shade: Int(p.shade))
             }
             plants += placements.count
         }
+
+        // The buildings next to the camera, for the renderer to choose the one whose interior to make (lotAreas), and
+        // that one with its interior (its tile left it out): still (the world's scenes are), its doors open.
+        let kit = BuildingKit(self, mapIndex: mapIndex)
+        kit.still = true
+        for (k, job) in jobs.enumerated() where job.level == 0 && tiles[k] != nil {
+            let o = WorldTile.origin(job.x, job.z)
+            guard let (city, blocks) = world.blocks(x0: o.x, z0: o.y, side: side) else { continue }
+            for block in blocks {
+                for (i, lot) in block.plan.lots.enumerated() {
+                    let ref = world.lotRef(city, block, i)
+                    let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
+                    lotAreas.append((ref.key, CityPlan.Rect(lo: lot.rect.lo + c, hi: lot.rect.hi + c), Float(lot.floors) * 3.4 + 6))
+                    guard ref.key == settings.interior else { continue }
+                    var spec = BuildingSpec(lot: lot, city: settings.city, night: true, catalog: buildings)
+                    if let o = buildings.override(for: ref) { spec.apply(o, catalog: buildings) }
+                    spec.interior = true
+                    let building = BuildingGenerator.generate(spec)
+                    let transform = translate([c.x, city.level, c.y]) * lot.transform
+                    kit.addBuilding(building, at: transform)
+                    walkAreas.append(WalkArea(rect: CityPlan.Rect(lo: lot.rect.lo + c, hi: lot.rect.hi + c), building: building, at: transform))
+                }
+            }
+        }
+        walkColliders = kit.colliders
+        let terrain = world, from = anchor
+        walkGround = { x, z in terrain.height(Double(x) + from.x, Double(z) + from.y) }
+        kit.addFlashlight()
 
         // The light from the sky: the sun, and once it has set the moon (its colour is the atmosphere's to say).
         addLight(.sun(angularRadius: Heavens.discRadius), color: [1, 1, 1]) { t in

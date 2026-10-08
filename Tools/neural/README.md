@@ -24,10 +24,10 @@ uv pip install -p Tools/neural/.venv -r Tools/neural/requirements.txt
 ## 1. Make the dataset
 
 ```bash
-METALRENDERER_RT=metal nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.log
+nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.log
 ```
 Renders offscreen (no window). First every clip's noisy frames (minutes), then a path-traced reference for every
-frame (the long part: 1,660 of them, 62 GB; 6–54 s each on an M4 Max with the Metal tracer, ~10 h in all; ~70 s each on an
+frame (the long part: 1,660 of them, 62 GB; 6–54 s each on an M4 Max, ~10 h in all; ~70 s each on an
 M1 Max, 6–9 min for the showcase's and the stress building's). Stop it any time; run it again to carry on. The clip
 list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, the stress building's 4 zones, 24 random rooms
 and the showcase's 11 models, each on its own set; 20 frames a clip (`stressframes=` / `showcaseframes=` cut those two); 512
@@ -40,9 +40,8 @@ the same image, so it needs one reference, frame 0's, for all 100: long, still v
 they are what teaches the net to keep accumulating while a view holds still, as MetalFX does. 42 of them: ~4,200 noisy
 frames (~95 GB, a few minutes) and 42 references.
 
-`METALRENDERER_RT=metal` is for Macs with hardware ray tracing (M3 and later): on an M4 Max it renders the same reference
-as the custom tracer (92 dB apart) in ~60% of the time. On an M1 Max leave it out. To time a new scene first:
-`METALRENDERER_DATASET="scenes=cornell,clips=1,frames=1,spp=512" METALRENDERER_RT=metal Tools/neural/make-dataset.sh -d /tmp/try`.
+Macs with hardware ray tracing (M3 and later) render references much faster. To time a new scene first:
+`METALRENDERER_DATASET="scenes=cornell,clips=1,frames=1,spp=512" Tools/neural/make-dataset.sh -d /tmp/try`.
 
 References have no firefly clamp, so a rare sample overflows the half-float light textures; the averaging kernels
 count it as 65504 (`finiteSample`, Output.metal). Datasets rendered before that fix (6 Oct 2026) have NaN or zeroed

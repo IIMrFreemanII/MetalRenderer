@@ -4,12 +4,33 @@ import AppKit
 struct RendererStatus {
     /// This frame's direct-light method with Auto resolved, for the settings panel's denoiser caption.
     var directMode: DirectLightMode
-    /// The custom tracer's traversal counters are compiled in (RT_STATS).
+    /// The ray queries' counters are compiled in (RT_STATS).
     var traversalCounters: Bool
     /// What the Debug window shows; only while it is open (`RendererController.debugActive`).
     var debugInfo: DebugInfo?
     /// The GPU pass timings averaged since the last tick, if passes are being profiled.
     var passTimes: [(name: String, ms: Double)]?
+    /// The plant workshop's plant: what it costs (Scene.plantStats).
+    var plantStats: PlantStats?
+    /// The building workshop's building: what it costs, and its plan (the Floor Plan window).
+    var buildingStats: BuildingStats?
+    var buildingPlan: BuildingPlan?
+    /// Walking: where (the Floor Plan window's you-are-here).
+    var walker: WalkerStatus?
+    /// Where the camera is (the building editor's Pin: the city's building nearest it).
+    var cameraPosition: SIMD3<Float>?
+}
+
+/// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).
+struct WalkerStatus: Equatable {
+    var position: SIMD3<Float>
+    var yaw: Float
+    var building: Int?
+    var storey: Int?
+    var local: SIMD3<Float>?
+    var message: String?
+    var flashlight: Bool
+    var crouched: Bool
 }
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the
@@ -27,7 +48,7 @@ final class RendererController: InputHandler {
     let passProfilingSupported: Bool
     /// The last stats tick's report; nil before the first.
     private(set) var status: RendererStatus?
-    /// The custom tracer's traversal counters (RT_STATS) are on.
+    /// The ray queries' counters (RT_STATS) are on.
     private(set) var traversalCounters: Bool
     private var sentUpdate = 0                  // the number of the last settings edit sent to the renderer
 
@@ -41,6 +62,13 @@ final class RendererController: InputHandler {
     var onFirstFrame: (() -> Void)?
     var onTogglePanel: (() -> Void)?            // Tab key
     var onToggleDebug: (() -> Void)?            // I key
+    var onToggleLoading: (() -> Void)?          // P key
+    var onTogglePlants: (() -> Void)?           // K key
+    var onToggleBuildings: (() -> Void)?        // J key
+    /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
+    var onCompare: ((Bool) -> Void)?
+    /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
+    let loadActivity: LoadActivity
 
     /// The Debug window is open: the stats tick brings `debugInfo`, and every frame `onFrameTime`.
     var debugActive = false {
@@ -61,6 +89,7 @@ final class RendererController: InputHandler {
         upscaleSteps = renderer.upscaleSteps
         passProfilingSupported = renderer.passProfilingSupported
         traversalCounters = renderer.traversalCounters
+        loadActivity = renderer.loadActivity
         renderer.onSettings = { [weak self] settings, update, persist in
             DispatchQueue.main.async { self?.received(settings, update: update, persist: persist) }
         }
@@ -125,6 +154,9 @@ final class RendererController: InputHandler {
     func addModels(_ urls: [URL]) { renderer.perform { $0.addModels(urls) } }
 
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
+    /// The plant workshop's camera at its plants again (F).
+    func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
+
     func setTraversalCounters(_ on: Bool, then done: @escaping () -> Void) {
         renderer.perform { [weak self] r in
             r.setTraversalCounters(on) {
@@ -141,9 +173,17 @@ final class RendererController: InputHandler {
 
     func keyDown(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+        // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
+        if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" {
-            if !event.isARepeat { (key == "\t" ? onTogglePanel : onToggleDebug)?() }
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" {
+            if !event.isARepeat {
+                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants : onToggleBuildings)?()
+            }
+            return
+        }
+        if key == "c", settings.scene.kind == .plants {
+            if !event.isARepeat { onCompare?(true) }
             return
         }
         let isRepeat = event.isARepeat
@@ -152,15 +192,28 @@ final class RendererController: InputHandler {
 
     func keyUp(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+        if key == "c", settings.scene.kind == .plants { onCompare?(false) }
         renderer.perform { $0.keyUp(key) }
     }
 
     func flagsChanged(_ event: NSEvent) {
-        let shift = event.modifierFlags.contains(.shift)
-        renderer.perform { $0.setShift(shift) }
+        let shift = event.modifierFlags.contains(.shift), control = event.modifierFlags.contains(.control)
+        renderer.perform { $0.setShift(shift); $0.setControl(control) }
     }
 
-    func mouseDragged(dx: Float, dy: Float) {
-        renderer.perform { $0.mouseDragged(dx: dx, dy: dy) }
+    func mouseDown(at cursor: SIMD2<Float>) {
+        renderer.perform { $0.mouseDown(at: cursor) }
+    }
+
+    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        renderer.perform { $0.mouseDragged(dx: dx, dy: dy, at: cursor) }
+    }
+
+    func mouseUp() {
+        renderer.perform { $0.mouseUp() }
+    }
+
+    func scrolled(dy: Float) {
+        renderer.perform { $0.scrolled(dy: dy) }
     }
 }
