@@ -25,6 +25,7 @@ enum SettingsStore {
         s.scene.worldAnchor = nil
         s.scene.extraModels = []
         s.scene.plantCatalog = ""
+        s.scene.effects = ""   // the VFX editor's catalogs are this session's
         s.scene.plants.mutants = ""
         s.scene.plants.compare = ""
         s.virtualGeometry.freeze = false

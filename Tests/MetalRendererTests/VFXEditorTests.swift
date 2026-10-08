@@ -20,6 +20,13 @@ final class VFXEditorTests: XCTestCase {
         }
         func observeSettings(_ observer: @escaping (RenderSettings) -> Void) { observers.append(observer) }
         func observeTick(_ observer: @escaping () -> Void) {}
+        var time: Float = 0
+        var gizmos: VFXGizmos.Target?
+        var profiling = false
+        var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+        func setTime(_ t: Float) { time = t }
+        func setGizmos(_ target: VFXGizmos.Target?) { gizmos = target }
+        func setProfiling(_ on: Bool) { profiling = on }
     }
 
     private func editor(folder: URL? = nil, kind: SceneKind = .vfxStage) -> (VFXEditorModel, Host) {
@@ -215,6 +222,70 @@ final class VFXEditorTests: XCTestCase {
             for i in boxes.indices { for j in boxes.indices where i < j { XCTAssertFalse(boxes[i].intersects(boxes[j]), "\(name): \(boxes[i]) \(boxes[j])") } }
             XCTAssertEqual(layout.input(near: try XCTUnwrap(layout.inputs.first?.value), radius: 1), layout.inputs.first?.key)
         }
+    }
+
+    // MARK: - The preview
+
+    /// The clock, the gizmos' target (the selected emitter's), a handle's drag moving its emitter's shape (one undo
+    /// step), the stats' timing.
+    func testPreviewControls() throws {
+        let (m, host) = editor()
+        m.setTime(2.5)
+        XCTAssertEqual(host.time, 2.5)
+        XCTAssertEqual(host.gizmos, VFXGizmos.Target(effect: "fireworks", emitter: nil))
+        m.click("rockets.rate")
+        XCTAssertEqual(host.gizmos, VFXGizmos.Target(effect: "fireworks", emitter: "rockets"))
+        let before = try XCTUnwrap(m.effect.block("rockets.shape")?.block.vec3("position"))
+        host.onGizmoMoved?("fireworks", "rockets", .zero, 0)
+        host.onGizmoMoved?("fireworks", "rockets", [0.5, 0, 0], 1)
+        host.onGizmoMoved?("fireworks", "rockets", [0.25, 0, 0], 1)
+        host.onGizmoMoved?("fireworks", "rockets", .zero, 2)
+        XCTAssertEqual(m.effect.block("rockets.shape")?.block.vec3("position"), before + [0.75, 0, 0])
+        m.undo.undo()
+        XCTAssertEqual(m.effect.block("rockets.shape")?.block.vec3("position"), before, "a drag is one step")
+        m.showGizmos = false
+        XCTAssertNil(host.gizmos)
+        m.showStats = true
+        XCTAssertTrue(host.profiling)
+        XCTAssertNil(m.placingScene, "only the stage places the fireworks")
+        m.select("campfire")
+        XCTAssertEqual(m.placingScene, .particles)
+    }
+
+    /// The gizmos: the target effect's emitters' shapes and the fields and colliders they use, the selected emitter's
+    /// handle at its shape; an arrow under the cursor is picked, and a drag along it measured.
+    func testGizmos() throws {
+        let fx = try XCTUnwrap(VFXLibrary.named("campfire"))
+        let lowered = VFXLowering.system([VFXInstance(effect: fx, place: .identity)],
+                                         colliders: [("floor", .plane(normal: [0, 1, 0], point: .zero))])
+        let owners = Scene.owners(lowered, [VFXInstance(effect: fx, place: .identity)], count: lowered.system.emitters.count)
+        let none = VFXGizmos.segments(lowered.system, owners: owners, target: .init(effect: "rain", emitter: nil))
+        XCTAssertTrue(none.segments.isEmpty)
+        let (segments, handle) = VFXGizmos.segments(lowered.system, owners: owners, target: .init(effect: "campfire", emitter: "smoke"))
+        let smoke = try XCTUnwrap(lowered.system.emitters.first { $0.name == "smoke" })
+        XCTAssertEqual(handle, smoke.position)
+        XCTAssertTrue(segments.contains { $0.color == VFXGizmos.field }, "the hot air the smoke rides")
+        XCTAssertEqual(segments.filter { $0.color == VFXGizmos.axes[1] }.count, 3, "the handle's up arrow")
+        // A camera 4 m in front of the handle, looking at it: the up arrow is picked just above it.
+        var camera = Camera()
+        camera.position = smoke.position + [0, 0, 4]
+        camera.fovY = 0.8
+        camera.pitch = 0
+        let size = SIMD2<Float>(1600, 1000), aspect: Float = 1.6
+        XCTAssertEqual(VFXGizmos.pick(handle: smoke.position, cursor: [0.5, 0.44], camera: camera, aspect: aspect, size: size), 1)
+        XCTAssertNil(VFXGizmos.pick(handle: smoke.position, cursor: [0.2, 0.9], camera: camera, aspect: aspect, size: size))
+        let s = VFXGizmos.along(origin: smoke.position, axis: [0, 1, 0], from: camera.position,
+                                dir: normalize(smoke.position + [0, 0.3, 0] - camera.position))
+        XCTAssertEqual(s, 0.3, accuracy: 1e-4)
+    }
+
+    /// The stage frames where an effect's particles go: the fireworks burst metres up, the campfire stays low.
+    func testPreviewBounds() throws {
+        let fireworks = Scene.previewBounds(try XCTUnwrap(VFXLibrary.named("fireworks")))
+        XCTAssertGreaterThan(fireworks.hi.y, 3)
+        let campfire = Scene.previewBounds(try XCTUnwrap(VFXLibrary.named("campfire")))
+        XCTAssertLessThan(campfire.hi.y, fireworks.hi.y)
+        XCTAssertLessThanOrEqual(campfire.lo.y, 0.95)
     }
 
     // MARK: - Pictures

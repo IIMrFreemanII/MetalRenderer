@@ -498,6 +498,13 @@ final class ParticlesGPU {
                                   count: system.capacity))
     }
 
+    /// Each emitter's particles alive as of the last step the GPU finished (its capacity less its free slots; read while
+    /// frames run, so a step late at most: the VFX editor's stats).
+    func aliveCounts() -> [Int] {
+        let c = counts.contents().bindMemory(to: UInt32.self, capacity: ParticlesGPU.countsSize / 4)
+        return system.emitters.indices.map { e in max(system.emitters[e].capacity - Int(c[Counter.dead + e]), 0) }
+    }
+
     // MARK: - Reading back (tests; the GPU idle)
 
     func readCounts() -> [UInt32] {

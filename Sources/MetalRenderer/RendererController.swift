@@ -79,6 +79,9 @@ final class RendererController: InputHandler {
         renderer.onTick = { [weak self] status in
             DispatchQueue.main.async { self?.ticked(status) }
         }
+        renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
+            DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
+        }
         renderer.onFrameTime = { [weak self] cpu, gpu in
             DispatchQueue.main.async { self?.onFrameTime?(cpu, gpu) }
         }
@@ -139,6 +142,12 @@ final class RendererController: InputHandler {
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
     /// The plant workshop's camera at its plants again (F).
     func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
+
+    /// The VFX editor's: the scene's clock at `t` (s), and what its gizmos show (nil: none).
+    func setTime(_ t: Float) { renderer.perform { $0.setTime(t) } }
+    func setGizmos(_ target: VFXGizmos.Target?) { renderer.perform { $0.setGizmos(target) } }
+    /// A gizmo's handle dragged in the view (Renderer.onGizmoMoved), on the main thread.
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
 
     func setTraversalCounters(_ on: Bool, then done: @escaping () -> Void) {
         renderer.perform { [weak self] r in

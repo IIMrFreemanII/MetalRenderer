@@ -19,7 +19,9 @@ enum VFXEditorScript {
             let s = m.status
             let mine = s?.emitters.filter { $0.effect == m.selectedEffect } ?? []
             print("VFX script \(k) \(name): scene \(m.scene.kind.title), stage \(m.scene.stage.effects), effect \(m.selectedEffect), "
-                  + "emitters \(mine.map { "\($0.name)\($0.program ? " (code)" : "")" }), compiling \(s?.compiling ?? false), "
+                  + "emitters \(mine.map { "\($0.name) \($0.alive)/\($0.capacity)\($0.program ? " (code)" : "")" }), "
+                  + "time \(String(format: "%.2f", m.time)) s\(m.paused ? " paused" : ""), backdrop \(m.scene.stage.backdrop.rawValue), "
+                  + "passes \(s?.passMs.mapValues { String(format: "%.2f", $0) } ?? [:]), compiling \(s?.compiling ?? false), "
                   + "compiled in \(s?.compileMs.map { String(format: "%.0f ms", $0) } ?? "-"), failure \(s?.failure ?? "none"), "
                   + "notes \(s?.notes ?? []), key \(s?.key ?? "-"), dirty \(m.isDirty)")
             guard let view = panel.window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
@@ -29,6 +31,11 @@ enum VFXEditorScript {
         var steps: [(String, Double, () -> Void)] = [
             ("open", 1, { panel.show(nextTo: main); m.select("fireworks"); m.showOnStage() }),
             ("fireworks", 5, {}),
+            ("grey backdrop", 4, { m.setBackdrop(.grey) }),
+            ("scrubbed to 1 s, paused", 2, { m.playPause(); m.setTime(1) }),
+            ("a step on", 1.5, { m.stepFrame() }),
+            ("playing at half speed, stats", 3, { m.setSpeed(0.5); m.playPause(); m.showStats = true; m.click("stars.velocity") }),
+            ("full speed", 1, { m.setSpeed(1); m.showStats = false }),
             ("new effect", 1, { m.newEffect(); m.showOnStage() }),
             ("new effect running", 4, {}),
         ]

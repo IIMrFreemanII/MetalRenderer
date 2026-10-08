@@ -703,6 +703,15 @@ struct SceneSettings: Equatable, Codable {
 /// The VFX stage (Scene+Stage.swift): the effects it lines up, by name (VFXLibrary's, or the catalog's: Scene.effect).
 struct VFXStageSettings: Equatable, Codable {
     var effects = ["fireworks"]
+    var backdrop = VFXBackdrop.dark
+}
+
+/// What the VFX stage's effects are shown against.
+enum VFXBackdrop: String, Codable, CaseIterable {
+    /// A dark room, a key light and a cool one over it; a grey cyclorama (a floor curving up into a wall), softly lit;
+    /// nothing at all, black; a plain under the sun and a blue sky; the plain at night, under the moon.
+    case dark, grey, black, outdoor, night
+    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 
 /// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
@@ -1132,4 +1141,9 @@ struct RenderSettings: Equatable, Codable {
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13
+}
+
+extension SceneKind {
+    /// The camera turns about what the scene shows (the plant workshop's plants, the VFX stage's effects; F frames them).
+    var orbits: Bool { self == .plants || self == .vfxStage }
 }

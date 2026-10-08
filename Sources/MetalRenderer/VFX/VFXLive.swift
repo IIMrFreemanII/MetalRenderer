@@ -77,6 +77,8 @@ struct VFXStatus: Equatable {
         /// It runs generated code (VFXProgram), not only the fixed emitter.
         var program: Bool
         var capacity: Int
+        /// Alive as of the last step the GPU finished.
+        var alive = 0
     }
     var emitters: [Emitter] = []
     /// The VFX library: compiling for an edit (or the scene's programs), or why it didn't compile.
@@ -87,4 +89,7 @@ struct VFXStatus: Equatable {
     var notes: [String] = []
     /// The settings' effects key the scene runs (SceneSettings.effects).
     var key = ""
+    /// The scene's clock (s), and the particle passes' GPU times (ms) when passes are profiled.
+    var time: Float = 0
+    var passMs: [String: Double] = [:]
 }

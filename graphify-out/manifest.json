@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791485109.4402602,
-    "seen": 1791486205.68477,
-    "ast_hash": "6676d311a8059bc5897ed53de5402006",
+    "mtime": 1791487804.336705,
+    "seen": 1791489213.6199229,
+    "ast_hash": "48ed82e1d7cbf7fb930936413b834275",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791484808.2399616,
-    "seen": 1791486205.684604,
-    "ast_hash": "1e77af9b09aaeac9eb678a2323a35c7a",
+    "mtime": 1791487101.634429,
+    "seen": 1791489213.619749,
+    "ast_hash": "cd3b6d2338a0f9f4180556a25446a38d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -246,9 +246,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1791481265.5115275,
-    "seen": 1791482228.7926311,
-    "ast_hash": "211d21299d40d7763a0002146b7dcabb",
+    "mtime": 1791486807.8351924,
+    "seen": 1791489213.6197739,
+    "ast_hash": "81967deff65c9de0586510ced68b27f5",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
@@ -258,9 +258,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders.metal": {
-    "mtime": 1791477357.2975636,
-    "seen": 1791482228.792636,
-    "ast_hash": "f72690faf79d35d641e2337a8cdcfcc8",
+    "mtime": 1791486683.1183488,
+    "seen": 1791489213.619779,
+    "ast_hash": "6e3a4f427c5aa1b36a4d85b50146be7d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/TextureStreamer.swift": {
@@ -360,9 +360,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsStore.swift": {
-    "mtime": 1791476593.1291337,
-    "seen": 1791476758.9736059,
-    "ast_hash": "c8f58894ba7961ef2fa005dc69f98ccc",
+    "mtime": 1791486794.035921,
+    "seen": 1791489213.619777,
+    "ast_hash": "91d6ff4ff3b6f6a79f01bbf8023f3ed0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/DebugPanel.swift": {
@@ -420,9 +420,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1791478081.7660847,
-    "seen": 1791482228.792589,
-    "ast_hash": "cf452569b55718cc8cd818e067e50971",
+    "mtime": 1791486689.2033668,
+    "seen": 1791489213.6197288,
+    "ast_hash": "15e2b3ee4e994902d1a7004b6905d15e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791484808.2391531,
-    "seen": 1791486205.684526,
-    "ast_hash": "d29380d237b5f2c6f1260c271bd79f7d",
+    "mtime": 1791487787.8938248,
+    "seen": 1791489213.619669,
+    "ast_hash": "ac30903905eb61787ea0ef791ddd7c19",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -966,9 +966,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RendererController.swift": {
-    "mtime": 1791483943.2384691,
-    "seen": 1791486205.684605,
-    "ast_hash": "815dc99942c17082b594142b2f1b5e3e",
+    "mtime": 1791486784.9129884,
+    "seen": 1791489213.619749,
+    "ast_hash": "d911b0c35dedcdd7e0ce6a42be34ae9c",
     "semantic_hash": ""
   },
   ".claude/skills/code-graph/scripts/ensure-graph.sh": {
@@ -1488,9 +1488,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ParticlesGPU.swift": {
-    "mtime": 1791483230.2982638,
-    "seen": 1791486205.684573,
-    "ast_hash": "c4e60e4367891cf6e18cdb931d6e3e23",
+    "mtime": 1791486771.446484,
+    "seen": 1791489213.6197162,
+    "ast_hash": "3a79b88cc647e5fc655d897145d751cf",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Particles.swift": {
@@ -1638,9 +1638,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Stage.swift": {
-    "mtime": 1791481953.1539993,
-    "seen": 1791482228.792626,
-    "ast_hash": "b0db509952a71f81c43ea1bd50489abe",
+    "mtime": 1791487595.219,
+    "seen": 1791489213.6197681,
+    "ast_hash": "16e6957694289b247979c50af9c85d4a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/ParticleLight.metal": {
@@ -1734,15 +1734,15 @@
     "semantic_hash": ""
   },
   ".claude/notes/vfx-editor-handoff.md": {
-    "mtime": 1791485109.4405835,
-    "seen": 1791486205.6847591,
-    "ast_hash": "0a08c9daea423b97ba25fc00c2ac7e75",
+    "mtime": 1791487954.990686,
+    "seen": 1791489213.619912,
+    "ast_hash": "be895d43cad00ac43137801ac005f9fc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXLive.swift": {
-    "mtime": 1791483208.1734147,
-    "seen": 1791486205.684681,
-    "ast_hash": "7e6094ffa6e888074b80d216ed4fd3a9",
+    "mtime": 1791486771.4468863,
+    "seen": 1791489213.619832,
+    "ast_hash": "e90df0f0b950086a0e10c53df74844ac",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXCanvasView.swift": {
@@ -1752,9 +1752,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorModel.swift": {
-    "mtime": 1791485840.5001023,
-    "seen": 1791486205.6846871,
-    "ast_hash": "53bfb106a43d847694214333e429f632",
+    "mtime": 1791486902.183684,
+    "seen": 1791489213.619837,
+    "ast_hash": "e628d0bd830a0f7dd7a1457061224584",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorPanel.swift": {
@@ -1764,15 +1764,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorScript.swift": {
-    "mtime": 1791485071.2031896,
-    "seen": 1791486205.6846879,
-    "ast_hash": "1884628728fff71a36588f8dac786416",
+    "mtime": 1791487759.2540665,
+    "seen": 1791489213.619839,
+    "ast_hash": "4828dd7bf5ab085411907fd870be19b2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorView.swift": {
-    "mtime": 1791485840.500939,
-    "seen": 1791486205.6846888,
-    "ast_hash": "d3901c561dec55271a9063cfdd552cba",
+    "mtime": 1791486926.6190784,
+    "seen": 1791489213.61984,
+    "ast_hash": "b76abc89aa9199d59416065b8601893b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXInspector.swift": {
@@ -1788,9 +1788,21 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VFXEditorTests.swift": {
-    "mtime": 1791485444.5263677,
-    "seen": 1791486205.684737,
-    "ast_hash": "0ea3d02fa2d05529b1a36cf898ac41ea",
+    "mtime": 1791487327.267925,
+    "seen": 1791489213.6198888,
+    "ast_hash": "0d3365238146e64369a85e5a802766f8",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/Shaders/Gizmo.metal": {
+    "mtime": 1791486682.9061193,
+    "seen": 1791489213.619786,
+    "ast_hash": "221923ca836f62554c714461a5794247",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/VFX/VFXGizmos.swift": {
+    "mtime": 1791486728.1970398,
+    "seen": 1791489213.619828,
+    "ast_hash": "8fb345f309205d152d24d0a0ae9b9d88",
     "semantic_hash": ""
   }
 }

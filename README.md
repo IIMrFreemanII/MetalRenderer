@@ -1545,6 +1545,19 @@ The VFX Editor (V or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effec
   * Save writes `Assets/Effects/<name>.vfx.json`; Revert brings back the saved one.
   * Unsaved edits are kept as a draft between launches; Copy as Swift puts the effect on the clipboard as Swift.
   * Show on Stage puts the selected effect alone on the VFX stage, and the stage follows the selection.
+* **The preview bar:**
+  * Stage or In Scene (the particles scene or the showcase, for the built-in effects that they place).
+  * The stage's backdrop: dark, a grey cyclorama, black, outdoor under the sun, night under the moon
+    (`SceneSettings.stage.backdrop`, `Scene+Stage.swift`). On the stage the camera turns about the effects: drag orbits,
+    scroll zooms, F frames them. The framing comes from where the CPU's interpreter sends their particles in 4 s.
+  * Play and pause, back to the start, a step of 1/60 s, the speed (0.1× to 2×), and a timeline: dragging it scrubs the
+    scene's clock, and going back replays the particles from the start.
+  * Gizmos (`VFX/VFXGizmos.swift`, `Shaders/Gizmo.metal`): lines over the finished frame for the effect's spawn shapes
+    and their axes, the fields and colliders its emitters use, and three arrows on the selected emitter. Dragging an
+    arrow in the view moves that emitter's spawn shape along it, as a live edit (one undo step a drag).
+    `METALRENDERER_GIZMOS=<effect>[/<emitter>]` draws them in benchmarks.
+  * Stats: each emitter's particles alive against its capacity (from the GPU's counters), fixed or generated code, the
+    particle passes' GPU times (timed while the stats show), and the last compile.
 * **The status line** says where the effect runs (the stage, the scene, or not here), how many of its emitters run
   generated code, the compile and its time, a compile's error, and what the lowering left out.
 * **Checked:**
@@ -1555,6 +1568,7 @@ The VFX Editor (V or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effec
     edit's code is swapped in, matching the same graph made from scratch within run-to-run noise.
   * `METALRENDERER_VFX_SCRIPT=<folder>` drives the editor in the app, step by step, printing the renderer's report and
     saving the window.
+  * `METALRENDERER_BENCH=vfxstage` renders the backdrops; `vfxstagedemo` is their video.
 
 ### Geometry debug views
 

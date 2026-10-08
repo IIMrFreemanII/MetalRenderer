@@ -399,6 +399,19 @@ final class Renderer: NSObject {
     }
     private var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
     private var particlesVersion = 0
+    /// The VFX editor's gizmos (VFX/VFXGizmos.swift): what they show, the selected emitter's handle (where it was last
+    /// drawn), the drag of one of its arrows (its axis, and how far along it the cursor was), and where a drag goes.
+    /// `METALRENDERER_GIZMOS=<effect>[/<emitter>]`: the gizmos from the start (offscreen pictures of them).
+    private var gizmoTarget: VFXGizmos.Target? = ProcessInfo.processInfo.environment["METALRENDERER_GIZMOS"].map {
+        let parts = $0.split(separator: "/", maxSplits: 1).map(String.init)
+        return VFXGizmos.Target(effect: parts.first ?? "", emitter: parts.count > 1 ? parts[1] : nil)
+    }
+    private var gizmoHandle: SIMD3<Float>?
+    private var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
+    private var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
+    private var gizmoViewSize = SIMD2<Float>(1280, 800)
+    /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
     /// The VFX editor's last edit that needs new code (VFXLive.swift), until its library is compiled.
     private var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
     private var particlesCamera = SIMD4<Float>.zero
@@ -1067,7 +1080,47 @@ final class Renderer: NSObject {
         s.compileMs = VFXCompiler.shared.lastMilliseconds
         s.notes = scene.effectNotes
         s.key = scene.settings.effects
+        for (i, n) in gpu.aliveCounts().enumerated() where i < s.emitters.count { s.emitters[i].alive = n }
+        s.time = animTime
         return s
+    }
+
+    /// What the VFX editor's gizmos show (nil: none).
+    func setGizmos(_ target: VFXGizmos.Target?) {
+        gizmoTarget = target
+        if target?.emitter == nil { gizmoHandle = nil }
+    }
+
+    /// The scene's clock at `t` (s): the VFX editor's timeline (the particles replay from the start to go back).
+    func setTime(_ t: Float) {
+        animTime = max(t, 0)
+        previousAnimTime = animTime
+    }
+
+    /// The gizmos over the finished frame `output` (Shaders/Gizmo.metal).
+    private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
+        guard let target = gizmoTarget, let gpu = particlesGPU else { gizmoHandle = nil; return }
+        let (segments, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
+        gizmoHandle = handle
+        gizmoViewSize = SIMD2(Float(output.width), Float(output.height))
+        guard !segments.isEmpty else { return }
+        let bytes = segments.count * MemoryLayout<VFXGizmos.Segment>.stride
+        if (gizmoBuffers[slot]?.length ?? 0) < bytes {
+            gizmoBuffers[slot] = device.makeBuffer(length: max(bytes * 2, 4096), options: .storageModeShared)
+            gizmoBuffers[slot]?.label = "gizmos\(slot)"
+        }
+        guard let buffer = gizmoBuffers[slot], let enc = passes.compute("gizmos") else { return }
+        segments.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        let c = camera
+        var view = VFXGizmos.View(position: SIMD4(c.position, 0), right: SIMD4(c.right, 0), up: SIMD4(c.up, 0), forward: SIMD4(c.forward, 0),
+                                  size: gizmoViewSize, tanY: tan(c.fovY / 2), aspect: gizmoViewSize.x / max(gizmoViewSize.y, 1),
+                                  count: UInt32(segments.count), samples: VFXGizmos.samples)
+        enc.setComputePipelineState(pipelines[.gizmoLines])
+        enc.setBytes(&view, length: MemoryLayout<VFXGizmos.View>.stride, index: 0)
+        enc.setBuffer(buffer, offset: 0, index: 1)
+        enc.setTexture(output, index: 0)
+        dispatch(enc, .gizmoLines, width: Int(VFXGizmos.samples), height: segments.count)
+        passes.endCompute()
     }
 
     /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
@@ -1147,10 +1200,14 @@ final class Renderer: NSObject {
             camera = scene.defaultCamera
             prevCamera = camera
         }
-        if scene.settings.kind != .plants {
+        // The workshop and the VFX stage: the camera turns about what they show, framed on it when that changes (the
+        // stage's effects, not their edits: a capacity's edit makes the scene again).
+        let stageChanged = scene.settings.kind == .vfxStage
+            && (oldSettings.kind != .vfxStage || oldSettings.stage.effects != scene.settings.stage.effects)
+        if !scene.settings.kind.orbits {
             orbit = nil
-        } else if resetCamera || !sameWorkshop || oldSettings.plants.layout != scene.settings.plants.layout
-                    || oldSettings.plants.species != scene.settings.plants.species {
+        } else if resetCamera || stageChanged || (scene.settings.kind == .plants && (!sameWorkshop || oldSettings.plants.layout != scene.settings.plants.layout
+                    || oldSettings.plants.species != scene.settings.plants.species)) {
             frameWorkshop()
         } else if orbit == nil, let focus = scene.focus {
             orbit = (focus.centroid, length(camera.position - focus.centroid))
@@ -1741,7 +1798,7 @@ final class Renderer: NSObject {
 
     /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
     func frameWorkshop() {
-        guard scene.settings.kind == .plants, let focus = scene.focus else { return }
+        guard scene.settings.kind.orbits, let focus = scene.focus else { return }
         let framed = Camera.framing(focus, fovY: settings.fovDegrees * .pi / 180, aspect: viewAspect)
         camera = framed.camera
         prevCamera = camera
@@ -2773,6 +2830,7 @@ final class Renderer: NSObject {
                 passes.endCompute()
             }
         }
+        if let drawable { encodeGizmos(drawable.texture, slot: plan.slot, passes: passes) }
         return (drawable, drawableWait)
     }
 
@@ -4437,6 +4495,7 @@ final class Renderer: NSObject {
             let other = passTimeFrameMs / n - times.reduce(0) { $0 + $1.ms }
             if other > 0.005 { times.append((name: "other", ms: other)) }   // MetalFX, its copy, texture streaming
             status.passTimes = times
+            for t in times where t.name.hasPrefix("particle") || t.name == "gizmos" { status.effects?.passMs[t.name] = t.ms }
             passTimeOrder = []
             passTimeSums = [:]
             passTimeFrameMs = 0
@@ -4678,6 +4737,17 @@ final class Renderer: NSObject {
     /// camera.
     func mouseDown(at cursor: SIMD2<Float>) {
         holding = nil
+        gizmoDrag = nil
+        // The VFX editor's handle: an arrow under the cursor is dragged along its axis.
+        if let handle = gizmoHandle, let target = gizmoTarget, let emitter = target.emitter,
+           let k = VFXGizmos.pick(handle: handle, cursor: cursor, camera: camera, aspect: viewAspect, size: gizmoViewSize) {
+            var axis = SIMD3<Float>.zero
+            axis[k] = 1
+            let s = VFXGizmos.along(origin: handle, axis: axis, from: camera.position, dir: cursorRay(cursor))
+            gizmoDrag = (axis, handle, s)
+            onGizmoMoved?(target.effect, emitter, .zero, 0)
+            return
+        }
         guard let physics = scene.physics else { return }
         let direction = cursorRay(cursor)
         guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
@@ -4687,6 +4757,13 @@ final class Renderer: NSObject {
     }
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if let drag = gizmoDrag {
+            let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
+            let move = min(max(s - drag.last, -5), 5)
+            gizmoDrag?.last = s
+            if move != 0, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, drag.axis * move, 1) }
+            return
+        }
         if holding != nil {
             holding?.cursor = cursor
             return
@@ -4698,6 +4775,8 @@ final class Renderer: NSObject {
 
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
+        if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
+        gizmoDrag = nil
         holding = nil
         scene.physics?.grab.target.w = 0
     }

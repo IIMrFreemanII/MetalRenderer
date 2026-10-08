@@ -50,9 +50,23 @@ The particle effects as node graphs, and an editor for them (README "VFX graphs"
 - Not clicked through by hand: no tool here sends clicks to a native window. The scripted session and the offscreen pictures
   stand in for it.
 
-## Next: phase 3 (preview tools, the stage's backdrops, gizmos)
+## Phase 3 (preview tools, backdrops, gizmos): done, at check-in 3
 
-See the plan: transport and scrub, stats (alive counts, the GPU ms, per-emitter profile), gizmos, backdrops.
+- The preview bar (`VFXEditorView.swift`): Stage / In Scene, the backdrop, transport (play, restart, step, speed), the
+  timeline (`Renderer.setTime`: back replays), gizmos, stats.
+- Backdrops (`VFXBackdrop`, `Scene+Stage.swift`): dark (the phase 1 room), grey cyclorama, black, outdoor, night.
+  The stage orbits (`SceneKind.orbits`); `focus` from `Scene.previewBounds` (the interpreter, 4 s).
+- Gizmos: `VFX/VFXGizmos.swift` (segments, picking, the drag's maths), `Shaders/Gizmo.metal` (`gizmoLinesKernel`, a thread
+  a point along a segment, over the drawable after post), `Renderer.encodeGizmos` / `mouseDown`. A drag goes to the
+  main thread (`onGizmoMoved`) and moves the emitter's Spawn Shape position (adds one if it has none).
+- Stats: `ParticlesGPU.aliveCounts` (capacity less the dead list), `VFXStatus.passMs` (the particle passes while the
+  stats show: `profilePasses`, which the Debug window also sets).
+- Not done: a per-emitter GPU time (the plan's "Profile" dispatching emitters one at a time); gizmos for fields' and
+  colliders' handles (they are drawn, not draggable); the gizmos aren't depth tested.
+
+## Next
+
+M4 Max checks (Metal 4 path of the VFX library and the gizmo pass), then the PR's description.
 
 ## Traps found
 

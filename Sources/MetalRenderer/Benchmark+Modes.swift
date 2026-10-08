@@ -19,7 +19,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
+        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit, "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1211,6 +1211,36 @@ extension Benchmark {
                 base.named("code").with { $0.scene.effects = code },
                 base.named("other").with { $0.scene.stage.effects = ["magic"] },
                 base.named("code fresh").with { $0.scene.effects = code }]
+    }
+
+    /// The VFX stage's backdrops: the campfire, the fireworks and the magic at 3.5 s in front of each, from the stage's
+    /// default camera (`METALRENDERER_GIZMOS=fireworks/rockets` draws the editor's gizmos).
+    private static func vfxStage() -> [Config] {
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage).still(at: 3.5)
+        return VFXBackdrop.allCases.map { b in base.named(b.rawValue).with { $0.scene.stage.backdrop = b } }
+    }
+
+    /// The VFX stage's backdrops as a video (`recording`; `video.sh -m vfxstagedemo`, run with
+    /// `METALRENDERER_GIZMOS=fireworks/rockets` for the editor's gizmos): 4 s on each, the camera arcing round the
+    /// line-up, the clock from 1.5 s.
+    private static func vfxStageDemo() -> [Config] {
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        return VFXBackdrop.allCases.enumerated().map { k, b in
+            let side: Float = k % 2 == 0 ? 1 : -1
+            let track = CameraTrack([
+                CameraTrack.Key(time: 0, position: [-3.5 * side, 2.2, 9.8], target: [0, 2.4, 0]),
+                CameraTrack.Key(time: 4, position: [3.5 * side, 2.6, 9.8], target: [0, 2.4, 0]),
+            ])
+            var c = Config(b.rawValue, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage) {
+                $0.scene.stage.backdrop = b
+                $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+            }.track(track).recording()
+            c.startTime = 1.5
+            return c
+        }
     }
 
     /// The VFX stage's demo video: 16 s of the line-up (the campfire, the fireworks, the magic) along a camera track

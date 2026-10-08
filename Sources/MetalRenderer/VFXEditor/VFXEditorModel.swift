@@ -11,10 +11,16 @@ protocol VFXEditorHost: AnyObject {
     func update(_ change: @escaping (inout RenderSettings) -> Void)
     func observeSettings(_ observer: @escaping (RenderSettings) -> Void)
     func observeTick(_ observer: @escaping () -> Void)
+    /// The scene's clock (the timeline), the gizmos, the particle passes' timing (the stats).
+    func setTime(_ t: Float)
+    func setGizmos(_ target: VFXGizmos.Target?)
+    func setProfiling(_ on: Bool)
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)? { get set }
 }
 
 extension RendererController: VFXEditorHost {
     var effectsStatus: VFXStatus? { status?.effects }
+    func setProfiling(_ on: Bool) { profilePasses = on }
 }
 
 /// The VFX editor's state, on the main thread: the effects as edited (a catalog: the built-in ones edited, and new
@@ -38,7 +44,7 @@ final class VFXEditorModel: ObservableObject {
     @Published var selectedEffect: String
     /// The selected emitters, blocks and nodes (their ids); the inspector shows `focus`.
     @Published var selection: Set<String> = []
-    @Published var focus: String?
+    @Published var focus: String? { didSet { if focus != oldValue { pushGizmos() } } }
     /// The canvas's view: where the graph's origin is in the canvas (points), and its scale.
     @Published var pan = CGPoint(x: 360, y: 40)
     @Published var zoom: CGFloat = 0.9
@@ -47,6 +53,14 @@ final class VFXEditorModel: ObservableObject {
     @Published private(set) var status: VFXStatus?
     @Published private(set) var scene: SceneSettings
     @Published private(set) var message: String?
+    /// The preview: the clock paused and its speed (the renderer's), the timeline's length (s), when the status last
+    /// came (to move the playhead between them), the gizmos and the stats shown.
+    @Published private(set) var paused = false
+    @Published private(set) var timeScale: Float = 1
+    @Published var duration: Float = 20
+    private(set) var statusArrived = CACurrentMediaTime()
+    @Published var showGizmos = true { didSet { pushGizmos() } }
+    @Published var showStats = false { didSet { controller.setProfiling(showStats) } }
     /// The canvas's size and the pointer's place on it (canvas points): where Tab adds, what Frame All fits.
     var canvasSize = CGSize(width: 800, height: 600)
     /// The canvas's top left in the window (top-down points): the window's scrolls over it pan it.
@@ -77,6 +91,8 @@ final class VFXEditorModel: ObservableObject {
         undo.groupsByEvent = false
         catalog = (draft ? VFXEditorModel.loadDraft() : nil) ?? saved
         scene = controller.settings.scene
+        paused = controller.settings.paused
+        timeScale = controller.settings.timeScale
         let stage = controller.settings.scene.stage.effects.first ?? "fireworks"
         selectedEffect = stage
         if effectNames.firstIndex(of: stage) == nil { selectedEffect = "fireworks" }
@@ -84,8 +100,11 @@ final class VFXEditorModel: ObservableObject {
         controller.observeTick { [weak self, unowned controller] in
             guard let self, controller.effectsStatus != self.status else { return }
             self.status = controller.effectsStatus
+            self.statusArrived = CACurrentMediaTime()
         }
+        controller.onGizmoMoved = { [weak self] effect, emitter, delta, phase in self?.gizmoMoved(effect, emitter, delta, phase) }
         if catalog != saved { push(final: true) }
+        pushGizmos()
     }
 
     // MARK: - What is edited
@@ -188,6 +207,8 @@ final class VFXEditorModel: ObservableObject {
 
     private func received(_ s: RenderSettings) {
         if s.scene != scene { scene = s.scene }
+        if s.paused != paused { paused = s.paused }
+        if s.timeScale != timeScale { timeScale = s.timeScale }
         if !dragging, s.scene.effects != key { push(final: true) }   // a scene loaded with the saved ones
     }
 
@@ -218,7 +239,91 @@ final class VFXEditorModel: ObservableObject {
         focus = nil
         search = nil
         frameAll(in: canvasSize)
+        pushGizmos()
         if onStage, scene.stage.effects != [name] { showOnStage() }
+    }
+
+    /// The scenes that place a built-in effect (the particles scene's five, the showcase's four), to preview it there.
+    var placingScene: SceneKind? {
+        switch selectedEffect {
+        case "campfire", "grinder", "magic", "rain", "rubble": return .particles
+        case "embers", "bubbles", "dust", "runes": return .showcase
+        default: return nil
+        }
+    }
+
+    /// To the scene that places the selected effect.
+    func showInScene() {
+        guard let kind = placingScene else { return }
+        let key = self.key, defaults = controller.defaultSettings
+        controller.update { s in
+            s.scene.effects = key
+            guard s.scene.kind != kind else { return }
+            s.scene.kind = kind
+            s.scene.extraModels = []
+            s.applySceneDefaults(from: defaults)
+        }
+    }
+
+    func setBackdrop(_ b: VFXBackdrop) { controller.update { $0.scene.stage.backdrop = b } }
+
+    // MARK: - The clock
+
+    /// The scene's clock now: the last report's, moved on by how long ago it came while playing.
+    var time: Float {
+        let t = status?.time ?? 0
+        return paused ? t : t + Float(CACurrentMediaTime() - statusArrived) * timeScale
+    }
+
+    func playPause() { controller.update { $0.paused.toggle() } }
+    func restart() { setTime(0) }
+    /// A step of the particles' (1/60 s), paused.
+    func stepFrame() {
+        let t = time
+        if !paused { controller.update { $0.paused = true } }
+        setTime(t + ParticleSystem.stepLength)
+    }
+    func setSpeed(_ x: Float) { controller.update { $0.timeScale = x } }
+
+    /// The clock to `t` (the timeline: back is a replay from the start).
+    func setTime(_ t: Float) {
+        controller.setTime(t)
+        if var s = status { s.time = t; status = s }
+        statusArrived = CACurrentMediaTime()
+    }
+
+    // MARK: - Gizmos
+
+    /// The emitter the selection is in (it, or one of its blocks), if one is.
+    var focusedEmitter: VFXEmitter? {
+        guard let id = focus else { return nil }
+        if let e = effect.emitter(id) { return e }
+        return effect.block(id).map { effect.emitters[$0.emitter] }
+    }
+
+    private func pushGizmos() {
+        controller.setGizmos(showGizmos ? VFXGizmos.Target(effect: selectedEffect, emitter: focusedEmitter?.name) : nil)
+    }
+
+    /// A handle dragged in the view: the emitter's spawn shape moved by `delta` (one undo step a drag).
+    func gizmoMoved(_ effectName: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) {
+        guard effectName == selectedEffect else { return }
+        switch phase {
+        case 0: beginDrag()
+        case 2: endDrag()
+        default:
+            edit { fx in
+                guard let e = fx.emitters.firstIndex(where: { $0.name == emitter }) else { return }
+                if let k = fx.emitters[e].initialize.firstIndex(where: { $0.kind == .shape }) {
+                    let p = fx.emitters[e].initialize[k].vec3("position")
+                    fx.emitters[e].initialize[k].params["position"] = .vec3(p + delta)
+                } else {
+                    var shape = VFXBlock.shape("point", at: delta)
+                    shape.id = VFXEffect.unique("\(fx.emitters[e].id).shape", fx.allIDs)
+                    fx.emitters[e].initialize.insert(shape, at: 0)
+                }
+            }
+        }
     }
 
     // MARK: - Effects

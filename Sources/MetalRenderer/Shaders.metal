@@ -47,3 +47,4 @@ using namespace metal::raytracing;
 #include "Shaders/FluidSurface.metal"      // liquids' surfaces: splat, blur, surface nets into the scene's buffers
 #include "Shaders/ParticleSim.metal"       // particle effects: a step's begin, emit and simulate, the pose (particle* kernels)
 #include "Shaders/ParticleLight.metal"     // ...their light, the camera's layer of them, the heat haze
+#include "Shaders/Gizmo.metal"             // the VFX editor's gizmos: lines over the finished frame
