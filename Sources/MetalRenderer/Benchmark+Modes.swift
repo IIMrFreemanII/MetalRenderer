@@ -19,6 +19,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
+        "plants": plants,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -309,6 +310,36 @@ extension Benchmark {
             base.named("forest 10k trees").with { $0.scene.trees = 10000 },
             moving,
             moving.named("forest moving 3x").with { $0.renderScale = 0.5; $0.upscaleFactor = 3 },
+        ]
+    }
+
+    /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:
+    /// an oak, a birch's ages and variants, a conifer's skeleton, a bush, ferns, grass, and a species of a catalog of
+    /// its own (a willow: a birch whose twigs hang). `METALRENDERER_PLANTS=builtin` leaves out what Assets/Plants holds.
+    private static func plants() -> [Config] {
+        func shown(_ name: String, _ change: (inout PlantSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .plants)
+            change(&scene.plants)
+            return Config("plants \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+        }
+        var willow = PlantCatalog.launch
+        var def = PlantCatalog.builtIn[.birch]
+        def.id = "willow"
+        def.name = "Willow"
+        def.seedIndex = 100
+        def.recipe.levels[2].tropism = -1.4
+        def.recipe.levels[2].curve = -1.6
+        def.bough?.levels[0].tropism = -1.2
+        willow = willow.merging([def])
+        let catalog = PlantCatalog.register(willow)
+        return [
+            shown("oak"),
+            shown("birch lineup") { $0.species = "birch"; $0.layout = .lineup },
+            shown("conifer skeleton") { $0.species = "conifer"; $0.view = .skeleton },
+            shown("bush") { $0.species = "bush" },
+            shown("fern") { $0.species = "fern" },
+            shown("grass") { $0.species = "grass" },
+            shown("willow") { $0.species = "willow" }.with { $0.scene.plantCatalog = catalog },
         ]
     }
 

@@ -41,6 +41,10 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
     plus `,objects=…,lights=…` (the crowd: `,characters=…,poses=…,detail=…`; the city: `,seed=…,blocks=…,style=…,lit=…,rooms=…,textures=…`;
     the showcase: `,showcase=owl`, a part of a model's file name; the physics scene, `physics`:
     `,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`);
+    the plant workshop, `plants`: `,species=oak|birch|…,age=…,variant=…,plantseed=…,layout=single|lineup|mutate,view=plant|skeleton`
+    (`-m plants` renders seven of them);
+  * plants: `METALRENDERER_PLANTS=builtin` leaves out the species saved in `Assets/Plants` (the plant editor's), for
+    comparisons between builds; `=<folder>` reads another folder;
   * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);
   * GI: `METALRENDERER_GI="mode=pt|cascades|restir,bounces=2,scale=0.75,factor=0"` (factor 0 means native, no
     upscaling);

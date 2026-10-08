@@ -604,6 +604,8 @@ final class Renderer: NSObject {
     private var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
+    /// The plant workshop's camera turns about what it shows: the point it looks at, and how far it is from it.
+    private var orbit: (target: SIMD3<Float>, distance: Float)?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
@@ -780,7 +782,8 @@ final class Renderer: NSObject {
                     instanceBlocks: namedInstanceBlocks,
                     voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels : nil,
                     leafFall: Scene.leafFall(season: settings.foliage.season),
-                    worldTextures: settings.scene.isSameWorld(as: scene.settings) && builtAPI == settings.api
+                    worldTextures: (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameWorkshop(as: scene.settings))
+                        && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
@@ -880,12 +883,16 @@ final class Renderer: NSObject {
     private func startLoadingScene() {
         let wanted = (scene: settings.scene, api: settings.api)
         if let loading, loading == wanted { return }
+        // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
+        if let loading, loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
+            return
+        }
         loading = wanted
         let reuse = wanted.scene == scene.settings ? scene : nil   // only the API changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
         loadJob?.cancel()
-        let job = benchmark != nil ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
+        let job = benchmark != nil || wanted.scene.isSameWorkshop(as: scene.settings) ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
             : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title)
         loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -1021,6 +1028,9 @@ final class Renderer: NSObject {
         // The open world made around another tile is the same world in the same place: what the frames have gathered
         // of it holds.
         let sameWorld = scene.settings.isSameWorld(as: oldSettings)
+        // The workshop edited: the same few plants a little changed, where they were. What the frames gathered of the
+        // light mostly holds (the plants are new, but the sky, the ground and the camera aren't).
+        let sameWorkshop = scene.settings.isSameWorkshop(as: oldSettings)
         var moved = SIMD2<Float>()
         if sameWorld, let was = oldPlace, let now = scene.worldPlace {
             // The scene's origin has moved: the camera is where it was in the world.
@@ -1032,7 +1042,9 @@ final class Renderer: NSObject {
             // ...and so is where Freeze LOD holds the detail for.
             frozenLOD?.0 += SIMD3(moved.x, 0, moved.y)
         }
-        if !(sameWorld && moved == .zero) {
+        if sameWorkshop {
+            resetReference()
+        } else if !(sameWorld && moved == .zero) {
             resetGIState()
             upscalerReset = true
             resetReference()
@@ -1047,8 +1059,16 @@ final class Renderer: NSObject {
             camera = scene.defaultCamera
             prevCamera = camera
         }
+        if scene.settings.kind != .plants {
+            orbit = nil
+        } else if resetCamera || !sameWorkshop || oldSettings.plants.layout != scene.settings.plants.layout
+                    || oldSettings.plants.species != scene.settings.plants.species {
+            frameWorkshop()
+        } else if orbit == nil, let focus = scene.focus {
+            orbit = (focus.centroid, length(camera.position - focus.centroid))
+        }
         // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
-        if sameWorld, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
+        if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
         if #available(macOS 26.0, *) { (metal4Storage as? Metal4Frame)?.noteSceneChange() }
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
@@ -1627,7 +1647,22 @@ final class Renderer: NSObject {
         if length(move) > 0 {
             let speed = settings.moveSpeed * (shiftHeld ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
+            orbit?.target += normalize(move) * speed * dt   // the workshop's: it moves what it turns about with it
         }
+    }
+
+    /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
+    func frameWorkshop() {
+        guard scene.settings.kind == .plants, let focus = scene.focus else { return }
+        let framed = Camera.framing(focus, fovY: settings.fovDegrees * .pi / 180, aspect: viewAspect)
+        camera = framed.camera
+        prevCamera = camera
+        orbit = (framed.target, framed.distance)
+    }
+
+    private func placeOrbitingCamera() {
+        guard let orbit else { return }
+        camera.position = orbit.target - camera.forward * orbit.distance
     }
 
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
@@ -4149,6 +4184,7 @@ final class Renderer: NSObject {
         traversalFrames = 0
         var status = RendererStatus(directMode: activeDirectMode, traversalCounters: traversalCounters,
                                     debugInfo: debugActive ? debugInfo() : nil)
+        status.plantStats = scene.plantStats
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
@@ -4382,6 +4418,7 @@ final class Renderer: NSObject {
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r": reloadShaders { if $0 { print("Shaders reloaded") } }
+        case "f": frameWorkshop()
         default: break
         }
     }
@@ -4410,6 +4447,7 @@ final class Renderer: NSObject {
         }
         camera.yaw += dx * 0.004
         camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
+        placeOrbitingCamera()
     }
 
     /// Lets go: the body keeps its speed (a flick throws it).
@@ -4420,6 +4458,11 @@ final class Renderer: NSObject {
 
     /// While holding: the body nearer (down) or farther (up).
     func scrolled(dy: Float) {
+        if holding == nil, let o = orbit {   // the workshop: nearer (down) or farther (up)
+            orbit?.distance = min(max(o.distance * exp(dy * 0.05), 0.3), 1000)
+            placeOrbitingCamera()
+            return
+        }
         guard let depth = holding?.depth else { return }
         holding?.depth = max(depth * exp(dy * 0.05), 0.3)
     }

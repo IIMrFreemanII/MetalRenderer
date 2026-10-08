@@ -243,6 +243,10 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | Tab, ⌘, | Show or hide the Render Settings panel |
 | I, ⌘I | Show or hide the Debug window |
 | P | Show or hide the loading overlay (see "The loading overlay" below) |
+| K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
+| F | Plant workshop: frame the plants (drag orbits about them, scroll zooms, W A S D pan) |
+| C (hold) | Plant workshop: the saved plant in place of the edited one |
+| ⌘Z, ⇧⌘Z | Undo, redo the plant editor's edits |
 
 The window title and the Debug window show the resolution, frame rate and GPU time. The panels never take keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
 
@@ -738,9 +742,51 @@ The first frame of a sky also draws the noise and the atmosphere's tables, and r
 * Cloud shadows cover a square around the scene's bounding sphere.
 * An image's sun needs a sun light in the scene to land on; without one, the image still lights GI.
 
+### The plant editor
+
+The Plant Editor (K or ⌘E, a SwiftUI panel: `PlantEditor/`) shapes every species of plant and makes new ones; the
+**Plant workshop** scene (`METALRENDERER_SCENE=plants`, `Scene+Plants.swift`) shows what it edits. Entering the workshop
+opens the editor.
+
+* **Species** are data (`PlantSpecies.swift`): a `SpeciesDef` holds the mature recipe, the boughs' recipe, how the young
+  and the saplings differ from it, colours and textures, and where it grows. The seven built-in ones are
+  `BuiltInPlants.swift`. The tabs: **Stems** (each level of stems: counts, lengths, angles, bends, segments; + and − add
+  and remove levels), **Leaves**, **Boughs** (where they hang, and the bough itself), **Look**, **Habitat**, **Ages**.
+* **Curves:** the crown's profile (limb length up the trunk), each level's angle and length along its parent, a stem's
+  radius along it and a leaf's size along its twig are curves. The old shapes are presets (Conical, Flame, a line, a
+  taper) that give exactly what the numbers gave; dragging one turns it into points. Double-click adds a point,
+  Option-click removes one.
+* **The workshop** shows one plant (its age and variant), every age and variant (*Ages and variants*), or the plant and
+  six **Mutate** variations of it (*Use 1–6* takes one); the *Skeleton* view shows the stems alone, a colour to a
+  level. Drag orbits, scroll zooms, F frames. *Seed* tries other plants of the same recipe; holding *Compare* (or C)
+  shows the saved one. The wind sliders are the Foliage settings'. The line above them is the plant's cost: triangles
+  stored and traced, leaves, parts, boughs, and the build time.
+* **Edits are live:** the workshop is made again while a slider is dragged (about 20 ms for a tree on an M1 Max: its
+  structures are built for speed, uncompacted, with no leaf-fall variants), and the Forest, the valley and the open
+  world take the edits when it is let go (*Forest* goes there). An edit is one undo step; a drag is one.
+* **Saving:** *Save* writes every changed species to `Assets/Plants/<id>.json` (`PlantStore.swift`); a file with a
+  built-in species' id replaces it, any other is a species of its own. A built-in species reset to as it is built in
+  has no file. Unsaved edits are a draft, kept between launches until saved or reverted. `METALRENDERER_PLANTS=builtin`
+  ignores the files (benchmarks comparing builds), `METALRENDERER_PLANTS=<folder>` reads and saves another folder.
+* **New species** (the + menu) start as a copy of the selected one, with seeds and patches of their own. Their
+  **Habitat** says where they grow: a tree's weight against the others (base, height on the hills, slope, the stand
+  noise, light, or a fixed share), a bush's or ground cover's density and patches. The forest and the open world place
+  by these for the built-in species too, with the numbers their formulas had, so their plants stand where they stood.
+  New species grow in the Forest and the open world; the valley keeps its own oaks, birches and conifers.
+* **Caches:** an edited catalog's fingerprint is in the plants' names (meshes, voxel grids, the open world's tile
+  groups), so nothing built for other recipes is reused; the built-in species' names are what they were. A change of
+  where plants grow (habitat, variant counts, species) is in the open world's tiles' names too: they are made again.
+* `METALRENDERER_SCENE=plants,species=birch,age=young,variant=1,plantseed=7,layout=lineup,view=skeleton`;
+  `METALRENDERER_BENCH=plants` renders an oak, a birch's lineup, a conifer's skeleton, a bush, ferns, grass and a
+  catalog's own species.
+* **Tests:** `PlantGoldenTests` holds hashes of the built-in plants, the forest, the valley and the open world's
+  placement as they were before the editor; `PlantCatalogTests` (curves, ages, JSON, habitats, files, keys),
+  `PlantWorkshopTests`, `PlantEditorTests` (the parameter table, Mutate, the editor's model).
+
 ### Generated plants
 
-The plants are made at load time from a seed (`Foliage*.swift`); nothing is read from disk. The design follows Unreal Engine 5.7's Megaplants (the Procedural Vegetation Editor, Nanite Assemblies, skinning and voxels), adapted to a renderer that only traces rays.
+The plants are made at load time from a seed (`Foliage*.swift`) and their species' definitions (the built-in ones, or
+`Assets/Plants`: see "The plant editor" above). The design follows Unreal Engine 5.7's Megaplants (the Procedural Vegetation Editor, Nanite Assemblies, skinning and voxels), adapted to a renderer that only traces rays.
 
 **The generator** is a chain of plain functions over a `Recipe`:
 * **Grower:** recursive, parametric growth by levels (trunk, limbs, twigs), in the manner of Weber and Penn, inside a crown shape. A plant's age (sapling, young, mature) scales its levels, lengths and counts.
