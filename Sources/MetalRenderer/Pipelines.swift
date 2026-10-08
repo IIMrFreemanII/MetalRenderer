@@ -33,7 +33,7 @@ enum Kernel: Int, CaseIterable {
     case plantWind              // the plants' variants in the wind (PlantTracing)
     // Particle effects (ParticlesGPU, Shaders/Particles.metal): a step's begin, emit and simulate, then the frame's
     // records and boxes for the rays.
-    case particleReset, particleBegin, particleEmit, particleSimulate, particlePose
+    case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
     case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug

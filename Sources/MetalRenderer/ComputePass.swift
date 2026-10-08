@@ -222,8 +222,6 @@ struct UpscaleInputs {
     let view: Upscaler.View
     let jitter: SIMD2<Float>
     let reset: Bool
-    /// The particles' layer (particleLayerKernel), which MetalFX puts over what it denoises.
-    var overlay: MTLTexture? = nil
 }
 
 /// When a frame's GPU work ran: the whole frame, and with a benchmark's split passes each pass's command buffer.

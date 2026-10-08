@@ -394,6 +394,7 @@ final class Renderer: NSObject {
     private var particlesGPU: ParticlesGPU?
     private var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
     private var particlesVersion = 0
+    private var particlesCamera = SIMD4<Float>.zero
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
     private var virtualTracing: VirtualTracing?
@@ -590,7 +591,7 @@ final class Renderer: NSObject {
         let reflection: MTLTexture
     }
     private var liquidTextures: LiquidTargets?
-    private var particleLayerTexture: MTLTexture?
+    private var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
     private var pathTraceCount: UInt32 = 0
     private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
     private var referenceView: [SIMD4<Float>] = []
@@ -969,6 +970,7 @@ final class Renderer: NSObject {
         }
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
+            particlesGPU?.sdfScene = buffers.sdf.scene
             scene.replayParticles()
         }
         try createLightBuffers()
@@ -1875,11 +1877,10 @@ final class Renderer: NSObject {
         if !size.upscaling {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
-                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight || upscaler!.overlay != scene.hasParticles {
+                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight {
             do {
                 upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height,
-                                        outputWidth: outWidth, outputHeight: outHeight, synchronous: benchmark != nil,
-                                        overlay: scene.hasParticles)
+                                        outputWidth: outWidth, outputHeight: outHeight, synchronous: benchmark != nil)
                 upscalerReset = true
                 historyValid = false   // the denoising scaler comes or goes: SVGF's history is not this frame's
             } catch {
@@ -2047,7 +2048,7 @@ final class Renderer: NSObject {
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
-        var particles: MTLTexture?              // the particles' layer over the scene (particleLayerKernel)
+        var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
@@ -2105,7 +2106,10 @@ final class Renderer: NSObject {
         p.specular = usesSpecular
         p.glass = scene.hasGlass
         if scene.hasLiquid { p.liquid = liquidTargets(width: width, height: height) }
-        if particlesGPU != nil { p.particles = particleLayerTarget(width: width, height: height) }
+        if particlesGPU != nil {
+            let scale = settings.particleScale < 1 ? 0.5 : 1.0
+            p.particles = particleLayerTarget(width: max(Int((Double(width) * scale).rounded()), 1), height: max(Int((Double(height) * scale).rounded()), 1))
+        }
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
@@ -2385,6 +2389,13 @@ final class Renderer: NSObject {
             deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
             passes.endCompute()
         }
+        // Mesh particles (debris): their instances where the particles are, ahead of the top level. (Their steps run
+        // after it, with the billboards': below.)
+        if let particlesGPU, particlesGPU.system.meshCapacity > 0, let enc = passes.compute("particle meshes", serial: true) {
+            particlesGPU.encodeMeshPose(enc, pipelines: pipelines, instances: instanceDataBuffers[slot],
+                                        descriptors: !sceneBuffers.still ? instanceDescBuffers[slot] : nil, descriptorStride: instanceDescriptorStride)
+            passes.endCompute()
+        }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
         //    bottom-level structures around them (a refit: a pose keeps its triangles, so its tree keeps its shape).
         //    Ahead of the top level, which takes the new bounds.
@@ -2449,16 +2460,21 @@ final class Renderer: NSObject {
         //    queries trace (not in the TLAS). A slot built at these steps already (time paused) keeps its structures.
         if let particlesGPU {
             let (steps, restart) = scene.takeParticleSteps(limit: ParticlesGPU.maxStepsPerFrame)
-            if steps > 0 || restart { particlesVersion += 1 }
+            // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
+            let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
+            let camera = SIMD4(lod.camPos, 1 / max(lod.pixelScale * layerScale, 1e-6))
+            if steps > 0 || restart || camera != particlesCamera { particlesVersion += 1 }
+            particlesCamera = camera
             if particlesBuilt[slot] != particlesVersion, let enc = passes.compute("particles", serial: true) {
                 if restart { particlesGPU.encodeReset(enc, pipelines: pipelines, slot: slot) }
                 particlesGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot, wind: windFrame.wind) { [self] in
                     bindScene($0, slot: slot)
                 }
-                particlesGPU.encodePose(enc, pipelines: pipelines, slot: slot)
+                particlesGPU.encodePose(enc, pipelines: pipelines, slot: slot, camera: camera)
                 passes.endCompute()
-                passes.updatePrimitives(particlesGPU.build(slot: slot), pass: "particle build")
+                if let build = particlesGPU.build(slot: slot) { passes.updatePrimitives(build, pass: "particle build") }
                 particlesBuilt[slot] = particlesVersion
+                writeTraceScene(slot: slot)   // the structures' new sizes (written above with the last ones)
             }
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
@@ -2571,7 +2587,8 @@ final class Renderer: NSObject {
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
                               plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
-                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D, plan.particles ?? dummy2D])
+                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D, plan.particles?.color ?? dummy2D,
+                              plan.particles?.depth ?? dummy2D])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -2600,8 +2617,17 @@ final class Renderer: NSObject {
         }
         if let drawable, let upscaler {
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
-                                                   reset: upscalerReset, overlay: plan.particles), pass: "upscale")
+                                                   reset: upscalerReset), pass: "upscale")
             upscalerReset = false
+            // The particles over what it made (it would smear them: particleOverlayKernel).
+            if let layer = plan.particles, let enc = passes.compute("particle overlay") {
+                bind(enc, .particleOverlay, plan.uniforms, sceneSlot: plan.slot)
+                var fp = plan.fogParams
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                setTextures(enc, [upscaler.hdrOutput, layer.color, layer.depth, t.normalDepth[cur], plan.fog?.grid.integrated ?? dummy3D])
+                dispatch(enc, .particleOverlay, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
             // It leaves linear, unbounded light: the lens and the finish, or only the exposure and the tone curve, into
             // the drawable.
             if let post = plan.post {
@@ -2844,18 +2870,27 @@ final class Renderer: NSObject {
     }
 
     /// 3e. The particles in front of the camera's surfaces, after the fog's grid (they're fogged where they are). The
-    /// composite puts the layer over the scene, or MetalFX does as its transparency overlay.
+    /// composite puts the layer over the scene, or particleOverlayKernel over MetalFX's output (which would filter it
+    /// with the scene's motion), upsampled by depth where the layer is smaller than the frame (`particleScale`).
     private func particleLayerStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard let layer = plan.particles else { return [] }
         if !plan.neuralDenoise { composite.uniforms.flags |= UniformFlags.particles }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
         let fogGrid = plan.fog?.grid.integrated
         var fogParams = plan.fogParams
+        // Its rays through the frame's own (jittered) pixels when it is the frame's size and goes in the composite;
+        // otherwise through its texels' centres, steady (nothing filters it over time). Over MetalFX's output the
+        // overlay traces the thin ones again at its size (`detail`).
+        struct Params { var size: SIMD2<UInt32>; var jitter: UInt32; var detail: UInt32 }
+        let fits = layer.color.width == size.width && layer.color.height == size.height
+        var params = Params(size: SIMD2(UInt32(layer.color.width), UInt32(layer.color.height)), jitter: fits && !plan.neuralDenoise ? 1 : 0,
+                            detail: plan.neuralDenoise ? 1 : 0)
         return [ComputeStage(pass: "particle layer") { [self] enc in
             bind(enc, .particleLayer, uniforms, sceneSlot: slot)
             enc.setBytes(&fogParams, length: MemoryLayout<GPUFogParams>.stride, index: 9)
-            setTextures(enc, [t.normalDepth[cur], layer, fogGrid ?? dummy3D])
-            dispatch(enc, .particleLayer, width: size.width, height: size.height)
+            enc.setBytes(&params, length: MemoryLayout<Params>.stride, index: 10)
+            setTextures(enc, [t.normalDepth[cur], layer.color, fogGrid ?? dummy3D, layer.depth])
+            dispatch(enc, .particleLayer, width: layer.color.width, height: layer.color.height)
         }]
     }
 
@@ -3275,8 +3310,10 @@ final class Renderer: NSObject {
             clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max,
             particleCasters: particlesGPU?.parts[slot].casters?.structure, particleOthers: particlesGPU?.parts[slot].others?.structure,
             particleRender: particlesGPU?.render[slot], particleAtlas: particlesGPU?.atlas,
-            particleCounts: particlesGPU.map { SIMD2(UInt32($0.system.casterCapacity), UInt32($0.system.capacity - $0.system.casterCapacity)) } ?? .zero,
+            particleCounts: particlesGPU?.traceCounts(slot: slot) ?? .zero,
             particleFlags: scene.particlesReflected ? 1 : 0,
+            particleTrails: particlesGPU?.trails[slot]?.structure, trailPoints: particlesGPU?.trailPoints[slot],
+            trailRecords: particlesGPU?.trailRecords[slot], trailShape: particlesGPU?.trailShape ?? .zero,
             frame: frameIndex))
     }
 
@@ -3665,13 +3702,18 @@ final class Renderer: NSObject {
         return pathTraceAccum
     }
 
-    private func particleLayerTarget(width: Int, height: Int) -> MTLTexture? {
-        if let t = particleLayerTexture, t.width == width, t.height == height { return t }
-        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Upscaler.overlayFormat, width: width, height: height, mipmapped: false)
-        d.usage = [.shaderRead, .shaderWrite]
-        d.storageMode = .private
-        particleLayerTexture = device.makeTexture(descriptor: d)
-        particleLayerTexture?.label = "particleLayer"
+    private func particleLayerTarget(width: Int, height: Int) -> (color: MTLTexture, depth: MTLTexture)? {
+        if let t = particleLayerTexture, t.color.width == width, t.color.height == height { return t }
+        func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            let t = device.makeTexture(descriptor: d)
+            t?.label = label
+            return t
+        }
+        guard let color = make(.rgba16Float, "particleLayer"), let depth = make(.rg32Float, "particleLayerDepth") else { return nil }
+        particleLayerTexture = (color, depth)
         return particleLayerTexture
     }
 

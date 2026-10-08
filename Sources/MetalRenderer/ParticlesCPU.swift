@@ -43,16 +43,21 @@ enum ParticleMath {
     }
 
     /// Gradient noise with its analytic derivatives (quintic; Quilez's "noised"): x = value, yzw = gradient
-    /// (MSL particleNoise).
-    static func noise(_ x: SIMD3<Float>, _ salt: UInt32) -> SIMD4<Float> {
+    /// (MSL particleNoise). `period` > 0: its lattice repeats every that many cells (the baked tile's, CPU only).
+    static func noise(_ x: SIMD3<Float>, _ salt: UInt32, period: Int32 = 0) -> SIMD4<Float> {
         let i = floor(x), f = x - i
         let u = f * f * f * (f * (f * 6 - 15) + 10)
         let du = 30 * f * f * (f * (f - 2) + 1)
         let c = SIMD3<Int32>(Int32(i.x), Int32(i.y), Int32(i.z))
-        let ga = gradient(c, salt), gb = gradient(c &+ SIMD3(1, 0, 0), salt)
-        let gc = gradient(c &+ SIMD3(0, 1, 0), salt), gd = gradient(c &+ SIMD3(1, 1, 0), salt)
-        let ge = gradient(c &+ SIMD3(0, 0, 1), salt), gf = gradient(c &+ SIMD3(1, 0, 1), salt)
-        let gg = gradient(c &+ SIMD3(0, 1, 1), salt), gh = gradient(c &+ SIMD3(1, 1, 1), salt)
+        func g(_ o: SIMD3<Int32>) -> SIMD3<Float> {
+            guard period > 0 else { return gradient(c &+ o, salt) }
+            let w = c &+ o, p = SIMD3(repeating: period)
+            return gradient(((w % p) &+ p) % p, salt)
+        }
+        let ga = g(SIMD3(0, 0, 0)), gb = g(SIMD3(1, 0, 0))
+        let gc = g(SIMD3(0, 1, 0)), gd = g(SIMD3(1, 1, 0))
+        let ge = g(SIMD3(0, 0, 1)), gf = g(SIMD3(1, 0, 1))
+        let gg = g(SIMD3(0, 1, 1)), gh = g(SIMD3(1, 1, 1))
         let va = dot(ga, f), vb = dot(gb, f - SIMD3(1, 0, 0)), vc = dot(gc, f - SIMD3(0, 1, 0)), vd = dot(gd, f - SIMD3(1, 1, 0))
         let ve = dot(ge, f - SIMD3(0, 0, 1)), vf = dot(gf, f - SIMD3(1, 0, 1)), vg = dot(gg, f - SIMD3(0, 1, 1)), vh = dot(gh, f - SIMD3(1, 1, 1))
         let k0 = va - vb - vc + vd, k1 = va - vc - ve + vg, k2 = va - vb - ve + vf, k3 = -va + vb + vc - vd + ve - vf - vg + vh
@@ -74,6 +79,35 @@ enum ParticleMath {
         let z = noise(q + SIMD3(-23.137, 11.719, 59.311), 0xE6546B64)
         // ∇×ψ, each derivative times the frequency (d/dp = f d/dq).
         return SIMD3(z.z - y.w, x.w - z.y, y.y - x.z) * frequency
+    }
+
+    /// The curl as `curl` has it at frequency 1, time 0, from noise whose lattice repeats every `period` cells: a
+    /// field that tiles (ParticleField.curl bakes it).
+    static func periodicCurl(_ q: SIMD3<Float>, period: Int32) -> SIMD3<Float> {
+        let x = noise(q, 0x1B873593, period: period), y = noise(q + SIMD3(31.416, 47.853, 12.679), 0xCC9E2D51, period: period)
+        let z = noise(q + SIMD3(-23.137, 11.719, 59.311), 0xE6546B64, period: period)
+        return SIMD3(z.z - y.w, x.w - z.y, y.y - x.z)
+    }
+
+    /// Field `f` at `p`, its nodes `samples[f.dims.w...]` (MSL particleField).
+    static func field(_ f: GPUParticleField, _ samples: [SIMD4<Float>], _ p: SIMD3<Float>) -> SIMD3<Float> {
+        let n = SIMD3<Int32>(Int32(f.dims.x), Int32(f.dims.y), Int32(f.dims.z)), periodic = f.lo.w > 0
+        let nf = SIMD3<Float>(n), steps = periodic ? nf : nf - 1
+        var g = (p - xyz(f.lo)) / xyz(f.size) * steps
+        if periodic {
+            g = g - floor(g / nf) * nf
+        } else if any(g .< 0) || any(g .> steps) {
+            return .zero
+        }
+        let i0 = simd_min(SIMD3<Int32>(floor(g)), periodic ? n &- 1 : n &- 2), t = g - SIMD3<Float>(i0)
+        let i1 = periodic ? (i0 &+ 1) % n : i0 &+ 1
+        func at(_ x: Int32, _ y: Int32, _ z: Int32) -> SIMD3<Float> { xyz(samples[Int(f.dims.w) + Int((z * n.y + y) * n.x + x)]) }
+        let c00 = at(i0.x, i0.y, i0.z) + (at(i1.x, i0.y, i0.z) - at(i0.x, i0.y, i0.z)) * t.x
+        let c10 = at(i0.x, i1.y, i0.z) + (at(i1.x, i1.y, i0.z) - at(i0.x, i1.y, i0.z)) * t.x
+        let c01 = at(i0.x, i0.y, i1.z) + (at(i1.x, i0.y, i1.z) - at(i0.x, i0.y, i1.z)) * t.x
+        let c11 = at(i0.x, i1.y, i1.z) + (at(i1.x, i1.y, i1.z) - at(i0.x, i1.y, i1.z)) * t.x
+        let c0 = c00 + (c10 - c00) * t.y, c1 = c01 + (c11 - c01) * t.y
+        return c0 + (c1 - c0) * t.z
     }
 
     // MARK: A particle's life
@@ -120,25 +154,28 @@ enum ParticleMath {
                            info: SIMD4(spawn, seed, emitter, ParticleSystem.alive))
     }
 
-    /// Pushes `x` out of collider `c` and bounces `v` off it: the speed it hit at (0: it didn't) (MSL particleCollide).
+    /// Pushes a ball of `radius` at `x` out of collider `c` and bounces `v` off it: the speed it hit at (0: it didn't)
+    /// (MSL particleCollide).
     static func collide(_ c: GPUParticleCollider, _ x: inout SIMD3<Float>, _ v: inout SIMD3<Float>, restitution: Float,
-                        friction: Float) -> Float {
+                        friction: Float, radius: Float = 0) -> Float {
         var n = SIMD3<Float>.zero
         var inside = false
+        if c.b.w == 3 { return 0 }   // an SDF shape's instance: the GPU's, with the scene
         if c.b.w == 0 {
             n = xyz(c.a)
-            let d = dot(n, x) - c.a.w
+            let d = dot(n, x) - c.a.w - radius
             if d < 0 { x -= n * d; inside = true }
         } else if c.b.w == 1 {
-            let q = x - xyz(c.a), l = length(q)
-            if l < c.a.w && l > 1e-6 { n = q / l; x = xyz(c.a) + n * c.a.w; inside = true }
+            let q = x - xyz(c.a), l = length(q), r = c.a.w + radius
+            if l < r && l > 1e-6 { n = q / l; x = xyz(c.a) + n * r; inside = true }
         } else {
-            let q = x - xyz(c.a), o = abs(q) - xyz(c.b)
+            let h = xyz(c.b) + radius
+            let q = x - xyz(c.a), o = abs(q) - h
             if o.x < 0 && o.y < 0 && o.z < 0 {
                 let k = o.x > o.y ? (o.x > o.z ? 0 : 2) : (o.y > o.z ? 1 : 2)
                 let s: Float = q[k] >= 0 ? 1 : -1
                 n[k] = s
-                x[k] = c.a[k] + s * c.b[k]
+                x[k] = c.a[k] + s * h[k]
                 inside = true
             }
         }
@@ -151,14 +188,22 @@ enum ParticleMath {
 
     /// A particle's step: ages it, then (if it lives) the forces, the drag toward the air, semi-implicit Euler and the
     /// colliders. `keep`: it lives on; `event`: it leaves its children an event (MSL particleStep).
-    static func step(_ p: inout GPUParticle, _ e: GPUParticleEmitter, _ colliders: [GPUParticleCollider], _ s: GPUParticleStep)
-        -> (keep: Bool, event: Bool) {
+    static func step(_ p: inout GPUParticle, _ e: GPUParticleEmitter, _ colliders: [GPUParticleCollider], _ s: GPUParticleStep,
+                     fields: [GPUParticleField] = [], samples: [SIMD4<Float>] = []) -> (keep: Bool, event: Bool) {
         let flags = ParticleEmitter.Flags(rawValue: e.ids.w)
         let age = p.position.w + s.dt
         if age >= p.velocity.w { return (false, flags.contains(.eventsOnDeath)) }
         var x = xyz(p.position), v = xyz(p.velocity)
         var a = SIMD3<Float>(0, -s.gravity * e.forces.x, 0)
-        if e.forces.w != 0 { a += curl(x, frequency: e.noise.x, time: s.wind.w * e.noise.y) * e.forces.w }
+        if e.forces.w != 0 {
+            if e.field.w >= 0 {
+                let q = x * e.noise.x + SIMD3(0, s.wind.w * e.noise.y, 0)
+                a += field(fields[Int(e.field.w)], samples, q) * (e.noise.x * e.forces.w)
+            } else {
+                a += curl(x, frequency: e.noise.x, time: s.wind.w * e.noise.y) * e.forces.w
+            }
+        }
+        if e.field.x >= 0 && e.field.z == 0 { a += field(fields[Int(e.field.x)], samples, x) * e.field.y }
         if e.noise.z != 0 || e.noise.w != 0 {
             let r = x - xyz(e.attractor), axis = xyz(e.axis)
             let rp = r - axis * dot(r, axis), lp = length(rp), lr = length(r)
@@ -170,10 +215,14 @@ enum ParticleMath {
             let air = xyz(s.wind) * e.forces.z
             v = air + (v - air) * exp(-e.forces.y * s.dt)
         }
+        if e.field.x >= 0 && e.field.z != 0 {
+            let air = field(fields[Int(e.field.x)], samples, x)
+            v = air + (v - air) * exp(-e.field.y * s.dt)
+        }
         x += v * s.dt
         var impact: Float = 0
         for (i, c) in colliders.enumerated() where (e.ids2.y >> UInt32(i)) & 1 != 0 {
-            impact = max(impact, collide(c, &x, &v, restitution: e.attractor.w, friction: e.lock.w))
+            impact = max(impact, collide(c, &x, &v, restitution: e.attractor.w, friction: e.lock.w, radius: e.extra.x))
         }
         p.position = SIMD4(x, age)
         p.velocity = SIMD4(v, p.velocity.w)
@@ -207,6 +256,8 @@ final class ParticlesCPU {
     let system: ParticleSystem
     private let emitters: [GPUParticleEmitter]
     private let colliders: [GPUParticleCollider]
+    private let fields: [GPUParticleField]
+    private let samples: [SIMD4<Float>]
     private(set) var particles: [GPUParticle] = []
     private(set) var deadList: [UInt32] = []
     private(set) var deadCount: [Int] = []
@@ -220,6 +271,7 @@ final class ParticlesCPU {
         self.system = system
         emitters = system.gpuEmitters
         colliders = system.gpuColliders
+        (fields, samples) = system.gpuFields
         reset()
     }
 
@@ -280,7 +332,7 @@ final class ParticlesCPU {
         for slot in alive[p] {
             var q = particles[Int(slot)]
             let ei = Int(q.info.z), e = emitters[ei]
-            let (keep, event) = ParticleMath.step(&q, e, colliders, s)
+            let (keep, event) = ParticleMath.step(&q, e, colliders, s, fields: fields, samples: samples)
             if event && events[p][ei].count < Int(e.ids.y) { events[p][ei].append(ParticleEvent(q)) }
             if keep {
                 particles[Int(slot)] = q
@@ -309,8 +361,10 @@ extension ParticleMath {
         return (u0 * c + v0 * s, v0 * c - u0 * s)
     }
 
-    /// MSL particleBillboard: where the ray o + d t meets the billboard of `r`, and the uv there (-1...1 across it).
-    static func billboard(_ r: GPUParticleRender, _ o: SIMD3<Float>, _ d: SIMD3<Float>) -> (t: Float, uv: SIMD2<Float>)? {
+    /// MSL particleBillboard: where the ray o + d t meets the billboard of `r`, and the uv there (-1...1 across it);
+    /// `widen` its least half-size a unit away, `cover` what's left of its opacity.
+    static func billboard(_ r: GPUParticleRender, _ o: SIMD3<Float>, _ d: SIMD3<Float>, widen: Float = 0)
+        -> (t: Float, uv: SIMD2<Float>, cover: Float)? {
         let c = xyz(r.centerRadius), radius = r.centerRadius.w
         let orient = (r.info.x >> 27) & 3
         var n: SIMD3<Float>, u: SIMD3<Float>, v: SIMD3<Float>, size = SIMD2<Float>(radius, radius)
@@ -330,7 +384,8 @@ extension ParticleMath {
         if abs(dn) < 1e-8 { return nil }
         let t = dot(c - o, n) / dn
         let p = o + d * t - c
-        return (t, SIMD2(dot(p, u), dot(p, v)) / size)
+        let wide = simd_max(size, SIMD2(repeating: widen * abs(t)))
+        return (t, SIMD2(dot(p, u), dot(p, v)) / wide, (size.x / wide.x) * (size.y / wide.y))
     }
 
     /// MSL ParticleFragment.

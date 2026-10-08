@@ -1,38 +1,60 @@
 # Particles: handoff (branch claude/init-branch-94ae07)
 
-Ray-traced GPU particle effects (README "Particles"). Phase 1 (the core) is built and checked on the M1 Max; phase 2
-(the extras) is next. The plan: ~/.claude/plans/implement-modern-particle-system-typed-origami.md.
+Ray-traced GPU particle effects (README "Particles"). Phase 1 (the core, commit 8e46917) and phase 2 (the extras) are
+built and checked on the M1 Max. The plan: ~/.claude/plans/implement-modern-particle-system-typed-origami.md.
 
-## Built (phase 1)
+## Built
 
+Phase 1:
 - Emitters, pools, dead lists, alive lists, begin/emit/simulate, events and children, curl noise, colliders (analytic
   and the scene's by a ray a step): `Particles.swift`, `ParticlesGPU.swift`, `Shaders/Particles.metal`; the CPU
   reference `ParticlesCPU.swift`.
 - Rays: two primitive structures of boxes a frame (shadow casters, others), billboards per ray, a k-buffer of 4 for
-  the camera's layer (composite or MetalFX's transparency overlay), 2 for reflections, stochastic transmittance in
-  `isVisibleBlocker`, a light pass a particle, the path tracer's particles: `Shaders/ParticleTrace.metal`.
-- Flipbooks generated at load: `ParticleTextures.swift` (cache version 5).
+  the camera's layer, 2 for reflections, stochastic transmittance in `isVisibleBlocker`, a light pass a particle, the
+  path tracer's particles: `Shaders/ParticleTrace.metal`.
+- Flipbooks generated at load: `ParticleTextures.swift`.
 - The Particles scene, the showcase's motes, `METALRENDERER_BENCH=particles`, settings `budget`, `particleshadows`,
-  `particlereflections`; `ParticleTests` (16).
+  `particlereflections`.
+
+Phase 2:
+- Compacted builds: the pose packs the alive particles at the front of each structure's range; the builds take the
+  CPU's bound on how many can be alive (`ParticleSystem.aliveBounds`: births telescope, so O(1) a window).
+- Mesh particles (`ParticleEmitter.mesh`): reserved TLAS instances (`Scene.addParticles`), posed every frame before
+  the TLAS update from the last frame's steps (`particleMeshPoseKernel`): a frame behind the billboards. The rubble.
+- Trails (`ParticleEmitter.trail`): a ring of past places a particle, flat Catmull-Rom curves (ray-facing ribbons)
+  in a third structure; the camera's k-buffer and the path tracer take them. The wisps.
+- The camera's layer goes over MetalFX's output (`particleOverlayKernel`), not as its transparency overlay (that
+  smeared moving sparks into faint streaks); billboards widened to half a texel; particles too thin for the layer
+  (under 2 texels) are traced again at the output's size; the rest upsampled by depth (B-spline). `particlescale`
+  0.5 makes the layer half size.
+- Six-way smoke lighting (aux atlas layers; the light pass keeps the key light apart) with a multiple-scattering
+  lift; motion-vector flipbooks (smoke, flame) for the camera's rays.
+- Vector fields (`ParticleField`, `ParticleEmitter.field`) and the baked curl tile (`bakedCurl`); SDF shape colliders
+  (`ParticleCollider.shape`), GPU only.
+- `ParticleTests` (21).
 
 ## To do on the M4 Max
 
 1. `METALRENDERER_BENCH=particles METALRENDERER_BENCH_ONLY=metal4`: never run (no Metal 4 RT on the M1 Max). Check
-   the build goes through `PrimitiveWork4.encode4` in the frame's encoder, and pngdiff metal3 against metal4.
-2. Re-time the mode with hardware RT. On the M1 Max the cost is the box candidates' shader work: particle shadows
-   (trace +1.9 ms) and the reflections' gather (+2.3 ms) at 640×400; the build 1.3 ms for 5,700 slots.
+   the builds (boxes and the trails' curves) go through `PrimitiveWork4.encode4` in the frame's encoder, and pngdiff
+   metal3 against metal4.
+2. Re-time the mode with hardware RT. On the M1 Max the cost is the shader's work on box and curve candidates (the
+   trails' curve build is ~0.7 ms for 1,260 segments in software).
 3. `ParticleTests` there.
-
-## Phase 2 (next)
-
-Ribbons and trails (curves, order-preserving compaction), mesh particles (TLAS slots), six-way lighting,
-motion-vector flipbooks, SDF collisions, baked curl / vector-field textures, a build over the alive particles only
-(compacted, from a CPU bound), a half-resolution layer.
 
 ## Traps found
 
-- The pose's (and reset's) parameters once shared offset 0 of the steps' buffer: the first step of every frame ran
-  with the pose's (a burst at step 0 vanished). They have a slot of their own now (`extraParams`); a test guards it.
+- Parameters that share a place in the steps' buffer: the pose's once took the first step's (a burst at step 0
+  vanished), then the reset's (its pool size the billboards': the mesh slots' dead list was never set, so the rubble
+  took slot 0). Each has a place of its own now (`resetParams`, `poseParams`); a test guards both.
+- MetalFX's transparency overlay filters the overlay over time with the scene's motion: fine for still frames, but
+  moving sparks, motes and rain became faint grey streaks. The overlay pass replaced it.
+- One sample a texel can't draw a spark thinner than a texel: widening alone gives fat blobs, sharper upsampling
+  (Catmull-Rom, clamped) gives blocks. Tracing those pixels again at the output's size is what works; leave them out
+  of the layer, or the upsampling spreads a halo round them.
 - A billboard's shadow at full opacity: a column of smoke shadowed itself black. `shadowDensity` (smoke 0.12).
 - Shadow rays through every particle's box: rain (4000 non-casting streaks) made the trace 8.7 ms. Hence the casters'
   structure apart.
+- A mesh particle's collision ray starts inside its own instance: it skips its own hits (`instanceId`).
+- The baked curl tile is a different noise from the analytic one (its lattice wraps): the same statistics, another
+  plume.

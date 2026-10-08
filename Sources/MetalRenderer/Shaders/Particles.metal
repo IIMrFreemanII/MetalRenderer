@@ -47,12 +47,25 @@ struct ParticleEmitter {
     float4 lock;       // axis or normal; w = friction
     uint4  ids;        // first slot, capacity, parent, flags
     uint4  ids2;       // children an event, colliders, orientation, atlas layer | shadow density x 255 << 8
+    uint4  ids3;       // a mesh emitter's first instance (PARTICLE_NONE: billboards), a trail's places (0: none), its
+                       // first trail, steps between its places
+    float4 extra;      // collision radius, a trail's width (of the particle's)
+    float4 field;      // its vector field (-1: none), strength, 1: a velocity it follows, the baked curl's field (-1: none)
 };
-static_assert(sizeof(ParticleEmitter) == 304, "ParticleEmitter: GPUParticleEmitter");
+static_assert(sizeof(ParticleEmitter) == 352, "ParticleEmitter: GPUParticleEmitter");
+
+// A vector field (ParticleField): its nodes from dims.w in the fields' samples.
+struct ParticleFieldInfo {
+    float4 lo;         // the box's corner; w = 1: periodic (a tile, the size its period)
+    float4 size;
+    uint4  dims;       // nodes along x, y, z; where they start
+};
+static_assert(sizeof(ParticleFieldInfo) == 48, "ParticleFieldInfo: GPUParticleField");
 
 struct ParticleCollider {
     float4 a;          // plane: normal, offset; sphere: centre, radius; box: centre
-    float4 b;          // box: half extents; w = kind (0 plane, 1 sphere, 2 box)
+    float4 b;          // box: half extents; w = kind (0 plane, 1 sphere, 2 box, 3 an SDF shape's instance: a.x its
+                       // instance, a.y its shape, as uints)
 };
 static_assert(sizeof(ParticleCollider) == 32, "ParticleCollider: GPUParticleCollider");
 
@@ -61,8 +74,10 @@ struct ParticleStep {
     float  time, dt;
     uint   step, parity, emitters, colliders, capacity;
     float  gravity;
+    uint   casters, casterBound, othersBound, pose;   // the pose's (GPUParticleStep); its wind: the camera's position and
+                                                      // how far its billboards widen a unit away
 };
-static_assert(sizeof(ParticleStep) == 48, "ParticleStep: GPUParticleStep");
+static_assert(sizeof(ParticleStep) == 64, "ParticleStep: GPUParticleStep");
 
 // What a particle leaves its emitter's children: where, its seed (bits); its velocity, its spawn id (bits).
 struct ParticleEvent {
@@ -82,8 +97,9 @@ struct ParticleCounts {
     uint        emitFirst[PARTICLE_EMITTERS];   // where its newborns start among this step's
     uint        emitCount[PARTICLE_EMITTERS];
     uint        deadTop[PARTICLE_EMITTERS];     // its dead list's length before this step's pops
+    atomic_uint posed[2][2];                    // per pose parity, the casters' and the others' posed so far
 };
-static_assert(sizeof(ParticleCounts) == 1040, "ParticleCounts: ParticlesGPU.countsSize");
+static_assert(sizeof(ParticleCounts) == 1056, "ParticleCounts: ParticlesGPU.countsSize");
 
 // MARK: - The maths (ParticleMath in ParticlesCPU.swift, line for line)
 
@@ -131,6 +147,31 @@ inline float3 particleCurl(float3 p, float frequency, float time) {
     float4 x = particleNoise(q, 0x1B873593u), y = particleNoise(q + float3(31.416f, 47.853f, 12.679f), 0xCC9E2D51u);
     float4 z = particleNoise(q + float3(-23.137f, 11.719f, 59.311f), 0xE6546B64u);
     return float3(z.z - y.w, x.w - z.y, y.y - x.z) * frequency;
+}
+
+// Field f at p (trilinear between its nodes; outside its box nothing, unless it tiles). ParticleMath.field.
+inline float3 particleField(ParticleFieldInfo f, device const float4* samples, float3 p) {
+    int3 n = int3(f.dims.xyz);
+    bool periodic = f.lo.w > 0.0f;
+    float3 nf = float3(n), steps = periodic ? nf : nf - 1.0f;
+    float3 g = (p - f.lo.xyz) / f.size.xyz * steps;
+    if (periodic) {
+        g = g - floor(g / nf) * nf;
+    } else if (any(g < 0.0f) || any(g > steps)) {
+        return float3(0.0f);
+    }
+    int3 i0 = min(int3(floor(g)), periodic ? n - 1 : n - 2);
+    float3 t = g - float3(i0);
+    int3 i1 = periodic ? (i0 + 1) % n : i0 + 1;
+    device const float4* c = samples + f.dims.w;
+    #define PARTICLE_AT(I, J, K) c[((K) * n.y + (J)) * n.x + (I)].xyz
+    float3 c00 = PARTICLE_AT(i0.x, i0.y, i0.z) + (PARTICLE_AT(i1.x, i0.y, i0.z) - PARTICLE_AT(i0.x, i0.y, i0.z)) * t.x;
+    float3 c10 = PARTICLE_AT(i0.x, i1.y, i0.z) + (PARTICLE_AT(i1.x, i1.y, i0.z) - PARTICLE_AT(i0.x, i1.y, i0.z)) * t.x;
+    float3 c01 = PARTICLE_AT(i0.x, i0.y, i1.z) + (PARTICLE_AT(i1.x, i0.y, i1.z) - PARTICLE_AT(i0.x, i0.y, i1.z)) * t.x;
+    float3 c11 = PARTICLE_AT(i0.x, i1.y, i1.z) + (PARTICLE_AT(i1.x, i1.y, i1.z) - PARTICLE_AT(i0.x, i1.y, i1.z)) * t.x;
+    #undef PARTICLE_AT
+    float3 c0 = c00 + (c10 - c00) * t.y, c1 = c01 + (c11 - c01) * t.y;
+    return c0 + (c1 - c0) * t.z;
 }
 
 // A count of births in steps, floored: a whole number computed with rounding (k steps x a rate a step) stays whole.
@@ -203,25 +244,26 @@ inline Particle particleSpawn(ParticleEmitter e, uint emitter, uint seed, uint s
     return p;
 }
 
-// Pushes x out of collider c and bounces v off it: the speed it hit at (0: it didn't).
-inline float particleCollide(ParticleCollider c, thread float3& x, thread float3& v, float restitution, float friction) {
+// Pushes a ball of `radius` at x out of collider c and bounces v off it: the speed it hit at (0: it didn't).
+inline float particleCollide(ParticleCollider c, thread float3& x, thread float3& v, float restitution, float friction, float radius) {
     float3 n = float3(0.0f);
     bool inside = false;
     if (c.b.w == 0.0f) {
         n = c.a.xyz;
-        float d = dot(n, x) - c.a.w;
+        float d = dot(n, x) - c.a.w - radius;
         if (d < 0.0f) { x -= n * d; inside = true; }
     } else if (c.b.w == 1.0f) {
         float3 q = x - c.a.xyz;
-        float l = length(q);
-        if (l < c.a.w && l > 1e-6f) { n = q / l; x = c.a.xyz + n * c.a.w; inside = true; }
+        float l = length(q), r = c.a.w + radius;
+        if (l < r && l > 1e-6f) { n = q / l; x = c.a.xyz + n * r; inside = true; }
     } else {
-        float3 q = x - c.a.xyz, o = abs(q) - c.b.xyz;
+        float3 h = c.b.xyz + radius;
+        float3 q = x - c.a.xyz, o = abs(q) - h;
         if (o.x < 0.0f && o.y < 0.0f && o.z < 0.0f) {
             uint k = o.x > o.y ? (o.x > o.z ? 0u : 2u) : (o.y > o.z ? 1u : 2u);
             float s = q[k] >= 0.0f ? 1.0f : -1.0f;
             n[k] = s;
-            x[k] = c.a[k] + s * c.b[k];
+            x[k] = c.a[k] + s * h[k];
             inside = true;
         }
     }
@@ -236,31 +278,76 @@ inline float particleCollide(ParticleCollider c, thread float3& x, thread float3
 // colliders. True if it lives on; `event`: it leaves its children an event.
 // The geometry particle p's step crossed (`from` to x): pushed back out to its near side and bounced off it (by its
 // triangle's normal), as particleCollide does. A ray along the step finds it, so it is exact, off screen too (the
-// chat's depth-buffer collision without the depth buffer's blind spots).
-inline float particleCollideScene(float3 from, thread float3& x, thread float3& v, float restitution, float friction,
-                                  SCENE_ACCEL sc, thread const SceneData& sd) {
+// chat's depth-buffer collision without the depth buffer's blind spots). A ball of `radius` (a mesh particle) looks
+// that much further and stays that far out; `self`: its own instance, which the ray starts inside and passes.
+inline float particleCollideScene(float3 from, thread float3& x, thread float3& v, float restitution, float friction, float radius,
+                                  uint self, SCENE_ACCEL sc, thread const SceneData& sd) {
     float3 d = x - from;
     float len = length(d);
     if (len < 1e-6f) return 0.0f;
-    Surface h = traceSurface(makeRay(from, d / len, 0.0f, len + 1e-3f), rayMask(MASK_GEOMETRY, RAY_SHADOW), sc, sd, GI_RAY_SPREAD);
+    float3 dir = d / len;
+    float tmin = 0.0f;
+    Surface h;
+    for (uint k = 0; k < 3u; ++k) {
+        h = traceSurface(makeRay(from, dir, tmin, len + radius + 1e-3f), rayMask(MASK_GEOMETRY, RAY_SHADOW), sc, sd, GI_RAY_SPREAD);
+        if (!h.hit || h.instanceId != self) break;
+        tmin = dot(h.position - from, dir) + 1e-4f;
+        h.hit = false;
+    }
     if (!h.hit) return 0.0f;
     float3 n = normalize(h.geomNormal);
     if (dot(n, d) > 0.0f) n = -n;
-    x = h.position + n * 2e-3f;
+    x = h.position + n * max(radius, 2e-3f);
     float vn = dot(v, n);
     if (vn >= 0.0f) return 0.0f;
     v = (v - n * vn) * (1.0f - friction) - n * (vn * restitution);
     return -vn;
 }
 
-inline bool particleStep(thread Particle& p, ParticleEmitter e, device const ParticleCollider* colliders, constant ParticleStep& s,
-                         SCENE_ACCEL sc, thread const SceneData& sd, thread bool& event) {
+// Instance c.a.x of SDF shape c.a.y (the scene's): a ball of `radius` at x pushed out of it along its distance's
+// gradient and bounced off it there, as particleCollide does. Its distance in its own space, scaled to the world's
+// (its instances are turned and uniformly scaled).
+inline float particleCollideShape(ParticleCollider c, thread float3& x, thread float3& v, float restitution, float friction, float radius,
+                                  thread const SceneData& sd, device const SDFScene& sdf) {
+    InstanceData inst = sd.instances[as_type<uint>(c.a.x)];
+    SDFShape shape = sdf.shapes[as_type<uint>(c.a.y)];
+    float4x4 toObject = transpose(inst.normalMatrix);   // the normal matrix is the inverse's transpose
+    float3 q = (toObject * float4(x, 1.0f)).xyz;
+    float scale = length(inst.transform[0].xyz);
+    float d = sdfEval(sdf, shape, q) * scale - radius;
+    if (d >= 0.0f) return 0.0f;
+    float h = 1e-3f / max(scale, 1e-6f);
+    float3 g = float3(sdfEval(sdf, shape, q + float3(h, 0, 0)) - sdfEval(sdf, shape, q - float3(h, 0, 0)),
+                      sdfEval(sdf, shape, q + float3(0, h, 0)) - sdfEval(sdf, shape, q - float3(0, h, 0)),
+                      sdfEval(sdf, shape, q + float3(0, 0, h)) - sdfEval(sdf, shape, q - float3(0, 0, h)));
+    float3 n = (inst.normalMatrix * float4(g, 0.0f)).xyz;
+    float l = length(n);
+    if (l < 1e-12f) return 0.0f;
+    n /= l;
+    x -= n * d;
+    float vn = dot(v, n);
+    if (vn >= 0.0f) return 0.0f;
+    v = (v - n * vn) * (1.0f - friction) - n * (vn * restitution);
+    return -vn;
+}
+
+inline bool particleStep(thread Particle& p, uint slot, ParticleEmitter e, device const ParticleCollider* colliders, constant ParticleStep& s,
+                         device const ParticleFieldInfo* fields, device const float4* samples, SCENE_ACCEL sc,
+                         thread const SceneData& sd, device const SDFScene& sdf, thread bool& event) {
     uint flags = e.ids.w;
     float age = p.position.w + s.dt;
     if (age >= p.velocity.w) { event = (flags & PARTICLE_EVENTS_ON_DEATH) != 0; return false; }
     float3 x = p.position.xyz, v = p.velocity.xyz;
     float3 a = float3(0.0f, -s.gravity * e.forces.x, 0.0f);
-    if (e.forces.w != 0.0f) a += particleCurl(x, e.noise.x, s.wind.w * e.noise.y) * e.forces.w;
+    if (e.forces.w != 0.0f) {
+        if (e.field.w >= 0.0f) {   // the baked tile: at the noise's own place, its curl in the same units
+            float3 q = x * e.noise.x + float3(0.0f, s.wind.w * e.noise.y, 0.0f);
+            a += particleField(fields[uint(e.field.w)], samples, q) * (e.noise.x * e.forces.w);
+        } else {
+            a += particleCurl(x, e.noise.x, s.wind.w * e.noise.y) * e.forces.w;
+        }
+    }
+    if (e.field.x >= 0.0f && e.field.z == 0.0f) a += particleField(fields[uint(e.field.x)], samples, x) * e.field.y;
     if (e.noise.z != 0.0f || e.noise.w != 0.0f) {
         float3 r = x - e.attractor.xyz, axis = e.axis.xyz;
         float3 rp = r - axis * dot(r, axis);
@@ -273,15 +360,25 @@ inline bool particleStep(thread Particle& p, ParticleEmitter e, device const Par
         float3 air = s.wind.xyz * e.forces.z;
         v = air + (v - air) * exp(-e.forces.y * s.dt);
     }
+    if (e.field.x >= 0.0f && e.field.z != 0.0f) {   // a field of air it takes the velocity of, as drag does the wind's
+        float3 air = particleField(fields[uint(e.field.x)], samples, x);
+        v = air + (v - air) * exp(-e.field.y * s.dt);
+    }
     float3 from = x;
     x += v * s.dt;
     float impact = 0.0f;
     if ((flags & PARTICLE_SCENE_COLLISIONS) != 0u && (s.parity & PARTICLE_STEP_SCENE) != 0u) {
-        impact = particleCollideScene(from, x, v, e.attractor.w, e.lock.w, sc, sd);
+        uint self = e.ids3.x == PARTICLE_NONE ? PARTICLE_NONE : e.ids3.x + (slot - e.ids.x);
+        impact = particleCollideScene(from, x, v, e.attractor.w, e.lock.w, e.extra.x, self, sc, sd);
     }
     for (uint i = 0; i < s.colliders; ++i) {
         if (((e.ids2.y >> i) & 1u) == 0u) continue;
-        impact = max(impact, particleCollide(colliders[i], x, v, e.attractor.w, e.lock.w));
+        ParticleCollider c = colliders[i];
+        if (c.b.w == 3.0f) {
+            if ((s.parity & PARTICLE_STEP_SCENE) != 0u) impact = max(impact, particleCollideShape(c, x, v, e.attractor.w, e.lock.w, e.extra.x, sd, sdf));
+            continue;
+        }
+        impact = max(impact, particleCollide(c, x, v, e.attractor.w, e.lock.w, e.extra.x));
     }
     p.position = float4(x, age);
     p.velocity = float4(v, p.velocity.w);
@@ -369,6 +466,7 @@ kernel void particleEmitKernel(constant ParticleStep&          s         [[buffe
                                device uint*                    alive1    [[buffer(19)]],
                                device const ParticleEvent*     events0   [[buffer(20)]],
                                device const ParticleEvent*     events1   [[buffer(21)]],
+                               device float4*                  history   [[buffer(23)]],   // the trails' places
                                uint i [[thread_position_in_grid]])
 {
     if (i >= c.emits) return;
@@ -390,6 +488,8 @@ kernel void particleEmitKernel(constant ParticleStep&          s         [[buffe
     }
     particles[slot] = q;
     ((s.parity & 1u) == 0u ? alive0 : alive1)[c.emitBase + i] = slot;
+    // A trail starts where it is born: every place there.
+    for (uint k = 0, n = em.ids3.y; k < n; ++k) history[(em.ids3.z + slot - em.ids.x) * n + k] = float4(q.position.xyz, 0.0f);
 }
 
 kernel void particleSimulateKernel(constant ParticleStep&          s         [[buffer(0)]],
@@ -402,6 +502,10 @@ kernel void particleSimulateKernel(constant ParticleStep&          s         [[b
                                    device ParticleEvent*           events0   [[buffer(20)]],
                                    device ParticleEvent*           events1   [[buffer(21)]],
                                    device const ParticleCollider*  colliders [[buffer(22)]],
+                                   device float4*                  history   [[buffer(23)]],  // the trails' places
+                                   device const ParticleFieldInfo* fields    [[buffer(24)]],
+                                   device const float4*            samples   [[buffer(25)]],
+                                   device const SDFScene&          sdf       [[buffer(26)]],  // with PARTICLE_STEP_SCENE
                                    SCENE_ACCEL                     sc        [[buffer(1)]],   // with PARTICLE_STEP_SCENE
                                    device const float3*            positions [[buffer(2)]],
                                    device const float3*            normals   [[buffer(3)]],
@@ -425,7 +529,7 @@ kernel void particleSimulateKernel(constant ParticleStep&          s         [[b
         uint e = q.info.z;
         ParticleEmitter em = emitters[e];
         bool event = false;
-        keep = particleStep(q, em, colliders, s, sc, sd, event);
+        keep = particleStep(q, slot, em, colliders, s, fields, samples, sc, sd, sdf, event);
         if (event) {
             uint k = atomic_fetch_add_explicit(&c.events[p][e], 1u, memory_order_relaxed);
             if (k < em.ids.y) {
@@ -437,6 +541,9 @@ kernel void particleSimulateKernel(constant ParticleStep&          s         [[b
         }
         if (keep) {
             particles[slot] = q;
+            // A trail's place every so many steps, round its ring (ParticleTrail: the oldest follows the newest).
+            uint n = em.ids3.y, every = max(em.ids3.w, 1u);
+            if (n > 0u && s.step % every == 0u) history[(em.ids3.z + slot - em.ids.x) * n + (s.step / every) % n] = float4(q.position.xyz, 0.0f);
         } else {
             particles[slot].info.w = 0u;
             uint d = atomic_fetch_add_explicit(&c.dead[e], 1u, memory_order_relaxed);
@@ -463,75 +570,242 @@ inline float4 particleColor(ParticleEmitter e, float x) {
 // A random number of particle `seed`'s, for what stays the same over its life (`k`: which).
 inline float particleRandom(uint seed, uint k) { return float(pcgHash(seed ^ (k * 0x9E3779B9u + 0x85EBCA6Bu))) * (1.0f / 4294967296.0f); }
 
-// Every slot's record and box for this frame's structure (`render`, `boxes`: the frame slot's): a thread a slot. A
-// dead slot is a box far away that holds nothing.
+// The alive particles' records and boxes for this frame's structures (`render`, `boxes`: the frame slot's), packed
+// at the front of each structure's range: the casters' from 0, the others' from s.casterBound, so a build takes only
+// the CPU's bound on how many can be alive (ParticleSystem.aliveBounds), not the pool. A thread a pool slot; the
+// order within a range is the GPU's (one atomic a SIMD group), and particlePoseTailKernel empties the rest.
 kernel void particlePoseKernel(constant ParticleStep&          s         [[buffer(0)]],
                                device const ParticleEmitter*   emitters  [[buffer(13)]],
+                               device ParticleCounts&          c         [[buffer(14)]],
                                device const Particle*          particles [[buffer(16)]],
                                device ParticleRender*          render    [[buffer(23)]],
                                device float*                   boxes     [[buffer(24)]],
                                uint i [[thread_position_in_grid]])
 {
-    if (i >= s.capacity) return;
-    Particle q = particles[i];
-    ParticleRender r;
-    r.centerRadius = float4(0.0f);
-    r.axis = float4(0.0f);
-    r.color = half4(0.0h);
-    r.radiance = half4(1.0h);
-    r.info = uint4(0u);
-    float3 lo = float3(1.0e30f), hi = float3(1.0e30f);
-    if ((q.info.w & PARTICLE_ALIVE) != 0u) {
-        ParticleEmitter e = emitters[min(q.info.z, s.emitters - 1u)];
-        uint seed = q.info.y, flags = e.ids.w, orient = e.ids2.z;
-        float x = saturate(q.position.w / max(q.velocity.w, 1e-6f));
-        float size = mix(e.size.x, e.size.y, x) * (1.0f - e.size.z * particleRandom(seed, 1u));
-        float4 color = particleColor(e, x);
-        if ((flags & PARTICLE_EMISSIVE) != 0u) color.rgb *= e.look.y;
-        float spin = particleRandom(seed, 2u) * 2.0f * M_PI_F + (particleRandom(seed, 3u) * 2.0f - 1.0f) * e.look.w * q.position.w;
-        float3 c = q.position.xyz, reach = float3(size * e.flip.w);
-        float4 axis = float4(0.0f, 0.0f, 0.0f, spin);
-        if (orient == 1u) {
-            float3 v = q.velocity.xyz;
-            float speed = length(v);
-            float3 dir = speed > 1e-4f ? v / speed : e.axis.xyz;
-            float h = size + speed * e.size.w;
-            axis.xyz = dir * h;
-            reach = abs(dir) * h + size;
-        } else if (orient == 2u) {
-            axis.xyz = e.lock.xyz * size;
-            reach = abs(e.lock.xyz) * size + size;
-        } else if (orient == 3u) {
-            axis.xyz = e.lock.xyz;
-        }
-        // The flipbook's frame: over its life, or `fps` a second looping; from a random one if asked.
-        float n = e.flip.x;
-        float start = e.flip.z > 0.0f ? floor(particleRandom(seed, 4u) * n) : 0.0f;
-        float f;
-        uint f0, f1;
-        if (e.flip.y > 0.0f) {
-            f = fmod(start + q.position.w * e.flip.y, n);
-            f0 = min(uint(f), uint(n) - 1u);
-            f1 = (f0 + 1u) % uint(n);
-        } else {
-            f = min(x * n, n - 1.0f);
-            f = fmod(f + start, n);
-            f0 = min(uint(f), uint(n) - 1u);
-            f1 = min(f0 + 1u, uint(n) - 1u);
-        }
-        uint blend = uint(saturate(f - float(f0)) * 65535.0f);
-        r.centerRadius = float4(c, size);
-        r.axis = axis;
-        r.color = half4(min(color, 65000.0f));
-        r.info = uint4(q.info.z | (e.ids2.w & 0xFFu) << 16 | ((flags & 7u) | orient << 3) << 24,
-                       f0 | f1 << 6 | blend << 12, as_type<uint>(half2(half(e.look.z), half(float((e.ids2.w >> 8) & 0xFFu) / 255.0f))), seed);
-        lo = c - reach;
-        hi = c + reach;
+    Particle q = particles[min(i, s.capacity - 1u)];
+    bool alive = i < s.capacity && (q.info.w & PARTICLE_ALIVE) != 0u;
+    bool caster = i < s.casters;
+    uint mineC = alive && caster ? 1u : 0u, mineO = alive && !caster ? 1u : 0u;
+    uint beforeC = simd_prefix_exclusive_sum(mineC), totalC = simd_sum(mineC);
+    uint beforeO = simd_prefix_exclusive_sum(mineO), totalO = simd_sum(mineO);
+    uint baseC = 0u, baseO = 0u;
+    if (simd_is_first()) {
+        if (totalC > 0u) baseC = atomic_fetch_add_explicit(&c.posed[s.pose][0], totalC, memory_order_relaxed);
+        if (totalO > 0u) baseO = atomic_fetch_add_explicit(&c.posed[s.pose][1], totalO, memory_order_relaxed);
     }
-    render[i] = r;
-    device float* b = boxes + 6 * i;
+    baseC = simd_broadcast_first(baseC);
+    baseO = simd_broadcast_first(baseO);
+    if (!alive) return;
+    uint k = caster ? baseC + beforeC : baseO + beforeO;
+    if (k >= (caster ? s.casterBound : s.othersBound)) return;   // past the bound (it holds): not drawn
+    uint dst = caster ? k : s.casterBound + k;
+
+    ParticleEmitter e = emitters[min(q.info.z, s.emitters - 1u)];
+    uint seed = q.info.y, flags = e.ids.w, orient = e.ids2.z;
+    float x = saturate(q.position.w / max(q.velocity.w, 1e-6f));
+    float size = mix(e.size.x, e.size.y, x) * (1.0f - e.size.z * particleRandom(seed, 1u));
+    float4 color = particleColor(e, x);
+    if ((flags & PARTICLE_EMISSIVE) != 0u) color.rgb *= e.look.y;
+    float spin = particleRandom(seed, 2u) * 2.0f * M_PI_F + (particleRandom(seed, 3u) * 2.0f - 1.0f) * e.look.w * q.position.w;
+    // The box holds the billboard as the camera's rays widen it too (s.wind: the camera, how much a unit away).
+    float3 cen = q.position.xyz, reach = float3(size * e.flip.w);
+    float4 axis = float4(0.0f, 0.0f, 0.0f, spin);
+    if (orient == 1u) {
+        float3 v = q.velocity.xyz;
+        float speed = length(v);
+        float3 dir = speed > 1e-4f ? v / speed : e.axis.xyz;
+        float h = size + speed * e.size.w;
+        axis.xyz = dir * h;
+        reach = abs(dir) * h + size;
+    } else if (orient == 2u) {
+        axis.xyz = e.lock.xyz * size;
+        reach = abs(e.lock.xyz) * size + size;
+    } else if (orient == 3u) {
+        axis.xyz = e.lock.xyz;
+    }
+    // The flipbook's frame: over its life, or `fps` a second looping; from a random one if asked.
+    float n = e.flip.x;
+    float start = e.flip.z > 0.0f ? floor(particleRandom(seed, 4u) * n) : 0.0f;
+    float f;
+    uint f0, f1;
+    if (e.flip.y > 0.0f) {
+        f = fmod(start + q.position.w * e.flip.y, n);
+        f0 = min(uint(f), uint(n) - 1u);
+        f1 = (f0 + 1u) % uint(n);
+    } else {
+        f = min(x * n, n - 1.0f);
+        f = fmod(f + start, n);
+        f0 = min(uint(f), uint(n) - 1u);
+        f1 = min(f0 + 1u, uint(n) - 1u);
+    }
+    uint blend = uint(saturate(f - float(f0)) * 65535.0f);
+    ParticleRender r;
+    r.centerRadius = float4(cen, size);
+    r.axis = axis;
+    r.color = half4(min(color, 65000.0f));
+    r.radiance = half4(1.0h);
+    r.keyLight = half4(0.0h);
+    r.keyDir = half4(0.0h, 1.0h, 0.0h, 0.0h);
+    r.info = uint4(i | ((flags & 0x67u) | orient << 3) << 24, f0 | f1 << 6 | blend << 12,
+                   uint(as_type<ushort>(half(e.look.z))) | (((e.ids2.w >> 8) & 0xFFu) << 16) | ((e.ids2.w & 0xFFu) << 24), seed);
+    render[dst] = r;
+    reach += s.wind.w * length(cen - s.wind.xyz);
+    float3 lo = cen - reach, hi = cen + reach;
+    device float* b = boxes + 6 * dst;
     b[0] = lo.x; b[1] = lo.y; b[2] = lo.z;
     b[3] = hi.x; b[4] = hi.y; b[5] = hi.z;
+}
+
+// After the pose: every record and box it didn't fill holds nothing (a box far away), up to the pool's size, so
+// what an earlier frame left isn't lit or met. Clears the other pair of counters for the next pose.
+kernel void particlePoseTailKernel(constant ParticleStep&          s         [[buffer(0)]],
+                                   device ParticleCounts&          c         [[buffer(14)]],
+                                   device ParticleRender*          render    [[buffer(23)]],
+                                   device float*                   boxes     [[buffer(24)]],
+                                   uint i [[thread_position_in_grid]])
+{
+    if (i == 0u) {
+        atomic_store_explicit(&c.posed[1u - s.pose][0], 0u, memory_order_relaxed);
+        atomic_store_explicit(&c.posed[1u - s.pose][1], 0u, memory_order_relaxed);
+    }
+    if (i >= s.capacity) return;
+    uint casters = min(atomic_load_explicit(&c.posed[s.pose][0], memory_order_relaxed), s.casterBound);
+    uint others = min(atomic_load_explicit(&c.posed[s.pose][1], memory_order_relaxed), s.othersBound);
+    if (i < casters || (i >= s.casterBound && i < s.casterBound + others)) return;
+    render[i].centerRadius = float4(0.0f);
+    device float* b = boxes + 6 * i;
+    b[0] = 1.0e30f; b[1] = 1.0e30f; b[2] = 1.0e30f;
+    b[3] = 1.0e30f; b[4] = 1.0e30f; b[5] = 1.0e30f;
+}
+
+// MARK: - Trails
+
+// The trails' pose's parameters (ParticlesGPU.encodePose).
+struct ParticleTrailPose {
+    float4 camera;     // where the camera is; w = how far its ribbons widen a unit away (as the billboards: PARTICLE_WIDEN)
+    uint   trails;     // trails in all
+    uint   points;     // places each keeps (its curve has them and the head)
+    uint   step;       // steps run
+    uint   emitters;
+};
+
+// Every trail's control points, oldest place to the head, each with its radius (tapering from the head's to nothing,
+// and widened as the camera's rays widen the billboards: `radii`, the structure's; `points`.w the trail's own), and
+// its record (a thread its first point). A dead particle's trail is nothing at its emitter. A thread a point.
+kernel void particleTrailPoseKernel(constant ParticleTrailPose&     p          [[buffer(0)]],
+                                    device const ParticleEmitter*   emitters   [[buffer(13)]],
+                                    device const Particle*          particles  [[buffer(16)]],
+                                    device const float4*            history    [[buffer(17)]],
+                                    device const float4*            lighting   [[buffer(18)]],
+                                    device float4*                  points     [[buffer(19)]],
+                                    device float*                   radii      [[buffer(20)]],
+                                    device ParticleTrail*           trails     [[buffer(21)]],
+                                    uint i [[thread_position_in_grid]])
+{
+    uint n = p.points, m = n + 1u, trail = i / m, j = i % m;
+    if (trail >= p.trails) return;
+    uint e = 0u;
+    for (uint k = 0; k < p.emitters; ++k) {
+        ParticleEmitter c = emitters[k];
+        if (c.ids3.y > 0u && trail >= c.ids3.z && trail < c.ids3.z + c.ids.y) { e = k; break; }
+    }
+    ParticleEmitter em = emitters[e];
+    uint slot = em.ids.x + (trail - em.ids3.z);
+    Particle q = particles[slot];
+    bool alive = (q.info.w & PARTICLE_ALIVE) != 0u && q.info.z == e;
+    float3 x = em.origin.xyz;
+    float r = 0.0f;
+    float life = saturate(q.position.w / max(q.velocity.w, 1e-6f));
+    if (alive) {
+        float size = mix(em.size.x, em.size.y, life) * (1.0f - em.size.z * particleRandom(q.info.y, 1u));
+        uint every = max(em.ids3.w, 1u), last = p.step > 0u ? ((p.step - 1u) / every) % n : 0u;
+        x = j == n ? q.position.xyz : history[trail * n + (last + 1u + j) % n].xyz;
+        r = size * em.extra.y * float(j) / float(n);
+    }
+    points[i] = float4(x, r);
+    radii[i] = r > 0.0f ? max(r, p.camera.w * length(x - p.camera.xyz)) : 0.0f;
+    if (j != 0u) return;
+    ParticleTrail t;
+    float4 color = particleColor(em, life);
+    if ((em.ids.w & PARTICLE_EMISSIVE) != 0u) color.rgb *= em.look.y;
+    t.color = half4(min(color, 65000.0f));
+    t.radiance = half4(half3(min(lighting[3u * slot].rgb + lighting[3u * slot + 1u].rgb, 65000.0f)), 1.0h);
+    t.info = uint4(em.ids.w & 7u, alive ? 1u : 0u, slot, 0u);
+    trails[trail] = t;
+}
+
+// MARK: - Mesh particles
+
+// The mesh pose's parameters (ParticlesGPU.encodeMeshPose).
+struct ParticleMeshPose {
+    uint4  range;      // the meshes' first pool slot, their slots, the descriptors' stride (0: none), emitters
+    float4 lag;        // x = the time since the last pose (s): last frame's place, for motion vectors
+};
+
+// A turn of `angle` about unit `axis` (Rodrigues).
+inline float3x3 particleTurn(float3 axis, float angle) {
+    float c = cos(angle), s = sin(angle), t = 1.0f - c;
+    float3 a = axis;
+    return float3x3(float3(t * a.x * a.x + c, t * a.x * a.y + s * a.z, t * a.x * a.z - s * a.y),
+                    float3(t * a.x * a.y - s * a.z, t * a.y * a.y + c, t * a.y * a.z + s * a.x),
+                    float3(t * a.x * a.z + s * a.y, t * a.y * a.z - s * a.x, t * a.z * a.z + c));
+}
+
+// A mesh particle's transform at `age`: its size then, turned about its own axis from its own start, at x.
+inline float4x4 particleMeshTransform(ParticleEmitter e, uint seed, float life, float age, float3 x) {
+    float z = particleRandom(seed, 5u) * 2.0f - 1.0f, phi = particleRandom(seed, 6u) * 2.0f * M_PI_F;
+    float r = sqrt(max(1.0f - z * z, 0.0f));
+    float3 axis = float3(r * cos(phi), r * sin(phi), z);
+    float angle = particleRandom(seed, 2u) * 2.0f * M_PI_F + (particleRandom(seed, 3u) * 2.0f - 1.0f) * e.look.w * age;
+    float size = mix(e.size.x, e.size.y, saturate(age / max(life, 1e-6f))) * (1.0f - e.size.z * particleRandom(seed, 1u));
+    float3x3 m = particleTurn(axis, angle) * max(size, 1e-4f);
+    return float4x4(float4(m[0], 0.0f), float4(m[1], 0.0f), float4(m[2], 0.0f), float4(x, 1.0f));
+}
+
+// Every mesh slot's instance (and Metal's descriptor) in the frame slot's records: an alive particle where it is, a
+// dead one shrunk to nothing at its emitter. Ahead of the top-level structure's update, which takes them; from where
+// the last frame's steps left the pool (this frame's run after the structure: their scene collisions trace it), so
+// the meshes are a frame behind the billboards. A thread a mesh slot.
+kernel void particleMeshPoseKernel(constant ParticleMeshPose&      m           [[buffer(0)]],
+                                   device const ParticleEmitter*   emitters    [[buffer(13)]],
+                                   device const Particle*          particles   [[buffer(16)]],
+                                   device InstanceData*            instances   [[buffer(25)]],
+                                   device uchar*                   descriptors [[buffer(26)]],
+                                   uint i [[thread_position_in_grid]])
+{
+    if (i >= m.range.y) return;
+    uint slot = m.range.x + i, e = 0u;
+    for (uint k = 0; k < m.range.w; ++k) {
+        ParticleEmitter c = emitters[k];
+        if (c.ids3.x != PARTICLE_NONE && slot >= c.ids.x && slot < c.ids.x + c.ids.y) { e = k; break; }
+    }
+    ParticleEmitter em = emitters[e];
+    uint instance = em.ids3.x + (slot - em.ids.x);
+    Particle q = particles[slot];
+    float4x4 now, before;
+    if ((q.info.w & PARTICLE_ALIVE) != 0u && q.info.z == e) {
+        float age = q.position.w, lag = min(m.lag.x, age);
+        now = particleMeshTransform(em, q.info.y, q.velocity.w, age, q.position.xyz);
+        before = particleMeshTransform(em, q.info.y, q.velocity.w, age - lag, q.position.xyz - q.velocity.xyz * lag);
+    } else {
+        now = float4x4(float4(1e-4f, 0, 0, 0), float4(0, 1e-4f, 0, 0), float4(0, 0, 1e-4f, 0), float4(em.origin.xyz, 1));
+        before = now;
+    }
+    // The inverse of s R and t: R^T / s and -(R^T t) / s; the normal matrix is its transpose.
+    float3x3 r = float3x3(now[0].xyz, now[1].xyz, now[2].xyz);
+    float s2 = max(length_squared(r[0]), 1e-12f);
+    float3x3 inv = transpose(r) * (1.0f / s2);
+    float3 it = -(inv * now[3].xyz);
+    float4x4 inverse = float4x4(float4(inv[0], 0), float4(inv[1], 0), float4(inv[2], 0), float4(it, 1));
+    instances[instance].transform = now;
+    instances[instance].prevTransform = before;
+    instances[instance].normalMatrix = transpose(inverse);
+    if (m.range.z != 0u) {
+        device float* d = (device float*)(descriptors + instance * m.range.z);
+        for (uint c = 0; c < 4; ++c) {
+            for (uint row = 0; row < 3; ++row) d[c * 3 + row] = now[c][row];
+        }
+    }
 }
 
 // MARK: - Light
@@ -541,7 +815,9 @@ kernel void particlePoseKernel(constant ParticleStep&          s         [[buffe
 // particles do), its visibility the opaque scene's and the particles' transmittance between (so smoke shades
 // itself), plus the sky's mean (what an isotropic scatterer sends in a uniform sky). Averaged
 // over the frames (the shadow rays aim at random points of the lights): each frame weighs in at a third, a newborn's
-// first frame alone. `lighting`: per slot that average (rgb) and whose it is (w: the particle's seed).
+// first frame alone. `lighting`: per slot three: that average of the light from all round (rgb) and whose it is (w:
+// the particle's seed); of its brightest light (which six-way smoke shades apart: particleLit); where that comes from
+// (summed by its brightness, so the average leans toward the brighter frames').
 constant uint PARTICLE_LIGHTS = 8;
 
 kernel void particleLightKernel(constant Uniforms&               u          [[buffer(0)]],
@@ -563,7 +839,8 @@ kernel void particleLightKernel(constant Uniforms&               u          [[bu
     if (r.centerRadius.w <= 0.0f || (particleFlags(r) & PARTICLE_EMISSIVE) != 0u) return;
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     float3 p = r.centerRadius.xyz;
-    float3 sum = skyAmbient(u, s);
+    float3 sum = skyAmbient(u, s), key = float3(0.0f), keyDir = float3(0.0f);
+    float keyLum = 0.0f;
     Rng rng;
     rng.state = pcgHash(r.info.w ^ pcgHash(u.frameIndex * 0x9E3779B9u + 0x2545F491u));
     uint count = LIGHT_TABLE ? 0u : min(u.lightCount, PARTICLE_LIGHTS);
@@ -577,43 +854,133 @@ kernel void particleLightKernel(constant Uniforms&               u          [[bu
         float dist = length(d);
         float t;
         if (intersectAny(makeRay(p, d / dist, RAY_EPSILON, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_GEOMETRY, RAY_SHADOW), accel, t)) continue;
-        // lightUnshadowed facing the light is its irradiance / pi: a quarter of it is E / 4 pi.
-        sum += 0.25f * e * particleTransmittance(p, d / dist, r.centerRadius.w * 0.5f, dist, accel) * sunVisibilityScale(light, p, s);
+        // lightUnshadowed facing the light is its irradiance / pi: a quarter of it is E / 4 pi. Through the particles
+        // between, light scattered on inside a dense column gets further than single scattering lets it: octaves of
+        // weaker extinction (Wrenninge's multiple-scattering approximation), the same through thin smoke.
+        float T = particleTransmittance(p, d / dist, r.centerRadius.w * 0.5f, dist, accel);
+        float through = (T + 0.5f * sqrt(T) + 0.25f * sqrt(sqrt(T))) * (1.0f / 1.75f);
+        float3 c = 0.25f * e * through * sunVisibilityScale(light, p, s);
+        float lum = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+        if (lum > keyLum) {
+            sum += key;   // the brightest so far is the key; the one before joins the rest
+            key = c;
+            keyLum = lum;
+            keyDir = toward;
+        } else {
+            sum += c;
+        }
     }
-    float4 last = lighting[i];
-    float3 now = as_type<uint>(last.w) == r.info.w ? mix(last.rgb, sum, 1.0f / 3.0f) : sum;
-    lighting[i] = float4(now, as_type<float>(r.info.w));
+    uint slot = min(r.info.x & 0xFFFFFFu, capacity - 1u);
+    float4 last = lighting[3u * slot], lastKey = lighting[3u * slot + 1u], lastDir = lighting[3u * slot + 2u];
+    bool same = as_type<uint>(last.w) == r.info.w;
+    float3 now = same ? mix(last.rgb, sum, 1.0f / 3.0f) : sum;
+    float3 keyNow = same ? mix(lastKey.rgb, key, 1.0f / 3.0f) : key;
+    float3 dirNow = same ? mix(lastDir.xyz, keyDir * keyLum, 1.0f / 3.0f) : keyDir * keyLum;
+    lighting[3u * slot] = float4(now, as_type<float>(r.info.w));
+    lighting[3u * slot + 1u] = float4(keyNow, 0.0f);
+    lighting[3u * slot + 2u] = float4(dirNow, 0.0f);
+    float l = length(dirNow);
     render[i].radiance = half4(half3(min(now, 65000.0f)), 1.0h);
+    render[i].keyLight = half4(half3(min(keyNow, 65000.0f)), 1.0h);
+    render[i].keyDir = half4(half3(l > 1e-8f ? dirNow / l : float3(0.0f, 1.0f, 0.0f)), 0.0h);
 }
 
 // MARK: - The camera's layer
 
-// The particles in front of what the camera's ray hit: rgb = the light they send (fogged), a = how much of what is
-// behind them they hide. Soft where they near the surface behind them, and faded right in front of the camera. The
-// composite puts it over the scene (or MetalFX does, as its transparency overlay).
-kernel void particleLayerKernel(constant Uniforms&               u        [[buffer(0)]],
-                                SCENE_ACCEL                      sc       [[buffer(1)]],
-                                constant FogParams&              fog      [[buffer(9)]],
-                                texture2d<float, access::read>   nd       [[texture(0)]],
-                                texture2d<float, access::write>  layer    [[texture(1)]],
-                                texture3d<float>                 fogGrid  [[texture(2)]],
-                                uint2 tid [[thread_position_in_grid]])
-{
-    if (tid.x >= u.width || tid.y >= u.height) return;
-    float3 dir = primaryDirection(u, tid), o = u.camPos.xyz;
-    float depth = nd.read(tid).w, along = dot(dir, u.camForward.xyz);
+// The camera's billboards' least half-size, in texels of the layer (ParticlesGPU.widen).
+constant float PARTICLE_WIDEN = 0.5f;
+// ...and under how many texels across (half-size) a particle is too thin for them: the overlay traces it again.
+constant float PARTICLE_DETAIL = 2.0f;
+
+// The layer's size and how its rays leave the camera (Renderer.particleLayerStages): `jitter`, as the frame's (the
+// layer is the frame's size, composited pixel for pixel); otherwise through its own texels' centres, steady from frame
+// to frame (it goes over MetalFX's output, which doesn't filter it over time, or is smaller than the frame).
+// `detail`: the overlay traces the thin particles again (particleLayerRay leaves them out).
+struct ParticleLayerParams {
+    uint2 size;
+    uint  jitter;
+    uint  detail;
+};
+
+// What the camera's ray along `dir` (through `uv` of the view) sees of the particles in front of the surface at
+// `depth` (0: none): rgb = the light they send (fogged), a = how much of what is behind them they hide. Soft where
+// they near that surface, and faded right in front of the camera. `footprint`: the ray's pixel across, a unit away
+// (radians): the billboards are at least about that wide. `detail`: the ones under PARTICLE_DETAIL of them are left
+// out, and set `thin` (particleCollect).
+inline float4 particleLayerRay(constant Uniforms& u, SCENE_ACCEL sc, constant FogParams& fog, texture3d<float> fogGrid, float3 dir,
+                               float2 uv, float depth, float footprint, bool detail, thread bool& thin) {
+    float along = dot(dir, u.camForward.xyz);
     float tOpaque = depth > 0.0f ? depth / max(along, 1e-4f) : 1.0e5f;
     float meanT;
-    float4 gathered = particleGather<4>(o, dir, tOpaque, depth > 0.0f, sc, meanT);
+    float4 gathered = particleGather<4>(u.camPos.xyz, dir, tOpaque, depth > 0.0f, sc, meanT, PARTICLE_WIDEN * footprint,
+                                        detail ? PARTICLE_DETAIL * footprint : 0.0f, thin);
     float3 c = gathered.rgb;
     float hidden = gathered.a;
     if (hidden > 1e-4f && flagOn(u.flags, FLAG_FOG) && !flagOn(u.flags, FLAG_FOG_REFERENCE)) {
         // The fog in front of them, at their mean distance: what they send dims, and the fog's own light takes the
         // share of the view they hide (the composite fogs the rest to the surface).
         float tMean = meanT / hidden;
-        float2 uv = (float2(tid) + 0.5f) / float2(u.width, u.height);
         float4 fogged = fogFromGrid(fog, fogGrid, uv, tMean * along);
         c = c * fogged.a + hidden * fogged.rgb;
     }
-    layer.write(float4(c, hidden), tid);
+    return float4(c, hidden);
+}
+
+// A pixel's footprint at `uv` of a view `height` pixels high (radians across it, a unit away).
+inline float particleFootprint(constant Uniforms& u, float2 uv, float height) {
+    return length(normalize(viewDirection(u, uv + float2(0.0f, 1.0f / height))) - normalize(viewDirection(u, uv)));
+}
+
+// The camera's layer (particleLayerRay a texel): the composite puts it over the scene, or particleOverlayKernel over
+// MetalFX's output. `layerDepth`: x = the depth of the surface each texel's particles stand in front of, which the
+// upsampling weighs by (particleUpsample); y = 1 where some are too thin for its texels.
+kernel void particleLayerKernel(constant Uniforms&               u          [[buffer(0)]],
+                                SCENE_ACCEL                      sc         [[buffer(1)]],
+                                constant FogParams&              fog        [[buffer(9)]],
+                                constant ParticleLayerParams&    lp         [[buffer(10)]],
+                                texture2d<float, access::read>   nd         [[texture(0)]],
+                                texture2d<float, access::write>  layer      [[texture(1)]],
+                                texture3d<float>                 fogGrid    [[texture(2)]],
+                                texture2d<float, access::write>  layerDepth [[texture(3)]],
+                                uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= lp.size.x || tid.y >= lp.size.y) return;
+    float2 uv = (float2(tid) + 0.5f) / float2(lp.size);
+    uint2 pixel = min(uint2(uv * float2(u.width, u.height)), uint2(u.width - 1, u.height - 1));
+    float3 dir = lp.jitter != 0u ? primaryDirection(u, pixel) : normalize(viewDirection(u, uv));
+    float depth = nd.read(pixel).w;
+    bool thin;
+    float4 c = particleLayerRay(u, sc, fog, fogGrid, dir, uv, depth, particleFootprint(u, uv, float(lp.size.y)), lp.detail != 0u, thin);
+    layer.write(c, tid);
+    layerDepth.write(float4(depth, thin ? 1.0f : 0.0f, 0.0f, 0.0f), tid);
+}
+
+// The particles' layer over MetalFX's output (at its size, in place), before the lens and the tone curve: MetalFX
+// would filter it over time with the scene's motion, which isn't theirs (sparks smeared into streaks), so it takes
+// only the scene. Upsampled (particleUpsample; `nd`: the traced frame's depths, for its weights), but where the
+// layer's texels are too coarse for the particles there (sparks, rain, motes: `thin`) traced again for the pixel.
+kernel void particleOverlayKernel(constant Uniforms&                   u          [[buffer(0)]],
+                                  SCENE_ACCEL                          sc         [[buffer(1)]],
+                                  constant FogParams&                  fog        [[buffer(9)]],
+                                  texture2d<float, access::read_write> out        [[texture(0)]],
+                                  texture2d<float, access::read>       layer      [[texture(1)]],
+                                  texture2d<float, access::read>       layerDepth [[texture(2)]],
+                                  texture2d<float, access::read>       nd         [[texture(3)]],
+                                  texture3d<float>                     fogGrid    [[texture(4)]],
+                                  uint2 tid [[thread_position_in_grid]])
+{
+    uint2 size = uint2(out.get_width(), out.get_height());
+    if (tid.x >= size.x || tid.y >= size.y) return;
+    float2 uv = (float2(tid) + 0.5f) / float2(size);
+    uint2 ndSize = uint2(nd.get_width(), nd.get_height());
+    float depth = nd.read(min(uint2(uv * float2(ndSize)), ndSize - 1u)).w;
+    bool thin;
+    float4 l = particleUpsample(layer, layerDepth, uv, depth, thin);
+    if (thin) {
+        bool again;
+        l = particleLayerRay(u, sc, fog, fogGrid, normalize(viewDirection(u, uv)), uv, depth, particleFootprint(u, uv, float(size.y)),
+                             false, again);
+    }
+    float4 c = out.read(tid);
+    out.write(float4(l.rgb + (1.0f - l.a) * c.rgb, c.a), tid);
 }

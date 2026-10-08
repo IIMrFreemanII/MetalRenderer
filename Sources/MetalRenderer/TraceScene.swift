@@ -80,7 +80,7 @@ struct TraversalStats {
 /// top-level structure and what a hit reads besides the instance records. One per frame slot, written every frame
 /// (`write`), as its top-level structure and its virtual geometry's tables are the slot's own.
 final class TraceSceneArgs {
-    static let size = 176
+    static let size = 208
     /// The ray queries' counters (RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which recompiles
     /// the shaders): see TraversalStats.
     static var statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
@@ -133,6 +133,11 @@ final class TraceSceneArgs {
         var particleAtlas: MTLTexture?
         var particleCounts = SIMD2<UInt32>()
         var particleFlags: UInt32 = 0   // MSL PARTICLES_REFLECTED
+        /// The trails' structure this slot, their control points and records, and (trails, control points each).
+        var particleTrails: MTLAccelerationStructure?
+        var trailPoints: MTLBuffer?
+        var trailRecords: MTLBuffer?
+        var trailShape = SIMD2<UInt32>()
         var frame: UInt32 = 0
     }
 
@@ -160,6 +165,10 @@ final class TraceSceneArgs {
         p.storeBytes(of: c.particleAtlas?.gpuResourceID ?? MTLResourceID(), toByteOffset: 152, as: MTLResourceID.self)
         p.storeBytes(of: c.particleCounts, toByteOffset: 160, as: SIMD2<UInt32>.self)
         p.storeBytes(of: c.particleFlags, toByteOffset: 168, as: UInt32.self)
+        p.storeBytes(of: c.particleTrails?.gpuResourceID ?? MTLResourceID(), toByteOffset: 176, as: MTLResourceID.self)
+        p.storeBytes(of: address(c.trailPoints), toByteOffset: 184, as: UInt64.self)
+        p.storeBytes(of: address(c.trailRecords), toByteOffset: 192, as: UInt64.self)
+        p.storeBytes(of: c.trailShape, toByteOffset: 200, as: SIMD2<UInt32>.self)
     }
 
     /// What the frames finished since the last read added (in-flight ones in part): read while frames run.

@@ -1118,6 +1118,8 @@ extension Benchmark {
         out.append(native.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 5).frames(256))
         out.append(base.named("no shadows").with { $0.scene.particles.shadows = false }.still(at: 5))
         out.append(base.named("no reflections").with { $0.scene.particles.reflections = false }.still(at: 5))
+        out.append(base.named("half layer").with { $0.particleScale = 0.5 }.still(at: 5))
+        out.append(native.named("native half layer").with { $0.particleScale = 0.5 }.still(at: 5))
         for budget: Float in [0.25, 1, 4] {
             out.append(base.named(String(format: "moving %gx", budget)).with { $0.scene.particles.budget = budget })
         }

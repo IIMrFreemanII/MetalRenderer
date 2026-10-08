@@ -652,9 +652,19 @@ final class Scene {
     }
 
     /// The scene's particle effects (a builder's, once): see `particles`.
+    /// A mesh emitter's particles are instances, one a slot, reserved here (the GPU poses them: ParticlesGPU
+    /// .encodeMeshPose); they move every frame, so the scene isn't still.
     func addParticles(_ system: ParticleSystem) {
         precondition(particles == nil, "a scene has one particle system")
-        particles = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders)
+        let p = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders,
+                               fields: Array(system.fields.prefix(system.bakedCurlField ?? system.fields.count)))
+        for (i, e) in p.emitters.enumerated() {
+            guard let (mesh, material) = e.mesh else { continue }
+            let hidden = translate(e.position) * scale(1e-4)
+            p.meshInstances[i] = instances.count
+            for _ in 0..<e.capacity { instances[addInstance(mesh, material, hidden)].simulated = true }
+        }
+        particles = p
     }
 
     /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.

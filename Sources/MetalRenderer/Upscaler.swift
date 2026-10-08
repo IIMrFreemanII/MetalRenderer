@@ -15,10 +15,6 @@ final class Upscaler {
     let hdrOutput: MTLTexture
     private let scaler: AnyObject           // MTLFXTemporalDenoisedScaler
     static let hdrFormat = MTLPixelFormat.rgba16Float
-    /// It takes the particles' layer as its transparency overlay (made for "the output of your particle systems"):
-    /// what it denoises stays the scene behind them.
-    let overlay: Bool
-    static let overlayFormat = MTLPixelFormat.rgba16Float
 
     /// Largest per-axis scale factor the GPU supports.
     static func maxScale(on device: MTLDevice) -> Float {
@@ -33,8 +29,7 @@ final class Upscaler {
     /// and 960x544 to twice that worked. So under Metal 4 it runs on a Metal 3 command buffer between two of the
     /// frame's (Metal4Frame.interlude).
     init(device: MTLDevice, inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
-         synchronous: Bool = false, overlay: Bool = false) throws {
-        self.overlay = overlay
+         synchronous: Bool = false) throws {
         self.inputWidth = inputWidth
         self.inputHeight = inputHeight
         self.outputWidth = outputWidth
@@ -51,10 +46,9 @@ final class Upscaler {
         d.outputTextureFormat = Upscaler.hdrFormat
         (d.inputWidth, d.inputHeight, d.outputWidth, d.outputHeight) = (inputWidth, inputHeight, outputWidth, outputHeight)
         d.requiresSynchronousInitialization = synchronous
-        if overlay {
-            d.isTransparencyOverlayTextureEnabled = true
-            d.transparencyOverlayTextureFormat = Upscaler.overlayFormat
-        }
+        // (Not its transparency overlay for the particles' layer: it filters the overlay over time with the scene's
+        // motion, which isn't the particles', and sparks come out as faint streaks. particleOverlayKernel puts the
+        // layer over its output instead.)
         // The light arrives before the camera's exposure (tonemapKernel applies it), so MetalFX finds its own. A fixed
         // exposure texture, and a denoise-strength mask over the sky and the emitters, scored the same (hwrtq).
         d.isAutoExposureEnabled = true
@@ -68,7 +62,7 @@ final class Upscaler {
 
         let t = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Upscaler.hdrFormat, width: outputWidth, height: outputHeight,
                                                          mipmapped: false)
-        t.usage = scaler.outputTextureUsage.union(.shaderRead)   // tonemapKernel reads it
+        t.usage = scaler.outputTextureUsage.union([.shaderRead, .shaderWrite])   // tonemapKernel reads it; the particles go over it
         t.storageMode = .private
         guard let output = device.makeTexture(descriptor: t) else { throw RendererError.resourceCreation("texture upscaled") }
         output.label = "upscaled"
@@ -87,7 +81,6 @@ final class Upscaler {
         scaler.normalTexture = inputs.normalDepth      // xyz = world-space shading normal
         scaler.roughnessTexture = t.roughness
         scaler.outputTexture = hdrOutput
-        if overlay { scaler.transparencyOverlayTexture = inputs.overlay }
         // MetalFX wants the offset that takes a sample back to the pixel center: the negated ray jitter.
         // (Measured with MetalFX's temporal scaler: the wrong sign cost ~5 dB PSNR against a native-resolution render.)
         scaler.jitterOffsetX = -inputs.jitter.x

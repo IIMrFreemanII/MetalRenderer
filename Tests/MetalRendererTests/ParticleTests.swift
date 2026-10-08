@@ -33,7 +33,20 @@ final class ParticleTests: XCTestCase {
         v.gravity = 0
         v.vortex = 2
         v.attraction = 0.5
-        return ParticleSystem(emitters: [f, v])
+        // A draft: the baked curl tile, and a vortex field it is carried by (ParticleField).
+        var d = ParticleEmitter("draft", capacity: capacity / 2, at: [-1, 0.3, 0])
+        d.shape = .disc(radius: 0.3)
+        d.rate = 150
+        d.lifetime = 1...2
+        d.speed = 0.2...0.6
+        d.gravity = 0.2
+        d.curl = 2
+        d.curlFrequency = 1.3
+        d.curlSpeed = 0.5
+        d.bakedCurl = true
+        d.field = (index: 0, strength: 3, follow: true)
+        let column = ParticleField.vortex(center: [-1, 0, 0], radius: 0.6, height: 2.5, swirl: 1.5, lift: 1.2, dims: 12)
+        return ParticleSystem(emitters: [f, v, d], fields: [column])
     }
 
     /// Sparks that bounce off a floor and a box, leave smoke where they die, and rain that splashes on the floor.
@@ -396,9 +409,9 @@ final class ParticleTests: XCTestCase {
                 let from = c + SIMD3(s * cos(phi), s * sin(phi), z) * 3
                 let aim = c + (SIMD3(r.next(), r.next(), r.next()) * 2 - 1) * render[slot].centerRadius.w * 1.5
                 let d = normalize(aim - from)
-                guard let (t, uv) = ParticleMath.billboard(render[slot], from, d), abs(uv.x) <= 1, abs(uv.y) <= 1 else { continue }
+                guard let (t, uv, _) = ParticleMath.billboard(render[slot], from, d), abs(uv.x) <= 1, abs(uv.y) <= 1 else { continue }
                 // A ray-facing or world quad turns: its box holds the disc its picture is in (the trim), not the corners.
-                let orient = (render[slot].info.x >> 27) & 3, kind = ParticleTextures.Kind(rawValue: Int((render[slot].info.x >> 16) & 0xFF))!
+                let orient = (render[slot].info.x >> 27) & 3, kind = ParticleTextures.Kind(rawValue: Int(render[slot].info.z >> 24))!
                 if (orient == 0 || orient == 3) && length(uv) > ParticleTextures.trim(kind) { continue }
                 let p = from + d * t
                 hits += 1
@@ -463,14 +476,19 @@ final class ParticleTests: XCTestCase {
         }
     }
 
-    /// A frame encodes its steps and the pose in one go (Renderer.encodeSceneUpdate): the pose's parameters mustn't
-    /// take the place of a step's before the GPU has run it (a burst at the first step was lost that way).
+    /// A frame encodes its reset, steps and pose in one go (Renderer.encodeSceneUpdate): the pose's parameters mustn't
+    /// take the place of a step's or the reset's before the GPU has run them (a burst at the first step was lost that
+    /// way; and the pose's pool, the billboards', once left the mesh slots' dead list unset).
     func testThePoseLeavesTheStepsAlone() throws {
         var e = ParticleEmitter("burst", capacity: 12, at: [0, 0.5, 0])
         e.burst = (0, 12, 0, 0)
         e.lifetime = 100...100
         e.gravity = 0
-        let system = ParticleSystem(emitters: [e])
+        var rocks = ParticleEmitter("rocks", capacity: 8, at: [1, 0.5, 0])
+        rocks.mesh = (0, 0)
+        rocks.burst = (0.1, 5, 0, 0)
+        rocks.lifetime = 100...100
+        let system = ParticleSystem(emitters: [e, rocks])
         let m = try metal()
         let g = try ParticlesGPU(device: m.device, system: system, slots: 1)
         let cmd = m.queue.makeCommandBuffer()!
@@ -481,7 +499,224 @@ final class ParticleTests: XCTestCase {
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
-        XCTAssertEqual(g.readAliveSlots().count, 12)
-        XCTAssertEqual(g.readRender(slot: 0).filter { $0.centerRadius.w > 0 }.count, 12, "all twelve posed")
+        XCTAssertEqual(g.readAliveSlots().count, 17)
+        XCTAssertEqual(Set(g.readAliveSlots()).count, 17, "each in a slot of its own")
+        XCTAssertEqual(g.readRender(slot: 0).filter { $0.centerRadius.w > 0 }.count, 12, "all twelve billboards posed")
+    }
+
+    // MARK: Mesh particles
+
+    /// A mesh emitter's slots pose their instances: an alive one where its particle is, at its size, turned (a
+    /// rotation times its size: orthogonal columns of that length) and last frame's place behind it along its
+    /// velocity; a dead one shrunk at the emitter. The descriptor's transform is the record's.
+    func testMeshParticlesPoseTheirInstances() throws {
+        var dots = ParticleEmitter("dots", capacity: 50, at: [0, 1, 0])
+        dots.rate = 60
+        var rocks = ParticleEmitter("rocks", capacity: 40, at: [1, 0.5, 0])
+        rocks.mesh = (0, 0)
+        rocks.burst = (0, 25, 0, 0)
+        rocks.lifetime = 5...5
+        rocks.speed = 1...2
+        rocks.spread = 0.5
+        rocks.size = (0.1, 0.1)
+        rocks.spin = 4
+        let system = ParticleSystem(emitters: [dots, rocks])
+        system.meshInstances[1] = 3
+        XCTAssertEqual(system.billboardCapacity, 50)
+        XCTAssertEqual(system.bases[1], 50)
+        let (g, run) = try gpu(system)
+        let m = try metal()
+        let stride = 64
+        let instances = m.device.makeBuffer(length: 50 * MemoryLayout<GPUInstanceData>.stride, options: .storageModeShared)!
+        let descriptors = m.device.makeBuffer(length: 50 * stride, options: .storageModeShared)!
+        func pose() {
+            let cmd = m.queue.makeCommandBuffer()!
+            let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+            g.encodeMeshPose(Metal3Pass(enc: enc), pipelines: m.pipelines, instances: instances, descriptors: descriptors, descriptorStride: stride)
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+        }
+        run(20, .zero)
+        pose()
+        run(10, .zero)
+        pose()
+        let records = instances.contents().bindMemory(to: GPUInstanceData.self, capacity: 50)
+        let all = g.readParticles()
+        var alive = 0
+        for k in 0..<40 {
+            let q = all[50 + k], r = records[3 + k]
+            let t = r.transform
+            if q.info.w == ParticleSystem.alive {
+                alive += 1
+                XCTAssertLessThan(length(ParticleMath.xyz(t.columns.3) - ParticleMath.xyz(q.position)), 1e-5, "rock \(k) where its particle is")
+                for c in [t.columns.0, t.columns.1, t.columns.2] { XCTAssertEqual(length(ParticleMath.xyz(c)), 0.1, accuracy: 1e-4) }
+                XCTAssertEqual(dot(ParticleMath.xyz(t.columns.0), ParticleMath.xyz(t.columns.1)), 0, accuracy: 1e-4)
+                let back = ParticleMath.xyz(q.position) - ParticleMath.xyz(q.velocity) * 10 * ParticleSystem.stepLength
+                XCTAssertLessThan(length(ParticleMath.xyz(r.prevTransform.columns.3) - back), 1e-4, "last frame's place: 10 steps back")
+                let inverse = r.normalMatrix.transpose
+                XCTAssertLessThan(simd_length((inverse * t).columns.0 - SIMD4(1, 0, 0, 0)), 1e-3, "the normal matrix is the inverse's transpose")
+            } else {
+                XCTAssertLessThan(length(ParticleMath.xyz(t.columns.0)), 1e-3, "a dead rock is nothing")
+                XCTAssertLessThan(length(ParticleMath.xyz(t.columns.3) - SIMD3(1, 0.5, 0)), 1e-5, "...at its emitter")
+            }
+            let d = (descriptors.contents() + (3 + k) * stride).bindMemory(to: Float.self, capacity: 12)
+            XCTAssertEqual(SIMD3(d[9], d[10], d[11]), ParticleMath.xyz(t.columns.3), "the descriptor's translation")
+        }
+        XCTAssertEqual(alive, 25)
+        XCTAssertEqual(g.traceCounts(slot: 0), .zero, "no boxes posed yet")
+    }
+
+    // MARK: Fields
+
+    /// A field read at its nodes is what was put there; between them, trilinear; outside its box nothing. The baked
+    /// curl tile repeats, is the curl it baked at its nodes, and between them nearly divergence-free.
+    func testFieldsAndTheBakedCurl() {
+        let f = ParticleField(center: [1, 2, 3], halfExtents: [1, 0.5, 2], dims: [3, 4, 5]) { p in p * SIMD3(2, -1, 0.5) }
+        let g = f.gpu, samples = f.samples.map { SIMD4($0, 0) }
+        var r = ParticleMath.Rng(state: 9)
+        for _ in 0..<200 {
+            let p = f.lo + f.size * SIMD3(r.next(), r.next(), r.next())
+            XCTAssertLessThan(length(ParticleMath.field(g, samples, p) - p * SIMD3(2, -1, 0.5)), 1e-4, "linear: trilinear is exact")
+        }
+        XCTAssertEqual(ParticleMath.field(g, samples, f.lo - 0.1), .zero, "outside its box")
+
+        let tile = ParticleSystem.curlTile, t = tile.gpu, ts = tile.samples.map { SIMD4($0, 0) }
+        var worstDiv: Float = 0, mean: Float = 0, worstNode: Float = 0
+        for _ in 0..<300 {
+            let p = SIMD3(r.next(), r.next(), r.next()) * 4
+            let a = ParticleMath.field(t, ts, p), b = ParticleMath.field(t, ts, p + SIMD3(4, -8, 12))
+            XCTAssertLessThan(length(a - b), 1e-4, "it tiles")
+            let h: Float = 0.02
+            func c(_ o: SIMD3<Float>) -> SIMD3<Float> { ParticleMath.field(t, ts, p + o) }
+            let div = (c([h, 0, 0]).x - c([-h, 0, 0]).x + c([0, h, 0]).y - c([0, -h, 0]).y + c([0, 0, h]).z - c([0, 0, -h]).z) / (2 * h)
+            worstDiv = max(worstDiv, abs(div))
+            mean += length(a) / 300
+            let node = (SIMD3(r.next(), r.next(), r.next()) * 32).rounded(.down) / 8
+            worstNode = max(worstNode, length(ParticleMath.field(t, ts, node) - ParticleMath.periodicCurl(node, period: 4)))
+        }
+        print("baked curl: |v| ~ \(mean), divergence at most \(worstDiv), off the baked curl at its nodes by \(worstNode)")
+        XCTAssertLessThan(worstNode, 1e-4)
+        XCTAssertLessThan(worstDiv, mean * 2.5, "about divergence-free (the interpolation's error, a cell is an eighth of the noise's)")
+    }
+
+    // MARK: Trails
+
+    /// A trail's control points are its particle's last places, oldest first, `every` steps apart, then its head (where
+    /// it is), tapering from the head's radius to nothing; a dead particle's trail is nothing.
+    func testTrailsFollowTheirParticles() throws {
+        var e = ParticleEmitter("wisps", capacity: 40, at: [0, 1, 0])
+        e.rate = 60
+        e.lifetime = 1.5...1.5
+        e.speed = 1...2
+        e.spread = 0.6
+        e.gravity = 0
+        e.size = (0.02, 0.02)
+        e.trail = (points: 6, every: 2)
+        e.trailWidth = 0.5
+        let system = ParticleSystem(emitters: [e])
+        XCTAssertEqual(system.trailControlPoints, 7)
+        XCTAssertEqual(system.trailSegments, 4)
+        let (g, run) = try gpu(system)
+        let m = try metal()
+        run(61, .zero)
+        let cmd = m.queue.makeCommandBuffer()!
+        let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+        g.encodePose(Metal3Pass(enc: enc), pipelines: m.pipelines, slot: 0)
+        enc.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        let points = g.trailPoints[0].contents().bindMemory(to: SIMD4<Float>.self, capacity: 40 * 7)
+        let all = g.readParticles()
+        var checked = 0
+        let dt = ParticleSystem.stepLength
+        for slot in 0..<40 {
+            let q = all[slot], c = (0..<7).map { points[slot * 7 + $0] }
+            guard q.info.w == ParticleSystem.alive else {
+                XCTAssertTrue(c.allSatisfy { $0.w == 0 }, "a dead particle's trail is nothing")
+                continue
+            }
+            let v = ParticleMath.xyz(q.velocity)
+            XCTAssertLessThan(length(ParticleMath.xyz(c[6]) - ParticleMath.xyz(q.position)), 1e-5, "the head is where it is")
+            for j in 0..<7 { XCTAssertEqual(c[j].w, 0.02 * 0.5 * Float(j) / 6, accuracy: 1e-6, "tapering to nothing") }
+            // Old enough for a full ring (6 places, 2 steps apart): its places are 2 steps of its flight apart.
+            guard q.position.w > 14 * dt else { continue }
+            for j in 0..<5 {
+                XCTAssertLessThan(length(ParticleMath.xyz(c[j + 1] - c[j]) - v * 2 * dt), 1e-4, "place \(j) to \(j + 1)")
+            }
+            checked += 1
+        }
+        XCTAssertGreaterThan(checked, 20)
+        XCTAssertEqual(g.trailShape, SIMD2(40, 7))
+    }
+
+    // MARK: The structures' sizes
+
+    /// The CPU's bound on each emitter's alive particles (what the builds take) holds at every step, children and
+    /// splashes too, and isn't the pool when the pool is larger than the effect.
+    func testTheAliveBoundHolds() {
+        for system in [swirl(), sparks(capacity: 900)] {
+            let cpu = ParticlesCPU(system)
+            var slack = [Int](repeating: Int.max, count: system.emitters.count)
+            for _ in 0..<400 {
+                cpu.step(wind: [1, 0, 0.5, 0])
+                let bounds = system.aliveBounds(after: cpu.stepIndex)
+                for e in system.emitters.indices {
+                    let n = cpu.current.filter { $0.info.z == e }.count
+                    XCTAssertLessThanOrEqual(n, bounds[e], "\(system.emitters[e].name) after \(cpu.stepIndex) steps")
+                    slack[e] = min(slack[e], bounds[e] - n)
+                }
+            }
+            print("alive bounds: least slack \(slack) (\(system.emitters.map(\.name)))")
+        }
+        // A long-lived burst: its bound is the burst, not the pool.
+        var e = ParticleEmitter("burst", capacity: 1000, at: .zero)
+        e.burst = (1, 12, 0, 0)
+        e.lifetime = 1e6...1e6
+        let system = ParticleSystem(emitters: [e])
+        XCTAssertEqual(system.aliveBounds(after: 30), [0])
+        XCTAssertEqual(system.aliveBounds(after: 61), [12])
+        XCTAssertEqual(system.aliveBounds(after: 100_000), [12])
+    }
+
+    /// The pose packs every alive particle at the front of its structure's range, frame after frame (its counters
+    /// alternate), and empties the rest.
+    func testThePosePacksTheAlive() throws {
+        var lit = ParticleEmitter("lit", capacity: 400, at: [0, 1, 0])
+        lit.rate = 200
+        lit.lifetime = 0.5...1.5
+        lit.speed = 1...2
+        var glow = ParticleEmitter("glow", capacity: 600, at: [1, 1, 0])
+        glow.rate = 300
+        glow.burst = (0.3, 100, 0.4, 0)
+        glow.lifetime = 0.3...1
+        glow.castsShadows = false
+        let system = ParticleSystem(emitters: [lit, glow])
+        let (g, run) = try gpu(system)
+        let m = try metal()
+        for frame in 0..<6 {
+            run(17, .zero)
+            let cmd = m.queue.makeCommandBuffer()!
+            let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+            g.encodePose(Metal3Pass(enc: enc), pipelines: m.pipelines, slot: 0)
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            let alive = gpuAlive(g)
+            let casters = alive.filter { $0.info.z == 0 }.count, others = alive.count - casters
+            let bound = g.traceCounts(slot: 0)
+            XCTAssertLessThanOrEqual(casters, Int(bound.x))
+            XCTAssertLessThanOrEqual(others, Int(bound.y))
+            let render = g.readRender(slot: 0), live = render.map { $0.centerRadius.w > 0 }
+            let boxes = g.boxes[0].contents().bindMemory(to: Float.self, capacity: system.capacity * 6)
+            for i in 0..<system.capacity {
+                let expected = i < casters || (i >= Int(bound.x) && i < Int(bound.x) + others)
+                XCTAssertEqual(live[i], expected, "frame \(frame): record \(i)")
+                XCTAssertEqual(boxes[6 * i] < 1e29, expected, "frame \(frame): box \(i)")
+            }
+            let slots = Set(render.filter { $0.centerRadius.w > 0 }.map { $0.info.x & 0xFFFFFF })
+            XCTAssertEqual(slots, Set(g.readAliveSlots()), "frame \(frame): each alive slot posed once")
+            print("pose \(frame): casters \(casters) of bound \(bound.x), others \(others) of \(bound.y), pool \(system.capacity)")
+        }
     }
 }

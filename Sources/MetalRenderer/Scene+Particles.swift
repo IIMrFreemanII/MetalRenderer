@@ -4,8 +4,9 @@ import simd
 /// The particles scene (Particles.swift): GPU particle effects, ray traced, in a dark studio with a glossy floor that
 /// mirrors them. A brazier's fire (flames, a flickering light inside) and the smoke above it; a grinder throwing
 /// sparks that bounce off the floor, the crate (analytic colliders) and whatever else they meet (a ray a step), and
-/// leave puffs of smoke where they die; a swirl of magic motes in curl noise round a plinth; and rain falling on the
-/// right, splashing where it lands.
+/// leave puffs of smoke where they die; a swirl of magic motes in curl noise round a plinth; rain falling on the
+/// right, splashing where it lands; and bursts of rubble on the left, stone chunks (mesh particles: real geometry)
+/// that tumble, bounce and kick up dust.
 extension Scene {
     /// Each emitter's pool is its budget (Particles.swift): about its rate x its longest life (and its bursts), with
     /// room to spare. The structures are built over the whole pool every frame.
@@ -23,10 +24,10 @@ extension Scene {
 
         // The brazier: a bowl on a stand.
         let fire = SIMD3<Float>(-2.6, 0.95, -0.5)
-        addInstance(sdf: addSDFShape(SDFShape(.cylinder(halfHeight: 0.42, radius: 0.06, rounding: 0.01))), iron,
-                    translate([fire.x, 0.42, fire.z]))
-        addInstance(sdf: addSDFShape(SDFShape(.cylinder(halfHeight: 0.08, radius: 0.42, rounding: 0.04))), iron,
-                    translate([fire.x, 0.88, fire.z]))
+        let standShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.42, radius: 0.06, rounding: 0.01)))
+        let stand = addInstance(sdf: standShape, iron, translate([fire.x, 0.42, fire.z]))
+        let bowlShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.08, radius: 0.42, rounding: 0.04)))
+        let bowl = addInstance(sdf: bowlShape, iron, translate([fire.x, 0.88, fire.z]))
         // The fire's light; the flames are what shows it (its proxy is a point: nothing to see).
         let hidden = addMesh((positions: [.zero, .zero, .zero], normals: [[0, 1, 0], [0, 1, 0], [0, 1, 0]], indices: [0, 1, 2]))
         addLight(.sphere(radius: 0.15), color: SIMD3<Float>(1.0, 0.55, 0.2) * 12, proxyMesh: hidden, motion: .scaleOnly) { t in
@@ -42,7 +43,8 @@ extension Scene {
         let crate = (center: SIMD3<Float>(-0.4, 0.3, 1.0), half: SIMD3<Float>(0.3, 0.3, 0.3))
         addInstance(sdf: addSDFShape(SDFShape(.box(halfExtents: crate.half, rounding: 0.02))), wood, translate(crate.center))
         let plinth = SIMD3<Float>(0, 0, -2.6)
-        addInstance(sdf: addSDFShape(SDFShape(.cylinder(halfHeight: 0.4, radius: 0.35, rounding: 0.03))), stone, translate(plinth + SIMD3(0, 0.4, 0)))
+        let plinthShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.4, radius: 0.35, rounding: 0.03)))
+        let plinthInstance = addInstance(sdf: plinthShape, stone, translate(plinth + SIMD3(0, 0.4, 0)))
 
         // A dim key light, so the smoke and the rain have something to scatter.
         addLight(.rect(width: 3, height: 1.5), color: SIMD3<Float>(0.75, 0.85, 1.0) * 1.2, motion: .constant) { _ in
@@ -64,6 +66,7 @@ extension Scene {
         flames.curl = 2
         flames.curlFrequency = 2.5
         flames.curlSpeed = 1.5
+        flames.bakedCurl = true
         flames.size = (0.34, 0.14)
         flames.sizeJitter = 0.3
         flames.colors = ([1, 0.8, 0.5, 0.2], [1, 0.6, 0.3, 0.15], [0.8, 0.25, 0.08, 0])
@@ -89,6 +92,7 @@ extension Scene {
         smoke.curl = 0.6
         smoke.curlFrequency = 0.8
         smoke.curlSpeed = 0.3
+        smoke.bakedCurl = true
         smoke.size = (0.22, 0.9)
         smoke.sizeJitter = 0.3
         smoke.colors = ([0.8, 0.78, 0.75, 0.0], [0.85, 0.84, 0.82, 0.75], [0.9, 0.9, 0.9, 0])
@@ -157,6 +161,20 @@ extension Scene {
         motes.atlas = .dot
         motes.castsShadows = false
 
+        // Wisps in the same swirl, fewer and brighter, each with a glowing ribbon behind it (ParticleEmitter.trail).
+        var wisps = motes
+        wisps.name = "wisps"
+        wisps.capacity = 90
+        wisps.rate = 24
+        wisps.lifetime = 2.5...3.5
+        wisps.speed = 0.3...0.6
+        wisps.size = (0.018, 0.01)
+        wisps.sizeJitter = 0.2
+        wisps.colors = ([0.3, 0.9, 1, 0], [0.5, 0.85, 1, 1], [0.9, 0.4, 1, 0])
+        wisps.emission = 10
+        wisps.trail = (points: 16, every: 2)   // half a second of where it was
+        wisps.trailWidth = 0.8
+
         let rainArea = (center: SIMD3<Float>(3.6, 6.5, 1.0), half: SIMD3<Float>(1.6, 0, 2.2))
         var rain = ParticleEmitter("rain", capacity: 1600, at: rainArea.center)
         rain.shape = .box(halfExtents: rainArea.half)
@@ -190,8 +208,74 @@ extension Scene {
         splashes.castsShadows = false
         splashes.frameBlend = true
 
-        addParticles(ParticleSystem(emitters: [flames, smoke, sparks, puffs, motes, rain, splashes],
-                                    colliders: [.plane(normal: [0, 1, 0], point: [0, 0.001, 0]), .box(center: crate.center, halfExtents: crate.half)]))
+        // Rubble: a burst of stone chunks every 2.5 s, thrown up from a spot on the floor. They're instances in the
+        // scene's structure (shadows, reflections, GI), tumbling; dust where they land.
+        let rubbleAt = SIMD3<Float>(-1.9, 0.05, 2.2)
+        var rubble = ParticleEmitter("rubble", capacity: 120, at: rubbleAt)
+        rubble.mesh = (addMesh(Scene.rock(seed: 7)), stone)
+        rubble.burst = (0.5, 36, 2.5, 0)
+        rubble.direction = normalize(SIMD3<Float>(0.3, 1, -0.15))
+        rubble.spread = 0.45
+        rubble.lifetime = 3...3.5
+        rubble.speed = 2.5...4.5
+        rubble.shape = .disc(radius: 0.15)
+        rubble.colliders = 0b11111   // the floor, the crate, and the brazier and plinth by their distance fields
+        rubble.collidesWithScene = true
+        rubble.restitution = 0.3
+        rubble.friction = 0.35
+        rubble.size = (0.05, 0.05)
+        rubble.sizeJitter = 0.5
+        rubble.collisionRadius = 0.035
+        rubble.spin = 9
+
+        // (A puff an impact, few and small: crowded near the floor, every ray through them meets them all.)
+        var dust = ParticleEmitter("dust", capacity: 160, at: .zero)
+        dust.parent = 7
+        dust.trigger = .collision
+        dust.perEvent = 1
+        dust.inherit = 0.1
+        dust.speed = 0.2...0.5
+        dust.spread = 1.2
+        dust.lifetime = 0.6...1.1
+        dust.gravity = -0.02
+        dust.drag = 2
+        dust.size = (0.03, 0.16)
+        dust.sizeJitter = 0.3
+        dust.colors = ([0.6, 0.55, 0.48, 0.4], [0.6, 0.56, 0.5, 0.25], [0.6, 0.57, 0.52, 0])
+        dust.midpoint = 0.2
+        dust.atlas = .smoke
+        dust.frames = 64
+        dust.randomFrame = true
+        dust.spin = 0.6
+        dust.soft = 0.05
+        dust.castsShadows = false
+        dust.field = (index: 0, strength: 1.5, follow: true)   // the air the rubble stirs: a little whirl rising
+
+        addParticles(ParticleSystem(emitters: [flames, smoke, sparks, puffs, motes, rain, splashes, rubble, dust, wisps],
+                                    colliders: [.plane(normal: [0, 1, 0], point: [0, 0.001, 0]), .box(center: crate.center, halfExtents: crate.half),
+                                                .shape(instance: bowl, shape: bowlShape), .shape(instance: stand, shape: standShape),
+                                                .shape(instance: plinthInstance, shape: plinthShape)],
+                                    fields: [.vortex(center: rubbleAt, radius: 0.7, height: 1.6, swirl: 1.2, lift: 0.6)]))
         defaultCamera = Scene.demoCamera(.particles)!
+    }
+
+    /// A stone chunk about a unit across: an icosphere pushed in and out by a hash of its corners, its faces flat.
+    static func rock(seed: UInt32) -> MeshGeometry {
+        let ball = icosphere(subdivisions: 1)
+        let corners = ball.positions.enumerated().map { i, p -> SIMD3<Float> in
+            var r = ParticleMath.Rng(state: ParticleMath.hash(seed &+ UInt32(i) &* 0x9E37_79B9))
+            return p * (0.7 + 0.45 * r.next()) * SIMD3(1, 0.75, 0.9)
+        }
+        var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], indices: [UInt32] = []
+        for f in stride(from: 0, to: ball.indices.count, by: 3) {
+            let a = corners[Int(ball.indices[f])], b = corners[Int(ball.indices[f + 1])], c = corners[Int(ball.indices[f + 2])]
+            let n = normalize(cross(b - a, c - a))
+            for p in [a, b, c] {
+                indices.append(UInt32(positions.count))
+                positions.append(p)
+                normals.append(n)
+            }
+        }
+        return (positions, normals, indices)
     }
 }

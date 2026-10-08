@@ -694,9 +694,11 @@ struct GPUParticleRender {
                                              // world: the normal; w = spin (rad)
     var color = SIMD4<Float16>()             // rgb: albedo (lit) or emitted light (emissive), a: opacity
     var radiance = SIMD4<Float16>()          // rgb: the light it scatters to the eye (particleLightKernel), a: unused
-    var info = SIMD4<UInt32>()               // x = emitter | atlas layer << 16 | ParticleEmitter.Flags << 24,
-                                             // y = flipbook frames (ParticleTrace.metal), z = half2(soft distance (m),
-                                             // shadow density), w = seed
+    var info = SIMD4<UInt32>()               // x = pool slot | ParticleEmitter.Flags << 24, y = flipbook frames
+                                             // (ParticleTrace.metal), z = soft distance (m, half) | shadow density
+                                             // x 255 << 16 | atlas layer << 24, w = seed
+    var keyLight = SIMD4<Float16>()          // rgb: the light of its brightest light (particleLightKernel), apart from
+    var keyDir = SIMD4<Float16>()            // `radiance` for six-way smoke; xyz: where it comes from (unit)
 }
 
 /// An emitter as the kernels read it (Particles.swift): MSL ParticleEmitter. Written once.
@@ -728,6 +730,18 @@ struct GPUParticleEmitter {
     var ids = SIMD4<UInt32>()                // x = first slot, y = capacity, z = parent (ParticleSystem.none), w = flags
     var ids2 = SIMD4<UInt32>()               // x = children an event, y = colliders (mask), z = orientation code,
                                              // w = atlas layer | shadow density x 255 << 8
+    var ids3 = SIMD4<UInt32>()               // x = a mesh emitter's first instance (ParticleSystem.none: billboards),
+                                             // y = a trail's places (0: none), z = its first trail, w = steps apart
+    var extra = SIMD4<Float>()               // x = collision radius (m), y = a trail's width (of the particle's)
+    var field = SIMD4<Float>()               // x = its vector field (-1: none), y = strength, z = 1: a velocity it
+                                             // follows (else an acceleration), w = the baked curl's field (-1: none)
+}
+
+/// A vector field as the kernels read it (ParticleField): MSL ParticleFieldInfo.
+struct GPUParticleField {
+    var lo = SIMD4<Float>()                  // the box's corner; w = 1: periodic
+    var size = SIMD4<Float>()                // its size (a periodic one's period)
+    var dims = SIMD4<UInt32>()               // nodes along x, y, z; w = where its nodes start
 }
 
 /// An analytic shape particles bounce off (Particles.swift): MSL ParticleCollider.
@@ -748,6 +762,11 @@ struct GPUParticleStep {
     var colliders: UInt32 = 0
     var capacity: UInt32 = 0
     var gravity: Float = 9.81
+    // The pose's (ParticlesGPU.encodePose):
+    var casters: UInt32 = 0                  // the shadow casters' slots (the pool's first)
+    var casterBound: UInt32 = 0              // the casters' structure's boxes; the others' start there in the records
+    var othersBound: UInt32 = 0              // the others' structure's boxes
+    var pose: UInt32 = 0                     // which pair of the pose's counters it counts in (the other pair it clears)
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
@@ -813,9 +832,10 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUFluidParams>.stride == 224, "GPUFluidParams layout mismatch")
     precondition(MemoryLayout<GPUFluidSurface>.stride == 80, "GPUFluidSurface layout mismatch")
     precondition(MemoryLayout<GPUParticle>.stride == 48, "GPUParticle layout mismatch")
-    precondition(MemoryLayout<GPUParticleRender>.stride == 64, "GPUParticleRender layout mismatch")
-    precondition(MemoryLayout<GPUParticleEmitter>.stride == 304, "GPUParticleEmitter layout mismatch")
+    precondition(MemoryLayout<GPUParticleRender>.stride == 80, "GPUParticleRender layout mismatch")
+    precondition(MemoryLayout<GPUParticleField>.stride == 48, "GPUParticleField layout mismatch")
+    precondition(MemoryLayout<GPUParticleEmitter>.stride == 352, "GPUParticleEmitter layout mismatch")
     precondition(MemoryLayout<GPUParticleCollider>.stride == 32, "GPUParticleCollider layout mismatch")
-    precondition(MemoryLayout<GPUParticleStep>.stride == 48, "GPUParticleStep layout mismatch")
+    precondition(MemoryLayout<GPUParticleStep>.stride == 64, "GPUParticleStep layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

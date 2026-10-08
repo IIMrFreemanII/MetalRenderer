@@ -393,6 +393,8 @@ enum SettingsTable {
                 .when { $0.scene.kind == .particles },
             S.check("Particles in reflections", \.scene.particles.reflections).env(.scene, "particlereflections")
                 .when { $0.scene.kind == .particles },
+            S.popup("Particle layer", \.particleScale, [("Full size", Float(1)), ("Half size", Float(0.5))]).env(.view, "particlescale")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .showcase },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }

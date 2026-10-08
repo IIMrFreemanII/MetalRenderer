@@ -196,6 +196,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outRoughness [[texture(19)]],
                             texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
                             texture2d<float, access::read>  particles  [[texture(21)]],  // with FLAG_PARTICLES: their layer
+                            texture2d<float, access::read>  particleDepth [[texture(22)]], // ...and its surfaces' depths
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -308,7 +309,9 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
     if (flagOn(u.flags, FLAG_PARTICLES) && u.viewMode == 0) {   // in front of it all (fogged already, particleLayerKernel)
-        float4 layer = particles.read(tid);
+        // (The frame's size, as it is without upscaling unless it is smaller: read as it is.)
+        float4 layer = particles.get_width() == u.width && particles.get_height() == u.height ? particles.read(tid)
+            : particleUpsample(particles, particleDepth, (float2(tid) + 0.5f) / float2(u.width, u.height), nd.read(tid).w);
         c = layer.rgb + (1.0f - layer.a) * c;
     }
     if (flagOn(u.flags, FLAG_HDR_OUTPUT)) {
