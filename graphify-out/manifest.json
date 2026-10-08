@@ -1518,15 +1518,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantControls.swift": {
-    "mtime": 1791450069.0175974,
-    "seen": 1791451762.4554298,
-    "ast_hash": "a5b32b6d46535521d3fc2ceb327016d0",
+    "mtime": 1791452355.9456465,
+    "seen": 1791453664.032275,
+    "ast_hash": "7488ef82212167bb3c0e6460c6899314",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantEditorModel.swift": {
-    "mtime": 1791450946.158369,
-    "seen": 1791451762.455431,
-    "ast_hash": "9cd1b29524551f496e9f47a273e12569",
+    "mtime": 1791452484.2952912,
+    "seen": 1791453664.032276,
+    "ast_hash": "bf0f1aa885fbead059535ed3f8059dfc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantEditorPanel.swift": {
@@ -1536,15 +1536,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantEditorView.swift": {
-    "mtime": 1791451187.7030447,
-    "seen": 1791451762.455432,
-    "ast_hash": "255ed953e26ca547a6ced10845f4d535",
+    "mtime": 1791453491.3825452,
+    "seen": 1791453664.032278,
+    "ast_hash": "fb63844973127a9c3d3a218a9cd287f9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantTabs.swift": {
-    "mtime": 1791450132.264437,
-    "seen": 1791451762.455433,
-    "ast_hash": "7c6eeebef2aab6dfc467d2f381990aca",
+    "mtime": 1791453208.6612985,
+    "seen": 1791453664.032279,
+    "ast_hash": "1c77f30f56387a1dbc6b1b8154b057e2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantMutate.swift": {
@@ -1566,9 +1566,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantEditorTests.swift": {
-    "mtime": 1791450946.1585937,
-    "seen": 1791451762.455538,
-    "ast_hash": "37eec90614867d5fe199c7a452559561",
+    "mtime": 1791453491.382993,
+    "seen": 1791453664.032384,
+    "ast_hash": "36b5ecb9ecc3b4c6559aa6e28a45fccd",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantWorkshopTests.swift": {

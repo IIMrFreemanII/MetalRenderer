@@ -82,6 +82,8 @@ struct CurveEditor: View {
     var xLabel = "base → tip"
     @EnvironmentObject var model: PlantEditorModel
     @State private var dragged: Int?
+    /// The last click that moved nothing, to tell a double-click (SwiftUI's taps have no location on macOS 13).
+    @State private var lastClick: (time: TimeInterval, at: CGPoint)?
 
     private var points: [SIMD2<Float>] {
         if case .points(let p) = curve { return p }
@@ -169,8 +171,11 @@ struct CurveEditor: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { g in drag(g, size) }
-                .onEnded { _ in dragged = nil; model.endDrag() })
-            .overlay(DoubleClickCatcher { location in addPoint(location, size) })
+                .onEnded { g in
+                    dragged = nil
+                    model.endDrag()
+                    clicked(g, size)
+                })
         }
     }
 
@@ -201,6 +206,19 @@ struct CurveEditor: View {
         curve = .points(p)
     }
 
+    /// A click (a drag that went nowhere): the second one soon after and near the first adds a point there.
+    private func clicked(_ g: DragGesture.Value, _ size: CGSize) {
+        guard hypot(g.translation.width, g.translation.height) < 3 else { lastClick = nil; return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = lastClick, now - last.time < NSEvent.doubleClickInterval,
+           hypot(last.at.x - g.location.x, last.at.y - g.location.y) < 6 {
+            lastClick = nil
+            addPoint(g.location, size)
+        } else {
+            lastClick = (now, g.location)
+        }
+    }
+
     private func addPoint(_ location: CGPoint, _ size: CGSize) {
         var p = points
         if p.isEmpty, case .points(let made) = curve.editable(samples: 5) { p = made }
@@ -210,30 +228,6 @@ struct CurveEditor: View {
         p.sort { $0.x < $1.x }
         curve = .points(p)
     }
-}
-
-/// Double-clicks on a view, with where (SwiftUI's tap gesture has no location on macOS 13).
-struct DoubleClickCatcher: NSViewRepresentable {
-    let action: (CGPoint) -> Void
-
-    final class Catcher: NSView {
-        var action: ((CGPoint) -> Void)?
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 {
-                let p = convert(event.locationInWindow, from: nil)
-                action?(CGPoint(x: p.x, y: bounds.height - p.y))
-            } else {
-                super.mouseDown(with: event)
-            }
-        }
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            // Only double-clicks: the rest go to the canvas's drag.
-            NSApp.currentEvent?.clickCount == 2 ? super.hitTest(point) : nil
-        }
-    }
-
-    func makeNSView(context: Context) -> Catcher { let v = Catcher(); v.action = action; return v }
-    func updateNSView(_ v: Catcher, context: Context) { v.action = action }
 }
 
 /// A linear RGB colour as a ColorPicker (which edits sRGB).

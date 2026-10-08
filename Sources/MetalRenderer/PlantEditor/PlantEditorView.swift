@@ -58,7 +58,8 @@ struct PlantEditorView: View {
             .onChange(of: model.selected) { id in withAnimation { scroller.scrollTo(id) } }
             }
             Menu {
-                Button("New Species from \(model.def.name)") { model.newSpecies() }
+                Button("New Species from \(model.def.name)…") { model.newSpecies(); askName() }
+                Button("Rename \(model.def.name)…") { askName() }.disabled(model.isBuiltIn)
                 Button("Reset \(model.def.name) to Built-in") { model.resetToBuiltIn() }.disabled(!model.isBuiltIn)
                 Divider()
                 Button("Delete \(model.def.name)") { model.deleteSpecies() }.disabled(model.isBuiltIn)
@@ -70,11 +71,9 @@ struct PlantEditorView: View {
 
     private var header: some View {
         HStack {
-            if model.isBuiltIn {
-                Text(model.def.name).font(.headline)
-            } else {
-                TextField("Name", text: Binding(get: { model.def.name }, set: { model.rename($0) })).font(.headline)
-                    .textFieldStyle(.plain)
+            Text(model.def.name).font(.headline)
+            if !model.isBuiltIn {
+                Button { askName() } label: { Image(systemName: "pencil") }.buttonStyle(.borderless).help("Rename")
             }
             if let base = model.def.basedOn { Text("from \(base)").font(.system(size: 10)).foregroundColor(.secondary) }
             Spacer()
@@ -173,6 +172,25 @@ struct PlantEditorView: View {
                 Slider(value: Binding(get: { model.foliage.gusts }, set: { g in model.setWind { $0.gusts = g } }), in: 0...1).controlSize(.small)
             }
         }
+    }
+
+    /// A name for the selected species, asked in a dialog: the panel never takes the keyboard (the main window keeps
+    /// it, for W A S D), so it can't have a text field of its own.
+    private func askName() {
+        guard !model.isBuiltIn else { return }
+        let alert = NSAlert()
+        alert.messageText = "Name the species"
+        alert.icon = NSImage(systemSymbolName: "leaf", accessibilityDescription: nil)
+        alert.informativeText = "Its file in Assets/Plants is named after it."
+        let field = NSTextField(string: model.def.name)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, name != model.def.name { model.rename(name) }
     }
 
     private func count(_ n: Int) -> String { n >= 1_000_000 ? String(format: "%.1fM", Double(n) / 1e6) : n >= 1000 ? "\(n / 1000)k" : "\(n)" }

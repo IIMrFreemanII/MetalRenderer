@@ -1,6 +1,20 @@
 import SwiftUI
 import simd
 
+/// Bindings SwiftUI may still read after an edit took away what they point at (a level removed, the boughs or a
+/// cover turned off, an undo): they read a stand-in then, and write nothing.
+extension Binding {
+    /// Element `i` of `array`, or `stand` once the array is shorter.
+    init<E>(_ array: Binding<[E]>, _ i: Int, or stand: E) where Value == E {
+        self.init(get: { array.wrappedValue.indices.contains(i) ? array.wrappedValue[i] : stand },
+                  set: { if array.wrappedValue.indices.contains(i) { array.wrappedValue[i] = $0 } })
+    }
+    /// What `optional` holds, or `stand` while it holds nothing (a write then is dropped).
+    init<W>(_ optional: Binding<W?>, or stand: W) where Value == W {
+        self.init(get: { optional.wrappedValue ?? stand }, set: { if optional.wrappedValue != nil { optional.wrappedValue = $0 } })
+    }
+}
+
 /// A recipe's stem levels: a picker of levels (with + and −), the level's numbers and curves, and the recipe's own
 /// numbers. For a plant's recipe or its boughs'.
 struct LevelEditor: View {
@@ -20,7 +34,7 @@ struct LevelEditor: View {
                 Button { removeLevel() } label: { Image(systemName: "minus") }.disabled(count <= 1).help("Remove the last level")
             }
             EditorGroup(title: l == 0 ? (bough ? "Twig" : "Stems from the ground") : "Level \(l)", clip: .level, bough: bough) {
-                ParamRows(table: l == 0 ? PlantParams.trunk : PlantParams.level, root: $recipe.levels[l])
+                ParamRows(table: l == 0 ? PlantParams.trunk : PlantParams.level, root: level(l))
                 if l == 0 {
                     ValueRow(title: "Lean (several stems)", value: Binding(get: { recipe.levels[0].down.start },
                                                                           set: { recipe.levels[0].down = .linear($0, $0) }),
@@ -30,15 +44,15 @@ struct LevelEditor: View {
             if l > 0 {
                 EditorGroup(title: "Curves") {
                     CurveEditor(title: l == 1 && !bough ? "Crown profile: limb length up the trunk" : "Length along the parent",
-                                curve: $recipe.levels[l].along, range: 0...1.4, crowns: l == 1, lineRange: 0...1.4,
+                                curve: level(l).along, range: 0...1.4, crowns: l == 1, lineRange: 0...1.4,
                                 xLabel: "parent's foot → tip")
-                    CurveEditor(title: "Angle from the parent", curve: $recipe.levels[l].down, range: 0...Float.pi,
+                    CurveEditor(title: "Angle from the parent", curve: level(l).down, range: 0...Float.pi,
                                 lineRange: 0...Double.pi, xLabel: "parent's foot → tip")
-                    CurveEditor(title: "Radius along the stem", curve: $recipe.levels[l].radius, range: 0...1.4, lineRange: 0...1.4)
+                    CurveEditor(title: "Radius along the stem", curve: level(l).radius, range: 0...1.4, lineRange: 0...1.4)
                 }
             } else {
                 EditorGroup(title: "Curves") {
-                    CurveEditor(title: "Radius along the stem", curve: $recipe.levels[0].radius, range: 0...1.4, lineRange: 0...1.4)
+                    CurveEditor(title: "Radius along the stem", curve: level(0).radius, range: 0...1.4, lineRange: 0...1.4)
                 }
             }
             if !bough {
@@ -50,14 +64,16 @@ struct LevelEditor: View {
                     })).font(.system(size: 11))
                     if recipe.carve != nil {
                         ValueRow(title: "Centre height", value: carve(\.center.y), range: 0...20)
-                        ValueRow(title: "Half width", value: Binding(get: { recipe.carve!.radii.x },
-                                                                     set: { recipe.carve!.radii.x = $0; recipe.carve!.radii.z = $0 }), range: 0.1...15)
+                        ValueRow(title: "Half width", value: Binding(get: { recipe.carve?.radii.x ?? 1 },
+                                                                     set: { recipe.carve?.radii.x = $0; recipe.carve?.radii.z = $0 }), range: 0.1...15)
                         ValueRow(title: "Half height", value: carve(\.radii.y), range: 0.1...15)
                     }
                 }
             }
         }
     }
+
+    private func level(_ l: Int) -> Binding<Foliage.Level> { Binding($recipe.levels, l, or: Foliage.Level()) }
 
     private func carve(_ path: WritableKeyPath<Foliage.Carve, Float>) -> Binding<Float> {
         Binding(get: { recipe.carve?[keyPath: path] ?? 0 }, set: { recipe.carve?[keyPath: path] = $0 })
@@ -137,7 +153,8 @@ struct LeavesTab: View {
                 if model.def.bough != nil {
                     EditorGroup(title: "On the boughs", clip: .leaves, bough: true) {
                         if model.def.bough?.leaf != nil {
-                            LeafEditor(leaf: Binding(get: { model.def.bough!.leaf! }, set: { model.def.bough?.leaf = $0 }))
+                            LeafEditor(leaf: Binding(get: { model.def.bough?.leaf ?? Foliage.LeafRecipe() },
+                                                     set: { l in if model.def.bough?.leaf != nil { model.def.bough?.leaf = l } }))
                         } else {
                             Button("Add leaves to the boughs") { model.def.bough?.leaf = Foliage.LeafRecipe() }
                         }
@@ -148,7 +165,7 @@ struct LeavesTab: View {
                         model.def.recipe.leaf = on ? Foliage.LeafRecipe(fromLevel: max(model.def.recipe.levels.count - 1, 0)) : nil
                     })).font(.system(size: 11))
                     if model.def.recipe.leaf != nil {
-                        LeafEditor(leaf: Binding(get: { model.def.recipe.leaf! }, set: { model.def.recipe.leaf = $0 }))
+                        LeafEditor(leaf: Binding($model.def.recipe.leaf, or: Foliage.LeafRecipe()))
                     }
                 }
             }
@@ -166,11 +183,11 @@ struct BoughsTab: View {
                 .font(.system(size: 11)).disabled(model.def.grass != nil)
             if model.def.bough != nil, model.def.recipe.graft != nil {
                 EditorGroup(title: "Where they hang", clip: .graft) {
-                    ParamRows(table: PlantParams.graft, root: Binding(get: { model.def.recipe.graft! }, set: { model.def.recipe.graft = $0 }))
+                    ParamRows(table: PlantParams.graft, root: Binding($model.def.recipe.graft, or: Foliage.Graft()))
                     ParamRows(table: PlantParams.palette, root: $model.def.palette)
                 }
                 Text("The bough").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
-                LevelEditor(recipe: Binding(get: { model.def.bough! }, set: { model.def.bough = $0 }), bough: true)
+                LevelEditor(recipe: Binding($model.def.bough, or: Foliage.Recipe(levels: [Foliage.Level()])), bough: true)
             }
         }
     }
@@ -197,9 +214,9 @@ struct LookTab: View {
                 LinearColorPicker(title: "Bark", color: $model.def.look.bark)
                 ForEach(model.def.look.leaves.indices, id: \.self) { i in
                     HStack {
-                        LinearColorPicker(title: "Leaf shade \(i + 1)", color: $model.def.look.leaves[i])
+                        LinearColorPicker(title: "Leaf shade \(i + 1)", color: Binding($model.def.look.leaves, i, or: .zero))
                         Spacer()
-                        Button { model.def.look.leaves.remove(at: i) } label: { Image(systemName: "minus.circle") }
+                        Button { if model.def.look.leaves.indices.contains(i) { model.def.look.leaves.remove(at: i) } } label: { Image(systemName: "minus.circle") }
                             .buttonStyle(.borderless).disabled(model.def.look.leaves.count <= 1)
                     }
                 }
@@ -208,7 +225,7 @@ struct LookTab: View {
                 Toggle("Turns in autumn", isOn: Binding(get: { model.def.look.autumn != nil },
                                                         set: { model.def.look.autumn = $0 ? [0.3, 0.14, 0.035] : nil })).font(.system(size: 11))
                 if model.def.look.autumn != nil {
-                    LinearColorPicker(title: "Autumn", color: Binding(get: { model.def.look.autumn! }, set: { model.def.look.autumn = $0 }))
+                    LinearColorPicker(title: "Autumn", color: Binding($model.def.look.autumn, or: [0.3, 0.14, 0.035]))
                 }
             }
             EditorGroup(title: "Surface") {
@@ -254,10 +271,10 @@ struct HabitatTab: View {
             } else if model.def.habitat.cover != nil {
                 EditorGroup(title: "How thickly it grows", clip: .habitat) {
                     ParamRows(table: Array(PlantParams.tree.prefix(1)), root: $model.def.habitat)
-                    ParamRows(table: PlantParams.cover, root: Binding(get: { model.def.habitat.cover! }, set: { model.def.habitat.cover = $0 }))
-                    Toggle("In the open (not under the trees)", isOn: Binding(get: { model.def.habitat.cover!.open },
+                    ParamRows(table: PlantParams.cover, root: Binding($model.def.habitat.cover, or: Foliage.Habitat.Cover()))
+                    Toggle("In the open (not under the trees)", isOn: Binding(get: { model.def.habitat.cover?.open ?? false },
                                                                              set: { model.def.habitat.cover?.open = $0 })).font(.system(size: 11))
-                    Toggle("On a grid in the forest's clearing", isOn: Binding(get: { model.def.habitat.cover!.grid != nil },
+                    Toggle("On a grid in the forest's clearing", isOn: Binding(get: { model.def.habitat.cover?.grid != nil },
                                                                                set: { model.def.habitat.cover?.grid = $0 ? 2 : nil })).font(.system(size: 11))
                 }
             }
@@ -301,10 +318,14 @@ struct AgesTab: View {
                 .font(.system(size: 11))
             ForEach(rule.wrappedValue.counts.indices, id: \.self) { i in
                 HStack {
-                    Text("Level \(rule.wrappedValue.counts[i].level) count").font(.system(size: 11)).frame(width: 110, alignment: .leading)
-                    ValueRow(title: "×", value: rule.counts[i].factor, range: 0...1)
-                    Stepper("≥ \(rule.wrappedValue.counts[i].minimum)", value: rule.counts[i].minimum, in: 0...20).font(.system(size: 11))
-                    Button { rule.wrappedValue.counts.remove(at: i) } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                    Text("Level \(rule.wrappedValue.counts[safe: i]?.level ?? 0) children").font(.system(size: 11)).frame(width: 100, alignment: .leading)
+                    let count = Binding(rule.counts, i, or: Foliage.CountRule(level: 1, factor: 1, minimum: 0))
+                    Slider(value: count.factor, in: 0...1) { editing in editing ? model.beginDrag() : model.endDrag() }
+                        .controlSize(.small)
+                    Text(String(format: "×%.2f", count.wrappedValue.factor)).monospacedDigit().foregroundColor(.secondary)
+                        .font(.system(size: 11)).frame(width: 40, alignment: .trailing)
+                    Stepper("≥ \(count.wrappedValue.minimum)", value: count.minimum, in: 0...20).font(.system(size: 11))
+                    Button { if rule.wrappedValue.counts.indices.contains(i) { rule.wrappedValue.counts.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
                 }
             }
             Button("Fewer children on a level") {

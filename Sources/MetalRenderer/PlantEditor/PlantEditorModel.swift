@@ -49,6 +49,7 @@ final class PlantEditorModel: ObservableObject {
     @Published private(set) var message: String?
 
     private var dragging = false
+    private var dragStart: PlantCatalog?
     private var liveSent = 0.0
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
@@ -94,12 +95,15 @@ final class PlantEditorModel: ObservableObject {
     func beginDrag() {
         guard !dragging else { return }
         dragging = true
-        registerUndo(catalog)
+        dragStart = catalog
     }
 
+    /// The drag's one undo step, if it changed anything.
     func endDrag() {
         guard dragging else { return }
         dragging = false
+        if let start = dragStart, start != catalog { registerUndo(start) }
+        dragStart = nil
         push(final: true)
     }
 

@@ -111,6 +111,11 @@ final class PlantEditorTests: XCTestCase {
         XCTAssertEqual(m.def.recipe.levels[1].count, 18)
         m.undo.redo()
         XCTAssertEqual(m.def.look.translucency, 0.5)
+        // A click on a slider or a curve that moves nothing is no step at all.
+        m.beginDrag()
+        m.endDrag()
+        m.undo.undo()
+        XCTAssertEqual(m.def.look.translucency, 0.35)
     }
 
     /// While dragging only the workshop follows (in another scene with plants, nothing until it is let go); an edit
