@@ -67,9 +67,10 @@ if [[ $suites == " " ]]; then
           CatalogRegistry.swift) add PlantCatalogTests PlantEditorTests BuildingEditorTests ;;
           CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
           Scene+Stress.swift) add StressSceneTests ;;
-          SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests CharacterBaseTests ;;   # (the muscles' rig poses its bones by it)
-          Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests CharacterBaseTests ;;
-          Character*.swift) add CharacterDNATests CharacterBaseTests CharacterEditorTests ;;   # (and CharacterEditor/*: its model)
+          SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests CharacterBaseTests CharacterFaceTests ;;   # (the muscles' rig poses its bones by it)
+          Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests CharacterBaseTests CharacterFaceTests ;;
+          Character*.swift) add CharacterDNATests CharacterBaseTests CharacterFaceTests CharacterEditorTests ;;   # (and CharacterEditor/*: its model)
+          Face*.swift) add CharacterBaseTests CharacterFaceTests ;;
           Scene+Characters.swift) add CharacterBaseTests ;;
           FBXReader.swift) add FBXTests ;;
           Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ;;

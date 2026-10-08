@@ -405,6 +405,8 @@ final class Scene {
 
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
+    /// Where the camera is (the renderer sets it before `update`): the workshop's faces look at it.
+    var viewer: SIMD3<Float>?
     /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
     private(set) var physics: PhysicsWorld?
     private(set) var physicsOnGPU = false
@@ -628,6 +630,7 @@ final class Scene {
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
+            crowd.viewer = viewer
             crowd.pose(at: t)
             for w in crowd.walkers {
                 let (p, previous) = w.positions(crowd.slots[w.slot])
@@ -1019,7 +1022,8 @@ final class Scene {
         for p in crowd.parts.indices {
             let geometry = crowd.geometry(part: p)
             crowd.parts[p].bindVertex = positions.count
-            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs)
+            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs,
+                                          materials: geometry.materials.isEmpty ? nil : geometry.materials)
         }
         for i in crowd.slots.indices {
             // A pose: its character's triangles over vertices of its own, which `finishCrowd` places. Its bounds are
@@ -1462,6 +1466,16 @@ final class Scene {
     func notePlants() { hasPlants = true }
 
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
+    /// A generated character's run of materials (CharacterBuilder.materials), its first returned: an instance of the
+    /// character names it. `glossy` false: diffuse ones (a crowd's: glossy materials turn on the reflection pass for
+    /// the whole frame, about 3 ms at 1920 x 1200 on an M1 Max, for eyes a few pixels across).
+    func addCharacterMaterials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, glossy: Bool = true) -> Int {
+        let run = CharacterBuilder.materials(look, skin: skin).map {
+            glossy ? addPBRMaterial(baseColor: $0.color, metallic: 0, roughness: $0.roughness) : addMaterial(albedo: $0.color)
+        }
+        return run[0]
+    }
+
     func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))

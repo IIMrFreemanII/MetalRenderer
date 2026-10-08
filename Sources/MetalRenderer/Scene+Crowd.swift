@@ -57,6 +57,9 @@ extension Scene {
         let library = settings.crowdBodies == .generated ? Scene.generatedPeople(settings.characterCatalog) : CharacterLibrary.load()
         guard !library.characters.isEmpty else { return }
         let crowd = Crowd(characters: library.characters, poses: poses, level: detail)
+        if settings.crowdBodies == .generated, let kit = CharacterKit.shared() {
+            crowd.faces = library.characters.map { Crowd.Face(rig: kit.face, character: $0, expressive: false) }
+        }
         adopt(crowd)
         let states = crowd.liveStates
         guard !states.isEmpty else { return }
@@ -66,9 +69,12 @@ extension Scene {
                                     [0.75, 0.75, 0.75], [0.12, 0.12, 0.14]]
         let tints: [[Int]] = library.characters.map { c in
             // Generated people in their own skin (shades of it, until they have clothes), mannequins in colours.
-            let colors = settings.crowdBodies == .generated ? (0...hues.count).map { c.color * (0.85 + 0.3 * Float($0) / Float(hues.count)) }
-                                                            : [c.color] + hues
-            return colors.map { addMaterial(albedo: $0) }
+            if settings.crowdBodies == .generated {
+                return (0...hues.count).map {
+                    addCharacterMaterials(CharacterDNA.Look(), skin: c.color * (0.85 + 0.3 * Float($0) / Float(hues.count)), glossy: false)
+                }
+            }
+            return ([c.color] + hues).map { addMaterial(albedo: $0) }
         }
 
         // Rows: two in three walk or run, the rest stand.

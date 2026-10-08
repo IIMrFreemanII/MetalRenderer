@@ -55,8 +55,8 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `BuildingEditor/*` (the SwiftUI panel, the Floor Plan window) | BuildingEditorTests covers its model; the views: prove with the app |
 | `CityPlan`, `Scene+City` | CityTests, BuildingTests |
 | `Scene+Stress` | StressSceneTests |
-| `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests, CharacterBaseTests (`SkinnedCharacter`: + MuscleTests, the rig's poses) |
-| `Character*.swift` (DNA, base body, morphs, builder, params, store), `CharacterEditor/*` | CharacterDNATests, CharacterBaseTests, CharacterEditorTests (the editor's views: prove with the app) |
+| `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests, CharacterBaseTests, CharacterFaceTests (`SkinnedCharacter`: + MuscleTests, the rig's poses; the face pass on the GPU: `METALRENDERER_CROWD_CHECK=1` with `-m characters`) |
+| `Character*.swift` (DNA, base body, morphs, face rig, builder, params, store), `Face*.swift` (the sculpted head, eyes, teeth), `CharacterEditor/*` | CharacterDNATests, CharacterBaseTests, CharacterFaceTests, CharacterEditorTests (the editor's views: prove with the app) |
 | `Scene+Characters` (the character workshop) | CharacterBaseTests |
 | `FBXReader` | FBXTests |
 | `Foliage*.swift`, `Scene+Forest` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`), PlantGoldenTests, PlantCatalogTests |

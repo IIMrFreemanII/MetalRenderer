@@ -896,8 +896,16 @@ The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes peop
     waist, deep pelvis and panel edges go.
   * **Hands made again** from the finger joints: a palm and five fingers of round cones, on the forearm's end (the Y Bot
     has mittens).
-  * Meshed by **sparse surface nets** (`SurfaceNets.sparseMesh`, 2.5 mm, only the bricks near the skin), simplified to
-    80k triangles (`MeshSimplifier`), smoothed without shrinking (Taubin). One closed surface.
+  * Meshed by **sparse surface nets** (`SurfaceNets.sparseMesh`, 2.5 mm, only the bricks near the skin), simplified
+    (`MeshSimplifier`), smoothed without shrinking (Taubin). One closed surface, about 106k triangles with the head.
+  * **A sculpted head** (`FaceSculpt.swift`) in place of the mannequin's egg: a distance field of smooth primitives at a
+    man's average proportions (skull, face, jaw, neck), with a brow ridge, cheekbones, eye sockets with lids round the
+    eyeballs and their openings cut, a nose with nostrils, lips with the mouth cut into a mouth, and ears (rim, ridge,
+    bowl, lobe). It is meshed at 1 mm apart from the body and sewn to it across the neck; the simplifier keeps the
+    vertices where the surface bends sharply (ears, lids, nostrils, the lips' parting) and where colours meet.
+  * **The face's own parts** (`FaceParts.swift`): eyeballs with the cornea's dome and iris and pupil rings, both rows of
+    teeth, a tongue; each triangle of the character takes one of eight materials (skin, lips, brows, sclera, iris,
+    pupil, teeth, mouth). The brows and lips are painted on the skin's triangles until hair and skin textures come.
   * **Skinned to the Y Bot's skeleton**, so every clip of the library plays on it: each vertex takes the weights of the
     Y Bot's skin under it (facing the same way, within 3 cm), the hands' from their bones, the rest from their
     neighbours; then smoothed twelve times (the Y Bot's panels each ride one bone, and a neck there tears).
@@ -906,6 +914,18 @@ The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes peop
   muscle, thinness, age, and ten shape sliders (chest, belly, waist, hips, seat, shoulders, neck, arms, thighs, calves).
   A woman is the female loft (wider hips, a narrower waist, ribcage and shoulders, breasts) less the male one, plus the
   X Bot's skeleton.
+* **Face sliders** (`CharacterFaceMorphs.swift`, the editor's **Face** tab): eyes (spacing, height, opening, tilt,
+  deep-set), brows, nose (length, width, bridge, tip), mouth (width, fullness, height), jaw and cheeks, ears; each
+  section has its own dice. Every slider moves both sides alike; the eyeballs and teeth move whole. The macros shape the
+  face too: a woman's (a smaller brow ridge, jaw and nose, fuller lips), an old one (longer nose, larger ears, thinner
+  lips, sagging cheeks), a heavy one and a thin one.
+* **Faces move** (`CharacterFace.swift`), on the GPU in the skinning kernel, per pose slot: expressions are morph
+  targets with their normals' change (the jaw opening, smile, frown, brows up and down, and mouth shapes for speech),
+  and the lids and eyes turn about the eyes' centres (the Mixamo rig has no eye or jaw bones), so a blink folds the lid
+  over the eyeball and the eyes can look at the camera. Every face blinks (seeded, every few seconds); the workshop's
+  can smile, frown, look surprised, talk, or go through them all (*Face* in the Face tab, `expr=` in
+  `METALRENDERER_SCENE`), their eyes on the camera (`gaze=`). The GPU's faces match the CPU's within 2 µm
+  (`METALRENDERER_CROWD_CHECK=1`).
 * **The macro rig** (`MacroRig`, in `CharacterBuilder.swift`) turns the macros into morph weights and bone scales: sex
   blends toward the female shape and the X Bot's skeleton (and 7% shorter), weight into the male or female fat, age into
   sag, less muscle and (past 60) a little height. Bone scales lengthen bones along their axis (the skin across them
@@ -915,21 +935,25 @@ The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes peop
   one), in a T pose, an A pose, idling, walking or any clip of the library, whole or its face close. Each slider has a
   **lock**: the dice on a group (or *Randomize all*) draw the unlocked sliders again, from near the middle of their
   ranges; Mutate leaves locked ones alone. Holding *Compare* (or C) shows the saved character.
-* **Edits are live:** the workshop is made again at each edit: 11 ms for one character on an M1 Max (morphs and
-  skeleton 5 ms on the CPU, its structures 6 ms), 35 ms for all six. An edit is one undo step; a drag is one.
+* **Edits are live:** the workshop is made again at each edit: 13 ms for one character on an M1 Max (morphs and
+  skeleton 5 ms on the CPU, its structures 8 ms), 43 ms for all six. The kit (base, morphs, face rig) takes about 10 s
+  to make, 15 ms to read from its cache. An edit is one undo step; a drag is one.
 * **Saving:** *Save* writes changed characters to `Assets/CharacterDefs/<id>.json` (`CharacterStore`); a file with a
   built-in's id replaces it. Unsaved edits are a draft, kept between launches. `METALRENDERER_CHARACTERS=builtin` ignores
   the files, `=<folder>` reads and saves another folder.
 * **Crowds of them:** `METALRENDERER_SCENE=crowd,cast=generated` fills the crowd scene with the catalog's people
-  instead of the mannequins (`METALRENDERER_BENCH=charactercrowd`: 2048 of them on 64 poses, 17 ms a frame on an M1 Max;
-  the GPU's skinning within 2 µm of the CPU's).
+  instead of the mannequins (`METALRENDERER_BENCH=charactercrowd`: 2048 of them on 64 poses, 18 ms a frame on an M1 Max,
+  blinking; diffuse materials there, as glossy eyes would turn on the reflection pass for the whole frame).
 * `METALRENDERER_SCENE=people,person=woman,pose=walk,cview=face,clayout=lineup`; `METALRENDERER_BENCH=characters`
-  renders each built-in character, two faces, everyone, poses and clips, and close-ups of hands, waist and shoulders.
+  renders each built-in character, faces from the front, side and three quarters, each expression, an ear, everyone,
+  poses and clips, and close-ups of hands, waist and shoulders.
 * **Tests:** `CharacterDNATests` (JSON, defaults, sanitizing, the catalog and store), `CharacterBaseTests` (a closed
   skin, weights, stretch over every clip, symmetric morphs, height by its slider, repeatable builds, the cache, the
-  workshop and its remake time), `CharacterEditorTests` (the parameter table, Randomize, Mutate, undo, saving).
-* **Next** (one pull request each): a sculpted face with eyes and expressions; skin shading and hair; clothes and
-  cloth; NPC archetypes, crowds in the city and generated bodies in the physics scenes.
+  workshop and its remake time), `CharacterFaceTests` (the face's parts, a blink closing the lids without touching the
+  eye, the gaze, the jaw parting the lips, expressions and face sliders touching only the face, blinks),
+  `CharacterEditorTests` (the parameter table, Randomize, Mutate, undo, saving).
+* **Next** (one pull request each): skin shading and hair; clothes and cloth; NPC archetypes, crowds in the city and
+  generated bodies in the physics scenes.
 
 ### Generated plants
 

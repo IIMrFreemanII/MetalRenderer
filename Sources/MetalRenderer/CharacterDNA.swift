@@ -42,6 +42,8 @@ struct CharacterDNA: Codable, Equatable {
         var melanin: Float = 0.3
         var redness: Float = 0.35
         var roughness: Float = 0.5
+        /// The irises: 0 = dark brown ... 0.4 hazel ... 0.65 green ... 1 = light blue.
+        var eyes: Float = 0.2
     }
 
     /// The morph offset `name` (0 if unset).
@@ -63,6 +65,7 @@ struct CharacterDNA: Codable, Equatable {
         d.look.melanin = min(max(d.look.melanin, 0), 1)
         d.look.redness = min(max(d.look.redness, 0), 1)
         d.look.roughness = min(max(d.look.roughness, 0.2), 0.9)
+        d.look.eyes = min(max(d.look.eyes, 0), 1)
         return d
     }
 
@@ -115,7 +118,7 @@ extension CharacterDNA.Macro {
 }
 
 extension CharacterDNA.Look {
-    private enum CodingKeys: String, CodingKey { case melanin, redness, roughness }
+    private enum CodingKeys: String, CodingKey { case melanin, redness, roughness, eyes }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -123,5 +126,6 @@ extension CharacterDNA.Look {
         melanin = try c.decodeIfPresent(Float.self, forKey: .melanin) ?? d.melanin
         redness = try c.decodeIfPresent(Float.self, forKey: .redness) ?? d.redness
         roughness = try c.decodeIfPresent(Float.self, forKey: .roughness) ?? d.roughness
+        eyes = try c.decodeIfPresent(Float.self, forKey: .eyes) ?? d.eyes
     }
 }

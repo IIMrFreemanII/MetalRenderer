@@ -15,21 +15,28 @@ struct CharacterBase {
     var character: SkinnedCharacter
     /// Per vertex, what part of the body it is (Region), for the morphs' masks.
     var regions: [UInt8]
+    /// Per vertex, its material (FaceParts.Material); a triangle takes its corners' (`triangleMaterials`).
+    var materials: [UInt8]
 
     enum Region: UInt8 {
         case trunk, head, neck, arm, hand, leg, foot
+        /// The face's meshes of their own (FaceParts): the eyeballs, the upper and lower teeth, the tongue.
+        case leftEye, rightEye, upperTeeth, lowerTeeth, tongue
     }
 
     struct Options {
-        /// Surface nets' cell (m), and how many triangles the full-detail mesh is simplified to.
+        /// Surface nets' cell (m), and how many triangles the full-detail mesh is simplified to (the head's among them).
         var cell: Float = 0.0025
-        var triangles = 80_000
+        var triangles = 96_000
         /// BodySurface's: its grid and how far it is smoothed (cells).
         var surfaceCell: Float = 0.006
         var smoothing = 3
         /// Taubin passes over the mesh.
         var smoothingPasses = 12
         var trunkPasses = 20
+        /// The head's cell and triangles (it is meshed apart from the body, finer, and joined to it at the neck).
+        var headCell: Float = 0.001
+        var headTriangles = 32_000
     }
 
     // MARK: Joints
@@ -275,7 +282,7 @@ struct CharacterBase {
 
     /// The base made from `source` (the Y Bot, or any character of a Mixamo rig). nil if it hasn't the joints.
     static func build(_ source: SkinnedCharacter, options: Options = Options()) -> CharacterBase? {
-        guard let rig = CharacterRig(source) else { return nil }
+        guard let rig = CharacterRig(source), let face = FaceSculpt(source) else { return nil }
         let start = CFAbsoluteTimeGetCurrent()
         let level = source.level(0)
         let body = BodySurface((level.positions, level.normals, level.indices), cell: options.surfaceCell,
@@ -285,40 +292,83 @@ struct CharacterBase {
         let surfaced = CFAbsoluteTimeGetCurrent()
         let loft = TrunkLoft(source, female: false)
         func distance(_ p: SIMD3<Float>) -> Float {
-            // On the trunk mostly the loft, on the limbs, neck and head the Y Bot.
+            // The head and neck the sculpt's; on the trunk mostly the loft, on the limbs the Y Bot.
+            let h = face.headness(p)
+            if h >= 1 { return face.distance(p) }
             let t = loft.trunkness(p)
             var d = body.distance(p)
             if t > 0 { d += (loft.distance(p) - d) * t }
-            for h in hands where simd_length_squared(p - h.wrist) < h.reach * h.reach {
-                d = smoothMin(max(d, h.cut(p)), h.distance(p), 0.02)
+            for hand in hands where simd_length_squared(p - hand.wrist) < hand.reach * hand.reach {
+                d = smoothMin(max(d, hand.cut(p)), hand.distance(p), 0.02)
             }
+            if h > 0 { d += (face.distance(p) - d) * h }
             return d
         }
-        let size = options.cell
-        func gradient(_ p: SIMD3<Float>) -> SIMD3<Float> {
+        func gradient(_ p: SIMD3<Float>, _ size: Float, _ f: (SIMD3<Float>) -> Float) -> SIMD3<Float> {
             let h = size * 0.25
-            return SIMD3(distance(p + [h, 0, 0]) - distance(p - [h, 0, 0]), distance(p + [0, h, 0]) - distance(p - [0, h, 0]),
-                         distance(p + [0, 0, h]) - distance(p - [0, 0, h])) / (2 * h)
+            return SIMD3(f(p + [h, 0, 0]) - f(p - [h, 0, 0]), f(p + [0, h, 0]) - f(p - [0, h, 0]), f(p + [0, 0, h]) - f(p - [0, 0, h])) / (2 * h)
         }
+        // The body below a cut across the neck, the head above it (finer): each closed off a little past the cut,
+        // meshed, cut there, simplified (their open edges stay), then sewn together.
+        let cut = face.world([0, 1.552, 0]).y
+        let below: (SIMD3<Float>) -> Float = { p in max(distance(p), p.y - cut - 0.008) }
+        let above: (SIMD3<Float>) -> Float = { p in max(distance(p), cut - 0.006 - p.y) }
         let box = level.positions.reduce(AABB()) { var b = $0; b.grow($1); return b }
+        let size = options.cell
         let lo = box.lo - SIMD3(repeating: 0.03)
-        let counts = SIMD3<Int>(((box.hi - box.lo + 0.06) / size).rounded(.up)) &+ 1
-        var (positions, indices) = SurfaceNets.sparseMesh(lo: lo, size: size, counts: counts, distance: distance, gradient: gradient)
+        let counts = SIMD3<Int>(((SIMD3(box.hi.x, cut + 0.02, box.hi.z) - lo + 0.03) / size).rounded(.up)) &+ 1
+        var (positions, indices) = SurfaceNets.sparseMesh(lo: lo, size: size, counts: counts, distance: below,
+                                                          gradient: { gradient($0, size, below) })
         (positions, indices) = largestPart(positions, indices)
+        (positions, indices) = clipped(positions, indices) { $0 < cut }
+        let headLo = face.world([-0.125, 1.536, -0.15]), headHi = face.world([0.125, 1.83, 0.17])
+        let headSize = options.headCell * face.scale
+        var (headPositions, headIndices) = SurfaceNets.sparseMesh(lo: headLo, size: headSize,
+                                                                  counts: SIMD3<Int>(((headHi - headLo) / headSize).rounded(.up)) &+ 1,
+                                                                  distance: above, gradient: { gradient($0, headSize, above) })
+        (headPositions, headIndices) = largestPart(headPositions, headIndices)
+        (headPositions, headIndices) = clipped(headPositions, headIndices) { $0 >= cut }
         let meshed = CFAbsoluteTimeGetCurrent()
-        (positions, indices) = simplified(positions, indices, to: options.triangles)
+        (positions, indices) = simplified(positions, indices, to: options.triangles - options.headTriangles)
+        // Kept at full detail: where the lips' and brows' colours end (their edges stay smooth curves), and where the
+        // surface bends sharply (the rims of the ears, the lids' edges, the nostrils, the lips' parting), which the
+        // simplifier would otherwise flatten.
+        let kinds = headPositions.map { FaceParts.skinMaterial(face.local($0)) }
+        let headRing = neighbours(headPositions.count, headIndices)
+        let headNormals = headPositions.map { p -> SIMD3<Float> in
+            let g = gradient(p, headSize, above)
+            return simd_length_squared(g) > 0 ? simd_normalize(g) : [0, 1, 0]
+        }
+        let sharp = cos(Float(24) * .pi / 180)
+        let kept = headPositions.indices.map { v in
+            headRing[v].contains { kinds[Int($0)] != kinds[v] || simd_dot(headNormals[Int($0)], headNormals[v]) < sharp }
+        }
+        (headPositions, headIndices) = simplified(headPositions, headIndices, to: options.headTriangles, locked: kept)
+        (positions, indices) = stitched((positions, indices), (headPositions, headIndices), at: cut)
         // Smoothed without shrinking (Taubin): the grid's ripples and what is left of the panels' seams go. The
-        // fingers are left as they are (a finger is only a few cells across).
-        let fixed = positions.map { p in hands.contains { h in h.cut(p) > -0.01 && simd_length(p - h.wrist) < h.reach } }
+        // fingers are left as they are (a finger is only a few cells across), and the face (its details are fine).
+        let fixed = positions.map { p in
+            hands.contains { h in h.cut(p) > -0.01 && simd_length(p - h.wrist) < h.reach } || face.local(p).y > 1.575
+        }
         let ring = neighbours(positions.count, indices)
         positions = taubin(positions, ring, fixed: fixed, iterations: options.smoothingPasses)
         // The trunk, and where it meets the limbs, more.
         let joins = positions.map { p in loft.trunkness(p) < 0.05 }
         positions = taubin(positions, ring, fixed: joins, iterations: options.trunkPasses)
+        // The face a little: the grid's terraces.
+        positions = taubin(positions, ring, fixed: positions.map { face.local($0).y < 1.575 }, iterations: 2)
         let normals = vertexNormals(positions, indices)
         let simplifiedAt = CFAbsoluteTimeGetCurrent()
 
-        let skin = transferWeights(positions, normals, indices, from: level, hands: hands, jointCount: source.joints.count)
+        var skin = transferWeights(positions, normals, indices, from: level, hands: hands, jointCount: source.joints.count)
+        // The face and skull on the head's bone alone (there is no jaw bone: the jaw opens by a morph).
+        if let head = joint("Head", in: source) {
+            for v in skin.indices {
+                let q = face.local(positions[v])
+                let t = max(FaceSculpt.smoothstep(1.60, 1.64, q.y), FaceSculpt.smoothstep(1.575, 1.595, q.y) * FaceSculpt.smoothstep(-0.02, 0.01, q.z))
+                if t > 0 { skin[v] = blended(skin[v], toward: head, by: t) }
+            }
+        }
         var c = source
         c.name = "Generated"
         c.positions = positions
@@ -329,13 +379,144 @@ struct CharacterBase {
         c.coarser = []
         c.clips = []
         c.color = [0.8, 0.62, 0.52]
+        var regions = CharacterBase.regions(c)
+        var materials = positions.map { p -> UInt8 in
+            let q = face.local(p)
+            return q.y > 1.55 ? FaceParts.skinMaterial(q).rawValue : FaceParts.Material.skin.rawValue
+        }
+        // The eyeballs, teeth and tongue: meshes of their own, on the head's bone.
+        let headJoint = UInt32(joint("Head", in: source) ?? 0)
+        let parts: [(FaceParts.Mesh, Region)] = [(FaceParts.eyeball(centre: face.eyes[0], scale: face.scale), .leftEye),
+                                                 (FaceParts.eyeball(centre: face.eyes[1], scale: face.scale), .rightEye),
+                                                 (FaceParts.teeth(face, upper: true), .upperTeeth),
+                                                 (FaceParts.teeth(face, upper: false), .lowerTeeth),
+                                                 (FaceParts.tongue(face), .tongue)]
+        for (part, region) in parts {
+            // A vertex where two materials meet is one for each (the simplifier keeps the seam: CharacterImporter.coarser).
+            var copies: [Int: [UInt8: UInt32]] = [:]
+            for (t, m) in part.materials.enumerated() {
+                for k in 0..<3 {
+                    let v = Int(part.indices[3 * t + k])
+                    if let made = copies[v]?[m.rawValue] { c.indices.append(made); continue }
+                    let index = UInt32(c.positions.count)
+                    copies[v, default: [:]][m.rawValue] = index
+                    c.positions.append(part.positions[v])
+                    c.normals.append(part.normals[v])
+                    c.uvs.append(SIMD2(Float(m.rawValue), 0))
+                    c.skin.append(GPUSkinVertex(joints: headJoint, w0: 1, w1: 0, w2: 0))
+                    regions.append(region.rawValue)
+                    materials.append(m.rawValue)
+                    c.indices.append(index)
+                }
+            }
+        }
+        c.materials = triangleMaterials(c.indices, materials)
         (c.boundsMin, c.boundsMax) = CharacterImporter.bounds(of: c)
-        let regions = CharacterBase.regions(c)
         let done = CFAbsoluteTimeGetCurrent()
         print(String(format: "Character base: %d vertices, %d triangles from %@ (surface %.0f ms, meshed %.0f ms, simplified %.0f ms, skinned %.0f ms)",
-                     positions.count, indices.count / 3, source.name, (surfaced - start) * 1000, (meshed - surfaced) * 1000,
+                     c.positions.count, c.indices.count / 3, source.name, (surfaced - start) * 1000, (meshed - surfaced) * 1000,
                      (simplifiedAt - meshed) * 1000, (done - simplifiedAt) * 1000))
-        return CharacterBase(character: c, regions: regions)
+        return CharacterBase(character: c, regions: regions, materials: materials)
+    }
+
+    /// Each triangle's material: the one most of its corners have (the first corner's if they all differ).
+    static func triangleMaterials(_ indices: [UInt32], _ materials: [UInt8], source: [UInt32]? = nil) -> [UInt8] {
+        stride(from: 0, to: indices.count, by: 3).map { t in
+            let m = (0..<3).map { k -> UInt8 in
+                let v = Int(indices[t + k])
+                return materials[source.map { Int($0[v]) } ?? v]
+            }
+            return m[1] == m[2] ? m[1] : m[0]
+        }
+    }
+
+    /// `skin` moved toward the joint `j` alone by `t` (0...1), the four heaviest kept.
+    static func blended(_ skin: GPUSkinVertex, toward j: Int, by t: Float) -> GPUSkinVertex {
+        let ws = [skin.w0, skin.w1, skin.w2, 1 - skin.w0 - skin.w1 - skin.w2]
+        var w: [Int: Float] = [:]
+        for k in 0..<4 where ws[k] > 0 { w[Int((skin.joints >> UInt32(8 * k)) & 0xFF), default: 0] += ws[k] * (1 - t) }
+        w[j, default: 0] += t
+        let row = w.sorted { $0.value > $1.value }.prefix(4)
+        let sum = row.reduce(0) { $0 + $1.value }
+        let joints = row.map { UInt32($0.key) } + [UInt32](repeating: UInt32(row.first!.key), count: 4 - row.count)
+        let weights = row.map { $0.value / sum } + [Float](repeating: 0, count: 4 - row.count)
+        return GPUSkinVertex(joints: joints[0] | joints[1] << 8 | joints[2] << 16 | joints[3] << 24, w0: weights[0], w1: weights[1], w2: weights[2])
+    }
+
+    /// The triangles of a mesh whose middles' heights `keep` accepts, vertices renumbered.
+    static func clipped(_ positions: [SIMD3<Float>], _ indices: [UInt32], keep: (Float) -> Bool) -> ([SIMD3<Float>], [UInt32]) {
+        var remap = [Int32](repeating: -1, count: positions.count)
+        var outP: [SIMD3<Float>] = [], outI: [UInt32] = []
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            let y = (positions[Int(indices[t])].y + positions[Int(indices[t + 1])].y + positions[Int(indices[t + 2])].y) / 3
+            guard keep(y) else { continue }
+            for k in 0..<3 {
+                let v = Int(indices[t + k])
+                if remap[v] < 0 { remap[v] = Int32(outP.count); outP.append(positions[v]) }
+                outI.append(UInt32(remap[v]))
+            }
+        }
+        return (outP, outI)
+    }
+
+    /// Two meshes made one: each has an open edge round the same upright tube at height `y` (the neck, cut), each
+    /// edge's loop is laid flat at that height and a strip of triangles sews the two round, the shorter way across at
+    /// every step.
+    static func stitched(_ a: ([SIMD3<Float>], [UInt32]), _ b: ([SIMD3<Float>], [UInt32]), at y: Float) -> ([SIMD3<Float>], [UInt32]) {
+        var positions = a.0 + b.0
+        var indices = a.1 + b.1.map { $0 + UInt32(a.0.count) }
+        // Open edges (one triangle), in their triangles' direction.
+        var count: [UInt64: Int] = [:]
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            for k in 0..<3 {
+                let u = UInt64(indices[t + k]), v = UInt64(indices[t + (k + 1) % 3])
+                count[min(u, v) << 32 | max(u, v), default: 0] += 1
+            }
+        }
+        var next: [UInt32: UInt32] = [:]
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            for k in 0..<3 {
+                let u = indices[t + k], v = indices[t + (k + 1) % 3]
+                if count[UInt64(min(u, v)) << 32 | UInt64(max(u, v))] == 1 { next[u] = v }
+            }
+        }
+        // The loops; each mesh's longest is its cut.
+        var loops: [[UInt32]] = [], seen = Set<UInt32>()
+        for start in next.keys.sorted() where !seen.contains(start) {
+            var loop: [UInt32] = [], v = start
+            while !seen.contains(v), let n = next[v] { seen.insert(v); loop.append(v); v = n }
+            if v == start { loops.append(loop) }
+        }
+        let split = UInt32(a.0.count)
+        guard let la = loops.filter({ $0[0] < split }).max(by: { $0.count < $1.count }),
+              let lb = loops.filter({ $0[0] >= split }).max(by: { $0.count < $1.count }) else { return (positions, indices) }
+        for v in la + lb { positions[Int(v)].y = y }
+        let centre = la.reduce(SIMD3<Float>()) { $0 + positions[Int($1)] } / Float(la.count)
+        func angle(_ v: UInt32) -> Float { atan2(positions[Int(v)].z - centre.z, positions[Int(v)].x - centre.x) }
+        // Both walked the same way round (increasing angle); `forward`: whether that is the loop's own direction.
+        func ordered(_ loop: [UInt32]) -> ([UInt32], Bool) {
+            var turn: Float = 0
+            for k in loop.indices {
+                var d = angle(loop[(k + 1) % loop.count]) - angle(loop[k])
+                if d > .pi { d -= 2 * .pi } else if d < -.pi { d += 2 * .pi }
+                turn += d
+            }
+            return turn > 0 ? (loop, true) : (loop.reversed(), false)
+        }
+        let (sa, fa) = ordered(la)
+        var (sb, fb) = ordered(lb)
+        let first = sb.indices.min { simd_distance(positions[Int(sb[$0])], positions[Int(sa[0])]) < simd_distance(positions[Int(sb[$1])], positions[Int(sa[0])]) }!
+        sb = Array(sb[first...] + sb[..<first])
+        // A triangle on an open edge (x, y) of a walk, and the vertex across: the edge the other way round.
+        func add(_ x: UInt32, _ y: UInt32, _ w: UInt32, forward: Bool) { indices += forward ? [y, x, w] : [x, y, w] }
+        var i = 0, j = 0
+        while i < sa.count || j < sb.count {
+            let a0 = sa[i % sa.count], a1 = sa[(i + 1) % sa.count], b0 = sb[j % sb.count], b1 = sb[(j + 1) % sb.count]
+            let advanceA = j >= sb.count || (i < sa.count && simd_distance(positions[Int(a1)], positions[Int(b0)])
+                                                < simd_distance(positions[Int(b1)], positions[Int(a0)]))
+            if advanceA { add(a0, a1, b0, forward: fa); i += 1 } else { add(b0, b1, a0, forward: fb); j += 1 }
+        }
+        return (positions, indices)
     }
 
     /// Each vertex's part of the body, by the bone that moves it most.
@@ -384,7 +565,8 @@ struct CharacterBase {
     }
 
     /// The mesh simplified to about `target` triangles (MeshSimplifier's quadric edge collapses), vertices renumbered.
-    static func simplified(_ positions: [SIMD3<Float>], _ indices: [UInt32], to target: Int) -> ([SIMD3<Float>], [UInt32]) {
+    /// `locked` vertices stay (and so their triangles).
+    static func simplified(_ positions: [SIMD3<Float>], _ indices: [UInt32], to target: Int, locked: [Bool]? = nil) -> ([SIMD3<Float>], [UInt32]) {
         guard indices.count / 3 > target else { return (positions, indices) }
         let ids = Array(0..<Int32(positions.count))
         let uvs = [SIMD2<Float>](repeating: .zero, count: positions.count)
@@ -392,7 +574,7 @@ struct CharacterBase {
             ids.withUnsafeBufferPointer { i in
                 uvs.withUnsafeBufferPointer { u in
                     MeshSimplifier.simplify(triangles: indices, positions: p, posId: i, uvs: u, targetTriangles: target,
-                                            locked: { _ in false }).triangles
+                                            locked: { locked?[Int($0)] ?? false }).triangles
                 }
             }
         }

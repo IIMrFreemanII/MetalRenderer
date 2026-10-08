@@ -18,9 +18,14 @@ Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/imp
 1. **Body pipeline + workshop + Body editor (this PR).** DNA, store, params, macro rig, base body (lofted trunk, rebuilt
    hands, sparse surface nets, weight transfer), body morphs, builder, kit cache, workshop, editor (Body / Proportions /
    Skin tabs), `crowd,cast=generated`, bench `characters` and `charactercrowd`.
-2. Face + expressions: `FaceSculpt` (landmarks, sockets, nose, lips, ears, eyelids, eyeball meshes), face morphs with
-   symmetry, expressions as per-frame morph weights added in `crowdSkinKernel` for slots that animate faces, gaze in
-   `crowdPoseKernel` (eye joints), Face tab.
+2. **Face + expressions (PR 2).** `FaceSculpt` (the head as a distance field: cranium, face, jaw, neck, brow ridge,
+   cheekbones, eye sockets with lid shells and their openings cut, nose and nostrils, lips with the mouth cut into a
+   mouth, ears with a stalk into the skull), meshed at 1 mm apart from the body (2.5 mm) and sewn to it at the neck
+   (`CharacterBase.stitched`); `FaceParts` (eyeballs with cornea, iris and pupil rings; teeth; tongue; the per-vertex
+   materials: lips, brows, mouth); `FaceRig` (expression targets with normal deltas, lid and eye rotation groups) run
+   in `crowdSkinKernel` per slot; `FacePlayer` (blinks, expressions, speech, gaze); face sliders and the macros' face
+   targets (`CharacterFaceMorphs.swift`); the Face tab (sections with their own dice, the expression preview, eyes on the
+   camera) and the eye colour.
 3. Skin + hair: `GPUMaterial.params.w < 0` = skin (wrapped diffuse, red-shifted, thin-part transmission), `SkinTextures`,
    strand hair on a kinematic head + caps for crowds, Skin & Hair tab. Needs UVs on the base (not made yet).
 4. Clothes: garment shells bound to the body, fabrics, body hiding, `addClothMesh` with kinematic pins.
@@ -36,6 +41,12 @@ Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/imp
   ends) is blended in by `trunkness` (up to 80%). The female shape is the female loft (breasts included) less the male
   one, not the X Bot's skin (whose panels made the chest crumple); only the X Bot's skeleton is used.
 - No UVs on the base yet (PR 3 needs them for detail maps).
+- **PR 2: no eye joints, no jaw joint.** The Mixamo rig has neither, and adding joints would mean widening every clip.
+  The eyes and lids turn by rotation groups about the eyes' centres in the skinning kernel (the CPU computes each slot's
+  turns: gaze through the head joint's skinning matrix), the jaw opens by a morph (a rotation about the hinge, weighted).
+- **PR 2: no symmetry toggle.** Every face slider moves both sides alike; asymmetry can come as its own slider later.
+- **PR 2: the brows and lips are materials on the skin's triangles**, edges kept by locking the simplifier there.
+  Strand brows and texture-painted lips come with PR 3's UVs and skin textures.
 
 ## Traps found
 
@@ -49,6 +60,13 @@ Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/imp
 - The X Bot's skeleton is not shorter than the Y Bot's: sex scales height by 0.93 explicitly.
 - Skin stretch over every clip: 99.9% of edges within 3.4x (the Y Bot's rigid panels: 1.3x; a one-piece skin folds at
   the groin and armpits under linear blend skinning).
+
+- The head's simplification flattened thin features (ears to 7% of their vertices): the simplifier now keeps
+  vertices where the surface bends sharply (24 degrees between neighbours' normals) and where materials meet.
+- An ear stood a millimetre off the head and `largestPart` dropped it: the concha's stalk ties it into the skull.
+- The face close-up's camera: `Camera.framing` keeps 20 cm round any box; the face view places its camera itself.
+- The kit's cache key doesn't include the build options: after changing the sculpt, delete
+  `Assets/.metalrenderer-cache/character-kit-*` (or bump `CharacterKit.version`).
 
 ## Open
 

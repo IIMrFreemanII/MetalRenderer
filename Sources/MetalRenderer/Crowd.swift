@@ -79,7 +79,36 @@ final class Crowd {
         }
     }
 
+    /// A character's face, for one made from the character kit (FaceRig): its rig, its eyes' centres in its bind pose,
+    /// how big its head is against the base's, its head's joint; `expressive`: expressions and the eyes on the viewer
+    /// as well as blinks.
+    struct Face {
+        var rig: FaceRig
+        var eyes: [SIMD3<Float>]
+        var scale: Float
+        var head: Int
+        var expressive: Bool
+
+        init(rig: FaceRig, character c: SkinnedCharacter, expressive: Bool) {
+            self.rig = rig
+            let left = rig.eye(0, in: c.positions), right = rig.eye(1, in: c.positions)
+            eyes = [left.centre, right.centre]
+            scale = (left.scale + right.scale) / 2
+            head = CharacterBase.joint("Head", in: c) ?? 0
+            self.expressive = expressive
+        }
+    }
+
     let characters: [SkinnedCharacter]
+    /// Per character, its face (nil: a mannequin's, none).
+    var faces: [Face?] = []
+    /// What the expressive faces do, and where the viewer is (world space) for their eyes.
+    var expression: FaceExpression = .neutral
+    var viewer: SIMD3<Float>?
+    /// Per slot that one member stands in: that member's object-to-world transform (its eyes find the viewer from it).
+    var lookers: [Int: float4x4] = [:]
+    /// Per slot, its face at the crowd's current time (nil where its character has none).
+    private(set) var faceStates: [FaceState?] = []
     private(set) var states: [State] = []
     var parts: [Part] = []
     var slots: [Slot] = []
@@ -193,6 +222,30 @@ final class Crowd {
             let speedA = Double(simd_length(a.velocity)), speedB = Double(simd_length(b.velocity))
             slots[i].previousDistance = slots[i].distance
             slots[i].distance = speedA * time + (speedB - speedA) * blendIntegral
+        }
+        poseFaces(at: t)
+    }
+
+    /// Every slot's face at time `t`: blinks (each slot's own), and for expressive faces the expression and the eyes on
+    /// the viewer.
+    private func poseFaces(at t: Float) {
+        guard faces.contains(where: { $0 != nil }) else { return }
+        if faceStates.count != slots.count { faceStates = [FaceState?](repeating: nil, count: slots.count) }
+        for i in slots.indices {
+            let c = states[slots[i].state].character
+            guard c < faces.count, let face = faces[c] else { faceStates[i] = nil; continue }
+            var gaze: SIMD3<Float>? = nil
+            if face.expressive, let viewer, let world = lookers[i] {
+                // The viewer in the head's bind space: through the member's transform, then back through the head
+                // joint's skinning matrix (a rotation and a translation).
+                let local = world.inverse * SIMD4(viewer, 1)
+                let m = palette(slot: i)[face.head]
+                let r = simd_float3x3(rows: [SIMD3(m.row0.x, m.row0.y, m.row0.z), SIMD3(m.row1.x, m.row1.y, m.row1.z),
+                                             SIMD3(m.row2.x, m.row2.y, m.row2.z)])
+                gaze = r.transpose * (SIMD3(local.x, local.y, local.z) - SIMD3(m.row0.w, m.row1.w, m.row2.w))
+            }
+            faceStates[i] = FacePlayer.state(at: t, seed: UInt64(i) &* 0x2545_F491_4F6C_DD1D &+ UInt64(c), expression: expression,
+                                             expressive: face.expressive, eyes: face.eyes, gaze: gaze)
         }
     }
 

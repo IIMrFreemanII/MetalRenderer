@@ -52,6 +52,8 @@ extension Scene {
         let clipName = w.pose.clipName ?? w.clip
         let clips = built.map { $0.clip(named: clipName) ?? $0.clip(named: "A-Pose") ?? 0 }
         let crowd = Crowd(characters: built, clips: clips)
+        crowd.faces = built.map { Crowd.Face(rig: generator.face, character: $0, expressive: true) }
+        crowd.expression = w.expression
         adopt(crowd)
 
         // In a row along x, a metre apart (wider for the wide), facing the camera.
@@ -59,9 +61,10 @@ extension Scene {
         var focus = AABB(), face = AABB()
         for (k, c) in built.enumerated() {
             let x = (Float(k) - Float(built.count - 1) / 2) * gap
-            let skin = addPBRMaterial(baseColor: c.color, metallic: 0, roughness: shown[k].look.roughness)
+            let skin = addCharacterMaterials(shown[k].look, skin: c.color)
             let instance = addInstance(crowd.slots[k].mesh, skin, translate([x, 0, 0]))
             setSkinned(instance, travels: false)
+            if w.lookAt { crowd.lookers[k] = translate([x, 0, 0]) }
             let level = c.level(0)
             var box = level.positions.reduce(AABB()) { var b = $0; b.grow($1); return b }
             box = box.transformed(translate([x, 0, 0]))
@@ -69,14 +72,24 @@ extension Scene {
             if k == 0 || shown.count == 1 {
                 let bind = c.bindPoses
                 if let head = CharacterBase.joint("Head", in: c), let top = CharacterBase.joint("HeadTop_End", in: c) {
-                    let h = bind[head].t + [x, 0, 0], t = bind[top].t + [x, 0, 0], r = simd_distance(h, t) * 0.75
-                    face = AABB(lo: simd_min(h, t) - [r, r * 0.6, r], hi: simd_max(h, t) + [r, r * 0.1, r])
+                    // The face: from the chin to the brow, ear to ear.
+                    let h = bind[head].t + [x, 0, 0], t = bind[top].t + [x, 0, 0], r = simd_distance(h, t)
+                    face = AABB(lo: h + [-0.42 * r, -0.25 * r, 0], hi: h + [0.42 * r, 0.62 * r, 0.62 * r])
+                    _ = t
                 }
             }
         }
         if focus.isEmpty { focus = fallback }
         self.focus = w.view == .face && !face.isEmpty ? face : focus
-        defaultCamera = Camera.framing(self.focus!, fovY: Camera().fovY, pitch: w.view == .face ? -0.05 : -0.12).camera
+        if w.view == .face && !face.isEmpty {
+            // Close: the face filling most of the height (the framing below keeps 20 cm round anything).
+            var c = Camera()
+            c.pitch = -0.03
+            c.position = face.centroid + [0, 0.012, 0] - c.forward * (0.19 / tan(c.fovY / 2))
+            defaultCamera = c
+        } else {
+            defaultCamera = Camera.framing(self.focus!, fovY: Camera().fovY, pitch: -0.12).camera
+        }
 
         if let c = built.first {
             var stats = CharacterStats(name: chosen.name, vertices: c.positions.count, triangles: c.triangleCount)

@@ -29,6 +29,8 @@ struct SkinnedCharacter: Equatable {
         /// Each vertex's at full detail (`coarser`'s levels keep some of its vertices): a generated character's levels
         /// are gathered from its full mesh through it (CharacterBuilder).
         var source: [UInt32] = []
+        /// Each triangle's material, as an offset from its instance's (Scene.addMesh); empty: one material.
+        var materials: [UInt8] = []
         var triangleCount: Int { indices.count / 3 }
     }
 
@@ -38,6 +40,8 @@ struct SkinnedCharacter: Equatable {
     var uvs: [SIMD2<Float>]
     var indices: [UInt32]
     var skin: [GPUSkinVertex]
+    /// Each triangle's material at full detail (Level.materials); empty: one material.
+    var materials: [UInt8] = []
     /// Levels 1, 2, ...: each about half the triangles of the one before (CharacterImporter.coarser). A crowd is
     /// skinned and traced at the level its scene asks for: a pose's cost follows its triangles.
     var coarser: [Level] = []
@@ -53,7 +57,7 @@ struct SkinnedCharacter: Equatable {
     func clip(named name: String) -> Int? { clips.firstIndex { $0.name == name } }
     /// Level `i` of detail (0 = full), or the coarsest there is.
     func level(_ i: Int) -> Level {
-        i <= 0 || coarser.isEmpty ? Level(positions: positions, normals: normals, uvs: uvs, indices: indices, skin: skin)
+        i <= 0 || coarser.isEmpty ? Level(positions: positions, normals: normals, uvs: uvs, indices: indices, skin: skin, materials: materials)
                                   : coarser[min(i, coarser.count) - 1]
     }
 }

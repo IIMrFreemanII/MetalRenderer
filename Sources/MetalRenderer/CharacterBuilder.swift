@@ -43,6 +43,10 @@ enum MacroRig {
         w["age"] = aged
         if m.muscle > 0 { w["muscle"] = m.muscle * (1 - 0.4 * m.sex) * (1 - 0.5 * aged) } else { w["slight"] = -m.muscle }
         w["slight", default: 0] += 0.4 * aged
+        // The face's: a woman's, an old, a heavy or a thin one.
+        w["faceFemale"] = m.sex
+        w["faceOld"] = aged
+        if m.weight > 0 { w["faceFat"] = m.weight } else { w["faceThin"] = -m.weight }
         for (name, value) in dna.morphs { w[name, default: 0] += value }
         s.weights = w
 
@@ -190,6 +194,33 @@ enum CharacterBuilder {
         }
     }
 
+    /// A generated character's run of materials (FaceParts.Material's order): base colour and roughness. `skin`: the
+    /// skin's colour (`skinColor`, or a crowd's tint of it).
+    static func materials(_ look: CharacterDNA.Look, skin: SIMD3<Float>) -> [(color: SIMD3<Float>, roughness: Float)] {
+        let m = look.melanin
+        // Irises from dark brown through hazel and green to light blue.
+        let irises: [(Float, SIMD3<Float>)] = [(0, [0.06, 0.025, 0.01]), (0.4, [0.2, 0.12, 0.04]), (0.65, [0.13, 0.2, 0.08]), (1, [0.17, 0.3, 0.46])]
+        var iris = irises[0].1
+        for k in 1..<irises.count where look.eyes >= irises[k - 1].0 {
+            let t = min((look.eyes - irises[k - 1].0) / (irises[k].0 - irises[k - 1].0), 1)
+            iris = irises[k - 1].1 + (irises[k].1 - irises[k - 1].1) * t
+        }
+        let lips = simd_clamp(skin * SIMD3(0.86, 0.56, 0.56) + SIMD3(0.03, 0, 0) * (1 - m), SIMD3(repeating: 0.01), SIMD3(repeating: 0.9))
+        let brows = SIMD3<Float>(0.075, 0.048, 0.03) * (1 - 0.7 * m)
+        return FaceParts.Material.allCases.map { kind in
+            switch kind {
+            case .skin: return (skin, look.roughness)
+            case .lips: return (lips, max(look.roughness - 0.05, 0.35))
+            case .brows: return (brows, 0.7)
+            case .sclera: return ([0.8, 0.76, 0.72], 0.08)
+            case .iris: return (iris, 0.12)
+            case .pupil: return ([0.006, 0.006, 0.006], 0.06)
+            case .teeth: return ([0.78, 0.74, 0.64], 0.25)
+            case .mouth: return ([0.32, 0.07, 0.07], 0.4)
+            }
+        }
+    }
+
     /// The skin's diffuse colour: a mix of a pale and a dark skin by melanin, made redder by `redness` (linear RGB).
     static func skinColor(_ look: CharacterDNA.Look) -> SIMD3<Float> {
         let pale = SIMD3<Float>(0.82, 0.6, 0.5), dark = SIMD3<Float>(0.13, 0.065, 0.04)
@@ -206,11 +237,13 @@ enum CharacterBuilder {
 final class CharacterKit {
     let base: CharacterBase
     let morphs: CharacterMorphs
+    let face: FaceRig
     let clips: [SkinnedCharacter.Clip]
 
-    init(base: CharacterBase, morphs: CharacterMorphs, clips: [SkinnedCharacter.Clip]) {
+    init(base: CharacterBase, morphs: CharacterMorphs, face: FaceRig, clips: [SkinnedCharacter.Clip]) {
         self.base = base
         self.morphs = morphs
+        self.face = face
         self.clips = clips
     }
 
@@ -227,7 +260,7 @@ final class CharacterKit {
         return kit
     }
 
-    static let version: UInt32 = 11
+    static let version: UInt32 = 12
     private static let magic: UInt32 = 0x4B43_474D   // "MGCK"
 
     static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true, options: CharacterBase.Options = .init()) -> CharacterKit? {
@@ -240,18 +273,24 @@ final class CharacterKit {
             .filter { $0.pathExtension.lowercased() == "fbx" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let url = CharacterLibrary.cacheURL(for: files, in: directory, prefix: "character-kit-\(Int(options.cell * 10000))",
                                             version: version)
-        if cache, let (base, morphs) = try? read(url), base.character.joints.count == male.joints.count {
+        if cache, let (base, morphs, face) = try? read(url), base.character.joints.count == male.joints.count {
             print(String(format: "Character kit: from the cache in %.1f ms", (CFAbsoluteTimeGetCurrent() - start) * 1000))
-            return CharacterKit(base: base, morphs: morphs, clips: clips)
+            return CharacterKit(base: base, morphs: morphs, face: face, clips: clips)
         }
-        guard var base = CharacterBase.build(male, options: options) else { return nil }
+        guard var base = CharacterBase.build(male, options: options), let sculpt = FaceSculpt(base.character) else { return nil }
         base.character.coarser = CharacterImporter.coarser(base.character, levels: CharacterLibrary.coarserLevels)
-        let morphs = CharacterMorphs.build(base, female: female)
-        print(String(format: "Character kit: built in %.0f ms (%d targets)", (CFAbsoluteTimeGetCurrent() - start) * 1000, morphs.targets.count))
-        if cache {
-            do { try CacheFile.write(encoded(base, morphs), to: url) } catch { print("Character kit: could not write \(url.path): \(error)") }
+        for i in base.character.coarser.indices {
+            let level = base.character.coarser[i]
+            base.character.coarser[i].materials = CharacterBase.triangleMaterials(level.indices, base.materials, source: level.source)
         }
-        return CharacterKit(base: base, morphs: morphs, clips: clips)
+        let morphs = CharacterMorphs.build(base, female: female)
+        let face = FaceRig.build(base, sculpt: sculpt)
+        print(String(format: "Character kit: built in %.0f ms (%d targets, %d expressions)", (CFAbsoluteTimeGetCurrent() - start) * 1000,
+                     morphs.targets.count, face.targets.count))
+        if cache {
+            do { try CacheFile.write(encoded(base, morphs, face), to: url) } catch { print("Character kit: could not write \(url.path): \(error)") }
+        }
+        return CharacterKit(base: base, morphs: morphs, face: face, clips: clips)
     }
 
     /// A still clip of the bind pose (the T pose), and one with the arms down at 45 degrees (the A pose).
@@ -288,7 +327,7 @@ final class CharacterKit {
 
     // MARK: Cache file
 
-    static func encoded(_ base: CharacterBase, _ morphs: CharacterMorphs) -> Data {
+    static func encoded(_ base: CharacterBase, _ morphs: CharacterMorphs, _ face: FaceRig) -> Data {
         var w = BlobWriter()
         w.put(magic)
         w.put(version)
@@ -299,13 +338,18 @@ final class CharacterKit {
         w.put(UInt32(c.coarser.count))
         for l in c.coarser { w.put(l.indices); w.put(l.skin); w.put(l.uvs); w.put(l.source) }
         w.put(base.regions)
+        w.put(base.materials)
         w.put(UInt32(morphs.targets.count))
         for t in morphs.targets { w.put(t.name); w.put(t.vertices); w.put(t.deltas) }
         w.put(morphs.sexOffsets)
+        w.put(UInt32(face.targets.count))
+        for t in face.targets { w.put(t.name); w.put(t.vertices); w.put(t.deltas); w.put(t.normals) }
+        w.put(face.groups)
+        w.put(face.eyePoles)
         return w.data
     }
 
-    static func read(_ url: URL) throws -> (CharacterBase, CharacterMorphs) {
+    static func read(_ url: URL) throws -> (CharacterBase, CharacterMorphs, FaceRig) {
         var r = BlobReader(try Data(contentsOf: url, options: .alwaysMapped))
         guard try r.get(UInt32.self) == magic, try r.get(UInt32.self) == version else { throw FBXError.invalid("not a character kit cache") }
         var c = SkinnedCharacter(name: "Generated", positions: try r.array(), normals: try r.array(), uvs: try r.array(),
@@ -321,6 +365,7 @@ final class CharacterKit {
                                                     uvs: uvs, indices: indices, skin: skin, source: source))
         }
         let regions: [UInt8] = try r.array()
+        let materials: [UInt8] = try r.array()
         var targets: [CharacterMorphs.Target] = []
         for _ in 0..<Int(try r.get(UInt32.self)) {
             let t = CharacterMorphs.Target(name: try r.string(), vertices: try r.array(), deltas: try r.array())
@@ -330,11 +375,24 @@ final class CharacterKit {
             targets.append(t)
         }
         let offsets: [SIMD3<Float>] = try r.array()
+        var expressions: [FaceRig.Target] = []
+        for _ in 0..<Int(try r.get(UInt32.self)) {
+            let t = FaceRig.Target(name: try r.string(), vertices: try r.array(), deltas: try r.array(), normals: try r.array())
+            guard t.vertices.count == t.deltas.count, t.normals.count == t.deltas.count,
+                  t.vertices.allSatisfy({ Int($0) < c.positions.count }) else { throw FBXError.invalid("a character kit cache that doesn't add up") }
+            expressions.append(t)
+        }
+        let groups: [UInt32] = try r.array(), poles: [SIMD2<UInt32>] = try r.array()
         guard c.normals.count == c.positions.count, c.skin.count == c.positions.count, regions.count == c.positions.count,
+              materials.count == c.positions.count, groups.count == c.positions.count, poles.count == 2,
+              poles.allSatisfy({ Int($0.x) < c.positions.count && Int($0.y) < c.positions.count }),
               offsets.count == c.joints.count, c.indices.allSatisfy({ Int($0) < c.positions.count }) else {
             throw FBXError.invalid("a character kit cache that doesn't add up")
         }
+        c.materials = CharacterBase.triangleMaterials(c.indices, materials)
+        for i in c.coarser.indices { c.coarser[i].materials = CharacterBase.triangleMaterials(c.coarser[i].indices, materials, source: c.coarser[i].source) }
         (c.boundsMin, c.boundsMax) = CharacterImporter.bounds(of: c)
-        return (CharacterBase(character: c, regions: regions), CharacterMorphs(targets: targets, sexOffsets: offsets))
+        return (CharacterBase(character: c, regions: regions, materials: materials), CharacterMorphs(targets: targets, sexOffsets: offsets),
+                FaceRig(targets: expressions, groups: groups, eyePoles: poles))
     }
 }

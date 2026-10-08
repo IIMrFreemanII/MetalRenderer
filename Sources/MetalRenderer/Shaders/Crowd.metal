@@ -63,8 +63,29 @@ struct CrowdSkinParams {
     uint firstSlot;
     uint slotCount;
     uint paletteStride;
+    uint faceBase;        // its vertices' first range of face targets (CROWD_NONE: no expressions)
+    uint groupBase;       // its vertices' first face group (CROWD_NONE: no face)
+    uint faceTargets;     // weights per slot
+    float faceScale;      // its head's size against the base's (the targets' movements are the base's)
 };
-static_assert(sizeof(CrowdSkinParams) == 32, "CrowdSkinParams: CrowdSkinner.SkinParams");
+static_assert(sizeof(CrowdSkinParams) == 48, "CrowdSkinParams: CrowdSkinner.SkinParams");
+
+#define CROWD_NONE 0xFFFFFFFFu
+#define FACE_GROUPS 6u
+
+// A face's target moving a vertex (FaceRig.Entry): delta.w is the target's index (bits).
+struct FaceEntry {
+    float4 delta;
+    float4 normal;
+};
+static_assert(sizeof(FaceEntry) == 32, "FaceEntry: FaceRig.Entry");
+
+// A face group's turn this frame (FaceState.Turn): about `pivot` (an eye's centre), by the angle at weight 1.
+struct FaceTurn {
+    float4 axisAngle;
+    float4 pivot;
+};
+static_assert(sizeof(FaceTurn) == 32, "FaceTurn: FaceState.Turn");
 
 inline float4 quatMul(float4 a, float4 b) {
     return float4(a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz), a.w * b.w - dot(a.xyz, b.xyz));
@@ -141,12 +162,18 @@ kernel void crowdPoseKernel(constant CrowdPoseParams& p         [[buffer(0)]],
 }
 
 // Linear blend skinning of one vertex of one slot. The slot's positions of last frame are kept first: a hit on a
-// deforming mesh finds where its point was (MeshData.prevOffset, traceSurface).
+// deforming mesh finds where its point was (MeshData.prevOffset, traceSurface). A face's vertex is moved first, in the
+// bind pose (CharacterFace.swift): by the slot's expression targets, then turned with its group (an eyeball, a lid).
 kernel void crowdSkinKernel(constant CrowdSkinParams& p          [[buffer(0)]],
                             device const SkinVertex*  skin       [[buffer(1)]],
                             device const JointMatrix* palette    [[buffer(2)]],
                             device float3*            positions  [[buffer(3)]],
                             device float3*            normals    [[buffer(4)]],
+                            device const uint*        faceRanges [[buffer(5)]],
+                            device const FaceEntry*   faceEntries [[buffer(6)]],
+                            device const float*       faceWeights [[buffer(7)]],
+                            device const uint*        faceGroups [[buffer(8)]],
+                            device const FaceTurn*    faceTurns  [[buffer(9)]],
                             uint2 gid [[thread_position_in_grid]])
 {
     if (gid.x >= p.vertexCount || gid.y >= p.slotCount) return;
@@ -154,8 +181,31 @@ kernel void crowdSkinKernel(constant CrowdSkinParams& p          [[buffer(0)]],
     positions[p.previousBase + gid.y * p.vertexCount + gid.x] = positions[current];
 
     SkinVertex v = skin[p.skinBase + gid.x];
-    float4 bind = float4(positions[p.bindBase + gid.x], 1.0f), normal = float4(normals[p.bindBase + gid.x], 0.0f);
-    uint base = (p.firstSlot + gid.y) * p.paletteStride;
+    float3 bindPosition = positions[p.bindBase + gid.x], bindNormal = normals[p.bindBase + gid.x];
+    uint slot = p.firstSlot + gid.y;
+    if (p.faceBase != CROWD_NONE) {
+        uint first = faceRanges[p.faceBase + gid.x], last = faceRanges[p.faceBase + gid.x + 1];
+        device const float* w = faceWeights + slot * p.faceTargets;
+        for (uint e = first; e < last; ++e) {
+            FaceEntry f = faceEntries[e];
+            float k = w[as_type<uint>(f.delta.w)];
+            bindPosition += (k * p.faceScale) * f.delta.xyz;
+            bindNormal += k * f.normal.xyz;
+        }
+        bindNormal = normalize(bindNormal);
+    }
+    if (p.groupBase != CROWD_NONE) {
+        uint g = faceGroups[p.groupBase + gid.x];
+        if ((g & 0xFFu) != 0u) {
+            FaceTurn t = faceTurns[slot * FACE_GROUPS + (g & 0xFFu) - 1u];
+            float angle = t.axisAngle.w * float(g >> 8) / 255.0f;
+            float4 q = float4(t.axisAngle.xyz * sin(0.5f * angle), cos(0.5f * angle));
+            bindPosition = t.pivot.xyz + quatRotate(q, bindPosition - t.pivot.xyz);
+            bindNormal = quatRotate(q, bindNormal);
+        }
+    }
+    float4 bind = float4(bindPosition, 1.0f), normal = float4(bindNormal, 0.0f);
+    uint base = slot * p.paletteStride;
     float weights[4] = {v.w0, v.w1, v.w2, 1.0f - v.w0 - v.w1 - v.w2};
     float3 position = float3(0.0f), n = float3(0.0f);
     for (uint k = 0; k < 4; ++k) {

@@ -2102,6 +2102,7 @@ final class Renderer: NSObject {
         moveGrab()
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
+        scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }

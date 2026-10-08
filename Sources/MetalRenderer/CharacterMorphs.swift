@@ -181,20 +181,29 @@ struct CharacterMorphs {
         ("buttocks", [Bump(part: .trunk, u: -0.02, du: 0.12, angle: 180, da: 45, out: 0.03)]),
         ("shoulders", [Bump(part: .upperArm, u: 0.06, du: 0.2, angle: 80, da: 95, out: 0.015),
                        Bump(part: .trunk, u: 0.95, du: 0.06, angle: 100, da: 40, out: 0.008)]),
-        ("neckThickness", [Bump(part: .neck, u: 0.5, du: 1.2, out: 0.012)]),
+        ("neckThickness", [Bump(part: .neck, u: 0.3, du: 0.35, out: 0.013)]),   // (none left at the head, where the neck ends)
         ("arms", [Bump(part: .upperArm, u: 0.5, du: 1.2, out: 0.01), Bump(part: .forearm, u: 0.4, du: 0.8, out: 0.007)]),
         ("thighs", [Bump(part: .thigh, u: 0.45, du: 0.8, out: 0.02)]),
         ("calves", [Bump(part: .shin, u: 0.3, du: 0.3, out: 0.012)]),
     ]
 
     /// A target's deltas from its bumps, smoothed over the mesh.
+    /// The neck's bumps go by how much of a vertex the neck's bone moves (the neck meets the head and the trunk where
+    /// their bones take over, not at a line).
     static func deltas(_ bumps: [Bump], _ c: SkinnedCharacter, _ coords: Coordinates, _ ring: [[Int32]]) -> [SIMD3<Float>] {
         var d = [SIMD3<Float>](repeating: .zero, count: c.positions.count)
+        let neck = CharacterBase.joint("Neck", in: c).map(UInt32.init)
+        func neckWeight(_ s: GPUSkinVertex) -> Float {
+            let ws = [s.w0, s.w1, s.w2, 1 - s.w0 - s.w1 - s.w2]
+            return (0..<4).reduce(0) { $0 + ((s.joints >> UInt32(8 * $1)) & 0xFF == neck ? ws[$1] : 0) }
+        }
         for v in d.indices {
             var out: Float = 0, down: Float = 0
-            for b in bumps where b.part == coords.part[v] {
-                let along = (coords.u[v] - b.u) / b.du
-                var w = exp(-along * along)
+            let onNeck = neck != nil && [.neck, .head, .trunk].contains(coords.part[v]) ? neckWeight(c.skin[v]) : 0
+            for b in bumps where b.part == coords.part[v] || (b.part == .neck && onNeck > 0) {
+                let u = b.part != .neck || coords.part[v] == .neck ? coords.u[v] : coords.part[v] == .head ? 1 : 0
+                let along = (u - b.u) / b.du
+                var w = exp(-along * along) * (b.part == .neck ? min(onNeck * 1.5, 1) : 1)
                 if b.da > 0 {
                     var a = abs(coords.angle[v] - b.angle).truncatingRemainder(dividingBy: 360)
                     if a > 180 { a = 360 - a }
@@ -246,6 +255,7 @@ struct CharacterMorphs {
         }
         let (target, offsets) = sexTarget(base, coords: coords, ring: ring, female: female)
         targets.append(target)
+        if let sculpt = FaceSculpt(c) { targets += faceTargets(base, sculpt: sculpt) }
         return CharacterMorphs(targets: targets, sexOffsets: offsets)
     }
 
