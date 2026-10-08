@@ -487,6 +487,7 @@ final class Scene {
         case .fluids: buildFluids(settings.physics)
         case .plants: buildPlantWorkshop()
         case .buildings: buildBuildingWorkshop()
+        case .bulbRoom: buildRandomRoom(seed: settings.seed, bulbs: true)
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }

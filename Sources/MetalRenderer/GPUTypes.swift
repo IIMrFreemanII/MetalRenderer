@@ -58,6 +58,7 @@ enum UniformFlags {
     static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
     static let vsm: UInt32 = 2097152         // the camera's surfaces' shadows through virtual shadow maps (VSM.swift)
     static let giRadiance: UInt32 = 4194304  // the composite keeps the lit diffuse light for Lumen's screen traces
+    static let splitOutput: UInt32 = 8388608 // with hdrOutput: the composite also writes the light in parts (our upscaler's inputs)
 }
 
 /// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.

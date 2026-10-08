@@ -34,6 +34,8 @@ extension Benchmark {
         var factor: CGFloat = 3
         var scale: CGFloat = 0.5
         var directory = URL(fileURLWithPath: "dataset")
+        var need: String? = nil // a clip counts as saved only with this array too (its last frame's): `need=extra` renders
+                                // the inputs of clips saved before that buffer again, and leaves their references
 
         init(env: [String: String] = ProcessInfo.processInfo.environment) {
             if let dir = env["METALRENDERER_DATASET_DIR"] { directory = URL(fileURLWithPath: dir) }
@@ -54,6 +56,7 @@ extension Benchmark {
                 case "bounces": bounces = Int(kv[1]) ?? bounces
                 case "factor": factor = Double(kv[1]).map { CGFloat($0) } ?? factor
                 case "scale": scale = Double(kv[1]).map { CGFloat($0) } ?? scale
+                case "need": need = kv[1]
                 default: print("METALRENDERER_DATASET: unknown key \(kv[0])")
                 }
             }
@@ -153,12 +156,16 @@ extension Benchmark {
     }
 
     /// `METALRENDERER_BENCH=dataset`: every clip, as the app renders it (its GI method, upscaled by MetalFX), but those
-    /// already saved (their last frame has its row): a larger dataset adds clips to a smaller one.
+    /// already saved (their last frame has its row, and the `need` array): a larger dataset adds clips to a smaller one.
+    /// The same clip renders the same cameras and times again, so its references still fit.
     static func dataset() -> [Config] {
         let spec = DatasetSpec()
         let clips = spec.clipList.filter { clip in
-            !FileManager.default.fileExists(atPath: spec.directory.appendingPathComponent(clip.name)
-                .appendingPathComponent(datasetFileName(frame: clip.frames - 1, buffer: nil)).path)
+            let dir = spec.directory.appendingPathComponent(clip.name)
+            let saved = { (buffer: String?) in
+                FileManager.default.fileExists(atPath: dir.appendingPathComponent(datasetFileName(frame: clip.frames - 1, buffer: buffer)).path)
+            }
+            return !(saved(nil) && spec.need.map(saved) ?? true)
         }
         print("dataset: \(clips.count) of \(spec.clipList.count) clips to render")
         return clips.map { clip in

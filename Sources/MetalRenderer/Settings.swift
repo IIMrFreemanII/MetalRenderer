@@ -355,6 +355,7 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // plant editor shapes them (`SceneSettings.plants`)
     case buildings          // the building workshop (Scene+Buildings.swift): one building, inside and out, on its lot, as
                             // the building editor shapes it (`SceneSettings.buildings`)
+    case bulbRoom           // ...another random room, strung with dozens to hundreds of small bulbs (as the night market)
 
     var title: String {
         switch self {
@@ -386,6 +387,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .fluids: return "Fluids"
         case .plants: return "Plant workshop"
         case .buildings: return "Building workshop"
+        case .bulbRoom: return "Bulb room (training)"
         }
     }
 
@@ -871,7 +873,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .plants, .buildings, .randomRoom:   // at night: thousands of lit windows scatter in blotches
+             .plants, .buildings, .randomRoom, .bulbRoom:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -977,7 +979,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids, .randomRoom:
+             .softBodies, .muscles, .fluids, .randomRoom, .bulbRoom:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500

@@ -417,7 +417,7 @@ enum SettingsTable {
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
-            S.slider("Room seed", \.scene.seed, SceneSettings.seedRange, live: false).when { $0.scene.kind == .randomRoom },
+            S.slider("Room seed", \.scene.seed, SceneSettings.seedRange, live: false).when { [.randomRoom, .bulbRoom].contains($0.scene.kind) },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants },
             S.value(\.scene.plants.species).env(.scene, "species"),

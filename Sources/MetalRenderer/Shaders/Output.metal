@@ -173,6 +173,31 @@ inline float3 toneMap(float3 c, float4 post) {
     }
 }
 
+/// The light split for our upscaler (FLAG_SPLIT_OUTPUT) divides the specular part by the specular albedo, at least this
+/// much, so that color = albedo * diffuse + max(specular albedo, SPLIT_MIN_SPECULAR) * specular + extra.
+constant float SPLIT_MIN_SPECULAR = 1e-3f;
+
+/// How much of last frame shows this pixel's surface: the bilinear weights of the taps around its previous position that
+/// pass SVGF's depth and normal test (denoiseTemporalKernel). 0 where it was hidden or off screen, and after a reset.
+inline float historyValidity(constant Uniforms& u, float4 mv, float4 nd, texture2d<float, access::read> prevND) {
+    if (!flagOn(u.flags, FLAG_HISTORY_VALID)) return 0.0f;
+    if (nd.w <= 0.0f) return 1.0f;   // the sky
+    if (!(mv.w > 0.0f)) return 0.0f;
+    int2 base = int2(floor(mv.xy));
+    float2 f = mv.xy - float2(base);
+    float bilinear[4] = { (1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y };
+    int2 offsets[4] = { int2(0, 0), int2(1, 0), int2(0, 1), int2(1, 1) };
+    float valid = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        int2 q = base + offsets[i];
+        if (q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height)) continue;
+        float4 pnd = prevND.read(uint2(q));
+        if (pnd.w <= 0.0f || abs(pnd.w - mv.z) > REUSE_DEPTH * mv.z || dot(pnd.xyz, nd.xyz) < REUSE_NORMAL) continue;
+        valid += bilinear[i];
+    }
+    return valid;
+}
+
 kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
                             texture2d<float, access::read>  denoised   [[texture(0)]],
                             texture2d<float, access::read>  direct     [[texture(1)]],
@@ -195,6 +220,11 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
                             texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
+                            texture2d<float, access::write> outDiffuse [[texture(21)]],   // with FLAG_SPLIT_OUTPUT: light / albedo
+                            texture2d<float, access::write> outSpecular [[texture(22)]],  // ...specular light / specular albedo
+                            texture2d<float, access::write> outExtra [[texture(23)]],     // ...emission and fog; a = historyValidity
+                            texture2d<float, access::read>  motion     [[texture(24)]],   // with FLAG_SPLIT_OUTPUT
+                            texture2d<float, access::read>  prevND     [[texture(25)]],   // with FLAG_SPLIT_OUTPUT
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -312,6 +342,14 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         outSpecularAlbedo.write(float4(guideSpecular, 1.0f), tid);
         outRoughness.write(float4(guideRoughness), tid);
+        if (flagOn(u.flags, FLAG_SPLIT_OUTPUT)) {
+            // The same light in parts, for our upscaler: what lights the surface without its colour (the noise to
+            // filter, apart from the texture), the reflections without the surface's reflectance, and what neither
+            // multiplies (emission, fog in-scatter). color = albedo * diffuse + max(specular albedo, 1e-3) * specular + extra.
+            outDiffuse.write(float4(illumination * fogged.a, 1.0f), tid);
+            outSpecular.write(float4(specular / max(guideSpecular, float3(SPLIT_MIN_SPECULAR)) * fogged.a, 1.0f), tid);
+            outExtra.write(float4(emission * fogged.a + fogged.rgb, historyValidity(u, motion.read(tid), nd.read(tid), prevND)), tid);
+        }
         return;
     }
     if (flagOn(u.flags, FLAG_POST)) {   // the lens effects follow (Post.metal): they want the light as it is

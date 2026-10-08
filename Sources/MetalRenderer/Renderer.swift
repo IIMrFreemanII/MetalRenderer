@@ -52,17 +52,33 @@ final class RenderTargets {
     // More guides for MetalFX's denoising scaler (written by the composite while it is the upscaler)
     let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
     let roughness: MTLTexture
+    /// Our upscaler's inputs, written by the composite with FLAG_SPLIT_OUTPUT: the light in parts (diffuse light / albedo,
+    /// specular light / specular albedo, the rest: emission and fog, with how much of last frame still shows in alpha).
+    /// Made the first time a frame asks for them.
+    private(set) lazy var split: (diffuse: MTLTexture, specular: MTLTexture, extra: MTLTexture)? = {
+        let make = { try RenderTargets.texture(self.device, self.width, self.height, .rgba16Float, $0) }
+        guard let d = try? make("split diffuse"), let s = try? make("split specular"), let e = try? make("split extra")
+        else { return nil }
+        return (d, s, e)
+    }()
+    private let device: MTLDevice
+
+    private static func texture(_ device: MTLDevice, _ width: Int, _ height: Int, _ format: MTLPixelFormat,
+                                _ label: String) throws -> MTLTexture {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+        t.label = label
+        return t
+    }
 
     init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
         self.height = height
+        self.device = device
         func make(_ format: MTLPixelFormat, _ label: String) throws -> MTLTexture {
-            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
-            d.usage = [.shaderRead, .shaderWrite]
-            d.storageMode = .private
-            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
-            t.label = label
-            return t
+            try RenderTargets.texture(device, width, height, format, label)
         }
         normalDepth = [try make(.rgba16Float, "normalDepth0"), try make(.rgba16Float, "normalDepth1")]
         albedo = try make(.rgba16Float, "albedo")
@@ -1202,7 +1218,7 @@ final class Renderer: NSObject {
         d3.usage = .shaderRead
         d3.storageMode = .private
         let d2 = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
-        d2.usage = .shaderRead
+        d2.usage = [.shaderRead, .shaderWrite]   // also stands in for outputs a kernel writes only with a flag
         d2.storageMode = .private
         let da = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: 1, height: 1, mipmapped: false)
         da.textureType = .type2DArray
@@ -2343,6 +2359,7 @@ final class Renderer: NSObject {
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
         if neuralDenoise || linearReference { u.flags |= UniformFlags.hdrOutput }
+        if splitOutput { u.flags |= UniformFlags.splitOutput }
         if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
         p.uniforms = u
 
@@ -2780,6 +2797,9 @@ final class Renderer: NSObject {
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
                               plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
                               plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D])
+            let split = c.uniforms.flags & UniformFlags.splitOutput != 0 ? t.split : nil
+            setTextures(enc, [split?.diffuse ?? dummy2D, split?.specular ?? dummy2D, split?.extra ?? dummy2D,
+                              t.motion, t.normalDepth[plan.prev]], from: 21)
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -3758,6 +3778,13 @@ final class Renderer: NSObject {
         print("benchmark: \(c.name)")
     }
 
+    /// The composite also writes the light in parts (RenderTargets.split): for our upscaler, and for a dataset clip's
+    /// arrays.
+    private var splitOutput: Bool {
+        guard neuralUpscaler != nil || (upscaler != nil && !supersampling && benchmark?.current.dataset != nil) else { return false }
+        return targets?.split != nil
+    }
+
     /// A dataset reference (METALRENDERER_BENCH=datasetref) averages linear light, as the denoising scaler's output is
     /// before its tone curve.
     private var linearReference: Bool { supersampling && benchmark?.current.dataset != nil }
@@ -3767,7 +3794,8 @@ final class Renderer: NSObject {
     /// frame's row, once the frame is done.
     private func datasetCapture(_ dataset: Benchmark.DatasetCapture, plan: FramePlan, benchmark: Benchmark,
                                 passes: FrameEncoder) -> (() -> Void)? {
-        let dir: URL, frame: Int, arrays: [(texture: MTLTexture, keep: Int, name: String)]
+        let dir: URL, frame: Int
+        var arrays: [(texture: MTLTexture, keep: Int, name: String)] = []
         var row: Data?
         switch dataset {
         case .inputs(let clip):
@@ -3780,6 +3808,9 @@ final class Renderer: NSObject {
             arrays = [(t.upscaleColor, 3, "color"), (t.albedo, 3, "albedo"), (t.specularAlbedo, 3, "specular"),
                       (t.normalDepth[plan.cur], 4, "normal"), (t.deviceDepth, 1, "depth"), (t.pixelMotion, 2, "motion"),
                       (t.roughness, 1, "roughness"), (output.0, 3, output.1)]
+            if plan.uniforms.flags & UniformFlags.splitOutput != 0, let split = t.split {
+                arrays += [(split.diffuse, 3, "diffuse"), (split.specular, 3, "specularlight"), (split.extra, 4, "extra")]
+            }
             let u = plan.uniforms, size = plan.size
             row = try? JSONEncoder().encode(Benchmark.DatasetFrame(
                 frame: frame, time: animTime,
@@ -3958,8 +3989,8 @@ final class Renderer: NSObject {
         return accumTextures
     }
 
-    private func setTextures(_ enc: ComputePass, _ textures: [MTLTexture]) {
-        for (i, texture) in textures.enumerated() { enc.setTexture(texture, index: i) }
+    private func setTextures(_ enc: ComputePass, _ textures: [MTLTexture], from first: Int = 0) {
+        for (i, texture) in textures.enumerated() { enc.setTexture(texture, index: first + i) }
     }
 
     /// sRGB, so shaders and MetalFX write linear color and the GPU encodes it.

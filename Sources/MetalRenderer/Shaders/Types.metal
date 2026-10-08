@@ -278,6 +278,8 @@ constant uint FLAG_POST          = 524288; // the lens effects follow (Post.meta
 constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
 constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
 constant uint FLAG_GI_RADIANCE   = 4194304; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
+constant uint FLAG_SPLIT_OUTPUT  = 8388608; // with FLAG_HDR_OUTPUT: the composite also writes the light in parts for our
+                                           // upscaler (diffuse, specular, the rest) and how much of last frame still shows
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
