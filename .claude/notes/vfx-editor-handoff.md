@@ -66,7 +66,7 @@ The particle effects as node graphs, and an editor for them (README "VFX graphs"
 
 ## Next
 
-M4 Max checks (Metal 4 path of the VFX library and the gizmo pass), then the PR's description.
+Committed and pushed (3709ffa), PR description updated. Next: the user's hand test of the window (gizmo drags, wires, Tab search, curve and gradient editors), then M4 Max checks (the Metal 4 path of the VFX library and the gizmo pass).
 
 ## Traps found
 
