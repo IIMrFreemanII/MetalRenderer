@@ -98,7 +98,10 @@ setting's frames:
 ```bash
 .claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
 ```
-`-m stressdemo` tours the stress building the same way (58 s).
+`-m stressdemo` tours the stress building the same way (58 s). `-m buildingsdemo` is the building editor's demo
+(40 shots, about 4.5 min): the camera can walk (`.walking()`: doors open for it, it shoves loose furniture), ride a
+lift (`.riding(n)`) and act at times of its track (`.at(t, .callLift / .lights / .flashlight)`); `DemoWalk` makes
+its walks from a building's plan. Keep its frames (`-k`) to join the shots into one captioned video.
 It takes minutes (every frame of the track is rendered), so run it with `run_in_background`. To tune a track, look
 along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 

@@ -54,6 +54,37 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertNotNil(demo[0].track)
     }
 
+    /// The building editor's demo: recording settings of three to five minutes in all, its walks clear of the walls
+    /// (the camera's eyes and chest kept out of every wall, floor and pane but where doors are), its lift ride and
+    /// night switched as it goes.
+    func testTheBuildingsDemo() {
+        let demo = Benchmark.configs(for: "buildingsdemo")
+        XCTAssertTrue(demo.allSatisfy(\.record))
+        let seconds = Float(demo.reduce(0) { $0 + ($1.frames ?? 240) }) / 60
+        print(String(format: "Buildings demo: %d shots, %.0f s", demo.count, seconds))
+        for c in demo { print(String(format: "  %@: %.1f s", c.name, Float(c.frames ?? 240) / 60)) }
+        XCTAssertGreaterThan(seconds, 180)
+        XCTAssertLessThan(seconds, 300)
+        XCTAssertTrue(demo.contains { $0.ride == 0 && $0.events.count == 2 }, "the lift ride")
+        XCTAssertTrue(demo.contains { $0.events.contains { if case .lights(false, _) = $0.event { return true } else { return false } } })
+        for c in demo where c.body && c.ride == nil {
+            guard let track = c.track else { XCTFail(c.name); continue }
+            let grid = ColliderGrid(Scene(c.settings.scene).walkColliders.filter { $0.kind != .furniture })
+            var hits = 0
+            for k in 0...Int(track.duration * 10) {
+                let eye = track.camera(at: Float(k) / 10).position
+                for p in [eye, eye - SIMD3(0, 0.8, 0)] {
+                    let near = grid.boxes(overlapping: p - 0.12, p + 0.12)
+                    if let box = near.first(where: { all(p .> $0.lo - 0.12) && all(p .< $0.hi + 0.12) }) {
+                        hits += 1
+                        if hits <= 3 { XCTFail("\(c.name) at \(Float(k) / 10) s: \(p) in \(box.lo)...\(box.hi) (\(box.kind))") }
+                    }
+                }
+            }
+            XCTAssertEqual(hits, 0, c.name)
+        }
+    }
+
     func testBenchmarkDefaultsDifferFromTheApps() {
         let c = Benchmark.Config("x")
         XCTAssertEqual(c.settings.renderScale, 0.75)
