@@ -209,7 +209,9 @@ struct FaceSculpt {
         d = smin(d, ridge + 0.004 * smoothstep(0.1, -0.5, u / halfWidth), 0.0015)
         // The concha: a stalk into the skull (it holds the ear on), its bowl carved, and the tragus before it.
         let local = SIMD3(u, v, w)
-        d = smin(d, roundCone(local, [-0.004, -0.004, -0.005], [-0.009, -0.003, -0.022], 0.0075, 0.0095), 0.003)
+        d = smin(d, roundCone(local, [-0.003, -0.005, -0.004], [-0.009, -0.003, -0.022], 0.009, 0.0105), 0.003)
+        // (The bowl's floor: the carve reaches through the shell, which left a pit into the head behind.)
+        d = smin(d, ellipsoid(SIMD3(u + 0.003, v + 0.005, w + 0.001), [0.011, 0.011, 0.003]), 0.002)
         d = smax(d, -sphere(SIMD3(u + 0.003, v + 0.005, w - 0.0082), 0.0068), 0.002)
         d = smin(d, sphere(SIMD3(u + 0.0138, v + 0.004, w - 0.0014), 0.0032), 0.0025)
         return d

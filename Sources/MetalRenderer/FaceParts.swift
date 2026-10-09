@@ -5,9 +5,10 @@ import simd
 /// eyeballs, the teeth and the tongue; and which of a character's materials each part of its surface takes.
 enum FaceParts {
     /// A generated character's materials, in the order its instance's run of materials has them (CharacterBuilder
-    /// `materials`): each triangle names one by its offset from the first.
+    /// `materials`): each triangle names one by its offset from the first. `thinSkin`: the ears and the nostrils'
+    /// wings, skin light comes through from behind; `hair`: a crowd's hair cap (CharacterHairCap), not the base's.
     enum Material: UInt8, CaseIterable {
-        case skin, lips, brows, sclera, iris, pupil, teeth, mouth
+        case skin, lips, brows, sclera, iris, pupil, teeth, mouth, thinSkin, hair
     }
 
     /// A part's mesh in the character's bind space: one material per triangle.
@@ -152,6 +153,9 @@ enum FaceParts {
 
     /// The skin's material at a point of it (the sculpt's space): the lips' red, the brows, the inside of the mouth.
     static func skinMaterial(_ q: SIMD3<Float>) -> Material {
+        // The ears (out from the head's side), and the nostrils' wings.
+        if abs(q.x) > 0.072, simd_distance(SIMD3(abs(q.x), q.y, q.z), FaceSculpt.ears[0]) < 0.036 { return .thinSkin }
+        if simd_distance(SIMD3(abs(q.x), q.y, q.z), [0.0155, 1.639, 0.111]) < 0.0075 { return .thinSkin }
         guard q.y > 1.585, q.y < 1.73, q.z > 0.02 else { return .skin }
         // Inside the mouth: behind the lips' inner edge.
         var a = q

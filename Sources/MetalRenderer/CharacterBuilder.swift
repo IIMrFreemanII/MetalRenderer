@@ -144,8 +144,9 @@ enum CharacterBuilder {
         return (p, CharacterBase.vertexNormals(p, c.indices))
     }
 
-    /// The character `dna` describes, made from `kit`'s base, with `kit`'s clips.
-    static func build(_ dna: CharacterDNA, kit: CharacterKit) -> SkinnedCharacter {
+    /// The character `dna` describes, made from `kit`'s base, with `kit`'s clips. `cap`: its hair as a cap of its mesh
+    /// (CharacterHairCap; a crowd's), not strands.
+    static func build(_ dna: CharacterDNA, kit: CharacterKit, cap: Bool = false) -> SkinnedCharacter {
         let base = kit.base.character
         let shape = MacroRig.shape(dna, character: base)
         let newBind = bind(shape, base: base, morphs: kit.morphs)
@@ -172,8 +173,44 @@ enum CharacterBuilder {
             return k
         }
         c.color = CharacterBuilder.skinColor(dna.look)
+        if cap, let hair = CharacterHairCap.cap(dna, kit: kit), let head = CharacterBase.joint("Head", in: base) {
+            addCap(hair, to: &c, head: head, from: old[head], to: newBind[head], scale: shape.scales[head])
+        }
         (c.boundsMin, c.boundsMax) = CharacterImporter.bounds(of: c)
         return c
+    }
+
+    /// `cap` (the base's bind space) on character `c` whose head joint went from `from` to `to`, scaled by `scale`: its
+    /// levels appended to `c`'s, on the head's bone, of material `hair`. Its vertices have no full-detail source
+    /// (`Level.source` UInt32.max: no morphs, no face).
+    static func addCap(_ cap: CharacterHairCap.Cap, to c: inout SkinnedCharacter, head: Int, from: SIMD3<Float>, to: SIMD3<Float>,
+                       scale: simd_float3x3) {
+        let skin = GPUSkinVertex(joints: UInt32(head), w0: 1, w1: 0, w2: 0)
+        let normalScale = scale.inverse.transpose
+        func moved(_ level: (positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32]))
+            -> (positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32]) {
+            (level.positions.map { to + scale * ($0 - from) }, level.normals.map { simd_normalize(normalScale * $0) }, level.indices)
+        }
+        let material = FaceParts.Material.hair.rawValue
+        let full = moved(cap.levels[0])
+        let first = UInt32(c.positions.count)
+        c.positions += full.positions
+        c.normals += full.normals
+        c.uvs += [SIMD2<Float>](repeating: SIMD2(Float(material), 0), count: full.positions.count)
+        c.skin += [GPUSkinVertex](repeating: skin, count: full.positions.count)
+        c.indices += full.indices.map { $0 + first }
+        c.materials += [UInt8](repeating: material, count: full.indices.count / 3)
+        for k in c.coarser.indices {
+            let l = moved(cap.levels[min(k + 1, cap.levels.count - 1)])
+            let start = UInt32(c.coarser[k].positions.count)
+            c.coarser[k].positions += l.positions
+            c.coarser[k].normals += l.normals
+            c.coarser[k].uvs += [SIMD2<Float>](repeating: SIMD2(Float(material), 0), count: l.positions.count)
+            c.coarser[k].skin += [GPUSkinVertex](repeating: skin, count: l.positions.count)
+            c.coarser[k].source += [UInt32](repeating: .max, count: l.positions.count)
+            c.coarser[k].indices += l.indices.map { $0 + start }
+            c.coarser[k].materials += [UInt8](repeating: material, count: l.indices.count / 3)
+        }
     }
 
     /// `base`'s joints with their bind positions at `bind` (rotations unchanged): local offsets and inverse binds.
@@ -194,9 +231,21 @@ enum CharacterBuilder {
         }
     }
 
-    /// A generated character's run of materials (FaceParts.Material's order): base colour and roughness. `skin`: the
-    /// skin's colour (`skinColor`, or a crowd's tint of it).
-    static func materials(_ look: CharacterDNA.Look, skin: SIMD3<Float>) -> [(color: SIMD3<Float>, roughness: Float)] {
+    /// One of a generated character's materials: base colour, roughness, and how it scatters light under its surface
+    /// (0: not skin; else its strength, + 2 where it is thin: Material.params.w's code, Shaders/Hair.metal).
+    struct Material {
+        var color: SIMD3<Float>
+        var roughness: Float
+        var skin: Float = 0
+        /// It takes the skin's textures (SkinTextures).
+        var textured = false
+    }
+
+    /// A generated character's run of materials (FaceParts.Material's order). `skin`: the skin's colour (`skinColor`,
+    /// or a crowd's tint of it). `strandBrows`: its brows are strands (CharacterHair), the skin under them only a
+    /// little darker; else painted.
+    static func materials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, hair: SIMD3<Float> = [0.08, 0.05, 0.03],
+                          strandBrows: Bool = false) -> [Material] {
         let m = look.melanin
         // Irises from dark brown through hazel and green to light blue.
         let irises: [(Float, SIMD3<Float>)] = [(0, [0.06, 0.025, 0.01]), (0.4, [0.2, 0.12, 0.04]), (0.65, [0.13, 0.2, 0.08]), (1, [0.17, 0.3, 0.46])]
@@ -206,17 +255,19 @@ enum CharacterBuilder {
             iris = irises[k - 1].1 + (irises[k].1 - irises[k - 1].1) * t
         }
         let lips = simd_clamp(skin * SIMD3(0.86, 0.56, 0.56) + SIMD3(0.03, 0, 0) * (1 - m), SIMD3(repeating: 0.01), SIMD3(repeating: 0.9))
-        let brows = SIMD3<Float>(0.075, 0.048, 0.03) * (1 - 0.7 * m)
+        let brows = strandBrows ? skin * 0.86 : SIMD3<Float>(0.075, 0.048, 0.03) * (1 - 0.7 * m)
         return FaceParts.Material.allCases.map { kind in
             switch kind {
-            case .skin: return (skin, look.roughness)
-            case .lips: return (lips, max(look.roughness - 0.05, 0.35))
-            case .brows: return (brows, 0.7)
-            case .sclera: return ([0.8, 0.76, 0.72], 0.08)
-            case .iris: return (iris, 0.12)
-            case .pupil: return ([0.006, 0.006, 0.006], 0.06)
-            case .teeth: return ([0.78, 0.74, 0.64], 0.25)
-            case .mouth: return ([0.32, 0.07, 0.07], 0.4)
+            case .skin: return Material(color: skin, roughness: look.roughness, skin: 1, textured: true)
+            case .lips: return Material(color: lips, roughness: max(look.roughness - 0.05, 0.35), skin: 0.8, textured: true)
+            case .brows: return Material(color: brows, roughness: 0.7, skin: strandBrows ? 1 : 0, textured: strandBrows)
+            case .sclera: return Material(color: [0.8, 0.76, 0.72], roughness: 0.08)
+            case .iris: return Material(color: iris, roughness: 0.12)
+            case .pupil: return Material(color: [0.006, 0.006, 0.006], roughness: 0.06)
+            case .teeth: return Material(color: [0.78, 0.74, 0.64], roughness: 0.25)
+            case .mouth: return Material(color: [0.32, 0.07, 0.07], roughness: 0.4, skin: 0.6)
+            case .thinSkin: return Material(color: skin, roughness: look.roughness, skin: 3, textured: true)
+            case .hair: return Material(color: hair * 0.85, roughness: 0.62)
             }
         }
     }
@@ -239,6 +290,19 @@ final class CharacterKit {
     let morphs: CharacterMorphs
     let face: FaceRig
     let clips: [SkinnedCharacter.Clip]
+    /// The base's head in its skin's textures (SkinTextures), made the first time it is asked for.
+    var chart: SkinChart {
+        chartLock.lock()
+        defer { chartLock.unlock() }
+        if let made = madeChart { return made }
+        let start = CFAbsoluteTimeGetCurrent()
+        let made = SkinChart.make(base)
+        print(String(format: "Character kit: skin chart in %.0f ms", (CFAbsoluteTimeGetCurrent() - start) * 1000))
+        madeChart = made
+        return made
+    }
+    private var madeChart: SkinChart?
+    private let chartLock = NSLock()
 
     init(base: CharacterBase, morphs: CharacterMorphs, face: FaceRig, clips: [SkinnedCharacter.Clip]) {
         self.base = base
@@ -260,7 +324,7 @@ final class CharacterKit {
         return kit
     }
 
-    static let version: UInt32 = 12
+    static let version: UInt32 = 13
     private static let magic: UInt32 = 0x4B43_474D   // "MGCK"
 
     static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true, options: CharacterBase.Options = .init()) -> CharacterKit? {

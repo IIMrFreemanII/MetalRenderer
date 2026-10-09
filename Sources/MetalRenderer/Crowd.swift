@@ -99,9 +99,21 @@ final class Crowd {
         }
     }
 
+    /// A groom's strands on one slot (CharacterHair): drawn into the scene's curve mesh `mesh` every frame after the
+    /// slot's skinning (crowdHairKernel), shaped by its character's head (its size against the base's, its joint).
+    struct Hair {
+        var slot: Int
+        var groom: CharacterHair.Groom
+        var mesh: Int
+        var scale: Float
+        var head: Int
+    }
+
     let characters: [SkinnedCharacter]
     /// Per character, its face (nil: a mannequin's, none).
     var faces: [Face?] = []
+    /// The strands the slots grow (a workshop's characters'; crowds have caps).
+    var hair: [Hair] = []
     /// What the expressive faces do, and where the viewer is (world space) for their eyes.
     var expression: FaceExpression = .neutral
     var viewer: SIMD3<Float>?

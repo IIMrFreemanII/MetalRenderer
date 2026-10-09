@@ -30,6 +30,8 @@ struct CharacterEditorView: View {
                         CharacterGroup(title: "Bone lengths and sizes", groups: [.bones], table: CharacterParams.bones)
                     case .skin:
                         CharacterGroup(title: "Skin", groups: [.skin], table: CharacterParams.skin)
+                        hairStyle
+                        CharacterGroup(title: "Hair colour and cut", groups: [.hair], table: CharacterParams.hair)
                     }
                 }
                 .padding(10)
@@ -145,6 +147,39 @@ struct CharacterEditorView: View {
         .disabled(!model.inWorkshop)
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+
+    /// The hair's style and the beard (CharacterHair's lists), each with a lock, and how the workshop draws hair.
+    private var hairStyle: some View {
+        let w = model.scene.characterWorkshop
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Hair").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Spacer()
+                Picker("", selection: Binding(get: { w.hair }, set: { m in model.workshop { $0.hair = m } })) {
+                    ForEach(CharacterSceneSettings.HairMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 190).disabled(!model.inWorkshop)
+                .help("Strands (each hair), the caps crowds have, or none")
+            }
+            lockedPicker("Style", id: CharacterParams.hairStyleID, value: \.hair.style, options: CharacterHair.styles.map { ($0.id, $0.title) })
+            lockedPicker("Beard", id: CharacterParams.beardID, value: \.hair.beard, options: CharacterHair.beards.map { ($0.id, $0.title) })
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+
+    private func lockedPicker(_ title: String, id: String, value: WritableKeyPath<CharacterDNA, String>,
+                              options: [(id: String, title: String)]) -> some View {
+        HStack(spacing: 4) {
+            Button { model.toggleLock(id) } label: {
+                Image(systemName: model.isLocked(id) ? "lock.fill" : "lock.open").foregroundColor(model.isLocked(id) ? .accentColor : .secondary)
+            }
+            .buttonStyle(.borderless).frame(width: 16).help("Locked: Randomize leaves it alone")
+            Picker(title, selection: Binding(get: { model.dna[keyPath: value] }, set: { v in var d = model.dna; d[keyPath: value] = v; model.dna = d })) {
+                ForEach(options, id: \.id) { Text($0.title).tag($0.id) }
+            }
+        }
     }
 
     private var workshopControls: some View {

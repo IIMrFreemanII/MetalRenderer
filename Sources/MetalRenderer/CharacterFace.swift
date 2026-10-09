@@ -60,6 +60,9 @@ final class FaceRig {
         return (ranges, lists.flatMap { $0 })
     }()
 
+    /// Vertex `v`'s group (0 for a vertex not of the base: a hair cap's, `Level.source` UInt32.max).
+    @inline(__always) func group(_ v: Int) -> UInt32 { v < groups.count ? groups[v] : 0 }
+
     /// An eye's centre (and how big it is against the base's) in a mesh made from the base: from its poles, which
     /// any reshaping of the head moves with it.
     func eye(_ e: Int, in positions: [SIMD3<Float>]) -> (centre: SIMD3<Float>, scale: Float) {
@@ -246,7 +249,7 @@ final class FaceRig {
         var back: [Int32]? = nil
         if let source {   // full-detail vertex -> this level's
             var map = [Int32](repeating: -1, count: groups.count)
-            for (v, s) in source.enumerated() { map[Int(s)] = Int32(v) }
+            for (v, s) in source.enumerated() where Int(s) < groups.count { map[Int(s)] = Int32(v) }
             back = map
         }
         for (k, t) in targets.enumerated() where k < state.weights.count && state.weights[k] != 0 {
@@ -259,7 +262,7 @@ final class FaceRig {
             }
         }
         for v in positions.indices {
-            let g = groups[source.map { Int($0[v]) } ?? v]
+            let g = group(source.map { Int($0[v]) } ?? v)
             normals[v] = simd_normalize(normals[v])
             guard g & 0xFF != 0 else { continue }
             let turn = state.turns[Int(g & 0xFF) - 1]

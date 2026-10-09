@@ -96,6 +96,7 @@ extension CrowdBodies: EnvNamed {}
 extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)".lowercased() } }
 extension CharacterSceneSettings.View: EnvNamed {}
 extension FaceExpression: EnvNamed {}
+extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -386,6 +387,7 @@ enum SettingsTable {
             S.popup("View", \.scene.characterWorkshop.view, titled(\.title)).env(.scene, "cview").when(characters),
             S.popup("Face", \.scene.characterWorkshop.expression, titled(\.title)).env(.scene, "expr").when(characters),
             S.check("Eyes on the camera", \.scene.characterWorkshop.lookAt).env(.scene, "gaze").when(characters),
+            S.popup("Hair", \.scene.characterWorkshop.hair, titled(\.title)).env(.scene, "hairs").when(characters),
             S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
                 .env(.scene, "bodies").when { $0.scene.kind == .physics },
             S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
