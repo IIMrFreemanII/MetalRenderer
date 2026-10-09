@@ -530,12 +530,14 @@ struct PTMaterial {
     float  f90;
     float  a;       // GGX alpha
     float  pSpec;   // probability of sampling the specular lobe (0: diffuse only)
+    HairPoint skin; // skin (Hair.metal): its diffuse wrapped, light through its thin parts
 };
 
 inline PTMaterial ptMaterial(thread const Surface& h, float NoV, bool specular) {
     PTMaterial m;
     float roughness = max(h.roughness, MIN_ROUGHNESS);
     m.albedo = h.albedo; m.f0 = h.f0; m.f90 = h.specular; m.a = roughness * roughness; m.pSpec = 0.0f;
+    m.skin = SKIN && h.skin > 0.0f ? skinPoint(h.skin) : noHair();
     if (specular && h.specular > 0.0f && !h.backlit) {   // (a leaf lit from behind: the light through it is diffuse)
         float ls = luminance(specularAlbedo(m.f0, m.f90, roughness, NoV)), ld = luminance(m.albedo);
         m.pSpec = ls + ld > 0.0f ? ls / (ls + ld) : 0.0f;
@@ -547,8 +549,14 @@ inline PTMaterial ptMaterial(thread const Surface& h, float NoV, bool specular) 
 inline void ptEval(thread const PTMaterial& m, float3 n, float3 v, float3 l, thread float3& fd, thread float3& fs, thread float& pdf) {
     float NoL = dot(n, l);
     fd = float3(0.0f); fs = float3(0.0f); pdf = 0.0f;
+    if (SKIN && m.skin.skin > 0.0f) {
+        // Skin as the frame's passes light it (skinUnshadowed): wrapped past the edge, and through a thin part.
+        float3 w = SKIN_WRAP * m.skin.skin;
+        fd = m.albedo * (max(NoL + w, 0.0f) / (1.0f + w)) / M_PI_F;
+        if (m.skin.thin && NoL < 0.0f) fd += m.albedo * SKIN_TRANSMIT * (m.skin.skin * -NoL) / M_PI_F;
+    }
     if (NoL <= 0.0f) return;
-    fd = m.albedo * (NoL / M_PI_F);
+    if (!SKIN || m.skin.skin <= 0.0f) fd = m.albedo * (NoL / M_PI_F);
     pdf = (1.0f - m.pSpec) * NoL / M_PI_F;
     if (m.pSpec > 0.0f) {
         float NoV = max(dot(n, v), 1e-4f);
@@ -813,13 +821,15 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 float2 r = ptRandom(smp, bounce, PT_SLOT_LIGHT, rng);
                 if (li < u.lightCount && pick > 0.0f) {
                     PTLightSample ls = ptSampleLight(lights[li], p, r, s, u.flags);
-                    if (ls.pdf > 0.0f && dot(ls.dir, ng) > 0.0f) {
+                    if (ls.pdf > 0.0f && (dot(ls.dir, ng) > 0.0f || (SKIN && mat.skin.skin > 0.0f))) {
                         float3 fd, fs;
                         float pdfB;
                         ptEval(mat, n, v, ls.dir, fd, fs, pdfB);
                         float3 f = ls.mesh ? fd : fd + fs;
                         if (any(f > 0.0f)) {
-                            float3 T = ptTransmittance(p, p + ls.dir * ls.dist, accel, s, fogOn, fog, rng);
+                            // (Skin past its edge: the shadow ray from a little out, or past a thin part: skinShadowOrigin.)
+                            float3 from = SKIN && mat.skin.skin > 0.0f ? skinShadowOrigin(mat.skin, h.position, n, p, p + ls.dir) : p;
+                            float3 T = ptTransmittance(from, p + ls.dir * ls.dist, accel, s, fogOn, fog, rng);
                             if (any(T > 0.0f)) {
                                 float lightPdf = pick * ls.pdf;
                                 bool found = lightHits && !ls.delta && !ls.mesh && (!treeLights || lightType(lights[li]) == LIGHT_SUN

@@ -139,6 +139,7 @@ struct Surface {
     bool   hair;          // a strand (HAIR_CURVES) whose material is hair (Material.params.z < 0): Hair.metal lights it
     float3 tangent;       // a strand's direction there
     float  hairH;         // where across the strand the ray met it, -1...1 (Hair.metal's h)
+    float  skin;          // skin (Material.params.w < 0): its strength, 0...1, + 2 where it is thin (ears): Hair.metal
 };
 
 // Where across a strand along `tangent` its normal `n` is, seen from `view` (pbrt's h: in the strand's frame x =
@@ -355,6 +356,7 @@ inline void surfaceMaterial(thread Surface& sf, Material mat) {
     sf.roughness = mat.emission.a;
     sf.specular = mat.params.x;
     sf.lightEmitter = mat.params.z > 0.0f;
+    sf.skin = max(-mat.params.w, 0.0f);
 }
 
 // Metallic-roughness, once the textures are in: metals reflect their base colour, dielectrics 4% (x weight).
@@ -380,6 +382,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     sf.hair = false;
     sf.tangent = float3(0.0f);
     sf.hairH = 0.0f;
+    sf.skin = 0.0f;
     if (!res.hit) return sf;
 
     uint id = res.instance;

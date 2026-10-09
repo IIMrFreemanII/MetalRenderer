@@ -58,7 +58,8 @@ struct Material {
     float4 emission;    // rgb = emitted radiance, a = roughness
     float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
                         // z = 1: its emission is sampled as an emissive-mesh light,
-                        // w = translucency (leaves): this share of them is lit from behind (traceSurface)
+                        // w = translucency (leaves): this share of them is lit from behind (traceSurface);
+                        //     < 0: skin, -w its strength (0...1), + 2 where it is thin (Hair.metal skinUnshadowed)
     uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
 };
 
@@ -157,6 +158,9 @@ constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
 constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
 // Bit 18 = LIQUID: some instances are a liquid's surface (MASK_LIQUID), which camera rays are bent through (liquidKernel).
 constant bool LIQUID = (LIGHT_SPEC & 0x00040000u) != 0;
+// Bit 17 = SKIN: some materials are skin (Material.params.w < 0), lit wrapped and through thin parts (Hair.metal
+// skinUnshadowed); without it the lights' code is what it was before skin (0.3 ms of the crowd's trace on an M1 Max).
+constant bool SKIN = (LIGHT_SPEC & 0x00020000u) != 0;
 constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;

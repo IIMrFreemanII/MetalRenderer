@@ -21,6 +21,7 @@ struct CharacterDNA: Codable, Equatable {
     /// Bone group length offsets by name (CharacterParams.boneGroups), -1...1; absent = 0.
     var bones: [String: Float] = [:]
     var look = Look()
+    var hair = Hair()
 
     struct Macro: Codable, Equatable {
         /// 0 = male ... 1 = female.
@@ -42,6 +43,28 @@ struct CharacterDNA: Codable, Equatable {
         var melanin: Float = 0.3
         var redness: Float = 0.35
         var roughness: Float = 0.5
+        /// The irises: 0 = dark brown ... 0.4 hazel ... 0.65 green ... 1 = light blue.
+        var eyes: Float = 0.2
+        /// The skin's marks (SkinTextures), each 0...1: freckles; makeup on the cheeks, the eyelids and the lips.
+        var freckles: Float = 0
+        var blush: Float = 0
+        var eyeShadow: Float = 0
+        var lipstick: Float = 0
+        /// The hair's colour: how dark (eumelanin, 0 = platinum ... 1 = black), how red (pheomelanin), and how grey
+        /// beyond what age greys it.
+        var hairMelanin: Float = 0.6
+        var hairRed: Float = 0.15
+        var grey: Float = 0
+    }
+
+    /// What grows (CharacterHair): the hair's style (CharacterHair.styles' ids, "bald" none), how much longer or
+    /// shorter than the style's (-1...1), how curly (0...1); the beard (CharacterHair.beards' ids); the brows' density.
+    struct Hair: Codable, Equatable {
+        var style = "short"
+        var length: Float = 0
+        var curl: Float = 0
+        var beard = "none"
+        var brows: Float = 0.6
     }
 
     /// The morph offset `name` (0 if unset).
@@ -63,6 +86,13 @@ struct CharacterDNA: Codable, Equatable {
         d.look.melanin = min(max(d.look.melanin, 0), 1)
         d.look.redness = min(max(d.look.redness, 0), 1)
         d.look.roughness = min(max(d.look.roughness, 0.2), 0.9)
+        d.look.eyes = min(max(d.look.eyes, 0), 1)
+        for k in [\Look.freckles, \.blush, \.eyeShadow, \.lipstick, \.hairMelanin, \.hairRed, \.grey] {
+            d.look[keyPath: k] = min(max(d.look[keyPath: k], 0), 1)
+        }
+        d.hair.length = min(max(d.hair.length, -1), 1)
+        d.hair.curl = min(max(d.hair.curl, 0), 1)
+        d.hair.brows = min(max(d.hair.brows, 0), 1)
         return d
     }
 
@@ -80,7 +110,7 @@ struct CharacterDNA: Codable, Equatable {
 
     // MARK: Decoding with defaults
 
-    private enum CodingKeys: String, CodingKey { case format, id, name, basedOn, seed, macro, morphs, bones, look }
+    private enum CodingKeys: String, CodingKey { case format, id, name, basedOn, seed, macro, morphs, bones, look, hair }
 
     init() {}
 
@@ -96,6 +126,7 @@ struct CharacterDNA: Codable, Equatable {
         morphs = try c.decodeIfPresent([String: Float].self, forKey: .morphs) ?? [:]
         bones = try c.decodeIfPresent([String: Float].self, forKey: .bones) ?? [:]
         look = try c.decodeIfPresent(Look.self, forKey: .look) ?? d.look
+        hair = try c.decodeIfPresent(Hair.self, forKey: .hair) ?? d.hair
     }
 }
 
@@ -115,7 +146,9 @@ extension CharacterDNA.Macro {
 }
 
 extension CharacterDNA.Look {
-    private enum CodingKeys: String, CodingKey { case melanin, redness, roughness }
+    private enum CodingKeys: String, CodingKey {
+        case melanin, redness, roughness, eyes, freckles, blush, eyeShadow, lipstick, hairMelanin, hairRed, grey
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -123,5 +156,27 @@ extension CharacterDNA.Look {
         melanin = try c.decodeIfPresent(Float.self, forKey: .melanin) ?? d.melanin
         redness = try c.decodeIfPresent(Float.self, forKey: .redness) ?? d.redness
         roughness = try c.decodeIfPresent(Float.self, forKey: .roughness) ?? d.roughness
+        eyes = try c.decodeIfPresent(Float.self, forKey: .eyes) ?? d.eyes
+        freckles = try c.decodeIfPresent(Float.self, forKey: .freckles) ?? d.freckles
+        blush = try c.decodeIfPresent(Float.self, forKey: .blush) ?? d.blush
+        eyeShadow = try c.decodeIfPresent(Float.self, forKey: .eyeShadow) ?? d.eyeShadow
+        lipstick = try c.decodeIfPresent(Float.self, forKey: .lipstick) ?? d.lipstick
+        hairMelanin = try c.decodeIfPresent(Float.self, forKey: .hairMelanin) ?? d.hairMelanin
+        hairRed = try c.decodeIfPresent(Float.self, forKey: .hairRed) ?? d.hairRed
+        grey = try c.decodeIfPresent(Float.self, forKey: .grey) ?? d.grey
+    }
+}
+
+extension CharacterDNA.Hair {
+    private enum CodingKeys: String, CodingKey { case style, length, curl, beard, brows }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CharacterDNA.Hair()
+        style = try c.decodeIfPresent(String.self, forKey: .style) ?? d.style
+        length = try c.decodeIfPresent(Float.self, forKey: .length) ?? d.length
+        curl = try c.decodeIfPresent(Float.self, forKey: .curl) ?? d.curl
+        beard = try c.decodeIfPresent(String.self, forKey: .beard) ?? d.beard
+        brows = try c.decodeIfPresent(Float.self, forKey: .brows) ?? d.brows
     }
 }

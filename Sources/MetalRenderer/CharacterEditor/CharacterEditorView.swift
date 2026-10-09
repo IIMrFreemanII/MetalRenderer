@@ -20,10 +20,18 @@ struct CharacterEditorView: View {
                     case .body:
                         CharacterGroup(title: "Body", groups: [.macro], table: CharacterParams.macro)
                         CharacterGroup(title: "Shape", groups: [.shape], table: CharacterParams.shape)
+                    case .face:
+                        expressions
+                        ForEach(CharacterParams.faceSections, id: \.self) { section in
+                            CharacterGroup(title: section, groups: [.face], table: CharacterParams.face.filter { $0.section == section },
+                                           ownSliders: true)
+                        }
                     case .proportions:
                         CharacterGroup(title: "Bone lengths and sizes", groups: [.bones], table: CharacterParams.bones)
                     case .skin:
                         CharacterGroup(title: "Skin", groups: [.skin], table: CharacterParams.skin)
+                        hairStyle
+                        CharacterGroup(title: "Hair colour and cut", groups: [.hair], table: CharacterParams.hair)
                     }
                 }
                 .padding(10)
@@ -120,6 +128,60 @@ struct CharacterEditorView: View {
         .font(.system(size: 11))
     }
 
+    /// The Face tab's preview: what the workshop's faces do, whether their eyes follow the camera, and the close-up.
+    private var expressions: some View {
+        let w = model.scene.characterWorkshop
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Picker("Expression", selection: Binding(get: { w.expression }, set: { e in model.workshop { $0.expression = e } })) {
+                    ForEach(FaceExpression.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .frame(width: 230)
+                Spacer()
+                Button("Close-up") { model.workshop { $0.view = .face }; model.frame() }.disabled(!model.inWorkshop || w.view == .face)
+                    .help("The workshop's camera on the face")
+            }
+            Toggle("Eyes follow the camera", isOn: Binding(get: { w.lookAt }, set: { on in model.workshop { $0.lookAt = on } }))
+            Text("Every face blinks; each slider moves both sides alike.").font(.system(size: 10)).foregroundColor(.secondary)
+        }
+        .disabled(!model.inWorkshop)
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+
+    /// The hair's style and the beard (CharacterHair's lists), each with a lock, and how the workshop draws hair.
+    private var hairStyle: some View {
+        let w = model.scene.characterWorkshop
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Hair").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
+                Spacer()
+                Picker("", selection: Binding(get: { w.hair }, set: { m in model.workshop { $0.hair = m } })) {
+                    ForEach(CharacterSceneSettings.HairMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 190).disabled(!model.inWorkshop)
+                .help("Strands (each hair), the caps crowds have, or none")
+            }
+            lockedPicker("Style", id: CharacterParams.hairStyleID, value: \.hair.style, options: CharacterHair.styles.map { ($0.id, $0.title) })
+            lockedPicker("Beard", id: CharacterParams.beardID, value: \.hair.beard, options: CharacterHair.beards.map { ($0.id, $0.title) })
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+
+    private func lockedPicker(_ title: String, id: String, value: WritableKeyPath<CharacterDNA, String>,
+                              options: [(id: String, title: String)]) -> some View {
+        HStack(spacing: 4) {
+            Button { model.toggleLock(id) } label: {
+                Image(systemName: model.isLocked(id) ? "lock.fill" : "lock.open").foregroundColor(model.isLocked(id) ? .accentColor : .secondary)
+            }
+            .buttonStyle(.borderless).frame(width: 16).help("Locked: Randomize leaves it alone")
+            Picker(title, selection: Binding(get: { model.dna[keyPath: value] }, set: { v in var d = model.dna; d[keyPath: value] = v; model.dna = d })) {
+                ForEach(options, id: \.id) { Text($0.title).tag($0.id) }
+            }
+        }
+    }
+
     private var workshopControls: some View {
         let w = model.scene.characterWorkshop
         return VStack(alignment: .leading, spacing: 6) {
@@ -188,6 +250,8 @@ struct CharacterGroup: View {
     let title: String
     let groups: [CharacterParam.Group]
     let table: [CharacterParam]
+    /// Its dice draws only its own sliders (a section of the face), not its groups' all.
+    var ownSliders = false
     @EnvironmentObject var model: CharacterEditorModel
 
     var body: some View {
@@ -196,7 +260,7 @@ struct CharacterGroup: View {
             HStack {
                 Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
                 Spacer()
-                Button { model.randomize(groups) } label: { Image(systemName: "dice") }
+                Button { if ownSliders { model.randomize(only: table.map(\.id)) } else { model.randomize(groups) } } label: { Image(systemName: "dice") }
                     .buttonStyle(.borderless).help("These sliders at random (the unlocked ones)")
             }
             ForEach(table.indices, id: \.self) { i in

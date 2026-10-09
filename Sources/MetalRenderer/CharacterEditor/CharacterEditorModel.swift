@@ -24,7 +24,7 @@ extension RendererController: CharacterEditorHost {
 /// at most 30 times a second while a slider is dragged; unsaved edits are a draft (CharacterStore) until saved or
 /// reverted; one undo step per edit, a drag being one edit.
 final class CharacterEditorModel: ObservableObject {
-    enum Tab: String, CaseIterable { case body = "Body", proportions = "Proportions", skin = "Skin" }
+    enum Tab: String, CaseIterable { case body = "Body", face = "Face", proportions = "Proportions", skin = "Skin & Hair" }
 
     let controller: CharacterEditorHost
     let undo = UndoManager()
@@ -205,6 +205,12 @@ final class CharacterEditorModel: ObservableObject {
     /// The unlocked sliders of `groups` drawn again at random.
     func randomize(_ groups: [CharacterParam.Group]) {
         dna = CharacterParams.randomized(dna, groups: groups, locked: locked, seed: UInt64.random(in: 1...UInt64.max))
+    }
+
+    /// Just these sliders (CharacterParam.id) drawn again at random, the unlocked ones: one part of the face.
+    func randomize(only ids: [String]) {
+        dna = CharacterParams.randomized(dna, groups: CharacterParam.Group.allCases, only: Set(ids), locked: locked,
+                                         seed: UInt64.random(in: 1...UInt64.max))
     }
 
     /// Five variations side by side in the workshop: pick one with `pick`.

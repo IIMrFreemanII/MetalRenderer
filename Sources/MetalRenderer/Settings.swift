@@ -779,6 +779,11 @@ struct CharacterSceneSettings: Equatable, Codable {
     /// Pose `clip`: the clip's name (any clip of the character library).
     var clip = ""
     var view = View.body
+    /// What the faces do (blinks always), and whether their eyes follow the camera.
+    var expression = FaceExpression.neutral
+    var lookAt = true
+    /// How hair is drawn (CharacterHair): strands, the caps crowds have, or none.
+    var hair = HairMode.strands
     /// Registry keys (CharacterCatalog.register), session state: the editor's variations of the character to show
     /// beside it (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
     var mutants = ""
@@ -800,6 +805,10 @@ struct CharacterSceneSettings: Equatable, Codable {
         case body           // the whole character
         case face           // its head, close
         var title: String { ["Body", "Face"][rawValue] }
+    }
+    enum HairMode: Int, CaseIterable, Codable {
+        case strands, caps, none
+        var title: String { ["Strands", "Caps", "None"][rawValue] }
     }
 }
 

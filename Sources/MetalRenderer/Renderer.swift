@@ -965,7 +965,8 @@ final class Renderer: NSObject {
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
-            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+            let curves = crowd.hair.map { (first: scene.meshes[$0.mesh].vertexOffset, previous: scene.meshes[$0.mesh].prevOffset) }
+            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight, curves: curves)
         }
         // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
         // from the GPU's buffers).
@@ -1666,7 +1667,15 @@ final class Renderer: NSObject {
             walk(dt)
             return
         }
-        scene.interiorControls?.advance(dt, walker: nil)
+        // (A benchmark's walking camera: a body for the doors and the furniture.)
+        let body = benchmark?.current.body == true ? camera.position - SIMD3(0, Walker.eyeStanding, 0) : nil
+        scene.interiorControls?.advance(dt, walker: body)
+        if let body {
+            if let last = benchmarkBody, dt > 0 {
+                scene.interiorControls?.push(scene.physics, feet: body, velocity: (body - last) / dt, height: Walker.standing)
+            }
+            benchmarkBody = body
+        }
         var move = SIMD3<Float>(repeating: 0)
         let forward = camera.forward, right = camera.right
         if heldKeys.contains("w") { move += forward }
@@ -2089,6 +2098,7 @@ final class Renderer: NSObject {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
             if let track = benchmark.current.track { camera = track.camera(at: benchmark.trackTime) }
+            benchmarkActs(benchmark)
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
             if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
@@ -2102,6 +2112,7 @@ final class Renderer: NSObject {
         moveGrab()
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
+        scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }
@@ -2572,7 +2583,7 @@ final class Renderer: NSObject {
         //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
-                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
+                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], hair: pipelines[.crowdHair], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
@@ -2914,6 +2925,10 @@ final class Renderer: NSObject {
             let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)
             print(String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
                          crowdSkinner.crowd.slots.count, skin.position, skin.normal))
+            if !crowdSkinner.crowd.hair.isEmpty {
+                print(String(format: "  Hair check: %d grooms, GPU against CPU within %.2g m", crowdSkinner.crowd.hair.count,
+                             crowdSkinner.checkHair(positions: positionBuffer)))
+            }
         }
     }
 
@@ -3648,7 +3663,32 @@ final class Renderer: NSObject {
 
     // MARK: - Benchmark
 
+    /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
+    private func benchmarkActs(_ benchmark: Benchmark) {
+        let c = benchmark.current
+        guard let controls = scene.interiorControls else { return }
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
+            benchmarkFired.insert(k)
+            switch e.event {
+            case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
+            case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
+            case .flashlight(let on): controls.flashlight.on = on
+            }
+        }
+        if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
+            camera.position.y += controls.lifts[n].y - base
+        }
+        if controls.flashlight.on {
+            controls.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            controls.flashlight.direction = camera.forward
+        }
+    }
+    private var benchmarkFired = Set<Int>()
+    private var benchmarkBody: SIMD3<Float>?
+
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
+        benchmarkFired = []
+        benchmarkBody = nil
         settings = c.resolvedSettings()
         animTime = c.startTime
         previousAnimTime = c.startTime

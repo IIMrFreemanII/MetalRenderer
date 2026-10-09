@@ -20,7 +20,7 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "plants": plants, "buildings": buildings, "characters": characters, "charactercrowd": characterCrowd,
+        "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo, "characters": characters, "charactercrowd": characterCrowd,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -377,6 +377,14 @@ extension Benchmark {
 
     /// The open world with the building nearest where it starts walkable: from inside it (its tile without its shell).
     private static func worldInterior(_ inside: (BuildingSpec, RoomType, Int, Bool, float4x4) -> Camera) -> [Config] {
+        guard let (scene, spec, transform) = worldInteriorLot() else { return [] }
+        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            .from(inside(spec, .living, 1, false, transform))]
+    }
+
+    /// The open world's scene with the building (3 floors or more) nearest where the world starts walkable, that
+    /// building's spec (with its interior), and its lot's place in the scene.
+    static func worldInteriorLot() -> (scene: SceneSettings, spec: BuildingSpec, transform: float4x4)? {
         var scene = SceneSettings(kind: .world)
         let world = World(seed: UInt64(max(scene.seed, 0)))
         let side = Double(World.tileSize), begin = world.start.place
@@ -396,14 +404,12 @@ extension Benchmark {
                 }
             }
         }
-        guard let (_, ref, lot, city) = best else { return [] }
+        guard let (_, ref, lot, city) = best else { return nil }
         scene.interior = ref.key
         var spec = BuildingSpec(lot: lot, city: scene.city, night: true, catalog: .builtIn)
         spec.interior = true
         let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
-        let transform = translate([c.x, city.level, c.y]) * lot.transform
-        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
-            .from(inside(spec, .living, 1, false, transform))]
+        return (scene, spec, translate([c.x, city.level, c.y]) * lot.transform)
     }
 
     /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:
@@ -416,12 +422,42 @@ extension Benchmark {
             var scene = SceneSettings(kind: .characters)
             scene.characterCatalog = "builtin"
             change(&scene.characterWorkshop)
-            return Config("characters \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            // Close-ups at full resolution (pores and wrinkles are a texel or two of an upscaled frame).
+            let close = scene.characterWorkshop.view == .face
+            return Config("characters \(name)", scale: close ? 1.5 : 0.5, upscale: close ? 0 : 3, gi: .radianceCascades, scene: scene)
+                .still().frames(30)
+        }
+        // A built-in changed (hair styles, beards, marks the built-ins don't have), its face close.
+        func styled(_ name: String, from id: String, _ change: (inout CharacterDNA) -> Void) -> Config {
+            var d = BuiltInCharacters.all.first { $0.id == id }!
+            change(&d)
+            var c = shown("hair \(name)") { $0.character = id; $0.view = .face }
+            c.settings.scene.characterCatalog = CharacterCatalog.register(CharacterCatalog(characters: [d]))
+            return c
         }
         return BuiltInCharacters.all.map { def in shown(def.id) { $0.character = def.id } } + [
             shown("man face") { $0.view = .face },
             shown("woman face") { $0.character = "woman"; $0.view = .face },
+            shown("elder face") { $0.character = "elder"; $0.view = .face },
+            shown("heavy face") { $0.character = "heavy"; $0.view = .face },
+            shown("man smiling") { $0.view = .face; $0.expression = .smile },
+            shown("man frowning") { $0.view = .face; $0.expression = .frown },
+            shown("man surprised") { $0.view = .face; $0.expression = .surprise },
+            shown("man talking") { $0.view = .face; $0.expression = .talk },
+            viewed(shown("man face three quarters") { $0.view = .face }, look(from: [0.3, 1.7, 0.42], at: [0, 1.66, 0.04])),
+            viewed(shown("man face side") { $0.view = .face }, look(from: [0.5, 1.68, 0.05], at: [0, 1.665, 0.03])),
+            viewed(shown("man ear") { $0.view = .face }, look(from: [0.3, 1.7, -0.25], at: [0.07, 1.67, -0.01])),
+            viewed(shown("woman face three quarters") { $0.character = "woman"; $0.view = .face }, look(from: [-0.3, 1.62, 0.4], at: [0, 1.58, 0.04])),
             shown("everyone") { $0.layout = .lineup },
+            shown("everyone caps") { $0.layout = .lineup; $0.hair = .caps },
+            styled("long", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+            styled("slicked stubble", from: "man") { $0.hair.style = "slicked"; $0.hair.beard = "stubble" },
+            styled("goatee", from: "athlete") { $0.hair.beard = "goatee" },
+            styled("moustache grey", from: "man") { $0.hair.style = "sidePart"; $0.hair.beard = "moustache"; $0.macro.age = 62 },
+            styled("curly red freckles", from: "woman") { $0.hair.style = "curly"; $0.look.hairRed = 0.9; $0.look.hairMelanin = 0.35; $0.look.freckles = 1 },
+            viewed(styled("long behind", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+                   look(from: [0.35, 1.55, -0.6], at: [0, 1.45, 0])),
+            shown("woman face caps") { $0.character = "woman"; $0.view = .face; $0.hair = .caps },
             shown("man t pose") { $0.pose = .tPose },
             shown("man walking") { $0.pose = .walk },
             shown("woman dancing") { $0.character = "woman"; $0.pose = .clip; $0.clip = "Hip Hop Dancing" },

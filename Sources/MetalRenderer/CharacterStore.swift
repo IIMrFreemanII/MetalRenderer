@@ -161,21 +161,28 @@ enum CharacterStore {
 /// The characters that come with the app: a few people far enough apart to show what the sliders reach.
 enum BuiltInCharacters {
     static let all: [CharacterDNA] = [
-        make("man", "Man", sex: 0, age: 32),
-        make("woman", "Woman", sex: 1, age: 30, melanin: 0.25),
-        make("athlete", "Athlete", sex: 0, age: 26, weight: -0.3, muscle: 0.9, height: 0.4, melanin: 0.55),
-        make("heavy", "Heavy man", sex: 0, age: 48, weight: 0.9, muscle: -0.1, height: -0.2, melanin: 0.2),
-        make("elder", "Elder", sex: 0.15, age: 78, weight: 0.1, muscle: -0.5, height: -0.4, melanin: 0.12),
-        make("dancer", "Dancer", sex: 1, age: 24, weight: -0.4, muscle: 0.35, height: 0.3, proportions: 0.6, melanin: 0.85),
+        make("man", "Man", sex: 0, age: 32, hair: "short", hairColour: 0.62),
+        make("woman", "Woman", sex: 1, age: 30, melanin: 0.25, hair: "bob", hairColour: 0.45) { $0.look.lipstick = 0.2; $0.hair.brows = 0.45 },
+        make("athlete", "Athlete", sex: 0, age: 26, weight: -0.3, muscle: 0.9, height: 0.4, melanin: 0.55, hair: "buzz", hairColour: 0.95),
+        make("heavy", "Heavy man", sex: 0, age: 48, weight: 0.9, muscle: -0.1, height: -0.2, melanin: 0.2, hair: "sidePart", hairColour: 0.5) {
+            $0.hair.beard = "full"; $0.look.hairRed = 0.35
+        },
+        make("elder", "Elder", sex: 0.15, age: 78, weight: 0.1, muscle: -0.5, height: -0.4, melanin: 0.12, hair: "receding", hairColour: 0.5),
+        make("dancer", "Dancer", sex: 1, age: 24, weight: -0.4, muscle: 0.35, height: 0.3, proportions: 0.6, melanin: 0.85, hair: "curly",
+             hairColour: 0.97) { $0.hair.brows = 0.5 },
     ]
 
     static func make(_ id: String, _ name: String, sex: Float, age: Float, weight: Float = 0, muscle: Float = 0, height: Float = 0,
-                     proportions: Float = 0, melanin: Float = 0.3) -> CharacterDNA {
+                     proportions: Float = 0, melanin: Float = 0.3, hair: String = "short", hairColour: Float = 0.6,
+                     _ change: (inout CharacterDNA) -> Void = { _ in }) -> CharacterDNA {
         var d = CharacterDNA()
         d.id = id
         d.name = name
         d.macro = CharacterDNA.Macro(sex: sex, age: age, weight: weight, muscle: muscle, height: height, proportions: proportions)
         d.look.melanin = melanin
+        d.look.hairMelanin = hairColour
+        d.hair.style = hair
+        change(&d)
         return d
     }
 }

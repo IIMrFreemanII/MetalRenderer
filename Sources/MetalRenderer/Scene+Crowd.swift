@@ -12,7 +12,7 @@ extension Scene {
         let dna = CharacterCatalog.resolve(key).characters
         var built = [SkinnedCharacter](repeating: kit.base.character, count: dna.count)
         built.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: dna.count) { out[$0] = CharacterBuilder.build(dna[$0], kit: kit) }
+            DispatchQueue.concurrentPerform(iterations: dna.count) { out[$0] = CharacterBuilder.build(dna[$0], kit: kit, cap: true) }
         }
         // The workshop's still poses aren't motions a crowd plays.
         let still = Set(CharacterKit.poseClips(kit.base.character).map(\.name))
@@ -57,6 +57,9 @@ extension Scene {
         let library = settings.crowdBodies == .generated ? Scene.generatedPeople(settings.characterCatalog) : CharacterLibrary.load()
         guard !library.characters.isEmpty else { return }
         let crowd = Crowd(characters: library.characters, poses: poses, level: detail)
+        if settings.crowdBodies == .generated, let kit = CharacterKit.shared() {
+            crowd.faces = library.characters.map { Crowd.Face(rig: kit.face, character: $0, expressive: false) }
+        }
         adopt(crowd)
         let states = crowd.liveStates
         guard !states.isEmpty else { return }
@@ -64,11 +67,17 @@ extension Scene {
         // Tints: each character in its own colour and a few others.
         let hues: [SIMD3<Float>] = [[0.75, 0.2, 0.15], [0.85, 0.6, 0.15], [0.2, 0.5, 0.25], [0.2, 0.3, 0.7], [0.55, 0.25, 0.6],
                                     [0.75, 0.75, 0.75], [0.12, 0.12, 0.14]]
-        let tints: [[Int]] = library.characters.map { c in
-            // Generated people in their own skin (shades of it, until they have clothes), mannequins in colours.
-            let colors = settings.crowdBodies == .generated ? (0...hues.count).map { c.color * (0.85 + 0.3 * Float($0) / Float(hues.count)) }
-                                                            : [c.color] + hues
-            return colors.map { addMaterial(albedo: $0) }
+        let people = settings.crowdBodies == .generated ? CharacterCatalog.resolve(settings.characterCatalog).characters : []
+        let tints: [[Int]] = library.characters.enumerated().map { k, c in
+            // Generated people in their own skin (shades of it, until they have clothes) and hair, mannequins in colours.
+            if settings.crowdBodies == .generated {
+                let hair = k < people.count ? CharacterHair.colour(people[k].look, age: people[k].macro.age) : SIMD3<Float>(0.08, 0.05, 0.03)
+                return (0...hues.count).map {
+                    addCharacterMaterials(CharacterDNA.Look(), skin: c.color * (0.85 + 0.3 * Float($0) / Float(hues.count)), glossy: false,
+                                          hair: hair)
+                }
+            }
+            return ([c.color] + hues).map { addMaterial(albedo: $0) }
         }
 
         // Rows: two in three walk or run, the rest stand.
