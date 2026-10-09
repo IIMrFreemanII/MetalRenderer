@@ -13,7 +13,7 @@ struct CharacterParam {
     var section = ""
 
     enum Group: String, CaseIterable {
-        case macro = "Body", shape = "Shape", face = "Face", bones = "Proportions", skin = "Skin"
+        case macro = "Body", shape = "Shape", face = "Face", bones = "Proportions", skin = "Skin", hair = "Hair"
     }
 }
 
@@ -63,9 +63,43 @@ enum CharacterParams {
         CharacterParam(id: "redness", group: .skin, param: .float("Redness", \.look.redness, 0...1, mutation: 0.08)),
         CharacterParam(id: "roughness", group: .skin, param: .float("Roughness", \.look.roughness, 0.2...0.9, mutation: 0.05)),
         CharacterParam(id: "eyes", group: .skin, param: .float("Eyes: brown … blue", \.look.eyes, 0...1, mutation: 0.05), spread: 1),
+        CharacterParam(id: "freckles", group: .skin, param: .float("Freckles", \.look.freckles, 0...1, mutation: 0.05), spread: 0.3),
+        CharacterParam(id: "blush", group: .skin, param: .float("Blush", \.look.blush, 0...1, mutation: 0.05), spread: 0.2),
+        CharacterParam(id: "eyeShadow", group: .skin, param: .float("Eye shadow", \.look.eyeShadow, 0...1, mutation: 0.05), spread: 0.2),
+        CharacterParam(id: "lipstick", group: .skin, param: .float("Lipstick", \.look.lipstick, 0...1, mutation: 0.05), spread: 0.2),
     ]
 
-    static let all: [CharacterParam] = macro + shape + face + bones + skin
+    /// The hair's colour and cut (its style and beard are picked from CharacterHair's lists, `randomHair`).
+    static let hair: [CharacterParam] = [
+        CharacterParam(id: "hairMelanin", group: .hair, param: .float("Platinum … black", \.look.hairMelanin, 0...1, mutation: 0.05), spread: 1),
+        CharacterParam(id: "hairRed", group: .hair, param: .float("Red", \.look.hairRed, 0...1, mutation: 0.05), spread: 0.5),
+        CharacterParam(id: "grey", group: .hair, param: .float("Grey", \.look.grey, 0...1, mutation: 0.05), spread: 0.2),
+        CharacterParam(id: "hairLength", group: .hair, param: .float("Shorter … longer", \.hair.length, -1...1, mutation: 0.1), spread: 0.5),
+        CharacterParam(id: "curl", group: .hair, param: .float("Curl", \.hair.curl, 0...1, mutation: 0.05), spread: 0.35),
+        CharacterParam(id: "brows", group: .hair, param: .float("Brows", \.hair.brows, 0...1, mutation: 0.05), spread: 0.4),
+    ]
+
+    static let all: [CharacterParam] = macro + shape + face + bones + skin + hair
+
+    /// Lockable as sliders are: the hair's style and the beard.
+    static let hairStyleID = "hairStyle", beardID = "beard"
+
+    /// A style and a beard for `dna` at random (a woman's styles for a woman, a beard for a man one time in two, a
+    /// receding or bald head for an older man more often), the locked ones kept.
+    static func randomHair(_ dna: CharacterDNA, locked: Set<String>, rng: inout SplitMix64) -> CharacterDNA {
+        var d = dna
+        let female = dna.macro.sex > 0.5, older = dna.macro.age > 45
+        if !locked.contains(hairStyleID) {
+            let choices = female ? ["bob", "long", "curly", "short", "sidePart", "slicked"]
+                : ["short", "buzz", "sidePart", "slicked", "curly", "short"] + (older ? ["receding", "receding", "bald"] : ["long"])
+            d.hair.style = choices[rng.int(choices.count)]
+        }
+        if !locked.contains(beardID) {
+            let beards = ["stubble", "short", "full", "goatee", "moustache"]
+            d.hair.beard = female || rng.next() < 0.5 ? "none" : beards[rng.int(beards.count)]
+        }
+        return d
+    }
 
     static func group(_ g: CharacterParam.Group) -> [CharacterParam] { all.filter { $0.group == g } }
 
@@ -83,6 +117,7 @@ enum CharacterParams {
             let v = p.spread >= 1 ? lo + Double(rng.next()) * (hi - lo) : (lo + hi) / 2 + u * p.spread * (hi - lo) / 2 * 1.7
             p.param.set(&d, p.param.clamp(v))
         }
+        if groups.contains(.hair) && only == nil { d = randomHair(d, locked: locked, rng: &rng) }
         return d.sanitized()
     }
 

@@ -373,7 +373,8 @@ struct CharacterBase {
         c.name = "Generated"
         c.positions = positions
         c.normals = normals
-        c.uvs = [SIMD2<Float>](repeating: .zero, count: positions.count)
+        // Where the skin is in its textures (SkinAtlas); the face's own meshes below have no textures.
+        c.uvs = positions.map { SkinAtlas.uv(face.local($0)) }
         c.indices = indices
         c.skin = skin
         c.coarser = []

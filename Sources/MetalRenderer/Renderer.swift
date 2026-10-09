@@ -965,7 +965,8 @@ final class Renderer: NSObject {
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
-            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+            let curves = crowd.hair.map { (first: scene.meshes[$0.mesh].vertexOffset, previous: scene.meshes[$0.mesh].prevOffset) }
+            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight, curves: curves)
         }
         // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
         // from the GPU's buffers).
@@ -2582,7 +2583,7 @@ final class Renderer: NSObject {
         //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
-                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
+                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], hair: pipelines[.crowdHair], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
@@ -2924,6 +2925,10 @@ final class Renderer: NSObject {
             let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)
             print(String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
                          crowdSkinner.crowd.slots.count, skin.position, skin.normal))
+            if !crowdSkinner.crowd.hair.isEmpty {
+                print(String(format: "  Hair check: %d grooms, GPU against CPU within %.2g m", crowdSkinner.crowd.hair.count,
+                             crowdSkinner.checkHair(positions: positionBuffer)))
+            }
         }
     }
 

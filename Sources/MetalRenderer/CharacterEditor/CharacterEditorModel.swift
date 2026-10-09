@@ -24,7 +24,7 @@ extension RendererController: CharacterEditorHost {
 /// at most 30 times a second while a slider is dragged; unsaved edits are a draft (CharacterStore) until saved or
 /// reverted; one undo step per edit, a drag being one edit.
 final class CharacterEditorModel: ObservableObject {
-    enum Tab: String, CaseIterable { case body = "Body", face = "Face", proportions = "Proportions", skin = "Skin" }
+    enum Tab: String, CaseIterable { case body = "Body", face = "Face", proportions = "Proportions", skin = "Skin & Hair" }
 
     let controller: CharacterEditorHost
     let undo = UndoManager()

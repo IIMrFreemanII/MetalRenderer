@@ -217,3 +217,69 @@ kernel void crowdSkinKernel(constant CrowdSkinParams& p          [[buffer(0)]],
     positions[current] = position;
     normals[current] = normalize(n);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Hair (CharacterHair.swift): a groom's strands on a pose slot, after its skinning. A strand's root is a point of one
+// of the slot's triangles; its control points are offsets from the root, turned by the head's bone (scalp hair) or by
+// the triangle's frame (brows, lashes, beard: they follow the expressions), scaled by the head's size. Written into the
+// groom's curve mesh with a phantom point before and after (a Catmull-Rom curve passes through the rest), last frame's
+// kept first (prevOffset). CharacterHair.place is the same on the CPU.
+// ---------------------------------------------------------------------------------------------
+
+struct CrowdHairParams {
+    uint firstStrand;     // the groom's first root (CrowdHairRoot) and offset (per strand `perStrand` of them)
+    uint strandCount;
+    uint perStrand;
+    uint firstOffset;
+    uint curveBase;       // the curve mesh's first control point
+    uint prevOffset;      // ...and last frame's, that far on
+    uint slotBase;        // the slot's first vertex (its skinned positions)
+    uint palette;         // the head joint's skinning matrix
+    float scale;          // the head's size against the base's
+    uint followsHead;
+    uint pad0, pad1;
+};
+static_assert(sizeof(CrowdHairParams) == 48, "CrowdHairParams: CrowdSkinner.HairParams");
+
+struct CrowdHairRoot {
+    uint4  vertices;      // the triangle's corners (the slot's vertices)
+    float4 bary;          // xy: the second and third corners' weights
+};
+
+kernel void crowdHairKernel(constant CrowdHairParams&   p        [[buffer(0)]],
+                            device const CrowdHairRoot* roots    [[buffer(1)]],
+                            device const float4*        offsets  [[buffer(2)]],
+                            device const JointMatrix*   palette  [[buffer(3)]],
+                            device float3*              positions [[buffer(4)]],
+                            uint s [[thread_position_in_grid]])
+{
+    if (s >= p.strandCount) return;
+    CrowdHairRoot r = roots[p.firstStrand + s];
+    float3 p0 = positions[p.slotBase + r.vertices.x], p1 = positions[p.slotBase + r.vertices.y], p2 = positions[p.slotBase + r.vertices.z];
+    float3 root = p0 * (1.0f - r.bary.x - r.bary.y) + p1 * r.bary.x + p2 * r.bary.y;
+    float3 fx, fy, fz;
+    if (p.followsHead != 0u) {
+        JointMatrix m = palette[p.palette];
+        fx = float3(m.row0.x, m.row1.x, m.row2.x);
+        fy = float3(m.row0.y, m.row1.y, m.row2.y);
+        fz = float3(m.row0.z, m.row1.z, m.row2.z);
+    } else {
+        fx = normalize(p1 - p0);
+        fz = normalize(cross(p1 - p0, p2 - p0));
+        fy = cross(fz, fx);
+    }
+    uint n = p.perStrand, base = p.curveBase + s * (n + 2);
+    for (uint i = 0; i < n + 2; ++i) positions[base + i + p.prevOffset] = positions[base + i];
+    float3 a = float3(0.0f), b = float3(0.0f), y = float3(0.0f), z = float3(0.0f);
+    for (uint i = 0; i < n; ++i) {
+        float3 o = offsets[p.firstOffset + s * n + i].xyz * p.scale;
+        float3 x = root + fx * o.x + fy * o.y + fz * o.z;
+        positions[base + 1 + i] = x;
+        if (i == 0) a = x;
+        if (i == 1) b = x;
+        if (i == n - 2) y = x;
+        if (i == n - 1) z = x;
+    }
+    positions[base] = 2.0f * a - b;
+    positions[base + n + 1] = 2.0f * z - y;
+}

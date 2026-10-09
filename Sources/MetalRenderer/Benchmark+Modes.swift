@@ -422,7 +422,18 @@ extension Benchmark {
             var scene = SceneSettings(kind: .characters)
             scene.characterCatalog = "builtin"
             change(&scene.characterWorkshop)
-            return Config("characters \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            // Close-ups at full resolution (pores and wrinkles are a texel or two of an upscaled frame).
+            let close = scene.characterWorkshop.view == .face
+            return Config("characters \(name)", scale: close ? 1.5 : 0.5, upscale: close ? 0 : 3, gi: .radianceCascades, scene: scene)
+                .still().frames(30)
+        }
+        // A built-in changed (hair styles, beards, marks the built-ins don't have), its face close.
+        func styled(_ name: String, from id: String, _ change: (inout CharacterDNA) -> Void) -> Config {
+            var d = BuiltInCharacters.all.first { $0.id == id }!
+            change(&d)
+            var c = shown("hair \(name)") { $0.character = id; $0.view = .face }
+            c.settings.scene.characterCatalog = CharacterCatalog.register(CharacterCatalog(characters: [d]))
+            return c
         }
         return BuiltInCharacters.all.map { def in shown(def.id) { $0.character = def.id } } + [
             shown("man face") { $0.view = .face },
@@ -438,6 +449,15 @@ extension Benchmark {
             viewed(shown("man ear") { $0.view = .face }, look(from: [0.3, 1.7, -0.25], at: [0.07, 1.67, -0.01])),
             viewed(shown("woman face three quarters") { $0.character = "woman"; $0.view = .face }, look(from: [-0.3, 1.62, 0.4], at: [0, 1.58, 0.04])),
             shown("everyone") { $0.layout = .lineup },
+            shown("everyone caps") { $0.layout = .lineup; $0.hair = .caps },
+            styled("long", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+            styled("slicked stubble", from: "man") { $0.hair.style = "slicked"; $0.hair.beard = "stubble" },
+            styled("goatee", from: "athlete") { $0.hair.beard = "goatee" },
+            styled("moustache grey", from: "man") { $0.hair.style = "sidePart"; $0.hair.beard = "moustache"; $0.macro.age = 62 },
+            styled("curly red freckles", from: "woman") { $0.hair.style = "curly"; $0.look.hairRed = 0.9; $0.look.hairMelanin = 0.35; $0.look.freckles = 1 },
+            viewed(styled("long behind", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+                   look(from: [0.35, 1.55, -0.6], at: [0, 1.45, 0])),
+            shown("woman face caps") { $0.character = "woman"; $0.view = .face; $0.hair = .caps },
             shown("man t pose") { $0.pose = .tPose },
             shown("man walking") { $0.pose = .walk },
             shown("woman dancing") { $0.character = "woman"; $0.pose = .clip; $0.clip = "Hip Hop Dancing" },

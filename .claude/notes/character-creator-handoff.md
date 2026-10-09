@@ -1,6 +1,7 @@
 # Character creator: handoff
 
-Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/implement-procedural-character-creation-rustling-teapot.md`
+Branches `claude/procedural-character-creation-cb1a51` (PR 1), `claude/character-face-cb1a51` (PR 2),
+`claude/character-skin-hair-cb1a51` (PR 3), each stacked on the one before. Plan: `~/.claude/plans/implement-procedural-character-creation-rustling-teapot.md`
 (on the M1 Max). README: "The character editor".
 
 ## Decisions (the user's)
@@ -26,8 +27,16 @@ Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/imp
    in `crowdSkinKernel` per slot; `FacePlayer` (blinks, expressions, speech, gaze); face sliders and the macros' face
    targets (`CharacterFaceMorphs.swift`); the Face tab (sections with their own dice, the expression preview, eyes on the
    camera) and the eye colour.
-3. Skin + hair: `GPUMaterial.params.w < 0` = skin (wrapped diffuse, red-shifted, thin-part transmission), `SkinTextures`,
-   strand hair on a kinematic head + caps for crowds, Skin & Hair tab. Needs UVs on the base (not made yet).
+3. **Skin + hair (PR 3, branch `claude/character-skin-hair-cb1a51`, stacked on PR 2's).** Skin: `GPUMaterial.params.w
+   < 0` (strength, + 2 thin), `skinUnshadowed`/`skinShadowOrigin` in `Shaders/Hair.metal` (wrapped diffuse per channel,
+   light through the ears and nostrils' wings from shadow rays started past them), carried through the G-buffer's
+   `geoNormal.w` (minus the code) to every lighting path and the path tracer; shader feature bit 17 `SKIN`. UVs
+   (`SkinAtlas`: angle round the head's axis folded at the face's middle, by height; body on the plain last row),
+   `SkinChart` (each texel's point of the head), `SkinTextures` (colour, roughness, normals from landmarks and DNA).
+   Hair: `CharacterHair` (9 styles, 5 beards, brows, lashes; guides + clumped children; roots bound to base
+   triangles), `crowdHairKernel` after the skinning (scalp by the head's palette, the rest by their triangle's frame),
+   `CharacterHairCap` (strand volume + scalp shell, meshed, per level, cached) for crowds and `hairs=caps`. Skin & Hair
+   tab (style and beard pickers with locks, colour and cut sliders, skin marks, hair mode).
 4. Clothes: garment shells bound to the body, fabrics, body hiding, `addClothMesh` with kinematic pins.
 5. NPC archetypes, 32 baked bodies with clip dedupe, city sidewalk crowd (opt-in), physics `characterBody=generated`.
 
@@ -46,7 +55,13 @@ Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/imp
   turns: gaze through the head joint's skinning matrix), the jaw opens by a morph (a rotation about the hinge, weighted).
 - **PR 2: no symmetry toggle.** Every face slider moves both sides alike; asymmetry can come as its own slider later.
 - **PR 2: the brows and lips are materials on the skin's triangles**, edges kept by locking the simplifier there.
-  Strand brows and texture-painted lips come with PR 3's UVs and skin textures.
+  PR 3: brows are strands in the workshop (the material only darkens the skin under them); crowds keep painted brows.
+- **PR 3: hair is not simulated.** The plan had a kinematic head body in the physics; strands are carried rigidly by the
+  head (scalp) and by their triangles (brows, lashes, beard), which follows every clip and expression and costs no
+  physics, but nothing swings. Long hair can go through the shoulders in some poses (it is kept off them only in the T pose).
+- **PR 3: one texture layout for the head only** (no body charts): the body's UVs are the textures' plain last row, so
+  the body has no pores or marks. The fold makes the textures symmetric (freckles and moles mirror).
+- **PR 3: lashes as strands** (not in the plan): roots on the lids' edge vertices, they blink with the lids.
 
 ## Traps found
 
@@ -66,10 +81,24 @@ Branch `claude/procedural-character-creation-cb1a51`. Plan: `~/.claude/plans/imp
 - An ear stood a millimetre off the head and `largestPart` dropped it: the concha's stalk ties it into the skull.
 - The face close-up's camera: `Camera.framing` keeps 20 cm round any box; the face view places its camera itself.
 - The kit's cache key doesn't include the build options: after changing the sculpt, delete
-  `Assets/.metalrenderer-cache/character-kit-*` (or bump `CharacterKit.version`).
+  `Assets/.metalrenderer-cache/character-kit-*` (or bump `CharacterKit.version`). Hair caps are cached there too
+  (`hair-cap-*`, keyed by style, kit version and base size; bump `CharacterHairCap.version` after changing the cap).
+- PR 3: the ear's bowl was carved through its shell, a pit into the head that showed as a bright dot in close-ups
+  since PR 2: the bowl now has a floor and a thicker root (the field probe along the ear's axis said solid; a ray cast
+  against the mesh found it).
+- PR 3: surface nets on a grid field fling vertices where the grid is flat (a cap vertex 90 m away made every ray in
+  the crowd 8x slower): the cap's gradient is floored (as MuscleAtlas's), its vertices clamped to its box, and a level
+  the simplifier throws a vertex off from is replaced by the level before.
+- PR 3: skin code in the lights cost every scene 0.27 ms of the crowd's trace even without skin: behind `SKIN` now.
+- PR 3: face close-ups in `-m characters` render at full resolution (1920x1200 native): at 640x400 upscaled, pores and
+  wrinkles are a texel or two and vanish.
 
 ## Open
 
 - A small flap at a woman's waist side in some dance frames (skinning, not geometry: the T pose is clean).
 - Breasts' upper edge creases a little; the trunk still reads a bit tubular for the man. Polish when the face is in.
-- Metal 4 and the M4 Max: not run. Run `METALRENDERER_BENCH=characters` and `charactercrowd` under both APIs there.
+- Metal 4 and the M4 Max: not run. Run `METALRENDERER_BENCH=characters` and `charactercrowd` under both APIs there
+  (hair curves: hardware curves on the M4 Max should make strands much cheaper than the M1 Max's 35 ms remake).
+- Hair: strands are a pixel or less wide in close-ups (dotted look with 1 sample a pixel); lashes and brows read best
+  with the lash line and the darkened brow skin under them. Long hair hangs in rather regular clumps.
+- Caps are plain shells (no strand texture); fine at crowd distance, a helmet close up.

@@ -22,7 +22,7 @@ final class CharacterFaceTests: XCTestCase {
         }
         let c = k.base.character
         XCTAssertEqual(c.materials.count, c.triangleCount)
-        XCTAssertEqual(Set(c.materials), Set(FaceParts.Material.allCases.map(\.rawValue)))
+        XCTAssertEqual(Set(c.materials), Set(FaceParts.Material.allCases.filter { $0 != .hair }.map(\.rawValue)), "every material but a cap's")
         for level in c.coarser { XCTAssertEqual(level.materials.count, level.triangleCount) }
         // The eyes where the sculpt has them, as big as it says.
         for e in 0..<2 {
