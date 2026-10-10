@@ -244,10 +244,15 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | I, ⌘I | Show or hide the Debug window |
 | P | Show or hide the loading overlay (see "The loading overlay" below) |
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
-| V, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
-| F | Plant workshop: frame the plants (drag orbits about them, scroll zooms, W A S D pan) |
+| J, ⌘B | Show or hide the Building Editor and its Floor Plan window (see "The building editor" below) |
+| X, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
+| F | Workshops and the VFX stage: frame the plants, the building or the effects (drag orbits about them, scroll zooms, W A S D pan) |
 | C (hold) | Plant workshop: the saved plant in place of the edited one |
-| ⌘Z, ⇧⌘Z | Undo, redo the plant editor's edits |
+| V | Walk (the building workshop, the city, the open world) or fly again |
+| Walking: W A S D, Shift, Space, C or Control | Walk, run, jump, crouch (Space no longer pauses while walking) |
+| Walking: E or a click | Open or shut the door, flip the light switch, call the lift you look at |
+| Walking: F, 0–9 | The flashlight; in a lift, its floor (0 the ground floor) |
+| ⌘Z, ⇧⌘Z | Undo, redo the plant editor's or the building editor's edits |
 
 The window title and the Debug window show the resolution, frame rate and GPU time. The panels never take keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
 
@@ -784,6 +789,210 @@ opens the editor.
   placement as they were before the editor; `PlantCatalogTests` (curves, ages, JSON, habitats, files, keys),
   `PlantWorkshopTests`, `PlantEditorTests` (the parameter table, Mutate, the editor's model).
 
+### The building editor
+
+The Building Editor (J or ⌘B, a SwiftUI panel and a Floor Plan window: `BuildingEditor/`) shapes the styles the city's
+buildings are made in, and single buildings' own floor plans; the **Building workshop** scene
+(`METALRENDERER_SCENE=buildings`, `Scene+Buildings.swift`) shows what it edits, inside and out, and can be walked in.
+
+* **Buildings have insides.** A building's floor plans are made first (`BuildingPlanner.swift`), then its facades
+  from them, then (on demand) its interior (`Building+Interior.swift`):
+  * **The plan** is laid out storey by storey around one core: a dog-leg stair (and a lift from a few floors up),
+    placed in the topmost tier so it runs from the ground to the top. Partitions stand on the facades' bay lines, so
+    none meets a window. *Apartments*: a corridor past the core and flats either side of it (a flat a floor in a
+    narrow building), each with rooms on its windows and a hall and bathroom along its door. *A house*: the stair
+    against a side wall, a hall beside it, rooms in front and behind, a shop in front if the street has shops.
+    *Offices*: open floors round the core and toilets, meeting rooms and offices along the windows, a lobby below.
+    *A warehouse*: a hall with racks and pallets, an office and a WC in a back corner. Doors join every room to the
+    stair (a breadth-first search adds what is missing); a flat opens onto the corridor by one door only.
+  * **The facades follow the plan:** the doors are where the plan's are (the front door, a shop's own), a window
+    lights up with its room at night, a bathroom's is small and high, only living rooms and bedrooms have balconies,
+    the stair's head on the roof is over the stair. Walls are as thick as they are (0.3 m and more), every opening
+    goes through them, and what is behind the glass of a building without its interior (blinds, the dark, room
+    boxes, closed doors) is its *fill*, dropped when the interior is there.
+  * **The interior:** the walls' inside faces cut round the windows, partitions with doorways and frames, floors and
+    ceilings in each room's finish (wood, tile, carpet, concrete, paint), the stair's flights and landings and the
+    spine between them, the lift's shaft; furniture by room type (`FurnitureKit.swift`, `BuildingFurnish.swift`:
+    beds, sofas, tables and chairs, kitchens, bathrooms, desks, shelves of books, wardrobes, office desk clusters,
+    meeting tables, toilets' cubicles, shop counters and racks, warehouse racks and pallets), clutter on them,
+    house plants, pictures; ceiling lights, and a switch by each room's door. A tower's identical storeys share one
+    mesh (in threes, furnished alike). Nothing is laid flat on anything else.
+* **Walking** (V, `Walker.swift`): a person 1.8 m tall who falls, climbs stairs, slides along walls and doesn't pass
+  glass, at 120 Hz on the scenes' box colliders. Doors' leaves swing (`InteriorControls.swift`): they open as you
+  come up to them and shut a while after, or with E or a click; switches turn a room's lights on and off; lifts
+  (`InteriorLifts.swift`) come when called (the button by each landing door) and go to the floor a number key names
+  while you stand in them; F is a flashlight. Chairs, office chairs and boxes are rigid bodies (the physics world's,
+  on the CPU, asleep at rest): walking into one shoves it, a click and drag carries it, and they tip and fall.
+* **Styles are data** (`BuildingStyleDef.swift`): ranges and choices a building draws from, each value from its own
+  stream of the building's seed, so changing one range changes that value alone. The five built-in ones are
+  `BuiltInBuildings.swift`. The tabs: **Massing** (plan shapes, floors, storey heights, bays, towers' podiums and
+  setbacks, roofs), **Facade** (windows, balconies, shops, ledges), **Floors** (walls' thickness, the stair, the lift,
+  the corridor, and the shown building's hand edits), **Rooms** (what it is for, and the sizes rooms aim for),
+  **Furnish** (clutter, plants, lights, the finishes' colours, glTF props), **Look** (the outside's materials, the
+  glow of lit blinds), **Site** (the workshop's lot, night, a city building pinned, the shown building's own style
+  and floors, and the districts a style is built in).
+* **The Floor Plan window** shows the shown building's plan a floor at a time (its front at the bottom) and edits it:
+  *Wall* drags a wall (and every room along it), *Door* adds, turns, moves or (Option) removes a door, *Split* and
+  *Merge* rooms, *Type* sets what a room is for; for this floor, the upper floors or every floor. An edit is saved
+  with its building (`LotOverride`, `PlanEdits.swift`): it names what it changes by where it is, so it survives a
+  change of the style, the floors or the seed while what it changed is still there, and one that finds nothing is
+  kept and marked. While walking, a red dot and arrow show where you are.
+* **Single buildings:** the workshop's own building (its lot's size and sides, floors, seed), or, with *Pin* in the
+  city, the city's building nearest the camera, with its own plan's edits; its own style or floors (Site).
+* **The workshop** shows the building, the building between two neighbours of its style, or six **Mutate**
+  variations along a street; *Whole*, *Cutaway* (no roof and nothing above a floor) or *Dollhouse* (no front wall
+  either); by day or at night. *Seed* tries another building of the style; holding *Compare* shows the saved
+  styles. Edits rebuild it live (M1 Max, `BuildingWorkshopTests`, scene and structures: a house 8 ms, six storeys of
+  flats 40 ms, a twelve-storey office tower 57 ms); the city and the open world take them when a slider is let go.
+* **Interiors on demand.** A city of 868 buildings can't hold all their interiors: the building you come near
+  (within `interiorReach`, 30 m, and not while flying past) gets its interior, made in the background and swapped
+  in like the open world's next tile (its other buildings keep their structures: their meshes are named), and
+  loses it when you leave. In the open world the building's tile is made without it and the scene adds it with its
+  interior, still (the world's scenes are: doors stand open, the lifts wait at the ground floor, the furniture
+  doesn't move, the lights come on at dusk), and the terrain is the walker's ground everywhere.
+* **Saving:** *Save* writes every changed style to `Assets/Buildings/Styles/<id>.json` and single buildings'
+  plans to `Assets/Buildings/overrides.json` (`BuildingStore.swift`); a file with a built-in style's id replaces it,
+  any other is a style of its own (built now and then in the districts it names). Files are read over a plain
+  style's defaults, so a field added later keeps its default. Unsaved edits are a draft until saved or reverted.
+  `METALRENDERER_BUILDINGS=builtin` ignores the files, `=<folder>` reads and saves another folder.
+* **glTF props:** `Assets/Props/props.json` (`PropLibrary.swift`) lists models to stand in for generated pieces:
+  `{"props": [{"file": "Props/armchair.glb", "replaces": "armchair", "rooms": ["living"], "chance": 0.5}]}`. Each is
+  fitted into the piece's box wherever the furnishing put it (scaled evenly, its front, +z, into the room).
+  `METALRENDERER_PROPS=none` leaves them out.
+* **Costs** (M1 Max, 640×400 upscaled 3×, cascades GI, `METALRENDERER_BENCH=buildings`): a building from outside or a
+  room by day 6–8 ms a frame; at night, with every room's lights there to switch (190–420 rect lights), 18–21 ms,
+  ReSTIR DI most of it. By day only lit rooms have lights (an off light still costs its sampling); a scene's
+  doors and lifts cost a refit of the top level only on the frames they move.
+* `METALRENDERER_SCENE=buildings,bstyle=office,width=34,depth=30,sides=free,floors=12,bview=cutaway,cut=3,night=1`;
+  the city's `interiors=0` turns interiors off, `reach=` sets how near. `METALRENDERER_BENCH=buildings` renders each
+  style, the cutaway and the dollhouse, rooms by day and at night, an office floor and a city's and the open world's
+  building from inside.
+* **Tests:** `BuildingPlanTests` (rooms tile every storey, nothing overlaps, everything is reached from the stair,
+  the stair is the same on every storey; interiors' meshes are sound), `BuildingEditorTests` (styles round-trip and
+  fit their sliders, districts, undo, pushes, copy and paste, Mutate, saving, hand edits change the plan and survive
+  regeneration, glTF props), `BuildingWorkshopTests` (what the workshop holds, its loose furniture, reload times),
+  `WalkerTests` (in through the door, up every flight, walls and glass hold, jump and crouch, doors and lifts),
+  `CityTests` (a city with one interior keeps the other buildings' meshes), `WorldTests` (a tile without the building
+  that has its interior).
+* **Limits:** the open world's interiors are still (no switches, lifts or loose furniture there: the world's
+  instance groups need a still scene); interiors on demand are one building at a time; Lumen's mesh distance fields
+  are coarser than a partition (radiance cascades, ReSTIR GI or path tracing are the methods for interiors);
+  hand-edited plans keep rooms rectangular.
+
+### The character editor
+
+The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes people. The **Character workshop** scene
+(`METALRENDERER_SCENE=people`, `Scene+Characters.swift`) shows what it edits; entering the workshop opens the editor.
+
+* **A character is data** (`CharacterDNA.swift`): a seed, six macro sliders (male … female, age, thin … heavy, slight …
+  muscular, height, stocky … long-limbed), morph offsets by name, bone-group lengths and the skin's look. The editor and
+  (later) the NPC generator only write DNA; `CharacterBuilder` makes the mesh, skeleton and materials from it. Six
+  built-in people (`BuiltInCharacters`, in `CharacterStore.swift`) show what the sliders reach.
+* **One base body for everyone** (`CharacterBase.swift`), made once from the library's Y Bot and kept in a cache file
+  next to the character library's (about 7 s to make on an M1 Max, 3 ms to read):
+  * The Y Bot's skin as a distance field (`BodySurface`, flooded from outside so its joint pieces don't count,
+    smoothed so the grooves between its panels close), its hollow elbows filled by its bones' shapes.
+  * Its trunk mostly an **anatomical loft** (`TrunkLoft`): rounded cross-sections from the crotch to the neck, a man's
+    average widths and depths, meeting the Y Bot's limbs, neck and head over a few centimetres. The mannequin's narrow
+    waist, deep pelvis and panel edges go.
+  * **Hands made again** from the finger joints: a palm and five fingers of round cones, on the forearm's end (the Y Bot
+    has mittens).
+  * Meshed by **sparse surface nets** (`SurfaceNets.sparseMesh`, 2.5 mm, only the bricks near the skin), simplified
+    (`MeshSimplifier`), smoothed without shrinking (Taubin). One closed surface, about 106k triangles with the head.
+  * **A sculpted head** (`FaceSculpt.swift`) in place of the mannequin's egg: a distance field of smooth primitives at a
+    man's average proportions (skull, face, jaw, neck), with a brow ridge, cheekbones, eye sockets with lids round the
+    eyeballs and their openings cut, a nose with nostrils, lips with the mouth cut into a mouth, and ears (rim, ridge,
+    bowl, lobe). It is meshed at 1 mm apart from the body and sewn to it across the neck; the simplifier keeps the
+    vertices where the surface bends sharply (ears, lids, nostrils, the lips' parting) and where colours meet.
+  * **The face's own parts** (`FaceParts.swift`): eyeballs with the cornea's dome and iris and pupil rings, both rows of
+    teeth, a tongue; each triangle of the character takes one of its materials (skin, lips, brows, sclera, iris,
+    pupil, teeth, mouth, the thin skin of the ears and nostrils, and a crowd's hair cap).
+  * **UVs for the skin** (`SkinAtlas`, in `CharacterSkin.swift`): the head and neck unrolled round the head's upright
+    axis, the angle from the front (both sides share the texels: the map folds at the face's middle and the back of the
+    head, so no vertex is split) by the height; the body is on the textures' plain last row.
+  * **Skinned to the Y Bot's skeleton**, so every clip of the library plays on it: each vertex takes the weights of the
+    Y Bot's skin under it (facing the same way, within 3 cm), the hands' from their bones, the rest from their
+    neighbours; then smoothed twelve times (the Y Bot's panels each ride one bone, and a neck there tears).
+* **Morphs** (`CharacterMorphs.swift`) are sparse deltas on the base, generated rather than sculpted: smooth bumps on the
+  body's own coordinates (which bone, how far along it, at what angle round it) for fat (where men and women carry it),
+  muscle, thinness, age, and ten shape sliders (chest, belly, waist, hips, seat, shoulders, neck, arms, thighs, calves).
+  A woman is the female loft (wider hips, a narrower waist, ribcage and shoulders, breasts) less the male one, plus the
+  X Bot's skeleton.
+* **Face sliders** (`CharacterFaceMorphs.swift`, the editor's **Face** tab): eyes (spacing, height, opening, tilt,
+  deep-set), brows, nose (length, width, bridge, tip), mouth (width, fullness, height), jaw and cheeks, ears; each
+  section has its own dice. Every slider moves both sides alike; the eyeballs and teeth move whole. The macros shape the
+  face too: a woman's (a smaller brow ridge, jaw and nose, fuller lips), an old one (longer nose, larger ears, thinner
+  lips, sagging cheeks), a heavy one and a thin one.
+* **Faces move** (`CharacterFace.swift`), on the GPU in the skinning kernel, per pose slot: expressions are morph
+  targets with their normals' change (the jaw opening, smile, frown, brows up and down, and mouth shapes for speech),
+  and the lids and eyes turn about the eyes' centres (the Mixamo rig has no eye or jaw bones), so a blink folds the lid
+  over the eyeball and the eyes can look at the camera. Every face blinks (seeded, every few seconds); the workshop's
+  can smile, frown, look surprised, talk, or go through them all (*Face* in the Face tab, `expr=` in
+  `METALRENDERER_SCENE`), their eyes on the camera (`gaze=`). The GPU's faces match the CPU's within 2 µm
+  (`METALRENDERER_CROWD_CHECK=1`).
+* **Skin** (the editor's **Skin & Hair** tab):
+  * **Light under the skin** (`skinUnshadowed`, `Shaders/Hair.metal`): a material with `params.w < 0` is skin. Its
+    diffuse light wraps past where the surface turns from the light, red furthest (blood takes the green and blue
+    first), which softens and reddens the shadow's edge; the ears and the nostrils' wings glow red with light from
+    behind (their shadow rays start past them, so thick parts stay dark). It is in the light term, so the denoisers,
+    ReSTIR and the composite shade it alike; the reference path tracer shades it the same.
+  * **Textures drawn from the face** (`SkinTextures`, `SkinChart`): each texel of the atlas knows the point of the head
+    it shows, so features are placed by the sculpt's landmarks: pores (wider on the nose and cheeks), lines across the
+    lips, wrinkles with age (forehead, between the brows, crow's feet, under the eyes, beside the mouth, the neck), a
+    mottle, redder cheeks, nose and ears, darker hollows under the eyes, a lash line, a man's beard shadow, freckles,
+    age spots, moles and makeup (blush, eye shadow, lipstick); an oilier forehead and nose. Colour and normals are 1024²,
+    drawn in tens of milliseconds and kept by the generated-texture cache (quantised: a drag remakes them a few times).
+* **Hair** (`CharacterHair.swift`): nine styles (bald, buzz cut, receding, short, side parting, slicked back, curly,
+  bob, long) with length and curl sliders, five beards (stubble, short, full, goatee, moustache), brows (a density
+  slider) and lashes, coloured from the DNA (eumelanin, pheomelanin, grey; age greys it):
+  * **Strands** in the workshop: groomed once on the base's head (guides along the style's flow, falling with length,
+    kept off the head, neck and shoulders, cut where the style says; each drawn strand follows its nearest guide,
+    clumped, curled and strayed), drawn as curves with the hair BSDF. Each strand's root is a point of one of the base's
+    triangles, so every frame `crowdHairKernel` carries it after the skinning: scalp hair turns with the head's bone,
+    brows, lashes and beards with their triangles, so the brows rise, the lashes blink and the beard opens with the
+    jaw. About 30,000 strands for one character (a third as many each in a lineup); the GPU matches the CPU within
+    1 µm (`METALRENDERER_CROWD_CHECK=1`).
+  * **Caps** in crowds (`CharacterHairCap.swift`): one closed shell round what the style's strands fill (a sample of
+    them as tubes, joined to a shell over the scalp, meshed and simplified for each level of detail), part of the
+    character's mesh on the head's bone, kept in a cache file per style. *Hair* in the tab (`hairs=strands|caps|none`)
+    shows the workshop's characters with either.
+* **The macro rig** (`MacroRig`, in `CharacterBuilder.swift`) turns the macros into morph weights and bone scales: sex
+  blends toward the female shape and the X Bot's skeleton (and 7% shorter), weight into the male or female fat, age into
+  sag, less muscle and (past 60) a little height. Bone scales lengthen bones along their axis (the skin across them
+  less), or scale a head, hands or feet whole; the skin is carried by the joints it hangs on, and the clips' root travel
+  scales with the hips' height.
+* **The workshop** shows the character, everyone (*Everyone*), or it and five **Mutate** variations (*Use 1–5* takes
+  one), in a T pose, an A pose, idling, walking or any clip of the library, whole or its face close. Each slider has a
+  **lock**: the dice on a group (or *Randomize all*) draw the unlocked sliders again, from near the middle of their
+  ranges; Mutate leaves locked ones alone. Holding *Compare* (or C) shows the saved character.
+* **Edits are live:** the workshop is made again at each edit (M1 Max, `CharacterHairTests`): 11 ms for one character
+  without hair (morphs and skeleton 5 ms on the CPU, its structures 6 ms), 12.5 ms with a cap, 35 ms with strands (their
+  curves' structures 17 ms), 128 ms for all six with strands. A style's strands take 50–580 ms to groom the first time
+  and are kept; a cap 0.3–2 s, kept in a cache file. The kit (base, morphs, face rig) takes about 10 s to make, 15 ms
+  to read from its cache. An edit is one undo step; a drag is one.
+* **Saving:** *Save* writes changed characters to `Assets/CharacterDefs/<id>.json` (`CharacterStore`); a file with a
+  built-in's id replaces it. Unsaved edits are a draft, kept between launches. `METALRENDERER_CHARACTERS=builtin` ignores
+  the files, `=<folder>` reads and saves another folder.
+* **Crowds of them:** `METALRENDERER_SCENE=crowd,cast=generated` fills the crowd scene with the catalog's people
+  instead of the mannequins (`METALRENDERER_BENCH=charactercrowd`: 2048 of them on 64 poses, 18.3 ms a frame on an M1
+  Max, blinking, with skin and hair caps: 0.75 ms more than without; diffuse materials there, as glossy eyes would turn
+  on the reflection pass for the whole frame). Scenes without skin compile without it (SKIN, a shader feature bit).
+* `METALRENDERER_SCENE=people,person=woman,pose=walk,cview=face,clayout=lineup,hairs=caps`; `METALRENDERER_BENCH=characters`
+  renders each built-in character, faces from the front, side and three quarters (at full resolution), each
+  expression, an ear, everyone (with strands and with caps), hair styles and beards the built-ins don't have, poses
+  and clips, and close-ups of hands, waist and shoulders.
+* **Tests:** `CharacterDNATests` (JSON, defaults, sanitizing, the catalog and store), `CharacterBaseTests` (a closed
+  skin, weights, stretch over every clip, symmetric morphs, height by its slider, repeatable builds, the cache, the
+  workshop and its remake time), `CharacterFaceTests` (the face's parts, a blink closing the lids without touching the
+  eye, the gaze, the jaw parting the lips, expressions and face sliders touching only the face, blinks),
+  `CharacterSkinTests` (the UVs, the chart covering the head, the textures plain below the neck and following the
+  landmarks and the DNA, wrinkles with age), `CharacterHairTests` (every style rooted on the scalp and off the head, the
+  long styles cut, the beard, brows and lashes where they belong and the lashes blinking, caps by style and on every
+  level, the workshop's remake time with hair), `CharacterEditorTests` (the parameter table, Randomize, Mutate, undo,
+  saving).
+* **Next** (one pull request each): clothes and cloth; NPC archetypes, crowds in the city and generated bodies in the
+  physics scenes. Hair doesn't swing yet (it rides the head and the face).
+
 ### Generated plants
 
 The plants are made at load time from a seed (`Foliage*.swift`) and their species' definitions (the built-in ones, or
@@ -988,7 +1197,8 @@ The **City** and **City at night** scenes are generated: a seeded street grid of
   * At night it is 192 mesh lights of 8,900 triangles (1,706 and 58,000 at 10 × 10), and ReSTIR DI is most of the frame, as in the Night market.
   * On Metal's tracer, the only one now, 10 × 10 is 1,737 structures, 485 MB after compaction, 6.6 ms a frame, and Metal 4 draws the same images as Metal 3 (but see the limits).
 * **Checked** by `CityTests`, `BuildingTests`, `PlantTracingTests` and `ProceduralTextureTests`: the plan's lots stand inside their blocks and apart; every style's meshes are valid over many seeds and lots (finite, unit normals, no triangle without area or, where textured, without UV area, inside the lot, under the limit); a building of modules is the whole building's triangles, slot by slot, and shares its windows' shells; a flat building has fewer triangles and as many windows; a city of modules is still, has rigid assemblies of one variant each and doesn't compile the plants' code; outlines close around their plans; a seed always builds the same city; the textures tile.
-* **Limits:** every building is unique but for its windows' shells (modules), so memory and load time grow with the city; the street grid is a grid; rooms are boxes; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
+* **Interiors:** every building has floor plans and the one you come near its interior (see "The building editor").
+* **Limits:** every building is unique but for its windows' shells (modules), so memory and load time grow with the city; the street grid is a grid; there is no night in the day cycle (the sun stays 12 degrees or more above the horizon, and the night scene is its own).
 
 ### Open world
 
@@ -1477,7 +1687,7 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
   * the k-buffer (exact up to 4, order-free), the flipbooks (inside their trims, nothing on a cell's border);
   * a frame's reset, steps and pose each keeping their own parameters.
 
-  Scenes without particles render bit-identically (the feature is a shader specialisation, `PARTICLES`, bit 17).
+  Scenes without particles render bit-identically (the feature is a shader specialisation, `PARTICLES`, bit 16).
 * What it costs (M1 Max: no ray-tracing hardware, so every box and curve is the shader's work; 640×400 traced, MetalFX 3x, 1920×1200 out; `METALRENDERER_BENCH=particles`). The scene's pools hold 7,040 billboards, 90 trails and 120 chunks (the table is from before the rain's lamp and its denser rain, which made the paused frame 15.3 ms and the moving one 17.4 ms; the fire's heat haze then 15.6 ms paused, the moving frame the same):
 
   | Setting | Build | Light pass | Camera layer | Overlay | Trace (its shadow rays) | Reflections | Whole frame (GPU) |
@@ -1538,7 +1748,7 @@ Every particle effect is a graph (`Sources/MetalRenderer/VFX`), as Unity's VFX G
 
 ### The VFX editor
 
-The VFX Editor (V or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effects' graphs while they run.
+The VFX Editor (X or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effects' graphs while they run.
 * **The canvas:** a dark grid with the effect's emitters as columns of their four contexts' blocks and its operator nodes,
   each header coloured by its family. Pins are coloured by type (float, vector, colour, bool) and the wires are curves.
   * Drag from an output to an input to wire them; drag a wired input to move its wire elsewhere or let it go.

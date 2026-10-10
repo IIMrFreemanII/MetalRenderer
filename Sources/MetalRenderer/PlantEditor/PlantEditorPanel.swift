@@ -22,7 +22,8 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
         panel.becomesKeyOnlyIfNeeded = true   // sliders don't need key status; the name field does
         panel.hidesOnDeactivate = true
         panel.setFrameAutosaveName("PlantEditor")
-        panel.contentView = NSHostingView(rootView: PlantEditorView().environmentObject(model))
+        panel.contentView = NSHostingView(rootView: PlantEditorView().environmentObject(model)
+            .environment(\.editorDrag, EditorDrag(begin: model.beginDrag, end: model.endDrag)))
         controller.onCompare = { [weak self] on in self?.model.compare(on) }
     }
 

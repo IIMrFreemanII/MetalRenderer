@@ -311,7 +311,8 @@ struct GPUMaterial {
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
     var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
                                             // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
-                                            // w = a leaf's translucency
+                                            // w = a leaf's translucency; < 0: skin, -w its strength (0...1), + 2
+                                            // where it is thin (Hair.metal skinUnshadowed)
     var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
 }

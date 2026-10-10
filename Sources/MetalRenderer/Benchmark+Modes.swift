@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import simd
 
 /// The benchmark modes: `METALRENDERER_BENCH=<name>` runs that mode's list of settings (`Benchmark.Config`).
 /// Setting names become PNG names and the scorers in Tools/eval look them up, so they are part of the interface.
@@ -19,7 +20,9 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit, "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
+        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
+        "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
+        "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -313,9 +316,179 @@ extension Benchmark {
         ]
     }
 
+    /// The building workshop (Scene+Buildings.swift) as the building editor shows it (cascades, MetalFX 3x from 0.5x),
+    /// paused: each style's building from outside, a street of them, the cutaway and the dollhouse, and inside: a
+    /// living room by day and by night, the stair, an office floor.
+    private static func buildings() -> [Config] {
+        func shown(_ name: String, _ change: (inout BuildingSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .buildings)
+            change(&scene.buildings)
+            return Config("buildings \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+        }
+        /// Standing in a corner of the first room of `type` on `storey` (a lit one, if `lit`), looking across it to the
+        /// far corner; `transform`: the lot's into the world.
+        func inside(_ spec: BuildingSpec, _ type: RoomType, storey: Int, lit: Bool = false, transform: float4x4 = matrix_identity_float4x4) -> Camera {
+            let plan = BuildingGenerator.generate(spec).plan
+            let f = plan.storeys[min(storey, plan.storeys.count - 1)]
+            let rooms = f.rooms.filter { $0.type == type }
+            let r = ((lit ? rooms.first { $0.lit } : nil) ?? rooms.max { $0.area < $1.area } ?? f.rooms.max { $0.area < $1.area }!).rect
+            let a = transform * SIMD4(r.lo.x + 0.5, f.floor + 1.6, r.lo.y + 0.5, 1), b = transform * SIMD4(r.hi.x - 0.3, f.floor + 1.0, r.hi.y - 0.3, 1)
+            let v = SIMD3(b.x - a.x, b.y - a.y, b.z - a.z), d = v / (v * v).sum().squareRoot()
+            var c = Camera()
+            c.position = SIMD3(a.x, a.y, a.z)
+            c.yaw = atan2(d.x, -d.z)
+            c.pitch = asin(d.y)
+            return c
+        }
+        func inside(_ p: BuildingSceneSettings, _ type: RoomType, storey: Int, lit: Bool = false) -> Camera {
+            inside(Scene.workshopSpec(p, catalog: .builtIn).spec, type, storey: storey, lit: lit)
+        }
+        // A city, and the building of its first residential lot on a street with its interior: from inside it.
+        var city = CitySettings()
+        (city.blocks, city.style) = (2, .residential)
+        let cityPlan = CityPlan(city, seed: 1)
+        let lotIndex = cityPlan.lots.firstIndex { $0.edges[0] == .street } ?? 0
+        let lot = cityPlan.lots[lotIndex]
+        var inCity = SceneSettings(kind: .city, city: city, seed: 1)
+        inCity.interior = LotRef.city(city, seed: 1, lot: lotIndex, lot).key
+        var citySpec = BuildingSpec(lot: lot, city: city, night: false, catalog: .builtIn)
+        citySpec.interior = true
+        var home = BuildingSceneSettings()
+        (home.style, home.lot, home.floors) = ("residential", SIMD2(22, 14), 5)
+        var office = BuildingSceneSettings()
+        (office.style, office.lot, office.sides, office.floors) = ("office", SIMD2(34, 30), .free, 12)
+        var night = home
+        night.night = true
+        return [
+            shown("residential") { $0 = home },
+            shown("oldtown") { $0.style = "oldtown"; $0.lot = SIMD2(9, 12); $0.floors = 3 },
+            shown("modern street") { $0.style = "modern"; $0.lot = SIMD2(24, 15); $0.floors = 6; $0.layout = .street },
+            shown("office") { $0 = office },
+            shown("warehouse") { $0.style = "warehouse"; $0.lot = SIMD2(34, 28); $0.sides = .free; $0.floors = 2 },
+            shown("cutaway") { $0 = home; $0.view = .cutaway; $0.cut = 1 },
+            shown("dollhouse") { $0 = home; $0.view = .dollhouse; $0.cut = 1 },
+            shown("living room") { $0 = home }.from(inside(home, .living, storey: 1)),
+            shown("living room night") { $0 = night }.from(inside(night, .living, storey: 1, lit: true)),
+            shown("bedroom night") { $0 = night }.from(inside(night, .bedroom, storey: 2, lit: true)),
+            shown("stair") { $0 = home }.from(inside(home, .corridor, storey: 1)),
+            shown("office floor") { $0 = office }.from(inside(office, .openOffice, storey: 3)),
+            Config("buildings city interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: inCity).still().frames(30)
+                .from(inside(citySpec, .living, storey: 1, transform: lot.transform)),
+        ] + worldInterior { inside($0, $1, storey: $2, lit: $3, transform: $4) }
+    }
+
+    /// The open world with the building nearest where it starts walkable: from inside it (its tile without its shell).
+    private static func worldInterior(_ inside: (BuildingSpec, RoomType, Int, Bool, float4x4) -> Camera) -> [Config] {
+        guard let (scene, spec, transform) = worldInteriorLot() else { return [] }
+        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            .from(inside(spec, .living, 1, false, transform))]
+    }
+
+    /// The open world's scene with the building (3 floors or more) nearest where the world starts walkable, that
+    /// building's spec (with its interior), and its lot's place in the scene.
+    static func worldInteriorLot() -> (scene: SceneSettings, spec: BuildingSpec, transform: float4x4)? {
+        var scene = SceneSettings(kind: .world)
+        let world = World(seed: UInt64(max(scene.seed, 0)))
+        let side = Double(World.tileSize), begin = world.start.place
+        let home = SIMD2(Int((begin.x / side).rounded(.down)), Int((begin.z / side).rounded(.down)))
+        let anchor = WorldTile.origin(world.anchorTile.x, world.anchorTile.y)
+        var best: (distance: Double, ref: LotRef, lot: CityPlan.Lot, city: World.City)?
+        for j in -1...1 {
+            for i in -1...1 {
+                let o = WorldTile.origin(home.x + i, home.y + j)
+                guard let (city, blocks) = world.blocks(x0: o.x, z0: o.y, side: side) else { continue }
+                for block in blocks {
+                    for (k, lot) in block.plan.lots.enumerated() where lot.floors >= 3 && lot.style != .warehouse {
+                        let c = city.center + SIMD2(Double(lot.rect.center.x), Double(lot.rect.center.y))
+                        let d = ((c.x - begin.x) * (c.x - begin.x) + (c.y - begin.z) * (c.y - begin.z)).squareRoot()
+                        if d < best?.distance ?? .infinity { best = (d, world.lotRef(city, block, k), lot, city) }
+                    }
+                }
+            }
+        }
+        guard let (_, ref, lot, city) = best else { return nil }
+        scene.interior = ref.key
+        var spec = BuildingSpec(lot: lot, city: scene.city, night: true, catalog: .builtIn)
+        spec.interior = true
+        let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
+        return (scene, spec, translate([c.x, city.level, c.y]) * lot.transform)
+    }
+
     /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:
     /// an oak, a birch's ages and variants, a conifer's skeleton, a bush, ferns, grass, and a species of a catalog of
     /// its own (a willow: a birch whose twigs hang). `METALRENDERER_PLANTS=builtin` leaves out what Assets/Plants holds.
+    /// The character workshop: each built-in character in the A pose, the first's face close, everyone side by side,
+    /// and the first walking and in a clip of the library.
+    private static func characters() -> [Config] {
+        func shown(_ name: String, _ change: (inout CharacterSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .characters)
+            scene.characterCatalog = "builtin"
+            change(&scene.characterWorkshop)
+            // Close-ups at full resolution (pores and wrinkles are a texel or two of an upscaled frame).
+            let close = scene.characterWorkshop.view == .face
+            return Config("characters \(name)", scale: close ? 1.5 : 0.5, upscale: close ? 0 : 3, gi: .radianceCascades, scene: scene)
+                .still().frames(30)
+        }
+        // A built-in changed (hair styles, beards, marks the built-ins don't have), its face close.
+        func styled(_ name: String, from id: String, _ change: (inout CharacterDNA) -> Void) -> Config {
+            var d = BuiltInCharacters.all.first { $0.id == id }!
+            change(&d)
+            var c = shown("hair \(name)") { $0.character = id; $0.view = .face }
+            c.settings.scene.characterCatalog = CharacterCatalog.register(CharacterCatalog(characters: [d]))
+            return c
+        }
+        return BuiltInCharacters.all.map { def in shown(def.id) { $0.character = def.id } } + [
+            shown("man face") { $0.view = .face },
+            shown("woman face") { $0.character = "woman"; $0.view = .face },
+            shown("elder face") { $0.character = "elder"; $0.view = .face },
+            shown("heavy face") { $0.character = "heavy"; $0.view = .face },
+            shown("man smiling") { $0.view = .face; $0.expression = .smile },
+            shown("man frowning") { $0.view = .face; $0.expression = .frown },
+            shown("man surprised") { $0.view = .face; $0.expression = .surprise },
+            shown("man talking") { $0.view = .face; $0.expression = .talk },
+            viewed(shown("man face three quarters") { $0.view = .face }, look(from: [0.3, 1.7, 0.42], at: [0, 1.66, 0.04])),
+            viewed(shown("man face side") { $0.view = .face }, look(from: [0.5, 1.68, 0.05], at: [0, 1.665, 0.03])),
+            viewed(shown("man ear") { $0.view = .face }, look(from: [0.3, 1.7, -0.25], at: [0.07, 1.67, -0.01])),
+            viewed(shown("woman face three quarters") { $0.character = "woman"; $0.view = .face }, look(from: [-0.3, 1.62, 0.4], at: [0, 1.58, 0.04])),
+            shown("everyone") { $0.layout = .lineup },
+            shown("everyone caps") { $0.layout = .lineup; $0.hair = .caps },
+            styled("long", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+            styled("slicked stubble", from: "man") { $0.hair.style = "slicked"; $0.hair.beard = "stubble" },
+            styled("goatee", from: "athlete") { $0.hair.beard = "goatee" },
+            styled("moustache grey", from: "man") { $0.hair.style = "sidePart"; $0.hair.beard = "moustache"; $0.macro.age = 62 },
+            styled("curly red freckles", from: "woman") { $0.hair.style = "curly"; $0.look.hairRed = 0.9; $0.look.hairMelanin = 0.35; $0.look.freckles = 1 },
+            viewed(styled("long behind", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+                   look(from: [0.35, 1.55, -0.6], at: [0, 1.45, 0])),
+            shown("woman face caps") { $0.character = "woman"; $0.view = .face; $0.hair = .caps },
+            shown("man t pose") { $0.pose = .tPose },
+            shown("man walking") { $0.pose = .walk },
+            shown("woman dancing") { $0.character = "woman"; $0.pose = .clip; $0.clip = "Hip Hop Dancing" },
+            viewed(shown("man side") { $0.pose = .tPose }, look(from: [3.2, 1.1, 0], at: [0, 1.0, 0])),
+            viewed(shown("man back") { $0.pose = .tPose }, look(from: [0.3, 1.3, -3.4], at: [0, 1.0, 0])),
+            viewed(shown("man hand") { $0.pose = .tPose }, look(from: [0.75, 1.75, 0.35], at: [0.75, 1.42, 0])),
+            viewed(shown("man hand below") { $0.pose = .tPose }, look(from: [0.72, 1.1, 0.25], at: [0.75, 1.42, 0])),
+            viewed(shown("woman waist") { $0.character = "woman"; $0.pose = .tPose }, look(from: [0.55, 1.15, 0.75], at: [0.1, 1.08, 0])),
+            viewed(shown("woman shoulder") { $0.character = "woman"; $0.pose = .tPose }, look(from: [0.35, 1.75, 0.6], at: [0.1, 1.42, 0])),
+        ]
+    }
+
+    /// `config` seen from `camera`.
+    static func viewed(_ config: Config, _ camera: Camera) -> Config {
+        var c = config
+        c.camera = camera
+        return c
+    }
+
+    /// A camera at `from` looking at `at`.
+    static func look(from: SIMD3<Float>, at: SIMD3<Float>) -> Camera {
+        let d = simd_normalize(at - from)
+        var c = Camera()
+        c.position = from
+        c.yaw = atan2(d.x, -d.z)
+        c.pitch = asin(d.y)
+        return c
+    }
+
     private static func plants() -> [Config] {
         func shown(_ name: String, _ change: (inout PlantSceneSettings) -> Void = { _ in }) -> Config {
             var scene = SceneSettings(kind: .plants)
@@ -469,7 +642,8 @@ extension Benchmark {
         }
         // The block with a courtyard nearest the city's middle.
         let around = w.blocks(x0: cx - 400, z0: cz - 400, side: 800)?.blocks ?? []
-        let court = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }.min { ($0 * $0).sum() < ($1 * $1).sum() } ?? .zero
+        let centers: [SIMD2<Float>] = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }
+        let court: SIMD2<Float> = centers.min { (a: SIMD2<Float>, b: SIMD2<Float>) -> Bool in (a * a).sum() < (b * b).sum() } ?? .zero
         return [
             view("ground crossing", cx, cz + 22, up: 30, pitch: -0.95),
             view("ground corner", cx + 4.5, cz + 14, up: 1.7, yaw: -0.5, pitch: -0.12),
@@ -1562,6 +1736,17 @@ extension Benchmark {
     /// structures), against the number of characters on them ("tlas", "trace", and the CPU's share in "cpu") and
     /// against the poses' level of detail. Then the frames to look at: a still with the frame before it, and the
     /// camera moving through the crowd. `METALRENDERER_CROWD_CHECK=1` compares what the GPU skinned with the CPU's.
+    /// The crowd of generated people (SceneSettings.crowdBodies): the catalog's built-in characters on the square.
+    private static func characterCrowd() -> [Config] {
+        func square(_ name: String, characters: Int, poses: Int = 64, detail: Int = 3) -> Config {
+            var scene = SceneSettings(kind: .crowd, characters: characters, poses: poses, detail: detail, crowdBodies: .generated)
+            scene.characterCatalog = "builtin"
+            return Config("generated crowd \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+        }
+        return [square("256", characters: 256), square("2048", characters: 2048), square("2048 detail 1", characters: 2048, detail: 1),
+                square("still", characters: 2048).still(previous: true)]
+    }
+
     private static func crowd() -> [Config] {
         func square(_ name: String, characters: Int = 2048, poses: Int = 64, detail: Int = 3) -> Config {
             Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades,

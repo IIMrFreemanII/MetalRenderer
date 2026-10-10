@@ -1,17 +1,33 @@
 import SwiftUI
 import simd
 
+/// What an editor does around a drag of one of its controls (its model's `beginDrag` / `endDrag`: one undo step),
+/// for the controls shared by the plant and building editors.
+struct EditorDrag {
+    var begin: () -> Void = {}
+    var end: () -> Void = {}
+}
+
+private struct EditorDragKey: EnvironmentKey { static let defaultValue = EditorDrag() }
+
+extension EnvironmentValues {
+    var editorDrag: EditorDrag {
+        get { self[EditorDragKey.self] }
+        set { self[EditorDragKey.self] = newValue }
+    }
+}
+
 /// A labelled slider and its value, for one of PlantParams' numbers of `root`. Dragging is one undo step.
 struct ParamRow<Root>: View {
     let param: PlantParam<Root>
     @Binding var root: Root
-    @EnvironmentObject var model: PlantEditorModel
+    @Environment(\.editorDrag) private var drag
 
     var body: some View {
         let value = Binding<Double>(get: { param.get(root) }, set: { v in var r = root; param.set(&r, param.clamp(v)); root = r })
         HStack(spacing: 8) {
-            Text(param.title).frame(width: 130, alignment: .leading).lineLimit(1)
-            Slider(value: value, in: param.range) { editing in editing ? model.beginDrag() : model.endDrag() }
+            Text(param.title).lineLimit(2).fixedSize(horizontal: false, vertical: true).frame(width: 130, alignment: .leading)
+            Slider(value: value, in: param.range) { editing in editing ? drag.begin() : drag.end() }
                 .controlSize(.small)
             Text(param.text(value.wrappedValue)).monospacedDigit().frame(width: 64, alignment: .trailing).foregroundColor(.secondary)
         }
@@ -35,10 +51,10 @@ struct ValueRow: View {
     @Binding var value: Float
     let range: ClosedRange<Double>
     var digits = 2
-    @EnvironmentObject var model: PlantEditorModel
+    var unit = ""
 
     var body: some View {
-        ParamRow(param: PlantParam<Float>(title: title, range: range, step: 0, digits: digits, unit: "", mutation: 0,
+        ParamRow(param: PlantParam<Float>(title: title, range: range, step: 0, digits: digits, unit: unit, mutation: 0,
                                           get: { Double($0) }, set: { $0 = Float($1) }), root: $value)
     }
 }
@@ -46,20 +62,17 @@ struct ValueRow: View {
 /// A section of rows with a title and, if given, copy and paste buttons.
 struct EditorGroup<Content: View>: View {
     let title: String
-    var clip: PlantEditorModel.Clip? = nil
-    var bough = false
+    var copy: (() -> Void)? = nil
+    var paste: (() -> Void)? = nil
     @ViewBuilder let content: Content
-    @EnvironmentObject var model: PlantEditorModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
                 Spacer()
-                if let clip {
-                    Button("Copy") { model.copy(clip, bough: bough) }.buttonStyle(.borderless).font(.system(size: 10))
-                    Button("Paste") { model.paste(clip, bough: bough) }.buttonStyle(.borderless).font(.system(size: 10))
-                }
+                if let copy { Button("Copy", action: copy).buttonStyle(.borderless).font(.system(size: 10)) }
+                if let paste { Button("Paste", action: paste).buttonStyle(.borderless).font(.system(size: 10)) }
             }
             content
         }
@@ -80,7 +93,7 @@ struct CurveEditor: View {
     var crowns = false
     var lineRange: ClosedRange<Double> = 0...Double.pi
     var xLabel = "base → tip"
-    @EnvironmentObject var model: PlantEditorModel
+    @Environment(\.editorDrag) private var editorDrag
     @State private var dragged: Int?
     /// The last click that moved nothing, to tell a double-click (SwiftUI's taps have no location on macOS 13).
     @State private var lastClick: (time: TimeInterval, at: CGPoint)?
@@ -173,7 +186,7 @@ struct CurveEditor: View {
                 .onChanged { g in drag(g, size) }
                 .onEnded { g in
                     dragged = nil
-                    model.endDrag()
+                    editorDrag.end()
                     clicked(g, size)
                 })
         }
@@ -186,7 +199,7 @@ struct CurveEditor: View {
             p = made
         }
         if dragged == nil {
-            model.beginDrag()
+            editorDrag.begin()
             let at = g.startLocation
             func distance(_ i: Int) -> CGFloat { hypot(toView(p[i], size).x - at.x, toView(p[i], size).y - at.y) }
             // The point under the cursor, if one is (-1: none, the drag moves nothing).

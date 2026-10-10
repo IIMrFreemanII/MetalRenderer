@@ -43,6 +43,13 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
     `,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`);
     the plant workshop, `plants`: `,species=oak|birch|…,age=…,variant=…,plantseed=…,layout=single|lineup|mutate,view=plant|skeleton`
     (`-m plants` renders seven of them);
+    the building workshop, `buildings`: `,bstyle=residential|oldtown|office|…,width=…,depth=…,sides=row|backtoback|corner|free,floors=…,bseed=…,blayout=single|street|mutate,bview=full|cutaway|dollhouse,cut=…,night=…`
+    (`-m buildings` renders each style outside, the cutaway and dollhouse, rooms by day and night, an office floor, and
+    a city's and the open world's building from inside); the city's interiors near the camera: `,interiors=…,reach=…`
+    (benchmarks never make one by themselves: a config sets `SceneSettings.interior`);
+  * buildings: `METALRENDERER_BUILDINGS=builtin` leaves out the styles and single buildings saved in `Assets/Buildings`
+    (the building editor's), `=<folder>` reads another; `METALRENDERER_PROPS=none` leaves out the glTF props of
+    `Assets/Props/props.json`;
   * plants: `METALRENDERER_PLANTS=builtin` leaves out the species saved in `Assets/Plants` (the plant editor's), for
     comparisons between builds; `=<folder>` reads another folder;
   * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);
@@ -91,7 +98,10 @@ setting's frames:
 ```bash
 .claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
 ```
-`-m stressdemo` tours the stress building the same way (58 s).
+`-m stressdemo` tours the stress building the same way (58 s). `-m buildingsdemo` is the building editor's demo
+(40 shots, about 4.5 min): the camera can walk (`.walking()`: doors open for it, it shoves loose furniture), ride a
+lift (`.riding(n)`) and act at times of its track (`.at(t, .callLift / .lights / .flashlight)`); `DemoWalk` makes
+its walks from a building's plan. Keep its frames (`-k`) to join the shots into one captioned video.
 It takes minutes (every frame of the track is rendered), so run it with `run_in_background`. To tune a track, look
 along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 

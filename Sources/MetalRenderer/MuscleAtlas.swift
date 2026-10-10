@@ -563,12 +563,10 @@ struct MuscleAtlas {
     let ranges: [Range<Int>]
     let pieces: [Range<Int>]
 
-    /// The atlas on `rig`'s character, sculpted on its whole mesh (its coarser levels, simplified when the character cache
-    /// is built, aren't symmetric: a rebuilt cache moved a muscle a centimetre off its mirror).
-    init(_ rig: CharacterRig, muscles: [Muscle] = MuscleAtlas.all) {
-        let level = rig.character.level(0)
-        // Its skin, and its bones' shapes 8 mm within it inside too (the Y Bot's elbows are hollow).
-        let solids = rig.bones.indices.filter { !rig.bones[$0].rigid }.map { b -> (bounds: AABB, distance: (SIMD3<Float>) -> Float) in
+    /// `rig`'s bones' shapes (all but the rigid ones: head, hands, feet) 8 mm within them, as BodySurface's `solids`:
+    /// inside too, whatever the mesh says (the Y Bot's elbows are hollow).
+    static func boneSolids(_ rig: CharacterRig) -> [(bounds: AABB, distance: (SIMD3<Float>) -> Float)] {
+        rig.bones.indices.filter { !rig.bones[$0].rigid }.map { b -> (bounds: AABB, distance: (SIMD3<Float>) -> Float) in
             let shape = rig.bones[b].shape, unplace = rig.restPlacement(b).inverse, placed = rig.restPlacement(b)
             let box = shape.bounds()
             let corners = (0..<8).map { k in
@@ -578,7 +576,13 @@ struct MuscleAtlas {
                               hi: corners.reduce(SIMD3(repeating: -.infinity)) { simd_max($0, $1) })
             return (bounds, { p in shape.distance(PhysicsMath.xyz(unplace * SIMD4(p, 1))).d + 0.008 })
         }
-        let body = BodySurface((level.positions, level.normals, level.indices), solids: solids)
+    }
+
+    /// The atlas on `rig`'s character, sculpted on its whole mesh (its coarser levels, simplified when the character cache
+    /// is built, aren't symmetric: a rebuilt cache moved a muscle a centimetre off its mirror).
+    init(_ rig: CharacterRig, muscles: [Muscle] = MuscleAtlas.all) {
+        let level = rig.character.level(0)
+        let body = BodySurface((level.positions, level.normals, level.indices), solids: MuscleAtlas.boneSolids(rig))
         self.body = body
         let marks = BodyMarks(rig, body: body)
         self.marks = marks

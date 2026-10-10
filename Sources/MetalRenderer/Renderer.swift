@@ -634,6 +634,17 @@ final class Renderer: NSObject {
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
     /// The plant workshop's camera turns about what it shows: the point it looks at, and how far it is from it.
     private var orbit: (target: SIMD3<Float>, distance: Float)?
+    /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
+    private var walker: Walker?
+    /// The frame something last moved in, and each slot's last top-level refit (`writeFrameData`).
+    private var lastMotionFrame = 0
+    private var slotRefitFrame = [Int](repeating: -1, count: 8)
+    private var walkGrid: ColliderGrid?
+    private var walkRemainder: Float = 0
+    private var crouchHeld = false, jumpPending = false
+    private var lastLiftY: [Float] = []
+    private var walkMessage: String?
+    private var clickAt: SIMD2<Float>?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
@@ -810,7 +821,8 @@ final class Renderer: NSObject {
                     instanceBlocks: namedInstanceBlocks,
                     voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels : nil,
                     leafFall: Scene.leafFall(season: settings.foliage.season),
-                    worldTextures: (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameWorkshop(as: scene.settings))
+                    worldTextures: (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameWorkshop(as: scene.settings)
+                                    || settings.scene.isSameCity(as: scene.settings))
                         && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
@@ -920,7 +932,8 @@ final class Renderer: NSObject {
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
         loadJob?.cancel()
-        let job = benchmark != nil || wanted.scene.isSameWorkshop(as: scene.settings) ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
+        let job = benchmark != nil || wanted.scene.isSameWorkshop(as: scene.settings) || wanted.scene.isSameCity(as: scene.settings)
+            ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
             : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title)
         loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -983,13 +996,16 @@ final class Renderer: NSObject {
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
-            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+            let curves = crowd.hair.map { (first: scene.meshes[$0.mesh].vertexOffset, previous: scene.meshes[$0.mesh].prevOffset) }
+            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight, curves: curves)
         }
         // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
         // from the GPU's buffers).
         if let physics = scene.physics {
             let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
-            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
+            // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
+            let onGPU = scene.settings.kind.simulates
+                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
@@ -1168,7 +1184,8 @@ final class Renderer: NSObject {
         }
         // The open world made around another tile is the same world in the same place: what the frames have gathered
         // of it holds.
-        let sameWorld = scene.settings.isSameWorld(as: oldSettings)
+        // ...and the city with another building's interior in it: the same city where it was.
+        let sameWorld = scene.settings.isSameWorld(as: oldSettings) || scene.settings.isSameCity(as: oldSettings)
         // The workshop edited: the same few plants a little changed, where they were. What the frames gathered of the
         // light mostly holds (the plants are new, but the sky, the ground and the camera aren't).
         let sameWorkshop = scene.settings.isSameWorkshop(as: oldSettings)
@@ -1200,14 +1217,21 @@ final class Renderer: NSObject {
             camera = scene.defaultCamera
             prevCamera = camera
         }
-        // The workshop and the VFX stage: the camera turns about what they show, framed on it when that changes (the
+        // Walking: on in what it was on (the same workshop or city a little changed), off otherwise.
+        walkGrid = scene.walkColliders.isEmpty && scene.walkGround == nil ? nil : ColliderGrid(scene.walkColliders)
+        if walkGrid == nil || !(sameWorkshop || scene.settings.isSameCity(as: oldSettings)) { walker = nil }
+        lastLiftY = scene.interiorControls?.lifts.map(\.y) ?? []
+        // The workshops and the VFX stage: the camera turns about what they show, framed on it when that changes (the
         // stage's effects, not their edits: a capacity's edit makes the scene again).
         let stageChanged = scene.settings.kind == .vfxStage
             && (oldSettings.kind != .vfxStage || oldSettings.stage.effects != scene.settings.stage.effects)
-        if !scene.settings.kind.orbits {
+        if walker != nil {
             orbit = nil
-        } else if resetCamera || stageChanged || (scene.settings.kind == .plants && (!sameWorkshop || oldSettings.plants.layout != scene.settings.plants.layout
-                    || oldSettings.plants.species != scene.settings.plants.species)) {
+        } else if !scene.settings.kind.orbits {
+            orbit = nil
+        } else if resetCamera || stageChanged || (scene.settings.kind.isWorkshop && (!sameWorkshop
+                    || oldSettings.plants.layout != scene.settings.plants.layout || oldSettings.plants.species != scene.settings.plants.species
+                    || oldSettings.buildings.view != scene.settings.buildings.view)) {
             frameWorkshop()
         } else if orbit == nil, let focus = scene.focus {
             orbit = (focus.centroid, length(camera.position - focus.centroid))
@@ -1699,7 +1723,10 @@ final class Renderer: NSObject {
         }
         if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
         // Deforming meshes (the crowd's, cloths, soft bodies, hair) change their structures' bounds: the top level's too.
-        instanceASStale[slot] = first || !scene.movingInstances.isEmpty || virtualTracing != nil || scene.hasDeformingMeshes
+        // (What moves only now and then, doors and lifts: only once each slot has caught up with its last move.)
+        if scene.motionThisFrame { lastMotionFrame = Int(frameIndex) }
+        let moved = !scene.movingInstances.isEmpty && slotRefitFrame[slot] <= lastMotionFrame
+        instanceASStale[slot] = first || moved || virtualTracing != nil || scene.hasDeformingMeshes
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
                                                                first: sceneBuffers.instanceCount, scene: scene) {
@@ -1781,6 +1808,19 @@ final class Renderer: NSObject {
     }
 
     private func updateCamera(dt: Float) {
+        if walker != nil {
+            walk(dt)
+            return
+        }
+        // (A benchmark's walking camera: a body for the doors and the furniture.)
+        let body = benchmark?.current.body == true ? camera.position - SIMD3(0, Walker.eyeStanding, 0) : nil
+        scene.interiorControls?.advance(dt, walker: body)
+        if let body {
+            if let last = benchmarkBody, dt > 0 {
+                scene.interiorControls?.push(scene.physics, feet: body, velocity: (body - last) / dt, height: Walker.standing)
+            }
+            benchmarkBody = body
+        }
         var move = SIMD3<Float>(repeating: 0)
         let forward = camera.forward, right = camera.right
         if heldKeys.contains("w") { move += forward }
@@ -1794,6 +1834,136 @@ final class Renderer: NSObject {
             camera.position += normalize(move) * speed * dt
             orbit?.target += normalize(move) * speed * dt   // the workshop's: it moves what it turns about with it
         }
+    }
+
+    // MARK: - Interiors on demand
+
+    private var interiorWanted: (key: String?, since: Double)?
+    private var lastCameraPosition: SIMD3<Float>?
+
+    /// The city's building the camera is in or nearest (within reach, not far above it): its interior is made, in the
+    /// background (SceneSettings.interior); left behind, it is dropped. It waits a moment and while the camera flies
+    /// fast, so that passing by doesn't make one.
+    private func chooseInterior() {
+        let now = CACurrentMediaTime()
+        let p = camera.position, flat = SIMD2(p.x, p.z)
+        let speed = lastCameraPosition.map { length($0 - p) } ?? 0
+        lastCameraPosition = p
+        guard speed < 0.25 else { return }   // (a frame's way at 15 m/s and 60 fps)
+        let reach = settings.scene.city.interiorReach
+        func gap(_ r: CityPlan.Rect) -> Float { length(simd_max(simd_max(r.lo - flat, flat - r.hi), .zero)) }
+        let current = settings.scene.interior
+        var wanted = current
+        if let inside = scene.lotAreas.first(where: { gap($0.rect) == 0 && p.y < $0.height + 1 }) {
+            wanted = inside.key
+        } else if let near = scene.lotAreas.filter({ p.y < $0.height + 25 }).min(by: { gap($0.rect) < gap($1.rect) }) {
+            let held = scene.lotAreas.first { $0.key == current }
+            if held.map({ gap($0.rect) > reach + 15 }) ?? true { wanted = gap(near.rect) < reach ? near.key : nil }
+        } else {
+            wanted = nil
+        }
+        guard wanted != current else { interiorWanted = nil; return }
+        if interiorWanted?.key != wanted { interiorWanted = (wanted, now); return }
+        if let since = interiorWanted?.since, now - since > 0.4 || benchmark != nil {
+            settings.scene.interior = wanted
+            interiorWanted = nil
+        }
+    }
+
+    // MARK: - Walking
+
+    /// Walk mode on or off. On: the walker stands under the camera (in the building workshop, outside, at the
+    /// building's door, if the camera isn't in the building).
+    private func toggleWalk() {
+        if walker != nil {
+            walker = nil
+            scene.interiorControls?.flashlight.on = false
+            walkMessage = "Flying"
+            return
+        }
+        guard let grid = walkGrid else { walkMessage = "Nothing to walk on here"; return }
+        var feet = camera.position
+        let inside = scene.walkAreas.contains { area in
+            let p = area.at.inverse * SIMD4(camera.position, 1)
+            return area.rect.contains(SIMD2(p.x, p.z)) && p.y < area.building.height
+        }
+        if scene.settings.kind == .buildings, !inside, let area = scene.walkAreas.first,
+           let door = area.building.plan.outsideDoors(0).first {
+            // In front of the door, facing it.
+            let room = area.building.plan.storeys[0].rooms[door.a].rect.center
+            var out = door.alongX ? SIMD2<Float>(0, door.at.y > room.y ? 1 : -1) : SIMD2<Float>(door.at.x > room.x ? 1 : -1, 0)
+            let p = door.at + out * 1.6
+            let w = area.at * SIMD4(p.x, 1, p.y, 1)
+            feet = SIMD3(w.x, w.y, w.z)
+            let o4 = area.at * SIMD4(out.x, 0, out.y, 0)
+            out = SIMD2(o4.x, o4.z)
+            camera.yaw = atan2(-out.x, out.y)
+            camera.pitch = 0
+        }
+        if let down = grid.raycast(feet + SIMD3(0, 0.5, 0), [0, -1, 0], limit: 300) { feet.y += 0.5 - down }
+        else if let ground = scene.walkGround { feet.y = ground(feet.x, feet.z) }
+        else { feet.y -= Walker.eyeStanding }
+        walker = Walker(feet: feet)
+        orbit = nil
+        camera.pitch = min(max(camera.pitch, -0.7), 0.7)
+        walkMessage = "Walking: W A S D, Shift runs, Space jumps, C crouches, E or a click uses, F the flashlight, V flies"
+    }
+
+    /// A walking frame: the walker told what is held, the doors and lifts moved on, the camera at its eyes.
+    private func walk(_ dt: Float) {
+        guard var w = walker, let grid = walkGrid else { walker = nil; return }
+        let controls = scene.interiorControls
+        let fw = camera.forward
+        let ahead = length(SIMD2(fw.x, fw.z)) > 1e-4 ? normalize(SIMD2(fw.x, fw.z)) : SIMD2<Float>(0, -1)
+        let right = SIMD2(-ahead.y, ahead.x)
+        var move = SIMD2<Float>.zero
+        if heldKeys.contains("w") { move += ahead }
+        if heldKeys.contains("s") { move -= ahead }
+        if heldKeys.contains("d") { move += right }
+        if heldKeys.contains("a") { move -= right }
+        if length(move) > 0 { move = normalize(move) }
+        let input = Walker.Input(move: move, run: shiftHeld, crouch: crouchHeld || controlHeld, jump: jumpPending)
+        jumpPending = false
+        controls?.advance(dt, walker: w.feet)
+        let lifts = controls?.lifts.map(\.y) ?? []
+        var moved = zip(lifts, lastLiftY).map { $0 - $1 }
+        lastLiftY = lifts
+        controls?.push(scene.physics, feet: w.feet, velocity: w.velocity, height: w.height)
+        let obstacles = (controls?.obstacles ?? []) + (controls?.propObstacles(scene.physics) ?? [])
+        w.advance(dt, input: input, world: grid, moving: obstacles, carry: { p in
+            defer { if p < moved.count { moved[p] = 0 } }
+            return p < moved.count ? SIMD3(0, moved[p], 0) : .zero
+        }, terrain: scene.walkGround, remainder: &walkRemainder)
+        // Fallen out of the world: back where it started.
+        if w.feet.y < -50 { w = Walker(feet: camera.position) }
+        walker = w
+        camera.position = w.eyePosition
+        if let c = controls, c.flashlight.on {
+            c.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            c.flashlight.direction = camera.forward
+        }
+    }
+
+    /// Uses what is along `ray` from the eyes: a door, a switch, a lift's button.
+    private func use(_ ray: SIMD3<Float>) {
+        guard let c = scene.interiorControls else { return }
+        let blocked = walkGrid?.raycast(camera.position, ray, limit: 3)
+        if let what = c.use(from: camera.position, along: ray, blocked: blocked) { walkMessage = what }
+    }
+
+    /// The storey the walker is on, of the building it is in (its plan's), if it is in one.
+    var walkerStatus: WalkerStatus? {
+        guard let w = walker else { return nil }
+        var status = WalkerStatus(position: w.feet, yaw: camera.yaw, building: nil, storey: nil, local: nil, message: walkMessage,
+                                  flashlight: scene.interiorControls?.flashlight.on ?? false, crouched: w.crouched)
+        for (i, area) in scene.walkAreas.enumerated() {
+            let p = area.at.inverse * SIMD4(w.feet, 1)
+            guard area.rect.contains(SIMD2(p.x, p.z), margin: 0.5) else { continue }
+            status.building = i
+            status.local = SIMD3(p.x, p.y, p.z)
+            status.storey = area.building.plan.storeys.lastIndex { $0.floor <= p.y + 0.3 } ?? 0
+        }
+        return status
     }
 
     /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
@@ -1902,12 +2072,15 @@ final class Renderer: NSObject {
             }
         }
         if scene.worldPlace != nil { scene.follow(camera.position) }
+        if settings.scene.kind.isCity || settings.scene.kind.isWorld, settings.scene.city.interiors, loading == nil, benchmark == nil {
+            chooseInterior()
+        }
         setWorldLights()
         if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
-            let streamed = settings.scene.isSameWorld(as: scene.settings) && settings.api == builtAPI
+            let streamed = (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)) && settings.api == builtAPI
             if benchmark != nil && !streamed { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
@@ -2073,6 +2246,7 @@ final class Renderer: NSObject {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
             if let track = benchmark.current.track { camera = track.camera(at: benchmark.trackTime) }
+            benchmarkActs(benchmark)
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
             if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
@@ -2086,6 +2260,7 @@ final class Renderer: NSObject {
         moveGrab()
         previousAnimTime = animTime
         if !settings.paused { animTime += dt * settings.timeScale }
+        scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }
@@ -2568,7 +2743,7 @@ final class Renderer: NSObject {
         //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
-                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
+                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], hair: pipelines[.crowdHair], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
@@ -2621,6 +2796,7 @@ final class Renderer: NSObject {
                                             + (sceneBuffers.plants?.structures(slot: slot) ?? []),
                                          indirect: sceneBuffers.indirect), pass: "tlas")
             instanceASBuilt.insert(slot)
+            slotRefitFrame[slot] = Int(frameIndex)
         }
         // 2. Particle effects: the steps since last frame (or a replay from the start; their scene collisions trace this
         //    frame's TLAS), then this slot's records and boxes and the structures over them, which only the particle
@@ -2980,6 +3156,10 @@ final class Renderer: NSObject {
             let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)
             print(String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
                          crowdSkinner.crowd.slots.count, skin.position, skin.normal))
+            if !crowdSkinner.crowd.hair.isEmpty {
+                print(String(format: "  Hair check: %d grooms, GPU against CPU within %.2g m", crowdSkinner.crowd.hair.count,
+                             crowdSkinner.checkHair(positions: positionBuffer)))
+            }
         }
     }
 
@@ -3760,7 +3940,32 @@ final class Renderer: NSObject {
 
     // MARK: - Benchmark
 
+    /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
+    private func benchmarkActs(_ benchmark: Benchmark) {
+        let c = benchmark.current
+        guard let controls = scene.interiorControls else { return }
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
+            benchmarkFired.insert(k)
+            switch e.event {
+            case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
+            case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
+            case .flashlight(let on): controls.flashlight.on = on
+            }
+        }
+        if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
+            camera.position.y += controls.lifts[n].y - base
+        }
+        if controls.flashlight.on {
+            controls.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            controls.flashlight.direction = camera.forward
+        }
+    }
+    private var benchmarkFired = Set<Int>()
+    private var benchmarkBody: SIMD3<Float>?
+
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
+        benchmarkFired = []
+        benchmarkBody = nil
         settings = c.resolvedSettings()
         animTime = c.startTime
         previousAnimTime = c.startTime
@@ -4489,6 +4694,11 @@ final class Renderer: NSObject {
                                     debugInfo: debugActive ? debugInfo() : nil)
         status.plantStats = scene.plantStats
         status.effects = effectsStatus()
+        status.buildingStats = scene.buildingStats
+        status.characterStats = scene.characterStats
+        status.buildingPlan = scene.buildingPlan
+        status.walker = walkerStatus
+        status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
@@ -4692,6 +4902,30 @@ final class Renderer: NSObject {
 
     /// A key went down: `key` is its character without modifiers, lowercased.
     func keyDown(_ key: String, isRepeat: Bool) {
+        if key == "v" && !isRepeat { toggleWalk(); return }
+        if let w = walker {
+            switch key {
+            case " ": jumpPending = true; return
+            case "c": crouchHeld = true; return
+            case "e": if !isRepeat { use(camera.forward) }; return
+            case "f":
+                if !isRepeat, let c = scene.interiorControls {
+                    c.flashlight.on.toggle()
+                    c.flashlight.position = camera.position
+                    c.flashlight.direction = camera.forward
+                    walkMessage = c.flashlight.on ? "Flashlight on" : "Flashlight off"
+                }
+                return
+            case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+                // In a lift: to that floor (0 the ground floor).
+                if let p = w.standingOn, let c = scene.interiorControls, c.lifts.indices.contains(p) {
+                    c.lifts[p].call(Int(key)!)
+                    walkMessage = "Lift to floor \(key)"
+                    return
+                }
+            default: break
+            }
+        }
         if ["w", "a", "s", "d", "q", "e"].contains(key) {
             heldKeys.insert(key)
             return
@@ -4728,7 +4962,14 @@ final class Renderer: NSObject {
         }
     }
 
-    func keyUp(_ key: String) { heldKeys.remove(key) }
+    func keyUp(_ key: String) {
+        heldKeys.remove(key)
+        if key == "c" { crouchHeld = false }
+    }
+
+    /// Control: crouching, while walking.
+    func setControl(_ held: Bool) { controlHeld = held }
+    private var controlHeld = false
 
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
@@ -4748,6 +4989,7 @@ final class Renderer: NSObject {
             onGizmoMoved?(target.effect, emitter, .zero, 0)
             return
         }
+        clickAt = cursor
         guard let physics = scene.physics else { return }
         let direction = cursorRay(cursor)
         guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
@@ -4764,6 +5006,7 @@ final class Renderer: NSObject {
             if move != 0, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, drag.axis * move, 1) }
             return
         }
+        if let c = clickAt, length(c - cursor) > 0.004 { clickAt = nil }
         if holding != nil {
             holding?.cursor = cursor
             return
@@ -4777,6 +5020,9 @@ final class Renderer: NSObject {
     func mouseUp() {
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
+        // A click (no drag) while walking: use what is under the cursor.
+        if let c = clickAt, walker != nil, holding == nil { use(cursorRay(c)) }
+        clickAt = nil
         holding = nil
         scene.physics?.grab.target.w = 0
     }

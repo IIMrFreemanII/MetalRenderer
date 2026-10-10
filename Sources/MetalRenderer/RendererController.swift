@@ -14,6 +14,27 @@ struct RendererStatus {
     var plantStats: PlantStats?
     /// The scene's particle effects as they run (the VFX editor's status line).
     var effects: VFXStatus?
+    /// The building workshop's building: what it costs, and its plan (the Floor Plan window).
+    var buildingStats: BuildingStats?
+    var buildingPlan: BuildingPlan?
+    /// The character workshop's character (Scene.characterStats).
+    var characterStats: CharacterStats?
+    /// Walking: where (the Floor Plan window's you-are-here).
+    var walker: WalkerStatus?
+    /// Where the camera is (the building editor's Pin: the city's building nearest it).
+    var cameraPosition: SIMD3<Float>?
+}
+
+/// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).
+struct WalkerStatus: Equatable {
+    var position: SIMD3<Float>
+    var yaw: Float
+    var building: Int?
+    var storey: Int?
+    var local: SIMD3<Float>?
+    var message: String?
+    var flashlight: Bool
+    var crouched: Bool
 }
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the
@@ -47,9 +68,13 @@ final class RendererController: InputHandler {
     var onToggleDebug: (() -> Void)?            // I key
     var onToggleLoading: (() -> Void)?          // P key
     var onTogglePlants: (() -> Void)?           // K key
-    var onToggleVFX: (() -> Void)?              // V key
+    var onToggleVFX: (() -> Void)?              // X key
+    var onToggleBuildings: (() -> Void)?        // J key
+    var onToggleCharacters: (() -> Void)?       // H key
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
     var onCompare: ((Bool) -> Void)?
+    /// ...and in the character workshop: the saved character.
+    var onCompareCharacter: ((Bool) -> Void)?
     /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
     let loadActivity: LoadActivity
 
@@ -168,14 +193,15 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "v" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" {
             if !event.isARepeat {
-                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants : onToggleVFX)?()
+                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
+                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : onToggleBuildings)?()
             }
             return
         }
-        if key == "c", settings.scene.kind == .plants {
-            if !event.isARepeat { onCompare?(true) }
+        if key == "c", settings.scene.kind == .plants || settings.scene.kind == .characters {
+            if !event.isARepeat { (settings.scene.kind == .plants ? onCompare : onCompareCharacter)?(true) }
             return
         }
         let isRepeat = event.isARepeat
@@ -185,12 +211,13 @@ final class RendererController: InputHandler {
     func keyUp(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
         if key == "c", settings.scene.kind == .plants { onCompare?(false) }
+        if key == "c", settings.scene.kind == .characters { onCompareCharacter?(false) }
         renderer.perform { $0.keyUp(key) }
     }
 
     func flagsChanged(_ event: NSEvent) {
-        let shift = event.modifierFlags.contains(.shift)
-        renderer.perform { $0.setShift(shift) }
+        let shift = event.modifierFlags.contains(.shift), control = event.modifierFlags.contains(.control)
+        renderer.perform { $0.setShift(shift); $0.setControl(control) }
     }
 
     func mouseDown(at cursor: SIMD2<Float>) {

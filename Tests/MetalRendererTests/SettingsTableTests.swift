@@ -125,7 +125,8 @@ final class SettingsTableTests: XCTestCase {
     func testEverySettingRoundTrips() {
         // Session state, like the camera; and what the renderer sets by the time of day.
         let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
-                                         "scene.plants.compare"]
+                                         "scene.plants.compare", "scene.buildingCatalog", "scene.buildings.mutants", "scene.buildings.compare",
+                                         "scene.interior", "scene.buildings.pinned"]
         let changes = singleChanges()
         XCTAssertGreaterThan(changes.count, 120)
         for (path, s) in changes where !unexported.contains(path) {

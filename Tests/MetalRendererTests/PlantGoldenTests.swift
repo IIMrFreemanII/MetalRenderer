@@ -91,7 +91,8 @@ final class PlantGoldenTests: XCTestCase {
             let side = Double(World.tileSize), x0 = Double(x) * side, z0 = Double(z) * side
             h.add(world.trees(x0: x0, z0: z0, side: side, flora: flora))
             for j in 0..<4 { h.add(world.groundCover(x0: x0, z0: z0 + Double(j) * 32, side: 32, flora: flora)) }
-            h.add(WorldTile.place(world, x: x, z: z))
+            // (The tiles' name as of World.version 6: 7 changed the buildings, not where the plants stand.)
+            h.add(WorldTile.place(world, x: x, z: z).replacingOccurrences(of: "tile v\(World.version) ", with: "tile v6 "))
         }
         XCTAssertEqual(h.value, "fd2a42daf43a")
     }

@@ -18,7 +18,7 @@ enum Kernel: Int, CaseIterable {
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
-    case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    case crowdPose, crowdSkin, crowdHair   // the crowd's pose slots: skinning matrices, vertices, hair (CrowdSkinner)
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
     case physicsParticleInsert, physicsParticleNeighbours

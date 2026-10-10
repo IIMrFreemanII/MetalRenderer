@@ -46,7 +46,7 @@ The particle effects as node graphs, and an editor for them (README "VFX graphs"
   - Otherwise the scene is made again.
   - Benchmarks take the same path (`applyBenchmarkConfig`; mode `vfxedit`).
 - `Scene.addEffect(builtIn:)`: a catalog's copy of a built-in effect is moved from its origin to the scene's place.
-- V / ⇧⌘E opens it (`RendererController.onToggleVFX`, main.swift).
+- X / ⇧⌘E opens it (`RendererController.onToggleVFX`, main.swift); it was V until main took V for walking.
 - Not clicked through by hand: no tool here sends clicks to a native window. The scripted session and the offscreen pictures
   stand in for it.
 

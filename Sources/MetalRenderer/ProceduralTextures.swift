@@ -46,6 +46,21 @@ enum SurfaceKind: Int, CaseIterable, Hashable {
     var hasRoughness: Bool { self == .metalpanel }
 }
 
+/// Written by name (building styles' files).
+extension SurfaceKind: Codable {
+    init(from decoder: Decoder) throws {
+        let name = try decoder.singleValueContainer().decode(String.self)
+        guard let found = SurfaceKind.allCases.first(where: { "\($0)" == name }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no surface \(name)"))
+        }
+        self = found
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode("\(self)")
+    }
+}
+
 /// The city's textures, made on the CPU: for each `SurfaceKind` a base-colour map, a normal map and, for the one
 /// with a specular lobe, a roughness map, all tiling. The base colours are near white, so a material's own colour
 /// tints them and the buildings of a street share a few textures. Seeded and pure: the same pixels every time.

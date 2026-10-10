@@ -65,22 +65,32 @@ if [[ $suites == " " ]]; then
           Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;
           BVH.swift) add BVHTests CacheTests ;;
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;
-          Building*.swift|MeshBuilder.swift) add BuildingTests CityTests ;;
+          Building*.swift|MeshBuilder.swift|BuiltInBuildings.swift) add BuildingTests CityTests BuildingPlanTests BuildingEditorTests BuildingWorkshopTests WalkerTests ;;
+          PlanEdits.swift|FloorPlanView.swift|PropLibrary.swift) add BuildingEditorTests BuildingPlanTests ;;
+          FurnitureKit.swift) add BuildingPlanTests BuildingWorkshopTests ;;
+          Walker.swift|InteriorControls.swift|InteriorLifts.swift) add WalkerTests BuildingWorkshopTests ;;
+          Scene+Buildings.swift|Scene+Interiors.swift) add BuildingWorkshopTests CityTests WorldTests WalkerTests ;;
+          CatalogRegistry.swift) add PlantCatalogTests PlantEditorTests BuildingEditorTests ;;
           CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
           Scene+Stress.swift) add StressSceneTests ;;
-          SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests ;;   # (the muscles' rig poses its bones by it)
-          Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
+          SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests CharacterBaseTests CharacterFaceTests ;;   # (the muscles' rig poses its bones by it)
+          Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests CharacterBaseTests CharacterFaceTests CharacterHairTests ;;
+          CharacterSkin.swift) add CharacterSkinTests CharacterBaseTests ;;
+          CharacterHair*.swift) add CharacterHairTests ;;
+          Character*.swift) add CharacterDNATests CharacterBaseTests CharacterFaceTests CharacterSkinTests CharacterHairTests CharacterEditorTests ;;   # (and CharacterEditor/*: its model)
+          Face*.swift) add CharacterBaseTests CharacterFaceTests CharacterSkinTests CharacterHairTests ;;
+          Scene+Characters.swift) add CharacterBaseTests CharacterHairTests ;;
           FBXReader.swift) add FBXTests ;;
           Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ;;
           PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
           Plant*.swift|BuiltInPlants.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests FoliageTests ForestTests ;;
           Scene+Plants.swift) add PlantWorkshopTests PlantGoldenTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
-          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
+          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests CharacterBaseTests ;;
           Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ;;
           FluidSurface.swift|Scene+Fluids.swift) add FluidTests ;;
           Particle*.swift|Scene+Particles.swift|Scene+Effects.swift) add ParticleTests VFXTests ;;
-          MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests ;;
+          MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests CharacterBaseTests ;;
           HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
