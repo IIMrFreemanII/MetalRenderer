@@ -2573,7 +2573,8 @@ final class Renderer: NSObject {
         viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
         moveGrab()
         previousAnimTime = animTime
-        if !settings.paused { animTime += dt * settings.timeScale }
+        // Paint mode holds the scene still (a character's pose is where the brush's tiles were measured).
+        if !settings.paused && painter.active == nil { animTime += dt * settings.timeScale }
         scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)

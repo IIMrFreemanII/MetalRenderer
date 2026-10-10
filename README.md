@@ -1894,22 +1894,26 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
 * **Its UVs** (`UVCheck`, `UVUnwrap`, `UVPack`): the mesh's own, if each point of it has a texel of its own; otherwise
   the painter's unwrap, written here: charts grown from the largest triangles while they face within a cone and
   never across a crease, small ones merged, each flattened by LSCM (a conjugate gradient; its projection on its plane
-  if it folds, and split in two if that folds or overlaps), turned to its smallest rectangle, packed on a skyline
-  with gutters. The corners' UVs (three a triangle) follow the meshes' own on the GPU: nothing is split
+  if it folds, and split in two if that folds or overlaps), turned to its smallest rectangle, then packed by its
+  outline with gutters (a horizon per column of half a gutter: each chart, largest first, in the quarter turn and place
+  where it rests lowest and leaves least room under it; a notch takes another's bump). The corners' UVs (three a triangle) follow the meshes' own on the GPU: nothing is split
   (`Scene+Painted.swift`, the painted materials' extras say where they start).
 * **Painting** (`PainterSession`, `MaterialShaders/Paint.metal`): every texel knows its triangle and barycentrics (a
   UV-space pass, dilated into the gutters), so a dab is texels whose point, as the object is now, shows under the
   brush on the screen (the render's own surface at that pixel: hidden texels aren't painted, and strokes cross seams).
   Brush: size, hardness, opacity, flow, spacing, pen pressure, stamps (built-in, jittered, following the stroke),
   symmetry along X, Y or Z, a stencil (a picture or a graph) painted through, an eraser; fills of the whole object, a
-  UV island, a polygon or a material. Only the tiles a stroke touches are composited again; undo keeps its tiles.
+  UV island, a polygon or a material. Only the tiles a stroke touches are composited again, and their mip levels made
+  again (2K, ten dabs a frame: 1.4 ms on an M1 Max); undo keeps its tiles.
 * **Smart masks** (`PaintBake`, `MaterialShaders/PaintBake.metal`): the object's curvature (its vertices' and its
   creases', convex and concave), ambient occlusion and thickness (Metal RT against the object alone), position and
   normal; generators of edge wear, dirt in cavities, dust on top, rust and leaks from them (amount, contrast, scale,
   seed); a graph mask (the Material Designer's Mesh Map node reads them); smart materials (`SmartMaterial`: Worn
-  Painted Metal, Rusty Iron, Dusty Plastic, Old Wood, Grimy Concrete, and saved ones).
+  Painted Metal, Rusty Iron, Dusty Plastic, Old Wood, Grimy Concrete, and saved ones). The mesh maps are baked off the
+  render thread (in bands of rows, on a queue of their own) when a layer first has a generated mask.
 * **Paint mode** (Paint or Tab in the window): left drag paints in the main view, right drag or Option-drag orbits the
-  object, scroll zooms, [ ] the brush's size, Escape leaves; a ring shows the brush on the surface. Shift-V walks.
+  object, scroll zooms, [ ] the brush's size, Escape leaves; a ring shows the brush on the surface; the scene's
+  animation holds still meanwhile. Shift-V walks.
 * **Saving:** `Assets/Painter/<name>.painter/` (`document.json`, the layers' pixels as 16-bit PNGs, the finished set),
   the scenes' paint in `Assets/Painter/assignments.json` (`METALRENDERER_PAINTER=none|<folder>`); Export writes the set
   (PNG 8 or 16-bit, EXR; with the mesh maps) and the unwrapped mesh as GLB.
@@ -1918,8 +1922,9 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
   window's undo); `METALRENDERER_BENCH=painter` (each object's layout under bricks), `paintersmart` (the smart
   materials), `painterstrokes` (strokes, symmetry, stamps, the eraser, a mask, an island fill: scripted paint mode);
   `METALRENDERER_PAINTER_EXPORT=<folder>` writes each set as it is first composited.
-* **Not done:** the window and paint mode were never used by hand (offscreen and tests only); the unwrap's charts are
-  packed as rectangles (about a third of the square for a character, two thirds for a box); paint is on a character's
+* **Not done:** the window and paint mode were never used by hand (offscreen and tests only); the unwrap's charts fill
+  about two fifths of the square for a character or a model, two thirds for a box (its largest charts are long: cutting
+  them shorter is next); paint is on a character's
   bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced, and Lumen sees their
   original material; Metal 4 untried.
 

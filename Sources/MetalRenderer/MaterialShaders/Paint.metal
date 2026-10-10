@@ -524,6 +524,18 @@ kernel void paintBakeOriginal(texture2d<uint, access::read> map [[texture(0)]],
     emissiveOut.write(float4(e, 1.0f), px);
 }
 
+// A level of the texture set from the one above, where the composite wrote: per threadgroup an 8x8 block of `dst`
+// (its `blocks` entry, in blocks), each texel the mean of its four in `src` (as a blit's mipmaps are, but only the
+// blocks over the dirty tiles).
+kernel void paintDownsample(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]],
+                            device const uint2* blocks [[buffer(0)]],
+                            uint2 group [[threadgroup_position_in_grid]], uint2 lid [[thread_position_in_threadgroup]]) {
+    uint2 p = blocks[group.x] * 8u + lid;
+    if (p.x >= dst.get_width() || p.y >= dst.get_height()) return;
+    uint2 q = p * 2u;
+    dst.write(0.25f * (src.read(q) + src.read(q + uint2(1, 0)) + src.read(q + uint2(0, 1)) + src.read(q + uint2(1, 1))), p);
+}
+
 // MARK: - Copies
 
 // A texture cleared (a paint layer's channel: no coverage).

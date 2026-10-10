@@ -116,6 +116,9 @@ final class PainterSession {
     /// The mesh maps (PaintBake), once made; its occlusion is the ORM's R.
     var bake: PaintBake?
     var occlusion: MTLTexture?
+    /// The mesh maps being made, until the render thread adopts them.
+    var baking: PaintBakeJob?
+    var bakeFailed = false
     /// Tiles whose texels the composite must write again (all: every tile).
     private(set) var dirty: Set<Int> = []
     var allDirty: Bool { dirty.count >= tilesAcross * tilesAcross }
@@ -444,9 +447,43 @@ final class PainterSession {
         enc.setBuffer(tileList, offset: 0, index: 1)
         enc.dispatchThreadgroups(MTLSize(width: tiles.count, height: 1, depth: 1), threadsPerThreadgroup: group)
         passes.endCompute()
-        passes.generateMipmaps([base, orm, normal, emissive, height, opacity], pass: "paint levels")
+        encodeLevels(passes, tiles: tiles)
         dirty = []
         composited = true
+    }
+
+    /// The texture set's levels, each texture's level by level (a view each), made once.
+    private lazy var levelViews: [[MTLTexture]] = [base, orm, normal, emissive, height, opacity].map { t in
+        (0..<t.mipmapLevelCount).compactMap { t.makeTextureView(pixelFormat: t.pixelFormat, textureType: .type2D, levels: $0..<($0 + 1), slices: 0..<1) }
+    }
+
+    /// The levels over `tiles` made again from the ones above (paintDownsample: 8x8 blocks of each level, those under
+    /// the tiles), instead of every level of the six textures each frame a stroke paints.
+    private func encodeLevels(_ passes: FrameEncoder, tiles: [Int]) {
+        guard let state = try? MatCompiler.shared.state("paintDownsample", device: device), let views = levelViews.first, views.count > 1,
+              let enc = passes.compute("paint levels", serial: true) else { return }
+        enc.setComputePipelineState(state)
+        let group = MTLSize(width: 8, height: 8, depth: 1), across = tilesAcross
+        for level in 1..<views.count {
+            // A tile's texels at level 0, at this one: in blocks of 8 (several tiles to a block lower down).
+            var blocks = Set<SIMD2<UInt32>>()
+            for t in tiles {
+                let lo0 = SIMD2(t % across, t / across) &* PainterSession.tile
+                let lo = lo0 &>> level, hi = (lo0 &+ (PainterSession.tile - 1)) &>> level
+                for by in (lo.y / 8)...(hi.y / 8) { for bx in (lo.x / 8)...(hi.x / 8) { blocks.insert(SIMD2(UInt32(bx), UInt32(by))) } }
+            }
+            let list = Array(blocks)
+            guard let buffer = list.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 16), options: .storageModeShared) })
+            else { continue }
+            enc.setBuffer(buffer, offset: 0, index: 0)
+            for chain in levelViews where level < chain.count {
+                enc.setTexture(chain[level - 1], index: 0)
+                enc.setTexture(chain[level], index: 1)
+                enc.dispatchThreadgroups(MTLSize(width: list.count, height: 1, depth: 1), threadsPerThreadgroup: group)
+            }
+            enc.memoryBarrier(scope: .textures)
+        }
+        passes.endCompute()
     }
 
     // MARK: - Strokes

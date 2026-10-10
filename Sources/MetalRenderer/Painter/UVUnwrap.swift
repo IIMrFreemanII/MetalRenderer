@@ -8,7 +8,7 @@ struct UVAtlas: Equatable {
     var chartOfTriangle: [Int32]
     var chartCount: Int
     var resolution: Int                  // the texture set's side it was laid out for (its gutters are in its texels)
-    /// Texels per metre (object space) at `resolution`: 0 for the mesh's own UVs.
+    /// Texels per metre (object space) at `resolution` (the mesh's own UVs: their mean).
     var texelsPerMetre: Float = 0
     /// The mesh's own UVs (UVCheck said good), not an unwrap.
     var own = false
@@ -26,11 +26,11 @@ struct UVAtlas: Equatable {
 /// The painter's own unwrap (no library): the mesh is cut into charts that face about one way (grown from the largest
 /// triangles while their normals stay within a cone), each chart is flattened by least-squares conformal maps (LSCM,
 /// a Jacobi-preconditioned conjugate gradient from its projection on its plane; the projection itself if that folds,
-/// and the chart split in two if the projection folds too), turned to its smallest bounding rectangle and packed
-/// (UVPack) into the square with gutters for the painting's dilation and mip levels.
+/// and the chart split in two if the projection folds too), turned to its smallest bounding rectangle and packed by
+/// its outline (UVPack) into the square with gutters for the painting's dilation and mip levels.
 enum UVUnwrap {
     /// Bumped when the unwrap lays a mesh out differently (the cached layouts are made again).
-    static let version = 3
+    static let version = 5
     /// How far a chart's triangles may face from its mean normal, and from its first's.
     static let coneAngle: Float = 66 * .pi / 180
     static let seedAngle: Float = 85 * .pi / 180
@@ -63,7 +63,14 @@ enum UVUnwrap {
         }
         let adj = mesh.adjacency(weld)
         let (chart, count) = components(Array(0..<mesh.triangleCount), adj, mesh.triangleCount)
-        return UVAtlas(corners: corners, chartOfTriangle: chart, chartCount: count, resolution: resolution, own: true)
+        // Its scale: texels per metre over the whole (the square root of the UV area in texels over the surface's).
+        var uvArea: Float = 0, worldArea: Float = 0
+        for t in 0..<mesh.triangleCount {
+            uvArea += abs(UVCheck.cross2(corners[3 * t + 1] - corners[3 * t], corners[3 * t + 2] - corners[3 * t])) / 2
+            worldArea += mesh.area(t)
+        }
+        let texelsPerMetre = worldArea > 0 ? (uvArea / worldArea).squareRoot() * Float(resolution) : 0
+        return UVAtlas(corners: corners, chartOfTriangle: chart, chartCount: count, resolution: resolution, texelsPerMetre: texelsPerMetre, own: true)
     }
 
     /// The unwrap.
@@ -93,25 +100,17 @@ enum UVUnwrap {
                 for half in split(tris, normal: normal, adj: adj, n: n) { charts.append(half) }
             }
         }
-        // Each chart square to its smallest rectangle, lying down, from 0.
-        var sizes: [SIMD2<Float>] = []
-        for i in flat.indices {
-            flat[i].uv = upright(flat[i].uv)
-            sizes.append(flat[i].uv.reduce(SIMD2<Float>.zero) { simd_max($0, $1) })
-        }
-        let packed = UVPack.pack(sizes, resolution: resolution, padding: padding(resolution))
+        // Each chart square to its smallest rectangle, lying down, from 0; then packed by its outline.
+        for i in flat.indices { flat[i].uv = upright(flat[i].uv) }
+        let packed = UVPack.pack(flat.map(\.uv), resolution: resolution, padding: padding(resolution))
         var corners = [SIMD2<Float>](repeating: .zero, count: 3 * n)
         var chartOf = [Int32](repeating: 0, count: n)
         let r = Float(resolution)
         for (i, chart) in flat.enumerated() {
-            let origin = packed.origins[i], turn = packed.turned.indices.contains(i) && packed.turned[i]
+            let origin = packed.origins[i], turns = packed.turns.indices.contains(i) ? packed.turns[i] : 0
             for (j, t) in chart.tris.enumerated() {
                 chartOf[t] = Int32(i)
-                for k in 0..<3 {
-                    var uv = chart.uv[3 * j + k]
-                    if turn { uv = SIMD2(sizes[i].y - uv.y, uv.x) }   // a quarter turn that keeps the winding
-                    corners[3 * t + k] = (origin + uv * packed.scale) / r
-                }
+                for k in 0..<3 { corners[3 * t + k] = (origin + UVPack.turn(chart.uv[3 * j + k], turns) * packed.scale) / r }
             }
         }
         return UVAtlas(corners: corners, chartOfTriangle: chartOf, chartCount: flat.count, resolution: resolution,

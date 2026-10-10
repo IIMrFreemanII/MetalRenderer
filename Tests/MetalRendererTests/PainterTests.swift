@@ -192,6 +192,51 @@ final class PainterTests: XCTestCase {
         session.undo(recorded!, undo: false)
         frame()
         XCTAssertGreaterThan(colourAt(hit).x, 0.9, "red again after redo")
+        // The levels (made again over the tiles the stroke touched only): each texel of level 3 the mean of its 8x8 of level 0.
+        let level0 = PainterPixels.read(session.base, device: device, queue: queue)
+        let view3 = try XCTUnwrap(session.base.makeTextureView(pixelFormat: session.base.pixelFormat, textureType: .type2D, levels: 3..<4, slices: 0..<1))
+        let level3 = PainterPixels.read(view3, device: device, queue: queue)
+        var worst: Float = 0
+        for y in 0..<view3.height {
+            for x in 0..<view3.width {
+                var mean = SIMD4<Float>.zero
+                for j in 0..<8 { for i in 0..<8 { mean += level0[(8 * y + j) * session.size + 8 * x + i] } }
+                worst = max(worst, simd_reduce_max(abs(mean / 64 - level3[y * view3.width + x])))
+            }
+        }
+        XCTAssertLessThan(worst, 4 / 255, "level 3 is level 0's means")
+    }
+
+    /// The mesh maps made off the render thread (PaintBakeJob, in bands of rows on a queue of its own) are those of
+    /// one pass over the whole set.
+    func testBakesInTheBackgroundMatchOnePass() throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no GPU") }
+        guard device.supportsRaytracing else { throw XCTSkip("no ray tracing") }
+        var s = SceneSettings(kind: .painter)
+        s.painterWorkshop.subject = .cube
+        s.painterWorkshop.document = "Painter bake cube"
+        let d = PaintDocument(name: s.painterWorkshop.document, resolution: 512)
+        PaintDocuments.shared.update(d)
+        let scene = Scene(s)
+        let o = try XCTUnwrap(scene.painted.first)
+        let session = try XCTUnwrap(PainterSession(device: device, object: o, document: d))
+        func buffer<T>(_ a: [T]) -> MTLBuffer { a.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)! } }
+        try session.prepare(queue: queue, args: session.objectArgs(transform: scene.instances[o.instance].transform, scene: scene),
+                            indices: buffer(scene.indices), positions: buffer(scene.positions), normals: buffer(scene.normals),
+                            offsets: [UInt8](repeating: 0, count: Int(scene.meshes[o.mesh].indexCount) / 3))
+        let map = try XCTUnwrap(session.texelMap)
+        let mesh = PaintMesh(scene: scene, mesh: o.mesh)
+        let job = PaintBakeJob(mesh: mesh, map: map, size: 512, device: device, queue: queue, bandRows: 64)
+        let deadline = Date().addingTimeInterval(60)
+        while job.done == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        let banded = try XCTUnwrap(job.done ?? nil, "the background bake")
+        let whole = try XCTUnwrap(PaintBake(mesh: mesh, map: map, size: 512, device: device, queue: queue, bandRows: 512))
+        for (a, b, name) in [(banded.occlusion, whole.occlusion, "occlusion"), (banded.curvature, whole.curvature, "curvature")] {
+            let pa = PainterPixels.read(a, device: device, queue: queue), pb = PainterPixels.read(b, device: device, queue: queue)
+            let worst = zip(pa, pb).reduce(Float(0)) { max($0, abs($1.0.x - $1.1.x)) }
+            XCTAssertLessThan(worst, 1.5 / 255, name)
+            XCTAssertGreaterThan(pa.reduce(0) { $0 + $1.x } / Float(pa.count), 0.05, "\(name) was made")
+        }
     }
 
     /// The GPU's time for a 2K set: a full composite of a few layers, then a frame of ten dabs (the tiles they touch

@@ -1,5 +1,6 @@
 import Foundation
 import Metal
+import QuartzCore
 import simd
 
 struct PaintBakeArgs {
@@ -14,7 +15,8 @@ struct PaintBakeArgs {
     var gridOrigin = SIMD4<Float>.zero
     var cellsZ: UInt32 = 0
     var thicknessScale: Float = 0.1
-    var pad0: UInt32 = 0, pad1: UInt32 = 0
+    var rowOffset: UInt32 = 0
+    var pad1: UInt32 = 0
 }
 
 struct PaintGenerateArgs {
@@ -30,11 +32,37 @@ struct PaintGenerateArgs {
     var boundsHi = SIMD4<Float>.zero
 }
 
+/// A PaintBake made off the render thread (it takes up to a second at 2K): the render thread adopts it once `done`.
+final class PaintBakeJob {
+    private let lock = NSLock()
+    private var made: PaintBake??
+    let started = CACurrentMediaTime()
+
+    init(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
+        // A queue of its own: the frames' queue runs between its command buffers.
+        let own = device.makeCommandQueue() ?? queue
+        own.label = "painter bakes"
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let b = PaintBake(mesh: mesh, map: map, size: size, device: device, queue: own, bandRows: bandRows)
+            lock.lock()
+            made = .some(b)
+            lock.unlock()
+        }
+    }
+
+    /// The bake once made (`.some(nil)`: it failed), nil while it is being made.
+    var done: PaintBake?? {
+        lock.lock()
+        defer { lock.unlock() }
+        return made
+    }
+}
+
 /// A painted object's mesh maps (MaterialShaders/PaintBake.metal), at its texture set's size: ambient occlusion and
 /// thickness (rays against the object alone, on a structure of its own: Metal RT), curvature (each welded vertex's,
 /// from how its neighbours' normals turn, and the creases near: edges whose faces meet at more than 25 degrees,
 /// convex or concave, within a reach of 3.5% of the object's size). The generators' masks read them
-/// (`generate`); they are made once a session, in the background of the painter's queue.
+/// (`generate`); they are made once a session, off the render thread (PaintBakeJob).
 final class PaintBake {
     let occlusion: MTLTexture
     let thickness: MTLTexture
@@ -50,7 +78,8 @@ final class PaintBake {
     /// A crease's reach (and the scale of the vertices' curvature): this share of the object's size.
     static let reach: Float = 0.035
 
-    init?(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue) {
+    /// `bandRows`: rows of occlusion and curvature per command buffer (nil: about 128K texels' worth).
+    init?(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
         func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: size, height: size, mipmapped: false)
             d.usage = [.shaderRead, .shaderWrite]
@@ -78,8 +107,7 @@ final class PaintBake {
               let itb = items.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress ?? UnsafeRawPointer(bitPattern: 16)!, length: max($0.count, 16), options: .storageModeShared) }),
               let occ = try? MatCompiler.shared.state("paintBakeOcclusion", device: device),
               let curv = try? MatCompiler.shared.state("paintBakeCurvature", device: device),
-              let maps = try? MatCompiler.shared.state("paintBakeMaps", device: device),
-              let command = queue.makeCommandBuffer(), let enc = command.makeComputeCommandEncoder() else { return nil }
+              let maps = try? MatCompiler.shared.state("paintBakeMaps", device: device) else { return nil }
         var a = PaintObjectArgs()
         a.size = UInt32(size)
         a.triangles = UInt32(mesh.triangleCount)
@@ -93,20 +121,33 @@ final class PaintBake {
         b.gridOrigin = SIMD4(grid.origin, grid.cell)
         (b.cellsX, b.cellsY, b.cellsZ) = (UInt32(grid.dims.x), UInt32(grid.dims.y), UInt32(grid.dims.z))
         let threads = MTLSize(width: size, height: size, depth: 1), group = MTLSize(width: 16, height: 16, depth: 1)
-        enc.setComputePipelineState(occ)
-        enc.setTextures([map, o, t], range: 0..<3)
-        enc.setBytes(&a, length: MemoryLayout<PaintObjectArgs>.stride, index: 0)
-        enc.setBytes(&b, length: MemoryLayout<PaintBakeArgs>.stride, index: 1)
-        enc.setBuffers([ib, pb, nb], offsets: [0, 0, 0], range: 2..<5)
-        enc.setAccelerationStructure(structure, bufferIndex: 5)
-        enc.useResource(structure, usage: .read)
-        enc.dispatchThreads(threads, threadsPerThreadgroup: group)
-        enc.setComputePipelineState(curv)
-        enc.setTextures([map, c], range: 0..<2)
-        enc.setBytes(&a, length: MemoryLayout<PaintObjectArgs>.stride, index: 0)
-        enc.setBytes(&b, length: MemoryLayout<PaintBakeArgs>.stride, index: 1)
-        enc.setBuffers([ib, pb, nb, vc, sb, cb, itb], offsets: [0, 0, 0, 0, 0, 0, 0], range: 2..<9)
-        enc.dispatchThreads(threads, threadsPerThreadgroup: group)
+        // Occlusion and curvature in bands of rows, a command buffer each, so that the frames (another queue) get the
+        // GPU between them.
+        let rows = max(bandRows ?? (1 << 17) / size, 16)
+        for start in stride(from: 0, to: size, by: rows) {
+            guard let command = queue.makeCommandBuffer(), let enc = command.makeComputeCommandEncoder() else { return nil }
+            let band = MTLSize(width: size, height: min(rows, size - start), depth: 1)
+            b.rowOffset = UInt32(start)
+            enc.setComputePipelineState(occ)
+            enc.setTextures([map, o, t], range: 0..<3)
+            enc.setBytes(&a, length: MemoryLayout<PaintObjectArgs>.stride, index: 0)
+            enc.setBytes(&b, length: MemoryLayout<PaintBakeArgs>.stride, index: 1)
+            enc.setBuffers([ib, pb, nb], offsets: [0, 0, 0], range: 2..<5)
+            enc.setAccelerationStructure(structure, bufferIndex: 5)
+            enc.useResource(structure, usage: .read)
+            enc.dispatchThreads(band, threadsPerThreadgroup: group)
+            enc.setComputePipelineState(curv)
+            enc.setTextures([map, c], range: 0..<2)
+            enc.setBytes(&a, length: MemoryLayout<PaintObjectArgs>.stride, index: 0)
+            enc.setBytes(&b, length: MemoryLayout<PaintBakeArgs>.stride, index: 1)
+            enc.setBuffers([ib, pb, nb, vc, sb, cb, itb], offsets: [0, 0, 0, 0, 0, 0, 0], range: 2..<9)
+            enc.dispatchThreads(band, threadsPerThreadgroup: group)
+            enc.endEncoding()
+            command.commit()
+            command.waitUntilCompleted()
+            if let e = command.error { print("Painter: the bakes failed: \(e)"); return nil }
+        }
+        guard let command = queue.makeCommandBuffer(), let enc = command.makeComputeCommandEncoder() else { return nil }
         var g = PaintGenerateArgs()
         g.size = UInt32(size)
         g.boundsLo = SIMD4(lo, 0)

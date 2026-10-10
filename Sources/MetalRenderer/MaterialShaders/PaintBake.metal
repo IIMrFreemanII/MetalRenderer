@@ -17,7 +17,8 @@ struct PaintBakeArgs {
     float4 gridOrigin;       // xyz, w = a cell's side
     uint cellsZ;
     float thicknessScale;    // metres of thickness that read as 1
-    uint pad0, pad1;
+    uint rowOffset;          // occlusion, curvature: the band of rows this dispatch makes starts here
+    uint pad1;
 };
 
 inline uint paintHash(uint x) {
@@ -40,7 +41,8 @@ kernel void paintBakeOcclusion(texture2d<uint, access::read> map [[texture(0)]],
                                constant PaintBakeArgs& b [[buffer(1)]], device const uint* indices [[buffer(2)]],
                                device const float3* positions [[buffer(3)]], device const float3* normals [[buffer(4)]],
                                metal::raytracing::primitive_acceleration_structure accel [[buffer(5)]],
-                               uint2 px [[thread_position_in_grid]]) {
+                               uint2 gid [[thread_position_in_grid]]) {
+    uint2 px = gid + uint2(0, b.rowOffset);
     if (px.x >= b.size || px.y >= b.size) return;
     uint tri; float3 bw;
     if (!paintTexel(map, px, tri, bw)) { occlusion.write(float4(1.0f), px); thickness.write(float4(0.0f), px); return; }
@@ -90,7 +92,8 @@ kernel void paintBakeCurvature(texture2d<uint, access::read> map [[texture(0)]],
                                device const uint* indices [[buffer(2)]], device const float3* positions [[buffer(3)]],
                                device const float3* normals [[buffer(4)]], device const float* vertexCurvature [[buffer(5)]],
                                device const float4* segments [[buffer(6)]], device const uint2* cells [[buffer(7)]],
-                               device const uint* items [[buffer(8)]], uint2 px [[thread_position_in_grid]]) {
+                               device const uint* items [[buffer(8)]], uint2 gid [[thread_position_in_grid]]) {
+    uint2 px = gid + uint2(0, b.rowOffset);
     if (px.x >= b.size || px.y >= b.size) return;
     uint tri; float3 bw;
     if (!paintTexel(map, px, tri, bw)) { out.write(float4(0.5f), px); return; }

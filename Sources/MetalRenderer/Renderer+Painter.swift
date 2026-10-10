@@ -118,7 +118,7 @@ extension Renderer {
             }
             guard let s = painter.sessions[k] else { continue }
             s.sync(doc, version: docs.version(object.document))
-            if s.document.layers.contains(where: { $0.mask?.generator != nil }) && s.bake == nil, let mesh = painter.meshes[k] {
+            if s.document.layers.contains(where: { $0.mask?.generator != nil }) && s.bake == nil && !s.bakeFailed, let mesh = painter.meshes[k] {
                 bakePainted(k, s, mesh)
             }
             regenerateMasks(s)
@@ -233,14 +233,35 @@ extension Renderer {
 
     // MARK: - Bakes and generated masks
 
-    /// The object's mesh maps (PaintBake), now (they take a moment: the window says so).
+    /// The object's mesh maps (PaintBake): made off the render thread, and taken once there (until then its generated
+    /// masks wait, and the window says so); in a benchmark, now.
     private func bakePainted(_ k: Int, _ s: PainterSession, _ mesh: PaintMesh) {
         guard let map = s.texelMap else { return }
-        let start = CACurrentMediaTime()
-        s.bake = PaintBake(mesh: mesh, map: map, size: s.size, device: device, queue: queue)
-        s.occlusion = s.bake?.occlusion
+        if s.baking == nil {
+            if benchmark != nil {
+                adoptBake(k, s, PaintBake(mesh: mesh, map: map, size: s.size, device: device, queue: queue), since: CACurrentMediaTime())
+                return
+            }
+            s.baking = PaintBakeJob(mesh: mesh, map: map, size: s.size, device: device, queue: queue)
+            painter.message = "Baking \(s.object.document)'s mesh maps…"
+            reportPainter()
+        }
+        guard let job = s.baking, let made = job.done else { return }
+        adoptBake(k, s, made, since: job.started)
+    }
+
+    private func adoptBake(_ k: Int, _ s: PainterSession, _ made: PaintBake?, since start: CFTimeInterval) {
+        s.baking = nil
+        guard let made else {
+            painter.message = "\(s.object.document)'s mesh maps couldn't be baked"
+            s.bakeFailed = true
+            return
+        }
+        s.bake = made
+        s.occlusion = made.occlusion
         s.invalidate()
         painter.installed[k] = nil   // its occlusion's strength
+        painter.message = "\(s.object.document)'s mesh maps baked"
         print(String(format: "Painter: %@'s mesh maps baked in %.0f ms (%d px, %d rays)", s.object.document, (CACurrentMediaTime() - start) * 1000,
                      s.size, PaintBake.rays))
     }

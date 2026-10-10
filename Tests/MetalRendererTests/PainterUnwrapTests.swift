@@ -33,7 +33,7 @@ final class PainterUnwrapTests: XCTestCase {
 
     /// What every layout must be: in the square, no triangle folded over, no texel covered twice, the charts at least
     /// a gutter apart, and the area at about the same scale everywhere (90% of triangles within 2x of the mean).
-    private func check(_ mesh: PaintMesh, _ atlas: UVAtlas, _ name: String, minCoverage: Float = 0.4, file: StaticString = #filePath, line: UInt = #line) {
+    private func check(_ mesh: PaintMesh, _ atlas: UVAtlas, _ name: String, minCoverage: Float = 0.6, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(atlas.corners.count, mesh.indices.count, name, file: file, line: line)
         XCTAssertTrue(atlas.corners.allSatisfy { $0.x >= 0 && $0.y >= 0 && $0.x <= 1 && $0.y <= 1 }, "\(name): in 0...1", file: file, line: line)
         var flipped = 0, ratios: [Float] = []
@@ -70,6 +70,7 @@ final class PainterUnwrapTests: XCTestCase {
         XCTAssertEqual(UVCheck.verdict(PaintMesh(positions: quad.positions, normals: quad.normals, indices: quad.indices)), .missing)
         let atlas = UVUnwrap.atlas(quad, resolution: 1024)
         XCTAssertTrue(atlas.own)
+        XCTAssertEqual(atlas.texelsPerMetre, 1024, accuracy: 1, "a metre square over the whole square")
         XCTAssertEqual(atlas.chartCount, 1)
     }
 
@@ -89,22 +90,50 @@ final class PainterUnwrapTests: XCTestCase {
     }
 
     func testGuttersKeepChartsApart() {
-        let atlas = UVUnwrap.unwrap(cube(), resolution: 256)
-        let pad = Float(UVUnwrap.padding(256))
-        // Each chart's box, in texels: any two at least 2 x padding - 1 apart along some axis.
-        var boxes = [(lo: SIMD2<Float>, hi: SIMD2<Float>)](repeating: (SIMD2(repeating: .infinity), SIMD2(repeating: -.infinity)), count: atlas.chartCount)
-        for t in 0..<atlas.corners.count / 3 {
-            let c = Int(atlas.chartOfTriangle[t])
-            for k in 0..<3 { boxes[c].lo = simd_min(boxes[c].lo, atlas.corners[3 * t + k] * 256); boxes[c].hi = simd_max(boxes[c].hi, atlas.corners[3 * t + k] * 256) }
+        for (name, mesh) in [("cube", cube()), ("cylinder", cylinder()), ("sphere", sphere())] {
+            let atlas = UVUnwrap.unwrap(mesh, resolution: 256)
+            let pad = Float(UVUnwrap.padding(256))
+            let tri = (0..<atlas.corners.count / 3).map { t in (0..<3).map { atlas.corners[3 * t + $0] * 256 } }
+            for p in tri.joined() {
+                XCTAssertGreaterThanOrEqual(min(p.x, p.y), pad - 1e-3, "\(name): the border's gutter")
+                XCTAssertLessThanOrEqual(max(p.x, p.y), 256 - pad + 1e-3, "\(name): the border's gutter")
+            }
+            // Any two triangles of different charts at least 2 x padding apart (outlines interlock: their boxes may not).
+            let gap = 2 * pad - 1e-2
+            let order = tri.indices.sorted { tri[$0].map(\.x).min()! < tri[$1].map(\.x).min()! }
+            var closest = Float.infinity
+            for (n, a) in order.enumerated() {
+                let aHi = tri[a].map(\.x).max()!
+                for b in order[(n + 1)...] {
+                    if tri[b].map(\.x).min()! > aHi + gap { break }
+                    guard atlas.chartOfTriangle[a] != atlas.chartOfTriangle[b] else { continue }
+                    closest = min(closest, distance(tri[a], tri[b]))
+                }
+            }
+            XCTAssertGreaterThanOrEqual(closest, gap, "\(name): charts' gutters")
         }
-        for i in boxes.indices {
-            XCTAssertGreaterThanOrEqual(simd_reduce_min(boxes[i].lo), pad - 1e-3, "the border's gutter")
-            XCTAssertLessThanOrEqual(simd_reduce_max(boxes[i].hi), 256 - pad + 1e-3)
-            for j in boxes.indices where j > i {
-                let gap = simd_max(boxes[j].lo - boxes[i].hi, boxes[i].lo - boxes[j].hi)
-                XCTAssertGreaterThanOrEqual(simd_reduce_max(gap), 2 * pad - 1, "charts \(i) and \(j)")
+    }
+
+    /// Two triangles' distance apart (0 if they cross): a corner of one to an edge of the other, nearest.
+    private func distance(_ a: [SIMD2<Float>], _ b: [SIMD2<Float>]) -> Float {
+        func toSegment(_ p: SIMD2<Float>, _ u: SIMD2<Float>, _ v: SIMD2<Float>) -> Float {
+            let d = v - u, l = simd_length_squared(d)
+            let s = l > 0 ? min(max(simd_dot(p - u, d) / l, 0), 1) : 0
+            return simd_distance(p, u + s * d)
+        }
+        func crosses(_ p: SIMD2<Float>, _ q: SIMD2<Float>, _ u: SIMD2<Float>, _ v: SIMD2<Float>) -> Bool {
+            let d1 = UVCheck.cross2(q - p, u - p), d2 = UVCheck.cross2(q - p, v - p)
+            let d3 = UVCheck.cross2(v - u, p - u), d4 = UVCheck.cross2(v - u, q - u)
+            return d1 * d2 < 0 && d3 * d4 < 0
+        }
+        var best = Float.infinity
+        for i in 0..<3 {
+            for j in 0..<3 {
+                if crosses(a[i], a[(i + 1) % 3], b[j], b[(j + 1) % 3]) { return 0 }
+                best = min(best, toSegment(a[i], b[j], b[(j + 1) % 3]), toSegment(b[j], a[i], a[(i + 1) % 3]))
             }
         }
+        return best
     }
 
     func testModelAndCharacterUnwrap() throws {
@@ -115,8 +144,8 @@ final class PainterUnwrapTests: XCTestCase {
             let atlas = UVUnwrap.unwrap(mesh, resolution: 2048)
             let seconds = Date().timeIntervalSince(start)
             print("Painter unwrap: \(name): \(mesh.triangleCount) triangles, \(atlas.chartCount) charts, coverage \(atlas.coverage), \(String(format: "%.2f", seconds)) s; own UVs \(UVCheck.verdict(mesh))")
-            // (Many charts of uneven outline, packed as their boxes: a third of the square.)
-            check(mesh, atlas, name, minCoverage: 0.28)
+            // (Many charts of uneven outline, packed by their outlines: two fifths of the square.)
+            check(mesh, atlas, name, minCoverage: 0.36)
             XCTAssertLessThan(seconds / Double(max(mesh.triangleCount, 1)) * 50_000, 1.5, "\(name): 50k triangles in 1.5 s")
         }
     }
