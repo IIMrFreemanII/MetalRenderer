@@ -1,18 +1,16 @@
 import SwiftUI
 import simd
 
-/// The VFX editor's colours: the dark canvas, the pins' by type, the nodes' headers by family, the contexts'.
+/// The VFX editor's colours: the graph editors' (GraphColors), the pins' by type, the nodes' headers by family, the
+/// contexts'.
 enum VFXColors {
-    static let canvas = Color(red: 0.105, green: 0.11, blue: 0.122)
-    /// The toolbar's, the inspector's and the status line's.
-    static let chrome = Color(red: 0.15, green: 0.155, blue: 0.165)
-    static let gridMinor = Color.white.opacity(0.035)
-    static let gridMajor = Color.white.opacity(0.075)
-    static let node = Color(red: 0.17, green: 0.175, blue: 0.19)
-    static let block = Color(red: 0.215, green: 0.22, blue: 0.235)
-    static let text = Color(white: 0.88)
-    static let dim = Color(white: 0.55)
-    static let selected = Color(red: 0.98, green: 0.72, blue: 0.25)
+    static let canvas = GraphColors.canvas
+    static let chrome = GraphColors.chrome
+    static let node = GraphColors.node
+    static let block = GraphColors.block
+    static let text = GraphColors.text
+    static let dim = GraphColors.dim
+    static let selected = GraphColors.selected
 
     static func pin(_ t: VFXType) -> Color {
         switch t {
@@ -46,157 +44,59 @@ enum VFXColors {
     }
 }
 
-/// The graph: a dark grid, the emitters' columns of blocks and the operator nodes, wired pin to pin. Drag a node or an
-/// emitter by its header to move it (the selection with it); drag from an output to an input to wire them (from a
-/// wired input to take its wire elsewhere); drag on the grid to select a box. Scroll pans, pinch or Cmd-scroll zooms
-/// (the panel's view: VFXEditorPanel); Tab or a right-click adds a node.
+/// The graph: the emitters' columns of blocks and the operator nodes, wired pin to pin, on the graph editors' canvas
+/// (GraphCanvas). Drag a node or an emitter by its header to move it (the selection with it); drag from an output to an
+/// input to wire them (from a wired input to take its wire elsewhere); drag on the grid to select a box. Scroll pans,
+/// pinch or Cmd-scroll zooms (the panel's view: GraphHostingView); Tab or a right-click adds a node.
 struct VFXCanvasView: View {
     @EnvironmentObject var model: VFXEditorModel
-    /// A wire being dragged: from a node's output, to where the pointer is (the graph's units).
-    @State private var wire: (from: String, output: String, to: CGPoint)?
-    /// A box being dragged on the grid (canvas points).
-    @State private var box: (start: CGPoint, end: CGPoint)?
-    /// What a header drag moves, and where it was last (the graph's units).
-    @State private var moving: (ids: Set<String>, last: CGPoint)?
-    /// Where the pointer is (canvas points): where Tab and a right-click add.
-    @State private var hover = CGPoint(x: 200, y: 200)
 
     var body: some View {
-        GeometryReader { geo in
-            let layout = VFXLayout(model.effect)
-            ZStack(alignment: .topLeading) {
-                grid(geo.size)
-                    .gesture(backgroundDrag(layout))
-                    .contextMenu { addMenu(at: model.graphPoint(hover)) }
-                graph(layout)
-                    .scaleEffect(model.zoom, anchor: .topLeading)
-                    .offset(x: model.pan.x, y: model.pan.y)
-                if let box {
-                    let r = CGRect(x: min(box.start.x, box.end.x), y: min(box.start.y, box.end.y),
-                                   width: abs(box.end.x - box.start.x), height: abs(box.end.y - box.start.y))
-                    Rectangle().fill(VFXColors.selected.opacity(0.08))
-                        .overlay(Rectangle().stroke(VFXColors.selected.opacity(0.7), lineWidth: 1))
-                        .frame(width: r.width, height: r.height).offset(x: r.minX, y: r.minY)
-                        .allowsHitTesting(false)
-                }
-                VFXMinimap(layout: layout, size: geo.size)
-                    .frame(width: 180, height: 120)
-                    .offset(x: geo.size.width - 192, y: geo.size.height - 132)
-                if let search = model.search {
-                    VFXNodeSearch(search: search)
-                        .offset(x: min(max(model.viewPoint(search.at).x, 8), max(geo.size.width - 288, 8)),
-                                y: min(max(model.viewPoint(search.at).y, 8), max(geo.size.height - 330, 8)))
-                }
-            }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-            .clipped()
-            .coordinateSpace(name: "canvas")
-            .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
-                if case .active(let p) = phase { hover = p; model.hover = p }
-            }
-            .onAppear { model.canvasSize = geo.size; model.canvasOrigin = geo.frame(in: .global).origin }
-            .onChange(of: geo.frame(in: .global)) { f in model.canvasSize = f.size; model.canvasOrigin = f.origin }
+        let layout = VFXLayout(model.effect)
+        GraphCanvas(model: model, bounds: layout.bounds, minimap: minimap(layout), items: layout.items(in:),
+                    inputNear: { layout.input(near: $0, radius: 14) }) { drags in
+            graph(layout, drags)
+        } menu: { g in
+            addMenu(at: g)
+        } search: {
+            if let search = model.search { VFXNodeSearch(search: search) }
         }
-        .background(VFXColors.canvas)
     }
 
-    // MARK: - The grid
-
-    private func grid(_ size: CGSize) -> some View {
-        Canvas { ctx, size in
-            let step = 24 * model.zoom
-            guard step > 4 else { return }
-            var minor = Path(), major = Path()
-            let x0 = model.pan.x.truncatingRemainder(dividingBy: step), y0 = model.pan.y.truncatingRemainder(dividingBy: step)
-            var i = Int(((x0 - model.pan.x) / step).rounded())
-            var x = x0
-            while x < size.width {
-                let line = Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: size.height)) }
-                if i % 5 == 0 { major.addPath(line) } else { minor.addPath(line) }
-                x += step; i += 1
-            }
-            var j = Int(((y0 - model.pan.y) / step).rounded())
-            var y = y0
-            while y < size.height {
-                let line = Path { $0.move(to: CGPoint(x: 0, y: y)); $0.addLine(to: CGPoint(x: size.width, y: y)) }
-                if j % 5 == 0 { major.addPath(line) } else { minor.addPath(line) }
-                y += step; j += 1
-            }
-            ctx.stroke(minor, with: .color(VFXColors.gridMinor), lineWidth: 1)
-            ctx.stroke(major, with: .color(VFXColors.gridMajor), lineWidth: 1)
-        }
-        .frame(width: size.width, height: size.height)
-        .contentShape(Rectangle())
-    }
-
-    /// A click on the grid clears the selection; a drag selects a box (Shift: adds to it).
-    private func backgroundDrag(_ layout: VFXLayout) -> some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
-            .onChanged { g in
-                model.focusCanvas?()
-                if model.search != nil { model.search = nil }
-                if hypot(g.translation.width, g.translation.height) > 3 { box = (g.startLocation, g.location) }
-            }
-            .onEnded { g in
-                defer { box = nil }
-                guard let b = box else {
-                    if !NSEvent.modifierFlags.contains(.shift) { model.clearSelection() }
-                    return
-                }
-                let a = model.graphPoint(b.start), c = model.graphPoint(b.end)
-                let r = CGRect(x: CGFloat(min(a.x, c.x)), y: CGFloat(min(a.y, c.y)), width: CGFloat(abs(c.x - a.x)), height: CGFloat(abs(c.y - a.y)))
-                let found = layout.items(in: r)
-                model.selection = NSEvent.modifierFlags.contains(.shift) ? model.selection.union(found) : found
-                model.focus = found.count == 1 ? found.first : nil
-            }
+    private func minimap(_ layout: VFXLayout) -> [GraphMinimap<VFXEditorModel>.Box] {
+        layout.emitters.values.map { .init(rect: $0, color: Color.white.opacity(0.25), rounded: true) }
+            + layout.nodes.map { id, r in .init(rect: r, color: VFXColors.family(layout.arranged.node(id)?.kind.spec.family ?? .value).opacity(0.8)) }
     }
 
     // MARK: - The graph
 
-    private func graph(_ layout: VFXLayout) -> some View {
+    private func graph(_ layout: VFXLayout, _ drags: GraphDrags<VFXEditorModel>) -> some View {
         let fx = layout.arranged
         let area = layout.bounds.insetBy(dx: -400, dy: -400)
         return ZStack(alignment: .topLeading) {
-            wires(layout, area: area)
+            wires(layout, area: area, dragged: drags.wire)
             ForEach(fx.emitters) { e in
-                VFXEmitterView(emitter: e, effect: fx, layout: layout, wire: $wire, moving: $moving)
+                VFXEmitterView(emitter: e, effect: fx, layout: layout, drags: drags)
                     .offset(x: CGFloat(e.canvas.x), y: CGFloat(e.canvas.y))
             }
             ForEach(fx.nodes) { n in
-                VFXNodeView(node: n, effect: fx, layout: layout, wire: $wire, moving: $moving)
+                VFXNodeView(node: n, effect: fx, layout: layout, drags: drags)
                     .offset(x: CGFloat(n.canvas.x), y: CGFloat(n.canvas.y))
             }
         }
-        .coordinateSpace(name: "graph")
     }
 
-    private func wires(_ layout: VFXLayout, area: CGRect) -> some View {
+    private func wires(_ layout: VFXLayout, area: CGRect, dragged: GraphWireDrag?) -> some View {
         let fx = layout.arranged
-        return Canvas { ctx, _ in
-            ctx.translateBy(x: -area.minX, y: -area.minY)
-            for l in fx.links {
-                guard let a = layout.outputs[.init(owner: l.from, name: l.output)], let b = layout.inputs[.init(owner: l.to, name: l.input)] else { continue }
-                let selected = model.selection.contains(l.from) || model.selection.contains(l.to)
-                ctx.stroke(VFXCanvasView.curve(a, b), with: .color(VFXColors.pin(fx.outputType(l.from, l.output)).opacity(selected ? 1 : 0.75)),
-                           lineWidth: selected ? 2.6 : 1.8)
-            }
-            if let w = wire, let a = layout.outputs[.init(owner: w.from, name: w.output)] {
-                ctx.stroke(VFXCanvasView.curve(a, w.to), with: .color(VFXColors.pin(fx.outputType(w.from, w.output))),
-                           style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-            }
+        let wires: [GraphWires.Wire] = fx.links.compactMap { l in
+            guard let a = layout.outputs[.init(owner: l.from, name: l.output)], let b = layout.inputs[.init(owner: l.to, name: l.input)] else { return nil }
+            return .init(from: a, to: b, color: VFXColors.pin(fx.outputType(l.from, l.output)),
+                         selected: model.selection.contains(l.from) || model.selection.contains(l.to))
         }
-        .frame(width: area.width, height: area.height)
-        .offset(x: area.minX, y: area.minY)
-        .allowsHitTesting(false)
-    }
-
-    /// A wire from an output to an input: a curve leaving right, arriving from the left.
-    static func curve(_ a: CGPoint, _ b: CGPoint) -> Path {
-        Path { p in
-            let dx = max(abs(b.x - a.x) * 0.5, 50)
-            p.move(to: a)
-            p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+        let drag = dragged.flatMap { w in
+            layout.outputs[.init(owner: w.from, name: w.output)].map { GraphWires.Wire(from: $0, to: w.to, color: VFXColors.pin(fx.outputType(w.from, w.output)), selected: true) }
         }
+        return GraphWires(area: area, wires: wires, dragged: drag)
     }
 
     // MARK: - Adding
@@ -217,78 +117,11 @@ struct VFXCanvasView: View {
     }
 }
 
-/// A pin's dot: filled when wired.
+/// A pin's dot, its type's colour: filled when wired.
 struct VFXPinDot: View {
     let type: VFXType
     let wired: Bool
-    var body: some View {
-        ZStack {
-            Circle().fill(wired ? VFXColors.pin(type) : VFXColors.node)
-            Circle().stroke(VFXColors.pin(type), lineWidth: 1.6)
-        }
-        .frame(width: 9, height: 9)
-        .frame(width: 18, height: 18)   // easier to hit
-        .contentShape(Rectangle())
-    }
-}
-
-/// Drags that start on a pin or a header, shared by the emitters' and the nodes' views.
-private struct GraphDrags {
-    let model: VFXEditorModel
-    let layout: VFXLayout
-    @Binding var wire: (from: String, output: String, to: CGPoint)?
-    @Binding var moving: (ids: Set<String>, last: CGPoint)?
-
-    /// From an output: a wire, joined to the input it is let go over.
-    func fromOutput(_ owner: String, _ output: String) -> some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .named("graph"))
-            .onChanged { g in wire = (owner, output, g.location) }
-            .onEnded { g in
-                defer { wire = nil }
-                if let pin = layout.input(near: g.location, radius: 14) { model.link(owner, output, to: pin.owner, pin.name) }
-            }
-    }
-
-    /// From a wired input: its wire, taken off and dragged from its output (let go over nothing: gone).
-    func fromInput(_ owner: String, _ input: String) -> some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .named("graph"))
-            .onChanged { g in
-                if wire == nil, let l = model.effect.link(into: owner, input) {
-                    model.beginDrag()
-                    model.unlink(owner, input)
-                    wire = (l.from, l.output, g.location)
-                } else if let w = wire {
-                    wire = (w.from, w.output, g.location)
-                }
-            }
-            .onEnded { g in
-                defer { wire = nil; model.endDrag() }
-                guard let w = wire, let pin = layout.input(near: g.location, radius: 14) else { return }
-                model.link(w.from, w.output, to: pin.owner, pin.name)
-            }
-    }
-
-    /// From a header: the item (with the selection, if it is in it) moved; a click selects it.
-    func header(_ id: String) -> some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named("graph"))
-            .onChanged { g in
-                model.focusCanvas?()
-                if moving == nil {
-                    let extend = NSEvent.modifierFlags.contains(.shift)
-                    model.click(id, extend: extend)
-                    moving = (model.selection.contains(id) ? model.selection : [id], g.startLocation)
-                    model.beginDrag()
-                }
-                guard let m = moving else { return }
-                let d = SIMD2(Float(g.location.x - m.last.x), Float(g.location.y - m.last.y))
-                if d != .zero { model.moveSelection(by: d, ids: m.ids) }
-                moving = (m.ids, g.location)
-            }
-            .onEnded { _ in
-                moving = nil
-                model.endDrag()
-            }
-    }
+    var body: some View { GraphPinDot(color: VFXColors.pin(type), wired: wired) }
 }
 
 /// An emitter: its header, then its four contexts, each a stack of blocks; a block's wireable pins as rows.
@@ -296,11 +129,8 @@ struct VFXEmitterView: View {
     let emitter: VFXEmitter
     let effect: VFXEffect
     let layout: VFXLayout
-    @Binding var wire: (from: String, output: String, to: CGPoint)?
-    @Binding var moving: (ids: Set<String>, last: CGPoint)?
+    let drags: GraphDrags<VFXEditorModel>
     @EnvironmentObject var model: VFXEditorModel
-
-    private var drags: GraphDrags { GraphDrags(model: model, layout: layout, wire: $wire, moving: $moving) }
 
     var body: some View {
         let selected = model.selection.contains(emitter.id)
@@ -414,11 +244,8 @@ struct VFXNodeView: View {
     let node: VFXNode
     let effect: VFXEffect
     let layout: VFXLayout
-    @Binding var wire: (from: String, output: String, to: CGPoint)?
-    @Binding var moving: (ids: Set<String>, last: CGPoint)?
+    let drags: GraphDrags<VFXEditorModel>
     @EnvironmentObject var model: VFXEditorModel
-
-    private var drags: GraphDrags { GraphDrags(model: model, layout: layout, wire: $wire, moving: $moving) }
 
     var body: some View {
         let spec = node.kind.spec, selected = model.selection.contains(node.id)
@@ -477,107 +304,28 @@ struct VFXNodeView: View {
     }
 }
 
-/// The graph in small, and the view's part of it; a click or a drag there moves the view.
-struct VFXMinimap: View {
-    let layout: VFXLayout
-    let size: CGSize
-    @EnvironmentObject var model: VFXEditorModel
-
-    var body: some View {
-        GeometryReader { geo in
-            let world = layout.bounds.insetBy(dx: -60, dy: -60)
-            let s = min(geo.size.width / max(world.width, 1), geo.size.height / max(world.height, 1))
-            let toMap = { (r: CGRect) in CGRect(x: (r.minX - world.minX) * s, y: (r.minY - world.minY) * s, width: r.width * s, height: r.height * s) }
-            Canvas { ctx, _ in
-                for r in layout.emitters.values { ctx.fill(Path(roundedRect: toMap(r), cornerRadius: 2), with: .color(Color.white.opacity(0.25))) }
-                for (id, r) in layout.nodes {
-                    let f = layout.arranged.node(id)?.kind.spec.family ?? .value
-                    ctx.fill(Path(toMap(r)), with: .color(VFXColors.family(f).opacity(0.8)))
-                }
-                let a = model.graphPoint(.zero), b = model.graphPoint(CGPoint(x: size.width, y: size.height))
-                let view = toMap(CGRect(x: CGFloat(a.x), y: CGFloat(a.y), width: CGFloat(b.x - a.x), height: CGFloat(b.y - a.y)))
-                ctx.stroke(Path(view), with: .color(VFXColors.selected.opacity(0.8)), lineWidth: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { g in
-                // The view centred where the map is clicked.
-                let gx = g.location.x / s + world.minX, gy = g.location.y / s + world.minY
-                model.pan = CGPoint(x: size.width / 2 - gx * model.zoom, y: size.height / 2 - gy * model.zoom)
-            })
-        }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.45)))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.1)))
-    }
-}
-
 /// Tab's search: what can be added there (operators; a context's blocks when one was asked), by name.
 struct VFXNodeSearch: View {
     let search: VFXEditorModel.Search
     @EnvironmentObject var model: VFXEditorModel
-    @State private var text = ""
-    @FocusState private var focused: Bool
 
-    private struct Item: Identifiable {
-        let id: String
-        let title: String
-        let detail: String
-        let add: () -> Void
-    }
-
-    private var items: [Item] {
-        var all: [Item] = []
+    private var items: [GraphNodeSearch.Item] {
         if let target = search.context {
-            for k in VFXBlockKind.allCases where k.spec.contexts.contains(target.context) {
-                all.append(Item(id: "b." + k.rawValue, title: k.spec.title, detail: target.context.title) { [model] in
+            return VFXBlockKind.allCases.filter { $0.spec.contexts.contains(target.context) }.map { k in
+                GraphNodeSearch.Item(id: "b." + k.rawValue, title: k.spec.title, detail: target.context.title) { [model] in
                     model.addBlock(k, to: target.emitter, target.context)
-                })
-            }
-        } else {
-            for k in VFXOpKind.allCases {
-                all.append(Item(id: "n." + k.rawValue, title: k.spec.title, detail: k.spec.family.rawValue) { [model, search] in
-                    model.addNode(k, at: search.at)
-                })
+                }
             }
         }
-        let q = text.lowercased().trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return all }
-        return all.filter { $0.title.lowercased().contains(q) || $0.detail.lowercased().contains(q) }
-            .sorted { ($0.title.lowercased().hasPrefix(q) ? 0 : 1) < ($1.title.lowercased().hasPrefix(q) ? 0 : 1) }
+        return VFXOpKind.allCases.map { k in
+            GraphNodeSearch.Item(id: "n." + k.rawValue, title: k.spec.title, detail: k.spec.family.rawValue) { [model, search] in
+                model.addNode(k, at: search.at)
+            }
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField(search.context == nil ? "Add a node…" : "Add a block…", text: $text)
-                .textFieldStyle(.roundedBorder)
-                .focused($focused)
-                .onSubmit { items.first?.add() }
-                .onExitCommand { model.search = nil }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(items) { item in
-                        Button(action: item.add) {
-                            HStack {
-                                Text(item.title).foregroundColor(VFXColors.text)
-                                Spacer()
-                                Text(item.detail).foregroundColor(VFXColors.dim)
-                            }
-                            .font(.system(size: 11))
-                            .padding(.horizontal, 6).padding(.vertical, 3)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .frame(height: 260)
-        }
-        .padding(8)
-        .frame(width: 270)
-        .background(RoundedRectangle(cornerRadius: 8).fill(VFXColors.node))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.15)))
-        .shadow(radius: 10)
-        .onAppear { focused = true }
+        GraphNodeSearch(placeholder: search.context == nil ? "Add a node…" : "Add a block…", items: items) { [model] in model.search = nil }
     }
 }
 

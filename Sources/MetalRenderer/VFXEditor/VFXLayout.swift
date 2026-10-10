@@ -17,10 +17,7 @@ struct VFXLayout {
     static let nodeHeader: CGFloat = 24
     static let gap: CGFloat = 6
 
-    struct Pin: Hashable {
-        var owner: String
-        var name: String
-    }
+    typealias Pin = GraphPin
 
     /// The effect with every emitter and node where it is drawn.
     let arranged: VFXEffect
