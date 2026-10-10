@@ -52,10 +52,16 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
+      Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
       Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
       Sources/MetalRenderer/VFXEditor/*.swift) add VFXEditorTests ;;
+      Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ;;
+      Sources/MetalRenderer/MaterialGraph/*.swift|Sources/MetalRenderer/MaterialShaders/*.metal|Sources/MetalRenderer/ShadersMaterial*.metal)
+        add MaterialGraphTests MaterialEngineTests MaterialEditorTests ;;
+      Sources/MetalRenderer/MaterialEditor/*.swift) add MaterialEditorTests ;;
+      Sources/MetalRenderer/Scene+Procedural.swift|Sources/MetalRenderer/Scene+Materials.swift) add MaterialEditorTests SceneBuffersTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;

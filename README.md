@@ -246,6 +246,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
 | J, ⌘B | Show or hide the Building Editor and its Floor Plan window (see "The building editor" below) |
 | X, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
+| O, ⇧⌘M | Show the Material Designer (see "The Material Designer" below) |
 | F | Workshops and the VFX stage: frame the plants, the building or the effects (drag orbits about them, scroll zooms, W A S D pan) |
 | C (hold) | Plant workshop: the saved plant in place of the edited one |
 | V | Walk (the building workshop, the city, the open world) or fly again |
@@ -1796,6 +1797,66 @@ The VFX Editor (X or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effec
   * `METALRENDERER_VFX_SCRIPT=<folder>` drives the editor in the app, step by step, printing the renderer's report and
     saving the window.
   * `METALRENDERER_BENCH=vfxstage` renders the backdrops; `vfxstagedemo` is their video.
+
+### The Material Designer
+
+The Material Designer (O or ⇧⌘M, a window of its own: `MaterialEditor/`, the graphs in `MaterialGraph/`) makes
+materials as node graphs, after Substance Designer: image nodes wired into each other, baked on the GPU, ending in
+output nodes that name the renderer's channels (base colour, normal, roughness, metallic, ambient occlusion, height,
+opacity, emissive).
+* **Nodes** (`MatNodes.swift`, their kernels in `MaterialShaders/`):
+  * noises: white, value, Perlin, fractal sum (fbm, ridged, turbulence, billow), cells (Worley: F1, F2, borders, a grey
+    a cell, crystal), anisotropic, scratches, grunge; every one tiles;
+  * patterns: shapes, gradients, checker, bricks (height and a random grey a brick), waves, tile sampler;
+  * adjustments: levels, curve, gradient map, HSL, invert, grayscale, histogram scan, posterize, RGBA split and merge;
+  * blending: 16 blend modes with opacity and a mask, height blend;
+  * filters: transform, mirror, warp, directional warp, blur, directional blur, slope blur, edge detect;
+  * height and normal: normal from height, normal combine, ambient occlusion from height, curvature;
+  * advanced: distance (jump flooding), bevel, flood fill (a random grey, a gradient, the centre and size of each
+    shape), auto levels, the pixel processor (a function of the pixel as math nodes, edited on the same canvas) and
+    Code (Metal, with its compiler's errors on the node);
+  * other graphs as subgraphs: their input and output nodes are the node's pins, their exposed parameters its own.
+* **Every node is an image of its own size and precision** (inherited from its first input or the graph, relative ½ to
+  ×4, or 256 to 4096 pixels; 8-bit, 16-bit float or 32-bit float; grey or colour, colour following what is wired).
+* **The engine** (`MatEngine`) bakes a node a kernel (several passes for blurs, distances and flood fills) on a queue of
+  its own, and keeps each node's images by a hash of what made it: an edit bakes only the nodes it reaches (an edit of
+  a value at 1024 px takes a few milliseconds), and undo finds the images it had. The renderer's textures are packed
+  from the outputs (sRGB base colour and emissive, occlusion-roughness-metallic, normal, 16-bit height, opacity),
+  mipmapped.
+* **The window:** the toolbar (the graph, New, Duplicate, Rename, Save, Revert, Export as PNG 8 or 16-bit or EXR, Copy
+  as Swift, the workshop's shapes and backdrop, Pick), the node library, the canvas (the VFX editor's: thumbnails on
+  every node, size and precision on its header, Tab to add, a right-click for the menu, double-click a pixel processor
+  to edit its function), the 2D view (a node's image, pinned or the focused one's: tiled, a channel, exposure), the 3D
+  preview (a sphere, cube, cylinder or plane, lit, with parallax and opacity; drag turns it) and the inspector
+  (parameters, each one exposable as the graph's input; with nothing selected the graph's size, precision, seed and how
+  the renderer uses it). Edits are one undo step each (a drag one), kept as a draft until saved.
+* **In the renderer** (`Scene+Procedural.swift`, `MaterialBake.swift`): a procedural material's six texture slots are
+  filled with its graph's bake, and filled again in place as it is edited (`SceneSettings.materials`, a catalog's
+  key; `Renderer.editMaterials`). What the material record has no room for is an extras buffer, compiled in only for
+  scenes that have such materials (`MATERIAL_EXTRAS`): a UV scale, parallax occlusion mapping from the height (camera
+  rays), occlusion from the ORM texture's red. Opacity cuts holes (`OPACITY`): those instances aren't opaque, the ray
+  queries alpha-test them, the raster leaves them to the rays.
+* **The material workshop** (`METALRENDERER_SCENE=materials`, `Scene+Materials.swift`): the graph on a sphere, a cube, a
+  cylinder and a tile, in a studio, outdoors or in the dark, path traced (`mgraph=`, `mlayout=`, `mbackdrop=`).
+* **Click-to-pick** (Pick, then a click in the view; `Shaders/Pick.metal`): the material under the click, which Assign
+  gives the shown graph. Assignments are per scene (its kind, and its seed or model), saved in
+  `Assets/Materials/assignments.json`; the scene is made again with that material procedural (a mesh without UVs gets
+  planar ones, a tile a metre). Not the open world's tiles.
+* **As code** ("Run as code in the shading"; `MatShaderCode.swift`): a graph of nodes that read their inputs at a few
+  places (no blurs, distances, flood fills, occlusion, bitmaps), within a budget, runs in the shading instead of being
+  sampled: its nodes become Metal functions spliced into the shaders (`Shaders/Procedural.metal`, `PROCEDURAL_CODE`),
+  its parameters a buffer (a value's edit is a write; a structural edit compiles the shaders again). The Marble
+  starter runs so. Height (for parallax) and opacity still come from its bake.
+* **Starters** (`MaterialLibrary.swift`): Red Bricks, Cobblestone, Rusted Paint, Brushed Steel, Scratched Copper,
+  Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code). Saved graphs are
+  `Assets/Materials/<name>.mat.json` (`METALRENDERER_MATERIALS=builtin|<folder>`).
+* **Checked:** `MaterialGraphTests` (the JSON, the plan: order, types, sizes, precision, hashes, subgraphs, functions,
+  shader code), `MaterialEngineTests` (every node bakes; blend modes, normals, blur, tiling, the cache, distance,
+  flood fill, pixel processors, export against the CPU or brute force), `MaterialEditorTests` (the editor's model,
+  assignments; `MATERIAL_EDITOR_PNG=<folder>` draws the window); `METALRENDERER_BENCH=materials` renders every starter
+  in the workshop, `matedit` an edit in place, assignments in the sun courtyard, and the marble as code and baked.
+* **Not done:** opacity on meshes without UVs, in Lumen and in the virtual shadow maps; SDF shapes (triplanar, no
+  normal maps); Metal 4 (written, not tried: the M1 Max has no Metal 4 ray tracing).
 
 ### Geometry debug views
 
