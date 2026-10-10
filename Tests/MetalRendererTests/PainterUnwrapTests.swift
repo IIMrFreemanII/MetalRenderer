@@ -144,8 +144,9 @@ final class PainterUnwrapTests: XCTestCase {
             let atlas = UVUnwrap.unwrap(mesh, resolution: 2048)
             let seconds = Date().timeIntervalSince(start)
             print("Painter unwrap: \(name): \(mesh.triangleCount) triangles, \(atlas.chartCount) charts, coverage \(atlas.coverage), \(String(format: "%.2f", seconds)) s; own UVs \(UVCheck.verdict(mesh))")
-            // (Many charts of uneven outline, packed by their outlines: two fifths of the square.)
-            check(mesh, atlas, name, minCoverage: 0.36)
+            // (Many charts of uneven outline, packed by their outlines: the model's many small ones over two fifths of
+            // the square, the character's three fifths.)
+            check(mesh, atlas, name, minCoverage: name == "character" ? 0.55 : 0.4)
             XCTAssertLessThan(seconds / Double(max(mesh.triangleCount, 1)) * 50_000, 1.5, "\(name): 50k triangles in 1.5 s")
         }
     }
@@ -173,6 +174,17 @@ extension PainterUnwrapTests {
                 let s = hi[c] - lo[c]
                 boxes += s.x * s.y
                 padded += (s.x + 2 * pad) * (s.y + 2 * pad)
+            }
+            // Where the boxes go: by how full of their triangles they are, and the largest charts.
+            var bins = [Float](repeating: 0, count: 5)
+            for c in 0..<atlas.chartCount {
+                let s = hi[c] - lo[c], box = s.x * s.y
+                bins[min(Int(area[c] / max(box, 1e-12) * 5), 4)] += box
+            }
+            print("Painter stats: \(name): box area by fill (0-20%...80-100%): \(bins.map { String(format: "%.3f", $0) })")
+            for c in (0..<atlas.chartCount).sorted(by: { area[$0] > area[$1] }).prefix(8) {
+                let s = hi[c] - lo[c]
+                print("Painter stats:   chart \(c): \(count[c]) triangles, area \(String(format: "%.4f", area[c])), box \(String(format: "%.3f x %.3f", s.x, s.y)), fill \(String(format: "%.2f", area[c] / (s.x * s.y)))")
             }
             let sizes = count.sorted()
             print("Painter stats: \(name): \(atlas.chartCount) charts (triangles: median \(sizes[sizes.count / 2]), max \(sizes.last ?? 0)); "

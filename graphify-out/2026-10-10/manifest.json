@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791639669.8309016,
-    "seen": 1791640822.117465,
-    "ast_hash": "b8a346d734f0237872f87b41bec91e73",
+    "mtime": 1791651276.7878177,
+    "seen": 1791651299.905066,
+    "ast_hash": "7ccef2316992b116e27b16e048a52911",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791637478.8601635,
-    "seen": 1791640822.117256,
-    "ast_hash": "de64e952af79f6ebdb77aced0b165cb9",
+    "mtime": 1791643381.1890988,
+    "seen": 1791651299.9048672,
+    "ast_hash": "6e66b0dbb586ad5da9f7029f859de8fe",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -2382,15 +2382,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/Paint.metal": {
-    "mtime": 1791637013.4051206,
-    "seen": 1791640822.117196,
-    "ast_hash": "14dd4aac03c2562bb48201c9deaae479",
+    "mtime": 1791642989.049326,
+    "seen": 1791651299.904804,
+    "ast_hash": "8cc26fcd58fdd3ff13077de57d2d4795",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/PaintBake.metal": {
-    "mtime": 1791639321.0604708,
-    "seen": 1791640822.117197,
-    "ast_hash": "035c72fb1c46ece8620eeb26c82d1471",
+    "mtime": 1791643355.743102,
+    "seen": 1791651299.904806,
+    "ast_hash": "96fb14e29e1a5b8f9a7d8f93910d733a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/GLBWriter.swift": {
@@ -2406,9 +2406,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintBake.swift": {
-    "mtime": 1791639321.0602314,
-    "seen": 1791640822.117208,
-    "ast_hash": "2132ab03c48aec14e687c48eb75b7cfb",
+    "mtime": 1791643416.2307248,
+    "seen": 1791651299.9048169,
+    "ast_hash": "26e9eea57d4ff8dc11bcc9a58a065d97",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintBrush.swift": {
@@ -2442,9 +2442,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PainterSession.swift": {
-    "mtime": 1791637013.4262176,
-    "seen": 1791640822.1172118,
-    "ast_hash": "dd9bcb2b6df3ff86652b08378dd0bc07",
+    "mtime": 1791643364.6672711,
+    "seen": 1791651299.904822,
+    "ast_hash": "8cda579f8f3908ebcaac09b389d8e07b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PainterStore.swift": {
@@ -2466,15 +2466,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/UVPack.swift": {
-    "mtime": 1791638884.2715855,
-    "seen": 1791640822.117215,
-    "ast_hash": "59ee7455bf6d9b1f0c77778ffea38af4",
+    "mtime": 1791649563.5174372,
+    "seen": 1791651299.9048262,
+    "ast_hash": "a22436ccea03e2b7e3a7e651772da0a9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/UVUnwrap.swift": {
-    "mtime": 1791638884.271791,
-    "seen": 1791640822.117215,
-    "ast_hash": "010302b21e1b34fd78f2d8df9abe791a",
+    "mtime": 1791651001.1117997,
+    "seen": 1791651299.9048269,
+    "ast_hash": "a719a94be2bbf40e08da936844ae7a9e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PainterEditor/PainterModel.swift": {
@@ -2496,9 +2496,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer+Painter.swift": {
-    "mtime": 1791639699.4937456,
-    "seen": 1791640822.117255,
-    "ast_hash": "8e67d79f0cacd32b4bb65b9e595898fa",
+    "mtime": 1791643364.667452,
+    "seen": 1791651299.9048672,
+    "ast_hash": "177e1efc80e43c5940b3addde0bd8369",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Painted.swift": {
@@ -2514,21 +2514,21 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PainterTests.swift": {
-    "mtime": 1791640728.3343182,
-    "seen": 1791640822.117404,
-    "ast_hash": "0ef5d429ed6304ba921ca378f69aeac9",
+    "mtime": 1791643416.0358229,
+    "seen": 1791651299.905011,
+    "ast_hash": "9ca527859786a617f512601a6679c751",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PainterUnwrapTests.swift": {
-    "mtime": 1791638760.394635,
-    "seen": 1791640822.117405,
-    "ast_hash": "479ba44e67124d1e65b2fef6b9216358",
+    "mtime": 1791650442.6447215,
+    "seen": 1791651299.905012,
+    "ast_hash": "e8a0fd2778c08459e05c2d7d94b18c2e",
     "semantic_hash": ""
   },
   ".claude/notes/material-painter-handoff.md": {
-    "mtime": 1791640808.3792725,
-    "seen": 1791640822.11745,
-    "ast_hash": "0c0941e0121224feb935eed2b44842f2",
+    "mtime": 1791651286.3442926,
+    "seen": 1791651299.905052,
+    "ast_hash": "6b9c84eb46914e427685e0d00f4b49c4",
     "semantic_hash": ""
   }
 }

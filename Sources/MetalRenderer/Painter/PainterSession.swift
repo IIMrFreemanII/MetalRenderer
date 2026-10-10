@@ -107,6 +107,8 @@ final class PainterSession {
         var mask: MTLTexture?
         var generated: MTLTexture?
         var generatedFrom: PaintGenerator?
+        /// The mask being made (off the render thread), until the render thread takes it.
+        var generating: PaintMaskJob?
     }
     private(set) var layers: [UUID: LayerTextures] = [:]
     /// Layers to be filled from the object as it was (PaintLayer.source "original"), once their textures are there.
@@ -119,6 +121,12 @@ final class PainterSession {
     /// The mesh maps being made, until the render thread adopts them.
     var baking: PaintBakeJob?
     var bakeFailed = false
+    /// The generated masks' queue (theirs, so that the frames' queue runs while they are made).
+    private(set) lazy var maskQueue: MTLCommandQueue? = {
+        let q = device.makeCommandQueue()
+        q?.label = "painter masks"
+        return q
+    }()
     /// Tiles whose texels the composite must write again (all: every tile).
     private(set) var dirty: Set<Int> = []
     var allDirty: Bool { dirty.count >= tilesAcross * tilesAcross }
@@ -281,7 +289,7 @@ final class PainterSession {
                 for c in layer.channels where t.channels[c] == nil { t.channels[c] = makePaint(c.isColor ? .rgba16Float : .rg16Float, "\(layer.name) \(c)") }
             }
             if let mask = layer.mask, mask.painted, t.mask == nil { t.mask = makePaint(.rg16Float, "\(layer.name) mask") }
-            if layer.mask?.generator == nil { t.generated = nil; t.generatedFrom = nil }
+            if layer.mask?.generator == nil { t.generated = nil; t.generatedFrom = nil; t.generating = nil }
         }
         for id in layers.keys where !live.contains(id) { layers[id] = nil }
         invalidate()

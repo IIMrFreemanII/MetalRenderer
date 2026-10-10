@@ -209,7 +209,7 @@ final class PainterTests: XCTestCase {
 
     /// The mesh maps made off the render thread (PaintBakeJob, in bands of rows on a queue of its own) are those of
     /// one pass over the whole set.
-    func testBakesInTheBackgroundMatchOnePass() throws {
+    func testBakesAndMasksInTheBackgroundMatchOnePass() throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no GPU") }
         guard device.supportsRaytracing else { throw XCTSkip("no ray tracing") }
         var s = SceneSettings(kind: .painter)
@@ -237,6 +237,16 @@ final class PainterTests: XCTestCase {
             XCTAssertLessThan(worst, 1.5 / 255, name)
             XCTAssertGreaterThan(pa.reduce(0) { $0 + $1.x } / Float(pa.count), 0.05, "\(name) was made")
         }
+        // A generated mask made in the background is the one made now (on a queue of its own).
+        let wear = PaintGenerator(kind: .edgeWear, amount: 0.6)
+        let maskJob = PaintMaskJob(wear, bake: whole, map: map, size: 512, catalog: nil, device: device, queue: try XCTUnwrap(session.maskQueue))
+        while maskJob.done == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        let background = try XCTUnwrap(maskJob.done ?? nil, "the background mask")
+        let now = try XCTUnwrap(whole.mask(wear, map: map, size: 512, catalog: nil, device: device, queue: queue))
+        let pa = PainterPixels.read(background, device: device, queue: queue), pb = PainterPixels.read(now, device: device, queue: queue)
+        XCTAssertEqual(pa.count, 512 * 512)
+        XCTAssertEqual(zip(pa, pb).reduce(Float(0)) { max($0, abs($1.0.x - $1.1.x)) }, 0, "the same mask")
+        XCTAssertGreaterThan(pa.reduce(0) { $0 + $1.x }, 0, "edge wear on a cube's edges")
     }
 
     /// The GPU's time for a 2K set: a full composite of a few layers, then a frame of ten dabs (the tiles they touch

@@ -26,11 +26,12 @@ struct UVAtlas: Equatable {
 /// The painter's own unwrap (no library): the mesh is cut into charts that face about one way (grown from the largest
 /// triangles while their normals stay within a cone), each chart is flattened by least-squares conformal maps (LSCM,
 /// a Jacobi-preconditioned conjugate gradient from its projection on its plane; the projection itself if that folds,
-/// and the chart split in two if the projection folds too), turned to its smallest bounding rectangle and packed by
-/// its outline (UVPack) into the square with gutters for the painting's dilation and mip levels.
+/// and the chart split in two if the projection folds too), turned to its smallest bounding rectangle (and cut in two
+/// where long or mostly empty in it) and packed by its outline (UVPack) into the square with gutters for the
+/// painting's dilation and mip levels.
 enum UVUnwrap {
     /// Bumped when the unwrap lays a mesh out differently (the cached layouts are made again).
-    static let version = 5
+    static let version = 6
     /// How far a chart's triangles may face from its mean normal, and from its first's.
     static let coneAngle: Float = 66 * .pi / 180
     static let seedAngle: Float = 85 * .pi / 180
@@ -100,8 +101,31 @@ enum UVUnwrap {
                 for half in split(tris, normal: normal, adj: adj, n: n) { charts.append(half) }
             }
         }
-        // Each chart square to its smallest rectangle, lying down, from 0; then packed by its outline.
-        for i in flat.indices { flat[i].uv = upright(flat[i].uv) }
+        // Each chart square to its smallest rectangle, lying down, from 0. One longer than the square root of the whole's
+        // area (it would set the scale) or over 1% of it and less than half its rectangle (a ring, an L) is cut in
+        // two, its halves keeping their places in it (a part of a layout without folds or overlaps has none), and they
+        // go round again.
+        let total = area.reduce(0, +), side = total.squareRoot()
+        var laid = flat
+        flat = []
+        var at = [Int32](repeating: 0, count: n)
+        var i = 0
+        while i < laid.count {
+            let (tris, uv) = laid[i]
+            laid[i] = ([], [])
+            i += 1
+            let up = upright(uv)
+            var hi = SIMD2<Float>(repeating: 0), chartArea: Float = 0
+            for p in up { hi = simd_max(hi, p) }
+            for t in tris { chartArea += area[t] }
+            let long = hi.x > side, empty = chartArea < 0.5 * hi.x * hi.y && chartArea > 0.01 * total
+            guard tris.count >= 16 && (long || empty) else { flat.append((tris, up)); continue }
+            for (j, t) in tris.enumerated() { at[t] = Int32(j) }
+            for half in split(tris, normal: normal, adj: adj, n: n) {
+                laid.append((half, half.flatMap { t in (0..<3).map { uv[3 * Int(at[t]) + $0] } }))
+            }
+        }
+        // Packed by their outlines.
         let packed = UVPack.pack(flat.map(\.uv), resolution: resolution, padding: padding(resolution))
         var corners = [SIMD2<Float>](repeating: .zero, count: 3 * n)
         var chartOf = [Int32](repeating: 0, count: n)
@@ -161,8 +185,9 @@ enum UVUnwrap {
     }
 
     /// Small charts (under a quarter of the mean's area, or a few triangles under the mean's) into the neighbour they
-    /// share the most edges with (not across a crease), smallest first, if the two face within 100 degrees of each
-    /// other: fewer seams and gutters. (A merged chart that won't flatten is split again.)
+    /// share the most edges with, smallest first, if the two face within 100 degrees of each other: fewer seams and
+    /// gutters (across a crease too: a hard-edged model's bevels and slivers; a box's faces, all alike, stay apart).
+    /// (A merged chart that won't flatten is split again.)
     static func merge(_ grown: [[Int]], normal: [SIMD3<Float>], area: [Float], adj: (start: [Int32], next: [Int32])) -> [[Int]] {
         var charts = grown
         var chartOf = [Int32](repeating: 0, count: normal.count)
@@ -172,15 +197,13 @@ enum UVUnwrap {
         }
         let mean = areas.reduce(0, +) / Float(max(charts.count, 1))
         let limit = cos(Float(100) * .pi / 180)
-        let crease = cos(creaseAngle)
         let order = charts.indices.filter { areas[$0] < 0.25 * mean || (charts[$0].count < 8 && areas[$0] < mean) }.sorted { areas[$0] < areas[$1] }
         for c in order where !charts[c].isEmpty {
             var shared: [Int32: Int] = [:]
             for t in charts[c] {
                 for j in Int(adj.start[t])..<Int(adj.start[t + 1]) {
                     let u = Int(adj.next[j]), o = chartOf[u]
-                    // Not across a crease (a box's faces stay apart).
-                    if o != Int32(c) && (normal[t] == .zero || normal[u] == .zero || simd_dot(normal[t], normal[u]) >= crease) {
+                    if o != Int32(c) {
                         shared[o, default: 0] += 1
                     }
                 }

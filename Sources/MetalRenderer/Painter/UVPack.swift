@@ -40,32 +40,45 @@ enum UVPack {
         var lo: Float = 0
         var hi = min((r - 4 * Float(pad)) / max(widest, 1e-12), r / max(area.squareRoot(), 1e-12))
         var best: Placed?
-        if let all = place(shapes, order, scale: hi, resolution: resolution, pad: pad) { return Result(scale: hi, origins: all.origins, padding: pad, turns: all.turns) }
-        // From below: a fit that leaves the square's top empty grows by about the square root of what it left (and
-        // at least 1%), a miss halves the gap; within 1% of the largest that fits.
-        var guess = hi * 0.6
+        // From the top: what the largest scale left over (the share of the area it placed) says where to start.
+        var guess: Float
+        switch place(shapes, order, scale: hi, resolution: resolution, pad: pad) {
+        case .fit(let all): return Result(scale: hi, origins: all.origins, padding: pad, turns: all.turns)
+        case .miss(let placed): guess = hi * max((placed / max(area, 1e-20)).squareRoot() * 0.97, 0.3)
+        }
+        // A fit grows by the square root of the room it left above its horizon (at least 1%, at most halfway to the
+        // smallest miss); a miss aims at the square root of the share it placed (between the two it knows of, else
+        // halfway); within 1% of the largest that fits.
         for _ in 0..<24 {
-            if let o = place(shapes, order, scale: guess, resolution: resolution, pad: pad) {
+            switch place(shapes, order, scale: guess, resolution: resolution, pad: pad) {
+            case .fit(let o):
                 lo = guess
                 best = o
-                guess = max(guess * (r / max(o.height, 1)).squareRoot(), guess * 1.01)
-            } else {
+                let grow = guess * (r * r / max(r * r - o.free, r * r / 4)).squareRoot() * 0.995
+                guess = min(max(grow, guess * 1.01), (lo + hi) / 2)
+            case .miss(let placed):
                 hi = guess
-                guess = lo > 0 ? (lo + hi) / 2 : guess * 0.8
+                let aim = guess * (placed / max(area, 1e-20)).squareRoot() * 0.995
+                guess = lo == 0 ? min(aim, guess * 0.9) : (aim > lo * 1.005 && aim < hi ? aim : (lo + hi) / 2)
             }
             if hi - lo < hi * 0.01 { break }
             if guess >= hi { guess = (lo + hi) / 2 }
         }
-        if best == nil { best = place(shapes, order, scale: lo, resolution: resolution, pad: pad) }
+        if best == nil, case .fit(let o) = place(shapes, order, scale: lo, resolution: resolution, pad: pad) { best = o }
         return Result(scale: lo, origins: best?.origins ?? [SIMD2<Float>](repeating: .zero, count: charts.count), padding: pad,
                       turns: best?.turns ?? [Int](repeating: 0, count: charts.count))
     }
 
-    /// Where the charts went, and how high the square is filled.
+    /// Where the charts went, and the room left above them (texels²).
     private struct Placed {
         var origins: [SIMD2<Float>]
         var turns: [Int]
-        var height: Float
+        var free: Float
+    }
+    /// They all fit, or the area (metres) of those that did before one didn't.
+    private enum Outcome {
+        case fit(Placed)
+        case miss(placed: Float)
     }
 
     /// A chart's triangles (metres) in each of its four quarter turns, from 0.
@@ -146,20 +159,25 @@ enum UVPack {
         }
     }
 
-    /// The charts on the horizon at `scale`, or nil if they don't fit: per chart its origin (texels) and turns.
-    private static func place(_ shapes: [Shape], _ order: [Int], scale: Float, resolution: Int, pad: Int) -> Placed? {
+    /// The charts on the horizon at `scale`, if they fit: per chart its origin (texels) and turns.
+    private static func place(_ shapes: [Shape], _ order: [Int], scale: Float, resolution: Int, pad: Int) -> Outcome {
         // Columns of half the gutter, two of them its width (between two charts' points 2 to 2.5 gutters across).
         let reach = pad >= 2 ? 2 : 1
         let cell = Float(max(pad, 1)) / Float(reach)
         let columns = Int(Float(resolution) / cell)
         let height = Float(resolution)
-        var horizon = [Float](repeating: 0, count: columns)
+        // (Eight floats over the end, so that the scan reads whole SIMD8s.)
+        var horizon = [Float](repeating: 0, count: columns + 8)
         var origins = [SIMD2<Float>](repeating: .zero, count: shapes.count)
         var turns = [Int](repeating: 0, count: shapes.count)
-        var rest = [Float](repeating: 0, count: columns), under = [Float](repeating: 0, count: columns)
+        var rest = [SIMD8<Float>](repeating: .zero, count: columns / 8 + 1), under = [Float](repeating: 0, count: columns)
+        var prefix = [Double](repeating: 0, count: columns + 1)
+        var placed: Float = 0
         for i in order {
             var best: (score: Float, x: Int, y: Float, k: Int) = (.infinity, 0, 0, 0)
             var bestProfile: [Float] = []
+            // The horizon's running sum (the room under a chart whose columns are all of it, at once).
+            for c in 0..<columns { prefix[c + 1] = prefix[c] + Double(horizon[c]) }
             // (A chart of a few columns turned half round is much the same: its two quarter turns only.)
             for k in 0..<(shapes[i].box * scale * scale > Float(64 * pad * pad) ? 4 : 2) {
                 let (bottom, top) = shapes[i].profile(k, scale: scale, cell: cell, reach: reach, pad: Float(pad))
@@ -167,39 +185,49 @@ enum UVPack {
                 guard w <= columns else { continue }
                 var topMax: Float = 0
                 for c in 0..<w where top[c].isFinite { topMax = max(topMax, top[c]) }
-                // Every position across at once, column by column of the chart (loops the compiler vectorises): where
-                // it comes to rest (the highest of the horizon less its underside), and the room under it (its
-                // columns' rest height and underside, less the horizon under them: a sum over them).
-                let n = columns - w + 1
-                rest.withUnsafeMutableBufferPointer { y in
+                // Every position across at once, column by column of the chart (eight at a time): where it comes to
+                // rest (the highest of the horizon less its underside), and the room under it (its columns' rest
+                // height and underside, less the horizon under them: a sum over them).
+                let n = columns - w + 1, n8 = (n + 7) / 8
+                var filled: Float = 0, undersides: Float = 0
+                for c in 0..<w where bottom[c].isFinite { filled += 1; undersides += bottom[c] }
+                let whole = Int(filled) == w
+                rest.withUnsafeMutableBufferPointer { y8 in
                     under.withUnsafeMutableBufferPointer { sum in
                         horizon.withUnsafeBufferPointer { h in
-                            for x in 0..<n { y[x] = 0; sum[x] = 0 }
-                            var filled: Float = 0, undersides: Float = 0
+                            let raw = UnsafeRawPointer(h.baseAddress!)
+                            for j in 0..<n8 { y8[j] = .zero }
+                            if whole {
+                                for x in 0..<n { sum[x] = Float(prefix[x + w] - prefix[x]) }
+                            } else {
+                                for x in 0..<n { sum[x] = 0 }
+                                for c in 0..<w where bottom[c].isFinite {
+                                    for x in 0..<n { sum[x] += h[x + c] }
+                                }
+                            }
                             for c in 0..<w where bottom[c].isFinite {
-                                let b = bottom[c]
-                                filled += 1
-                                undersides += b
-                                for x in 0..<n {
-                                    let v = h[x + c]
-                                    y[x] = max(y[x], v - b)
-                                    sum[x] += v
+                                let b = SIMD8<Float>(repeating: bottom[c])
+                                for j in 0..<n8 {
+                                    let v = raw.loadUnaligned(fromByteOffset: 4 * (8 * j + c), as: SIMD8<Float>.self)
+                                    y8[j] = simd_max(y8[j], v - b)
                                 }
                             }
                             for x in 0..<n {
-                                let reached = y[x] + topMax
+                                let yx = y8[x >> 3][x & 7]
+                                let reached = yx + topMax
                                 guard reached <= height, reached <= best.score else { continue }
                                 // The room it leaves under it, per column, counts against it (four times).
-                                let waste = filled * y[x] + undersides - sum[x]
+                                let waste = filled * yx + undersides - sum[x]
                                 let score = reached + 4 * waste / Float(w)
-                                if score < best.score { best = (score, x, y[x], k) }
+                                if score < best.score { best = (score, x, yx, k) }
                             }
                         }
                     }
                 }
                 if best.k == k && best.score.isFinite { bestProfile = top }
             }
-            guard best.score.isFinite else { return nil }
+            guard best.score.isFinite else { return .miss(placed: placed) }
+            placed += shapes[i].area
             for c in bestProfile.indices where bestProfile[c].isFinite {
                 horizon[best.x + c] = max(horizon[best.x + c], best.y + bestProfile[c])
             }
@@ -207,6 +235,8 @@ enum UVPack {
             origins[i] = SIMD2(Float(best.x + reach) * cell, best.y) - shapes[i].lows[best.k] * scale
             turns[i] = best.k
         }
-        return Placed(origins: origins, turns: turns, height: horizon.max() ?? 0)
+        var free: Float = 0
+        for h in horizon[..<columns] { free += max(height - h, 0) * cell }
+        return .fit(Placed(origins: origins, turns: turns, free: free))
     }
 }

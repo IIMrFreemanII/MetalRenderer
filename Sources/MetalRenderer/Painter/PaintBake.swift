@@ -58,6 +58,32 @@ final class PaintBakeJob {
     }
 }
 
+/// A generated mask made off the render thread (a graph mask's bake and the generator's dispatch, waited for there,
+/// on a queue of the session's own): a new texture, which the render thread takes in place of the layer's last once
+/// `done` (the frames that read the last keep it while they run).
+final class PaintMaskJob {
+    let generator: PaintGenerator
+    private let lock = NSLock()
+    private var made: MTLTexture??
+
+    init(_ g: PaintGenerator, bake: PaintBake, map: MTLTexture, size: Int, catalog: MaterialCatalog?, device: MTLDevice, queue: MTLCommandQueue) {
+        generator = g
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let t = bake.mask(g, map: map, size: size, catalog: catalog, device: device, queue: queue)
+            lock.lock()
+            made = .some(t)
+            lock.unlock()
+        }
+    }
+
+    /// The mask once made (`.some(nil)`: it failed), nil while it is being made.
+    var done: MTLTexture?? {
+        lock.lock()
+        defer { lock.unlock() }
+        return made
+    }
+}
+
 /// A painted object's mesh maps (MaterialShaders/PaintBake.metal), at its texture set's size: ambient occlusion and
 /// thickness (rays against the object alone, on a structure of its own: Metal RT), curvature (each welded vertex's,
 /// from how its neighbours' normals turn, and the creases near: edges whose faces meet at more than 25 degrees,
@@ -269,6 +295,22 @@ final class PaintBake {
         }
         if segments.isEmpty { return (perVertex, [SIMD4<Float>(repeating: 0)], [SIMD2<UInt32>(0, 0)], [0], (lo, 0, SIMD3(1, 1, 1))) }
         return (perVertex, segments, cells, items, (lo, cell, dims))
+    }
+
+    /// A generator's mask, made now on the caller's thread (it waits for the GPU): a new R8 texture of `size` (a graph
+    /// mask's graph baked first, with `catalog`).
+    func mask(_ g: PaintGenerator, map: MTLTexture, size: Int, catalog: MaterialCatalog?, device: MTLDevice, queue: MTLCommandQueue) -> MTLTexture? {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: size, height: size, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        guard let out = device.makeTexture(descriptor: d) else { return nil }
+        out.label = "paint generated mask"
+        var graph: MTLTexture?
+        if g.kind == .graph, !g.graph.isEmpty, let catalog {
+            graph = PaintMeshMaps.bake(graph: g.graph, catalog: catalog, maps: self, size: size, device: device)
+        }
+        generate(g, into: out, map: map, graph: graph, queue: queue, device: device)
+        return out
     }
 
     /// A generator's mask into `out` (R8, the set's size), now (waits for the GPU). `graph`: a graph mask's bake.

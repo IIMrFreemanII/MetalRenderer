@@ -1893,9 +1893,10 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
   cylinder|plane|character|model,pmodel=demon`): a shape, the base character, or a model's largest part, on a plinth.
 * **Its UVs** (`UVCheck`, `UVUnwrap`, `UVPack`): the mesh's own, if each point of it has a texel of its own; otherwise
   the painter's unwrap, written here: charts grown from the largest triangles while they face within a cone and
-  never across a crease, small ones merged, each flattened by LSCM (a conjugate gradient; its projection on its plane
-  if it folds, and split in two if that folds or overlaps), turned to its smallest rectangle, then packed by its
-  outline with gutters (a horizon per column of half a gutter: each chart, largest first, in the quarter turn and place
+  never across a crease, small ones merged (across creases too), each flattened by LSCM (a conjugate gradient; its
+  projection on its plane if it folds, and split in two if that folds or overlaps), turned to its smallest rectangle
+  and cut in two where it is long or mostly empty in it (an arm, a ring: the halves keep their layout), then packed
+  by its outline with gutters (a horizon per column of half a gutter: each chart, largest first, in the quarter turn and place
   where it rests lowest and leaves least room under it; a notch takes another's bump). The corners' UVs (three a triangle) follow the meshes' own on the GPU: nothing is split
   (`Scene+Painted.swift`, the painted materials' extras say where they start).
 * **Painting** (`PainterSession`, `MaterialShaders/Paint.metal`): every texel knows its triangle and barycentrics (a
@@ -1910,7 +1911,8 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
   normal; generators of edge wear, dirt in cavities, dust on top, rust and leaks from them (amount, contrast, scale,
   seed); a graph mask (the Material Designer's Mesh Map node reads them); smart materials (`SmartMaterial`: Worn
   Painted Metal, Rusty Iron, Dusty Plastic, Old Wood, Grimy Concrete, and saved ones). The mesh maps are baked off the
-  render thread (in bands of rows, on a queue of their own) when a layer first has a generated mask.
+  render thread (in bands of rows, on a queue of their own) when a layer first has a generated mask; the masks too
+  (a mask at a time a layer, the last one shown until the next is made).
 * **Paint mode** (Paint or Tab in the window): left drag paints in the main view, right drag or Option-drag orbits the
   object, scroll zooms, [ ] the brush's size, Escape leaves; a ring shows the brush on the surface; the scene's
   animation holds still meanwhile. Shift-V walks.
@@ -1923,8 +1925,8 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
   materials), `painterstrokes` (strokes, symmetry, stamps, the eraser, a mask, an island fill: scripted paint mode);
   `METALRENDERER_PAINTER_EXPORT=<folder>` writes each set as it is first composited.
 * **Not done:** the window and paint mode were never used by hand (offscreen and tests only); the unwrap's charts fill
-  about two fifths of the square for a character or a model, two thirds for a box (its largest charts are long: cutting
-  them shorter is next); paint is on a character's
+  three fifths of the square for a character, two fifths for a hard-edged model of many small charts, two thirds for a
+  box; paint is on a character's
   bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced, and Lumen sees their
   original material; Metal 4 untried.
 

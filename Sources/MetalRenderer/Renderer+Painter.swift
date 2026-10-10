@@ -267,26 +267,30 @@ extension Renderer {
     }
 
     /// Each layer's generated mask, made again when its generator changed (a graph mask: the graph baked with the
-    /// object's mesh maps as its inputs).
+    /// object's mesh maps as its inputs): off the render thread, a mask at a time a layer (a slider dragged: the last
+    /// value once the one being made is done), the last mask shown until then; in a benchmark, now.
     private func regenerateMasks(_ s: PainterSession) {
         guard let bake = s.bake, let map = s.texelMap else { return }
+        var catalog: MaterialCatalog?
         for layer in s.document.layers {
-            guard let g = layer.mask?.generator, let t = s.layers[layer.id], t.generatedFrom != g else { continue }
-            if t.generated == nil {
-                let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: s.size, height: s.size, mipmapped: false)
-                d.usage = [.shaderRead, .shaderWrite]
-                d.storageMode = .private
-                t.generated = device.makeTexture(descriptor: d)
+            guard let g = layer.mask?.generator, let t = s.layers[layer.id] else { continue }
+            if let job = t.generating, let made = job.done {
+                t.generating = nil
+                t.generatedFrom = job.generator
+                if let made {
+                    t.generated = made
+                    s.invalidate()
+                }
             }
-            guard let out = t.generated else { continue }
-            var graph: MTLTexture?
-            if g.kind == .graph, !g.graph.isEmpty {
-                let catalog = MaterialCatalog.resolve(scene.settings.materials)
-                graph = PaintMeshMaps.bake(graph: g.graph, catalog: catalog, maps: bake, size: s.size, device: device)
+            guard t.generatedFrom != g, t.generating == nil else { continue }
+            if g.kind == .graph && catalog == nil { catalog = MaterialCatalog.resolve(scene.settings.materials) }
+            if benchmark != nil {
+                if let made = bake.mask(g, map: map, size: s.size, catalog: catalog, device: device, queue: queue) { t.generated = made }
+                t.generatedFrom = g
+                s.invalidate()
+            } else {
+                t.generating = PaintMaskJob(g, bake: bake, map: map, size: s.size, catalog: catalog, device: device, queue: s.maskQueue ?? queue)
             }
-            bake.generate(g, into: out, map: map, graph: graph, queue: queue, device: device)
-            t.generatedFrom = g
-            s.invalidate()
         }
     }
 
