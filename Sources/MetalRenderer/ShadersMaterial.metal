@@ -12,3 +12,5 @@ using namespace metal;
 #include "MaterialShaders/MatHeight.metal"
 #include "MaterialShaders/MatAdvanced.metal"
 #include "MaterialShaders/MatDisplace.metal"
+#include "MaterialShaders/Paint.metal"
+#include "MaterialShaders/PaintBake.metal"

@@ -97,6 +97,7 @@ extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)
 extension CharacterSceneSettings.View: EnvNamed {}
 extension MaterialWorkshopSettings.Layout: EnvNamed {}
 extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
+extension PainterWorkshopSettings.Subject: EnvNamed {}
 extension FaceExpression: EnvNamed {}
 extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
@@ -385,6 +386,10 @@ enum SettingsTable {
             S.value(\.scene.materialWorkshop.graph).env(.scene, "mgraph"),
             S.popup("Shapes", \.scene.materialWorkshop.layout, titled(\.title)).env(.scene, "mlayout").when { $0.scene.kind == .materials },
             S.popup("Backdrop", \.scene.materialWorkshop.backdrop, titled(\.title)).env(.scene, "mbackdrop").when { $0.scene.kind == .materials },
+            S.popup("Object", \.scene.painterWorkshop.subject, titled(\.title)).env(.scene, "psubject").when { $0.scene.kind == .painter },
+            S.value(\.scene.painterWorkshop.model).env(.scene, "pmodel"),
+            S.value(\.scene.painterWorkshop.document).env(.scene, "pdocument"),
+            S.popup("Backdrop", \.scene.painterWorkshop.backdrop, titled(\.title)).env(.scene, "pbackdrop").when { $0.scene.kind == .painter },
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
             S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),

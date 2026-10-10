@@ -38,6 +38,9 @@ final class Benchmark {
             case callLift(Int, floor: Int)          // lift n to that floor
             case lights(on: Bool, within: Float)    // the switches that near the camera, on or off
             case flashlight(Bool)
+            /// The Material Painter in paint mode on the scene's first painted object (the camera kept), its steps
+            /// one a frame (Renderer.runPainterScript).
+            case paint([PainterStep])
         }
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false

@@ -93,7 +93,7 @@ enum MatBlendMode: String, CaseIterable {
 /// The nodes. Their kernels are MaterialShaders/*.metal, `mat_<kind>`, reading their parameters in the spec's order.
 enum MatOpKind: String, Codable, CaseIterable {
     // Graph
-    case input, output, subgraph, uniform, uniformColor, bitmap
+    case input, output, subgraph, uniform, uniformColor, bitmap, meshMap
     // Noises
     case whiteNoise, valueNoise, perlinNoise, fractalSum, cells, anisotropicNoise, scratches, grunge, fibers
     // Patterns
@@ -142,6 +142,13 @@ enum MatOpKind: String, Codable, CaseIterable {
         case .bitmap:
             return spec("Bitmap", .graph, [], [("out", .color)], [P("path", "File", .text("")), c("channel", "As", ["color", "luminance"])], .global,
                         "An image file (PNG, JPEG, EXR), stretched over the tile.")
+
+        case .meshMap:
+            return spec("Mesh Map", .graph, [], [("out", .color)],
+                        [c("map", "Map", ["curvature", "occlusion", "thickness", "position", "normal", "height"]),
+                         P("context", "Object", .text(""))], .global,
+                        "A painted object's bake (Material Painter): its curvature, occlusion, thickness, position, normal or height "
+                        + "over its texture set; a neutral grey outside the painter.")
 
         case .whiteNoise:
             return spec("White Noise", .noise, [], [("out", .grey)], [seed], .generator, "A random grey a pixel.")

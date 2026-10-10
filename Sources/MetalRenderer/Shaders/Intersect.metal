@@ -381,12 +381,16 @@ constexpr sampler rtOpacitySampler(filter::linear, mip_filter::linear, address::
 inline bool rtOpacity(SCENE_ACCEL sc, uint id, uint prim, float2 bc) {
     uint4 o = sc.opacity[id];
     if (o.x == NO_TEXTURE) return true;
-    MeshData m = sc.meshes[o.y];
+    // A painted object's (the mesh's top bit): its corners' own UVs (Scene+Painted.swift), at a UV scale of 1.
+    bool painted = (o.y & 0x80000000u) != 0u;
+    MeshData m = sc.meshes[o.y & 0x7FFFFFFFu];
     float2 uv = float2(0.0f);
     float w[3] = {1.0f - bc.x - bc.y, bc.x, bc.y};
     for (uint k = 0; k < 3; ++k) {
         float2 t;
-        if (STREAMED && m.block != nullptr) {
+        if (painted) {
+            t = sc.uvs[uint(int(o.w) + int(m.firstIndex + prim * 3u + k))];
+        } else if (STREAMED && m.block != nullptr) {
             device const float2* uvs = (device const float2*)(m.block + 2u * m.vertexCount);
             device const uint* indices = (device const uint*)(uvs + m.vertexCount);
             t = uvs[indices[prim * 3u + k]];
@@ -395,7 +399,7 @@ inline bool rtOpacity(SCENE_ACCEL sc, uint id, uint prim, float2 bc) {
         }
         uv += t * w[k];
     }
-    float a = sc.textures[o.x].t.sample(rtOpacitySampler, uv * as_type<float>(o.w), level(1.0f)).r;
+    float a = sc.textures[o.x].t.sample(rtOpacitySampler, uv * (painted ? 1.0f : as_type<float>(o.w)), level(1.0f)).r;
     return a >= as_type<float>(o.z);
 }
 

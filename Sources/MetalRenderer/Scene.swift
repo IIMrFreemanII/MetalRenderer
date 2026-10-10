@@ -367,6 +367,12 @@ final class Scene {
     /// Procedural materials a scene keeps undisplaced (their parallax instead), so its triangles go where relief shows:
     /// the swamp's ground, its flat patches and its far trees, leaving them to its near gnarly trunks.
     var undisplacedMaterials: Set<Int> = []
+    /// Objects the Material Painter paints (Scene+Painted.swift): each its instance's texture set's slots and layout,
+    /// and the UVs of their corners, three per triangle, after the meshes' own on the GPU (the painted materials' extras
+    /// say where theirs start). The painter workshop's object (Scene+Painter.swift), painted whatever is assigned.
+    var painted: [PaintedObject] = []
+    var paintUVs: [SIMD2<Float>] = []
+    var paintSubject: Int? = nil
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
@@ -389,6 +395,8 @@ final class Scene {
     /// The first sun among the lights (the sky follows it), if any.
     private(set) var firstSun: Int?
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
+    /// Mesh `m`'s own bounds (the painter's orbit).
+    func meshBounds(_ m: Int) -> (SIMD3<Float>, SIMD3<Float>) { meshBounds.indices.contains(m) ? meshBounds[m] : (.zero, .zero) }
     /// The deforming meshes other than the crowd's: each one's mesh and its vertices (`addDeformingMesh`).
     private(set) var deforming: [(mesh: Int, first: Int, count: Int)] = []
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
@@ -535,6 +543,7 @@ final class Scene {
         case .characters: buildCharacterWorkshop()
         case .materials: buildMaterialWorkshop()
         case .mireland: buildMireland()
+        case .painter: buildPainterWorkshop()
         }
         applyMaterialAssignments()
         buildProceduralPrograms()
@@ -554,6 +563,7 @@ final class Scene {
         finishSoftBodies()
         finishLiquids()
         physics?.finish()
+        applyPaintAssignments()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }
@@ -1191,10 +1201,16 @@ final class Scene {
         if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
     }
 
+    /// Instance `i` given its painted materials (Scene+Painted.swift), its shadows traced if they cut holes.
+    func setPaintedMaterial(_ i: Int, _ material: Int, cutsHoles: Bool) {
+        instances[i].material = material
+        if cutsHoles && instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
     /// The instances a procedural material cuts holes in (the raster leaves them to the rays): their shadows traced too
     /// (the virtual shadow maps are drawn by the raster, which would leave them out).
     func traceHoleShadows() {
-        guard groups.isEmpty, procedural.contains(where: { $0.channels.contains(.opacity) }) else { return }
+        guard groups.isEmpty, procedural.contains(where: { $0.channels.contains(.opacity) }) || painted.contains(where: \.opacity) else { return }
         for i in instances.indices where instances[i].isGeometry {
             if let e = materialExtras[instances[i].material], e.textures.y != .max { instances[i].mask |= Scene.maskShadowTraced }
         }

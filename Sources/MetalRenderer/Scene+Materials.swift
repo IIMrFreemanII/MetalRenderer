@@ -40,7 +40,7 @@ extension Scene {
     }
 
     /// A shape's mesh (with UVs: a tile a UV unit), its placement over the plinth, and its size.
-    private func materialShape(_ shape: MaterialWorkshopSettings.Layout) -> (Int, float4x4, SIMD3<Float>) {
+    func materialShape(_ shape: MaterialWorkshopSettings.Layout) -> (Int, float4x4, SIMD3<Float>) {
         switch shape {
         case .sphere, .lineup: return (addMesh(Scene.uvSphere(), uvs: Scene.uvSphereUVs()), translate([0, 0.9, 0]) * scale(0.9), [1.8, 1.8, 1.8])
         case .cube:
@@ -62,7 +62,7 @@ extension Scene {
         }
     }
 
-    private func materialBackdrop(_ backdrop: MaterialWorkshopSettings.Backdrop, _ kit: Kit) {
+    func materialBackdrop(_ backdrop: MaterialWorkshopSettings.Backdrop, _ kit: Kit) {
         switch backdrop {
         case .studio:
             skyColor = [0.16, 0.16, 0.17]

@@ -303,7 +303,10 @@ struct SceneBuffers {
         sdf = try SDFBuffers(device: device, scene: scene)
         normals = try buffer(scene.normals, "normals")
         indices = try buffer(scene.indices, "indices")
-        uvs = try buffer(scene.uvs, "uvs")
+        // The painted corners after the vertices' UVs (PaintedObject.cornerBase counts from the vertices' end: nothing
+        // adds UVs after the painter's).
+        precondition(scene.painted.allSatisfy { $0.cornerBase >= scene.uvs.count }, "UVs added after the painted corners")
+        uvs = try buffer(scene.paintUVs.isEmpty ? scene.uvs : scene.uvs + scene.paintUVs, "uvs")
         // (Zeros for the arrays' triangles where only borrowed meshes have several materials: a hit reads one for each.)
         triangleMaterials = scene.triangleMaterials.isEmpty && scene.hasMaterialOffsets
             ? try empty(scene.indices.count / 3, "triangleMaterials") : try buffer(scene.triangleMaterials, "triangleMaterials")

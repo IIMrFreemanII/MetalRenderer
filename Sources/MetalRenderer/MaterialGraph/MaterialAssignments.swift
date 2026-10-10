@@ -38,6 +38,7 @@ struct MaterialAssignments: Codable, Equatable {
         case .forest, .valley, .mireland: return "\(s.kind.envName),seed=\(s.seed)"
         case .showcase: return "showcase,model=\(s.showcase)"
         case .materials: return "materials"
+        case .painter: return "painter,subject=\(s.painterWorkshop.subject.rawValue),model=\(s.painterWorkshop.model)"
         default: return s.kind.envName
         }
     }

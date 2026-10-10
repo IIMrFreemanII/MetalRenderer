@@ -95,7 +95,7 @@ extension Scene {
 
     /// Some procedural material cuts holes (its graph has an opacity output) in a scene whose instances are its own
     /// (not an open world's blocks): the queries alpha-test those instances (OPACITY).
-    var hasOpacity: Bool { !hasGroups && procedural.contains { $0.channels.contains(.opacity) } }
+    var hasOpacity: Bool { !hasGroups && (procedural.contains { $0.channels.contains(.opacity) } || painted.contains(where: \.opacity)) }
 
     /// The instances whose material cuts holes: for each, its opacity texture, mesh, cutoff and UV scale (MSL
     /// TraceScene.opacity, per instance: the texture ~0 for every other).
@@ -104,7 +104,12 @@ extension Scene {
         var records = [SIMD4<UInt32>](repeating: SIMD4(.max, 0, 0, 0), count: instances.count)
         for (i, inst) in instances.enumerated() {
             guard let e = materialExtras[inst.material], e.textures.y != .max, inst.mesh >= 0 else { continue }
-            records[i] = SIMD4(e.textures.y, UInt32(inst.mesh), e.surface.z.bitPattern, e.surface.y.bitPattern)
+            if let corners = PaintedObject.corners(e) {
+                // A painted object's: its own corners' UVs (the mesh's top bit says so; at a UV scale of 1).
+                records[i] = SIMD4(e.textures.y, UInt32(inst.mesh) | 0x8000_0000, e.surface.z.bitPattern, UInt32(bitPattern: corners))
+            } else {
+                records[i] = SIMD4(e.textures.y, UInt32(inst.mesh), e.surface.z.bitPattern, e.surface.y.bitPattern)
+            }
         }
         return records
     }

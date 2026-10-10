@@ -28,6 +28,7 @@ enum SettingsStore {
         s.scene.effects = ""   // the VFX editor's catalogs are this session's
         s.scene.materials = ""
         s.scene.materialAssignments = ""
+        s.scene.paintAssignments = ""
         s.scene.buildingCatalog = ""
         s.scene.characterCatalog = ""
         s.scene.characterWorkshop.mutants = ""

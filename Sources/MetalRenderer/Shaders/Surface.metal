@@ -589,6 +589,12 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             t0 = planarUV(w0p, a); t1 = planarUV(w1p, a); t2 = planarUV(w2p, a);
         }
     }
+    if (MATERIAL_EXTRAS && (ex.textures.z & 0xC0000000u) == 0x80000000u && hv.triangle != ~0u) {
+        // A painted object (Scene+Painted.swift): its corners' own UVs, after the vertices' (the offset to its mesh's
+        // first triangle's, in the low 30 bits; ~0 is a material without extras).
+        uint c = uint((int(ex.textures.z << 2) >> 2) + int(3u * hv.triangle));
+        t0 = s.uvs[c]; t1 = s.uvs[c + 1u]; t2 = s.uvs[c + 2u];
+    }
     if (any(mat.textures != uint4(NO_TEXTURE)) || (MATERIAL_EXTRAS && ex.textures.x != NO_TEXTURE)
         || (PROCEDURAL_CODE && ex.textures.w != NO_TEXTURE)) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;

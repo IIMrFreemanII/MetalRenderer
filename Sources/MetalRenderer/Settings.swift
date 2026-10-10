@@ -354,6 +354,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     case materials          // the material workshop (Scene+Materials.swift): a Material Designer graph's material on a
                             // sphere, a cube, a cylinder and a tile (`SceneSettings.materialWorkshop`), baked as it is edited
     case mireland           // a misty swamp (Scene+Mireland.swift) made of the Mireland materials, every one procedural
+    case painter            // the painter workshop (Scene+Painter.swift): one object on a plinth, painted with the Material
+                            // Painter (`SceneSettings.painterWorkshop`)
 
     var title: String {
         switch self {
@@ -389,6 +391,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .vfxStage: return "VFX stage"
         case .materials: return "Material workshop"
         case .mireland: return "Mireland swamp"
+        case .painter: return "Painter workshop"
         }
     }
 
@@ -703,6 +706,12 @@ struct SceneSettings: Equatable, Codable {
     /// (Assets/Materials/assignments.json), otherwise a key of the registry the Material Designer fills. A change makes
     /// the scene again. Session state.
     var materialAssignments = ""
+    /// The painter workshop: what it shows, painted with which document.
+    var painterWorkshop = PainterWorkshopSettings()
+    /// Which scene objects the Material Painter paints (PaintAssignments): "" the saved ones
+    /// (Assets/Painter/assignments.json), otherwise a key of the registry the painter fills. A change makes the scene
+    /// again. Session state.
+    var paintAssignments = ""
     /// The building workshop: what it shows.
     var buildings = BuildingSceneSettings()
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
@@ -780,6 +789,21 @@ struct MaterialWorkshopSettings: Equatable, Codable {
     }
     enum Backdrop: String, Codable, CaseIterable {
         case studio, outdoor, dark
+        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+}
+
+/// The painter workshop (Scene+Painter.swift): the object it paints (a shape, the base character, a glTF model's
+/// largest part), with which document (PaintDocuments, by name), against what.
+struct PainterWorkshopSettings: Equatable, Codable {
+    var subject = Subject.sphere
+    /// `.model`: the glTF file (a path, or a name under Assets).
+    var model = ""
+    var document = "Workshop"
+    var backdrop = MaterialWorkshopSettings.Backdrop.studio
+
+    enum Subject: String, Codable, CaseIterable {
+        case sphere, cube, cylinder, plane, character, model
         var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
 }
@@ -1007,7 +1031,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles, .plants, .vfxStage, .buildings, .characters, .materials:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -1117,7 +1141,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids, .particles, .vfxStage, .materials:
+             .softBodies, .muscles, .fluids, .particles, .vfxStage, .materials, .painter:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -1340,5 +1364,5 @@ struct RenderSettings: Equatable, Codable {
 
 extension SceneKind {
     /// The camera turns about what the scene shows (the plant workshop's plants, the VFX stage's effects; F frames them).
-    var orbits: Bool { isWorkshop || self == .vfxStage || self == .materials }
+    var orbits: Bool { isWorkshop || self == .vfxStage || self == .materials || self == .painter }
 }

@@ -321,12 +321,12 @@ final class Renderer: NSObject {
     /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
     private var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
 
-    private let device: MTLDevice
+    let device: MTLDevice
     /// The GPU it draws with (the Material Designer bakes on it). Any thread.
     var metalDevice: MTLDevice { device }
-    private let queue: MTLCommandQueue
+    let queue: MTLCommandQueue
     private weak var surface: RenderSurface?
-    private var scene = Scene()
+    private(set) var scene = Scene()
     /// The shaders' entry file: next to this source file, or `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which
     /// lets one binary run another copy of the shaders (an A/B of a shader change without a second build).
     private let shaderURL = ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0) }
@@ -350,7 +350,7 @@ final class Renderer: NSObject {
     private weak var lumenKeptScene: Scene?
 
     /// The scene's geometry, its instances' records and Metal's structures over them (SceneBuffers.swift).
-    private var sceneBuffers: SceneBuffers!
+    private(set) var sceneBuffers: SceneBuffers!
     private var positionBuffer: MTLBuffer { sceneBuffers.positions }
     private var normalBuffer: MTLBuffer { sceneBuffers.normals }
     private var indexBuffer: MTLBuffer { sceneBuffers.indices }
@@ -398,6 +398,10 @@ final class Renderer: NSObject {
     private var proceduralApplied: [Int: String] = [:]
     private var proceduralKeys: (catalog: String, keys: [String: String]) = ("", [:])
     private var srgbViews: [ObjectIdentifier: MTLTexture] = [:]
+    /// The Material Painter's GPU side (Renderer+Painter.swift): per painted object its session (texture set, layers).
+    var painter = PainterGPU()
+    /// A benchmark's painting still to do (Benchmark.Config.Event.paint), a step a frame.
+    var painterScript: [PainterStep] = []
     /// The displaced meshes' records (Scene.displaceVertices, displaceMembers), and per displacing material the height
     /// its meshes were last moved by (and the surface's values then), and the materials whose meshes wait to be moved.
     private var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
@@ -438,6 +442,10 @@ final class Renderer: NSObject {
     private var gizmoViewSize = SIMD2<Float>(1280, 800)
     /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
     var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+    /// The Material Painter's status, when it changes (Renderer+Painter.swift; on the render thread).
+    var onPainter: ((PainterStatus) -> Void)?
+    /// A pen's pressure for the next press or drag (1 for a mouse).
+    var penPressure: Float = 1
     /// The VFX editor's last edit that needs new code (VFXLive.swift), until its library is compiled.
     private var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
     private var particlesCamera = SIMD4<Float>.zero
@@ -554,7 +562,7 @@ final class Renderer: NSObject {
     private var targets: RenderTargets?
 
     // State
-    private var camera = Camera()
+    var camera = Camera()
     private var prevCamera = Camera()
     private var frameIndex: UInt32 = 0
     private var animTime: Float = 0
@@ -682,7 +690,7 @@ final class Renderer: NSObject {
     var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
-    private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
+    let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
     private var gpuMs: Double = 0
@@ -1167,6 +1175,7 @@ final class Renderer: NSObject {
                 }
             }
         }
+        updatePainted()
         guard slot < textureTables.count else { return }
         if !tablePending[slot].isEmpty {
             let table = textureTables[slot].contents().bindMemory(to: MTLResourceID.self, capacity: materialTextures.count)
@@ -1230,28 +1239,35 @@ final class Renderer: NSObject {
         instanceASBuilt.removeAll()
     }
 
+    /// An RGBA8 texture's sRGB view (made once a texture).
+    func srgbView(_ t: MTLTexture) -> MTLTexture {
+        if let v = srgbViews[ObjectIdentifier(t)] { return v }
+        let v = t.makeTextureView(pixelFormat: .rgba8Unorm_srgb) ?? t
+        srgbViews[ObjectIdentifier(t)] = v
+        if srgbViews.count > 64 {   // views of textures the bakes and the painter let go of
+            let live = Set(proceduralTextures.values.map { ObjectIdentifier($0) })
+            srgbViews = srgbViews.filter { live.contains(ObjectIdentifier($0.value)) || $0.value === v }
+        }
+        return v
+    }
+
+    /// Texture slot `index` (Scene.textures) holds `t` from now on: each frame slot's table takes it as it is next
+    /// written; what it held goes once no frame in flight can read it.
+    func installTexture(_ t: MTLTexture, slot index: UInt32) {
+        guard proceduralTextures[index] !== t else { return }
+        if let old = proceduralTextures[index] { retiredTextures.append((frameIndex, old)) }
+        proceduralTextures[index] = t
+        for s in tablePending.indices { tablePending[s][index] = t }
+    }
+
     /// `pm`'s material as its graph's bake `o` says: its textures in its slots (each frame slot takes them as it is
     /// next written), its values (a texture's channel is the value; a channel without one, a neutral value), its
     /// extras (parallax, opacity cutoff, UV scale, occlusion).
     private func applyProcedural(_ pm: ProceduralMaterial, outputs o: MatOutputs, key: String) {
-        func srgb(_ t: MTLTexture) -> MTLTexture {
-            if let v = srgbViews[ObjectIdentifier(t)] { return v }
-            let v = t.makeTextureView(pixelFormat: .rgba8Unorm_srgb) ?? t
-            srgbViews[ObjectIdentifier(t)] = v
-            return v
-        }
-        let textures: [MTLTexture?] = [o.baseColor.map(srgb), o.orm, o.normal, o.emissive.map(srgb), o.height, o.opacity]
+        let textures: [MTLTexture?] = [o.baseColor.map(srgbView), o.orm, o.normal, o.emissive.map(srgbView), o.height, o.opacity]
         for (k, t) in textures.enumerated() {
             guard let t, k < pm.slots.count else { continue }
-            let index = pm.slots[k]
-            guard proceduralTextures[index] !== t else { continue }
-            if let old = proceduralTextures[index] { retiredTextures.append((frameIndex, old)) }
-            proceduralTextures[index] = t
-            for s in tablePending.indices { tablePending[s][index] = t }
-        }
-        if srgbViews.count > 64 {   // views of textures the bakes let go of
-            let live = Set(proceduralTextures.values.map { ObjectIdentifier($0) })
-            srgbViews = srgbViews.filter { live.contains(ObjectIdentifier($0.value)) }
+            installTexture(t, slot: pm.slots[k])
         }
         let code = pm.program != nil
         // As code, the graph's channels are the shading's (its bake's textures stand by unread, but height and opacity).
@@ -1385,9 +1401,14 @@ final class Renderer: NSObject {
     }
 
     private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
-        guard let target = gizmoTarget, let gpu = particlesGPU else { gizmoHandle = nil; return }
-        let (segments, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
-        gizmoHandle = handle
+        var segments = painterRingSegments()   // the Material Painter's brush, where the cursor meets the object
+        if let target = gizmoTarget, let gpu = particlesGPU {
+            let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
+            gizmoHandle = handle
+            segments += s
+        } else {
+            gizmoHandle = nil
+        }
         gizmoViewSize = SIMD2(Float(output.width), Float(output.height))
         guard !segments.isEmpty else { return }
         let bytes = segments.count * MemoryLayout<VFXGizmos.Segment>.stride
@@ -1537,6 +1558,7 @@ final class Renderer: NSObject {
         slotTextures = Array(repeating: [:], count: Renderer.maxFramesInFlight)
         tablePending = Array(repeating: [:], count: Renderer.maxFramesInFlight)
         proceduralApplied = [:]
+        painter.sceneChanged()
         displaceBuffers = nil
         if !scene.displaced.isEmpty {
             displaceBuffers = (try makeBuffer(scene.displaceVertices, "displaceVertices"), try makeBuffer(scene.displaceMembers, "displaceMembers"))
@@ -3055,6 +3077,7 @@ final class Renderer: NSObject {
             passes.updatePrimitives(primitiveRefit, pass: "blas")
         }
         encodeDisplacement(passes: passes)
+        encodePainting(passes: passes)
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
             if let enc = passes.compute("wind", serial: true) {
@@ -4239,6 +4262,13 @@ final class Renderer: NSObject {
     /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
     private func benchmarkActs(_ benchmark: Benchmark) {
         let c = benchmark.current
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
+            if case .paint(let steps) = e.event {
+                benchmarkFired.insert(k)
+                painterScript += steps
+            }
+        }
+        runPainterScript()
         guard let controls = scene.interiorControls else { return }
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
             benchmarkFired.insert(k)
@@ -4246,6 +4276,7 @@ final class Renderer: NSObject {
             case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
             case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
             case .flashlight(let on): controls.flashlight.on = on
+            case .paint: break
             }
         }
         if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
@@ -5273,10 +5304,15 @@ final class Renderer: NSObject {
 
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
+    /// Option: in paint mode a drag turns the camera instead of painting.
+    func setOption(_ held: Bool) { optionHeld = held }
+    private var optionHeld = false
 
     /// A click on a body grabs it where the cursor meets it (Physics.swift's `grab`); anywhere else, the drag turns the
     /// camera.
     func mouseDown(at cursor: SIMD2<Float>) {
+        // Paint mode: a stroke (Option: the camera turns about the object).
+        if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
         holding = nil
         gizmoDrag = nil
         // The VFX editor's handle: an arrow under the cursor is dragged along its axis.
@@ -5299,6 +5335,7 @@ final class Renderer: NSObject {
     }
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
         if let drag = gizmoDrag {
             let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
             let move = min(max(s - drag.last, -5), 5)
@@ -5318,6 +5355,7 @@ final class Renderer: NSObject {
 
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
+        if paintMouseUp() { return }
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
         // A click (no drag) with a pick armed: pick what is under it; while walking: use it.
@@ -5332,6 +5370,16 @@ final class Renderer: NSObject {
         scene.physics?.grab.target.w = 0
     }
 
+    /// The right button: in paint mode the camera turns about the object; elsewhere as the left one's drag.
+    func rightMouseDown(at cursor: SIMD2<Float>) { _ = paintMouseDown(at: cursor, pressure: 1, orbit: true) }
+    func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: 1) { return }
+        camera.yaw += dx * 0.004
+        camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
+        placeOrbitingCamera()
+    }
+    func rightMouseUp() { _ = paintMouseUp() }
+
     /// While holding: the body nearer (down) or farther (up).
     func scrolled(dy: Float) {
         if holding == nil, let o = orbit {   // the workshop: nearer (down) or farther (up)
@@ -5342,6 +5390,33 @@ final class Renderer: NSObject {
         guard let depth = holding?.depth else { return }
         holding?.depth = max(depth * exp(dy * 0.05), 0.3)
     }
+
+    // MARK: - What the painter (Renderer+Painter.swift) reads of the renderer
+
+    var renderTargetsForPainter: RenderTargets? { targets }
+    var materialTexturesForPainter: [MTLTexture] { materialTextures }
+    func resetReferenceForPainting() { resetReference() }
+    func cursorRayForPainter(_ cursor: SIMD2<Float>) -> SIMD3<Float> { cursorRay(cursor) }
+    /// The render's size in pixels, and its pixels per point of the view (a brush's size is in points).
+    var renderSizeForPainter: SIMD2<Float> {
+        guard let t = targets else { return SIMD2(1280, 800) }
+        return SIMD2(Float(t.width), Float(t.height))
+    }
+    var renderPixelsPerPoint: Float { renderSizeForPainter.y / max(painter.viewPoints.y, 1) }
+    var orbitForPainter: (target: SIMD3<Float>, distance: Float)? {
+        get { orbit }
+        set { orbit = newValue }
+    }
+    /// The camera turned to look at `p` (from where it is), then placed on its orbit.
+    func lookAtForPainter(_ p: SIMD3<Float>) {
+        let d = p - camera.position
+        guard simd_length(d) > 1e-4 else { return }
+        let n = simd_normalize(d)
+        camera.pitch = asin(min(max(n.y, -1), 1))
+        camera.yaw = atan2(n.x, -n.z)
+        placeOrbitingCamera()
+    }
+    func placeOrbitForPainter() { placeOrbitingCamera() }
 
     /// The ray from the camera through `cursor` (0...1 across and down), unjittered.
     private func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {

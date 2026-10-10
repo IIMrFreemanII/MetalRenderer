@@ -23,7 +23,7 @@ extension Benchmark {
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
-        "materials": materials, "matedit": matEdit, "mireland": mireland,
+        "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1415,6 +1415,89 @@ extension Benchmark {
             })
         }
         return out
+    }
+
+    /// The painter workshop: each object it paints, its texture set a brick graph laid on its layout (UV projection: the
+    /// unwrap's charts, Painter/UVUnwrap.swift, as seams; their texels per metre as the bricks' size).
+    private static func painterModes() -> [Config] {
+        var d = PaintDocument(name: "Bench layout")
+        var bricks = PaintLayer.fill("Bricks", PaintValues(), channels: [.color, .roughness, .metallic, .height])
+        bricks.graph = "Red Bricks"
+        bricks.projection = .uv
+        bricks.tiling = 2
+        d.layers = [PaintDocument.baseLayer, bricks]
+        PaintDocuments.shared.update(d)
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        return PainterWorkshopSettings.Subject.allCases.map { subject in
+            base.named(subject.rawValue).with {
+                $0.scene.painterWorkshop.subject = subject
+                $0.scene.painterWorkshop.model = "demon"
+                $0.scene.painterWorkshop.document = d.name
+            }
+        }
+    }
+
+    /// The smart materials (SmartMaterial.builtIn), each on another object: their masks generated from its bakes
+    /// (curvature, occlusion: PaintBake).
+    private static func painterSmart() -> [Config] {
+        let subjects: [PainterWorkshopSettings.Subject] = [.cube, .model, .sphere, .character, .cylinder]
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        return SmartMaterial.builtIn.enumerated().map { k, m in
+            var d = PaintDocument(name: "Bench \(m.name)")
+            d.layers = [PaintDocument.baseLayer] + m.instantiate()
+            PaintDocuments.shared.update(d)
+            return base.named(VFXEffect.slug(m.name)).with {
+                $0.scene.painterWorkshop.subject = subjects[k % subjects.count]
+                $0.scene.painterWorkshop.model = "demon"
+                $0.scene.painterWorkshop.document = d.name
+            }
+        }
+    }
+
+    /// Strokes in paint mode (Renderer.runPainterScript): red across the sphere (over its seams), blue mirrored
+    /// (symmetry X), leaves stamped and scattered, the eraser through the red, gold revealed through a black mask,
+    /// a UV island filled green; then the same on the demon model.
+    private static func painterStrokes() -> [Config] {
+        var d = PaintDocument(name: "Bench strokes")
+        var paint = PaintLayer(name: "Paint")
+        paint.channels = [.color, .roughness, .metallic, .height]
+        var gold = PaintLayer.fill("Gold", PaintValues(color: [1, 0.72, 0.3], roughness: 0.25, metallic: 1), channels: [.color, .roughness, .metallic])
+        gold.mask = PaintMask(base: 0, generator: nil, painted: true)
+        var fills = PaintLayer(name: "Fills")
+        fills.channels = [.color, .roughness]
+        d.layers = [PaintDocument.baseLayer, paint, gold, fills]
+        PaintDocuments.shared.update(d)
+        func brush(_ c: SIMD3<Float>, size: Float = 22, _ change: (inout PaintBrush) -> Void = { _ in }) -> PaintBrush {
+            var b = PaintBrush()
+            b.size = size
+            b.values.color = c
+            b.values.roughness = 0.35
+            b.values.height = 0.8
+            b.channels = [.color, .roughness, .height]
+            b.flow = 1
+            change(&b)
+            return b
+        }
+        func line(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ n: Int = 24) -> [SIMD2<Float>] { (0...n).map { a + (b - a) * Float($0) / Float(n) } }
+        let steps: [PainterStep] = [
+            .mode(0),
+            .brush(brush([0.8, 0.05, 0.03]), layer: 1, mask: false, tool: .brush), .stroke(line([0.3, 0.42], [0.7, 0.46])),
+            .brush(brush([0.05, 0.15, 0.8]) { $0.symmetry = .x }, layer: 1, mask: false, tool: .brush), .stroke(line([0.4, 0.3], [0.44, 0.36])),
+            .brush(brush([0.2, 0.45, 0.08], size: 30) { $0.stamp = 3; $0.scatter = 0.6; $0.angleJitter = 180; $0.spacing = 0.6 },
+                   layer: 1, mask: false, tool: .brush), .stroke(line([0.35, 0.3], [0.65, 0.32])),
+            .brush(brush(.zero, size: 12) { $0.eraser = true }, layer: 1, mask: false, tool: .brush), .stroke(line([0.5, 0.36], [0.52, 0.52])),
+            .brush(brush([1, 1, 1], size: 26), layer: 2, mask: true, tool: .brush), .stroke(line([0.38, 0.53], [0.62, 0.52])),
+            .brush(brush([0.1, 0.7, 0.2]) { $0.channels = [.color, .roughness] }, layer: 3, mask: false, tool: .fillIsland), .fill([0.5, 0.58]),
+            .wait, .wait,
+        ]
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        let sphere = base.named("sphere").with { $0.scene.painterWorkshop.subject = .sphere; $0.scene.painterWorkshop.document = d.name }
+        let model = base.named("model").with {
+            $0.scene.painterWorkshop.subject = .model
+            $0.scene.painterWorkshop.model = "demon"
+            $0.scene.painterWorkshop.document = d.name
+        }
+        return [sphere, model].map { c in var c = c; c.events = [(0, .paint(steps))]; return c }
     }
 
     /// The Mireland swamp (every material procedural): from the bank, closer to the water's edge, and wide.

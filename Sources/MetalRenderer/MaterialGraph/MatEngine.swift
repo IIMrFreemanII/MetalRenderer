@@ -282,6 +282,12 @@ final class MatEngine {
             var b = a
             b.wired = image != nil ? 1 : 0
             try dispatch("mat_copy", [image], outputs, b)
+        case .meshMap:
+            // The painter's bake of the object its context names (PaintMeshMaps), or its neutral picture.
+            let image = PaintMeshMaps.texture(context: step.node.text("context"), map: step.node.text("map"), device: device)
+            var b = a
+            b.wired = image != nil ? 1 : 0
+            try dispatch("mat_copy", [image], outputs, b)
         case .blur:
             let temp = makeImage(step, step.outputs[0])
             try dispatch("mat_blur", inputs, [temp], a)
