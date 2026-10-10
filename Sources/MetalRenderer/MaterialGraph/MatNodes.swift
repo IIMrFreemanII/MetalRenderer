@@ -95,7 +95,7 @@ enum MatOpKind: String, Codable, CaseIterable {
     // Graph
     case input, output, subgraph, uniform, uniformColor, bitmap
     // Noises
-    case whiteNoise, valueNoise, perlinNoise, fractalSum, cells, anisotropicNoise, scratches, grunge
+    case whiteNoise, valueNoise, perlinNoise, fractalSum, cells, anisotropicNoise, scratches, grunge, fibers
     // Patterns
     case shape, gradient, checker, bricks, waves, tileSampler
     // Adjustments
@@ -174,10 +174,16 @@ enum MatOpKind: String, Codable, CaseIterable {
             return spec("Grunge", .noise, [], [("out", .grey)],
                         [i("scale", "Scale", 4, 1...32), f("contrast", "Contrast", 0.6, 0...1), f("spots", "Spots", 0.5, 0...1), seed],
                         .generator, "Dirt: fractal noise broken up by cells and spots.")
+        case .fibers:
+            return spec("Fibers", .noise, [], [("out", .grey)],
+                        [i("count", "Per Cell", 4, 1...16), f("length", "Length", 0.3, 0.01...1), f("width", "Width", 0.006, 0.0005...0.05),
+                         f("angle", "Angle", 0.25, 0...1), f("angleRandom", "Angle Random", 0.2, 0...1), f("curvature", "Curvature", 0.15, -1...1),
+                         f("intensityRandom", "Intensity Random", 0.5, 0...1), i("scale", "Cells", 6, 1...32), seed],
+                        .generator, "Curved strands, rounded across, their ends tapered: straw, grass, bark fibre, twigs.")
 
         case .shape:
             return spec("Shape", .pattern, [], [("out", .grey)],
-                        [c("kind", "Shape", ["square", "disc", "polygon", "star", "bell", "cone", "pyramid", "paraboloid", "hemisphere", "ring"]),
+                        [c("kind", "Shape", ["square", "disc", "polygon", "star", "bell", "cone", "pyramid", "paraboloid", "hemisphere", "ring", "leaf", "blade"]),
                          f("size", "Size", 0.8, 0...1), i("sides", "Sides", 6, 3...12), f("softness", "Softness", 0.01, 0...0.5),
                          f("angle", "Angle", 0, 0...1), i("tiling", "Tiling", 1, 1...16)],
                         .generator, "A shape in the middle of the tile (or a grid of them).")

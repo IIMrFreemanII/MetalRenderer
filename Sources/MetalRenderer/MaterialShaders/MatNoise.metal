@@ -141,6 +141,44 @@ template <typename P> inline float matScratchesAt(float2 uv, P p, uint seed) {
     return saturate(best);
 }
 
+// Fibers: in each cell of a grid, `count` strands, each a slightly bent segment (a random centre, length, angle about
+// `angle`, its bend `curvature` across its length), rounded across its width and tapered to its ends; a pixel the
+// highest strand it is on.
+template <typename P> inline float matFibersAt(float2 uv, P p, uint seed) {
+    int count = clamp(int(p[0].x), 1, 16);
+    int cells = max(int(p[7].x), 1);
+    float halfLength = p[1].x * float(cells) * 0.5, width = p[2].x * float(cells);
+    float bend = p[5].x;
+    int reach = clamp(int(ceil(halfLength * (1.0 + abs(bend)))), 1, 3);
+    float2 x = uv * float(cells);
+    int2 c = int2(floor(x));
+    float best = 0;
+    for (int j = -reach; j <= reach; j++) {
+        for (int i = -reach; i <= reach; i++) {
+            int2 k = c + int2(i, j);
+            uint2 w = uint2(matWrap(k, int2(cells)));
+            for (int s = 0; s < count; s++) {
+                uint sd = seed + uint(s) * 7919u;
+                float2 centre = float2(k) + matRand2(w, sd);
+                float turn = p[3].x + (matRand(w, sd ^ 0x1234u) - 0.5) * p[4].x;
+                float2 dir = float2(cos(turn * MAT_TAU), sin(turn * MAT_TAU)), side = float2(-dir.y, dir.x);
+                float len = halfLength * (0.5 + 0.5 * matRand(w, sd ^ 0x777u));
+                float curl = bend * (matRand(w, sd ^ 0x5bd1u) * 0.6 + 0.7) / max(len, 1e-4);
+                float2 r = x - centre;
+                float t = clamp(dot(r, dir), -len, len);
+                // Across: from the bent centre line (a parabola through the centre).
+                float d = abs(dot(r, side) - curl * t * t) * rsqrt(1.0 + 4.0 * curl * curl * t * t);
+                float along = t / max(len, 1e-4);
+                float wid = width * 0.5 * (1.0 - 0.7 * along * along);
+                if (d >= wid || abs(dot(r, dir)) > len) continue;
+                float v = sqrt(1.0 - (d / wid) * (d / wid)) * (1.0 - 0.3 * along * along) * (1.0 - p[6].x * matRand(w, sd ^ 0x999u));
+                best = max(best, v);
+            }
+        }
+    }
+    return saturate(best);
+}
+
 // Grunge: fractal noise, darkened in its cells' borders and broken by spots.
 template <typename P> inline float matGrungeAt(float2 uv, P p, uint seed) {
     int s = max(int(p[0].x), 1);
@@ -175,4 +213,7 @@ kernel void mat_scratches(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matScr
 #endif
 #if !MAT_EVAL_ONLY
 kernel void mat_grunge(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matGrungeAt(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
+kernel void mat_fibers(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matFibersAt(uv, p, a.seed)), gid); }
 #endif

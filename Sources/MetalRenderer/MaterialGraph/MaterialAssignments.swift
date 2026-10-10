@@ -35,7 +35,7 @@ struct MaterialAssignments: Codable, Equatable {
     static func scope(_ s: SceneSettings) -> String {
         switch s.kind {
         case .city, .cityNight: return "\(s.kind.envName),seed=\(s.seed),style=\(s.city.style.envName)"
-        case .forest, .valley: return "\(s.kind.envName),seed=\(s.seed)"
+        case .forest, .valley, .mireland: return "\(s.kind.envName),seed=\(s.seed)"
         case .showcase: return "showcase,model=\(s.showcase)"
         case .materials: return "materials"
         default: return s.kind.envName

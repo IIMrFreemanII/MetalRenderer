@@ -40,7 +40,7 @@ struct MatBuilder {
 /// The built-in graphs: the Material Designer's starters, and what a scene can name before anything is saved.
 enum MaterialLibrary {
     static let all: [MaterialGraph] = [redBricks(), cobblestone(), rustedPaint(), brushedSteel(), scratchedCopper(), perforatedMetal(),
-                                       oakPlanks(), barkAndMoss(), scifiPanels(), marble()]
+                                       oakPlanks(), barkAndMoss(), scifiPanels(), marble()] + mireland
     static var names: [String] { all.map(\.name) }
     static func named(_ name: String) -> MaterialGraph? { all.first { $0.name == name } }
 

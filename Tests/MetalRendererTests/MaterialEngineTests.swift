@@ -243,4 +243,42 @@ final class MaterialEngineTests: XCTestCase {
         let edge = bevel.pixels[(side / 2) * side + side / 4 + 3].x   // 3 pixels in from the square's left edge
         XCTAssertEqual(edge, 4 / Float(side) / 0.1, accuracy: 0.03)   // 4 pixels to the nearest one outside
     }
+
+    /// The Mireland starters (MaterialLibrary+Mireland): each bakes without an error (their Code nodes compile), its
+    /// colour isn't black or white, its height isn't flat; the cut-outs cut some of it out and keep some. Every node's
+    /// mean and maximum are printed (`MATERIAL_STATS=1`), to tune them by.
+    func testMirelandStartersBake() throws {
+        let stats = ProcessInfo.processInfo.environment["MATERIAL_STATS"] == "1"
+        for var g in MaterialLibrary.mireland {
+            g.size = 8
+            let plan = try MatPlan(g, library: { _ in nil })
+            let r = engine.evaluateNow(plan)
+            XCTAssertTrue(r.errors.isEmpty, "\(g.name): \(r.errors)")
+            func pixels(_ id: String, _ o: Int = 0) throws -> [SIMD4<Float>] {
+                let step = plan.steps[plan.index[id]!]
+                return engine.read(try XCTUnwrap(engine.texture(step.hash, output: o), "\(g.name) \(id)"))
+            }
+            if stats {
+                for step in plan.steps {
+                    for o in step.outputs.indices {
+                        let px = try pixels(step.id, o)
+                        let mean = px.reduce(SIMD4<Float>(), +) / Float(px.count), top = px.reduce(SIMD4<Float>(repeating: -1), simd_max)
+                        print(String(format: "%@ %@.%d mean %.3f %.3f %.3f max %.3f", g.name, step.id, o, mean.x, mean.y, mean.z, top.x))
+                    }
+                }
+            }
+            let color = try pixels("baseColor")
+            let lum = color.map { simd_dot(SIMD3($0.x, $0.y, $0.z), [0.2126, 0.7152, 0.0722]) }.reduce(0, +) / Float(color.count)
+            XCTAssertGreaterThan(lum, 0.03, g.name)
+            XCTAssertLessThan(lum, 0.8, g.name)
+            let height = try pixels("height").map(\.x)
+            XCTAssertGreaterThan(height.max()! - height.min()!, 0.05, "\(g.name): a flat height")
+            if g.channels[.opacity] != nil {
+                let cover = try pixels("opacity").filter { $0.x > 0.5 }.count
+                XCTAssertGreaterThan(cover, 64 * 64 / 50, "\(g.name): nothing kept")
+                XCTAssertLessThan(cover, 256 * 256 * 98 / 100, "\(g.name): nothing cut out")
+            }
+        }
+        XCTAssertEqual(MaterialLibrary.mireland.filter { $0.channels[.opacity] != nil }.count, 5)
+    }
 }

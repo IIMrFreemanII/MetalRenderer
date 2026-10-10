@@ -32,7 +32,7 @@ extension Scene {
         guard worldPlace == nil else { return }
         var total = 0
         for pm in procedural {
-            guard let s = pm.made?.surface, s.displacement > 0, pm.channels.contains(.height) else { continue }
+            guard let s = pm.made?.surface, s.displacement > 0, pm.channels.contains(.height), !undisplacedMaterials.contains(pm.material) else { continue }
             let name = pm.made?.name ?? pm.graph
             var copies: [SIMD2<Int>: Int] = [:]
             var all = true, left = 0

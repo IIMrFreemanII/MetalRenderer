@@ -17,7 +17,7 @@ enum MatShaderCode {
 
     /// The kinds that can run as code.
     static let supported: Set<MatOpKind> = [.input, .output, .uniform, .uniformColor, .whiteNoise, .valueNoise, .perlinNoise, .fractalSum,
-                                            .cells, .anisotropicNoise, .scratches, .grunge, .shape, .gradient, .checker, .bricks, .waves,
+                                            .cells, .anisotropicNoise, .scratches, .grunge, .fibers, .shape, .gradient, .checker, .bricks, .waves,
                                             .levels, .curve, .gradientMap, .hsl, .invert, .grayscale, .histogramScan, .posterize,
                                             .rgbaSplit, .rgbaMerge, .blend, .heightBlend, .transform, .mirror, .warp, .directionalWarp,
                                             .normal, .normalCombine, .curvature, .pixelProcessor, .code]
@@ -124,6 +124,7 @@ enum MatShaderCode {
                 case .anisotropicNoise: body = "return float4(matAnisotropicAt(uv, \(p), \(seed)));"
                 case .scratches: body = "return float4(matScratchesAt(uv, \(p), \(seed)));"
                 case .grunge: body = "return float4(matGrungeAt(uv, \(p), \(seed)));"
+                case .fibers: body = "return float4(matFibersAt(uv, \(p), \(seed)));"
                 case .shape: body = "return float4(matShapeAt(uv, \(p)));"
                 case .gradient: body = "return float4(matGradientAt(uv, \(p)));"
                 case .checker: body = "return float4(matCheckerAt(uv, \(p)));"

@@ -1,22 +1,22 @@
 # Graph Report - graphify-update-746c89  (2026-10-10)
 
 ## Corpus Check
-- 369 files · ~1,513,017 words
+- 372 files · ~1,520,218 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 28 file(s) not represented in the graph (top: .fbx 12, .glb 11, (none) 4)
 
 ## Summary
-- 10832 nodes · 33947 edges · 332 communities (314 shown, 18 thin omitted)
-- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 4996 edges (avg confidence: 0.84)
+- 10873 nodes · 34124 edges · 326 communities (308 shown, 18 thin omitted)
+- Extraction: 85% EXTRACTED · 15% INFERRED · 0% AMBIGUOUS · INFERRED: 5075 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `1e3ce711`
+- Built from commit: `af3c6ca0`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- Float
+- AABB
 - MetalGI Real-Time Ray Tracer
 - GLTFLoader
 - Codable
@@ -27,20 +27,20 @@
 - Fluid.metal
 - evalcommon.py
 - PlantEditorModel
-- LayerSurface
+- MatFnKind
 - rcTraceMergeKernel
 - MatOpKind
-- MuscleTests
-- Hair.metal
+- .edit
+- BuildingStore
 - translate
 - VFXBlockKind
-- roundToHalf
+- GPU (Metal / MSL) practices for MetalRenderer
 - Fog.metal
 - Sky.metal
 - pathTraceKernel
 - LightTable
 - float4x4
-- VGStreamer
+- VirtualGeometry
 - LightSampling.metal
 - SkinnedCharacter
 - lumenTraceKernel
@@ -70,32 +70,32 @@
 - Float
 - SceneKind
 - 3D Geometric Test Scene
-- PhysicsWorld
+- SIMD4
 - Color Bleeding from Walls to Objects
 - 3D Graphics Stress Test Scene
 - Direct Lighting Reference Render
 - Geometric Primitives Rendering Test
 - SIMD3
 - FogParams
-- reflectionKernel
+- Surface.metal
 - SDFBox
 - MatPlan
 - Direct Rendering Stress Test 32
-- View
+- VFXCurve
 - Gallery Showcase View
 - Geometric Objects (Box, Cube, Sphere)
 - graphify Knowledge Graph (graphify-out/)
 - Package.swift
 - Character Reference Overview Gallery
 - Direct Illumination Mechanism
-- Map
-- Lift
-- Int32
+- VirtualTracing
+- CityPlan
+- FluidSystem
 - simd
-- Metal3Pass
+- RenderPass
 - RendererController
-- TextureStreamer
-- RasterClusters
+- Int
+- VirtualBLAS
 - .compile
 - ab.sh
 - LoadActivity
@@ -103,17 +103,17 @@
 - uint
 - VFXEditorModel
 - Where things are
-- .bytes
+- .city
 - Capabilities
 - .write
-- CharacterDNA
-- .sources
+- CodingKeys
+- SurfaceKind
 - ParticleSystem
 - Upscaler
 - megaLightsSampleKernel
-- FluidSystem
+- FluidTests
 - quatRotate
-- PhysicsTests
+- PhysicsWorld
 - Species
 - Building
 - float3
@@ -122,28 +122,28 @@
 - float4
 - Bool
 - CaseIterable
-- SettingsTable
-- SkinTextures
-- EditorGroup
 - EnvVariable
-- Int
+- SkinTextures
+- View
+- .buildCharacterWorkshop
+- .writeFrameData
 - VFXEffect
 - WorldTile
-- SDFNode
+- SDF.metal
 - Metal
 - ParticleTrace.metal
 - render.sh
 - BuildingAssembler
 - Interior
-- AABB
-- MeshSDF
+- .icosphere
+- FoliageTextures
 - Flora
 - same.sh
 - String
 - baseline.sh
 - BuildingPlan
 - .buildWorld
-- BVHBuilder
+- .build
 - Raster.metal
 - ParticleSim.metal
 - CharacterBase
@@ -152,21 +152,21 @@
 - Foliage.metal
 - PlantEditorTests
 - Kind
-- Benchmark
+- .look
 - RoomType
 - ParticleTests
-- MatFnKind
-- .write
+- MatFunction
+- BlueNoise
 - FluidSurface.metal
 - RasterClusters.metal
 - regirBuildKernel
-- .buildings
+- MatCompiler
 - RenderView
 - ParticleTextures
 - VSMCounters
 - .load
 - particleLightKernel
-- QuartzCore
+- AppKit
 - MeshBuilder
 - Pipelines
 - ParticlesGPU
@@ -181,11 +181,11 @@
 - CoreGraphics
 - MaterialStore
 - related.sh
-- VirtualMesh
+- .build
 - RTVoxels
-- .cross
+- dot
 - VGParams
-- Measuring MetalRenderer
+- VGStreamer
 - .add
 - VFXTests
 - VSM.metal
@@ -198,10 +198,10 @@
 - VSMScene
 - Renderer3D
 - FleshFigure
-- Config
+- Benchmark
 - CGFloat
 - VSMParams
-- .node
+- SpeciesDef
 - GizmoView
 - RasterParams
 - Role
@@ -213,17 +213,17 @@
 - PlantTracing
 - RasterCounters
 - .addHair
-- Camera
+- GraphCanvasModel
 - VFXGizmos
 - SDFShape
 - .workshop
-- RagdollTests
+- .step
 - FurnitureItem
-- LumenGlobalSDF
-- KernelVariantsTests
+- Int32
+- Map
 - ParticleEmitter
 - HairTests
-- CharacterParam
+- CharacterEditorView
 - PhysicsConstraint
 - PhysicsGroup
 - VFXInterpreter
@@ -239,66 +239,66 @@
 - FBXFile
 - float4
 - SceneShading
-- GraphCanvasModel
-- Images
+- GraphCanvas
+- MatCanvasLayout
 - RenderThread
 - VFXCompiler
 - SettingsTableTests
-- SIMD4
-- Key
-- MatCanvasLayout
+- GraphHostingView
+- PipelineCache
+- MatPinType
 - VoxelLOD
 - MatAdjust.metal
 - .meshes
 - Metal4Frame
 - Scene
 - Double
-- WorldPlace
-- CameraTrack
+- .origin
+- MatNodeView
 - MaterialAssignments
 - CurveEditor
-- Stage
+- .system
 - PlantEditorPanel
 - Core
 - MaterialGraph
-- VFXCurveEditor
+- float3
 - LoadingOverlay
-- .stages
+- SDFNode
 - VFXOpKind
 - Slot
 - MatCommon.metal
-- CharacterStore
-- .build
+- BuiltInCharacters
+- BuildingStyle
 - CharacterEditorPanel
-- Float
+- Heavens
 - VoxelGrids
 - MatDisplaceArgs
-- StressSceneTests
-- Terrain
+- .trees
+- .buildMireland
 - VFXEditorPanel
 - CharacterMorphs
-- .init
+- Layout
 - MatNoise.metal
 - ParticleCounts
 - SkyParams
-- VirtualBLAS
+- Habitat
 - float4
-- ShadersVFX.metal
-- PlantSpecies.swift
+- Shaders.metal
+- Foliage.Phyllotaxis
 - PhysicsParams
 - Light
 - .capture
 - Key
 - Optional
-- SurfaceKind
-- MatBlendMode
+- RasterScene
+- SwiftUI
 - RasterVGParams
-- MatBits
+- .swiftSource
 - VFXEmitterInfo
-- compositeKernel
-- CityPlan
-- Key
-- LotRef
+- flagOn
+- Clip
+- VFXParam
+- CityStyle
 - clusterWalk
 - VGBlas
 - Kind
@@ -313,52 +313,46 @@
 - uint
 - MatFilters.metal
 - ParticleStep
-- .d
-- Format
+- .editMaterials
+- Build
 - MatHeight.metal
-- HairBSDF
-- GPUMesh
+- LightKind
+- RasterSceneTests
 - MaterialEditorPanel
-- FoliageRuntimeTests
+- Clip
 - .simplify
 - Hit
-- Stored
-- MeshData
-- pickKernel
+- Hasher
+- GraphNodeSearch
+- Backend
 - .building
-- PropLibrary
+- Launch
 - RasterInstance
-- Host
-- PrimitiveWork4
-- DebugInfo
-- ParticleEmitter
-- Types.metal
+- Trigger
+- .init
+- TraversalStats
+- Shape
+- .memoryBarrier
 - WallGrid
 - ProcSlot
-- Host
-- Kind
-- Tab
-- .setFrameSize
+- BuildingEditorTests
+- .setComputePipelineState
 - XCTestCase
-- Particles
-- Kind
-- ParticleDistortParams
 - VGRasterInstance
 - EmissiveTriangle
 - MatPlan.swift
-- .show
 - vsmFragment
 
 ## God Nodes (most connected - your core abstractions)
-1. `SIMD3` - 692 edges
-2. `Scene` - 415 edges
+1. `SIMD3` - 695 edges
+2. `Scene` - 428 edges
 3. `Renderer` - 301 edges
 4. `PhysicsWorld` - 275 edges
-5. `SIMD4` - 232 edges
-6. `simd` - 206 edges
+5. `SIMD4` - 234 edges
+6. `simd` - 209 edges
 7. `Kernel` - 170 edges
 8. `Foliage` - 151 edges
-9. `Benchmark` - 138 edges
+9. `Benchmark` - 139 edges
 10. `MaterialEditorModel` - 138 edges
 
 ## Surprising Connections (you probably didn't know these)
@@ -370,8 +364,8 @@
   .claude/skills/refactor/SKILL.md → Sources/MetalRenderer/ComputePass.swift
 - `4. Divergence and memory access patterns` --references--> `clusterWalk()`  [INFERRED]
   .claude/skills/performance/references/gpu-metal.md → Sources/MetalRenderer/Shaders/Intersect.metal
-- `Traps found` --references--> `particleClipDepth()`  [INFERRED]
-  .claude/notes/particles-handoff.md → Sources/MetalRenderer/Shaders/ParticleLight.metal
+- `2. Memory bandwidth: the default suspect for screen-space passes` --references--> `sampleMaterial()`  [INFERRED]
+  .claude/skills/performance/references/gpu-metal.md → Sources/MetalRenderer/Shaders/Surface.metal
 
 ## Import Cycles
 - None detected.
@@ -393,11 +387,11 @@
 - **Stress Test Rendering Pipeline** — tools_eval_refs_stress_ref_direct_32_direct_rendering, tools_eval_refs_stress_ref_direct_32_3d_objects, tools_eval_refs_stress_ref_direct_32_lighting [INFERRED 0.85]
 - **Global Illumination Rendering Components** — tools_eval_refs_gi_ref8_0_5x_geometric_primitives, tools_eval_refs_gi_ref8_0_5x_material_surfaces, tools_eval_refs_gi_ref8_0_5x_light_source [INFERRED 0.85]
 
-## Communities (332 total, 18 thin omitted)
+## Communities (326 total, 18 thin omitted)
 
-### Community 0 - "Float"
-Cohesion: 0.06
-Nodes (30): GPUEmissiveTriangle, SDFVolume, Assembly, Bone, BorrowedLight, BorrowedMesh, Light, .isMesh (+22 more)
+### Community 0 - "AABB"
+Cohesion: 0.05
+Nodes (36): AABB, .area, .centroid, .isEmpty, .bounds, GPUEmissiveTriangle, .pixels, Assembly (+28 more)
 
 ### Community 1 - "MetalGI Real-Time Ray Tracer"
 Cohesion: 0.05
@@ -405,27 +399,27 @@ Nodes (60): AMD FidelityFX Shadow Denoiser, Benchmark Mode (METALGI_BENCH, Bench
 
 ### Community 2 - "GLTFLoader"
 Cohesion: 0.08
-Nodes (47): Buffer, CustomStringConvertible, Decodable, Error, Node, Primitive, LoadError, unreadable (+39 more)
+Nodes (49): Buffer, Decodable, Node, Primitive, Accessor, AnyDecodable, Asset, Buffer (+41 more)
 
 ### Community 3 - "Codable"
-Cohesion: 0.06
-Nodes (75): Codable, Equatable, Level, Float, Carve, Graft, LeafRecipe, Level (+67 more)
+Cohesion: 0.07
+Nodes (55): Codable, Equatable, Void, Hair, Look, Macro, Float, Entry (+47 more)
 
 ### Community 4 - "Lights.metal"
-Cohesion: 0.07
-Nodes (71): clipSegment(), ggxFromDirection(), isVisible(), isVisibleBlocker(), lightGroup(), lightShadowTarget(), lightSpecular(), LightSubset (+63 more)
+Cohesion: 0.06
+Nodes (86): clipSegment(), ggxFromDirection(), groupElement(), isVisible(), isVisibleBlocker(), lightGroup(), lightShadowTarget(), lightSpecular() (+78 more)
 
 ### Community 5 - "traceKernel"
-Cohesion: 0.09
-Nodes (46): 3. Occupancy and registers: the default suspect for big kernels, groupMask(), float4, penumbraWidth(), cosineSampleHemisphere(), laineKarrasPermutation(), luminance(), makeSampler() (+38 more)
+Cohesion: 0.05
+Nodes (88): 3. Occupancy and registers: the default suspect for big kernels, hairFresnel(), hairFromGBuffer(), hairI0(), hairLightDirection(), hairLogI0(), hairLogistic(), hairLogisticCDF() (+80 more)
 
 ### Community 6 - "CharacterEditorModel"
-Cohesion: 0.13
-Nodes (13): CharacterEditorModel, .index, .inWorkshop, .isBuiltIn, .isDirty, .savedDNA, DispatchWorkItem, Set (+5 more)
+Cohesion: 0.09
+Nodes (22): ObservableObject, CharacterEditorHost, CharacterEditorModel, .dna, .index, .inWorkshop, .isBuiltIn, .isDirty (+14 more)
 
 ### Community 7 - "Foliage"
-Cohesion: 0.11
-Nodes (20): Mesh, Bone, Card, Foliage, Grower, Part, Plant, .height (+12 more)
+Cohesion: 0.10
+Nodes (29): Level, Mesh, Float, Bone, Card, Carve, Foliage, Graft (+21 more)
 
 ### Community 8 - "Fluid.metal"
 Cohesion: 0.11
@@ -437,39 +431,39 @@ Nodes (34): glob, math, numpy, os, pil, re, shutil, struct (+26 more)
 
 ### Community 10 - "PlantEditorModel"
 Cohesion: 0.09
-Nodes (20): PlantEditorHost, PlantEditorModel, .def, .inWorkshop, .isBuiltIn, .isDirty, .key, .species (+12 more)
+Nodes (18): PlantEditorHost, PlantEditorModel, .def, .inWorkshop, .isBuiltIn, .isDirty, .key, .species (+10 more)
 
-### Community 11 - "LayerSurface"
-Cohesion: 0.11
-Nodes (20): 4. CPU↔GPU data layout, Encoding for both APIs: `ComputePass.swift`, `Metal4Backend.swift`, Layouts shared with the shaders: `GPUTypes.swift` ↔ `Shaders/*.metal`, Things that are not structures yet, Where new code belongs, validateGPULayouts(), FrameOutput, LayerSurface (+12 more)
+### Community 11 - "MatFnKind"
+Cohesion: 0.04
+Nodes (61): .items, .title, Float, SIMD2, Float, Set, SIMD2, .body (+53 more)
 
 ### Community 12 - "rcTraceMergeKernel"
 Cohesion: 0.10
 Nodes (34): array, Before declaring done, Checklist: GPU kernels (details: [references/gpu-metal.md](references/gpu-metal.md)), Checklist: offline builders (BVH, simplifier, clusterizer, VG pages, textures), Checklist: per-frame CPU / encoding (details: [references/cpu-swift.md](references/cpu-swift.md)), Performance in MetalRenderer, The loop, RC_MAX_CASCADES (+26 more)
 
 ### Community 13 - "MatOpKind"
-Cohesion: 0.04
-Nodes (49): MatOpKind, ambientOcclusion, anisotropicNoise, autoLevels, bevel, bitmap, blend, blur (+41 more)
+Cohesion: 0.03
+Nodes (69): MatBlendMode, add, colorBurn, colorDodge, copy, darken, difference, divide (+61 more)
 
-### Community 14 - "MuscleTests"
-Cohesion: 0.09
-Nodes (12): PhysicsJoint, PhysicsJointKind, ball, hinge, Float, SDFShape, UInt32, MuscleTests (+4 more)
+### Community 14 - ".edit"
+Cohesion: 0.08
+Nodes (28): MatParam, Void, CodeEditor, .body, MatColorRow, .body, MaterialInspector, .body (+20 more)
 
-### Community 15 - "Hair.metal"
+### Community 15 - "BuildingStore"
 Cohesion: 0.11
-Nodes (41): hairFresnel(), hairFromGBuffer(), hairI0(), hairLightDirection(), hairLogI0(), hairLogistic(), hairLogisticCDF(), hairMp() (+33 more)
+Nodes (14): JSONEncoder, base, interior, .launch, BuildingStore, .encoder, .folder, File (+6 more)
 
 ### Community 16 - "translate"
 Cohesion: 0.15
-Nodes (18): Scene kinds: `SceneKind` in `Settings.swift`, Darwin, GPUFogVolume, scale(), translate(), FogVolume, .gpu, LightPose (+10 more)
+Nodes (17): Scene kinds: `SceneKind` in `Settings.swift`, Darwin, scale(), translate(), FogVolume, .gpu, LightPose, Kit (+9 more)
 
 ### Community 17 - "VFXBlockKind"
-Cohesion: 0.07
-Nodes (29): VFXBlockKind, billboard, burst, collide, color, curl, distortion, drag (+21 more)
+Cohesion: 0.04
+Nodes (55): VFXContext, initialize, output, spawn, .title, update, Float, VFXBlockKind (+47 more)
 
-### Community 18 - "roundToHalf"
-Cohesion: 0.13
-Nodes (31): 10. GPU tools, 1. Frame structure and submission, 2. Memory bandwidth: the default suspect for screen-space passes, 4. Divergence and memory access patterns, 5. Reductions, atomics and threadgroup memory, 7. Acceleration structures and ray tracing, 9. Shader helpers: use them, don't copy, GPU (Metal / MSL) practices for MetalRenderer (+23 more)
+### Community 18 - "GPU (Metal / MSL) practices for MetalRenderer"
+Cohesion: 0.15
+Nodes (28): 10. GPU tools, 1. Frame structure and submission, 2. Memory bandwidth: the default suspect for screen-space passes, 4. Divergence and memory access patterns, 5. Reductions, atomics and threadgroup memory, 9. Shader helpers: use them, don't copy, GPU (Metal / MSL) practices for MetalRenderer, atrousKernel() (+20 more)
 
 ### Community 19 - "Fog.metal"
 Cohesion: 0.16
@@ -481,27 +475,27 @@ Nodes (42): atmosphereExtinction(), atmosphereLit(), atmosphereRadiance(), atmos
 
 ### Community 21 - "pathTraceKernel"
 Cohesion: 0.04
-Nodes (87): distance, makeRay(), liquidApplyKernel(), liquidFresnel(), liquidHighlights(), liquidKernel(), liquidMaterial(), constant (+79 more)
+Nodes (88): Where things are, distance, makeRay(), liquidApplyKernel(), liquidFresnel(), liquidHighlights(), liquidKernel(), liquidMaterial() (+80 more)
 
 ### Community 22 - "LightTable"
 Cohesion: 0.53
 Nodes (6): GPULightTableEntry, GPUTriangleInfo, LightTable, .byteCount, Float, UInt32
 
 ### Community 23 - "float4x4"
-Cohesion: 0.14
+Cohesion: 0.13
 Nodes (15): Parts, rotate(), Float, float4x4, Hall, Loop, .length, Props (+7 more)
 
-### Community 24 - "VGStreamer"
-Cohesion: 0.06
-Nodes (32): Group, Float, MTLBuffer, MTLDevice, SIMD2, UInt32, UnsafePointer, VGStreamer (+24 more)
+### Community 24 - "VirtualGeometry"
+Cohesion: 0.10
+Nodes (22): SIMD2, UnsafePointer, Build, Params, Float, MTLAccelerationStructure, MTLAccelerationStructureCommandEncoder, MTLBuffer (+14 more)
 
 ### Community 25 - "LightSampling.metal"
 Cohesion: 0.09
-Nodes (58): diskNeighbour(), equalAreaOctDecode(), equalAreaOctEncode(), giLightIllum(), lastFramePixel(), LightCandidate, element, uv (+50 more)
+Nodes (59): diskNeighbour(), equalAreaOctDecode(), equalAreaOctEncode(), evalLightSample(), giLightIllum(), lastFramePixel(), LightCandidate, element (+51 more)
 
 ### Community 26 - "SkinnedCharacter"
-Cohesion: 0.09
-Nodes (22): CharacterBuilder, CharacterShape, MacroRig, Material, Float, simd_float3x3, Part, Clip (+14 more)
+Cohesion: 0.08
+Nodes (29): CharacterBuilder, CharacterShape, MacroRig, Material, Float, simd_float3x3, CharacterDNA, .key (+21 more)
 
 ### Community 27 - "lumenTraceKernel"
 Cohesion: 0.14
@@ -512,12 +506,12 @@ Cohesion: 0.01
 Nodes (151): Kernel, accumulate, accumulateColor, atrous, bloomDown, bloomUp, cloudNoise, cloudShadow (+143 more)
 
 ### Community 29 - "SettingsPanel"
-Cohesion: 0.10
-Nodes (19): Settings: `SettingsTable.swift`, NSControl, NSGridView, Action, FlippedView, .isFlipped, SectionHeader, .expanded (+11 more)
+Cohesion: 0.09
+Nodes (20): NSControl, NSGridView, row, Action, FlippedView, .isFlipped, SectionHeader, .expanded (+12 more)
 
 ### Community 30 - "FramePlan"
-Cohesion: 0.14
-Nodes (14): 1. The frame loop (`Renderer.draw`), The frame: `Renderer.swift`, ComputeStage, FrameEncoder, CompositeInputs, FramePlan, .prev, FrameSize (+6 more)
+Cohesion: 0.10
+Nodes (26): 1. The frame loop (`Renderer.draw`), Encoding for both APIs: `ComputePass.swift`, `Metal4Backend.swift`, The frame: `Renderer.swift`, ComputeStage, FrameEncoder, RenderAttachments, Float, MTLTexture (+18 more)
 
 ### Community 31 - "CharacterEditorTests"
 Cohesion: 0.21
@@ -528,28 +522,28 @@ Cohesion: 0.10
 Nodes (22): CharacterKit, .chart, UInt32, Entry, FacePlayer, FaceRig, FaceState, Group (+14 more)
 
 ### Community 33 - "restirSpatialKernel"
-Cohesion: 0.12
-Nodes (33): lightSampleTarget(), emptyReservoir(), constant, device, float2, float4, kernel, read (+25 more)
+Cohesion: 0.13
+Nodes (31): shadowOrigin(), emptyReservoir(), constant, device, float2, float4, kernel, read (+23 more)
 
 ### Community 34 - "restirGIInitialKernel"
 Cohesion: 0.11
-Nodes (45): emptyGIReservoir(), giGeometry(), giLobe(), GIReceiver, depth, n, ng, p (+37 more)
+Nodes (46): emptyGIReservoir(), giGeometry(), giLobe(), GIReceiver, depth, n, ng, p (+38 more)
 
 ### Community 35 - "RadianceCascades"
 Cohesion: 0.18
 Nodes (13): Cascade, RadianceCascades, RCParams, RCPipelines, Float, MTLBuffer, MTLComputePipelineState, MTLDevice (+5 more)
 
 ### Community 36 - "GPUTypes.swift"
-Cohesion: 0.09
-Nodes (35): simd_float4x4, GPUFleshFibre, GPUFleshHeader, GPUFleshPin, GPUInstanceData, GPUJoint, .parent, GPUJointMatrix (+27 more)
+Cohesion: 0.11
+Nodes (32): simd_float4x4, GPUFleshFibre, GPUFleshHeader, GPUFleshPin, GPUInstanceData, GPUMegaLightsParams, GPUMuscle, GPUPathTraceParams (+24 more)
 
 ### Community 37 - "3D Scene Composition"
 Cohesion: 0.27
 Nodes (12): 3D Scene Composition, Blue Sphere, Multi-color Palette Design, Gradient Background, Gray Geometric Boxes, Green Tilted Rectangular Plane, Soft Lighting and Material Properties, Red Tilted Rectangular Plane (+4 more)
 
 ### Community 38 - "GeneratedCache"
-Cohesion: 0.14
-Nodes (11): CryptoKit, R, GeneratedCache, SectionFile, Data, UInt32, UnsafeRawBufferPointer, URL (+3 more)
+Cohesion: 0.12
+Nodes (15): CryptoKit, R, MeshGeometry, GeneratedCache, SectionFile, .array, Data, T (+7 more)
 
 ### Community 39 - "Physics.metal"
 Cohesion: 0.12
@@ -560,60 +554,60 @@ Cohesion: 0.09
 Nodes (23): Uniforms, bounces, camForward, camPos, camRight, camUp, denoise, flags (+15 more)
 
 ### Community 41 - "FaceSculpt"
-Cohesion: 0.11
+Cohesion: 0.10
 Nodes (18): FaceParts, Material, brows, hair, iris, lips, mouth, pupil (+10 more)
 
 ### Community 42 - "SettingsTable.swift"
 Cohesion: 0.03
-Nodes (84): FaceExpression, cycle, frown, neutral, smile, surprise, talk, .title (+76 more)
+Nodes (82): FaceExpression, cycle, frown, neutral, smile, surprise, talk, .title (+74 more)
 
 ### Community 43 - "VSMTargets"
 Cohesion: 0.07
-Nodes (31): GPULight, GPUVSMView, GPULightTreeNode, LightTree, .byteCount, Float, Range, SIMD2 (+23 more)
+Nodes (32): GPULight, GPUVSMView, GPULightTreeNode, LightTree, .byteCount, Float, Range, SIMD2 (+24 more)
 
 ### Community 44 - "SceneBuffers"
 Cohesion: 0.06
-Nodes (39): .empty, MTLCommandQueue, MTLDevice, .instanceScratch, .namedBlocks, .namedInstanceBlocks, .namedPrimitives, RendererError (+31 more)
+Nodes (44): .empty, RTPart, MTLCommandQueue, MTLDevice, .instanceScratch, .namedBlocks, .namedInstanceBlocks, .namedPrimitives (+36 more)
 
 ### Community 45 - "BuildingEditorModel"
-Cohesion: 0.05
-Nodes (39): BuildingEditorHost, BuildingEditorModel, .currentRef, .def, .inWorkshop, .isBuiltIn, .isDirty, .key (+31 more)
+Cohesion: 0.06
+Nodes (27): Encodable, BuildingEditorHost, BuildingEditorModel, .currentRef, .def, .inWorkshop, .isBuiltIn, .isDirty (+19 more)
 
 ### Community 46 - "3D Rendered Scene with Geometric Primitives"
 Cohesion: 0.28
 Nodes (9): Blue Hemisphere, Green Vertical Plane, Indirect Global Illumination, Ambient Light Source, Pink Rectangular Prism, Red Vertical Plane, 3D Rendered Scene with Geometric Primitives, White Rectangular Prism (+1 more)
 
 ### Community 47 - "LumenScene"
-Cohesion: 0.17
-Nodes (12): Source, GPULumenMeshSDF, GPULumenSDFInstance, LumenScene, .isBaking, .isCancelled, .megabytes, Source (+4 more)
+Cohesion: 0.07
+Nodes (26): Source, Lumen, LumenParams, LumenPipelines, LumenRadiosityParams, Float, MTLBuffer, MTLComputePipelineState (+18 more)
 
 ### Community 48 - "AppDelegate"
 Cohesion: 0.19
 Nodes (8): NSApplication, NSApplicationDelegate, NSMenuItem, AppDelegate, Any, NSWindow, RendererController, UndoManager
 
 ### Community 49 - "Crowd"
-Cohesion: 0.13
-Nodes (23): .parts, Crowd, .liveStates, Face, Hair, Motion, .isBlend, Slot (+15 more)
+Cohesion: 0.12
+Nodes (24): .parts, Crowd, .liveStates, Face, Hair, Motion, .isBlend, Part (+16 more)
 
 ### Community 50 - "MaterialEditorModel"
-Cohesion: 0.04
-Nodes (60): .items, .menu, .title, Float, SIMD2, MaterialEditorHost, .displacementSummary, MaterialEditorModel (+52 more)
+Cohesion: 0.05
+Nodes (40): .menu, MaterialEditorHost, .displacementSummary, MaterialEditorModel, .canPaste, .editingFunction, .function, .graph (+32 more)
 
 ### Community 51 - "Float"
-Cohesion: 0.12
-Nodes (20): Beard, CharacterHair, Flow, back, crown, forward, part, Groom (+12 more)
+Cohesion: 0.11
+Nodes (25): Beard, CharacterHair, Flow, back, crown, forward, part, Groom (+17 more)
 
 ### Community 52 - "SceneKind"
 Cohesion: 0.04
-Nodes (46): SceneKind, area, buildings, .cameraFromScene, characters, city, cityNight, cornell (+38 more)
+Nodes (45): SceneKind, area, buildings, .cameraFromScene, characters, city, cityNight, cornell (+37 more)
 
 ### Community 53 - "3D Geometric Test Scene"
 Cohesion: 0.29
 Nodes (7): Box Geometric Primitive, Cube Geometric Primitive, Global Illumination and Reflections, Colored Materials, 3D Geometric Test Scene, Sphere Geometric Primitive, Ray Tracing Stress Test Reference
 
-### Community 54 - "PhysicsWorld"
-Cohesion: 0.06
-Nodes (32): GPUHairGroup, GPUHairParams, GPUHairStrand, GPUHairVertex, GPUPhysicsBody, GPUPhysicsContact, GPUPhysicsParams, atan2 (+24 more)
+### Community 54 - "SIMD4"
+Cohesion: 0.05
+Nodes (39): GPUHairGroup, GPUHairParams, GPUHairStrand, GPUHairVertex, GPUPhysicsBody, GPUPhysicsContact, GPUPhysicsParams, GPUPhysicsShape (+31 more)
 
 ### Community 55 - "Color Bleeding from Walls to Objects"
 Cohesion: 0.40
@@ -632,16 +626,16 @@ Cohesion: 0.50
 Nodes (5): 3D Graphics Rendering Benchmark, Color Variation for Visual Distinction, Geometric Primitives Rendering Test, Object Density and Spatial Distribution, Stress Test Visualization - Geometric Primitives
 
 ### Community 59 - "SIMD3"
-Cohesion: 0.09
-Nodes (29): Atmosphere, Float, GPURasterMesh, BodyMarks, BodySurface, .bounds, Mark, Muscle (+21 more)
+Cohesion: 0.08
+Nodes (30): simd_double3x3, Atmosphere, Float, GPURasterMesh, BodyMarks, BodySurface, .bounds, Mark (+22 more)
 
 ### Community 60 - "FogParams"
 Cohesion: 0.15
 Nodes (13): FogParams, albedo, counts, grid, medium, noise, volumes, wind (+5 more)
 
-### Community 61 - "reflectionKernel"
+### Community 61 - "Surface.metal"
 Cohesion: 0.03
-Nodes (118): Material, glassKernel(), glassReflection(), constant, device, float3, kernel, read (+110 more)
+Nodes (104): Material, glassKernel(), glassReflection(), constant, device, float3, kernel, read (+96 more)
 
 ### Community 62 - "SDFBox"
 Cohesion: 0.10
@@ -649,15 +643,15 @@ Nodes (20): device, SDFBox, pad0, pad1, pad2, pad3, scene, shape (+12 more)
 
 ### Community 63 - "MatPlan"
 Cohesion: 0.06
-Nodes (41): CGBitmapInfo, CGColorSpace, MatCompiler, .folder, MTLComputePipelineState, MTLDevice, MTLLibrary, ObjectIdentifier (+33 more)
+Nodes (36): CGBitmapInfo, CGColorSpace, done, MatArgs, MatEngine, .cacheStats, MatOutputs, .all (+28 more)
 
 ### Community 64 - "Direct Rendering Stress Test 32"
 Cohesion: 0.60
 Nodes (5): 3D Geometry Rendering, Direct Rendering Technique, Complex Lighting Environment, Graphics Performance Testing, Direct Rendering Stress Test 32
 
-### Community 65 - "View"
-Cohesion: 0.04
-Nodes (92): E, Shape, .body, BuildingLookTab, .body, CaseChoiceRow, .body, ColorListRow (+84 more)
+### Community 65 - "VFXCurve"
+Cohesion: 0.09
+Nodes (39): Shape, .body, VFXCollider, VFXCurve, .range, CGPoint, CGSize, DragGesture (+31 more)
 
 ### Community 66 - "Gallery Showcase View"
 Cohesion: 0.67
@@ -667,44 +661,44 @@ Nodes (4): Gallery Showcase View, Mechanical Design Language, Individual Item Pe
 Cohesion: 1.00
 Nodes (3): Geometric Objects (Box, Cube, Sphere), Point Light Source, Shadow Casting on Surfaces
 
-### Community 72 - "Map"
+### Community 72 - "VirtualTracing"
 Cohesion: 0.06
-Nodes (27): Map, MaterialTextures, .instanceAS, .virtualGeometryChanged, Content, MTLAccelerationStructure, MTLBuffer, MTLDevice (+19 more)
+Nodes (29): MTLComputePipelineState, .instanceAS, .virtualGeometryChanged, VoxelLevels, Content, PlantKey, Float, MTLAccelerationStructure (+21 more)
 
-### Community 73 - "Lift"
-Cohesion: 0.11
-Nodes (20): Door, .colliders, InteriorControls, .obstacles, Prop, Float, SIMD2, Walker (+12 more)
+### Community 73 - "CityPlan"
+Cohesion: 0.06
+Nodes (43): .entry, .well, Block, CityPlan, Edge, open, party, street (+35 more)
 
-### Community 74 - "Int32"
-Cohesion: 0.14
-Nodes (11): Int32, GPUFluidParams, GPUFluidParticle, LocalIds, MeshClusterizer, Float, UInt32, UnsafeBufferPointer (+3 more)
+### Community 74 - "FluidSystem"
+Cohesion: 0.10
+Nodes (19): .surfaceCapacity, Float, UInt32, GPUFluidParams, GPUFluidParticle, GPUFluidSurface, FluidSystem, .capacity (+11 more)
 
-### Community 76 - "Metal3Pass"
-Cohesion: 0.05
-Nodes (20): Metal3Pass, .declarationScope, Metal3RenderPass, RenderPass, AnyObject, MTLAccelerationStructure, MTLBarrierScope, MTLBuffer (+12 more)
+### Community 76 - "RenderPass"
+Cohesion: 0.08
+Nodes (10): Metal3RenderPass, RenderPass, MTLBuffer, MTLDepthStencilState, MTLRenderCommandEncoder, MTLRenderPipelineState, MTLResource, MTLResourceUsage (+2 more)
 
 ### Community 77 - "RendererController"
-Cohesion: 0.07
-Nodes (24): RendererController, .buildingPlan, .buildingStats, .cameraPosition, .walker, Float, MaterialPick, RendererController (+16 more)
+Cohesion: 0.09
+Nodes (18): MaterialPick, RendererController, .debugActive, .debugInfo, .displacementSummary, .metalDevice, .profilePasses, RendererStatus (+10 more)
 
-### Community 78 - "TextureStreamer"
-Cohesion: 0.07
-Nodes (30): MTLRegion, MTLSparseTextureMappingMode, .materialBuffers, Entry, Level, SparseMapping, Data, MTLBuffer (+22 more)
+### Community 78 - "Int"
+Cohesion: 0.05
+Nodes (46): MTLRegion, MTLSparseTextureMappingMode, Range, LoadStep, Card, GPULumenCard, LumenCards, .megabytes (+38 more)
 
-### Community 79 - "RasterClusters"
-Cohesion: 0.08
-Nodes (23): MTLResource, Params, RasterClusters, .drawnByCamera, .stats, .summary, Float, MTLBuffer (+15 more)
+### Community 79 - "VirtualBLAS"
+Cohesion: 0.07
+Nodes (39): Params, RasterClusters, .drawnByCamera, .stats, .summary, Float, MTLBuffer, MTLDevice (+31 more)
 
 ### Community 80 - ".compile"
-Cohesion: 0.21
-Nodes (15): Pipelines: `Pipelines.swift`, MTLFunctionConstantValues, finish, .function, KernelVariants, .count, AnyObject, MTLComputePipelineState (+7 more)
+Cohesion: 0.19
+Nodes (16): Pipelines: `Pipelines.swift`, MTLFunctionConstantValues, finish, .function, KernelVariants, .count, Key, AnyObject (+8 more)
 
 ### Community 81 - "ab.sh"
 Cohesion: 0.70
 Nodes (4): check_bin(), run(), ab.sh script, usage()
 
 ### Community 82 - "LoadActivity"
-Cohesion: 0.12
+Cohesion: 0.11
 Nodes (15): Sendable, Job, .heading, LoadActivity, .onChange, LoadJob, .isCancelled, .isCancelled (+7 more)
 
 ### Community 83 - "LumenSDF.metal"
@@ -717,59 +711,63 @@ Nodes (27): boxCandidate(), candidate(), candidateIndex(), candidatePart(), card
 
 ### Community 85 - "VFXEditorModel"
 Cohesion: 0.05
-Nodes (45): Set, Emitter, Float, VFXStatus, VFXCatalog, SIMD2, Clip, RendererController (+37 more)
+Nodes (41): Set, VFXCatalog, VFXNodeSearch, .body, .items, Clip, Search, CGSize (+33 more)
 
 ### Community 86 - "Where things are"
-Cohesion: 0.13
-Nodes (12): Building editor: handoff (2026-10-08), Checked in the window (M1 Max, Oct 8), M1 Max numbers, Not checked anywhere, Where things are, BuildingMutate, BuildingParams, D (+4 more)
+Cohesion: 0.09
+Nodes (15): Building editor: handoff (2026-10-08), Checked in the window (M1 Max, Oct 8), M1 Max numbers, Not checked anywhere, To do on the M4 Max, Where things are, BuildingMutate, BuildingParams (+7 more)
+
+### Community 87 - ".city"
+Cohesion: 0.15
+Nodes (7): .time, UInt64, Data, StaticString, T, UInt, WorldTests
 
 ### Community 88 - "Capabilities"
 Cohesion: 0.20
 Nodes (7): Capabilities: `Capabilities.swift`, Capabilities, .summary, MTLDevice, CapabilitiesTests, .none, Void
 
 ### Community 89 - ".write"
-Cohesion: 0.13
-Nodes (19): Card, Plant, Skeleton, LeafAnchor, LeafShape, blade, kite, needle (+11 more)
+Cohesion: 0.15
+Nodes (18): Card, Plant, Skeleton, LeafShape, blade, kite, needle, Mesh (+10 more)
 
-### Community 90 - "CharacterDNA"
+### Community 90 - "CodingKeys"
 Cohesion: 0.05
-Nodes (46): CharacterDNA, CharacterDNA.Hair, .key, CharacterDNA.Look, CharacterDNA.Macro, CodingKeys, age, basedOn (+38 more)
+Nodes (35): CharacterDNA.Hair, CharacterDNA.Look, CharacterDNA.Macro, CodingKeys, age, basedOn, beard, blush (+27 more)
 
-### Community 91 - ".sources"
-Cohesion: 0.19
-Nodes (10): Maps, ProceduralTextures, Data, Float, Sample, SIMD2, UInt32, UInt8 (+2 more)
+### Community 91 - "SurfaceKind"
+Cohesion: 0.07
+Nodes (27): Float, MaterialDef, Maps, ProceduralTextures, SurfaceKind, asphalt, brick, concrete (+19 more)
 
 ### Community 92 - "ParticleSystem"
 Cohesion: 0.08
-Nodes (23): GPUVFXEmitter, ParticleCollider, box, .gpu, plane, shape, sphere, ParticleField (+15 more)
+Nodes (28): Flags, Orientation, axis, .code, rayFacing, velocity, world, ParticleCollider (+20 more)
 
 ### Community 93 - "Upscaler"
-Cohesion: 0.16
-Nodes (12): Float, SIMD2, UpscaleInputs, AnyObject, Float, MTLCommandBuffer, MTLDevice, MTLTexture (+4 more)
+Cohesion: 0.19
+Nodes (9): AnyObject, Float, MTLCommandBuffer, MTLDevice, MTLTexture, SIMD2, UInt32, Upscaler (+1 more)
 
 ### Community 94 - "megaLightsSampleKernel"
 Cohesion: 0.09
-Nodes (54): groupElement(), uint4, cosSubClamped(), inwardPlane(), lightTreeImportance(), LightTreeNode, axis, hi (+46 more)
+Nodes (52): cosSubClamped(), inwardPlane(), lightTreeImportance(), LightTreeNode, axis, hi, link, lo (+44 more)
 
-### Community 95 - "FluidSystem"
-Cohesion: 0.06
-Nodes (32): .surfaceCapacity, Float, UInt32, GPUFluidSurface, FluidSystem, .capacity, .cell, .dims (+24 more)
+### Community 95 - "FluidTests"
+Cohesion: 0.10
+Nodes (18): FluidWorld, LiquidKind, blood, honey, .look, .name, .physics, water (+10 more)
 
 ### Community 96 - "quatRotate"
 Cohesion: 0.04
 Nodes (70): crowdHairKernel(), CrowdHairRoot, bary, vertices, CrowdJoint, inverseBindRotation, inverseBindTranslation, local (+62 more)
 
-### Community 97 - "PhysicsTests"
-Cohesion: 0.12
-Nodes (9): GPUPhysicsGrab, Cloth, Set, PhysicsTests, Float, MTLCommandQueue, MTLDevice, SDFShape (+1 more)
+### Community 97 - "PhysicsWorld"
+Cohesion: 0.07
+Nodes (25): GPUPhysicsGrab, Cloth, PhysicsJoint, PhysicsJointKind, ball, hinge, PhysicsWorld, .buckets (+17 more)
 
 ### Community 98 - "Species"
-Cohesion: 0.10
-Nodes (16): RawRepresentable, Age, mature, sapling, young, Species, .description, .hasBoughs (+8 more)
+Cohesion: 0.08
+Nodes (14): RawRepresentable, Species, .description, .hasBoughs, .isTree, Tab, ages, boughs (+6 more)
 
 ### Community 99 - "Building"
-Cohesion: 0.08
-Nodes (29): Building, BuildingGenerator, BuildingSpec, .style, BuildingTier, .top, Detail, flat (+21 more)
+Cohesion: 0.07
+Nodes (30): Building, BuildingGenerator, BuildingSpec, .style, BuildingTier, .top, Detail, flat (+22 more)
 
 ### Community 100 - "float3"
 Cohesion: 0.10
@@ -780,56 +778,56 @@ Cohesion: 0.14
 Nodes (14): BVHNode, hi0, hi1, lo0, lo1, ClusterBox, index, mask (+6 more)
 
 ### Community 102 - "SoftModel"
-Cohesion: 0.07
-Nodes (28): ArraySlice, GPUPhysicsParticle, GPUSoftVertex, .particleCellSize, Flesh, SIMD2, SkinOptions, SkinShell (+20 more)
+Cohesion: 0.10
+Nodes (19): ArraySlice, GPUPhysicsParticle, .particleCellSize, NearCache, SoftModel, .near, .radius, Float (+11 more)
 
 ### Community 103 - "float4"
 Cohesion: 0.02
 Nodes (94): float4, uint4, physBetween(), PhysicsCloth, grid, previous, PhysicsFleshFibre, compliance (+86 more)
 
 ### Community 104 - "Bool"
-Cohesion: 0.13
-Nodes (13): PlanDoor, PlanRoom, .area, StoreyPlanner, Float, SIMD2, SplitMix64, Rect (+5 more)
+Cohesion: 0.09
+Nodes (21): PlanDoor, PlanRoom, .area, StoreyPlanner, .programme, Float, SIMD2, SplitMix64 (+13 more)
 
 ### Community 105 - "CaseIterable"
 Cohesion: 0.03
-Nodes (76): CaseIterable, Tab, facade, floors, furnish, look, massing, rooms (+68 more)
+Nodes (70): CaseIterable, Tab, facade, floors, furnish, look, massing, rooms (+62 more)
 
-### Community 106 - "SettingsTable"
-Cohesion: 0.08
-Nodes (29): Bound, F, format, on, .reservoirCount, Control, checkbox, custom (+21 more)
+### Community 106 - "EnvVariable"
+Cohesion: 0.04
+Nodes (58): Bound, F, format, on, .reservoirCount, Control, checkbox, custom (+50 more)
 
 ### Community 107 - "SkinTextures"
-Cohesion: 0.07
-Nodes (29): Phases, Marks, .key, SkinAtlas, SkinChart, SkinTextures, .versionKey, Float (+21 more)
+Cohesion: 0.12
+Nodes (13): Phases, Marks, .key, SkinAtlas, SkinChart, SkinTextures, .versionKey, Float (+5 more)
 
-### Community 108 - "EditorGroup"
-Cohesion: 0.10
-Nodes (28): .body, EditorGroup, .body, ParamRows, Void, Clip, graft, habitat (+20 more)
+### Community 108 - "View"
+Cohesion: 0.08
+Nodes (56): .body, BuildingLookTab, .body, CaseChoiceRow, .body, ColorListRow, .body, FacadeTab (+48 more)
 
-### Community 109 - "EnvVariable"
-Cohesion: 0.07
-Nodes (28): EnvVariable, api, denoise, direct, fog, fogSet, gi, .index (+20 more)
+### Community 109 - ".buildCharacterWorkshop"
+Cohesion: 0.11
+Nodes (9): Where things are, GPUMesh, UInt64, CharacterStats, Float, PlantStats, Float, Float (+1 more)
 
-### Community 110 - "Int"
-Cohesion: 0.05
-Nodes (36): GPUFogParams, .reflectionPassFlags, GPUPostParams, GPURegirParams, GPUSkyParams, MTLBuffer, Float, UnsafeBufferPointer (+28 more)
+### Community 110 - ".writeFrameData"
+Cohesion: 0.08
+Nodes (15): GPUFogParams, .reflectionPassFlags, GPUFogVolume, MaterialTextures, MTLCommandQueue, MTLDevice, MTLTexture, Float (+7 more)
 
 ### Community 111 - "VFXEffect"
-Cohesion: 0.05
-Nodes (51): Phase 1 (graph model, code generator, compile, interpreter, ports): done, at check-in 1, Identifiable, Key, bool, choice, color, curve, float (+43 more)
+Cohesion: 0.09
+Nodes (25): Phase 1 (graph model, code generator, compile, interpreter, ports): done, at check-in 1, Identifiable, choice, Kind, plume, vortex, UInt32, VFXEffect (+17 more)
 
 ### Community 112 - "WorldTile"
-Cohesion: 0.11
-Nodes (19): .time, Assembler, Chunk, .triangles, ChunkRecord, Draft, Light, Data (+11 more)
+Cohesion: 0.16
+Nodes (15): Assembler, Chunk, .triangles, ChunkRecord, Draft, Light, Data, Float (+7 more)
 
-### Community 113 - "SDFNode"
-Cohesion: 0.08
-Nodes (40): device, float2, float3, float4, thread, uint, uint4, sdfEval() (+32 more)
+### Community 113 - "SDF.metal"
+Cohesion: 0.13
+Nodes (27): device, float2, float3, float4, thread, uint, uint4, sdfEval() (+19 more)
 
 ### Community 114 - "Metal"
-Cohesion: 0.08
-Nodes (4): Metal, MetalFX, MetalRenderer, XCTest
+Cohesion: 0.06
+Nodes (5): Metal, MetalFX, MetalRenderer, QuartzCore, XCTest
 
 ### Community 115 - "ParticleTrace.metal"
 Cohesion: 0.08
@@ -840,40 +838,40 @@ Cohesion: 0.16
 Nodes (15): OptionSet, BuildingAssembler, Cell, .center, .width, Opening, Float, SIMD2 (+7 more)
 
 ### Community 118 - "Interior"
-Cohesion: 0.12
-Nodes (22): Door, Prop, Collider, Door, Finishes, .ceilingMaterial, Interior, InteriorBuilder (+14 more)
+Cohesion: 0.11
+Nodes (24): Door, Prop, Collider, Door, Finishes, .ceilingMaterial, Interior, InteriorBuilder (+16 more)
 
-### Community 119 - "AABB"
-Cohesion: 0.07
-Nodes (12): AABB, .area, .centroid, .isEmpty, .bounds, CharacterStats, Float, MeshGeometry (+4 more)
+### Community 119 - ".icosphere"
+Cohesion: 0.14
+Nodes (3): MeshGeometry, UInt32, SDFTests
 
-### Community 120 - "MeshSDF"
-Cohesion: 0.15
-Nodes (13): Int8, Baked, bricks, Heightfield, .hi, MeshSDF, .bytes, .hi (+5 more)
+### Community 120 - "FoliageTextures"
+Cohesion: 0.16
+Nodes (16): CardSheet, FoliageTextures, Image, Kind, birchBark, grass, leaf, .name (+8 more)
 
 ### Community 121 - "Flora"
-Cohesion: 0.09
-Nodes (17): .pixels, Flora, .name, Placed, assembly, flat, Prepared, boxes (+9 more)
+Cohesion: 0.13
+Nodes (11): Flora, .name, Placed, assembly, flat, Prepared, boxes, flat (+3 more)
 
 ### Community 122 - "same.sh"
 Cohesion: 0.83
 Nodes (3): run(), same.sh script, usage()
 
 ### Community 123 - "String"
-Cohesion: 0.05
-Nodes (21): MTLBlitCommandEncoder, MTLRenderPassDescriptor, CatalogRegistry, T, MTLAccelerationStructureCommandEncoder, MTLCommandBuffer, MTLComputeCommandEncoder, MTLRenderCommandEncoder (+13 more)
+Cohesion: 0.06
+Nodes (18): MTLBlitCommandEncoder, MTLRenderPassDescriptor, CatalogRegistry, T, MTLAccelerationStructureCommandEncoder, MTLCommandBuffer, MTLComputeCommandEncoder, MTLRenderCommandEncoder (+10 more)
 
 ### Community 125 - "BuildingPlan"
 Cohesion: 0.32
 Nodes (5): DemoWalk, Point, Float, SIMD2, BuildingPlan
 
 ### Community 126 - ".buildWorld"
-Cohesion: 0.12
-Nodes (12): Where things are, SurfaceMaterial, .uvScale, Prop, BuildingStats, Float, WalkArea, BuildingKit (+4 more)
+Cohesion: 0.18
+Nodes (6): BuildingStats, Float, WalkArea, BuildingKit, Float, UInt32
 
-### Community 127 - "BVHBuilder"
-Cohesion: 0.12
-Nodes (16): BinScratch, BVHBuilder, BVHNode, Node, Part, built, .count, split (+8 more)
+### Community 127 - ".build"
+Cohesion: 0.05
+Nodes (34): Int8, BinScratch, BVHBuilder, BVHNode, Node, Part, built, .count (+26 more)
 
 ### Community 128 - "Raster.metal"
 Cohesion: 0.17
@@ -885,14 +883,14 @@ Nodes (24): constant, device, kernel, uint, particleBeginKernel(), particleChild
 
 ### Community 130 - "CharacterBase"
 Cohesion: 0.08
-Nodes (30): Character creator: handoff, Decisions (the user's), Deviations from the plan, and why, Open, Traps found, CharacterBase, Hand, Options (+22 more)
+Nodes (29): Character creator: handoff, Decisions (the user's), Deviations from the plan, and why, Open, Traps found, CharacterBase, Hand, Options (+21 more)
 
 ### Community 131 - "instanceRecord"
-Cohesion: 0.08
-Nodes (50): LumenCard, atlas, hi, lo, lumenCardCaptureKernel(), lumenCardCombineKernel(), lumenCardLightKernel(), lumenCardPoint() (+42 more)
+Cohesion: 0.05
+Nodes (68): LumenCard, atlas, hi, lo, lumenCardCaptureKernel(), lumenCardCombineKernel(), lumenCardLightKernel(), lumenCardPoint() (+60 more)
 
 ### Community 132 - "PlantCatalog"
-Cohesion: 0.09
+Cohesion: 0.08
 Nodes (17): .savedDef, PlantCatalog, .count, .covers, File, Foliage.SpeciesDef, .fingerprint, .launch (+9 more)
 
 ### Community 133 - "Foliage.metal"
@@ -907,29 +905,25 @@ Nodes (8): PlantMutate, SplitMix64, UInt64, Host, PlantEditorTests, SceneKind, U
 Cohesion: 0.06
 Nodes (34): Kind, armchair, basin, bath, bed, bench, bookcase, boxes (+26 more)
 
-### Community 136 - "Benchmark"
-Cohesion: 0.08
-Nodes (13): Benchmark, .current, .framesInConfig, .framesLeftInConfig, .isFinished, .isMeasuring, .progressInConfig, .shouldCapture (+5 more)
-
 ### Community 137 - "RoomType"
 Cohesion: 0.06
 Nodes (36): CityPlan.Rect, .area, RoomType, backroom, bath, bedroom, corridor, dining (+28 more)
 
 ### Community 138 - "ParticleTests"
-Cohesion: 0.15
-Nodes (9): Key, ParticleTests, Float, MTLCommandQueue, MTLDevice, StaticString, UInt, UInt32 (+1 more)
+Cohesion: 0.12
+Nodes (13): Metal3Pass, .declarationScope, AnyObject, SIMD2, Key, ParticleTests, Float, MTLCommandQueue (+5 more)
 
-### Community 139 - "MatFnKind"
-Cohesion: 0.04
-Nodes (62): Hashable, Clip, MatLink, MatFnEnv, MatFnExpr, MatFnKind, abs, add (+54 more)
+### Community 139 - "MatFunction"
+Cohesion: 0.10
+Nodes (23): Hashable, Clip, MatLink, MatFnEnv, MatFnExpr, .spec, MatFnNode, MatFnPinSpec (+15 more)
 
-### Community 140 - ".write"
-Cohesion: 0.18
-Nodes (10): BlueNoise, .cacheURL, SplitMix64, Float, UInt64, URL, CacheFile, Data (+2 more)
+### Community 140 - "BlueNoise"
+Cohesion: 0.27
+Nodes (6): BlueNoise, SplitMix64, Float, UInt64, URL, .kernel
 
 ### Community 141 - "FluidSurface.metal"
-Cohesion: 0.21
-Nodes (27): fluidCorner(), FluidSurface, dims, field, lo, mesh, triangles, fluidSurfaceBlurKernel() (+19 more)
+Cohesion: 0.37
+Nodes (19): fluidCorner(), fluidSurfaceBlurKernel(), fluidSurfaceCell(), fluidSurfaceClearKernel(), fluidSurfaceCoords(), fluidSurfaceCountKernel(), fluidSurfaceEdges(), fluidSurfaceNode() (+11 more)
 
 ### Community 142 - "RasterClusters.metal"
 Cohesion: 0.21
@@ -939,17 +933,17 @@ Nodes (22): RasterClusterMeshOut, constant, device, kernel, read, texture2d, thr
 Cohesion: 0.12
 Nodes (26): constant, device, float2, float3, float4, kernel, thread, uint (+18 more)
 
-### Community 144 - ".buildings"
-Cohesion: 0.13
-Nodes (10): M1 Max numbers (whole frame ms, `METALRENDERER_BENCH_SPLIT=0`), M4 Max results (2026-10-07, after main was merged in at `0d1cc14`), Metal-only tracer: handoff to the M4 Max (2026-10-06), To do on the M4 Max, in order (1, 2, 3 and 6 done on 2026-10-07: see above), Traps, Offscreen rendering in MetalRenderer, Recipes, Render something: `scripts/render.sh` (+2 more)
+### Community 144 - "MatCompiler"
+Cohesion: 0.14
+Nodes (12): MatCompiler, .folder, MTLComputePipelineState, MTLDevice, MTLLibrary, ObjectIdentifier, URL, MatError (+4 more)
 
 ### Community 145 - "RenderView"
-Cohesion: 0.09
-Nodes (17): AnyObject, CALayer, NSDraggingInfo, NSDragOperation, NSObjectProtocol, InputHandler, RenderView, .acceptsFirstResponder (+9 more)
+Cohesion: 0.05
+Nodes (31): AnyObject, CALayer, NSDraggingInfo, NSDragOperation, NSObjectProtocol, FrameOutput, LayerSurface, .backingScale (+23 more)
 
 ### Community 146 - "ParticleTextures"
-Cohesion: 0.11
-Nodes (23): Aux, flameMotion, .layer, smokeBack, smokeLight, Kind, bubble, flame (+15 more)
+Cohesion: 0.10
+Nodes (25): Kind, .flags, Aux, flameMotion, .layer, smokeBack, smokeLight, Kind (+17 more)
 
 ### Community 147 - "VSMCounters"
 Cohesion: 0.09
@@ -960,36 +954,36 @@ Cohesion: 0.20
 Nodes (6): Failure, ShaderSource, URL, Substring, ShaderSourceTests, URL
 
 ### Community 149 - "particleLightKernel"
-Cohesion: 0.17
-Nodes (28): Built, constant, device, float2, float3, float4, kernel, read (+20 more)
+Cohesion: 0.11
+Nodes (36): Built, Particles: handoff (branch claude/init-branch-94ae07), To do on the M4 Max, Traps found, constant, device, float2, float3 (+28 more)
 
-### Community 150 - "QuartzCore"
-Cohesion: 0.08
-Nodes (6): AppKit, Combine, Element, QuartzCore, Array, Headless
+### Community 150 - "AppKit"
+Cohesion: 0.09
+Nodes (13): AppKit, Combine, Element, RendererController, .buildingPlan, .buildingStats, .cameraPosition, .walker (+5 more)
 
 ### Community 151 - "MeshBuilder"
 Cohesion: 0.10
 Nodes (14): .triangleCount, MeshBuilder, .bounds, .geometry, .isEmpty, .triangleCount, Float, MeshGeometry (+6 more)
 
 ### Community 152 - "Pipelines"
-Cohesion: 0.08
-Nodes (30): Where things are, ComputePass, MTLComputePipelineState, Float, FluidGPU, .summary, Steps, MTLBuffer (+22 more)
+Cohesion: 0.06
+Nodes (34): ComputePass, MTLHeap, MTLComputePipelineState, FluidGPU, .summary, Steps, MTLBuffer, MTLComputePipelineState (+26 more)
 
 ### Community 153 - "ParticlesGPU"
-Cohesion: 0.12
-Nodes (20): Part, Build, Counter, Part, ParticlesGPU, .hasPrograms, .trailShape, MTL4ComputeCommandEncoder (+12 more)
+Cohesion: 0.14
+Nodes (16): Part, Counter, Part, ParticlesGPU, .hasPrograms, .trailShape, Float, MTLAccelerationStructure (+8 more)
 
 ### Community 154 - "Curve"
-Cohesion: 0.13
+Cohesion: 0.15
 Nodes (16): Crown, conical, cylindrical, flame, hemispherical, spherical, Curve, crown (+8 more)
 
 ### Community 155 - "MatNode"
 Cohesion: 0.10
-Nodes (14): .allIDs, MatGraphInput, MatNode, MatType, color, grey, Float, MatParam (+6 more)
+Nodes (16): MatParamRow, .body, .allIDs, MatNode, MatType, color, grey, Hasher64 (+8 more)
 
 ### Community 156 - "Furnisher"
-Cohesion: 0.14
-Nodes (16): Side, Furnisher, FurnishPalette, Light, Prefer, any, away, corner (+8 more)
+Cohesion: 0.18
+Nodes (14): Side, Furnisher, Light, Prefer, any, away, corner, middle (+6 more)
 
 ### Community 157 - "FloorPlan"
 Cohesion: 0.24
@@ -997,7 +991,7 @@ Nodes (6): CGSize, FloorPlan, .height, BuildingPlanTests, Float, SIMD2
 
 ### Community 158 - "DebugPanel"
 Cohesion: 0.09
-Nodes (18): NSColor, NSRect, NSStackView, DebugPanel, .wasVisible, FlippedView, .isFlipped, FrameGraphView (+10 more)
+Nodes (17): NSColor, NSRect, NSStackView, DebugPanel, .wasVisible, FlippedView, .isFlipped, FrameGraphView (+9 more)
 
 ### Community 159 - "FluidParams"
 Cohesion: 0.06
@@ -1016,39 +1010,39 @@ Cohesion: 0.14
 Nodes (3): CoreGraphics, ImageIO, UniformTypeIdentifiers
 
 ### Community 163 - "MaterialStore"
-Cohesion: 0.24
-Nodes (6): .url, File, MaterialStore, .folder, Data, URL
+Cohesion: 0.30
+Nodes (5): File, MaterialStore, .folder, Data, URL
 
 ### Community 164 - "related.sh"
 Cohesion: 0.83
 Nodes (3): add(), related.sh script, usage()
 
-### Community 165 - "VirtualMesh"
-Cohesion: 0.13
-Nodes (17): Cluster, Group, .isRoot, Data, Float, SIMD2, UInt32, UInt64 (+9 more)
+### Community 165 - ".build"
+Cohesion: 0.11
+Nodes (16): .data, Cluster, Group, .isRoot, Float, SIMD2, UInt32, UInt64 (+8 more)
 
 ### Community 166 - "RTVoxels"
 Cohesion: 0.29
 Nodes (7): uint3, uint4, RTVoxels, dims, lo, offsets, voxelDims()
 
-### Community 167 - ".cross"
-Cohesion: 0.11
-Nodes (11): GPUParticleField, GPUParticleRender, Fragment, ParticleEvent, .seed, .spawn, ParticleMath, Rng (+3 more)
+### Community 167 - "dot"
+Cohesion: 0.06
+Nodes (20): Float16, GPUParticleCollider, GPUParticleField, GPUParticleRender, HairBSDF, Float, .worldToView, Fragment (+12 more)
 
 ### Community 168 - "VGParams"
 Cohesion: 0.08
 Nodes (33): constant, device, float4, kernel, uint, vgBoxesKernel(), VGCluster, childGroup (+25 more)
 
-### Community 169 - "Measuring MetalRenderer"
-Cohesion: 0.09
-Nodes (16): 2. Hot loops (BVH, MeshSimplifier, MeshClusterizer, VirtualGeometryBuilder, BlueNoise, FogNoise), 3. Parallelism, 5. Preprocessing and caches, 6. CPU tools, CPU (Swift) practices for MetalRenderer, A/B protocol, Kernel variants, Launch time (+8 more)
+### Community 169 - "VGStreamer"
+Cohesion: 0.14
+Nodes (11): BuddyAllocator, Group, Float, MTLBuffer, MTLDevice, Set, UInt32, VGStreamer (+3 more)
 
 ### Community 170 - ".add"
 Cohesion: 0.32
 Nodes (5): Hash, .value, PlantGoldenTests, Float, T
 
 ### Community 171 - "VFXTests"
-Cohesion: 0.17
+Cohesion: 0.19
 Nodes (9): Key, MTLCommandQueue, MTLDevice, SceneKind, StaticString, UInt, UInt32, Void (+1 more)
 
 ### Community 172 - "VSM.metal"
@@ -1056,24 +1050,24 @@ Cohesion: 0.23
 Nodes (22): float3, Light, read, SCENE_ACCEL, texture2d, thread, uint2, write (+14 more)
 
 ### Community 173 - "BuildingStyleDef"
-Cohesion: 0.06
-Nodes (51): Balustrade, bars, glass, solid, BuildingStyle, .isOffice, PlanShape, courtyard (+43 more)
+Cohesion: 0.09
+Nodes (34): Clipboard, Balustrade, bars, glass, solid, PlanShape, courtyard, l (+26 more)
 
 ### Community 174 - "GPUProfiler"
-Cohesion: 0.11
-Nodes (14): MTLCounterSampleBuffer, MTLCounterSet, MTLFence, MTLTimestamp, Metal3Frame, CAMetalDrawable, MTLCommandBuffer, MTLCommandQueue (+6 more)
+Cohesion: 0.05
+Nodes (35): Liquids: handoff to the M4 Max (2026-10-08), M1 Max numbers (whole frame, `METALRENDERER_BENCH_SPLIT=0`), To do on the M4 Max, MTL4InstanceAccelerationStructureDescriptor, MTLCounterSampleBuffer, MTLCounterSet, MTLFence, MTLRenderPassColorAttachmentDescriptor (+27 more)
 
 ### Community 175 - "FloorPlanView"
-Cohesion: 0.11
-Nodes (25): GraphicsContext, FloorPlanView, .body, .help, .picked, .status, .storeys, .toolbar (+17 more)
+Cohesion: 0.16
+Nodes (18): GraphicsContext, FloorPlanView, .body, .help, .picked, .status, .storeys, .toolbar (+10 more)
 
 ### Community 176 - "VSMView"
 Cohesion: 0.13
 Nodes (15): int2, VSMView, flags, kind, level, light, origin, pages (+7 more)
 
 ### Community 177 - "PlantParam"
-Cohesion: 0.16
-Nodes (11): ParamRow, .body, .body, .body, PlantParam, .isInteger, PlantParams, Float (+3 more)
+Cohesion: 0.20
+Nodes (8): .body, PlantParam, .isInteger, PlantParams, Float, L, Void, WritableKeyPath
 
 ### Community 178 - "VSMClusterArgs"
 Cohesion: 0.13
@@ -1084,28 +1078,28 @@ Cohesion: 0.14
 Nodes (14): depth2d_array, VSMScene, bias, camera, flags, forward, lightCount, lights (+6 more)
 
 ### Community 180 - "Renderer3D"
-Cohesion: 0.06
-Nodes (45): Done (commits on the branch), Material Designer: handoff (branch claude/graphify-update-746c89), Not verified / not done, The user's choices, Traps found, Verified (M1 Max, Metal 3), Context, MetalKit (+37 more)
+Cohesion: 0.07
+Nodes (39): Context, MetalKit, MTKView, MTKViewDelegate, NSViewRepresentable, .body, Mat2DSettings, Mat2DView (+31 more)
 
 ### Community 181 - "FleshFigure"
-Cohesion: 0.08
-Nodes (27): .programme, Axis, along, front, up, MuscleSpec, Side, back (+19 more)
+Cohesion: 0.06
+Nodes (37): GPUSoftVertex, Axis, along, front, up, Flesh, FleshOptions, MuscleSpec (+29 more)
 
-### Community 182 - "Config"
-Cohesion: 0.09
-Nodes (3): Benchmark modes: `Benchmark+Modes.swift`, Config, Void
+### Community 182 - "Benchmark"
+Cohesion: 0.03
+Nodes (61): M1 Max numbers (whole frame ms, `METALRENDERER_BENCH_SPLIT=0`), M4 Max results (2026-10-07, after main was merged in at `0d1cc14`), Metal-only tracer: handoff to the M4 Max (2026-10-06), To do on the M4 Max, in order (1, 2, 3 and 6 done on 2026-10-07: see above), Traps, Offscreen rendering in MetalRenderer, Recipes, Render something: `scripts/render.sh` (+53 more)
 
 ### Community 183 - "CGFloat"
-Cohesion: 0.07
-Nodes (33): Pin, .e, GraphNodeSearch, .body, .shown, Item, Void, .graph (+25 more)
+Cohesion: 0.08
+Nodes (29): Next, Phase 2 (the editor window): done, at check-in 2, The user's choices, Traps found, VFX editor: handoff (branch claude/init-branch-94ae07, PR #54), Pin, .e, CGFloat (+21 more)
 
 ### Community 184 - "VSMParams"
 Cohesion: 0.15
 Nodes (13): VSMParams, budget, entries, flags, frame, instanceCount, keep, maxDraws (+5 more)
 
-### Community 185 - ".node"
-Cohesion: 0.09
-Nodes (28): Float, Void, VFXContext, initialize, output, spawn, .title, update (+20 more)
+### Community 185 - "SpeciesDef"
+Cohesion: 0.11
+Nodes (17): Age, mature, sapling, young, AgeRule, Ages, CountRule, GrassPatch (+9 more)
 
 ### Community 186 - "GizmoView"
 Cohesion: 0.08
@@ -1121,7 +1115,7 @@ Nodes (24): Role, book0, book1, book2, book3, carton, ceramic, chrome (+16 more)
 
 ### Community 189 - "BuildingEditorPanel"
 Cohesion: 0.18
-Nodes (9): NSObject, BuildingEditorPanel, .isVisible, .wasVisible, Notification, NSPanel, NSWindow, RendererController (+1 more)
+Nodes (8): BuildingEditorPanel, .isVisible, .wasVisible, Notification, NSPanel, NSWindow, RendererController, UndoManager
 
 ### Community 190 - "PhysicsBody"
 Cohesion: 0.06
@@ -1132,7 +1126,7 @@ Cohesion: 0.18
 Nodes (11): uint4, VSMInstance, corners, indices, meshIndex, pages, view, w (+3 more)
 
 ### Community 192 - "ColliderGrid"
-Cohesion: 0.26
+Cohesion: 0.28
 Nodes (8): ColliderGrid, Input, Moving, Float, SIMD2, Walker, .eyePosition, .height
 
 ### Community 193 - "CrowdHairParams"
@@ -1141,7 +1135,7 @@ Nodes (13): CrowdHairParams, curveBase, firstOffset, firstStrand, followsHead, p
 
 ### Community 194 - "PlantTracing"
 Cohesion: 0.07
-Nodes (31): Tests, PlantTracing, .instanceOptions, .workItems, Refit, .encoderCount, RTPart, Float (+23 more)
+Nodes (30): Where things are, 7. Acceleration structures and ray tracing, Proving a refactor changed nothing, Scorers and other tools, Settings, names and lists, Tests, Timings, What could not be run (+22 more)
 
 ### Community 195 - "RasterCounters"
 Cohesion: 0.20
@@ -1151,13 +1145,13 @@ Nodes (10): atomic_uint, RasterCounters, baseInstance, groups, groupsX, groupsY,
 Cohesion: 0.27
 Nodes (6): HairStyle, Float, UInt32, SplitMix, Float, UInt64
 
-### Community 197 - "Camera"
-Cohesion: 0.16
-Nodes (10): Event, callLift, flashlight, lights, Float, SceneKind, Camera, .forward (+2 more)
+### Community 197 - "GraphCanvasModel"
+Cohesion: 0.17
+Nodes (4): .backgroundDrag, GraphCanvasModel, .body, CGSize
 
 ### Community 198 - "VFXGizmos"
 Cohesion: 0.12
-Nodes (18): Segment, Float, ParticleEmitter, SIMD2, UInt32, Target, VFXGizmos, View (+10 more)
+Nodes (20): Segment, Float, ParticleEmitter, SIMD2, UInt32, Target, VFXGizmos, View (+12 more)
 
 ### Community 199 - "SDFShape"
 Cohesion: 0.10
@@ -1167,21 +1161,21 @@ Nodes (28): Kind, arrays, block, clusters, skip, virtual, Node, .transform (+20 
 Cohesion: 0.24
 Nodes (5): M1 Max numbers, Not checked anywhere, Plant editor: handoff to the M4 Max (2026-10-08), PlantWorkshopTests, Void
 
-### Community 201 - "RagdollTests"
-Cohesion: 0.17
-Nodes (8): GPUPhysicsJoint, PhysicsJoint, RagdollTests, Float, MTLCommandQueue, MTLDevice, PhysicsJoint, Void
+### Community 201 - ".step"
+Cohesion: 0.14
+Nodes (10): GPUPhysicsJoint, PhysicsJoint, UInt32, UInt64, RagdollTests, Float, MTLCommandQueue, MTLDevice (+2 more)
 
 ### Community 202 - "FurnitureItem"
 Cohesion: 0.40
 Nodes (4): FurnitureItem, .collisionBoxes, Float, SplitMix64
 
-### Community 203 - "LumenGlobalSDF"
-Cohesion: 0.13
-Nodes (12): GPULumenClipLevel, LumenGlobalSDF, .isComplete, .megabytes, Float, MTLBuffer, MTLDevice, MTLTexture (+4 more)
+### Community 203 - "Int32"
+Cohesion: 0.10
+Nodes (18): Int32, GPULumenClipLevel, LumenGlobalSDF, .isComplete, .megabytes, Float, MTLBuffer, MTLDevice (+10 more)
 
-### Community 204 - "KernelVariantsTests"
-Cohesion: 0.18
-Nodes (6): Related tests only, Rules, Run them: `scripts/related.sh`, When the map misses, KernelVariantsTests, UInt32
+### Community 204 - "Map"
+Cohesion: 0.07
+Nodes (22): Map, Related tests only, Rules, Run them: `scripts/related.sh`, When the map misses, FluidSurface, dims, field (+14 more)
 
 ### Community 205 - "ParticleEmitter"
 Cohesion: 0.09
@@ -1189,11 +1183,11 @@ Nodes (23): ParticleEmitter, attractor, axis, burst, color0, color1, color2, ext
 
 ### Community 206 - "HairTests"
 Cohesion: 0.13
-Nodes (14): BoxData, SDFBuffers, .buffers, MTLAccelerationStructure, MTLBuffer, MTLCommandQueue, MTLDevice, UInt32 (+6 more)
+Nodes (13): BoxData, SDFBuffers, .buffers, MTLAccelerationStructure, MTLBuffer, MTLDevice, UInt32, UInt64 (+5 more)
 
-### Community 207 - "CharacterParam"
-Cohesion: 0.14
-Nodes (14): Group, CharacterParam, CharacterParams, .faceSections, Group, bones, face, hair (+6 more)
+### Community 207 - "CharacterEditorView"
+Cohesion: 0.08
+Nodes (25): Group, RendererController, CharacterEditorView, .body, .hairStyle, .header, CharacterGroup, .body (+17 more)
 
 ### Community 208 - "PhysicsConstraint"
 Cohesion: 0.40
@@ -1204,8 +1198,8 @@ Cohesion: 0.40
 Nodes (5): PhysicsGroup, count, first, last, pad
 
 ### Community 210 - "VFXInterpreter"
-Cohesion: 0.15
-Nodes (12): Kind, ParticleEvent, GPUParticle, GPUParticleCollider, GPUParticleEmitter, GPUParticleStep, .flags, .gpuEmitters (+4 more)
+Cohesion: 0.20
+Nodes (9): ParticleEvent, GPUParticle, GPUParticleEmitter, GPUParticleStep, .gpuEmitters, Float, UInt32, VFXInterpreter (+1 more)
 
 ### Community 211 - "PhysicsPair"
 Cohesion: 0.40
@@ -1216,7 +1210,7 @@ Cohesion: 0.40
 Nodes (5): PhysicsPoseParams, bodies, descriptorStride, pad0, pad1
 
 ### Community 213 - "Instance"
-Cohesion: 0.11
+Cohesion: 0.12
 Nodes (11): Instance, .isGeometry, .isStatic, .moves, InstanceGroup, SceneBuffersTests, Float, MeshGeometry (+3 more)
 
 ### Community 214 - "VSMLight"
@@ -1228,8 +1222,8 @@ Cohesion: 0.50
 Nodes (3): Build the graph when it's missing, Rules, Run it: `scripts/ensure-graph.sh`
 
 ### Community 219 - ".load"
-Cohesion: 0.16
-Nodes (12): Data, URL, Cap, CharacterHairCap, Data, Float, UInt32, BlobWriter (+4 more)
+Cohesion: 0.12
+Nodes (16): .cacheURL, CacheFile, Data, URL, Data, URL, Cap, CharacterHairCap (+8 more)
 
 ### Community 220 - "FBXFile"
 Cohesion: 0.07
@@ -1240,87 +1234,87 @@ Cohesion: 0.09
 Nodes (23): float4, uint4, Particle, info, position, velocity, ParticleEvent, a (+15 more)
 
 ### Community 222 - "SceneShading"
-Cohesion: 0.13
-Nodes (15): texture2d_array, SceneShading, cloudShadow, emissive, extras, feedback, materials, minLod (+7 more)
+Cohesion: 0.11
+Nodes (18): MaterialTexture, t, texture2d, texture2d_array, SceneShading, cloudShadow, emissive, extras (+10 more)
 
-### Community 223 - "GraphCanvasModel"
-Cohesion: 0.06
-Nodes (40): AnyView, Gesture, Graph, Menu, NSHostingView, ObservableObject, Path, Box (+32 more)
+### Community 223 - "GraphCanvas"
+Cohesion: 0.14
+Nodes (24): Gesture, Graph, Menu, Path, Box, GraphCanvas, .body, GraphColors (+16 more)
 
-### Community 224 - "Images"
-Cohesion: 0.16
-Nodes (4): 6. Math, Modes, Images, SceneKind
+### Community 224 - "MatCanvasLayout"
+Cohesion: 0.21
+Nodes (9): Box, MatCanvasLayout, MaterialCanvasView, .body, MatNodeSearch, .body, CGPoint, CGRect (+1 more)
 
 ### Community 225 - "RenderThread"
 Cohesion: 0.20
 Nodes (4): Notification, RenderThread, Thread, Void
 
 ### Community 226 - "VFXCompiler"
-Cohesion: 0.19
+Cohesion: 0.17
 Nodes (14): .vfxSetup, Entry, building, failed, ready, Key, ParticleKernels, Setup (+6 more)
 
 ### Community 227 - "SettingsTableTests"
-Cohesion: 0.07
-Nodes (16): The pass, The pass after a feature, The report and the commit message, What stays fixed, What to look for, base, SkyMode, atmosphere (+8 more)
+Cohesion: 0.05
+Nodes (29): 2. Hot loops (BVH, MeshSimplifier, MeshClusterizer, VirtualGeometryBuilder, BlueNoise, FogNoise), 3. Parallelism, 4. CPU↔GPU data layout, 5. Preprocessing and caches, 6. CPU tools, CPU (Swift) practices for MetalRenderer, A/B protocol, Kernel variants (+21 more)
 
-### Community 228 - "SIMD4"
+### Community 228 - "GraphHostingView"
+Cohesion: 0.21
+Nodes (6): AnyView, NSHostingView, GraphHostingView, .acceptsFirstResponder, Any, NSEvent
+
+### Community 229 - "PipelineCache"
+Cohesion: 0.47
+Nodes (3): PipelineCache, .count, Value
+
+### Community 230 - "MatPinType"
 Cohesion: 0.09
-Nodes (21): GPUPhysicsShape, .frame, .worldToView, PhysicsCandidate, .middle, PhysicsManifold, PhysicsMath, PhysicsShapeKind (+13 more)
-
-### Community 229 - "Key"
-Cohesion: 0.48
-Nodes (4): Key, PipelineCache, .count, Value
-
-### Community 230 - "MatCanvasLayout"
-Cohesion: 0.06
-Nodes (40): Box, Checkerboard, .body, MatCanvasLayout, MatColors, MaterialCanvasView, .body, MatNodeSearch (+32 more)
+Nodes (25): MatFamily, adjust, advanced, blend, filter, graph, height, noise (+17 more)
 
 ### Community 231 - "VoxelLOD"
-Cohesion: 0.13
-Nodes (18): MTL4InstanceAccelerationStructureDescriptor, MTLAccelerationStructureUsage, MTLInstanceAccelerationStructureDescriptor, TLASUpdate, .descriptor, .descriptor4, Entry, Float (+10 more)
+Cohesion: 0.18
+Nodes (13): .megabytes, Entry, Float, MTLAccelerationStructure, MTLAccelerationStructureUsage, MTLBuffer, MTLCommandQueue, MTLDevice (+5 more)
 
 ### Community 232 - "MatAdjust.metal"
 Cohesion: 0.12
 Nodes (39): mat_blend(), mat_curve(), mat_gradientMap(), mat_grayscale(), mat_heightBlend(), mat_histogramScan(), mat_hsl(), mat_invert() (+31 more)
 
 ### Community 233 - ".meshes"
-Cohesion: 0.10
-Nodes (11): GLTFModel, .triangleCount, Kind, directional, point, spot, Light, Material (+3 more)
+Cohesion: 0.13
+Nodes (9): GLTFModel, .triangleCount, Light, Entry, File, PropLibrary, Float, URL (+1 more)
 
 ### Community 234 - "Metal4Frame"
 Cohesion: 0.04
-Nodes (57): CAMetalLayer, Liquids: handoff to the M4 Max (2026-10-08), M1 Max numbers (whole frame, `METALRENDERER_BENCH_SPLIT=0`), To do on the M4 Max, MTL4ArgumentTable, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandQueue (+49 more)
+Nodes (46): CAMetalLayer, MTL4ArgumentTable, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandQueue, MTL4Compiler, MTL4RenderCommandEncoder, MTL4UpdateSparseTextureMappingOperation (+38 more)
 
 ### Community 235 - "Scene"
-Cohesion: 0.03
-Nodes (48): GPUMaterial, GPUMaterialExtra, meshLights, .viewNote, .walkerStatus, CityLight, CurveMesh, DisplacedMesh (+40 more)
+Cohesion: 0.04
+Nodes (44): GPUMaterial, GPUMaterialExtra, meshLights, CityLight, DisplacedMesh, MatDisplaceArgs, .displacedMeshSet, .displacementSummary (+36 more)
 
 ### Community 236 - "Double"
-Cohesion: 0.10
-Nodes (17): Launch, Double, World, .anchorTile, .start, Block, City, Ground (+9 more)
+Cohesion: 0.14
+Nodes (16): Double, World, .anchorTile, .start, Block, City, Ground, Highway (+8 more)
 
-### Community 237 - "WorldPlace"
-Cohesion: 0.43
-Nodes (4): Float, SIMD2, WorldPlace, .anchor
+### Community 237 - ".origin"
+Cohesion: 0.24
+Nodes (5): Float, Float, SIMD2, WorldPlace, .anchor
 
-### Community 238 - "CameraTrack"
-Cohesion: 0.13
-Nodes (6): CameraTrack, .duration, Key, ShowcaseLook, Float, Void
+### Community 238 - "MatNodeView"
+Cohesion: 0.23
+Nodes (10): GraphPinDot, Checkerboard, .body, MatColors, MatNodeView, .body, .header, .headerColor (+2 more)
 
 ### Community 239 - "MaterialAssignments"
-Cohesion: 0.14
-Nodes (10): .sceneAssignments, .body, PickedMaterial, .body, MaterialAssignments, URL, Hasher64, Float (+2 more)
+Cohesion: 0.18
+Nodes (7): .sceneAssignments, .body, PickedMaterial, .body, MaterialAssignments, .url, URL
 
 ### Community 240 - "CurveEditor"
-Cohesion: 0.16
-Nodes (17): EnvironmentKey, CurveEditor, .canvas, .points, .presetTitle, EditorDrag, EditorDragKey, EnvironmentValues (+9 more)
+Cohesion: 0.15
+Nodes (18): EnvironmentKey, CurveEditor, .canvas, .points, .presetTitle, EditorDrag, EditorDragKey, EnvironmentValues (+10 more)
 
-### Community 241 - "Stage"
-Cohesion: 0.25
-Nodes (8): Stage, crypt, forge, neon, sanctum, studio, underwater, workshop
+### Community 241 - ".system"
+Cohesion: 0.21
+Nodes (7): ParticleCollider, VFXPlacement, Float, ParticleCollider, ParticleEmitter, UInt32, VFXLowering
 
 ### Community 242 - "PlantEditorPanel"
-Cohesion: 0.21
+Cohesion: 0.24
 Nodes (7): PlantEditorPanel, .isVisible, .wasVisible, Notification, NSPanel, NSWindow, UndoManager
 
 ### Community 243 - "Core"
@@ -1328,76 +1322,80 @@ Cohesion: 0.20
 Nodes (10): Core, .all, .stairPlan, Mode, backCore, centre, frontCore, none (+2 more)
 
 ### Community 244 - "MaterialGraph"
-Cohesion: 0.09
-Nodes (20): .template, MaterialBake, MTLDevice, ObjectIdentifier, Set, Void, MaterialGraph, Set (+12 more)
+Cohesion: 0.13
+Nodes (14): MaterialGraph, Set, MatBuilder, .graph, MaterialLibrary, .names, MatLayout, MaterialLibrary (+6 more)
 
-### Community 245 - "VFXCurveEditor"
-Cohesion: 0.24
-Nodes (10): CGPoint, CGSize, DragGesture, SIMD2, TimeInterval, VFXCurveEditor, .body, .range (+2 more)
+### Community 245 - "float3"
+Cohesion: 0.23
+Nodes (13): float3, float3x3, int3, thread, particleBasis(), particleBirth(), particleCollideScene(), particleCurl() (+5 more)
 
 ### Community 246 - "LoadingOverlay"
-Cohesion: 0.12
-Nodes (13): NSFont, NSPoint, NSView, LoadingOverlay, .isEnabled, Row, State, failed (+5 more)
+Cohesion: 0.10
+Nodes (16): NSFont, NSPoint, NSView, LoadingOverlay, .isEnabled, Model, heading, item (+8 more)
 
-### Community 247 - ".stages"
-Cohesion: 0.09
-Nodes (24): Lumen, LumenParams, LumenPipelines, LumenRadiosityParams, Float, MTLBuffer, MTLComputePipelineState, MTLDevice (+16 more)
+### Community 247 - "SDFNode"
+Cohesion: 0.15
+Nodes (13): SDFNode, k, kind, material, op, pad0, pad1, params (+5 more)
 
 ### Community 248 - "VFXOpKind"
 Cohesion: 0.03
-Nodes (67): Float, VFXBlockSpec, VFXFamily, attribute, curve, input, logic, math (+59 more)
+Nodes (78): CustomStringConvertible, Float, Void, VFXCodegen, VFXOpKind, abs, add, age (+70 more)
 
 ### Community 249 - "Slot"
-Cohesion: 0.10
-Nodes (19): Slot, accent, blind, dark, floor, frame, glass, interior (+11 more)
+Cohesion: 0.11
+Nodes (17): Slot, accent, blind, dark, floor, frame, glass, .isFill (+9 more)
 
 ### Community 250 - "MatCommon.metal"
 Cohesion: 0.12
 Nodes (31): mat_copy(), mat_packColor(), mat_packORM(), mat_thumbnail(), mat_uniform(), MatArgs, data, greyIn (+23 more)
 
-### Community 251 - "CharacterStore"
-Cohesion: 0.24
-Nodes (4): CharacterStore, .folder, Data, URL
+### Community 251 - "BuiltInCharacters"
+Cohesion: 0.12
+Nodes (10): BuiltInCharacters, .launch, CharacterStore, .folder, File, Data, Float, URL (+2 more)
 
-### Community 252 - ".build"
-Cohesion: 0.19
-Nodes (6): UInt32, UnsafeBufferPointer, MeshSDFBuilderTests, SplitMix, Float, UInt64
+### Community 252 - "BuildingStyle"
+Cohesion: 0.20
+Nodes (10): UInt64, BuildingStyle, .isOffice, RoofKind, flat, gabled, hipped, mansard (+2 more)
 
 ### Community 253 - "CharacterEditorPanel"
-Cohesion: 0.18
-Nodes (8): CharacterEditorPanel, .isVisible, .wasVisible, Notification, NSPanel, NSWindow, RendererController, UndoManager
+Cohesion: 0.19
+Nodes (8): NSObject, CharacterEditorPanel, .isVisible, .wasVisible, Notification, NSPanel, NSWindow, UndoManager
 
-### Community 254 - "Float"
-Cohesion: 0.15
-Nodes (11): Flora, Heavens, .adaptation, .light, .lightIsMoon, .stars, .sunElevation, Placement (+3 more)
+### Community 254 - "Heavens"
+Cohesion: 0.25
+Nodes (6): Heavens, .adaptation, .light, .lightIsMoon, .stars, .sunElevation
 
 ### Community 255 - "VoxelGrids"
-Cohesion: 0.18
-Nodes (16): FoliageVoxels, Grid, Piece, Plant, Float, UInt32, BoxData, MTLAccelerationStructure (+8 more)
+Cohesion: 0.12
+Nodes (18): FoliageVoxels, Grid, Piece, Plant, Float, UInt32, BoxData, MTLAccelerationStructure (+10 more)
 
 ### Community 256 - "MatDisplaceArgs"
 Cohesion: 0.11
 Nodes (16): metal_stdlib, matDisplace(), MatDisplaceArgs, amount, count, first, lod, members (+8 more)
 
-### Community 258 - "Terrain"
-Cohesion: 0.28
-Nodes (6): Float, SIMD2, UInt32, UInt64, Terrain, .cell
+### Community 257 - ".trees"
+Cohesion: 0.24
+Nodes (4): Flora, Placement, UInt32, UInt16
+
+### Community 258 - ".buildMireland"
+Cohesion: 0.15
+Nodes (12): Float, MeshGeometry, SIMD2, SplitMix64, UInt32, Float, SIMD2, UInt32 (+4 more)
 
 ### Community 259 - "VFXEditorPanel"
-Cohesion: 0.12
-Nodes (15): Next, Phase 2 (the editor window): done, at check-in 2, The user's choices, Traps found, VFX editor: handoff (branch claude/init-branch-94ae07, PR #54), Notification, NSWindow, UndoManager (+7 more)
+Cohesion: 0.15
+Nodes (11): NSWindowDelegate, Notification, NSWindow, UndoManager, VFXEditorPanel, .isVisible, .wasVisible, NSWindow (+3 more)
 
 ### Community 260 - "CharacterMorphs"
-Cohesion: 0.13
-Nodes (18): Float, Bump, CharacterMorphs, Coordinates, Part, foot, forearm, hand (+10 more)
+Cohesion: 0.09
+Nodes (27): Kind, furniture, glass, solid, stair, .middles, Float, Bump (+19 more)
 
-### Community 261 - ".init"
-Cohesion: 0.17
-Nodes (7): CharacterEditorHost, .key, RendererController, .characterStats, URL, Void, .workshopControls
+### Community 261 - "Layout"
+Cohesion: 0.18
+Nodes (11): Layout, card, cube, cylinder, lineup, mutate, plane, single (+3 more)
 
 ### Community 262 - "MatNoise.metal"
-Cohesion: 0.17
-Nodes (34): matQuintic(), matWrap(), int2, mat_anisotropicNoise(), mat_cells(), mat_fractalSum(), mat_grunge(), mat_perlinNoise() (+26 more)
+Cohesion: 0.16
+Nodes (36): matQuintic(), matWrap(), int2, mat_anisotropicNoise(), mat_cells(), mat_fibers(), mat_fractalSum(), mat_grunge() (+28 more)
 
 ### Community 263 - "ParticleCounts"
 Cohesion: 0.15
@@ -1407,20 +1405,20 @@ Nodes (13): atomic_uint, ParticleCounts, alive, dead, deadTop, emitBase, emitCou
 Cohesion: 0.15
 Nodes (13): SkyParams, cloudLayer, cloudShape, flags, glow, glowTop, ground, place (+5 more)
 
-### Community 265 - "VirtualBLAS"
-Cohesion: 0.14
-Nodes (20): Where things are, Built, CutInput, Entry, Float, MTLAccelerationStructure, MTLBuffer, MTLCommandQueue (+12 more)
+### Community 265 - "Habitat"
+Cohesion: 0.42
+Nodes (6): Habitat, Ramp, Float, SIMD2, TreePicker, .isEmpty
 
 ### Community 266 - "float4"
 Cohesion: 0.14
 Nodes (16): Material, albedo, emission, params, textures, MaterialExtra, surface, textures (+8 more)
 
-### Community 267 - "ShadersVFX.metal"
-Cohesion: 0.14
-Nodes (14): metal_raytracing, device, float2, float3, float4, uint, proceduralMaterial(), procLinear() (+6 more)
+### Community 267 - "Shaders.metal"
+Cohesion: 0.08
+Nodes (24): metal_raytracing, constant, device, float4, kernel, SCENE_ACCEL, uint, pickKernel() (+16 more)
 
-### Community 268 - "PlantSpecies.swift"
-Cohesion: 0.27
+### Community 268 - "Foliage.Phyllotaxis"
+Cohesion: 0.28
 Nodes (5): Foliage.Phyllotaxis, FoliageTextures.Kind, .all, Decoder, Encoder
 
 ### Community 269 - "PhysicsParams"
@@ -1437,47 +1435,47 @@ Nodes (3): MTLBuffer, MTLDevice, MTLTexture
 
 ### Community 272 - "Key"
 Cohesion: 0.04
-Nodes (52): Key, absolute, alphaCutoff, aoStrength, at, bits, bool, choice (+44 more)
+Nodes (50): Key, absolute, alphaCutoff, aoStrength, at, bits, bool, choice (+42 more)
 
 ### Community 273 - "Optional"
 Cohesion: 0.33
 Nodes (3): MTLCommandEncoder, Optional, .clipName
 
-### Community 274 - "SurfaceKind"
-Cohesion: 0.11
-Nodes (16): Float, MaterialDef, SurfaceKind, asphalt, brick, concrete, .hasRoughness, metalpanel (+8 more)
+### Community 274 - "RasterScene"
+Cohesion: 0.24
+Nodes (6): RasterScene, .megabytes, RasterTargets, MTLBuffer, MTLDevice, MTLTexture
 
-### Community 275 - "MatBlendMode"
-Cohesion: 0.11
-Nodes (18): MatBlendMode, add, colorBurn, colorDodge, copy, darken, difference, divide (+10 more)
+### Community 275 - "SwiftUI"
+Cohesion: 0.22
+Nodes (4): PressButton, .body, Void, SwiftUI
 
 ### Community 276 - "RasterVGParams"
 Cohesion: 0.11
 Nodes (18): float4, RasterMeshVertex, RasterVGParams, capacity, flags, frame, instanceCount, lodCam (+10 more)
 
-### Community 277 - "MatBits"
-Cohesion: 0.21
-Nodes (10): MatBits, b16, b32, b8, inherit, .title, .swiftSource, MatSwift (+2 more)
+### Community 277 - ".swiftSource"
+Cohesion: 0.42
+Nodes (4): .swiftSource, MatSwift, Float, MatParam
 
 ### Community 278 - "VFXEmitterInfo"
 Cohesion: 0.22
 Nodes (9): VFXEmitterInfo, attributes, hooks, pad0, pad1, pad2, params, program (+1 more)
 
-### Community 279 - "compositeKernel"
-Cohesion: 0.21
-Nodes (24): accumulateColorKernel(), accumulateKernel(), acesFilm(), agxFilm(), compositeKernel(), debugHashColor(), debugHeat(), geometryDebugKernel() (+16 more)
+### Community 279 - "flagOn"
+Cohesion: 0.20
+Nodes (25): accumulateColorKernel(), accumulateKernel(), acesFilm(), agxFilm(), compositeKernel(), debugHashColor(), debugHeat(), geometryDebugKernel() (+17 more)
 
-### Community 280 - "CityPlan"
-Cohesion: 0.09
-Nodes (25): To do on the M4 Max, Block, CityPlan, Edge, open, party, street, Lamp (+17 more)
+### Community 280 - "Clip"
+Cohesion: 0.25
+Nodes (7): Clip, graft, habitat, leaves, level, look, Clipboard
 
-### Community 281 - "Key"
-Cohesion: 0.18
-Nodes (11): CodingKey, Keys, hi, lo, Key, crown, linear, points (+3 more)
-
-### Community 282 - "LotRef"
+### Community 281 - "VFXParam"
 Cohesion: 0.05
-Nodes (44): Encodable, JSONEncoder, .currentOverride, .fingerprint, .launch, BuildingStore, .encoder, .folder (+36 more)
+Nodes (36): CodingKey, Keys, hi, lo, Key, crown, linear, points (+28 more)
+
+### Community 282 - "CityStyle"
+Cohesion: 0.07
+Nodes (25): .currentOverride, Draft, BuildingUse, apartments, house, offices, .title, warehouse (+17 more)
 
 ### Community 283 - "clusterWalk"
 Cohesion: 0.53
@@ -1501,7 +1499,7 @@ Nodes (4): VFXEditKind, code, rebuild, values
 
 ### Community 288 - "Renderer"
 Cohesion: 0.03
-Nodes (66): To do on the M4 Max, Phase 3 (preview tools, backdrops, gizmos): done, at check-in 3, 8. Pipelines and resources, SkyImage, Set, done, MTLCommandQueue, MTLDevice (+58 more)
+Nodes (78): To do on the M4 Max, Phase 3 (preview tools, backdrops, gizmos): done, at check-in 3, 8. Pipelines and resources, Error, LoadError, unreadable, SkyImage, Set (+70 more)
 
 ### Community 289 - "Tab"
 Cohesion: 0.40
@@ -1532,116 +1530,88 @@ Cohesion: 0.29
 Nodes (17): mat_blur(), mat_directionalBlur(), mat_directionalWarp(), mat_edgeDetect(), mat_mirror(), mat_slopeBlur(), mat_transform(), mat_warp() (+9 more)
 
 ### Community 296 - "ParticleStep"
-Cohesion: 0.08
-Nodes (33): float3, float3x3, int3, SCENE_ACCEL, thread, particleBasis(), particleBirth(), particleCollide() (+25 more)
+Cohesion: 0.11
+Nodes (20): SCENE_ACCEL, particleCollide(), ParticleCollider, a, b, particleCollideShape(), ParticleStep, capacity (+12 more)
 
-### Community 297 - ".d"
-Cohesion: 0.18
-Nodes (7): Float16, simd_double3x3, SDFVolume, .hi, Float, Float, SDFShape
+### Community 297 - ".editMaterials"
+Cohesion: 0.25
+Nodes (6): Done (commits on the branch), Material Designer: handoff (branch claude/graphify-update-746c89), Not verified / not done, The user's choices, Traps found, Verified (M1 Max, Metal 3)
 
-### Community 298 - "Format"
-Cohesion: 0.40
-Nodes (5): Format, exr, png16, png8, .suffix
+### Community 298 - "Build"
+Cohesion: 0.32
+Nodes (5): Build, MTL4ComputeCommandEncoder, MTLAccelerationStructureCommandEncoder, MTLAllocation, Void
 
 ### Community 299 - "MatHeight.metal"
 Cohesion: 0.31
 Nodes (10): mat_ambientOcclusion(), mat_curvature(), mat_normal(), matCurvatureFrom(), matNormalFromSlope(), float2, float4, kernel (+2 more)
 
-### Community 301 - "GPUMesh"
-Cohesion: 0.21
-Nodes (5): GPUMesh, UInt64, RasterSceneTests, Float, MeshGeometry
+### Community 300 - "LightKind"
+Cohesion: 0.25
+Nodes (8): LightKind, .isSun, mesh, rect, sphere, spot, sun, tube
+
+### Community 301 - "RasterSceneTests"
+Cohesion: 0.31
+Nodes (3): RasterSceneTests, Float, MeshGeometry
 
 ### Community 302 - "MaterialEditorPanel"
-Cohesion: 0.23
-Nodes (7): NSWindowDelegate, MaterialEditorPanel, .isVisible, .wasVisible, Notification, NSWindow, UndoManager
+Cohesion: 0.25
+Nodes (6): MaterialEditorPanel, .isVisible, .wasVisible, Notification, NSWindow, UndoManager
+
+### Community 303 - "Clip"
+Cohesion: 0.29
+Nodes (7): Clip, facade, furnish, look, massing, plan, rooms
 
 ### Community 304 - ".simplify"
-Cohesion: 0.09
-Nodes (18): BuiltInCharacters, Float, Void, mirror, MeshSimplifier, Quadric, Float, SIMD2 (+10 more)
+Cohesion: 0.10
+Nodes (15): mirror, MeshSimplifier, Quadric, Float, SIMD2, UInt32, UnsafeBufferPointer, Sides (+7 more)
 
 ### Community 305 - "Hit"
 Cohesion: 0.18
 Nodes (11): intersection_type, committedCurve(), Hit, barycentrics, cluster, hit, instance, part (+3 more)
 
-### Community 306 - "Stored"
-Cohesion: 0.21
-Nodes (7): Hasher, Stored, .array, .count, mapped, T, UnsafeBufferPointer
+### Community 307 - "GraphNodeSearch"
+Cohesion: 0.70
+Nodes (5): GraphNodeSearch, .body, .shown, Item, Void
 
-### Community 307 - "MeshData"
-Cohesion: 0.15
-Nodes (13): InstanceBlockRef, records, MeshData, block, cutout, firstIndex, indexCount, lod (+5 more)
-
-### Community 308 - "pickKernel"
-Cohesion: 0.18
-Nodes (10): constant, device, float4, kernel, SCENE_ACCEL, uint, pickKernel(), PickRay (+2 more)
+### Community 308 - "Backend"
+Cohesion: 0.40
+Nodes (5): Backend, auto, cpu, gpu, .title
 
 ### Community 309 - ".building"
 Cohesion: 0.40
 Nodes (4): Float, SIMD2, Walker, WalkerTests
 
-### Community 310 - "PropLibrary"
-Cohesion: 0.44
-Nodes (5): Entry, File, PropLibrary, Float, URL
-
 ### Community 311 - "RasterInstance"
 Cohesion: 0.20
 Nodes (10): float4, RasterInstance, corners, indices, w, x, y, RasterMesh (+2 more)
 
-### Community 312 - "Host"
-Cohesion: 0.33
-Nodes (3): Host, Float, Void
+### Community 312 - "Trigger"
+Cohesion: 0.50
+Nodes (4): Trigger, collision, condition, death
 
-### Community 313 - "PrimitiveWork4"
+### Community 314 - "TraversalStats"
+Cohesion: 0.11
+Nodes (12): DebugInfo, Float, VirtualGeometry, blas, clusters, off, .triangles, UInt64 (+4 more)
+
+### Community 315 - "Shape"
 Cohesion: 0.25
-Nodes (6): Particles: handoff (branch claude/init-branch-94ae07), To do on the M4 Max, Traps found, PrimitiveWork4, MTL4ComputeCommandEncoder, MTLAllocation
-
-### Community 314 - "DebugInfo"
-Cohesion: 0.25
-Nodes (7): DebugInfo, Float, VirtualGeometry, blas, clusters, off, .triangles
-
-### Community 315 - "ParticleEmitter"
-Cohesion: 0.10
-Nodes (21): Flags, Orientation, axis, .code, rayFacing, velocity, world, ParticleEmitter (+13 more)
-
-### Community 316 - "Types.metal"
-Cohesion: 0.25
-Nodes (7): MaterialTexture, t, texture2d, RegirParams, RegirReservoir, VSMScene, windOn()
+Nodes (8): Shape, box, .code, disc, point, .radius, ring, sphere
 
 ### Community 317 - "WallGrid"
-Cohesion: 0.29
-Nodes (7): WallGrid, .alongX, .hi, .line, .lines, .lo, .middles
+Cohesion: 0.33
+Nodes (6): WallGrid, .alongX, .hi, .line, .lines, .lo
 
 ### Community 318 - "ProcSlot"
 Cohesion: 0.25
-Nodes (8): ProcSlot, baseColor, emissive, height, normal, opacity, orm, .srgb
+Nodes (7): ProcSlot, baseColor, emissive, height, normal, opacity, orm
 
-### Community 319 - "Host"
-Cohesion: 0.43
-Nodes (3): Host, Float, Void
-
-### Community 320 - "Kind"
-Cohesion: 0.33
-Nodes (6): Kind, furniture, glass, solid, stair, UInt8
-
-### Community 321 - "Tab"
-Cohesion: 0.29
-Nodes (7): Tab, ages, boughs, habitat, leaves, look, stems
+### Community 319 - "BuildingEditorTests"
+Cohesion: 0.16
+Nodes (7): BuildingEditorTests, Host, Float, SceneKind, UInt64, URL, Void
 
 ### Community 323 - "XCTestCase"
-Cohesion: 0.31
-Nodes (4): PipelineCacheTests, UInt32, VGStreamerTests, XCTestCase
-
-### Community 324 - "Particles"
-Cohesion: 0.33
-Nodes (6): Particles, bubbles, dust, embers, none, runes
-
-### Community 325 - "Kind"
-Cohesion: 0.40
-Nodes (5): Kind, beard, brows, lashes, scalp
-
-### Community 326 - "ParticleDistortParams"
-Cohesion: 0.40
-Nodes (5): ParticleDistortParams, count, emitters, first, time
+Cohesion: 0.18
+Nodes (5): PipelineCacheTests, UInt32, StressSceneTests, VGStreamerTests, XCTestCase
 
 ### Community 327 - "VGRasterInstance"
 Cohesion: 0.40
@@ -1652,24 +1622,24 @@ Cohesion: 0.40
 Nodes (5): EmissiveTriangle, e1, e2, uv12, v0
 
 ## Knowledge Gaps
-- **2490 isolated node(s):** `PackageDescription`, `.isEmpty`, `.centroid`, `.area`, `built` (+2485 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 3297 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **2494 isolated node(s):** `PackageDescription`, `.isEmpty`, `.centroid`, `.area`, `built` (+2489 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 3302 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **18 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Int` connect `Int` to `Float`, `GLTFLoader`, `Codable`, `CharacterEditorModel`, `Foliage`, `PlantEditorModel`, `LayerSurface`, `MuscleTests`, `translate`, `LightTable`, `float4x4`, `VGStreamer`, `SkinnedCharacter`, `Kernel`, `SettingsPanel`, `FramePlan`, `CharacterKit`, `RadianceCascades`, `GPUTypes.swift`, `GeneratedCache`, `FaceSculpt`, `SettingsTable.swift`, `VSMTargets`, `SceneBuffers`, `BuildingEditorModel`, `LumenScene`, `Crowd`, `Float`, `SceneKind`, `PhysicsWorld`, `SIMD3`, `MatPlan`, `View`, `Map`, `Lift`, `Int32`, `Metal3Pass`, `RendererController`, `TextureStreamer`, `RasterClusters`, `.compile`, `LoadActivity`, `VFXEditorModel`, `Where things are`, `.write`, `.sources`, `ParticleSystem`, `Upscaler`, `FluidSystem`, `PhysicsTests`, `Species`, `Building`, `SoftModel`, `Bool`, `CaseIterable`, `SettingsTable`, `SkinTextures`, `EditorGroup`, `EnvVariable`, `VFXEffect`, `WorldTile`, `BuildingAssembler`, `Interior`, `AABB`, `MeshSDF`, `Flora`, `String`, `BuildingPlan`, `.buildWorld`, `BVHBuilder`, `CharacterBase`, `PlantCatalog`, `PlantEditorTests`, `Benchmark`, `RoomType`, `ParticleTests`, `MatFnKind`, `.write`, `ParticleTextures`, `QuartzCore`, `MeshBuilder`, `Pipelines`, `ParticlesGPU`, `Curve`, `MatNode`, `Furnisher`, `FloorPlan`, `DebugPanel`, `VirtualMesh`, `.cross`, `VFXTests`, `BuildingStyleDef`, `GPUProfiler`, `FloorPlanView`, `PlantParam`, `Renderer3D`, `FleshFigure`, `Config`, `CGFloat`, `.node`, `Role`, `ColliderGrid`, `PlantTracing`, `.addHair`, `Camera`, `VFXGizmos`, `SDFShape`, `RagdollTests`, `FurnitureItem`, `LumenGlobalSDF`, `HairTests`, `CharacterParam`, `VFXInterpreter`, `Instance`, `FBXFile`, `Images`, `SettingsTableTests`, `SIMD4`, `Key`, `MatCanvasLayout`, `VoxelLOD`, `.meshes`, `Metal4Frame`, `Scene`, `Double`, `WorldPlace`, `MaterialAssignments`, `CurveEditor`, `MaterialGraph`, `VFXCurveEditor`, `LoadingOverlay`, `.stages`, `Slot`, `.build`, `Float`, `StressSceneTests`, `Terrain`, `CharacterMorphs`, `.init`, `VirtualBLAS`, `Key`, `SurfaceKind`, `CityPlan`, `LotRef`, `Renderer`, `.d`, `GPUMesh`, `FoliageRuntimeTests`, `.simplify`, `Stored`, `.building`, `PropLibrary`, `Host`, `DebugInfo`, `ParticleEmitter`, `ProcSlot`, `XCTestCase`, `Kind`?**
-  _High betweenness centrality (0.256) - this node is a cross-community bridge._
-- **Why does `String` connect `String` to `Float`, `GLTFLoader`, `Codable`, `CharacterEditorModel`, `PlantEditorModel`, `LayerSurface`, `MatOpKind`, `translate`, `VFXBlockKind`, `VGStreamer`, `SkinnedCharacter`, `Kernel`, `SettingsPanel`, `FramePlan`, `CharacterKit`, `GeneratedCache`, `FaceSculpt`, `SettingsTable.swift`, `SceneBuffers`, `BuildingEditorModel`, `MaterialEditorModel`, `Float`, `SceneKind`, `SIMD3`, `MatPlan`, `View`, `Map`, `Lift`, `RendererController`, `TextureStreamer`, `RasterClusters`, `.compile`, `LoadActivity`, `VFXEditorModel`, `Where things are`, `Capabilities`, `.write`, `CharacterDNA`, `ParticleSystem`, `Upscaler`, `FluidSystem`, `Species`, `Bool`, `CaseIterable`, `SettingsTable`, `SkinTextures`, `EditorGroup`, `EnvVariable`, `Int`, `VFXEffect`, `WorldTile`, `AABB`, `Flora`, `BuildingPlan`, `.buildWorld`, `BVHBuilder`, `PlantCatalog`, `PlantEditorTests`, `Kind`, `Benchmark`, `RoomType`, `ParticleTests`, `MatFnKind`, `.load`, `Pipelines`, `ParticlesGPU`, `Curve`, `MatNode`, `FloorPlan`, `DebugPanel`, `MaterialStore`, `VirtualMesh`, `.add`, `VFXTests`, `BuildingStyleDef`, `GPUProfiler`, `FloorPlanView`, `PlantParam`, `Renderer3D`, `FleshFigure`, `Config`, `CGFloat`, `.node`, `VFXGizmos`, `.workshop`, `KernelVariantsTests`, `CharacterParam`, `Instance`, `.load`, `FBXFile`, `GraphCanvasModel`, `Images`, `VFXCompiler`, `SettingsTableTests`, `MatCanvasLayout`, `VoxelLOD`, `.meshes`, `Metal4Frame`, `Scene`, `Double`, `CameraTrack`, `MaterialAssignments`, `CurveEditor`, `MaterialGraph`, `VFXCurveEditor`, `LoadingOverlay`, `VFXOpKind`, `CharacterStore`, `VoxelGrids`, `CharacterMorphs`, `.init`, `VirtualBLAS`, `Key`, `SurfaceKind`, `MatBlendMode`, `MatBits`, `Key`, `LotRef`, `Kind`, `Renderer`, `Tab`, `VFXCodegen.swift`, `Format`, `.simplify`, `Stored`, `PropLibrary`, `Host`, `DebugInfo`, `ParticleEmitter`, `Tab`?**
-  _High betweenness centrality (0.236) - this node is a cross-community bridge._
-- **Why does `SIMD3` connect `SIMD3` to `Float`, `GLTFLoader`, `Codable`, `Foliage`, `MuscleTests`, `translate`, `LightTable`, `float4x4`, `VGStreamer`, `SkinnedCharacter`, `CharacterKit`, `GPUTypes.swift`, `GeneratedCache`, `FaceSculpt`, `SettingsTable.swift`, `VSMTargets`, `LumenScene`, `Crowd`, `Float`, `PhysicsWorld`, `View`, `Lift`, `Int32`, `RendererController`, `RasterClusters`, `VFXEditorModel`, `Where things are`, `.write`, `.sources`, `ParticleSystem`, `FluidSystem`, `PhysicsTests`, `SoftModel`, `SkinTextures`, `VFXEffect`, `WorldTile`, `BuildingAssembler`, `Interior`, `AABB`, `MeshSDF`, `Flora`, `String`, `BuildingPlan`, `.buildWorld`, `BVHBuilder`, `CharacterBase`, `ParticleTests`, `.buildings`, `ParticleTextures`, `MeshBuilder`, `Furnisher`, `VirtualMesh`, `.cross`, `.add`, `BuildingStyleDef`, `Renderer3D`, `FleshFigure`, `Config`, `.node`, `ColliderGrid`, `PlantTracing`, `.addHair`, `Camera`, `VFXGizmos`, `SDFShape`, `.workshop`, `RagdollTests`, `FurnitureItem`, `LumenGlobalSDF`, `HairTests`, `VFXInterpreter`, `Instance`, `.load`, `FBXFile`, `SIMD4`, `VoxelLOD`, `.meshes`, `Scene`, `Double`, `WorldPlace`, `CameraTrack`, `CurveEditor`, `MaterialGraph`, `VFXCurveEditor`, `.stages`, `.build`, `Float`, `VoxelGrids`, `Terrain`, `CharacterMorphs`, `VirtualBLAS`, `CityPlan`, `Renderer`, `.d`, `HairBSDF`, `GPUMesh`, `FoliageRuntimeTests`, `.simplify`, `.building`, `PropLibrary`, `Host`, `ParticleEmitter`, `Host`?**
-  _High betweenness centrality (0.138) - this node is a cross-community bridge._
-- **Are the 77 inferred relationships involving `SIMD3` (e.g. with `.body` and `.ceilingLights()`) actually correct?**
-  _`SIMD3` has 77 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 44 inferred relationships involving `Scene` (e.g. with `Scene kinds: `SceneKind` in `Settings.swift`` and `.matEdit()`) actually correct?**
-  _`Scene` has 44 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `Int` connect `Int` to `AABB`, `GLTFLoader`, `Codable`, `CharacterEditorModel`, `Foliage`, `PlantEditorModel`, `.edit`, `translate`, `LightTable`, `float4x4`, `VirtualGeometry`, `SkinnedCharacter`, `Kernel`, `SettingsPanel`, `FramePlan`, `CharacterKit`, `RadianceCascades`, `GeneratedCache`, `FaceSculpt`, `SettingsTable.swift`, `VSMTargets`, `SceneBuffers`, `BuildingEditorModel`, `LumenScene`, `Crowd`, `Float`, `SceneKind`, `SIMD4`, `SIMD3`, `MatPlan`, `VFXCurve`, `VirtualTracing`, `CityPlan`, `FluidSystem`, `RenderPass`, `RendererController`, `VirtualBLAS`, `.compile`, `LoadActivity`, `VFXEditorModel`, `Where things are`, `.city`, `.write`, `SurfaceKind`, `ParticleSystem`, `Upscaler`, `FluidTests`, `PhysicsWorld`, `Species`, `Building`, `SoftModel`, `Bool`, `CaseIterable`, `EnvVariable`, `SkinTextures`, `View`, `.buildCharacterWorkshop`, `.writeFrameData`, `VFXEffect`, `WorldTile`, `BuildingAssembler`, `Interior`, `.icosphere`, `FoliageTextures`, `Flora`, `String`, `BuildingPlan`, `.buildWorld`, `.build`, `CharacterBase`, `PlantCatalog`, `PlantEditorTests`, `RoomType`, `ParticleTests`, `MatFunction`, `BlueNoise`, `MatCompiler`, `RenderView`, `ParticleTextures`, `AppKit`, `MeshBuilder`, `Pipelines`, `ParticlesGPU`, `Curve`, `MatNode`, `Furnisher`, `FloorPlan`, `DebugPanel`, `.build`, `dot`, `VGStreamer`, `VFXTests`, `BuildingStyleDef`, `GPUProfiler`, `FloorPlanView`, `PlantParam`, `Renderer3D`, `FleshFigure`, `Benchmark`, `SpeciesDef`, `Role`, `ColliderGrid`, `PlantTracing`, `.addHair`, `VFXGizmos`, `SDFShape`, `.step`, `FurnitureItem`, `Int32`, `HairTests`, `CharacterEditorView`, `VFXInterpreter`, `Instance`, `FBXFile`, `SettingsTableTests`, `PipelineCache`, `MatPinType`, `VoxelLOD`, `.meshes`, `Metal4Frame`, `Scene`, `Double`, `.origin`, `MaterialAssignments`, `CurveEditor`, `.system`, `MaterialGraph`, `LoadingOverlay`, `VFXOpKind`, `Slot`, `VoxelGrids`, `.trees`, `.buildMireland`, `CharacterMorphs`, `Layout`, `Key`, `RasterScene`, `VFXParam`, `CityStyle`, `Renderer`, `Build`, `LightKind`, `RasterSceneTests`, `.simplify`, `Backend`, `.building`, `.init`, `TraversalStats`, `ProcSlot`, `BuildingEditorTests`, `XCTestCase`?**
+  _High betweenness centrality (0.291) - this node is a cross-community bridge._
+- **Why does `String` connect `String` to `AABB`, `GLTFLoader`, `Codable`, `CharacterEditorModel`, `PlantEditorModel`, `MatFnKind`, `MatOpKind`, `.edit`, `BuildingStore`, `translate`, `VFXBlockKind`, `VirtualGeometry`, `SkinnedCharacter`, `Kernel`, `SettingsPanel`, `FramePlan`, `CharacterKit`, `GeneratedCache`, `FaceSculpt`, `SettingsTable.swift`, `SceneBuffers`, `BuildingEditorModel`, `MaterialEditorModel`, `Float`, `SceneKind`, `SIMD3`, `MatPlan`, `VFXCurve`, `VirtualTracing`, `CityPlan`, `RendererController`, `Int`, `VirtualBLAS`, `.compile`, `LoadActivity`, `VFXEditorModel`, `Where things are`, `.city`, `Capabilities`, `.write`, `CodingKeys`, `SurfaceKind`, `ParticleSystem`, `Upscaler`, `FluidTests`, `Species`, `Bool`, `CaseIterable`, `EnvVariable`, `SkinTextures`, `View`, `.buildCharacterWorkshop`, `VFXEffect`, `WorldTile`, `FoliageTextures`, `Flora`, `BuildingPlan`, `.buildWorld`, `.build`, `CharacterBase`, `PlantCatalog`, `PlantEditorTests`, `Kind`, `.look`, `RoomType`, `ParticleTests`, `MatFunction`, `MatCompiler`, `RenderView`, `.load`, `Pipelines`, `ParticlesGPU`, `Curve`, `MatNode`, `FloorPlan`, `DebugPanel`, `MaterialStore`, `.build`, `VGStreamer`, `.add`, `VFXTests`, `BuildingStyleDef`, `GPUProfiler`, `FloorPlanView`, `PlantParam`, `Renderer3D`, `FleshFigure`, `Benchmark`, `CGFloat`, `SpeciesDef`, `GraphCanvasModel`, `VFXGizmos`, `.workshop`, `Map`, `CharacterEditorView`, `Instance`, `.load`, `FBXFile`, `GraphCanvas`, `MatCanvasLayout`, `VFXCompiler`, `SettingsTableTests`, `MatPinType`, `.meshes`, `Metal4Frame`, `Scene`, `Double`, `.origin`, `MatNodeView`, `MaterialAssignments`, `CurveEditor`, `.system`, `MaterialGraph`, `LoadingOverlay`, `VFXOpKind`, `BuiltInCharacters`, `VoxelGrids`, `.buildMireland`, `CharacterMorphs`, `Layout`, `Key`, `SwiftUI`, `.swiftSource`, `Clip`, `VFXParam`, `CityStyle`, `Kind`, `Renderer`, `Tab`, `VFXCodegen.swift`, `Clip`, `.simplify`, `Hasher`, `GraphNodeSearch`, `Backend`, `Launch`, `TraversalStats`?**
+  _High betweenness centrality (0.249) - this node is a cross-community bridge._
+- **Why does `Bool` connect `Bool` to `AABB`, `GLTFLoader`, `Codable`, `CharacterEditorModel`, `Foliage`, `PlantEditorModel`, `.edit`, `translate`, `VFXBlockKind`, `float4x4`, `VirtualGeometry`, `SkinnedCharacter`, `SettingsPanel`, `FramePlan`, `CharacterKit`, `FaceSculpt`, `SettingsTable.swift`, `VSMTargets`, `SceneBuffers`, `BuildingEditorModel`, `LumenScene`, `AppDelegate`, `Crowd`, `MaterialEditorModel`, `Float`, `SceneKind`, `SIMD4`, `SIMD3`, `MatPlan`, `VFXCurve`, `VirtualTracing`, `CityPlan`, `FluidSystem`, `RendererController`, `Int`, `VirtualBLAS`, `.compile`, `LoadActivity`, `VFXEditorModel`, `Where things are`, `.city`, `.write`, `SurfaceKind`, `ParticleSystem`, `Upscaler`, `PhysicsWorld`, `Species`, `Building`, `SoftModel`, `EnvVariable`, `SkinTextures`, `View`, `.buildCharacterWorkshop`, `.writeFrameData`, `VFXEffect`, `WorldTile`, `BuildingAssembler`, `Interior`, `FoliageTextures`, `Flora`, `String`, `BuildingPlan`, `.buildWorld`, `.build`, `CharacterBase`, `PlantCatalog`, `RoomType`, `MatFunction`, `RenderView`, `ParticleTextures`, `.load`, `MeshBuilder`, `Pipelines`, `ParticlesGPU`, `Curve`, `MatNode`, `Furnisher`, `FloorPlan`, `DebugPanel`, `.build`, `dot`, `VGStreamer`, `BuildingStyleDef`, `GPUProfiler`, `PlantParam`, `Renderer3D`, `FleshFigure`, `Benchmark`, `CGFloat`, `BuildingEditorPanel`, `ColliderGrid`, `PlantTracing`, `.addHair`, `GraphCanvasModel`, `VFXGizmos`, `SDFShape`, `.workshop`, `.step`, `Int32`, `HairTests`, `CharacterEditorView`, `VFXInterpreter`, `Instance`, `.load`, `FBXFile`, `GraphCanvas`, `MatCanvasLayout`, `RenderThread`, `VFXCompiler`, `SettingsTableTests`, `GraphHostingView`, `MatPinType`, `VoxelLOD`, `Metal4Frame`, `Scene`, `Double`, `.origin`, `MatNodeView`, `PlantEditorPanel`, `Core`, `LoadingOverlay`, `VFXOpKind`, `Slot`, `BuildingStyle`, `CharacterEditorPanel`, `Heavens`, `VoxelGrids`, `VFXEditorPanel`, `Habitat`, `.capture`, `Key`, `RasterScene`, `SwiftUI`, `Clip`, `VFXParam`, `CityStyle`, `Renderer`, `LightKind`, `MaterialEditorPanel`, `.simplify`, `GraphNodeSearch`, `TraversalStats`, `Shape`, `WallGrid`, `ProcSlot`, `XCTestCase`, `MatPlan.swift`?**
+  _High betweenness centrality (0.130) - this node is a cross-community bridge._
+- **Are the 78 inferred relationships involving `SIMD3` (e.g. with `.body` and `.ceilingLights()`) actually correct?**
+  _`SIMD3` has 78 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 45 inferred relationships involving `Scene` (e.g. with `Scene kinds: `SceneKind` in `Settings.swift`` and `.matEdit()`) actually correct?**
+  _`Scene` has 45 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `PackageDescription`, `.isEmpty`, `.centroid` to the rest of the system?**
-  _2490 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `Float` be split into smaller, more focused modules?**
-  _Cohesion score 0.06448087431693988 - nodes in this community are weakly interconnected._
+  _2494 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `AABB` be split into smaller, more focused modules?**
+  _Cohesion score 0.05063291139240506 - nodes in this community are weakly interconnected._

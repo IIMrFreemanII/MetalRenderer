@@ -1,7 +1,8 @@
 // The patterns (MatNodes: Patterns): shapes, gradients, checkers, bricks, waves and the tile sampler.
 
-// A shape at r (-1...1 its extent): square, disc, polygon, star, bell, cone, pyramid, paraboloid, hemisphere, ring;
-// `soft` the edge's width in the same units.
+// A shape at r (-1...1 its extent): square, disc, polygon, star, bell, cone, pyramid, paraboloid, hemisphere, ring,
+// leaf (pointed at both ends along Y, domed, a groove down its midrib), blade (a grass blade from its root at the
+// bottom, tapering to a tip bent to the right, rounded across); `soft` the edge's width in the same units.
 inline float matShape(int kind, float2 r, int sides, float soft) {
     soft = max(soft, 1e-4);
     float n = float(max(sides, 3)), sector = MAT_TAU / n;
@@ -24,6 +25,20 @@ inline float matShape(int kind, float2 r, int sides, float soft) {
         case 6: return saturate(1.0 - max(abs(r.x), abs(r.y)));
         case 7: return saturate(1.0 - dot(r, r));
         case 8: return sqrt(saturate(1.0 - dot(r, r)));
+        case 10: {
+            float hw = 0.42 * pow(saturate(cos(r.y * 1.5707963)), 0.75) * (1.0 - 0.15 * r.y);
+            if (hw <= 1e-4) return 0.0;
+            float a = abs(r.x) / hw;
+            float edge = 1.0 - smoothstep(1.0 - soft / hw, 1.0, a);
+            return edge * sqrt(saturate(1.0 - a * a)) * (1.0 - 0.35 * exp(-r.x * r.x / 0.0012)) * (1.0 - smoothstep(0.92, 1.0, abs(r.y)));
+        }
+        case 11: {
+            float h = saturate((r.y + 1.0) * 0.5);                  // 0 at the root, 1 at the tip
+            float x0 = 0.35 * h * h, hw = 0.13 * pow(1.0 - h, 0.6) + 0.004;
+            float a = abs(r.x - x0) / hw;
+            float edge = 1.0 - smoothstep(1.0 - soft / hw, 1.0, a);
+            return r.y < -1.0 || r.y > 1.0 ? 0.0 : edge * sqrt(saturate(1.0 - a * a));
+        }
         default: return 1.0 - smoothstep(0.15 - soft, 0.15, abs(length(r) - 0.8));
     }
 }

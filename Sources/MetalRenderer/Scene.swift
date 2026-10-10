@@ -364,6 +364,9 @@ final class Scene {
     /// displacement had to leave out or cap (the Material Designer's status).
     var displacedMaterials: Set<Int> = []
     var displacementNotes: [String] = []
+    /// Procedural materials a scene keeps undisplaced (their parallax instead), so its triangles go where relief shows:
+    /// the swamp's ground, its flat patches and its far trees, leaving them to its near gnarly trunks.
+    var undisplacedMaterials: Set<Int> = []
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
@@ -531,10 +534,12 @@ final class Scene {
         case .buildings: buildBuildingWorkshop()
         case .characters: buildCharacterWorkshop()
         case .materials: buildMaterialWorkshop()
+        case .mireland: buildMireland()
         }
         applyMaterialAssignments()
         buildProceduralPrograms()
         displaceProcedural()
+        traceHoleShadows()
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
         for extra in settings.extraModels {
@@ -1184,6 +1189,15 @@ final class Scene {
     func setDisplacedMesh(_ i: Int, _ mesh: Int) {
         instances[i].mesh = mesh
         if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
+    /// The instances a procedural material cuts holes in (the raster leaves them to the rays): their shadows traced too
+    /// (the virtual shadow maps are drawn by the raster, which would leave them out).
+    func traceHoleShadows() {
+        guard groups.isEmpty, procedural.contains(where: { $0.channels.contains(.opacity) }) else { return }
+        for i in instances.indices where instances[i].isGeometry {
+            if let e = materialExtras[instances[i].material], e.textures.y != .max { instances[i].mask |= Scene.maskShadowTraced }
+        }
     }
 
     /// Mesh `m`'s bounds grown by `d` every way (where its displaced vertices may go).

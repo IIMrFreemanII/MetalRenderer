@@ -445,7 +445,7 @@ enum SettingsTable {
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
-                .env(.scene, "seed").when { $0.scene.kind.hasPlants },
+                .env(.scene, "seed").when { $0.scene.kind.hasPlants || $0.scene.kind == .mireland },
             S.value(\.scene.plants.species).env(.scene, "species"),
             S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
             S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),

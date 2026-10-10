@@ -37,6 +37,15 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
   `Renderer.encodeDisplacement` (before the TLAS: kernel, then `DisplacedBuild` rebuilds those BLAS in place, every
   slot's TLAS rebuilt); raster treats them as deforming; `editMaterials` makes the scene again for on/off, another
   detail, or an amount past the room. The embedded preview displaces on the CPU from a <=256 px readback.
+- P11–P13 Mireland (the user asked for the materials of the Substance collection "Welcome to Mireland - Sherif Dawoud";
+  chose: our own look-alike graphs, opacity cut-outs with a workshop "card" layout, plus a swamp scene). Shape kinds
+  leaf and blade, a Fibers node; `MaterialLibrary+Mireland.swift` (11 graphs; Grass Blades and Plant are Code nodes:
+  in a Code node `p` is the parameters, `seed` a float); `SceneKind.mireland` (`Scene+Mireland.swift`: terrain with
+  UVs in metres, water quad, ragged patches and decals following the terrain, tube trees, crossed cards, fog preset +
+  mist volume; `undisplacedMaterials` keeps the 4M displacement budget for the near gnarly trunks);
+  `Scene.traceHoleShadows` (procedural cut-outs' shadows traced: the VSM raster skips them). Histogram Scan's
+  position is the share kept (threshold = 1 - position). `MATERIAL_STATS=1` with testMirelandStartersBake prints
+  every node's mean and max.
 
 ## Verified (M1 Max, Metal 3)
 

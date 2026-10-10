@@ -1806,8 +1806,9 @@ output nodes that name the renderer's channels (base colour, normal, roughness, 
 opacity, emissive).
 * **Nodes** (`MatNodes.swift`, their kernels in `MaterialShaders/`):
   * noises: white, value, Perlin, fractal sum (fbm, ridged, turbulence, billow), cells (Worley: F1, F2, borders, a grey
-    a cell, crystal), anisotropic, scratches, grunge; every one tiles;
-  * patterns: shapes, gradients, checker, bricks (height and a random grey a brick), waves, tile sampler;
+    a cell, crystal), anisotropic, scratches, grunge, fibers (bent strands: straw, grass, bark fibre, twigs); every one
+    tiles;
+  * patterns: shapes (with a leaf and a grass blade), gradients, checker, bricks (height and a random grey a brick), waves, tile sampler;
   * adjustments: levels, curve, gradient map, HSL, invert, grayscale, histogram scan, posterize, RGBA split and merge;
   * blending: 16 blend modes with opacity and a mask, height blend;
   * filters: transform, mirror, warp, directional warp, blur, directional blur, slope blur, edge detect;
@@ -1848,7 +1849,8 @@ opacity, emissive).
   displaced: plants, SDF shapes, deforming or streamed meshes, meshes of several materials, the open world (they keep
   parallax). Cobblestone, Red Bricks, Bark and Moss and Sci-fi Panels displace.
 * **The material workshop** (`METALRENDERER_SCENE=materials`, `Scene+Materials.swift`): the graph on a sphere, a cube, a
-  cylinder and a tile, in a studio, outdoors or in the dark, path traced (`mgraph=`, `mlayout=`, `mbackdrop=`).
+  cylinder and a tile, or on a standing card and a tile on the ground (a cut-out: a plant, a decal), in a studio,
+  outdoors or in the dark, path traced (`mgraph=`, `mlayout=`, `mbackdrop=`).
 * **Click-to-pick** (Pick, then a click in the view; `Shaders/Pick.metal`): the material under the click, which Assign
   gives the shown graph. Assignments are per scene (its kind, and its seed or model), saved in
   `Assets/Materials/assignments.json`; the scene is made again with that material procedural (a mesh without UVs gets
@@ -1859,7 +1861,15 @@ opacity, emissive).
   its parameters a buffer (a value's edit is a write; a structural edit compiles the shaders again). The Marble
   starter runs so. Height (for parallax) and opacity still come from its bake.
 * **Starters** (`MaterialLibrary.swift`): Red Bricks, Cobblestone, Rusted Paint, Brushed Steel, Scratched Copper,
-  Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code). Saved graphs are
+  Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code); and Mireland's.
+* **Mireland** (`MaterialLibrary+Mireland.swift`): the eleven swamp materials of the Substance 3D Assets collection
+  "Welcome to Mireland" (Sherif Dawoud), made again as our own graphs by eye from its previews: Swamp Mud, Gnarly
+  Bark, Birch Bark, Loose Dirt, Dead Grass, Swamp Ground (black water, duckweed, twigs), and five cut out: Mud Cracks
+  and Mud Puddle (decals), Leaves (fallen, scattered), Grass Blades and Plant (cards; their shapes are Code nodes).
+  The Mireland scene (`METALRENDERER_SCENE=mireland`, `Scene+Mireland.swift`, benchmark `-m mireland`) is a misty
+  swamp made of them all: mud ground sinking under the water, ragged patches of dirt and dead grass, crusts, puddles
+  and leaves on it, bare birches and gnarly old trunks (displaced, the rest keeping parallax: `undisplacedMaterials`),
+  grass and plant cards along the water's edge, a low sun through ground mist; `seed=` places it. Saved graphs are
   `Assets/Materials/<name>.mat.json` (`METALRENDERER_MATERIALS=builtin|<folder>`).
 * **Checked:** `MaterialDisplacementTests` (subdivision to the detail, the cap, groups across hard edges, the
   kernel's surface staying closed, the workshop's displaced copies), `MaterialGraphTests` (the JSON, the plan: order, types, sizes, precision, hashes, subgraphs, functions,

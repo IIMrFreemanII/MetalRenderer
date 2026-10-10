@@ -25,6 +25,12 @@ extension Scene {
             // A low plinth under it.
             kit.box([x, 0.05, 0], [2, 0.1, 2], plinth)
             addInstance(mesh, material, translate([x, 0.1, 0]) * transform)
+            if shape == .card {
+                // The card's tile on the ground: the material as a decal, once across it.
+                let tile: MeshGeometry = ([[-0.9, 0.01, -0.9], [0.9, 0.01, -0.9], [0.9, 0.01, 0.9], [-0.9, 0.01, 0.9]],
+                                          [[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]], [0, 2, 1, 0, 3, 2])
+                addInstance(addMesh(tile, uvs: [[0, 0], [1, 0], [1, 1], [0, 1]]), material, translate([x, 0.1, 0]))
+            }
             bounds.grow([x - size.x / 2, 0, -size.z / 2])
             bounds.grow([x + size.x / 2, 0.1 + size.y, size.z / 2])
         }
@@ -44,6 +50,11 @@ extension Scene {
         case .cylinder:
             let (geometry, uvs) = Scene.uvCylinder(radius: 0.7, height: 1.6)
             return (addMesh(geometry, uvs: uvs), .init(1), [1.4, 1.6, 1.4])
+        case .card:
+            // Standing at the plinth's back, a UV tile across it (V down, as an image).
+            let geometry: MeshGeometry = ([[-0.8, 1.6, 0], [-0.8, 0, 0], [0.8, 0, 0], [0.8, 1.6, 0]],
+                                          [[0, 0, 1], [0, 0, 1], [0, 0, 1], [0, 0, 1]], [0, 1, 2, 0, 2, 3])
+            return (addMesh(geometry, uvs: [[0, 0], [0, 1], [1, 1], [1, 0]]), translate([0, 0.02, -0.55]), [1.8, 1.62, 1.8])
         case .plane:
             let geometry: MeshGeometry = ([[-0.9, 0.01, -0.9], [0.9, 0.01, -0.9], [0.9, 0.01, 0.9], [-0.9, 0.01, 0.9]],
                                           [[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]], [0, 2, 1, 0, 3, 2])

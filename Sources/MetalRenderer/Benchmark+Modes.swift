@@ -23,7 +23,7 @@ extension Benchmark {
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
-        "materials": materials, "matedit": matEdit,
+        "materials": materials, "matedit": matEdit, "mireland": mireland,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1401,6 +1401,13 @@ extension Benchmark {
                 $0.scene.materialWorkshop.layout = layout
             })
         }
+        // The cut-outs (an opacity output: a plant, a decal) as a card and a tile on the ground.
+        for g in MaterialLibrary.all where g.channels[.opacity] != nil && g.name.hasPrefix("Swamp") {
+            out.append(base.named("\(VFXEffect.slug(g.name)) card").with {
+                $0.scene.materialWorkshop.graph = g.name
+                $0.scene.materialWorkshop.layout = .card
+            })
+        }
         for backdrop in MaterialWorkshopSettings.Backdrop.allCases where backdrop != .studio {
             out.append(base.named("\(VFXEffect.slug(first)) \(backdrop.rawValue)").with {
                 $0.scene.materialWorkshop.graph = first
@@ -1408,6 +1415,15 @@ extension Benchmark {
             })
         }
         return out
+    }
+
+    /// The Mireland swamp (every material procedural): from the bank, closer to the water's edge, and wide.
+    private static func mireland() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .mireland)).still(at: 1)
+        var edge = base.named("edge"), wide = base.named("wide")
+        edge.camera = Scene.camera([3, 0.9, 9], yaw: 0.5, pitch: -0.12)
+        wide.camera = Scene.camera([-12, 4, 22], yaw: -0.45, pitch: -0.14)
+        return [base.named("bank"), edge, wide]
     }
 
     /// The Material Designer's edits reaching the renderer: the workshop's bricks as built in, then with more rows and

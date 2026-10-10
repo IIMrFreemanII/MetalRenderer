@@ -353,6 +353,7 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // the VFX editor shapes them
     case materials          // the material workshop (Scene+Materials.swift): a Material Designer graph's material on a
                             // sphere, a cube, a cylinder and a tile (`SceneSettings.materialWorkshop`), baked as it is edited
+    case mireland           // a misty swamp (Scene+Mireland.swift) made of the Mireland materials, every one procedural
 
     var title: String {
         switch self {
@@ -387,6 +388,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .characters: return "Character workshop"
         case .vfxStage: return "VFX stage"
         case .materials: return "Material workshop"
+        case .mireland: return "Mireland swamp"
         }
     }
 
@@ -408,7 +410,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop }   // these frame what they hold
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop || self == .mireland }   // these frame what they hold
     /// The editors' scenes: one thing (a plant, a building) made again at every edit, an orbit camera round it.
     var isWorkshop: Bool { self == .plants || self == .buildings || self == .characters }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
@@ -772,7 +774,8 @@ struct MaterialWorkshopSettings: Equatable, Codable {
     var backdrop = Backdrop.studio
 
     enum Layout: String, Codable, CaseIterable {
-        case lineup, sphere, cube, cylinder, plane
+        /// (`card`: a standing card and a tile on the ground, for a cut-out material: a plant, a decal.)
+        case lineup, sphere, cube, cylinder, plane, card
         var title: String { self == .lineup ? "Line-up" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
     enum Backdrop: String, Codable, CaseIterable {
@@ -1018,6 +1021,10 @@ struct FogSettings: Equatable, Codable {
         case .forest:
             f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
+        case .mireland:
+            // A misty morning: the far trees grey, the low sun's beams through the mist.
+            f.enabled = true; f.density = 0.05; f.heightFalloff = 0.1; f.anisotropy = 0.75; f.ambient = 0.35; f.noise = 0.5
+            f.maxDistance = 90
         case .world:
             // The noise's tile divides the tiles' 256 m, so the fog stays as it is when the scene's origin moves.
             f.enabled = true; f.density = 0.002; f.heightFalloff = 0.012; f.anisotropy = 0.6; f.noise = 0.2; f.noiseScale = 8
@@ -1128,6 +1135,9 @@ struct SkySettings: Equatable, Codable {
         case .forest:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 900; s.cloudThickness = 900; s.cloudScale = 1400
             s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
+        case .mireland:
+            s.mode = .atmosphere; s.coverage = 0.45; s.cloudBase = 800; s.cloudThickness = 900; s.cloudScale = 1400
+            s.density = 0.04; s.windSpeed = 4; s.shadowStrength = 0.5
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
