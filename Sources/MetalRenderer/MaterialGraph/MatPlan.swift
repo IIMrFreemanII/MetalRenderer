@@ -40,12 +40,14 @@ struct MatPlan {
     let channels: [MatChannel: Int]
     let size: Int
     let surface: MatSurface
+    let name: String
 
     /// The plan of `graph`, its subgraphs found by name in `library`.
     init(_ graph: MaterialGraph, library: (String) -> MaterialGraph? = { MaterialCatalog.launch.graph($0) }) throws {
         let flat = try MatPlan.flatten(graph, library: library)
         size = min(max(graph.size, 4), 12)
         surface = graph.surface
+        name = graph.name
         let order = try MatPlan.order(flat)
         var steps: [Step] = []
         var index: [String: Int] = [:]

@@ -52,12 +52,12 @@ enum MaterialLibrary {
     /// Red bricks in pale mortar, each brick its own shade and height, dirt in the joints.
     static func redBricks() -> MaterialGraph {
         var b = MatBuilder("Red Bricks")
-        let bricks = b.node(.bricks, ["columns": .int(4), "rows": .int(10), "gap": .float(0.025), "bevel": .float(0.25),
+        let bricks = b.node(.bricks, ["columns": .int(4), "rows": .int(10), "gap": .float(0.008), "bevel": .float(0.3),
                                       "heightRandom": .float(0.25)])
         let noise = b.node(.fractalSum, ["scale": .int(8), "octaves": .int(7), "roughness": .float(0.55)])
         let pits = b.node(.levels, ["inLow": .float(0.25), "inHigh": .float(0.75), "outLow": .float(0.82)], ["in": noise])
         let height = b.node(.blend, ["mode": .choice("multiply")], ["fg": pits, "bg": bricks])
-        let mortar = b.node(.histogramScan, ["position": .float(0.06), "contrast": .float(0.9), "invert": .bool(true)], ["in": bricks])
+        let mortar = b.node(.histogramScan, ["position": .float(0.97), "contrast": .float(0.95), "invert": .bool(true)], ["in": bricks])
         let shade = b.node(.gradientMap, ["gradient": gradient((0, [0.42, 0.13, 0.08]), (0.5, [0.58, 0.2, 0.12]), (1, [0.68, 0.32, 0.2]))],
                            ["in": bricks["random"]])
         let speckle = b.node(.blend, ["mode": .choice("multiply"), "opacity": .float(0.5)], ["fg": noise, "bg": shade])
