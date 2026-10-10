@@ -213,4 +213,34 @@ final class MaterialEngineTests: XCTestCase {
             }
         }
     }
+
+    /// Every node kind bakes (its inputs a noise, or a colour where it takes one) to finite values, and Auto Levels
+    /// and Bevel do what they say.
+    func testEveryNodeBakes() throws {
+        for kind in MatOpKind.allCases where kind != .subgraph && kind != .bitmap {
+            var nodes = [MatNode(.fractalSum, ["scale": .int(2)], id: "grey"), MatNode(.uniformColor, ["color": .color([0.8, 0.4, 0.2, 1])], id: "rgb"),
+                         MatNode(kind, id: "x")]
+            if kind == .pixelProcessor { nodes[2].function = .passThrough }
+            let links = kind.spec.inputs.map { MatLink($0.type == .color ? "rgb" : "grey", to: "x", $0.name) }
+            let g = graph(6, nodes, links)
+            let plan = try MatPlan(g, library: { _ in nil })
+            let r = engine.evaluateNow(plan)
+            XCTAssertTrue(r.errors.isEmpty, "\(kind): \(r.errors)")
+            let step = plan.steps[plan.index["x"]!]
+            for o in step.outputs.indices {
+                let px = engine.read(try XCTUnwrap(engine.texture(step.hash, output: o), "\(kind)"))
+                XCTAssertTrue(px.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }, "\(kind) output \(o)")
+            }
+        }
+        let levels = try bake(graph(6, [MatNode(.fractalSum, id: "n"), MatNode(.autoLevels, id: "a")], [MatLink("n", to: "a", "in")]), "a").pixels
+        XCTAssertEqual(levels.map(\.x).min()!, 0, accuracy: 1e-5)
+        XCTAssertEqual(levels.map(\.x).max()!, 1, accuracy: 1e-5)
+        let bevel = try bake(graph(6, [MatNode(.shape, ["kind": .choice("square"), "size": .float(0.5), "softness": .float(0)], id: "m"),
+                                       MatNode(.bevel, ["distance": .float(0.1), "smoothing": .float(0)], id: "b")], [MatLink("m", to: "b", "in")]), "b")
+        let side = bevel.side
+        XCTAssertEqual(bevel.pixels[0].x, 0, "outside")
+        XCTAssertEqual(bevel.pixels[(side / 2) * side + side / 2].x, 1, accuracy: 1e-3, "the middle: further in than the distance")
+        let edge = bevel.pixels[(side / 2) * side + side / 4 + 3].x   // 3 pixels in from the square's left edge
+        XCTAssertEqual(edge, 4 / Float(side) / 0.1, accuracy: 0.03)   // 4 pixels to the nearest one outside
+    }
 }
