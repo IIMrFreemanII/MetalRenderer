@@ -8,9 +8,9 @@ struct ShadingPoint {
     HairPoint hair;       // a strand's (Hair.metal): lit by its BSDF
 };
 
-// Where a shadow ray from `sp` toward `target` starts: `sp.p`, or a strand's own (hairShadowOrigin).
+// Where a shadow ray from `sp` toward `target` starts: `sp.p`, or a strand's or skin's own (hairOrSurface).
 inline float3 shadowOrigin(thread const ShadingPoint& sp, float3 target) {
-    return sp.hair.on ? hairShadowOrigin(sp.p - sp.ng * RAY_EPSILON, sp.n, target) : sp.p;
+    return hairOrSurface(sp.hair, sp.p - sp.ng * RAY_EPSILON, sp.n, sp.p, target);
 }
 
 // A light sample at a surface, unshadowed: diffuse light (albedo divided out, like lightUnshadowed), specular light,

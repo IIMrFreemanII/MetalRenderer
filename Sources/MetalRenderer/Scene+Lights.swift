@@ -72,7 +72,7 @@ extension Scene {
         case .softBodies: return camera([0, 2.3, 3.0], pitch: -0.42)
         case .muscles: return camera([0, 2.4, 8.2], pitch: -0.24)
         case .fluids: return camera([0, 1.25, 1.05], pitch: -0.64)
-        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings:
+        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings, .characters:
             return nil   // the crowd's, the city's, the world's and the showcase's are their scenes' to say
         }
     }

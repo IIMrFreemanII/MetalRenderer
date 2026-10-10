@@ -345,6 +345,8 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // plant editor shapes them (`SceneSettings.plants`)
     case buildings          // the building workshop (Scene+Buildings.swift): one building, inside and out, on its lot, as
                             // the building editor shapes it (`SceneSettings.buildings`)
+    case characters         // the character workshop (Scene+Characters.swift): generated people (CharacterDNA) in a studio,
+                            // as the character editor shapes them (`SceneSettings.characterWorkshop`)
 
     var title: String {
         switch self {
@@ -375,6 +377,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .fluids: return "Fluids"
         case .plants: return "Plant workshop"
         case .buildings: return "Building workshop"
+        case .characters: return "Character workshop"
         }
     }
 
@@ -398,7 +401,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     var hasLitWindows: Bool { self == .cityNight || self == .world }
     var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop }   // these frame what they hold
     /// The editors' scenes: one thing (a plant, a building) made again at every edit, an orbit camera round it.
-    var isWorkshop: Bool { self == .plants || self == .buildings }
+    var isWorkshop: Bool { self == .plants || self == .buildings || self == .characters }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
     var hasPlants: Bool { self == .forest || self == .valley || isWorld || self == .plants }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
@@ -604,6 +607,9 @@ struct SceneSettings: Equatable, Codable {
     var poses = 64
     /// ...and at which level of detail they are skinned and traced: 0 = the full mesh, each level half the one before.
     var detail = 3
+    /// ...and who they are: the character library's (the Y and X Bots) or the character catalog's people, made from
+    /// their DNA (CharacterBuilder).
+    var crowdBodies = CrowdBodies.library
     var city = CitySettings()
     /// The showcase: which model of `Scene.galleryFiles()`, as a part of its file name (any case); "" = the first.
     var showcase = ""
@@ -651,6 +657,11 @@ struct SceneSettings: Equatable, Codable {
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
     /// building editor sets as it edits; "" the saved ones (Assets/Buildings), "builtin" the built-in ones. Session state.
     var buildingCatalog = ""
+    /// The character workshop: who it shows, and how.
+    var characterWorkshop = CharacterSceneSettings()
+    /// The characters scenes are made with: a key of CharacterCatalog's registry, which the character editor sets as it
+    /// edits; "" the saved ones (Assets/CharacterDefs), "builtin" the built-in ones. Session state.
+    var characterCatalog = ""
     /// The city's building whose interior the scene has (LotRef.key; nil: none): the renderer's to set, as the camera
     /// comes near a building and leaves it (Scene+Interiors.swift). Session state.
     var interior: String? = nil
@@ -668,6 +679,10 @@ struct SceneSettings: Equatable, Codable {
     /// The plant workshop both, showing the same species the same way (only the species' definitions and which of its
     /// plants differ): what an edit changes.
     func isSameWorkshop(as other: SceneSettings) -> Bool {
+        if kind == .characters && other.kind == .characters {
+            let a = characterWorkshop, b = other.characterWorkshop
+            return a.layout == b.layout && a.pose == b.pose && a.clip == b.clip && a.view == b.view
+        }
         if kind == .buildings && other.kind == .buildings {
             return buildings.layout == other.buildings.layout && buildings.style == other.buildings.style
                 && buildings.pinned == other.buildings.pinned
@@ -746,6 +761,55 @@ struct BuildingSceneSettings: Equatable, Codable {
     static let floorRange = 1...40
     static let widthRange: ClosedRange<Float> = 6...48
     static let depthRange: ClosedRange<Float> = 8...48
+}
+
+/// Who the crowd scene's characters are.
+enum CrowdBodies: Int, CaseIterable, Codable {
+    case library        // Assets/Characters: the Mixamo mannequins
+    case generated      // the character catalog's people (CharacterCatalog, CharacterBuilder)
+    var title: String { ["Mannequins", "Generated people"][rawValue] }
+}
+
+/// The character workshop (Scene+Characters.swift): who it shows, in what pose, and how.
+struct CharacterSceneSettings: Equatable, Codable {
+    /// The character's id (CharacterCatalog).
+    var character = "man"
+    var layout = Layout.single
+    var pose = Pose.aPose
+    /// Pose `clip`: the clip's name (any clip of the character library).
+    var clip = ""
+    var view = View.body
+    /// What the faces do (blinks always), and whether their eyes follow the camera.
+    var expression = FaceExpression.neutral
+    var lookAt = true
+    /// How hair is drawn (CharacterHair): strands, the caps crowds have, or none.
+    var hair = HairMode.strands
+    /// Registry keys (CharacterCatalog.register), session state: the editor's variations of the character to show
+    /// beside it (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the character
+        case lineup         // every character of the catalog, side by side
+        case mutate         // the character and the editor's variations of it, in a row
+        var title: String { ["One character", "Everyone", "Variations"][rawValue] }
+    }
+    enum Pose: Int, CaseIterable, Codable {
+        case tPose, aPose, idle, walk, clip
+        var title: String { ["T pose", "A pose", "Idle", "Walking", "Clip"][rawValue] }
+        /// The clip it plays (CharacterKit's names), for every pose but `clip`.
+        var clipName: String? { [Optional("T-Pose"), "A-Pose", "Idle", "Walking", nil][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case body           // the whole character
+        case face           // its head, close
+        var title: String { ["Body", "Face"][rawValue] }
+    }
+    enum HairMode: Int, CaseIterable, Codable {
+        case strands, caps, none
+        var title: String { ["Strands", "Caps", "None"][rawValue] }
+    }
 }
 
 /// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
@@ -860,7 +924,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .plants, .buildings:   // at night: thousands of lit windows scatter in blotches
+             .plants, .buildings, .characters:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -987,7 +1051,7 @@ struct SkySettings: Equatable, Codable {
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
-        case .plants, .buildings:   // a few high clouds, no shadows of them: the plant is what is looked at
+        case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
             s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }
         if let o = override {

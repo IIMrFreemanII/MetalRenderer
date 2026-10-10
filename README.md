@@ -878,6 +878,120 @@ buildings are made in, and single buildings' own floor plans; the **Building wor
   are coarser than a partition (radiance cascades, ReSTIR GI or path tracing are the methods for interiors);
   hand-edited plans keep rooms rectangular.
 
+### The character editor
+
+The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes people. The **Character workshop** scene
+(`METALRENDERER_SCENE=people`, `Scene+Characters.swift`) shows what it edits; entering the workshop opens the editor.
+
+* **A character is data** (`CharacterDNA.swift`): a seed, six macro sliders (male … female, age, thin … heavy, slight …
+  muscular, height, stocky … long-limbed), morph offsets by name, bone-group lengths and the skin's look. The editor and
+  (later) the NPC generator only write DNA; `CharacterBuilder` makes the mesh, skeleton and materials from it. Six
+  built-in people (`BuiltInCharacters`, in `CharacterStore.swift`) show what the sliders reach.
+* **One base body for everyone** (`CharacterBase.swift`), made once from the library's Y Bot and kept in a cache file
+  next to the character library's (about 7 s to make on an M1 Max, 3 ms to read):
+  * The Y Bot's skin as a distance field (`BodySurface`, flooded from outside so its joint pieces don't count,
+    smoothed so the grooves between its panels close), its hollow elbows filled by its bones' shapes.
+  * Its trunk mostly an **anatomical loft** (`TrunkLoft`): rounded cross-sections from the crotch to the neck, a man's
+    average widths and depths, meeting the Y Bot's limbs, neck and head over a few centimetres. The mannequin's narrow
+    waist, deep pelvis and panel edges go.
+  * **Hands made again** from the finger joints: a palm and five fingers of round cones, on the forearm's end (the Y Bot
+    has mittens).
+  * Meshed by **sparse surface nets** (`SurfaceNets.sparseMesh`, 2.5 mm, only the bricks near the skin), simplified
+    (`MeshSimplifier`), smoothed without shrinking (Taubin). One closed surface, about 106k triangles with the head.
+  * **A sculpted head** (`FaceSculpt.swift`) in place of the mannequin's egg: a distance field of smooth primitives at a
+    man's average proportions (skull, face, jaw, neck), with a brow ridge, cheekbones, eye sockets with lids round the
+    eyeballs and their openings cut, a nose with nostrils, lips with the mouth cut into a mouth, and ears (rim, ridge,
+    bowl, lobe). It is meshed at 1 mm apart from the body and sewn to it across the neck; the simplifier keeps the
+    vertices where the surface bends sharply (ears, lids, nostrils, the lips' parting) and where colours meet.
+  * **The face's own parts** (`FaceParts.swift`): eyeballs with the cornea's dome and iris and pupil rings, both rows of
+    teeth, a tongue; each triangle of the character takes one of its materials (skin, lips, brows, sclera, iris,
+    pupil, teeth, mouth, the thin skin of the ears and nostrils, and a crowd's hair cap).
+  * **UVs for the skin** (`SkinAtlas`, in `CharacterSkin.swift`): the head and neck unrolled round the head's upright
+    axis, the angle from the front (both sides share the texels: the map folds at the face's middle and the back of the
+    head, so no vertex is split) by the height; the body is on the textures' plain last row.
+  * **Skinned to the Y Bot's skeleton**, so every clip of the library plays on it: each vertex takes the weights of the
+    Y Bot's skin under it (facing the same way, within 3 cm), the hands' from their bones, the rest from their
+    neighbours; then smoothed twelve times (the Y Bot's panels each ride one bone, and a neck there tears).
+* **Morphs** (`CharacterMorphs.swift`) are sparse deltas on the base, generated rather than sculpted: smooth bumps on the
+  body's own coordinates (which bone, how far along it, at what angle round it) for fat (where men and women carry it),
+  muscle, thinness, age, and ten shape sliders (chest, belly, waist, hips, seat, shoulders, neck, arms, thighs, calves).
+  A woman is the female loft (wider hips, a narrower waist, ribcage and shoulders, breasts) less the male one, plus the
+  X Bot's skeleton.
+* **Face sliders** (`CharacterFaceMorphs.swift`, the editor's **Face** tab): eyes (spacing, height, opening, tilt,
+  deep-set), brows, nose (length, width, bridge, tip), mouth (width, fullness, height), jaw and cheeks, ears; each
+  section has its own dice. Every slider moves both sides alike; the eyeballs and teeth move whole. The macros shape the
+  face too: a woman's (a smaller brow ridge, jaw and nose, fuller lips), an old one (longer nose, larger ears, thinner
+  lips, sagging cheeks), a heavy one and a thin one.
+* **Faces move** (`CharacterFace.swift`), on the GPU in the skinning kernel, per pose slot: expressions are morph
+  targets with their normals' change (the jaw opening, smile, frown, brows up and down, and mouth shapes for speech),
+  and the lids and eyes turn about the eyes' centres (the Mixamo rig has no eye or jaw bones), so a blink folds the lid
+  over the eyeball and the eyes can look at the camera. Every face blinks (seeded, every few seconds); the workshop's
+  can smile, frown, look surprised, talk, or go through them all (*Face* in the Face tab, `expr=` in
+  `METALRENDERER_SCENE`), their eyes on the camera (`gaze=`). The GPU's faces match the CPU's within 2 µm
+  (`METALRENDERER_CROWD_CHECK=1`).
+* **Skin** (the editor's **Skin & Hair** tab):
+  * **Light under the skin** (`skinUnshadowed`, `Shaders/Hair.metal`): a material with `params.w < 0` is skin. Its
+    diffuse light wraps past where the surface turns from the light, red furthest (blood takes the green and blue
+    first), which softens and reddens the shadow's edge; the ears and the nostrils' wings glow red with light from
+    behind (their shadow rays start past them, so thick parts stay dark). It is in the light term, so the denoisers,
+    ReSTIR and the composite shade it alike; the reference path tracer shades it the same.
+  * **Textures drawn from the face** (`SkinTextures`, `SkinChart`): each texel of the atlas knows the point of the head
+    it shows, so features are placed by the sculpt's landmarks: pores (wider on the nose and cheeks), lines across the
+    lips, wrinkles with age (forehead, between the brows, crow's feet, under the eyes, beside the mouth, the neck), a
+    mottle, redder cheeks, nose and ears, darker hollows under the eyes, a lash line, a man's beard shadow, freckles,
+    age spots, moles and makeup (blush, eye shadow, lipstick); an oilier forehead and nose. Colour and normals are 1024²,
+    drawn in tens of milliseconds and kept by the generated-texture cache (quantised: a drag remakes them a few times).
+* **Hair** (`CharacterHair.swift`): nine styles (bald, buzz cut, receding, short, side parting, slicked back, curly,
+  bob, long) with length and curl sliders, five beards (stubble, short, full, goatee, moustache), brows (a density
+  slider) and lashes, coloured from the DNA (eumelanin, pheomelanin, grey; age greys it):
+  * **Strands** in the workshop: groomed once on the base's head (guides along the style's flow, falling with length,
+    kept off the head, neck and shoulders, cut where the style says; each drawn strand follows its nearest guide,
+    clumped, curled and strayed), drawn as curves with the hair BSDF. Each strand's root is a point of one of the base's
+    triangles, so every frame `crowdHairKernel` carries it after the skinning: scalp hair turns with the head's bone,
+    brows, lashes and beards with their triangles, so the brows rise, the lashes blink and the beard opens with the
+    jaw. About 30,000 strands for one character (a third as many each in a lineup); the GPU matches the CPU within
+    1 µm (`METALRENDERER_CROWD_CHECK=1`).
+  * **Caps** in crowds (`CharacterHairCap.swift`): one closed shell round what the style's strands fill (a sample of
+    them as tubes, joined to a shell over the scalp, meshed and simplified for each level of detail), part of the
+    character's mesh on the head's bone, kept in a cache file per style. *Hair* in the tab (`hairs=strands|caps|none`)
+    shows the workshop's characters with either.
+* **The macro rig** (`MacroRig`, in `CharacterBuilder.swift`) turns the macros into morph weights and bone scales: sex
+  blends toward the female shape and the X Bot's skeleton (and 7% shorter), weight into the male or female fat, age into
+  sag, less muscle and (past 60) a little height. Bone scales lengthen bones along their axis (the skin across them
+  less), or scale a head, hands or feet whole; the skin is carried by the joints it hangs on, and the clips' root travel
+  scales with the hips' height.
+* **The workshop** shows the character, everyone (*Everyone*), or it and five **Mutate** variations (*Use 1–5* takes
+  one), in a T pose, an A pose, idling, walking or any clip of the library, whole or its face close. Each slider has a
+  **lock**: the dice on a group (or *Randomize all*) draw the unlocked sliders again, from near the middle of their
+  ranges; Mutate leaves locked ones alone. Holding *Compare* (or C) shows the saved character.
+* **Edits are live:** the workshop is made again at each edit (M1 Max, `CharacterHairTests`): 11 ms for one character
+  without hair (morphs and skeleton 5 ms on the CPU, its structures 6 ms), 12.5 ms with a cap, 35 ms with strands (their
+  curves' structures 17 ms), 128 ms for all six with strands. A style's strands take 50–580 ms to groom the first time
+  and are kept; a cap 0.3–2 s, kept in a cache file. The kit (base, morphs, face rig) takes about 10 s to make, 15 ms
+  to read from its cache. An edit is one undo step; a drag is one.
+* **Saving:** *Save* writes changed characters to `Assets/CharacterDefs/<id>.json` (`CharacterStore`); a file with a
+  built-in's id replaces it. Unsaved edits are a draft, kept between launches. `METALRENDERER_CHARACTERS=builtin` ignores
+  the files, `=<folder>` reads and saves another folder.
+* **Crowds of them:** `METALRENDERER_SCENE=crowd,cast=generated` fills the crowd scene with the catalog's people
+  instead of the mannequins (`METALRENDERER_BENCH=charactercrowd`: 2048 of them on 64 poses, 18.3 ms a frame on an M1
+  Max, blinking, with skin and hair caps: 0.75 ms more than without; diffuse materials there, as glossy eyes would turn
+  on the reflection pass for the whole frame). Scenes without skin compile without it (SKIN, a shader feature bit).
+* `METALRENDERER_SCENE=people,person=woman,pose=walk,cview=face,clayout=lineup,hairs=caps`; `METALRENDERER_BENCH=characters`
+  renders each built-in character, faces from the front, side and three quarters (at full resolution), each
+  expression, an ear, everyone (with strands and with caps), hair styles and beards the built-ins don't have, poses
+  and clips, and close-ups of hands, waist and shoulders.
+* **Tests:** `CharacterDNATests` (JSON, defaults, sanitizing, the catalog and store), `CharacterBaseTests` (a closed
+  skin, weights, stretch over every clip, symmetric morphs, height by its slider, repeatable builds, the cache, the
+  workshop and its remake time), `CharacterFaceTests` (the face's parts, a blink closing the lids without touching the
+  eye, the gaze, the jaw parting the lips, expressions and face sliders touching only the face, blinks),
+  `CharacterSkinTests` (the UVs, the chart covering the head, the textures plain below the neck and following the
+  landmarks and the DNA, wrinkles with age), `CharacterHairTests` (every style rooted on the scalp and off the head, the
+  long styles cut, the beard, brows and lashes where they belong and the lashes blinking, caps by style and on every
+  level, the workshop's remake time with hair), `CharacterEditorTests` (the parameter table, Randomize, Mutate, undo,
+  saving).
+* **Next** (one pull request each): clothes and cloth; NPC archetypes, crowds in the city and generated bodies in the
+  physics scenes. Hair doesn't swing yet (it rides the head and the face).
+
 ### Generated plants
 
 The plants are made at load time from a seed (`Foliage*.swift`) and their species' definitions (the built-in ones, or

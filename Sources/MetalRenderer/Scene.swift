@@ -376,6 +376,8 @@ final class Scene {
     /// The building workshop's: what its building is, and its plan (the building editor's Floor Plan window).
     var buildingStats: BuildingStats?
     var buildingPlan: BuildingPlan?
+    /// The character workshop's: what its character is (Scene+Characters.swift).
+    var characterStats: CharacterStats?
     /// What the walker (Walker.swift) meets: the interiors' walls, floors, stairs and furniture, the ground round
     /// them; and the buildings that can be walked in, where they stand.
     var walkColliders: [Interior.Collider] = []
@@ -403,6 +405,8 @@ final class Scene {
 
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
+    /// Where the camera is (the renderer sets it before `update`): the workshop's faces look at it.
+    var viewer: SIMD3<Float>?
     /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
     private(set) var physics: PhysicsWorld?
     private(set) var physicsOnGPU = false
@@ -486,6 +490,7 @@ final class Scene {
         case .fluids: buildFluids(settings.physics)
         case .plants: buildPlantWorkshop()
         case .buildings: buildBuildingWorkshop()
+        case .characters: buildCharacterWorkshop()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
@@ -625,6 +630,7 @@ final class Scene {
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
+            crowd.viewer = viewer
             crowd.pose(at: t)
             for w in crowd.walkers {
                 let (p, previous) = w.positions(crowd.slots[w.slot])
@@ -796,12 +802,12 @@ final class Scene {
         // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
-        // liquid's surface. (Shaders/Types.metal.)
+        // liquid's surface. Bit 17: SKIN, some materials are skin. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
-            | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0)
+            | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasSkin ? 0x0002_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1016,7 +1022,8 @@ final class Scene {
         for p in crowd.parts.indices {
             let geometry = crowd.geometry(part: p)
             crowd.parts[p].bindVertex = positions.count
-            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs)
+            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs,
+                                          materials: geometry.materials.isEmpty ? nil : geometry.materials)
         }
         for i in crowd.slots.indices {
             // A pose: its character's triangles over vertices of its own, which `finishCrowd` places. Its bounds are
@@ -1061,8 +1068,8 @@ final class Scene {
 
     /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).
     @discardableResult
-    func addDeformingInstance(_ mesh: Int, _ material: Int) -> Int {
-        let i = addInstance(mesh, material, matrix_identity_float4x4)
+    func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4) -> Int {
+        let i = addInstance(mesh, material, transform)
         instances[i].deforms = true
         // Like the crowd's: virtual shadow maps would draw it again every frame (and can't draw curves): traced.
         if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
@@ -1459,6 +1466,46 @@ final class Scene {
     func notePlants() { hasPlants = true }
 
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
+    /// A generated character's run of materials (CharacterBuilder.materials), its first returned: an instance of the
+    /// character names it. `glossy` false: diffuse ones (a crowd's: glossy materials turn on the reflection pass for
+    /// the whole frame, about 3 ms at 1920 x 1200 on an M1 Max, for eyes a few pixels across). `maps`: the skin's
+    /// textures (colour, roughness, normals: `addSkinTextures`), for its skin's materials; `hair`: a hair cap's colour
+    /// (CharacterHair.colour); `strandBrows`: brows of strands, not painted.
+    func addCharacterMaterials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, glossy: Bool = true, maps: SIMD3<UInt32>? = nil,
+                               hair: SIMD3<Float> = [0.08, 0.05, 0.03], strandBrows: Bool = false) -> Int {
+        let run = CharacterBuilder.materials(look, skin: skin, hair: hair, strandBrows: strandBrows).map { m in
+            var material = GPUMaterial(albedo: SIMD4(m.color, 0), emission: SIMD4(.zero, glossy ? m.roughness : 1),
+                                       params: SIMD4(glossy ? 1 : 0, 1, 0, -m.skin))
+            if let maps, m.textured {
+                // The colour texture holds its multiplier scaled down (SkinTextures.colourScale), the roughness its too.
+                material.albedo = SIMD4(m.color / SkinTextures.colourScale, 0)
+                material.emission.w = min(m.roughness / SkinTextures.roughnessScale, 1)
+                material.textures = SIMD4(maps.x, glossy ? maps.y : .max, maps.z, .max)
+            }
+            return addMaterial(material)
+        }
+        return run[0]
+    }
+
+    /// The skin's textures for `dna` (SkinTextures, over the kit's chart): colour, roughness and normals, drawn only
+    /// when no cache has them (a remade workshop asks again at every edit).
+    func addSkinTextures(_ dna: CharacterDNA, kit: CharacterKit) -> SIMD3<UInt32> {
+        let marks = SkinTextures.Marks(dna), wrinkles = SkinTextures.wrinkles(age: dna.macro.age)
+        let size = SkinChart.defaultSize
+        let colour = addGeneratedTexture(name: "skin-colour", width: size, height: size, key: marks.key, srgb: false) {
+            SkinTextures.cached("colour \(marks.key)") { SkinTextures.colour(kit.chart, marks) }
+        }
+        let roughness = addGeneratedTexture(name: "skin-roughness", width: size / 2, height: size / 2, key: SkinTextures.versionKey,
+                                            srgb: false) {
+            SkinTextures.cached("roughness") { SkinTextures.roughness(kit.chart) }
+        }
+        let normals = addGeneratedTexture(name: "skin-normals", width: size, height: size,
+                                          key: "\(SkinTextures.versionKey)-w\(Int(wrinkles * 12))", srgb: false) {
+            SkinTextures.cached("normals \(wrinkles)") { SkinTextures.normals(kit.chart, wrinkles: wrinkles) }
+        }
+        return SIMD3(colour, roughness, normals)
+    }
+
     func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))
@@ -1483,8 +1530,11 @@ final class Scene {
     /// Any material, as it is.
     func addMaterial(_ material: GPUMaterial) -> Int {
         materials.append(material)
+        if material.params.w < 0 { hasSkin = true }
         return materials.count - 1
     }
+    /// Some material is skin (GPUMaterial.params.w < 0): the shaders are compiled with SKIN.
+    private(set) var hasSkin = false
 
     /// An image for materials to sample: its index for `GPUMaterial.textures`.
     func addTexture(_ source: TextureSource) -> UInt32 {
@@ -1539,9 +1589,10 @@ final class Scene {
     /// A generated texture that `draw` draws only if no cache holds it: the caches name it by `key`, which says
     /// everything its pixels depend on (the generator's version, a seed). With the cache off it is drawn here and
     /// named by its pixels, as above.
-    func addGeneratedTexture(name: String, width: Int, height: Int, key: String, _ draw: @escaping () -> FoliageTextures.Image) -> UInt32 {
-        guard GeneratedCache.enabled else { return addGeneratedTexture(draw(), name: name) }
-        textures.append(TextureSource(data: Data(), srgb: true, name: "generated/\(name)",
+    func addGeneratedTexture(name: String, width: Int, height: Int, key: String, srgb: Bool = true,
+                             _ draw: @escaping () -> FoliageTextures.Image) -> UInt32 {
+        guard GeneratedCache.enabled else { return addGeneratedTexture(draw(), name: name, srgb: srgb) }
+        textures.append(TextureSource(data: Data(), srgb: srgb, name: "generated/\(name)",
                                       modelPath: GeneratedCache.folder.appendingPathComponent("\(settings.kind)").path,
                                       cacheKey: "\(name)-\(width)x\(height)-\(key)", raw: (width, height),
                                       pixels: { Data(draw().pixels) }))
