@@ -351,6 +351,8 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // as the character editor shapes them (`SceneSettings.characterWorkshop`)
     case vfxStage           // the VFX stage (Scene+Stage.swift): effects (`SceneSettings.stage`) lined up in a studio, as
                             // the VFX editor shapes them
+    case materials          // the material workshop (Scene+Materials.swift): a Material Designer graph's material on a
+                            // sphere, a cube, a cylinder and a tile (`SceneSettings.materialWorkshop`), baked as it is edited
 
     var title: String {
         switch self {
@@ -384,6 +386,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .buildings: return "Building workshop"
         case .characters: return "Character workshop"
         case .vfxStage: return "VFX stage"
+        case .materials: return "Material workshop"
         }
     }
 
@@ -688,6 +691,12 @@ struct SceneSettings: Equatable, Codable {
     var effects = ""
     /// The VFX stage: the effects it shows.
     var stage = VFXStageSettings()
+    /// The material workshop: the graph it shows, on what.
+    var materialWorkshop = MaterialWorkshopSettings()
+    /// The material graphs procedural materials are baked from (MaterialCatalog): "" the saved ones (Assets/Materials),
+    /// "builtin" the built-in ones, otherwise a key of the registry the Material Designer fills as it edits. An edit
+    /// that keeps every graph's channels bakes in place (Renderer.editMaterials). Session state.
+    var materials = ""
     /// The building workshop: what it shows.
     var buildings = BuildingSceneSettings()
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
@@ -749,6 +758,23 @@ struct SceneSettings: Equatable, Codable {
 struct VFXStageSettings: Equatable, Codable {
     var effects = ["fireworks"]
     var backdrop = VFXBackdrop.dark
+}
+
+/// The material workshop (Scene+Materials.swift): the graph whose material it shows (by name: MaterialCatalog's),
+/// on which shapes, against what.
+struct MaterialWorkshopSettings: Equatable, Codable {
+    var graph = "Red Bricks"
+    var layout = Layout.lineup
+    var backdrop = Backdrop.studio
+
+    enum Layout: String, Codable, CaseIterable {
+        case lineup, sphere, cube, cylinder, plane
+        var title: String { self == .lineup ? "Line-up" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+    enum Backdrop: String, Codable, CaseIterable {
+        case studio, outdoor, dark
+        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
 }
 
 /// What the VFX stage's effects are shown against.
@@ -974,7 +1000,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles, .plants, .vfxStage, .buildings, .characters:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants, .vfxStage, .buildings, .characters, .materials:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -1080,7 +1106,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids, .particles, .vfxStage:
+             .softBodies, .muscles, .fluids, .particles, .vfxStage, .materials:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -1300,5 +1326,5 @@ struct RenderSettings: Equatable, Codable {
 
 extension SceneKind {
     /// The camera turns about what the scene shows (the plant workshop's plants, the VFX stage's effects; F frames them).
-    var orbits: Bool { isWorkshop || self == .vfxStage }
+    var orbits: Bool { isWorkshop || self == .vfxStage || self == .materials }
 }

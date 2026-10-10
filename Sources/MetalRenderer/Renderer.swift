@@ -374,9 +374,26 @@ final class Renderer: NSObject {
     private var triangleMaterialBuffer: MTLBuffer { sceneBuffers.triangleMaterials }   // Scene.triangleMaterials (meshes of several materials)
     private var emissiveBuffer: MTLBuffer { sceneBuffers.emissive }                    // emissive-mesh lights' triangles (MSL EmissiveTriangle)
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
-    private var textureTable: MTLBuffer!              // their MTLResourceIDs (MSL MaterialTexture array)
+    private var textureTables: [MTLBuffer] = []       // per slot, their MTLResourceIDs (MSL MaterialTexture array):
+                                                      // a slot's own, as a procedural material's bake replaces its texture
+                                                      // in the slots one by one (applyProcedural)
     private var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
     private var shadingResources: [MTLResource] = []
+    /// Procedural materials (Scene+Procedural): per slot their extras (MSL MaterialExtra) and the instances' alpha tests
+    /// (TraceScene.opacity), written when the scene's `extrasVersion` has moved on; the bakes' textures by their slot in
+    /// the table (the latest, and per frame slot what its table holds: what its frames declare), the table entries a slot
+    /// has still to take, and the textures replaced, kept until no frame in flight can read them.
+    private var extrasBuffers: [MTLBuffer] = []
+    private var opacityBuffers: [MTLBuffer] = []
+    private var extrasWritten: [Int] = []
+    private var proceduralTextures: [UInt32: MTLTexture] = [:]
+    private var slotTextures: [[UInt32: MTLTexture]] = []
+    private var tablePending: [[UInt32: MTLTexture]] = []
+    private var retiredTextures: [(frame: UInt32, texture: MTLTexture)] = []
+    /// Per procedural material, the bake's key its textures are; per graph name in the catalog shown, its key.
+    private var proceduralApplied: [Int: String] = [:]
+    private var proceduralKeys: (catalog: String, keys: [String: String]) = ("", [:])
+    private var srgbViews: [ObjectIdentifier: MTLTexture] = [:]
     private var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
     private var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
     private var feedbackDummy: MTLBuffer!
@@ -476,7 +493,8 @@ final class Renderer: NSObject {
     /// (16-byte aligned), the virtual shadow maps' VSMScene.
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
     private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
-    private static let shadingArgsLength = shadingVSMOffset + 16   // 288: the shader asserts it
+    private static let shadingExtrasOffset = shadingVSMOffset + 8    // MaterialExtra's address (MATERIAL_EXTRAS)
+    private static let shadingArgsLength = shadingVSMOffset + 16      // 288: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
@@ -1064,6 +1082,112 @@ final class Renderer: NSObject {
         }
     }
 
+    // MARK: - Procedural materials
+
+    /// The Material Designer's edit (`settings.scene.materials`, a catalog's key): baked in place when every
+    /// procedural material's graph keeps its channels (what the scene was made for: its opacity decides how it is
+    /// traced, its textures' slots are there); otherwise the scene is made again, as for any other change.
+    private func editMaterials() {
+        var same = settings.scene
+        same.materials = scene.settings.materials
+        guard same == scene.settings else { return }
+        let catalog = MaterialCatalog.resolve(settings.scene.materials)
+        for pm in scene.procedural {
+            let channels = Set(catalog.graph(pm.graph)?.channels.keys.map { $0 } ?? [])
+            guard channels.contains(.opacity) == pm.channels.contains(.opacity) else { return }
+        }
+        scene.adoptMaterials(settings.scene.materials)
+    }
+
+    /// What `slot`'s table holds of the procedural materials' bakes (what its frames declare).
+    private func proceduralResources(slot: Int) -> [MTLResource] { Array(slotTextures[slot].values) }
+
+    /// The procedural materials as their graphs are now: each whose graph's key isn't the one it shows gets its bake's
+    /// textures and values (a benchmark bakes it there and then; the app asks for it and takes it a frame when it is
+    /// ready). Then `slot`'s table and extras catch up, and textures no frame can read any more go.
+    private func updateProcedural(slot: Int) {
+        if !scene.procedural.isEmpty {
+            let key = scene.settings.materials
+            if proceduralKeys.catalog != key { proceduralKeys = (key, [:]) }
+            let catalog = MaterialCatalog.resolve(key)
+            let bake = MaterialBake.shared(device)
+            for pm in scene.procedural {
+                guard let g = catalog.graph(pm.graph) else { continue }
+                let k = proceduralKeys.keys[pm.graph] ?? MaterialBake.key(g, catalog: catalog)
+                proceduralKeys.keys[pm.graph] = k
+                guard proceduralApplied[pm.material] != k else { continue }
+                if let o = bake.baked(k) ?? (benchmark != nil ? bake.bakeNow(g, key: k, catalog: catalog) : nil) {
+                    applyProcedural(pm, outputs: o, key: k)
+                } else {
+                    bake.request(g, key: k, catalog: catalog) {}
+                }
+            }
+        }
+        guard slot < textureTables.count else { return }
+        if !tablePending[slot].isEmpty {
+            let table = textureTables[slot].contents().bindMemory(to: MTLResourceID.self, capacity: materialTextures.count)
+            for (i, t) in tablePending[slot] where Int(i) < materialTextures.count {
+                table[Int(i)] = t.gpuResourceID
+                slotTextures[slot][i] = t
+            }
+            tablePending[slot] = [:]
+        }
+        if extrasWritten[slot] != scene.extrasVersion {
+            let extras = scene.extrasArray(), opacity = scene.opacityRecords()
+            if extras.count * MemoryLayout<GPUMaterialExtra>.stride <= extrasBuffers[slot].length {
+                extras.withUnsafeBytes { extrasBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+            if !opacity.isEmpty, opacity.count * 16 <= opacityBuffers[slot].length {
+                opacity.withUnsafeBytes { opacityBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+            extrasWritten[slot] = scene.extrasVersion
+        }
+        retiredTextures.removeAll { frameIndex &- $0.frame > UInt32(2 * Renderer.maxFramesInFlight + 1) }
+    }
+
+    /// `pm`'s material as its graph's bake `o` says: its textures in its slots (each frame slot takes them as it is
+    /// next written), its values (a texture's channel is the value; a channel without one, a neutral value), its
+    /// extras (parallax, opacity cutoff, UV scale, occlusion).
+    private func applyProcedural(_ pm: ProceduralMaterial, outputs o: MatOutputs, key: String) {
+        func srgb(_ t: MTLTexture) -> MTLTexture {
+            if let v = srgbViews[ObjectIdentifier(t)] { return v }
+            let v = t.makeTextureView(pixelFormat: .rgba8Unorm_srgb) ?? t
+            srgbViews[ObjectIdentifier(t)] = v
+            return v
+        }
+        let textures: [MTLTexture?] = [o.baseColor.map(srgb), o.orm, o.normal, o.emissive.map(srgb), o.height, o.opacity]
+        for (k, t) in textures.enumerated() {
+            guard let t, k < pm.slots.count else { continue }
+            let index = pm.slots[k]
+            guard proceduralTextures[index] !== t else { continue }
+            if let old = proceduralTextures[index] { retiredTextures.append((frameIndex, old)) }
+            proceduralTextures[index] = t
+            for s in tablePending.indices { tablePending[s][index] = t }
+        }
+        if srgbViews.count > 64 {   // views of textures the bakes let go of
+            let live = Set(proceduralTextures.values.map { ObjectIdentifier($0) })
+            srgbViews = srgbViews.filter { live.contains(ObjectIdentifier($0.value)) }
+        }
+        func has(_ c: ProcSlot) -> Bool { textures[c.rawValue] != nil }
+        func slot(_ c: ProcSlot) -> UInt32 { has(c) ? pm.slots[c.rawValue] : .max }
+        let s = o.surface
+        var m = scene.materials[pm.material]
+        m.textures = SIMD4(slot(.baseColor), slot(.orm), slot(.normal), slot(.emissive))
+        m.albedo = SIMD4(has(.baseColor) ? SIMD3(repeating: 1) : SIMD3(repeating: 0.5), has(.orm) ? 1 : 0)
+        m.emission = SIMD4(has(.emissive) ? SIMD3(repeating: s.emissiveIntensity) : .zero, has(.orm) ? 1 : 0.6)
+        m.params = SIMD4(1, s.normalStrength, 0, 0)
+        scene.setMaterial(pm.material, m)
+        var e = GPUMaterialExtra()
+        e.textures = SIMD4(has(.height) && s.heightDepth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
+                           pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, .max, .max)
+        e.surface = SIMD4(s.heightDepth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
+        if scene.materialExtras[pm.material] != e {
+            scene.materialExtras[pm.material] = e
+            scene.extrasVersion += 1
+        }
+        proceduralApplied[pm.material] = key
+    }
+
     /// The pending edit's system in the particles' place, with its code's `kernels`, replayed from the start.
     private func adoptEffects(_ pending: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String]),
                               kernels: ParticleKernels?) {
@@ -1256,7 +1380,15 @@ final class Renderer: NSObject {
         // The materials are the scene's as the buffers were made; what has changed since goes to every slot.
         materialsPending = [Range<Int>?](repeating: scene.takeMaterialsDirty(), count: Renderer.maxFramesInFlight)
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
-        textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
+        textureTables = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable\($0)") }
+        let extras = scene.extrasArray(), opacity = scene.opacityRecords()
+        extrasBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(extras, "materialExtras\($0)") }
+        opacityBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(opacity, "opacity\($0)") }
+        extrasWritten = [Int](repeating: scene.extrasVersion, count: Renderer.maxFramesInFlight)
+        proceduralTextures = [:]
+        slotTextures = Array(repeating: [:], count: Renderer.maxFramesInFlight)
+        tablePending = Array(repeating: [:], count: Renderer.maxFramesInFlight)
+        proceduralApplied = [:]
         staticMinLod = try makeBuffer([Float](repeating: 0, count: max(materialTextures.count, 1)), "textureMinLod")
         feedbackDummy = try makeBuffer([UInt32](repeating: 0, count: max(materialTextures.count, 1) * TextureStreamer.levelBins),
                                        "textureFeedback")
@@ -1269,11 +1401,12 @@ final class Renderer: NSObject {
             let p = args.contents()
             p.storeBytes(of: materialBuffers[slot].gpuAddress, toByteOffset: 0, as: UInt64.self)
             p.storeBytes(of: uvBuffer.gpuAddress, toByteOffset: 8, as: UInt64.self)
-            p.storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
+            p.storeBytes(of: textureTables[slot].gpuAddress, toByteOffset: 16, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.minLodBuffer(slot: slot) ?? staticMinLod).gpuAddress, toByteOffset: 24, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.feedbackBuffer(slot: slot) ?? feedbackDummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
             p.storeBytes(of: emissiveBuffer.gpuAddress, toByteOffset: 40, as: UInt64.self)
             p.storeBytes(of: triangleMaterialBuffer.gpuAddress, toByteOffset: 48, as: UInt64.self)
+            p.storeBytes(of: extrasBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingExtrasOffset, as: UInt64.self)
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
@@ -1283,7 +1416,8 @@ final class Renderer: NSObject {
         // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
         // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through their boxes'
         // data.
-        shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
+        let perSlot: [MTLResource] = materialBuffers + textureTables + extrasBuffers + opacityBuffers
+        shadingResources = perSlot + [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
         shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? [])
             + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
@@ -1753,6 +1887,7 @@ final class Renderer: NSObject {
                 plantsWritten[slot] = state
             }
         }
+        updateProcedural(slot: slot)
         writeTraceScene(slot: slot)
         crowdSkinner?.write(slot: slot)
         if !scene.instances.isEmpty, !still {
@@ -2077,6 +2212,7 @@ final class Renderer: NSObject {
         }
         setWorldLights()
         if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
+        if settings.scene.materials != scene.settings.materials, loading == nil { editMaterials() }
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
@@ -3673,6 +3809,7 @@ final class Renderer: NSObject {
         guard declare else { return }
         sceneDeclaredIn = enc.declarationScope
         enc.useResources(shadingResources, usage: .read)
+        if !slotTextures[slot].isEmpty { enc.useResources(proceduralResources(slot: slot), usage: .read) }
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
         if let vsm = vsmFrame {
             enc.useResources([vsm.pool, vsm.table, vsm.tags, vsm.lightTable, vsm.views[slot], vsm.sceneArgs[slot]], usage: .read)
@@ -3700,13 +3837,14 @@ final class Renderer: NSObject {
             particleFlags: scene.particlesReflected ? 1 : 0,
             particleTrails: particlesGPU?.trails[slot]?.structure, trailPoints: particlesGPU?.trailPoints[slot],
             trailRecords: particlesGPU?.trailRecords[slot], trailShape: particlesGPU?.trailShape ?? .zero,
-            frame: frameIndex))
+            frame: frameIndex, opacity: scene.hasOpacity ? opacityBuffers[slot] : nil, textures: textureTables[slot]))
     }
 
     /// What `slot`'s TraceScene points at besides the structures.
     private func traceSceneResources(slot: Int) -> [MTLResource] {
         (virtualTracing?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? [])
             + (sceneBuffers.plants?.resources(slot: slot) ?? []) + (particlesGPU?.resources(slot: slot) ?? [])
+            + (scene.hasOpacity ? [opacityBuffers[slot], textureTables[slot]] + proceduralResources(slot: slot) : [])
     }
 
     /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
@@ -3971,6 +4109,7 @@ final class Renderer: NSObject {
         previousAnimTime = c.startTime
         setWorldLights()   // the scene it starts with is the one its time of day asks for
         if settings.scene.effects != scene.settings.effects { editEffects() }   // the VFX editor's edits, as the app runs them
+        if settings.scene.materials != scene.settings.materials { editMaterials() }   // the Material Designer's
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }

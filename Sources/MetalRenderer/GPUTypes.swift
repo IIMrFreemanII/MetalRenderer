@@ -317,6 +317,15 @@ struct GPUMaterial {
                                                     // index, or ~0 = none
 }
 
+/// What a procedural material (a Material Designer graph's: MaterialBake) has past GPUMaterial, one per material of
+/// a scene that has any (MSL MaterialExtra, read with MATERIAL_EXTRAS): its height for parallax and its opacity, its
+/// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
+struct GPUMaterialExtra: Equatable {
+    var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none
+    var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
+                                                     // w = AO strength (0: the R channel isn't occlusion)
+}
+
 /// One light; see the MSL struct for what each field holds per type (Scene.LightKind).
 struct GPULight {
     var positionRadius: SIMD4<Float>  // xyz = centre, w = radius (sphere, spot, tube, mesh bounds), angular radius (sun)
@@ -788,6 +797,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUJointMatrix>.stride == 48, "GPUJointMatrix layout mismatch")
     precondition(MemoryLayout<GPUPoseSlot>.stride == 32, "GPUPoseSlot layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
+    precondition(MemoryLayout<GPUMaterialExtra>.stride == 32, "GPUMaterialExtra layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")

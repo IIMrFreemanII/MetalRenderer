@@ -161,8 +161,11 @@ struct TraceScene {
     device const float4*          trailPoints;    // their control points (xyz; w: the trail's radius there)
     device const struct ParticleTrail* trailRecords;  // their looks
     uint2                         trailShape;     // trails (0: none), control points each
+    device const uint4*           opacity;        // OPACITY, per instance: its opacity texture (~0: opaque), mesh,
+                                                  // cutoff and UV scale (floats' bits; Scene.opacityRecords)
+    device const MaterialTexture* textures;       // OPACITY: the material textures (SceneShading's table)
 };
-static_assert(sizeof(TraceScene) == 208 && __builtin_offsetof(TraceScene, particleTrails) == 176
+static_assert(sizeof(TraceScene) == 224 && __builtin_offsetof(TraceScene, opacity) == 208 && __builtin_offsetof(TraceScene, particleTrails) == 176
               && __builtin_offsetof(TraceScene, trailShape) == 200 && __builtin_offsetof(TraceScene, stats) == 96 && __builtin_offsetof(TraceScene, uvs) == 112
               && __builtin_offsetof(TraceScene, particleCasters) == 128 && __builtin_offsetof(TraceScene, particleAtlas) == 152
               && __builtin_offsetof(TraceScene, particleCounts) == 160,
@@ -372,6 +375,30 @@ inline bool rtCutout(SCENE_ACCEL sc, uint mesh, uint prim, float2 bc) {
     return sc.cutouts[((layer - 1u) * CUTOUT_SIZE + texel.y) * CUTOUT_SIZE + texel.x] != 0;
 }
 
+// An alpha-tested instance (OPACITY: a procedural material's, TraceScene.opacity) is there only where its opacity
+// texture, at the triangle's UV (times the material's UV scale), is at its cutoff or above: read at a coarse level.
+constexpr sampler rtOpacitySampler(filter::linear, mip_filter::linear, address::repeat);
+inline bool rtOpacity(SCENE_ACCEL sc, uint id, uint prim, float2 bc) {
+    uint4 o = sc.opacity[id];
+    if (o.x == NO_TEXTURE) return true;
+    MeshData m = sc.meshes[o.y];
+    float2 uv = float2(0.0f);
+    float w[3] = {1.0f - bc.x - bc.y, bc.x, bc.y};
+    for (uint k = 0; k < 3; ++k) {
+        float2 t;
+        if (STREAMED && m.block != nullptr) {
+            device const float2* uvs = (device const float2*)(m.block + 2u * m.vertexCount);
+            device const uint* indices = (device const uint*)(uvs + m.vertexCount);
+            t = uvs[indices[prim * 3u + k]];
+        } else {
+            t = sc.uvs[sc.indices[m.firstIndex + prim * 3u + k]];
+        }
+        uv += t * w[k];
+    }
+    float a = sc.textures[o.x].t.sample(rtOpacitySampler, uv * as_type<float>(o.w), level(1.0f)).r;
+    return a >= as_type<float>(o.z);
+}
+
 // HAIR_CURVES: the queries meet the strands' curves too (round Catmull-Rom segments of 4 control points, opaque),
 // which only queries with curve_data may: in such a scene every query has them (CurveLevels). A curve's hit is
 // HIT_CURVE with the curve's parameter in barycentrics.x (traceSurface finds the point there). The overloads pick out
@@ -468,8 +495,22 @@ template <> struct Levels<true> {
     // The candidate triangle (only leaf cards' aren't opaque): true if the ray meets it there.
     template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) {
         uint part = candidatePart(q);
-        if (part == HIT_NO_PART) return true;
+        if (part == HIT_NO_PART) {   // a scene instance's own triangle: alpha-tested if its material cuts holes
+            return !OPACITY || TILED || rtOpacity(sc, q.get_candidate_instance_id(0), q.get_candidate_primitive_id(),
+                                                  q.get_candidate_triangle_barycentric_coord());
+        }
         return rtCutout(sc, sc.parts[part].mesh, q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord());
+    }
+};
+// OPACITY scenes of two levels: Levels<false>, with the triangles' data in every query (the alpha test reads the
+// candidate's barycentrics) and the instances that cut holes alpha-tested.
+struct OpacityLevels {
+    typedef intersection_query<triangle_data, instancing> Closest;
+    typedef Closest Plain;
+    typedef intersector<triangle_data, instancing> ClosestIntersector;
+    typedef ClosestIntersector PlainIntersector;
+    template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) {
+        return rtOpacity(sc, q.get_candidate_instance_id(), q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord());
     }
 };
 #if HAS_CURVES
@@ -480,6 +521,7 @@ struct CurveLevels {
     typedef intersection_query<curve_data, instancing> Plain;
     typedef intersector<triangle_data, curve_data, instancing> ClosestIntersector;
     typedef intersector<curve_data, instancing> PlainIntersector;
+    template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) { return true; }   // (no cards)
 };
 #endif
 
@@ -539,10 +581,10 @@ inline bool boxCandidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL
 
 // One candidate of a query's loop: a leaf card's triangle (committed where its picture is) or a box. True if the
 // query may stop (ANY: a hit).
-template <bool PLANTS, bool ANY, typename Q>
+template <bool PLANTS, bool ANY, typename L, typename Q>
 inline bool candidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL sc, thread Hit& v) {
     if (ALPHA_TEST && q.get_candidate_intersection_type() == intersection_type::triangle) {
-        if (!Levels<PLANTS>::card(q, sc)) return false;
+        if (!L::card(q, sc)) return false;
         if (q.get_committed_intersection_type() == intersection_type::none
             || q.get_candidate_triangle_distance() < q.get_committed_distance()) q.commit_triangle_intersection();
         return ANY;
@@ -583,7 +625,7 @@ inline Hit countedQuery(Ray r, uint mask, SCENE_ACCEL sc, thread uint2& n) {
     while (q.next()) {
         if (q.get_candidate_intersection_type() == intersection_type::triangle) {
             ++n.x;
-            if (ALPHA_TEST && !Levels<PLANTS>::card(q, sc)) continue;
+            if (ALPHA_TEST && !L::card(q, sc)) continue;
             if (q.get_committed_intersection_type() == intersection_type::none
                 || q.get_candidate_triangle_distance() < q.get_committed_distance()) q.commit_triangle_intersection();
             if (ANY) break;
@@ -605,6 +647,7 @@ Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidat
 #if HAS_CURVES
     if (HAIR_CURVES && !ASSEMBLIES) h = countedQuery<false, false, true, CurveLevels>(r, mask, sc, n); else
 #endif
+    if (OPACITY && !ASSEMBLIES) h = countedQuery<false, false, false, OpacityLevels>(r, mask, sc, n); else
     h = ASSEMBLIES ? countedQuery<true, false>(r, mask, sc, n) : countedQuery<false, false>(r, mask, sc, n);
     candidates = n.x + n.y;
     return h;
@@ -618,6 +661,7 @@ inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
 #if HAS_CURVES
     if (HAIR_CURVES && !ASSEMBLIES) h = countedQuery<false, ANY, true, CurveLevels>(r, mask, sc, n); else
 #endif
+    if (OPACITY && !ASSEMBLIES) h = countedQuery<false, ANY, false, OpacityLevels>(r, mask, sc, n); else
     h = ASSEMBLIES ? countedQuery<true, ANY>(r, mask, sc, n) : countedQuery<false, ANY>(r, mask, sc, n);
     uint c = 4u * min(rayClass(mask), RAY_CLASSES - 1u);   // the ray's class's counters
     atomic_fetch_add_explicit(&sc.stats[c], 1u, memory_order_relaxed);
@@ -633,7 +677,7 @@ inline Hit closestHit(Ray r, uint mask, SCENE_ACCEL sc) {
         typename L::Closest q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), queryParams<CURVES>(false));
         Hit v = voxelMiss(r);
-        while (q.next()) candidate<PLANTS, false>(q, r, mask, true, sc, v);
+        while (q.next()) candidate<PLANTS, false, L>(q, r, mask, true, sc, v);
         return queryHit<PLANTS>(q, v);
     }
     typename L::ClosestIntersector isect;
@@ -660,6 +704,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
 #if HAS_CURVES
     if (HAIR_CURVES && !ASSEMBLIES) return closestHit<false, true, CurveLevels>(r, mask, sc);
 #endif
+    if (OPACITY && !ASSEMBLIES) return closestHit<false, false, OpacityLevels>(r, mask, sc);
     return ASSEMBLIES ? closestHit<true>(r, mask, sc) : closestHit<false>(r, mask, sc);
 }
 
@@ -669,7 +714,7 @@ inline float closestDistance(Ray r, uint mask, SCENE_ACCEL sc) {
         typename L::Plain q;
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), queryParams<CURVES>(false));
         Hit v = voxelMiss(r);
-        while (q.next()) candidate<PLANTS, false>(q, r, mask, false, sc, v);
+        while (q.next()) candidate<PLANTS, false, L>(q, r, mask, false, sc, v);
         float t = q.get_committed_intersection_type() == intersection_type::none ? INFINITY : q.get_committed_distance();
         return v.hit ? min(v.distance, t) : t;
     }
@@ -690,6 +735,7 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL sc) {
 #if HAS_CURVES
     if (HAIR_CURVES && !ASSEMBLIES) return closestDistance<false, true, CurveLevels>(r, mask, sc);
 #endif
+    if (OPACITY && !ASSEMBLIES) return closestDistance<false, false, OpacityLevels>(r, mask, sc);
     return ASSEMBLIES ? closestDistance<true>(r, mask, sc) : closestDistance<false>(r, mask, sc);
 }
 
@@ -700,7 +746,7 @@ inline bool anyHit(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
         q.reset(ray(r.origin, r.direction, r.tmin, r.tmax), sc.tlas, voxelMask(mask), queryParams<CURVES>(true));
         Hit v = voxelMiss(r);
         while (q.next()) {
-            if (candidate<PLANTS, true>(q, r, mask, false, sc, v)) {   // any hit will do
+            if (candidate<PLANTS, true, L>(q, r, mask, false, sc, v)) {   // any hit will do
                 if (v.hit) { t = v.distance; return true; }
                 break;
             }
@@ -729,5 +775,6 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
 #if HAS_CURVES
     if (HAIR_CURVES && !ASSEMBLIES) return anyHit<false, true, CurveLevels>(r, mask, sc, t);
 #endif
+    if (OPACITY && !ASSEMBLIES) return anyHit<false, false, OpacityLevels>(r, mask, sc, t);
     return ASSEMBLIES ? anyHit<true>(r, mask, sc, t) : anyHit<false>(r, mask, sc, t);
 }

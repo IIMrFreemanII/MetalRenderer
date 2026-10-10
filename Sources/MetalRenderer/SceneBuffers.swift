@@ -552,6 +552,7 @@ struct SceneBuffers {
         let stride = indirect ? SceneBuffers.indirectStride : 64
         let meshCount = scene.meshes.count
         let plants = plants, set = plants?.set(slot: slot) ?? 0
+        let holes = scene.hasOpacity   // an alpha-tested instance (a procedural material's opacity) isn't opaque either
         func write(_ i: Int) {
             let instance = scene.instances[i]
             guard instance.virtualMesh < 0 else { return }   // its cut's structure: VirtualTracing writes it
@@ -564,7 +565,7 @@ struct SceneBuffers {
             let index = instance.sdf >= 0 ? meshCount + instance.sdf : instance.mesh
             // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
             SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform,
-                                         options: instance.sdf >= 0 ? boxOptions : options, mask: instance.mask,
+                                         options: instance.sdf >= 0 || (holes && scene.cutsHoles(i)) ? boxOptions : options, mask: instance.mask,
                                          userID: UInt32(i), structure: indirect ? primitives[index] : nil, index: index)
         }
         if all {

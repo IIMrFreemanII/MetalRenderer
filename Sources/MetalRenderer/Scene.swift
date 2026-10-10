@@ -343,6 +343,12 @@ final class Scene {
     /// there too (Metal's per-mesh structures: SceneBuffers).
     private(set) var meshNames: [Int: String] = [:]
     private(set) var materials: [GPUMaterial] = []
+    /// Procedural materials' extras (GPUMaterialExtra), by material index: height, opacity, UV scale, occlusion
+    /// (Scene+Procedural.swift). A scene with any compiles MATERIAL_EXTRAS in; one whose graphs give opacity, OPACITY.
+    var materialExtras: [Int: GPUMaterialExtra] = [:]
+    /// The materials a Material Designer graph bakes (Scene+Procedural.swift), and a count of their extras' edits.
+    var procedural: [ProceduralMaterial] = []
+    var extrasVersion = 0
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
@@ -509,6 +515,7 @@ final class Scene {
         case .vfxStage: buildVFXStage()
         case .buildings: buildBuildingWorkshop()
         case .characters: buildCharacterWorkshop()
+        case .materials: buildMaterialWorkshop()
         }
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
@@ -727,6 +734,9 @@ final class Scene {
     /// The VFX editor's edit, run in place of the scene's particles (VFXLive.swift): `system` (made `continuing` the
     /// one it replaces) from `effects`, as `key` names them (SceneSettings.effects), so the scene isn't made again.
     /// Without `system` only the key: the edit's code compiles meanwhile.
+    /// The Material Designer's edit, baked in place (Renderer.editMaterials): its graphs' catalog's key.
+    func adoptMaterials(_ key: String) { settings.materials = key }
+
     func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
         settings.effects = key
         guard let system else { return }   // the running ones until their new code is ready (Renderer.editEffects)
@@ -756,6 +766,18 @@ final class Scene {
     var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
 
     /// The range of materials changed since the last call (nil: none), which is then forgotten.
+    /// Material `i` changed (a procedural one's bake): the renderer copies it to every slot.
+    func markMaterialDirty(_ i: Int) {
+        materialsDirty = materialsDirty.map { min($0.lowerBound, i)..<max($0.upperBound, i + 1) } ?? i..<(i + 1)
+    }
+
+    /// Material `i` replaced (a procedural one's values as its graph's bake gives them).
+    func setMaterial(_ i: Int, _ m: GPUMaterial) {
+        guard materials.indices.contains(i) else { return }
+        materials[i] = m
+        markMaterialDirty(i)
+    }
+
     func takeMaterialsDirty() -> Range<Int>? {
         defer { materialsDirty = nil }
         return materialsDirty
@@ -868,13 +890,15 @@ final class Scene {
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
         // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
+        // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes.
         // (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
             | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasSkin ? 0x0002_0000 : 0)
-            | (hasParticles ? 0x0001_0000 : 0)
+            | (hasParticles ? 0x0001_0000 : 0) | (materialExtras.isEmpty ? 0 : 0x8000)
+            | (hasOpacity ? 0x2000_4000 : 0)   // OPACITY, with ALPHA_TEST's query loop
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {

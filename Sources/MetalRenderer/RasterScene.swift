@@ -11,7 +11,8 @@ import simd
 ///
 /// What isn't drawn is traced where its bounding box is in front (the raster draws the box): an assembly's parts, leaf
 /// cards (alpha tested), ground cover that sways in the wind, virtual geometry without a BLAS over its cut (the cluster
-/// tree, `METALRENDERER_VG_MODE=clusters`) and instances finer than the pixels; every primary ray traces when the draw
+/// tree, `METALRENDERER_VG_MODE=clusters`), the meshes of instances a procedural material's opacity cuts holes in, and
+/// instances finer than the pixels; every primary ray traces when the draw
 /// lists are full (RasterTraced). Virtual geometry is drawn from its BLAS's triangles, or as clusters (RasterClusters).
 final class RasterScene {
     /// How a mesh's triangles are read (MSL RASTER_*), with `deforms` added for a crowd's pose slots.
@@ -72,9 +73,10 @@ final class RasterScene {
         noClusterState = try shared([UInt32](repeating: 0, count: 4), "raster no clusters")
         // The ordinary meshes, then the virtual ones (meshIndex = meshes.count + v).
         var records: [GPURasterMesh] = [], chunkMeshes: [UInt32] = []
+        let holes = scene.holeMeshes   // alpha-tested (a procedural material's opacity): traced, as leaf cards are
         for (m, mesh) in scene.meshes.enumerated() {
             let borrowed = mesh.block != 0 || (m < buffers.blocks.count && buffers.blocks[m] != nil)
-            let kind = RasterScene.kind(of: mesh, borrowed: borrowed)
+            let kind = holes.contains(m) ? .skip : RasterScene.kind(of: mesh, borrowed: borrowed)
             let deforms = mesh.prevOffset != 0 || mesh.vertexOffset != 0
             let b = scene.localBounds(mesh: m)
             let first = chunkMeshes.count

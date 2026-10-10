@@ -26,6 +26,7 @@ enum SettingsStore {
         s.scene.extraModels = []
         s.scene.plantCatalog = ""
         s.scene.effects = ""   // the VFX editor's catalogs are this session's
+        s.scene.materials = ""
         s.scene.buildingCatalog = ""
         s.scene.characterCatalog = ""
         s.scene.characterWorkshop.mutants = ""

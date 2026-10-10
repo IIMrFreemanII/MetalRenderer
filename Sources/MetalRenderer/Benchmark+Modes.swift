@@ -23,6 +23,7 @@ extension Benchmark {
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
+        "materials": materials,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1385,6 +1386,28 @@ extension Benchmark {
                 base.named("code").with { $0.scene.effects = code },
                 base.named("other").with { $0.scene.stage.effects = ["magic"] },
                 base.named("code fresh").with { $0.scene.effects = code }]
+    }
+
+    /// The material workshop (Scene+Materials.swift): every built-in graph on the line-up in the studio, path traced at
+    /// three quarters of the window (each graph baked when its scene is made: its bake's time printed), then the first
+    /// on each shape alone and against each backdrop.
+    private static func materials() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
+        var out = MaterialLibrary.names.map { name in base.named(VFXEffect.slug(name)).with { $0.scene.materialWorkshop.graph = name } }
+        let first = MaterialLibrary.names[0]
+        for layout in MaterialWorkshopSettings.Layout.allCases where layout != .lineup {
+            out.append(base.named("\(VFXEffect.slug(first)) \(layout.rawValue)").with {
+                $0.scene.materialWorkshop.graph = first
+                $0.scene.materialWorkshop.layout = layout
+            })
+        }
+        for backdrop in MaterialWorkshopSettings.Backdrop.allCases where backdrop != .studio {
+            out.append(base.named("\(VFXEffect.slug(first)) \(backdrop.rawValue)").with {
+                $0.scene.materialWorkshop.graph = first
+                $0.scene.materialWorkshop.backdrop = backdrop
+            })
+        }
+        return out
     }
 
     /// The VFX stage's backdrops: the campfire, the fireworks and the magic at 3.5 s in front of each, from the stage's

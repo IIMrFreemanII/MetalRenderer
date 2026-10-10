@@ -95,6 +95,8 @@ extension CharacterSceneSettings.Layout: EnvNamed {}
 extension CrowdBodies: EnvNamed {}
 extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)".lowercased() } }
 extension CharacterSceneSettings.View: EnvNamed {}
+extension MaterialWorkshopSettings.Layout: EnvNamed {}
+extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
 extension FaceExpression: EnvNamed {}
 extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
@@ -380,6 +382,9 @@ enum SettingsTable {
             S.popup("View", \.scene.buildings.view, titled(\.title)).env(.scene, "bview").when(buildings),
             S.slider("Cut above floor", \.scene.buildings.cut, 0...40, live: false).env(.scene, "cut").when(buildings),
             S.check("Night", \.scene.buildings.night).env(.scene, "night").when(buildings),
+            S.value(\.scene.materialWorkshop.graph).env(.scene, "mgraph"),
+            S.popup("Shapes", \.scene.materialWorkshop.layout, titled(\.title)).env(.scene, "mlayout").when { $0.scene.kind == .materials },
+            S.popup("Backdrop", \.scene.materialWorkshop.backdrop, titled(\.title)).env(.scene, "mbackdrop").when { $0.scene.kind == .materials },
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
             S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),

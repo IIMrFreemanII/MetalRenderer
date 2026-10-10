@@ -20,6 +20,7 @@ struct SceneData {
     texture2d<float>           cloudShadow;
     constant SkyParams*        skyParams;
     device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
+    device const MaterialExtra* extras;         // SceneShading.extras (with MATERIAL_EXTRAS)
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -34,6 +35,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
     s.vsm = shading.vsm;
+    s.extras = shading.extras;
 }
 
 // A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that
@@ -238,6 +240,31 @@ inline float4 sampleMaterial(thread const struct SceneData& s, uint index, float
     if (record) atomic_fetch_add_explicit(&s.feedback[16 * index + min(uint(lod), 15u)], 1u, memory_order_relaxed);
     return t.sample(materialSampler, uv, level(max(lod, s.minLod[index])));
 }
+
+// Parallax occlusion mapping (MATERIAL_EXTRAS: a procedural material's height): where the view ray, entering the
+// surface at `uv`, meets the height field below it (white the top, black `depth` down, in UV units), marched in 8 to
+// 32 layers (more the more grazing) and met between the last two. `V` toward the eye; T and B the surface's U and V
+// directions (world), N its normal.
+inline float2 parallaxUV(thread const SceneData& s, uint height, float2 uv, float3 V, float3 T, float3 B, float3 N, float depth, float lodBase) {
+    float3 v = float3(dot(V, normalize(T)), dot(V, normalize(B)), max(dot(V, N), 0.08f));
+    int steps = int(mix(32.0f, 8.0f, saturate(v.z)));
+    float layer = 1.0f / float(steps);
+    float2 shift = v.xy / v.z * depth * layer;
+    float2 at = uv;
+    float d = 0.0f, h = sampleMaterial(s, height, at, lodBase, false).r, prevH = h, prevD = 0.0f;
+    for (int i = 0; i < steps && d < 1.0f - h; ++i) {
+        prevH = h;
+        prevD = d;
+        at -= shift;
+        d += layer;
+        h = sampleMaterial(s, height, at, lodBase, false).r;
+    }
+    float after = (1.0f - h) - d, before = (1.0f - prevH) - prevD;
+    float w = after / min(after - before, -1e-6f);
+    return mix(at, at + shift, saturate(w));
+}
+// Below this footprint spread a ray's hit gets parallax (camera rays; GI rays are GI_RAY_SPREAD).
+constant float PARALLAX_SPREAD = 0.01f;
 
 // Orients a hit's normals toward the side the ray came from. The geometric normal decides the side; the smooth
 // shading normal is flipped onto that side. Face-forwarding the smooth normal alone flips it inward at
@@ -542,7 +569,9 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
     }
 
-    if (any(mat.textures != uint4(NO_TEXTURE))) {
+    MaterialExtra ex = { uint4(NO_TEXTURE), float4(0.0f, 1.0f, 0.5f, 0.0f) };
+    if (MATERIAL_EXTRAS) ex = s.extras[materialIndex];
+    if (any(mat.textures != uint4(NO_TEXTURE)) || (MATERIAL_EXTRAS && ex.textures.x != NO_TEXTURE)) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;
         // Texture level from the ray's footprint: width = distance x spread, stretched by the incidence angle,
         // converted to UV units by the triangle's UV-to-world area ratio.
@@ -559,12 +588,28 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         float stretch = max(length(d1) / max(length(e1), 1e-12f),
                             max(length(d2) / max(length(e2), 1e-12f), length(d3) / max(length(e3), 1e-12f)));
         float lodBase = worldArea > 0.0f && stretch > 0.0f ? log2(max(footprint, 1e-8f) * stretch) : 0.0f;
+        if (MATERIAL_EXTRAS) {
+            // A procedural material: its UV scale, and the place its height's parallax moves the hit to.
+            uv *= ex.surface.y;
+            lodBase += log2(max(ex.surface.y, 1e-6f));
+            if (ex.textures.x != NO_TEXTURE && ex.surface.x > 0.0f && spread < PARALLAX_SPREAD && uvArea > 0.0f) {
+                float invDet = 1.0f / (d1.x * d2.y - d1.y * d2.x);
+                float3 T = (e1 * d2.y - e2 * d1.y) * invDet, B = (e2 * d1.x - e1 * d2.x) * invDet;
+                float3 N = sf.normal;
+                T = T - N * dot(N, T);
+                B = B - N * dot(N, B);
+                if (dot(T, T) > 1e-12f && dot(B, B) > 1e-12f)
+                    uv = parallaxUV(s, ex.textures.x, uv, -normalize(r.direction), T, B, N, ex.surface.x, lodBase);
+            }
+        }
 
         if (mat.textures.x != NO_TEXTURE) sf.albedo *= sampleMaterial(s, mat.textures.x, uv, lodBase, record).rgb;
         if (mat.textures.y != NO_TEXTURE) {
             float4 mr = sampleMaterial(s, mat.textures.y, uv, lodBase, record);
             sf.roughness *= mr.g;
             sf.metallic *= mr.b;
+            // Its R as ambient occlusion (a procedural material's ORM), darkening the base colour.
+            if (MATERIAL_EXTRAS && ex.surface.w > 0.0f) sf.albedo *= mix(1.0f, mr.r, ex.surface.w);
         }
         if (mat.textures.w != NO_TEXTURE) sf.emission *= sampleMaterial(s, mat.textures.w, uv, lodBase, record).rgb;
         if (mat.textures.z != NO_TEXTURE && uvArea > 0.0f) {

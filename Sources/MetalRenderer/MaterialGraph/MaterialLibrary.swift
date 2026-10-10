@@ -39,7 +39,7 @@ struct MatBuilder {
 
 /// The built-in graphs: the Material Designer's starters, and what a scene can name before anything is saved.
 enum MaterialLibrary {
-    static let all: [MaterialGraph] = [redBricks()]
+    static let all: [MaterialGraph] = [redBricks(), perforatedMetal()]
     static var names: [String] { all.map(\.name) }
     static func named(_ name: String) -> MaterialGraph? { all.first { $0.name == name } }
 
@@ -64,13 +64,36 @@ enum MaterialLibrary {
         let mortarColor = b.node(.uniformColor, ["color": rgb(0.62, 0.58, 0.52)])
         let color = b.node(.blend, ["mode": .choice("copy")], ["fg": mortarColor, "bg": speckle, "mask": mortar])
         let ao = b.node(.ambientOcclusion, ["radius": .float(0.03)], ["in": height])
-        let dirty = b.node(.blend, ["mode": .choice("multiply"), "opacity": .float(0.6)], ["fg": ao, "bg": color])
         let rough = b.node(.levels, ["outLow": .float(0.95), "outHigh": .float(0.72)], ["in": height])
-        b.output(.baseColor, dirty)
+        b.output(.baseColor, color)
         b.output(.normal, b.node(.normal, ["intensity": .float(5)], ["in": height]))
         b.output(.roughness, rough)
         b.output(.ambientOcclusion, ao)
         b.output(.height, height)
+        return b.graph
+    }
+}
+
+extension MaterialLibrary {
+    /// A steel sheet punched with round holes in rows (its opacity cuts them), brushed, a little dirty at the edges.
+    static func perforatedMetal() -> MaterialGraph {
+        var b = MatBuilder("Perforated Metal")
+        let holes = b.node(.tileSampler, ["columns": .int(10), "rows": .int(10), "kind": .choice("disc"), "size": .float(0.62),
+                                          "sizeRandom": .float(0), "positionRandom": .float(0), "lumRandom": .float(0), "rowOffset": .float(0.5)])
+        let solid = b.node(.invert, [:], ["in": holes])
+        let rim = b.node(.bevel, ["distance": .float(0.012), "smoothing": .float(0.6)], ["in": solid])
+        let brushed = b.node(.anisotropicNoise, ["scaleX": .int(3), "scaleY": .int(256)])
+        let grime = b.node(.grunge, ["scale": .int(3), "contrast": .float(0.5)])
+        let steel = b.node(.gradientMap, ["gradient": gradient((0, [0.66, 0.67, 0.69]), (1, [0.84, 0.85, 0.86]))], ["in": brushed])
+        let dirty = b.node(.blend, ["mode": .choice("multiply"), "opacity": .float(0.35)], ["fg": grime, "bg": steel])
+        let rough = b.node(.levels, ["outLow": .float(0.22), "outHigh": .float(0.45)], ["in": grime])
+        b.output(.baseColor, dirty)
+        b.output(.metallic, b.node(.uniform, ["value": .float(1)]))
+        b.output(.roughness, rough)
+        b.output(.normal, b.node(.normal, ["intensity": .float(3)], ["in": rim]))
+        b.output(.height, rim)
+        b.output(.opacity, solid)
+        b.set { $0.surface.heightDepth = 0.01 }
         return b.graph
     }
 }
