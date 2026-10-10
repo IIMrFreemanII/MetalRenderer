@@ -697,6 +697,10 @@ struct SceneSettings: Equatable, Codable {
     /// "builtin" the built-in ones, otherwise a key of the registry the Material Designer fills as it edits. An edit
     /// that keeps every graph's channels bakes in place (Renderer.editMaterials). Session state.
     var materials = ""
+    /// Which scene materials graphs replace (MaterialAssignments: click-to-pick's): "" the saved ones
+    /// (Assets/Materials/assignments.json), otherwise a key of the registry the Material Designer fills. A change makes
+    /// the scene again. Session state.
+    var materialAssignments = ""
     /// The building workshop: what it shows.
     var buildings = BuildingSceneSettings()
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the

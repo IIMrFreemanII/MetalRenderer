@@ -1,4 +1,5 @@
 import AppKit
+import Metal
 
 /// What the renderer reports on its stats tick, twice a second, besides the settings.
 struct RendererStatus {
@@ -71,6 +72,9 @@ final class RendererController: InputHandler {
     var onToggleVFX: (() -> Void)?              // X key
     var onToggleBuildings: (() -> Void)?        // J key
     var onToggleCharacters: (() -> Void)?       // H key
+    var onToggleMaterials: (() -> Void)?        // O key
+    /// An armed pick's answer (the Material Designer's).
+    var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
     var onCompare: ((Bool) -> Void)?
     /// ...and in the character workshop: the saved character.
@@ -193,10 +197,10 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" {
             if !event.isARepeat {
                 (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
-                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : onToggleBuildings)?()
+                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials : onToggleBuildings)?()
             }
             return
         }
@@ -234,5 +238,32 @@ final class RendererController: InputHandler {
 
     func scrolled(dy: Float) {
         renderer.perform { $0.scrolled(dy: dy) }
+    }
+}
+
+extension RendererController: MaterialEditorHost {
+    var metalDevice: MTLDevice? { renderer.metalDevice }
+
+    /// Click-to-pick: the next click in the view (not a drag) names the material there.
+    func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void) {
+        onMaterialPicked = picked
+        renderer.perform { [weak self] r in
+            r.onMaterialPicked = { p in self?.materialPicked(p) }
+            r.armPick()
+        }
+    }
+
+    func cancelPick() {
+        onMaterialPicked?(nil)
+        onMaterialPicked = nil
+        renderer.perform { $0.disarmPick() }
+    }
+
+    /// From the render thread: what a pick found.
+    func materialPicked(_ p: MaterialPick?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onMaterialPicked?(p)
+            self?.onMaterialPicked = nil
+        }
     }
 }

@@ -263,6 +263,11 @@ inline float2 parallaxUV(thread const SceneData& s, uint height, float2 uv, floa
     float w = after / min(after - before, -1e-6f);
     return mix(at, at + shift, saturate(w));
 }
+// A world point's UV on the plane of the axis `a` (a triangle's normal's magnitudes) is most along: a tile a metre.
+inline float2 planarUV(float3 w, float3 a) {
+    return a.y >= a.x && a.y >= a.z ? w.xz : a.x >= a.z ? float2(w.z, -w.y) : float2(w.x, -w.y);
+}
+
 // Below this footprint spread a ray's hit gets parallax (camera rays; GI rays are GI_RAY_SPREAD).
 constant float PARALLAX_SPREAD = 0.01f;
 
@@ -571,6 +576,17 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
 
     MaterialExtra ex = { uint4(NO_TEXTURE), float4(0.0f, 1.0f, 0.5f, 0.0f) };
     if (MATERIAL_EXTRAS) ex = s.extras[materialIndex];
+    if (MATERIAL_EXTRAS && ex.textures.z == 1u) {
+        // A procedural material on a mesh without UVs (a generated scene's: an assignment, MaterialAssignments): the
+        // triangle's world positions projected along its most facing axis, a tile a metre.
+        float2 d1 = t1 - t0, d2 = t2 - t0;
+        if (abs(d1.x * d2.y - d1.y * d2.x) < 1e-12f) {
+            float3 w0p = (inst.transform * float4(p0, 1.0f)).xyz, w1p = (inst.transform * float4(p1, 1.0f)).xyz,
+                   w2p = (inst.transform * float4(p2, 1.0f)).xyz;
+            float3 a = abs(cross(w1p - w0p, w2p - w0p));
+            t0 = planarUV(w0p, a); t1 = planarUV(w1p, a); t2 = planarUV(w2p, a);
+        }
+    }
     if (any(mat.textures != uint4(NO_TEXTURE)) || (MATERIAL_EXTRAS && ex.textures.x != NO_TEXTURE)) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;
         // Texture level from the ray's footprint: width = distance x spread, stretched by the incidence angle,

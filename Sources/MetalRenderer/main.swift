@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var debugPanel: DebugPanel?
     private var plantEditor: PlantEditorPanel?
     private var vfxEditor: VFXEditorPanel?
+    private var materialEditor: MaterialEditorPanel?
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
     private var loadingOverlay: LoadingOverlay?
@@ -98,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           J / Cmd-B    show or hide the Building Editor and its Floor Plan window (the building workshop)
           H / Cmd-Y    show or hide the Character Editor (the character workshop: drag orbits, F frames, hold C compares)
           X / Shift-Cmd-E   show the VFX Editor (particle effects as node graphs; its window: Tab adds a node, Delete removes)
+          O / Shift-Cmd-M   show the Material Designer (procedural materials as node graphs, baked on the GPU; the
+                       material workshop shows them path traced; Pick gives a material in the view a graph)
           V            walk (in the building workshop, the city): W A S D, Shift runs, Space jumps, C or Control
                        crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
@@ -130,6 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if VFXEditorPanel.wasVisible { vfx.show(nextTo: window) }
         controller.onToggleVFX = { [weak self] in self?.toggleVFX(nil) }
         VFXEditorScript.run(vfx, main: window)
+        let materials = MaterialEditorPanel(controller: controller)
+        materialEditor = materials
+        if MaterialEditorPanel.wasVisible || controller.settings.scene.kind == .materials { materials.show(nextTo: window) }
+        controller.onToggleMaterials = { [weak self] in self?.toggleMaterials(nil) }
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
         controller.observeSettings { [weak self] s in
@@ -138,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if kind == .plants, self.plantEditor?.isVisible == false { self.plantEditor?.show(nextTo: self.window) }
             if kind == .buildings, self.buildingEditor?.isVisible == false { self.buildingEditor?.show(nextTo: self.window) }
             if kind == .characters, self.characterEditor?.isVisible == false { self.characterEditor?.show(nextTo: self.window) }
+            if kind == .materials, self.materialEditor?.isVisible == false { self.materialEditor?.show(nextTo: self.window) }
         }
     }
 
@@ -151,12 +159,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let buildings = controller.settings.scene.kind == .buildings || (buildingEditor?.isVisible == true && plantEditor?.isVisible != true)
         if buildings { return buildingEditor?.model.undo }
+        if controller.settings.scene.kind == .materials, let m = materialEditor { return m.model.undo }
         if let vfx = vfxEditor, vfx.isVisible, controller.settings.scene.kind != .plants { return vfx.model.undo }
         return plantEditor?.model.undo
     }
 
     @objc private func toggleVFX(_ sender: Any?) {
         vfxEditor?.toggle(nextTo: window)
+    }
+
+    @objc private func toggleMaterials(_ sender: Any?) {
+        materialEditor?.toggle(nextTo: window)
     }
 
     @objc private func togglePlants(_ sender: Any?) {
@@ -222,6 +235,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let vfx = appMenu.addItem(withTitle: "VFX Editor…", action: #selector(toggleVFX(_:)), keyEquivalent: "e")
         vfx.keyEquivalentModifierMask = [.command, .shift]
         vfx.target = self
+        let materials = appMenu.addItem(withTitle: "Material Designer…", action: #selector(toggleMaterials(_:)), keyEquivalent: "m")
+        materials.keyEquivalentModifierMask = [.command, .shift]
+        materials.target = self
         if !Benchmark.isEnabled {
             let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
             item.target = self

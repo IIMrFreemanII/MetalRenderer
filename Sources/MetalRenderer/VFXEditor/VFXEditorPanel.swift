@@ -20,7 +20,8 @@ final class VFXEditorPanel: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.setFrameAutosaveName("VFXEditor")
-        let host = GraphHostingView(rootView: AnyView(VFXEditorView().environmentObject(model)))
+        let host = GraphHostingView(rootView: AnyView(VFXEditorView().environmentObject(model)
+            .environment(\.editorDrag, EditorDrag(begin: { [weak model] in model?.beginDrag() }, end: { [weak model] in model?.endDrag() }))))
         host.model = model
         window.contentView = host
         model.focusCanvas = { [weak window, weak host] in

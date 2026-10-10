@@ -19,6 +19,8 @@ struct ProceduralMaterial {
     var channels: Set<MatChannel>
     /// The graph as the scene was made with it (its bake's key: MaterialBake.key).
     var made: MaterialGraph?
+    /// The material's fingerprint before it was made procedural (MaterialAssignments).
+    var fingerprint = ""
 }
 
 extension Scene {
@@ -26,9 +28,18 @@ extension Scene {
     /// renderer fills its textures and values as the graph says). Its index.
     @discardableResult
     func addProceduralMaterial(graph name: String, catalog: MaterialCatalog) -> Int {
+        let index = addMaterial(GPUMaterial(albedo: SIMD4(0.5, 0.5, 0.5, 0), emission: SIMD4(0, 0, 0, 0.6), params: SIMD4(1, 1, 0, 0)))
+        makeProcedural(index, graph: name, catalog: catalog)
+        return index
+    }
+
+    /// Material `index` as `graph`'s (an assignment: MaterialAssignments): its slots, its extras; a neutral grey until
+    /// its bake comes.
+    func makeProcedural(_ index: Int, graph name: String, catalog: MaterialCatalog) {
         let g = catalog.graph(name)
         let channels = Set(g?.channels.keys.map { $0 } ?? [])
-        let index = addMaterial(GPUMaterial(albedo: SIMD4(0.5, 0.5, 0.5, 0), emission: SIMD4(0, 0, 0, 0.6), params: SIMD4(1, 1, 0, 0)))
+        let fingerprint = procedural.first { $0.material == index }?.fingerprint ?? MaterialAssignments.fingerprint(materials[index])
+        setMaterial(index, GPUMaterial(albedo: SIMD4(0.5, 0.5, 0.5, 0), emission: SIMD4(0, 0, 0, 0.6), params: SIMD4(1, 1, 0, 0)))
         var slots: [UInt32] = []
         for slot in ProcSlot.allCases {
             // A white pixel, named by the graph and the slot: the same graph's slot is the same texture in another scene.
@@ -37,11 +48,12 @@ extension Scene {
                                                   cacheKey: "procedural-\(slot)", raw: (1, 1))))
         }
         var extra = GPUMaterialExtra()
+        extra.textures.z = 1
         if let g { extra.surface = SIMD4(0, g.surface.uvScale, g.surface.alphaCutoff, 0) }
         if channels.contains(.opacity) { extra.textures.y = slots[ProcSlot.opacity.rawValue] }
         materialExtras[index] = extra
-        procedural.append(ProceduralMaterial(graph: name, material: index, slots: slots, channels: channels, made: g))
-        return index
+        procedural.removeAll { $0.material == index }
+        procedural.append(ProceduralMaterial(graph: name, material: index, slots: slots, channels: channels, made: g, fingerprint: fingerprint))
     }
 
     /// Some procedural material cuts holes (its graph has an opacity output) in a scene whose instances are its own

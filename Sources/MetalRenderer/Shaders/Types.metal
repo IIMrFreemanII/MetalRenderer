@@ -66,7 +66,7 @@ struct Material {
 // A procedural material's extras (GPUTypes.swift GPUMaterialExtra; MATERIAL_EXTRAS: one per material, defaults for
 // the others): its height (parallax) and opacity textures, and how it is sampled.
 struct MaterialExtra {
-    uint4  textures;    // x = height, y = opacity; ~0 = none
+    uint4  textures;    // x = height, y = opacity; ~0 = none; z = 1: procedural (a mesh without UVs gets planar ones)
     float4 surface;     // x = parallax depth (UV units), y = UV scale, z = opacity cutoff, w = AO strength (the
                         //   metallic-roughness texture's R darkens the base colour by it; 0: R isn't occlusion)
 };

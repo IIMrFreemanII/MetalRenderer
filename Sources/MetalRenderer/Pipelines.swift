@@ -45,6 +45,7 @@ enum Kernel: Int, CaseIterable {
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
     case vsmVGCut               // ...in the shadow maps
     case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
+    case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
 
     var function: String { "\(self)Kernel" }
 

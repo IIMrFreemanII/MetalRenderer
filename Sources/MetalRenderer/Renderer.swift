@@ -322,6 +322,8 @@ final class Renderer: NSObject {
     private var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
 
     private let device: MTLDevice
+    /// The GPU it draws with (the Material Designer bakes on it). Any thread.
+    var metalDevice: MTLDevice { device }
     private let queue: MTLCommandQueue
     private weak var surface: RenderSurface?
     private var scene = Scene()
@@ -663,6 +665,13 @@ final class Renderer: NSObject {
     private var lastLiftY: [Float] = []
     private var walkMessage: String?
     private var clickAt: SIMD2<Float>?
+    /// Click-to-pick (the Material Designer's): armed, the next click (not a drag) is picked: its ray traced at the end
+    /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
+    private var pickArmed = false
+    private var pickRequest: SIMD2<Float>?
+    private var pickPending: Int?
+    private var pickBuffer: MTLBuffer?
+    var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
     private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
@@ -1179,7 +1188,7 @@ final class Renderer: NSObject {
         scene.setMaterial(pm.material, m)
         var e = GPUMaterialExtra()
         e.textures = SIMD4(has(.height) && s.heightDepth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
-                           pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, .max, .max)
+                           pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, 1, .max)
         e.surface = SIMD4(s.heightDepth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
         if scene.materialExtras[pm.material] != e {
             scene.materialExtras[pm.material] = e
@@ -1238,6 +1247,43 @@ final class Renderer: NSObject {
     }
 
     /// The gizmos over the finished frame `output` (Shaders/Gizmo.metal).
+    /// Arms click-to-pick (the controller's, for the Material Designer).
+    func armPick() { pickArmed = true }
+    func disarmPick() { pickArmed = false; pickRequest = nil }
+
+    /// The pick's ray, traced this frame (one thread: pickKernel): its answer is read when this slot is next written.
+    private func encodePick(_ plan: FramePlan, passes: FrameEncoder) {
+        guard let cursor = pickRequest else { return }
+        pickRequest = nil
+        if pickBuffer == nil {
+            pickBuffer = device.makeBuffer(length: 48, options: .storageModeShared)
+            pickBuffer?.label = "pick"
+        }
+        guard let buffer = pickBuffer, let enc = passes.compute("pick") else { return }
+        var ray = (SIMD4<Float>(camera.position, 0), SIMD4<Float>(cursorRay(cursor), 0))
+        bind(enc, .pick, plan.uniforms, sceneSlot: plan.slot)
+        enc.setBytes(&ray, length: 32, index: 9)
+        enc.setBuffer(buffer, offset: 0, index: 10)
+        enc.useResource(buffer, usage: [.read, .write])
+        dispatch(enc, .pick, width: 1, height: 1)
+        passes.endCompute()
+        pickPending = plan.slot
+    }
+
+    /// A pick traced in `slot`'s last frame (which is done): what it found.
+    private func readPick(slot: Int) {
+        guard pickPending == slot, let buffer = pickBuffer else { return }
+        pickPending = nil
+        let v = buffer.contents().bindMemory(to: SIMD4<Float>.self, capacity: 3)
+        guard v[0].x >= 0 else { onMaterialPicked?(nil); return }
+        let material = Int(v[0].y)
+        // Its fingerprint as the scene made it: a procedural one's from before it was (Scene.makeProcedural).
+        let procedural = scene.procedural.first { $0.material == material }
+        let fingerprint = procedural?.fingerprint ?? (material < scene.materials.count ? MaterialAssignments.fingerprint(scene.materials[material]) : "")
+        onMaterialPicked?(MaterialPick(instance: Int(v[0].x), material: material, fingerprint: fingerprint, graph: procedural?.graph,
+                                       albedo: SIMD3(v[1].x, v[1].y, v[1].z), position: SIMD3(v[2].x, v[2].y, v[2].z)))
+    }
+
     private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
         guard let target = gizmoTarget, let gpu = particlesGPU else { gizmoHandle = nil; return }
         let (segments, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
@@ -1887,6 +1933,7 @@ final class Renderer: NSObject {
                 plantsWritten[slot] = state
             }
         }
+        readPick(slot: slot)
         updateProcedural(slot: slot)
         writeTraceScene(slot: slot)
         crowdSkinner?.write(slot: slot)
@@ -3143,6 +3190,7 @@ final class Renderer: NSObject {
             }
         }
         if let drawable { encodeGizmos(drawable.texture, slot: plan.slot, passes: passes) }
+        encodePick(plan, passes: passes)
         return (drawable, drawableWait)
     }
 
@@ -5159,8 +5207,13 @@ final class Renderer: NSObject {
     func mouseUp() {
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
-        // A click (no drag) while walking: use what is under the cursor.
-        if let c = clickAt, walker != nil, holding == nil { use(cursorRay(c)) }
+        // A click (no drag) with a pick armed: pick what is under it; while walking: use it.
+        if let c = clickAt, pickArmed, holding == nil {
+            pickRequest = c
+            pickArmed = false
+        } else if let c = clickAt, walker != nil, holding == nil {
+            use(cursorRay(c))
+        }
         clickAt = nil
         holding = nil
         scene.physics?.grab.target.w = 0

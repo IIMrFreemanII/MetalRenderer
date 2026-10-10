@@ -320,13 +320,13 @@ struct VFXSliderRow: View {
     let value: Float
     let span: ClosedRange<Float>
     let set: (Float) -> Void
-    @EnvironmentObject var model: VFXEditorModel
+    @Environment(\.editorDrag) private var drag
 
     var body: some View {
         HStack(spacing: 6) {
             Text(title).frame(width: 110, alignment: .leading).lineLimit(1)
             Slider(value: Binding(get: { Double(min(max(value, span.lowerBound), span.upperBound)) }, set: { set(Float($0)) }),
-                   in: Double(span.lowerBound)...Double(span.upperBound)) { editing in editing ? model.beginDrag() : model.endDrag() }
+                   in: Double(span.lowerBound)...Double(span.upperBound)) { editing in editing ? drag.begin() : drag.end() }
                 .controlSize(.small)
             VFXNumberField(value: value, set: set).frame(width: 64)
         }
@@ -467,7 +467,7 @@ struct VFXCurveEditor: View {
     let title: String
     let curve: VFXCurve
     let set: (VFXCurve) -> Void
-    @EnvironmentObject var model: VFXEditorModel
+    @Environment(\.editorDrag) private var drag
     @State private var selected: Int?
     @State private var dragged: Int?
     /// The values shown, fixed while a key is dragged (so it doesn't run away).
@@ -544,7 +544,7 @@ struct VFXCurveEditor: View {
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in drag(g, size) }
             .onEnded { g in
-                if dragged != nil { model.endDrag() }
+                if dragged != nil { drag.end() }
                 dragged = nil
                 heldRange = nil
                 clicked(g, size)
@@ -570,7 +570,7 @@ struct VFXCurveEditor: View {
             }
             dragged = k
             heldRange = range
-            model.beginDrag()
+            drag.begin()
         }
         guard let k = dragged, k >= 0 else { return }
         move(k, fromView(g.location, size))
@@ -604,12 +604,14 @@ struct VFXCurveEditor: View {
 }
 
 /// A gradient of up to 8 colour keys: drag a stop along the bar (one undo step), double-click the bar to add one,
-/// Option-click a stop to remove it; the selected stop's colour, brightness and opacity below.
+/// Option-click a stop to remove it; the selected stop's colour, brightness and opacity below. `srgb`: its colours are
+/// sRGB values (the Material Designer's), shown and edited as they are, not linear ones.
 struct VFXGradientEditor: View {
     let title: String
     let gradient: VFXGradient
     let set: (VFXGradient) -> Void
-    @EnvironmentObject var model: VFXEditorModel
+    var srgb = false
+    @Environment(\.editorDrag) private var drag
     @State private var selected = 0
     @State private var dragged: Int?
     @State private var lastClick: (time: TimeInterval, at: CGPoint)?
@@ -620,7 +622,11 @@ struct VFXGradientEditor: View {
             GeometryReader { geo in bar(geo.size) }.frame(height: 36)
             if gradient.keys.indices.contains(selected) {
                 let key = gradient.keys[selected]
-                VFXColorRow(title: "Key \(selected + 1)", color: key.color) { c in var g = gradient; g.keys[selected].color = c; set(g) }
+                if srgb {
+                    MatColorRow(title: "Key \(selected + 1)", color: key.color) { c in var g = gradient; g.keys[selected].color = c; set(g) }
+                } else {
+                    VFXColorRow(title: "Key \(selected + 1)", color: key.color) { c in var g = gradient; g.keys[selected].color = c; set(g) }
+                }
                 VFXSliderRow(title: "At", value: key.t, span: 0...1) { t in move(selected, t) }
             }
         }
@@ -640,9 +646,9 @@ struct VFXGradientEditor: View {
                 for i in 0..<n {
                     let c = gradient.value((Float(i) + 0.5) / Float(n))
                     let rgb = SIMD3(c.x, c.y, c.z) / max(max(c.x, c.y, c.z), 1)
+                    let shown = srgb ? rgb : SIMD3(LinearColorPicker.encode(rgb.x), LinearColorPicker.encode(rgb.y), LinearColorPicker.encode(rgb.z))
                     ctx.fill(Path(CGRect(x: size.width * CGFloat(i) / CGFloat(n), y: 0, width: size.width / CGFloat(n) + 0.5, height: h)),
-                             with: .color(Color(.sRGB, red: Double(LinearColorPicker.encode(rgb.x)), green: Double(LinearColorPicker.encode(rgb.y)),
-                                                blue: Double(LinearColorPicker.encode(rgb.z)), opacity: Double(c.w))))
+                             with: .color(Color(.sRGB, red: Double(shown.x), green: Double(shown.y), blue: Double(shown.z), opacity: Double(c.w))))
                 }
             }
             .frame(height: h)
@@ -657,7 +663,7 @@ struct VFXGradientEditor: View {
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in drag(g, size) }
             .onEnded { g in
-                if dragged.map({ $0 >= 0 }) == true { model.endDrag() }
+                if dragged.map({ $0 >= 0 }) == true { drag.end() }
                 dragged = nil
                 clicked(g, size)
             })
@@ -678,7 +684,7 @@ struct VFXGradientEditor: View {
                 return
             }
             dragged = k
-            model.beginDrag()
+            drag.begin()
         }
         guard let k = dragged, k >= 0 else { return }
         move(k, Float(g.location.x / max(size.width, 1)))

@@ -23,7 +23,7 @@ extension Benchmark {
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
-        "materials": materials,
+        "materials": materials, "matedit": matEdit,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1408,6 +1408,34 @@ extension Benchmark {
             })
         }
         return out
+    }
+
+    /// The Material Designer's edits reaching the renderer: the workshop's bricks as built in, then with more rows and
+    /// rounder bricks (an edit of values: baked again in place, Renderer.editMaterials); the sun courtyard as made, then
+    /// with its ground's material given the bricks and a wall's the perforated metal (assignments: the scene made again,
+    /// the materials procedural, the metal's holes alpha-tested).
+    private static func matEdit() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
+        var bricks = MaterialLibrary.named("Red Bricks")!
+        if let k = bricks.nodes.firstIndex(where: { $0.kind == .bricks }) {
+            bricks.nodes[k].params["rows"] = .int(16)
+            bricks.nodes[k].params["roundness"] = .float(0.8)
+        }
+        let edited = MaterialCatalog.register(MaterialCatalog(graphs: ["Red Bricks": bricks]))
+        // The sun scene's two most used materials (its ground, a wall), by their fingerprints as it makes them.
+        let sun = SceneSettings(kind: .sun)
+        let made = Scene(sun)
+        var uses: [Int: Int] = [:]
+        for i in made.instances where i.mesh >= 0 { uses[i.material, default: 0] += 1 }
+        let top = uses.sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }.prefix(2).map(\.key)
+        var a = MaterialAssignments()
+        a.scenes[MaterialAssignments.scope(sun)] = zip(top, ["Red Bricks", "Perforated Metal"]).map {
+            .init(material: $0.0, fingerprint: MaterialAssignments.fingerprint(made.materials[$0.0]), graph: $0.1)
+        }
+        let assigned = MaterialAssignments.register(a)
+        let court = Config("", scale: 0.75, gi: .pathTraced, scene: sun).still(at: 20)
+        return [base.named("bricks"), base.named("bricks edited").with { $0.scene.materials = edited },
+                court.named("sun"), court.named("sun assigned").with { $0.scene.materialAssignments = assigned }]
     }
 
     /// The VFX stage's backdrops: the campfire, the fireworks and the magic at 3.5 s in front of each, from the stage's

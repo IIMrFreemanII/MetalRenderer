@@ -517,6 +517,7 @@ final class Scene {
         case .characters: buildCharacterWorkshop()
         case .materials: buildMaterialWorkshop()
         }
+        applyMaterialAssignments()
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
         for extra in settings.extraModels {

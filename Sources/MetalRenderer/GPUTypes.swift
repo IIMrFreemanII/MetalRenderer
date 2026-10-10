@@ -321,7 +321,8 @@ struct GPUMaterial {
 /// a scene that has any (MSL MaterialExtra, read with MATERIAL_EXTRAS): its height for parallax and its opacity, its
 /// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
 struct GPUMaterialExtra: Equatable {
-    var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none
+    var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none; z = 1: procedural
+                                                    // (a mesh without UVs gets planar ones)
     var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
                                                      // w = AO strength (0: the R channel isn't occlusion)
 }
