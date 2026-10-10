@@ -245,6 +245,35 @@ final class VFXTests: XCTestCase {
         XCTAssertLessThan(worst, 1e-4)
     }
 
+    /// `METALRENDERER_VFX_FORCE=all` (measuring generated code's cost): every emitter of the built-in effects gets a
+    /// program, which does what its fixed emitter does: the same particles, to the other library's rounding. (The
+    /// effects without scene collisions: this test has no scene to trace.)
+    func testForcedProgramsDoWhatTheFixedEmittersDo() throws {
+        let effects = ["campfire", "magic", "embers", "bubbles", "dust", "runes"].compactMap(VFXLibrary.named)
+        let instances = effects.map { VFXInstance(effect: $0, place: .identity) }
+        let plain = VFXLowering.system(instances).system
+        let saved = VFXForce.mode
+        VFXForce.mode = .all
+        let forced = VFXLowering.system(instances).system
+        VFXForce.mode = saved
+        XCTAssertTrue(forced.programs.allSatisfy { $0 != nil })
+        XCTAssertTrue(forced.programs.allSatisfy { $0!.hooks.isSuperset(of: [.spawn, .step]) })
+        XCTAssertEqual(forced.gpuEmitters.map(\.size), plain.gpuEmitters.map(\.size))
+        let (p, runP) = try gpu(plain), (q, runQ) = try gpu(forced)
+        runP(120); runQ(120)
+        let pa = alive(p), qa = alive(q)
+        XCTAssertGreaterThan(pa.count, 500)
+        var same = 0, missing = 0, worst: Float = 0
+        for (k, x) in pa {
+            guard let y = qa[k] else { missing += 1; continue }
+            same += x.position == y.position && x.velocity == y.velocity ? 1 : 0
+            worst = max(worst, length(ParticleMath.xyz(x.position) - ParticleMath.xyz(y.position)))
+        }
+        print("forced programs: \(same) of \(pa.count) particles bit for bit, \(missing) missing, the rest within \(worst) m after 120 steps")
+        XCTAssertEqual(Float(qa.count), Float(pa.count), accuracy: Float(pa.count) * 0.01)
+        XCTAssertLessThan(worst, 1e-3)
+    }
+
     /// The pose's size and colour from the program (a smooth size curve, a gradient of four keys) are the CPU's.
     func testProgramsLookAsTheInterpreterSays() throws {
         let system = programSystem()

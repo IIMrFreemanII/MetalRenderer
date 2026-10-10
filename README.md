@@ -1517,6 +1517,23 @@ Every particle effect is a graph (`Sources/MetalRenderer/VFX`), as Unity's VFX G
   The particles scene times the same as before (`ab.sh`, 3 alternating rounds against the build before graphs: 15.40 → 15.39 ms
   paused, 17.52 → 17.52 ms moving), and its frames and the showcase's match the old build's within what two runs of one
   build differ by (the GPU's atomics hand out pool slots in their own order, and each slot's light is averaged over frames).
+* **What generated code costs.** `METALRENDERER_VFX_FORCE=library` runs a system in the VFX library though it has no
+  programs; `=all` gives every emitter a program that does what its fixed emitter does (the same particles: 928 of 1,007
+  bit for bit after 120 steps, the rest an ulp off; `VFXTests`). The particles scene, all 15 emitters generated, against
+  the fixed code (M1 Max, `ab.sh`, 3 alternating rounds, whole frames with `METALRENDERER_BENCH_SPLIT=0`):
+
+  | | Fixed | VFX library only | All generated |
+  |---|---|---|---|
+  | Paused at 5 s | 13.29 ms | 13.35 ms | 13.35 ms |
+  | Moving | 15.52 ms | 15.59 ms | 15.62 ms |
+  | Moving, 4x | 39.22 ms | 39.85 ms | 39.74 ms |
+  | Step and pose (moving) | 0.12 ms | 0.13 ms | 0.20 ms |
+  | Step and pose (moving, 4x) | 0.15 ms | 0.17 ms | 0.24 ms |
+
+  The frame differences are within launch noise, except at 4x (+0.3 to +0.6 ms, the same sign each round). The generated
+  step and pose take 0.08 ms more, as every value is a parameter buffer's read and size and colour a curve's and a
+  gradient's walk. The compile is the larger cost: 6.1 s cold for 15 programs (0.6 s for the library alone, 1.2 s with
+  fireworks' two), 6–43 ms once Metal's shader cache has the source.
 * **Limits** (so far): the meshes', trails' and haze's size and colour are the fixed emitter's (a curve's ends, a gradient's ends and middle); a Sample Field node isn't known in Output; children don't read their parents' attributes; every child of a parent takes all its events (the fixed emitters' rule).
 
 ### The VFX editor

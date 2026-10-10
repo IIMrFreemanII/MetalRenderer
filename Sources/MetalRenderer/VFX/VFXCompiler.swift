@@ -91,6 +91,7 @@ final class VFXCompiler {
             if case .ready = entry { lastMilliseconds = (CACurrentMediaTime() - start) * 1000; lastFailure = nil }
             if case .failed(let f) = entry { lastFailure = f }
             lock.unlock()
+            if case .ready = entry { print(String(format: "VFX library: compiled in %.0f ms", (CACurrentMediaTime() - start) * 1000)) }
         }
         if wait {
             work()

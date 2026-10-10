@@ -86,6 +86,23 @@ extension VFXProgramBuilder {
                 }
             }
         }
+        if VFXForce.mode == .all {
+            // What the fixed emitter does, as generated code: its birth and step as they are, its size's lerp and its
+            // colour's three keys as a curve and a gradient.
+            hooks.formUnion([.spawn, .step])
+            if outputPlan.size == nil, let b = em.first(.size) {
+                let k = curveSlot("\(b.id).size", b.param("size").curve)
+                outputPlan.size = VFXExpr(type: .float, metal: "vfxCurve(P + \(k), x)") { env in
+                    SIMD4(repeating: VFXProgram.curve(env.params, k, env.share))
+                }
+            }
+            if outputPlan.color == nil, let b = em.first(.color) {
+                let k = gradientSlot("\(b.id).color", b.param("color").gradient)
+                outputPlan.color = VFXExpr(type: .color, metal: "vfxGradient(P + \(k), x)") { env in
+                    VFXProgram.gradient(env.params, k, env.share)
+                }
+            }
+        }
         if outputPlan.size != nil || outputPlan.color != nil { hooks.insert(.output) }
         guard !hooks.isEmpty else { return nil }
         let metal = VFXCodegen.functions(number: number, name: "\(effect.name)/\(em.name)", birth: initPlan, step: stepPlan,
@@ -93,6 +110,14 @@ extension VFXProgramBuilder {
         return VFXProgram(number: number, hooks: hooks, metal: metal, params: params, slots: slots, rate: rate,
                           attributes: attributes, initPlan: initPlan, stepPlan: stepPlan, outputPlan: outputPlan)
     }
+}
+
+/// `METALRENDERER_VFX_FORCE`, for measuring what generated code costs: `library` runs every particle system in the VFX
+/// library though it has no programs (the dispatchers' fixed cases only); `all` gives every emitter a program that does
+/// what its fixed emitter does (VFXProgramBuilder.build). Unset: neither.
+enum VFXForce: String {
+    case off, library, all
+    static var mode = VFXForce(rawValue: ProcessInfo.processInfo.environment["METALRENDERER_VFX_FORCE"] ?? "") ?? .off
 }
 
 enum VFXCodegen {

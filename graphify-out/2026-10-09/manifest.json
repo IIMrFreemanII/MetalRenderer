@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791526017.184993,
-    "seen": 1791526191.276887,
-    "ast_hash": "58be36b38b3c64f0460205872e9e5bf8",
+    "mtime": 1791487804.336705,
+    "seen": 1791489213.6199229,
+    "ast_hash": "48ed82e1d7cbf7fb930936413b834275",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -1482,9 +1482,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Particles.swift": {
-    "mtime": 1791524861.0244372,
-    "seen": 1791526191.276683,
-    "ast_hash": "1d6b71f3f7899af5020717db6a723cec",
+    "mtime": 1791478121.7828536,
+    "seen": 1791482228.792577,
+    "ast_hash": "e1f5e64286494983a02ec13b396a67ca",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ParticlesGPU.swift": {
@@ -1668,15 +1668,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXCodegen.swift": {
-    "mtime": 1791524858.230249,
-    "seen": 1791526191.2767959,
-    "ast_hash": "254d319b7c2373f335b32428f7c32c8b",
+    "mtime": 1791480886.821588,
+    "seen": 1791482228.7926788,
+    "ast_hash": "21db95b13ec30735283fb7070e0657c1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXCompiler.swift": {
-    "mtime": 1791525305.457798,
-    "seen": 1791526191.2767959,
-    "ast_hash": "2fcf018bdbae4fc25f52b3a1ab29bdf4",
+    "mtime": 1791478098.4473963,
+    "seen": 1791482228.7926788,
+    "ast_hash": "e0b08d25656f74bae9a32de99e24fbd1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXGraph.swift": {
@@ -1728,15 +1728,15 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VFXTests.swift": {
-    "mtime": 1791524876.5228875,
-    "seen": 1791526191.276856,
-    "ast_hash": "94f3d39bfef9d0f0a2e0519d17133639",
+    "mtime": 1791481953.154905,
+    "seen": 1791482228.792724,
+    "ast_hash": "8d66b02c2f01c99a885a5fb741b05298",
     "semantic_hash": ""
   },
   ".claude/notes/vfx-editor-handoff.md": {
-    "mtime": 1791489269.0738769,
-    "seen": 1791526191.276876,
-    "ast_hash": "8300d64fc02514127801d30cfc352ad1",
+    "mtime": 1791487954.990686,
+    "seen": 1791489213.619912,
+    "ast_hash": "be895d43cad00ac43137801ac005f9fc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXLive.swift": {

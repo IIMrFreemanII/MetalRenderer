@@ -380,7 +380,7 @@ final class ParticleSystem {
         precondition(programs.isEmpty || programs.count == emitters.count, "a program (or none) an emitter")
         self.programs = programs.isEmpty ? Array(repeating: nil, count: emitters.count) : programs
         let made = self.programs.compactMap { $0 }
-        programSource = made.isEmpty ? nil : VFXCodegen.source(made)
+        programSource = made.isEmpty ? (VFXForce.mode == .library ? VFXCodegen.source([]) : nil) : VFXCodegen.source(made)
         attributeStride = made.map(\.attributes).max() ?? 0
         self.colliders = colliders
         for e in emitters { if let f = e.field { precondition(f.index >= 0 && f.index < fields.count, "\(e.name): no such field") } }
