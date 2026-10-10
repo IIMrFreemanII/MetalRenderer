@@ -15,6 +15,7 @@ using namespace metal::raytracing;
 #include "Shaders/SDF.metal"               // SDF shapes: their distance fields and the march through them
 #include "Shaders/Intersect.metal"         // Ray, Hit, TraceScene and the ray queries (Metal's intersector)
 #include "Shaders/ParticleTrace.metal"     // particles as rays meet them: billboards, flipbooks, their transmittance
+#include "Shaders/Procedural.metal"        // procedural materials as code (the Material Designer's shader-code mode)
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
 #include "Shaders/Raster.metal"            // the raster visibility buffer: culling, the pyramid, the draw, visibilityHit
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
@@ -48,3 +49,4 @@ using namespace metal::raytracing;
 #include "Shaders/ParticleSim.metal"       // particle effects: a step's begin, emit and simulate, the pose (particle* kernels)
 #include "Shaders/ParticleLight.metal"     // ...their light, the camera's layer of them, the heat haze
 #include "Shaders/Gizmo.metal"             // the VFX editor's gizmos: lines over the finished frame
+#include "Shaders/Pick.metal"              // the Material Designer's click-to-pick: the material under a click

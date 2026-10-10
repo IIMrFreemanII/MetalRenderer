@@ -1,4 +1,5 @@
 import AppKit
+import Metal
 
 /// What the renderer reports on its stats tick, twice a second, besides the settings.
 struct RendererStatus {
@@ -19,6 +20,8 @@ struct RendererStatus {
     var buildingPlan: BuildingPlan?
     /// The character workshop's character (Scene.characterStats).
     var characterStats: CharacterStats?
+    /// What the procedural materials' displacement made of the scene's meshes (the Material Designer's inspector).
+    var displacement: String?
     /// Walking: where (the Floor Plan window's you-are-here).
     var walker: WalkerStatus?
     /// Where the camera is (the building editor's Pin: the city's building nearest it).
@@ -71,6 +74,13 @@ final class RendererController: InputHandler {
     var onToggleVFX: (() -> Void)?              // X key
     var onToggleBuildings: (() -> Void)?        // J key
     var onToggleCharacters: (() -> Void)?       // H key
+    var onToggleMaterials: (() -> Void)?        // O key
+    var onTogglePainter: (() -> Void)?          // V key (Shift-V walks)
+    /// The painter's status as the renderer last sent it, and who wants it.
+    private(set) var painterStatus = PainterStatus()
+    private var painterObservers: [(PainterStatus) -> Void] = []
+    /// An armed pick's answer (the Material Designer's).
+    var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
     var onCompare: ((Bool) -> Void)?
     /// ...and in the character workshop: the saved character.
@@ -104,6 +114,7 @@ final class RendererController: InputHandler {
         renderer.onTick = { [weak self] status in
             DispatchQueue.main.async { self?.ticked(status) }
         }
+        renderer.onPainter = { [weak self] status in self?.painterChanged(status) }
         renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
             DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
         }
@@ -193,12 +204,29 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" {
             if !event.isARepeat {
                 (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
-                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : onToggleBuildings)?()
+                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials : onToggleBuildings)?()
             }
             return
+        }
+        // V: the Material Painter's window (Shift-V walks, as V did).
+        if key == "v" && !event.modifierFlags.contains(.shift) {
+            if !event.isARepeat { onTogglePainter?() }
+            return
+        }
+        // Paint mode: [ ] the brush's size, Escape leaves it.
+        if painterStatus.active != nil {
+            if key == "[" || key == "]" {
+                let step = key == "[" ? -1 : 1
+                renderer.perform { $0.resizeBrush(step) }
+                return
+            }
+            if event.keyCode == 53 {
+                renderer.perform { $0.setPaintMode(nil) }
+                return
+            }
         }
         if key == "c", settings.scene.kind == .plants || settings.scene.kind == .characters {
             if !event.isARepeat { (settings.scene.kind == .plants ? onCompare : onCompareCharacter)?(true) }
@@ -217,7 +245,8 @@ final class RendererController: InputHandler {
 
     func flagsChanged(_ event: NSEvent) {
         let shift = event.modifierFlags.contains(.shift), control = event.modifierFlags.contains(.control)
-        renderer.perform { $0.setShift(shift); $0.setControl(control) }
+        let option = event.modifierFlags.contains(.option)
+        renderer.perform { $0.setShift(shift); $0.setControl(control); $0.setOption(option) }
     }
 
     func mouseDown(at cursor: SIMD2<Float>) {
@@ -234,5 +263,68 @@ final class RendererController: InputHandler {
 
     func scrolled(dy: Float) {
         renderer.perform { $0.scrolled(dy: dy) }
+    }
+
+    func rightMouseDown(at cursor: SIMD2<Float>) { renderer.perform { $0.rightMouseDown(at: cursor) } }
+    func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) { renderer.perform { $0.rightMouseDragged(dx: dx, dy: dy, at: cursor) } }
+    func rightMouseUp() { renderer.perform { $0.rightMouseUp() } }
+    func mouseMoved(at cursor: SIMD2<Float>) {
+        guard painterStatus.active != nil else { return }
+        renderer.perform { $0.paintMouseMoved(at: cursor) }
+    }
+    func pressure(_ p: Float) { renderer.perform { $0.penPressure = p } }
+}
+
+extension RendererController: PainterHost {
+    func observePainter(_ observer: @escaping (PainterStatus) -> Void) {
+        painterObservers.append(observer)
+        observer(painterStatus)
+    }
+
+    func painter(_ work: @escaping (Renderer) -> Void) { renderer.perform(work) }
+
+    func paintInfo(_ instance: Int, _ answer: @escaping (String?) -> Void) {
+        renderer.perform { r in
+            let s = r.scene
+            let fingerprint = s.paintable(instance) ? s.paintFingerprint(instance) : nil
+            DispatchQueue.main.async { answer(fingerprint) }
+        }
+    }
+
+    /// From the render thread: the painter's status changed.
+    func painterChanged(_ s: PainterStatus) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.painterStatus = s
+            for o in self.painterObservers { o(s) }
+        }
+    }
+}
+
+extension RendererController: MaterialEditorHost {
+    var metalDevice: MTLDevice? { renderer.metalDevice }
+    var displacementSummary: String? { status?.displacement }
+
+    /// Click-to-pick: the next click in the view (not a drag) names the material there.
+    func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void) {
+        onMaterialPicked = picked
+        renderer.perform { [weak self] r in
+            r.onMaterialPicked = { p in self?.materialPicked(p) }
+            r.armPick()
+        }
+    }
+
+    func cancelPick() {
+        onMaterialPicked?(nil)
+        onMaterialPicked = nil
+        renderer.perform { $0.disarmPick() }
+    }
+
+    /// From the render thread: what a pick found.
+    func materialPicked(_ p: MaterialPick?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onMaterialPicked?(p)
+            self?.onMaterialPicked = nil
+        }
     }
 }

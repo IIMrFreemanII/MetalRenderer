@@ -343,6 +343,36 @@ final class Scene {
     /// there too (Metal's per-mesh structures: SceneBuffers).
     private(set) var meshNames: [Int: String] = [:]
     private(set) var materials: [GPUMaterial] = []
+    /// Procedural materials' extras (GPUMaterialExtra), by material index: height, opacity, UV scale, occlusion
+    /// (Scene+Procedural.swift). A scene with any compiles MATERIAL_EXTRAS in; one whose graphs give opacity, OPACITY.
+    var materialExtras: [Int: GPUMaterialExtra] = [:]
+    /// The materials a Material Designer graph bakes (Scene+Procedural.swift), and a count of their extras' edits.
+    var procedural: [ProceduralMaterial] = []
+    var extrasVersion = 0
+    /// Those that run as code (MatShaderCode): their programs spliced together (the pipelines compile it in), their
+    /// parameters (SceneShading.procParams), and a count of the parameters' edits.
+    var proceduralCode = ""
+    var proceduralParams: [SIMD4<Float>] = []
+    var proceduralParamsVersion = 0
+    /// The meshes a procedural material's height moves (Scene+Displacement.swift): their subdivided copies, and what
+    /// the GPU moves their vertices from (`displaceVertices`, two a vertex: where it is and its group's first member,
+    /// the way it moves and its group's size; `displaceMembers`: the groups' vertices).
+    var displaced: [DisplacedMesh] = []
+    var displaceVertices: [SIMD4<Float>] = []
+    var displaceMembers: [UInt32] = []
+    /// The materials whose every instance is displaced (their height isn't the parallax's too), and what the
+    /// displacement had to leave out or cap (the Material Designer's status).
+    var displacedMaterials: Set<Int> = []
+    var displacementNotes: [String] = []
+    /// Procedural materials a scene keeps undisplaced (their parallax instead), so its triangles go where relief shows:
+    /// the swamp's ground, its flat patches and its far trees, leaving them to its near gnarly trunks.
+    var undisplacedMaterials: Set<Int> = []
+    /// Objects the Material Painter paints (Scene+Painted.swift): each its instance's texture set's slots and layout,
+    /// and the UVs of their corners, three per triangle, after the meshes' own on the GPU (the painted materials' extras
+    /// say where theirs start). The painter workshop's object (Scene+Painter.swift), painted whatever is assigned.
+    var painted: [PaintedObject] = []
+    var paintUVs: [SIMD2<Float>] = []
+    var paintSubject: Int? = nil
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
@@ -365,6 +395,8 @@ final class Scene {
     /// The first sun among the lights (the sky follows it), if any.
     private(set) var firstSun: Int?
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
+    /// Mesh `m`'s own bounds (the painter's orbit).
+    func meshBounds(_ m: Int) -> (SIMD3<Float>, SIMD3<Float>) { meshBounds.indices.contains(m) ? meshBounds[m] : (.zero, .zero) }
     /// The deforming meshes other than the crowd's: each one's mesh and its vertices (`addDeformingMesh`).
     private(set) var deforming: [(mesh: Int, first: Int, count: Int)] = []
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
@@ -509,7 +541,14 @@ final class Scene {
         case .vfxStage: buildVFXStage()
         case .buildings: buildBuildingWorkshop()
         case .characters: buildCharacterWorkshop()
+        case .materials: buildMaterialWorkshop()
+        case .mireland: buildMireland()
+        case .painter: buildPainterWorkshop()
         }
+        applyMaterialAssignments()
+        buildProceduralPrograms()
+        displaceProcedural()
+        traceHoleShadows()
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
         for extra in settings.extraModels {
@@ -524,6 +563,7 @@ final class Scene {
         finishSoftBodies()
         finishLiquids()
         physics?.finish()
+        applyPaintAssignments()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }
@@ -569,6 +609,8 @@ final class Scene {
         // cover's: the frames update it. Not the open world's, whose instance blocks need a still scene: its plants
         // stand still.)
         isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty && (!hasFoliage || hasGroups)
+        // (A displaced mesh's structure is built again when a bake moves its vertices: the top level's then too.)
+            && displaced.isEmpty
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -727,6 +769,9 @@ final class Scene {
     /// The VFX editor's edit, run in place of the scene's particles (VFXLive.swift): `system` (made `continuing` the
     /// one it replaces) from `effects`, as `key` names them (SceneSettings.effects), so the scene isn't made again.
     /// Without `system` only the key: the edit's code compiles meanwhile.
+    /// The Material Designer's edit, baked in place (Renderer.editMaterials): its graphs' catalog's key.
+    func adoptMaterials(_ key: String) { settings.materials = key }
+
     func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
         settings.effects = key
         guard let system else { return }   // the running ones until their new code is ready (Renderer.editEffects)
@@ -756,6 +801,18 @@ final class Scene {
     var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
 
     /// The range of materials changed since the last call (nil: none), which is then forgotten.
+    /// Material `i` changed (a procedural one's bake): the renderer copies it to every slot.
+    func markMaterialDirty(_ i: Int) {
+        materialsDirty = materialsDirty.map { min($0.lowerBound, i)..<max($0.upperBound, i + 1) } ?? i..<(i + 1)
+    }
+
+    /// Material `i` replaced (a procedural one's values as its graph's bake gives them).
+    func setMaterial(_ i: Int, _ m: GPUMaterial) {
+        guard materials.indices.contains(i) else { return }
+        materials[i] = m
+        markMaterialDirty(i)
+    }
+
     func takeMaterialsDirty() -> Range<Int>? {
         defer { materialsDirty = nil }
         return materialsDirty
@@ -868,13 +925,17 @@ final class Scene {
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
         // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
+        // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes. Bit 13:
+        // PROCEDURAL_CODE, some of them are code the shading runs.
         // (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
             | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasSkin ? 0x0002_0000 : 0)
-            | (hasParticles ? 0x0001_0000 : 0)
+            | (hasParticles ? 0x0001_0000 : 0) | (materialExtras.isEmpty ? 0 : 0x8000)
+            | (hasOpacity ? 0x2000_4000 : 0)   // OPACITY, with ALPHA_TEST's query loop
+            | (proceduralCode.isEmpty ? 0 : 0x2000)   // PROCEDURAL_CODE
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1131,6 +1192,33 @@ final class Scene {
         meshBounds[m] = (bounds.lo, bounds.hi)
         deforming.append((mesh: m, first: positions.count - mesh.positions.count, count: mesh.positions.count))
         return m
+    }
+
+    /// Instance `i` on `mesh`, its mesh's displaced copy (Scene+Displacement.swift): its shadows traced (the virtual
+    /// shadow maps would keep their pages of it as it was before a bake moved it).
+    func setDisplacedMesh(_ i: Int, _ mesh: Int) {
+        instances[i].mesh = mesh
+        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
+    /// Instance `i` given its painted materials (Scene+Painted.swift), its shadows traced if they cut holes.
+    func setPaintedMaterial(_ i: Int, _ material: Int, cutsHoles: Bool) {
+        instances[i].material = material
+        if cutsHoles && instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
+    /// The instances a procedural material cuts holes in (the raster leaves them to the rays): their shadows traced too
+    /// (the virtual shadow maps are drawn by the raster, which would leave them out).
+    func traceHoleShadows() {
+        guard groups.isEmpty, procedural.contains(where: { $0.channels.contains(.opacity) }) || painted.contains(where: \.opacity) else { return }
+        for i in instances.indices where instances[i].isGeometry {
+            if let e = materialExtras[instances[i].material], e.textures.y != .max { instances[i].mask |= Scene.maskShadowTraced }
+        }
+    }
+
+    /// Mesh `m`'s bounds grown by `d` every way (where its displaced vertices may go).
+    func growBounds(mesh m: Int, by d: Float) {
+        meshBounds[m] = (meshBounds[m].0 - SIMD3(repeating: d), meshBounds[m].1 + SIMD3(repeating: d))
     }
 
     /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).

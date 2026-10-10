@@ -85,7 +85,7 @@ extension Scene {
     }
 
     /// A floor that curves up into a back wall (a quarter circle of `radius` m), 30 m wide: no corner behind the effects.
-    private func cyclorama(_ kit: Kit, _ material: Int) {
+    func cyclorama(_ kit: Kit, _ material: Int) {
         let w: Float = 30, back: Float = -6, radius: Float = 3, height: Float = 14, steps = 10
         addInstance(kit.quad, material, translate([0, 0, (back + 12) / 2]) * scale([w, 1, 12 - back]))
         for k in 0..<steps {

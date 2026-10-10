@@ -246,6 +246,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
 | J, ⌘B | Show or hide the Building Editor and its Floor Plan window (see "The building editor" below) |
 | X, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
+| O, ⇧⌘M | Show the Material Designer (see "The Material Designer" below) |
 | F | Workshops and the VFX stage: frame the plants, the building or the effects (drag orbits about them, scroll zooms, W A S D pan) |
 | C (hold) | Plant workshop: the saved plant in place of the edited one |
 | V | Walk (the building workshop, the city, the open world) or fly again |
@@ -1796,6 +1797,138 @@ The VFX Editor (X or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effec
   * `METALRENDERER_VFX_SCRIPT=<folder>` drives the editor in the app, step by step, printing the renderer's report and
     saving the window.
   * `METALRENDERER_BENCH=vfxstage` renders the backdrops; `vfxstagedemo` is their video.
+
+### The Material Designer
+
+The Material Designer (O or ⇧⌘M, a window of its own: `MaterialEditor/`, the graphs in `MaterialGraph/`) makes
+materials as node graphs, after Substance Designer: image nodes wired into each other, baked on the GPU, ending in
+output nodes that name the renderer's channels (base colour, normal, roughness, metallic, ambient occlusion, height,
+opacity, emissive).
+* **Nodes** (`MatNodes.swift`, their kernels in `MaterialShaders/`):
+  * noises: white, value, Perlin, fractal sum (fbm, ridged, turbulence, billow), cells (Worley: F1, F2, borders, a grey
+    a cell, crystal), anisotropic, scratches, grunge, fibers (bent strands: straw, grass, bark fibre, twigs); every one
+    tiles;
+  * patterns: shapes (with a leaf and a grass blade), gradients, checker, bricks (height and a random grey a brick), waves, tile sampler;
+  * adjustments: levels, curve, gradient map, HSL, invert, grayscale, histogram scan, posterize, RGBA split and merge;
+  * blending: 16 blend modes with opacity and a mask, height blend;
+  * filters: transform, mirror, warp, directional warp, blur, directional blur, slope blur, edge detect;
+  * height and normal: normal from height, normal combine, ambient occlusion from height, curvature;
+  * advanced: distance (jump flooding), bevel, flood fill (a random grey, a gradient, the centre and size of each
+    shape), auto levels, the pixel processor (a function of the pixel as math nodes, edited on the same canvas) and
+    Code (Metal, with its compiler's errors on the node);
+  * other graphs as subgraphs: their input and output nodes are the node's pins, their exposed parameters its own.
+* **Every node is an image of its own size and precision** (inherited from its first input or the graph, relative ½ to
+  ×4, or 256 to 4096 pixels; 8-bit, 16-bit float or 32-bit float; grey or colour, colour following what is wired).
+* **The engine** (`MatEngine`) bakes a node a kernel (several passes for blurs, distances and flood fills) on a queue of
+  its own, and keeps each node's images by a hash of what made it: an edit bakes only the nodes it reaches (an edit of
+  a value at 1024 px takes a few milliseconds), and undo finds the images it had. The renderer's textures are packed
+  from the outputs (sRGB base colour and emissive, occlusion-roughness-metallic, normal, 16-bit height, opacity),
+  mipmapped.
+* **The window:** the toolbar (the graph, New, Duplicate, Rename, Save, Revert, Export as PNG 8 or 16-bit or EXR, Copy
+  as Swift, the workshop's shapes and backdrop, Pick), the node library, the canvas (the VFX editor's: thumbnails on
+  every node, size and precision on its header, Tab to add, a right-click for the menu, double-click a pixel processor
+  to edit its function), the 2D view (a node's image, pinned or the focused one's: tiled, a channel, exposure), the 3D
+  preview (a sphere, cube, cylinder or plane, lit, with parallax and opacity; drag turns it) and the inspector
+  (parameters, each one exposable as the graph's input; with nothing selected the graph's size, precision, seed and how
+  the renderer uses it). Edits are one undo step each (a drag one), kept as a draft until saved.
+* **In the renderer** (`Scene+Procedural.swift`, `MaterialBake.swift`): a procedural material's six texture slots are
+  filled with its graph's bake, and filled again in place as it is edited (`SceneSettings.materials`, a catalog's
+  key; `Renderer.editMaterials`). What the material record has no room for is an extras buffer, compiled in only for
+  scenes that have such materials (`MATERIAL_EXTRAS`): a UV scale, parallax occlusion mapping from the height (camera
+  rays), occlusion from the ORM texture's red. Opacity cuts holes (`OPACITY`): those instances aren't opaque, the ray
+  queries alpha-test them, the raster leaves them to the rays.
+* **Displacement** (Displacement, Midlevel and Detail in the inspector; `Scene+Displacement.swift`,
+  `MeshSubdivider.swift`, `MaterialShaders/MatDisplace.metal`): the height moves the geometry, so silhouettes,
+  shadows and contacts are bumped, not only the shading. Every mesh the material is on is copied, subdivided until no
+  edge is longer than the detail (1M triangles a mesh, 4M a scene at most), and its vertices are moved along the
+  surface's normal by the height (the midlevel stays put) each time the bake comes; then their acceleration
+  structures are built again. Vertices at one point (a hard edge's, a UV seam's) move together, so the surface stays
+  closed. Normals stay the surface's (the normal map has the height's slopes), and parallax is off on displaced
+  meshes. An edit of the amount (within twice what the scene was made with) moves the vertices in place; switching
+  it on or off, or another detail, makes the scene again. The embedded 3D preview displaces its shape too. Not
+  displaced: plants, SDF shapes, deforming or streamed meshes, meshes of several materials, the open world (they keep
+  parallax). Cobblestone, Red Bricks, Bark and Moss and Sci-fi Panels displace.
+* **The material workshop** (`METALRENDERER_SCENE=materials`, `Scene+Materials.swift`): the graph on a sphere, a cube, a
+  cylinder and a tile, or on a standing card and a tile on the ground (a cut-out: a plant, a decal), in a studio,
+  outdoors or in the dark, path traced (`mgraph=`, `mlayout=`, `mbackdrop=`).
+* **Click-to-pick** (Pick, then a click in the view; `Shaders/Pick.metal`): the material under the click, which Assign
+  gives the shown graph. Assignments are per scene (its kind, and its seed or model), saved in
+  `Assets/Materials/assignments.json`; the scene is made again with that material procedural (a mesh without UVs gets
+  planar ones, a tile a metre). Not the open world's tiles.
+* **As code** ("Run as code in the shading"; `MatShaderCode.swift`): a graph of nodes that read their inputs at a few
+  places (no blurs, distances, flood fills, occlusion, bitmaps), within a budget, runs in the shading instead of being
+  sampled: its nodes become Metal functions spliced into the shaders (`Shaders/Procedural.metal`, `PROCEDURAL_CODE`),
+  its parameters a buffer (a value's edit is a write; a structural edit compiles the shaders again). The Marble
+  starter runs so. Height (for parallax) and opacity still come from its bake.
+* **Starters** (`MaterialLibrary.swift`): Red Bricks, Cobblestone, Rusted Paint, Brushed Steel, Scratched Copper,
+  Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code); and Mireland's.
+* **Mireland** (`MaterialLibrary+Mireland.swift`): the eleven swamp materials of the Substance 3D Assets collection
+  "Welcome to Mireland" (Sherif Dawoud), made again as our own graphs by eye from its previews: Swamp Mud, Gnarly
+  Bark, Birch Bark, Loose Dirt, Dead Grass, Swamp Ground (black water, duckweed, twigs), and five cut out: Mud Cracks
+  and Mud Puddle (decals), Leaves (fallen, scattered), Grass Blades and Plant (cards; their shapes are Code nodes).
+  The Mireland scene (`METALRENDERER_SCENE=mireland`, `Scene+Mireland.swift`, benchmark `-m mireland`) is a misty
+  swamp made of them all: mud ground sinking under the water, ragged patches of dirt and dead grass, crusts, puddles
+  and leaves on it, bare birches and gnarly old trunks (displaced, the rest keeping parallax: `undisplacedMaterials`),
+  grass and plant cards along the water's edge, a low sun through ground mist; `seed=` places it. Saved graphs are
+  `Assets/Materials/<name>.mat.json` (`METALRENDERER_MATERIALS=builtin|<folder>`).
+* **Checked:** `MaterialDisplacementTests` (subdivision to the detail, the cap, groups across hard edges, the
+  kernel's surface staying closed, the workshop's displaced copies), `MaterialGraphTests` (the JSON, the plan: order, types, sizes, precision, hashes, subgraphs, functions,
+  shader code), `MaterialEngineTests` (every node bakes; blend modes, normals, blur, tiling, the cache, distance,
+  flood fill, pixel processors, export against the CPU or brute force), `MaterialEditorTests` (the editor's model,
+  assignments; `MATERIAL_EDITOR_PNG=<folder>` draws the window); `METALRENDERER_BENCH=materials` renders every starter
+  in the workshop, `matedit` an edit in place, assignments in the sun courtyard, and the marble as code and baked.
+* **Not done:** opacity on meshes without UVs, in Lumen and in the virtual shadow maps; displacement in Lumen's
+  mesh SDFs and cards (they have the undisplaced mesh); SDF shapes (triplanar, no
+  normal maps); Metal 4 (written, not tried: the M1 Max has no Metal 4 ray tracing).
+
+### The Material Painter
+
+The Material Painter (V or ⇧⌘P, a window of its own: `PainterEditor/`, the engine in `Painter/`) paints materials
+onto an object, after Substance Painter: a stack of layers, each a fill (values, or a Material Designer graph's bake
+projected onto it, triplanar or by UV) or what a brush put there, channel by channel (colour, roughness, metallic,
+height, emissive, opacity), through masks, into a texture set of its own (1K, 2K or 4K).
+* **What can be painted:** any object picked in the view (Pick object; a mesh of its own: not virtual geometry, a plant,
+  an SDF shape or the open world's tiles), glTF models, the character creator's people (in their bind pose: the paint
+  follows the skinning), and the painter workshop's object (`METALRENDERER_SCENE=painter`, `,psubject=sphere|cube|
+  cylinder|plane|character|model,pmodel=demon`): a shape, the base character, or a model's largest part, on a plinth.
+* **Its UVs** (`UVCheck`, `UVUnwrap`, `UVPack`): the mesh's own, if each point of it has a texel of its own; otherwise
+  the painter's unwrap, written here: charts grown from the largest triangles while they face within a cone and
+  never across a crease, small ones merged (across creases too), each flattened by LSCM (a conjugate gradient; its
+  projection on its plane if it folds, and split in two if that folds or overlaps), turned to its smallest rectangle
+  and cut in two where it is long or mostly empty in it (an arm, a ring: the halves keep their layout), then packed
+  by its outline with gutters (a horizon per column of half a gutter: each chart, largest first, in the quarter turn and place
+  where it rests lowest and leaves least room under it; a notch takes another's bump). The corners' UVs (three a triangle) follow the meshes' own on the GPU: nothing is split
+  (`Scene+Painted.swift`, the painted materials' extras say where they start).
+* **Painting** (`PainterSession`, `MaterialShaders/Paint.metal`): every texel knows its triangle and barycentrics (a
+  UV-space pass, dilated into the gutters), so a dab is texels whose point, as the object is now, shows under the
+  brush on the screen (the render's own surface at that pixel: hidden texels aren't painted, and strokes cross seams).
+  Brush: size, hardness, opacity, flow, spacing, pen pressure, stamps (built-in, jittered, following the stroke),
+  symmetry along X, Y or Z, a stencil (a picture or a graph) painted through, an eraser; fills of the whole object, a
+  UV island, a polygon or a material. Only the tiles a stroke touches are composited again, and their mip levels made
+  again (2K, ten dabs a frame: 1.4 ms on an M1 Max); undo keeps its tiles.
+* **Smart masks** (`PaintBake`, `MaterialShaders/PaintBake.metal`): the object's curvature (its vertices' and its
+  creases', convex and concave), ambient occlusion and thickness (Metal RT against the object alone), position and
+  normal; generators of edge wear, dirt in cavities, dust on top, rust and leaks from them (amount, contrast, scale,
+  seed); a graph mask (the Material Designer's Mesh Map node reads them); smart materials (`SmartMaterial`: Worn
+  Painted Metal, Rusty Iron, Dusty Plastic, Old Wood, Grimy Concrete, and saved ones). The mesh maps are baked off the
+  render thread (in bands of rows, on a queue of their own) when a layer first has a generated mask; the masks too
+  (a mask at a time a layer, the last one shown until the next is made).
+* **Paint mode** (Paint or Tab in the window): left drag paints in the main view, right drag or Option-drag orbits the
+  object, scroll zooms, [ ] the brush's size, Escape leaves; a ring shows the brush on the surface; the scene's
+  animation holds still meanwhile. Shift-V walks.
+* **Saving:** `Assets/Painter/<name>.painter/` (`document.json`, the layers' pixels as 16-bit PNGs, the finished set),
+  the scenes' paint in `Assets/Painter/assignments.json` (`METALRENDERER_PAINTER=none|<folder>`); Export writes the set
+  (PNG 8 or 16-bit, EXR; with the mesh maps) and the unwrapped mesh as GLB.
+* **Checked:** `PainterUnwrapTests` (no fold, no overlap, gutters, area kept, deterministic), `PainterTests` (the
+  painted scene, assignments, documents, dabs, the GLB read back, a composite and a stroke with undo on the GPU, the
+  window's undo); `METALRENDERER_BENCH=painter` (each object's layout under bricks), `paintersmart` (the smart
+  materials), `painterstrokes` (strokes, symmetry, stamps, the eraser, a mask, an island fill: scripted paint mode);
+  `METALRENDERER_PAINTER_EXPORT=<folder>` writes each set as it is first composited.
+* **Not done:** the window and paint mode were never used by hand (offscreen and tests only); the unwrap's charts fill
+  three fifths of the square for a character, two fifths for a hard-edged model of many small charts, two thirds for a
+  box; paint is on a character's
+  bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced, and Lumen sees their
+  original material; Metal 4 untried.
 
 ### Geometry debug views
 

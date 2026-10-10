@@ -95,6 +95,9 @@ extension CharacterSceneSettings.Layout: EnvNamed {}
 extension CrowdBodies: EnvNamed {}
 extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)".lowercased() } }
 extension CharacterSceneSettings.View: EnvNamed {}
+extension MaterialWorkshopSettings.Layout: EnvNamed {}
+extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
+extension PainterWorkshopSettings.Subject: EnvNamed {}
 extension FaceExpression: EnvNamed {}
 extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
@@ -380,6 +383,13 @@ enum SettingsTable {
             S.popup("View", \.scene.buildings.view, titled(\.title)).env(.scene, "bview").when(buildings),
             S.slider("Cut above floor", \.scene.buildings.cut, 0...40, live: false).env(.scene, "cut").when(buildings),
             S.check("Night", \.scene.buildings.night).env(.scene, "night").when(buildings),
+            S.value(\.scene.materialWorkshop.graph).env(.scene, "mgraph"),
+            S.popup("Shapes", \.scene.materialWorkshop.layout, titled(\.title)).env(.scene, "mlayout").when { $0.scene.kind == .materials },
+            S.popup("Backdrop", \.scene.materialWorkshop.backdrop, titled(\.title)).env(.scene, "mbackdrop").when { $0.scene.kind == .materials },
+            S.popup("Object", \.scene.painterWorkshop.subject, titled(\.title)).env(.scene, "psubject").when { $0.scene.kind == .painter },
+            S.value(\.scene.painterWorkshop.model).env(.scene, "pmodel"),
+            S.value(\.scene.painterWorkshop.document).env(.scene, "pdocument"),
+            S.popup("Backdrop", \.scene.painterWorkshop.backdrop, titled(\.title)).env(.scene, "pbackdrop").when { $0.scene.kind == .painter },
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
             S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),
@@ -440,7 +450,7 @@ enum SettingsTable {
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
-                .env(.scene, "seed").when { $0.scene.kind.hasPlants },
+                .env(.scene, "seed").when { $0.scene.kind.hasPlants || $0.scene.kind == .mireland },
             S.value(\.scene.plants.species).env(.scene, "species"),
             S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
             S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),
