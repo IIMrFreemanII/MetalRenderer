@@ -245,7 +245,8 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | P | Show or hide the loading overlay (see "The loading overlay" below) |
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
 | J, ⌘B | Show or hide the Building Editor and its Floor Plan window (see "The building editor" below) |
-| F | Workshops: frame the plants or the building (drag orbits about them, scroll zooms, W A S D pan) |
+| X, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
+| F | Workshops and the VFX stage: frame the plants, the building or the effects (drag orbits about them, scroll zooms, W A S D pan) |
 | C (hold) | Plant workshop: the saved plant in place of the edited one |
 | V | Walk (the building workshop, the city, the open world) or fly again |
 | Walking: W A S D, Shift, Space, C or Control | Walk, run, jump, crouch (Space no longer pauses while walking) |
@@ -1619,6 +1620,182 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
   * With liquids the raster's visibility buffer is off (its first hit would be the liquid's), and a frame takes at most 20 steps: a still at 6 s catches up over its first frames, so the GPU's watchdog never sees seconds of steps in one command buffer.
   * Stepped on the CPU (`physics=cpu`), the liquids aren't drawn: their particles stay on the CPU (it is the GPU's reference, and slow).
   * Metal 4 is untested (the M1 Max has no Metal 4 ray tracing).
+
+### Particles
+
+GPU particle effects as modern engines run them (Niagara, VFX Graph), but **ray traced**: their particles show in the camera's view, in reflections and in shadows (`Particles.swift`, `ParticlesGPU.swift`, `Shaders/ParticleSim.metal`, `Shaders/ParticleTrace.metal`), with the same steps on the CPU as their reference (`ParticleMath.swift`, `VFX/VFXInterpreter.swift`). Its effects are graphs (VFX graphs, below). The **Particles** scene (`METALRENDERER_SCENE=particles`, `Scene+Particles.swift`) is a dark studio with a glossy floor:
+* a brazier's fire (flames, and a flickering light in them), the heat haze over it, and its smoke carried up the fire's column of hot air (`ParticleField.plume`: drawn in low down, spread out high up), as the haze is;
+* a grinder's wheel throwing sparks off its rim where a steel bar is pressed on it (a hot glow at the contact), sparks that bounce off the floor, a crate and whatever else they meet, leaving puffs of smoke where they die;
+* a swirl of magic motes in curl noise round a plinth, and wisps trailing glowing ribbons through it;
+* rain on the right under a lamp in the ceiling (a spot light): lit along its fall, splashing in the pool of light where it lands;
+* bursts of rubble on the left: stone chunks (mesh particles, real geometry) that tumble, bounce off the floor, the crate, the brazier and the plinth, and kick up dust that a little whirl of air carries.
+
+The showcase's motes (embers, bubbles, dust, runes) are particle effects too. The scene's keys:
+* `budget=1`: every emitter's rate, bursts and pool times this (0.25 to 4);
+* `particleshadows=1`, `particlereflections=1`;
+* the view's `particlescale=1`: the camera's layer at the traced size, or 0.5 for half.
+
+* **An emitter** (`ParticleEmitter`, what an effect's graph lowers to: VFX graphs, below) holds:
+  * where particles are born (a point, a sphere or its surface, a disc, a box, a ring), how many (a rate, and bursts that can repeat), how long they live and how fast they leave;
+  * the forces on them: gravity's share, drag toward the air, the scene's wind, **curl noise** (analytic, or the baked tile), a vortex and a pull toward a point, and a **vector field** (`ParticleField`: a grid of velocities it follows or accelerations; `ParticleField.vortex` is a rising whirl);
+  * what they bounce off, as a ball of `collisionRadius`: the system's planes, spheres and boxes; **SDF shapes** (`ParticleCollider.shape`: an instance of one of the scene's SDF shapes, by its distance and gradient); and with `collidesWithScene` the scene's own geometry, by a ray along each step;
+  * how they look: size and three colour keys over their life, a flipbook, emitted light or lit, an orientation, spin, soft distance, whether they cast shadows; or a **mesh** (`mesh`) instead of a billboard; and a **trail** (`trail`).
+
+  A **child** emitter spawns `perEvent` particles where its parent's die or collide, with a share of their velocity (`trigger`).
+* **The step** (1/60 s, counted from the start, as the physics') is three dispatches, and the CPU never reads a count back:
+  * **begin** (one SIMD group, a thread an emitter): what each asks for (its rate's births over the step less those before, so a fraction carries; its bursts; or its parent's events), clamped to its dead count; its pops off its **dead list** (a stack of its free slots); the indirect arguments for the next two.
+  * **emit** (a thread a newborn): its slot from the dead list (no atomics: begin knows each emitter's top), its birth from its seed (its emitter's and its spawn id's hash: a particle is the same whatever slot it has), moved and aged by a random share of the step so a stream has no layers; appended to the **alive list**.
+  * **simulate** (a thread an alive particle): aged (the dead pushed back on their emitter's dead list, and an event written if it has children), the forces, `exp(-drag dt)` toward the air, semi-implicit Euler, the colliders (bounce and friction); the survivors appended to the other alive list with one atomic a SIMD group, which the next step reads. A trail's particle writes its place into its ring every few steps.
+  * **Curl noise** is the curl of three channels of gradient noise with their analytic derivatives (Quilez's quintic "noised"), so the flow is divergence-free: particles swirl without bunching. The **baked** tile (`bakedCurl`) is the same curl from noise whose lattice repeats, 32^3 nodes read trilinearly: one read for 24 gradient hashes, and the same statistics, though not the same plume.
+* **What rays meet.** After the steps a pose pass packs the alive particles' records (centre, size, axis and spin, colour, flipbook frames) and **boxes** at the front of each structure's range. The CPU bounds how many can be alive (each emitter's births within its longest life, children's through their parents': the counts telescope, so any window is two evaluations), and the builds take only that many.
+  * Two primitive acceleration structures of boxes are built every frame (`.preferFastBuild`): the shadow casters' and the others'.
+  * The trails' ribbons are a third: **flat Catmull-Rom curves** (Metal's curves that face the ray), a ring of a particle's places and its head, tapering to nothing and fading along it.
+  * All of them are separate from the scene's TLAS, so nothing else pays for them, and the particle queries run only to the opaque hit.
+  * Nothing is committed: the queries' loops take each box and work out the **billboard** the ray sees in it (a disc square to the ray, a quad along the velocity or an axis turned to face it, or one fixed in the world), so a particle is the same shape to camera, shadow and reflection rays, which a camera-facing quad isn't.
+  * **Mesh particles** are instances the scene reserves, a pool slot each, posed every frame ahead of the TLAS update (a frame behind the billboards, whose steps trace the TLAS); a dead one is shrunk to nothing at its emitter. Their own collision rays pass their own instance.
+* **Flipbooks** (`ParticleTextures.swift`: dot, smoke, flame, spark, streak, ring, rune, bubble, 8 x 8 frames of 64 pixels each) are generated at load and cached; a box is trimmed to how far its kind's pictures reach. After them come three aux layers:
+  * smoke's **six-way light maps**: how much of a light from the right, left, top, bottom, front and behind its puff passes on, by its own density;
+  * smoke's and flame's **motion** from a frame to the next, from the generator's own drift, which the camera's frame blending follows, so a lick doesn't cross-fade into a ghost of itself.
+* **Translucency per ray, not a sort.** A raster particle system sorts its quads back to front (a bitonic sort) to blend them; here each ray orders its own: a **k-buffer** of the 4 nearest fragments (sorted by distance; past that the two farthest merge, as MLAB does) blended front to back. Exact, and independent of the traversal's order, up to 4; bounded past it.
+* **The camera's layer** (`particleLayerKernel`, after the fog) has **soft particles** exactly (each fades over its soft distance in front of the opaque hit) and a near-camera fade, and is fogged at the particles' distance. Without upscaling the composite puts it over the scene.
+  * Upscaled, it goes over MetalFX's output (`particleOverlayKernel`), not in as MetalFX's transparency overlay: that filters the overlay over time with the scene's motion, and moving sparks, motes and rain came out as faint grey streaks.
+  * Billboards are at least half a layer texel wide (their opacity scaled down to match), so a spark thinner than a texel isn't hit by one ray and missed by the next.
+  * Particles still too thin for the layer (under 2 texels) are left out of it and flagged. The overlay traces those pixels again at the output's size: crisp sparks, rain and motes, moving or not.
+  * The rest is upsampled with a B-spline, each texel weighed by how near its surface's depth is (no bleeding across edges). `particlescale=0.5` halves the layer.
+* **Light.** Emissive particles (fire, sparks, motes, wisps) send their colour; lit ones (smoke, rain, dust) are lit once a particle a frame (`particleLightKernel`).
+  * The light comes from each of the first 8 lights, scattered isotropically (E / 4 pi per unit albedo), through the opaque scene and the shadow-casting particles between, plus the sky's mean, averaged over the frames.
+  * Through the particles, an octave sum of weaker extinctions (Wrenninge's multiple-scattering approximation) lets a dense column pass on more than single scattering would.
+  * The brightest light is kept apart: **six-way smoke** takes it through the maps of the directions it comes from (in the billboard's own frame) and the rest through their mean, so a dense puff is dark on its far side and glows lit from behind. Reflections take the isotropic answer.
+* **Heat haze** (`ParticleEmitter.distortion`): distortion particles, simulated like any others but never drawn. Their slots sit apart from the billboards', so no structure, shadow, reflection or light pass sees them.
+  * After the overlay (or the composite) and before the lens, `particleDistortKernel` bends each camera ray that crosses them in front of its surface. The bend is up to the emitter's strength (radians) times each disc's opacity over life, (1 - r^2)^2 across it.
+  * Its direction is curl noise rising through the air where they are met, across the ray. The pixel reads the frame's light where the bent ray looks, unless the surface there is nearer than the haze, which keeps foreground edges out.
+  * A prepass gathers the discs and the part of the view they cover; every pixel outside it is a copy (0.24 ms in all at 1920×1200, about 0.07 ms of it the copy). Bloom and depth of field take the bent light.
+* **Shadows and reflections.** A shadow ray (`isVisibleBlocker`) that misses the geometry takes the product of (1 - opacity) of the casters it crosses (any order) and gets through with that chance; the denoisers and averages make it soft, as the voxels' stochastic leaves are. A caster's `shadowDensity` scales what it blocks (a billboard stands for a soft volume: at full opacity a column of smoke shadowed itself black). Reflection rays gather the particles and trails in front of what they reflect (a k-buffer of 2). Mesh particles are geometry: they shadow and reflect as any does.
+* **The reference path tracer** stops a path at a particle or a trail's ribbon with the chance of its opacity (the nearest that does): an emissive one adds its light and ends it, a lit one scatters (isotropic, next-event estimation as the fog's), and the emitters before it add theirs. That is the layer's composite on average, so it checks the real-time image: the two agree on the fire, the sparks and their reflections. The smoke is brighter in it: there the flames light it, and light scatters on inside the column.
+* **Checked:** `ParticleTests` (22) covers:
+  * what an emitter asks for: a rate of 30 a second never two in a step, 270 over 9 s; bursts on their steps;
+  * the pool: every slot alive or on its emitter's dead list, once, for 240 steps on the CPU and on the GPU; births past the budget dropped; a distortion emitter's slots apart from the billboards' and never posed;
+  * children where their parents die, and splashes on the floor;
+  * the noise's analytic gradient against differences, curl noise's divergence, fields read exactly at their nodes (and linear ones exactly between), the baked tile repeating and matching its curl;
+  * the GPU against the CPU, with a vector field and the baked curl: the same particles alive, positions within 2e-7 m after 10 steps and 1.5e-5 after 120; with colliders and children, the same counts per emitter;
+  * two GPU runs and a reset, bit-identical;
+  * the alive bound holding at every step (slack 0 at times: it is tight);
+  * the pose packing every alive particle once, frame after frame;
+  * every posed billboard inside its box in each orientation;
+  * mesh particles' instances (place, size, turn, last frame's place, the normal matrix, the descriptor);
+  * trails' control points (places a stride of flight apart, oldest first, tapering);
+  * the k-buffer (exact up to 4, order-free), the flipbooks (inside their trims, nothing on a cell's border);
+  * a frame's reset, steps and pose each keeping their own parameters.
+
+  Scenes without particles render bit-identically (the feature is a shader specialisation, `PARTICLES`, bit 16).
+* What it costs (M1 Max: no ray-tracing hardware, so every box and curve is the shader's work; 640×400 traced, MetalFX 3x, 1920×1200 out; `METALRENDERER_BENCH=particles`). The scene's pools hold 7,040 billboards, 90 trails and 120 chunks (the table is from before the rain's lamp and its denser rain, which made the paused frame 15.3 ms and the moving one 17.4 ms; the fire's heat haze then 15.6 ms paused, the moving frame the same):
+
+  | Setting | Build | Light pass | Camera layer | Overlay | Trace (its shadow rays) | Reflections | Whole frame (GPU) |
+  |---|---|---|---|---|---|---|---|
+  | Paused at 5 s | — | 0.56 ms | 0.96 ms | 1.28 ms | 2.25 ms | 4.50 ms | 14.6 ms |
+  | No particle shadows | — | 0.11 ms | 1.09 ms | 1.23 ms | 1.13 ms | 2.73 ms | 11.3 ms |
+  | Not in reflections | — | 0.56 ms | 0.96 ms | 1.28 ms | 2.25 ms | 2.39 ms | 12.5 ms |
+  | Half-size layer | — | 0.57 ms | 0.78 ms | 1.73 ms | 2.27 ms | 4.74 ms | 14.8 ms |
+  | Moving, a quarter | 1.15 ms | 0.14 ms | 0.34 ms | 0.61 ms | 1.41 ms | 2.15 ms | 10.5 ms |
+  | Moving | 1.71 ms | 0.44 ms | 1.05 ms | 1.45 ms | 2.24 ms | 4.45 ms | 16.6 ms |
+  | Moving, 4x | 3.17 ms | 1.50 ms | 5.60 ms | 9.26 ms | 5.45 ms | 13.51 ms | 46.7 ms |
+
+  The steps themselves are under 0.2 ms; the mesh particles' pose 0.01 ms. Without particles the trace is 0.86 ms and the reflections 0.83: particle shadows cost most, then the reflections' gather. The overlay grows with the screen thin particles cover: at 4x, sparks and rain over most of it are traced again at 1920×1200. The build is the boxes' (about 1 ms for the bounded counts) and the trails' curves (0.7 ms for 1,260 segments). Paused, a slot's structures stay as they were built, unless the camera moves (the boxes hold the billboards as its rays widen them). Crowded particles cost the most: a dust of 2,000 big puffs where the rubble lands made the 4x frame 70 ms, each ray through it meeting hundreds of boxes; it holds 160 now.
+* **Limits:**
+  * Particles don't light the scene or each other (no particle lights): fire is lit by a light placed in it, and smoke over it is darker than the path tracer's.
+  * GI rays and the virtual shadow maps' traced shadows don't see billboards or trails; glass and liquids don't bend the rays that see them. Trails cast no shadows.
+  * Past 4 fragments a pixel the k-buffer merges the farthest; the path tracer is exact.
+  * The CPU reference has no scene, so `collidesWithScene` and SDF shape colliders are the GPU's alone; children spawn exactly only while their pool has room (past that, which parents' events win is the GPU's order).
+  * Mesh particles are a frame behind; every trail emitter keeps the same number of places.
+  * The heat haze is a screen-space bend: it can only show what the frame has. It is undone where the bent ray looks at something nearer than the haze. Reflections and the path tracer don't see it, and without MetalFX it needs the lens (it runs on post's input).
+  * Metal 4 is untested (the M1 Max has no Metal 4 ray tracing); the builds (boxes and curves) go into the frame's own encoder there (`PrimitiveWork4`).
+
+### VFX graphs
+
+Every particle effect is a graph (`Sources/MetalRenderer/VFX`), as Unity's VFX Graph and Niagara have them: an effect is emitters, each four **contexts** of **blocks** run in order (Spawn: rate and bursts, or a parent's events; Initialize: shape, velocity, lifetime; Update: gravity, drag, curl noise, a field, a vortex, collisions; Output: billboard, mesh, trail or distortion, then size, colour, flipbook, orientation, lighting), and **operator nodes** wired into the blocks' pins (`VFXNodes.swift`: math and logic, vectors, the particle's inputs, per-particle random numbers, curves and gradients of up to 8 keys, noise and curl noise, a field's value, attributes). A scene places effects (`Scene.addEffect`) and names the colliders of its own their Collide blocks meet (`addParticleCollider`); one particle system runs them all.
+* **Two tiers, one model.** An emitter whose blocks and pins all fit the fixed emitter is **lowered** to its descriptor (`VFXLowering.swift`) and runs the hand-written kernels: every built-in effect (`VFXLibrary.swift`: the particles scene's campfire, grinder, magic, rain and rubble; the showcase's embers, bubbles, dust and runes) renders as before. One that asks for more (a wired pin, a curve or gradient of other keys, an attribute, a Kill, a Trigger) gets **generated Metal** for what the fixed one can't do (`VFXProgram.swift`, `VFXCodegen.swift`): its birth, step and look as the fixed kernels have them, statement for statement, with the graph's expressions in their place. Its values are read from a parameter buffer, never written in as literals, so editing one needs no compile.
+* **The VFX library.** A system with programs runs the step and pose kernels from a library of their own (`ShadersVFX.metal`: the pieces they need and `VFX_PROGRAMS` hooks in `Shaders/ParticleSim.metal`, with the generated code spliced after): compiled in the background the first time (1.2 s cold on the M1 Max), kept for the last 6 sources (`VFXCompiler.swift`). Until it is ready the system runs the fixed code, then replays from the start with it; benchmarks wait. Under fast math the compiler fuses the fixed emitters' statements a little differently there: in a system with programs they are the main library's to an ulp (397 of 440 motes bit for bit after 120 steps, the rest in their lifetime's last bit).
+* **The CPU's interpreter** (`VFXInterpreter`, formerly ParticlesCPU) runs the same plans the Metal was written from: the tests check the generated code against it.
+* **Kept as** `Assets/Effects/<name>.vfx.json` (`VFXStore.swift`; `METALRENDERER_EFFECTS=builtin` leaves them out), which replace the built-in effect of their name in every scene, or as Swift (`VFXBuilder.swift`: a block a call, as `VFXLibrary` is written; `VFXEffect.swiftSource` writes one).
+* **Seeds and the pool.** Each emitter keeps its seed wherever it is placed (an effect looks the same in any scene); the built-in ones keep the places they had in their scenes' lists, and the pool is laid out by seed, so their particles sit in the slots they had.
+* **The VFX stage** (`METALRENDERER_SCENE=vfxstage`, `Scene+Stage.swift`): effects lined up in a dark studio by name (`SceneSettings.stage.effects`). `VFXLibrary.fireworks` is the example graph: rockets climb on a trail; a Trigger Event while one slows past 1.5 m/s up bursts it into stars (its children on that condition), a Kill as it starts to fall; a star's colour is its rocket's (its spawn id over 8, through the golden ratio into a rainbow gradient), dimming as it burns out. `METALRENDERER_BENCH=vfx` and `vfxdemo` (the video) render it.
+* **Checked:** `VFXTests`:
+  * the particles scene's effects lower to the emitters it had before, byte for byte (every descriptor, the pool's layout, the colliders and fields: `LegacyEffects.swift` keeps the old definitions);
+  * a graph with every kind of hook (a rate curve, a wired lifetime, an attribute, a wired gravity, a curl-noise force, a Kill, a Trigger for a child, a smooth size curve, a 4-key gradient) on the GPU against the interpreter: within 9.4e-6 m after 120 steps, the same lifetimes and attributes, the size and colour the pose writes;
+  * a rate curve's births and the alive bound; JSON and Copy as Swift.
+
+  The particles scene times the same as before (`ab.sh`, 3 alternating rounds against the build before graphs: 15.40 → 15.39 ms
+  paused, 17.52 → 17.52 ms moving), and its frames and the showcase's match the old build's within what two runs of one
+  build differ by (the GPU's atomics hand out pool slots in their own order, and each slot's light is averaged over frames).
+* **What generated code costs.** `METALRENDERER_VFX_FORCE=library` runs a system in the VFX library though it has no
+  programs; `=all` gives every emitter a program that does what its fixed emitter does (the same particles: 928 of 1,007
+  bit for bit after 120 steps, the rest an ulp off; `VFXTests`). The particles scene, all 15 emitters generated, against
+  the fixed code (M1 Max, `ab.sh`, 3 alternating rounds, whole frames with `METALRENDERER_BENCH_SPLIT=0`):
+
+  | | Fixed | VFX library only | All generated |
+  |---|---|---|---|
+  | Paused at 5 s | 13.29 ms | 13.35 ms | 13.35 ms |
+  | Moving | 15.52 ms | 15.59 ms | 15.62 ms |
+  | Moving, 4x | 39.22 ms | 39.85 ms | 39.74 ms |
+  | Step and pose (moving) | 0.12 ms | 0.13 ms | 0.20 ms |
+  | Step and pose (moving, 4x) | 0.15 ms | 0.17 ms | 0.24 ms |
+
+  The frame differences are within launch noise, except at 4x (+0.3 to +0.6 ms, the same sign each round). The generated
+  step and pose take 0.08 ms more, as every value is a parameter buffer's read and size and colour a curve's and a
+  gradient's walk. The compile is the larger cost: 6.1 s cold for 15 programs (0.6 s for the library alone, 1.2 s with
+  fireworks' two), 6–43 ms once Metal's shader cache has the source.
+* **Limits** (so far): the meshes', trails' and haze's size and colour are the fixed emitter's (a curve's ends, a gradient's ends and middle); a Sample Field node isn't known in Output; children don't read their parents' attributes; every child of a parent takes all its events (the fixed emitters' rule).
+
+### The VFX editor
+
+The VFX Editor (X or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effects' graphs while they run.
+* **The canvas:** a dark grid with the effect's emitters as columns of their four contexts' blocks and its operator nodes,
+  each header coloured by its family. Pins are coloured by type (float, vector, colour, bool) and the wires are curves.
+  * Drag from an output to an input to wire them; drag a wired input to move its wire elsewhere or let it go.
+  * A wire goes only into a pin that takes one and never makes a loop; a second wire into a pin replaces the first.
+  * Drag a header to move a node or an emitter; drag on the grid to select a box (Shift adds).
+  * Scroll pans, pinch or ⌘-scroll zooms, F frames the graph; a minimap shows where the view is.
+  * Tab (or a right-click) opens a searchable list of nodes, or of blocks over a context; a context's + adds a block.
+  * Delete removes the selection; ⌘C / ⌘V copy and paste nodes with the wires between them; ⌘Z undoes (a drag is one step).
+* **The inspector:** the selected block's, node's or emitter's values, or, with nothing selected, the effect's own
+  (its origin, emitters, fields and colliders). It has sliders, number fields, colour wells with a brightness past
+  white, and curve and gradient editors of up to 8 keys: drag a key, double-click to add one, Option-click to remove one.
+* **Edits run as they are made** (`VFX/VFXLive.swift`, `Renderer.editEffects`). The edited effects go to the scenes as a
+  catalog's key (`SceneSettings.effects`), and the renderer takes the cheapest way:
+  * a value (a slider, a key, a colour) is written into the running system's buffers, and the particles go on as they are;
+  * a wire or a node needs new code: it compiles in the background while the old code runs, then is swapped in and
+    replayed from the start;
+  * a capacity, a renderer, shadows on or off, or an emitter more makes the scene again.
+  * Every scene that places an effect of that name runs the edit: the VFX stage, the particles scene, the showcase.
+    A scene's own copy of a built-in effect is moved from the edited one's origin to its place.
+* **Effects:** New (a spray of sparks), Duplicate, rename, Delete; a built-in effect's edits can go back to it as built in.
+  * Save writes `Assets/Effects/<name>.vfx.json`; Revert brings back the saved one.
+  * Unsaved edits are kept as a draft between launches; Copy as Swift puts the effect on the clipboard as Swift.
+  * Show on Stage puts the selected effect alone on the VFX stage, and the stage follows the selection.
+* **The preview bar:**
+  * Stage or In Scene (the particles scene or the showcase, for the built-in effects that they place).
+  * The stage's backdrop: dark, a grey cyclorama, black, outdoor under the sun, night under the moon
+    (`SceneSettings.stage.backdrop`, `Scene+Stage.swift`). On the stage the camera turns about the effects: drag orbits,
+    scroll zooms, F frames them. The framing comes from where the CPU's interpreter sends their particles in 4 s.
+  * Play and pause, back to the start, a step of 1/60 s, the speed (0.1× to 2×), and a timeline: dragging it scrubs the
+    scene's clock, and going back replays the particles from the start.
+  * Gizmos (`VFX/VFXGizmos.swift`, `Shaders/Gizmo.metal`): lines over the finished frame for the effect's spawn shapes
+    and their axes, the fields and colliders its emitters use, and three arrows on the selected emitter. Dragging an
+    arrow in the view moves that emitter's spawn shape along it, as a live edit (one undo step a drag).
+    `METALRENDERER_GIZMOS=<effect>[/<emitter>]` draws them in benchmarks.
+  * Stats: each emitter's particles alive against its capacity (from the GPU's counters), fixed or generated code, the
+    particle passes' GPU times (timed while the stats show), and the last compile.
+* **The status line** says where the effect runs (the stage, the scene, or not here), how many of its emitters run
+  generated code, the compile and its time, a compile's error, and what the lowering left out.
+* **Checked:**
+  * `VFXEditorTests`: undo steps, edits reaching the scenes, the wiring rules and types, adding, deleting, copying and
+    pasting, saving, reverting and Copy as Swift, which edits run in place, need code or make the scene again, and the
+    layout (no two boxes overlap, every wire's ends have places). With `VFX_EDITOR_PNG=<folder>` it draws the window.
+  * `METALRENDERER_BENCH=vfxedit`: on the GPU, a value edit runs in place (the same particles, brighter) and a wired
+    edit's code is swapped in, matching the same graph made from scratch within run-to-run noise.
+  * `METALRENDERER_VFX_SCRIPT=<folder>` drives the editor in the app, step by step, printing the renderer's report and
+    saving the window.
+  * `METALRENDERER_BENCH=vfxstage` renders the backdrops; `vfxstagedemo` is their video.
 
 ### Geometry debug views
 

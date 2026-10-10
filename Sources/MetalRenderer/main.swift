@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsPanel: SettingsPanel?
     private var debugPanel: DebugPanel?
     private var plantEditor: PlantEditorPanel?
+    private var vfxEditor: VFXEditorPanel?
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
     private var loadingOverlay: LoadingOverlay?
@@ -96,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           K / Cmd-E    show or hide the Plant Editor (the plant workshop: drag orbits, scroll zooms, F frames, hold C compares)
           J / Cmd-B    show or hide the Building Editor and its Floor Plan window (the building workshop)
           H / Cmd-Y    show or hide the Character Editor (the character workshop: drag orbits, F frames, hold C compares)
+          X / Shift-Cmd-E   show the VFX Editor (particle effects as node graphs; its window: Tab adds a node, Delete removes)
           V            walk (in the building workshop, the city): W A S D, Shift runs, Space jumps, C or Control
                        crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
@@ -123,6 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         characterEditor = characters
         if CharacterEditorPanel.wasVisible || controller.settings.scene.kind == .characters { characters.show(nextTo: window) }
         controller.onToggleCharacters = { [weak self] in self?.toggleCharacters(nil) }
+        let vfx = VFXEditorPanel(controller: controller)
+        vfxEditor = vfx
+        if VFXEditorPanel.wasVisible { vfx.show(nextTo: window) }
+        controller.onToggleVFX = { [weak self] in self?.toggleVFX(nil) }
+        VFXEditorScript.run(vfx, main: window)
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
         controller.observeSettings { [weak self] s in
@@ -135,14 +142,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// The main window's undo is an editor's (their edits are what can be undone): the character editor's or the
-    /// building editor's in its workshop or while only it is open, the plant editor's otherwise.
+    /// building editor's in its workshop or while only it is open, the VFX editor's while it is open outside the
+    /// workshops, the plant editor's otherwise.
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
         if controller.settings.scene.kind == .characters
             || (characterEditor?.isVisible == true && plantEditor?.isVisible != true && buildingEditor?.isVisible != true) {
             return characterEditor?.model.undo
         }
         let buildings = controller.settings.scene.kind == .buildings || (buildingEditor?.isVisible == true && plantEditor?.isVisible != true)
-        return buildings ? buildingEditor?.model.undo : plantEditor?.model.undo
+        if buildings { return buildingEditor?.model.undo }
+        if let vfx = vfxEditor, vfx.isVisible, controller.settings.scene.kind != .plants { return vfx.model.undo }
+        return plantEditor?.model.undo
+    }
+
+    @objc private func toggleVFX(_ sender: Any?) {
+        vfxEditor?.toggle(nextTo: window)
     }
 
     @objc private func togglePlants(_ sender: Any?) {
@@ -205,6 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appMenu.addItem(withTitle: "Building Editor…", action: #selector(toggleBuildings(_:)), keyEquivalent: "b").target = self
         appMenu.addItem(withTitle: "Floor Plan", action: #selector(showFloorPlan(_:)), keyEquivalent: "").target = self
         appMenu.addItem(withTitle: "Character Editor…", action: #selector(toggleCharacters(_:)), keyEquivalent: "y").target = self
+        let vfx = appMenu.addItem(withTitle: "VFX Editor…", action: #selector(toggleVFX(_:)), keyEquivalent: "e")
+        vfx.keyEquivalentModifierMask = [.command, .shift]
+        vfx.target = self
         if !Benchmark.isEnabled {
             let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
             item.target = self

@@ -20,7 +20,9 @@ extension Benchmark {
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
-        "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo, "characters": characters, "charactercrowd": characterCrowd,
+        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
+        "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
+        "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1303,6 +1305,139 @@ extension Benchmark {
         }
         out.append(base.named("cpu 2k moving").with { $0.scene.physics.fluidParticles = 2048; $0.scene.physics.backend = .cpu })
         return out
+    }
+
+    /// The particles scene (Scene+Particles.swift) as the app shows it (cascades, MetalFX 3x from 0.5x): paused at 2, 5
+    /// and 8 s, at 5 s on each API, natively at 0.75x without MetalFX (the composite puts the particles' layer over the
+    /// scene, SVGF denoises), and path traced at 0.75x (the reference: its particles stop paths by their opacity, scatter
+    /// or glow); without particle shadows, without particles in reflections; then 5 s moving for timing at a quarter,
+    /// once and four times the particles (ParticleSettings.budget).
+    private static func particles() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+        var out: [Config] = []
+        for time: Float in [2, 5, 8] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 5)) }
+        let native = Config("", scale: 0.75, upscale: 0, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+        out.append(native.named("native").still(at: 5))
+        out.append(native.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 5).frames(256))
+        out.append(base.named("no shadows").with { $0.scene.particles.shadows = false }.still(at: 5))
+        out.append(base.named("no reflections").with { $0.scene.particles.reflections = false }.still(at: 5))
+        out.append(base.named("half layer").with { $0.particleScale = 0.5 }.still(at: 5))
+        out.append(native.named("native half layer").with { $0.particleScale = 0.5 }.still(at: 5))
+        for budget: Float in [0.25, 1, 4] {
+            out.append(base.named(String(format: "moving %gx", budget)).with { $0.scene.particles.budget = budget })
+        }
+        return out
+    }
+
+    /// The particles scene's demo video: 24 s along a camera track from 3 s in (the effects under way) at the
+    /// `particles` mode's settings with the showcase's lens but no depth of field (`recording`;
+    /// `.claude/skills/offscreen/scripts/video.sh -m particlesdemo` makes the mp4). Wide, then to the brazier's fire and
+    /// smoke, down to the rubble's bursts and dust, round to the plinth's motes and wisps, across the grinder's sparks
+    /// on the crate, over to the rain under its lamp, and back out.
+    private static func particlesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0.3, 1.9, 6.2], [0, 1.0, 0]),
+            key(4, [-1.2, 1.5, 1.9], [-2.6, 1.3, -0.5]),
+            key(8, [-0.6, 1.0, 4.0], [-1.9, 0.4, 2.2]),
+            key(12, [0.9, 1.6, -0.6], [0, 1.2, -2.6]),
+            key(16, [1.0, 1.3, 3.4], [0.5, 0.7, 0.8]),
+            key(20, [0.2, 2.0, 5.6], [3.4, 0.9, 0.6]),
+            key(24, [0.3, 1.9, 6.2], [0, 1.0, 0]),
+        ])
+        var demo = Config("particles demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles)) {
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = 2   // 3 s in at the first recorded frame, after Benchmark.warmupFrames
+        return [demo]
+    }
+
+    /// The VFX stage (Scene+Stage.swift) at the particles mode's settings: the fireworks alone (generated code:
+    /// VFXProgram) paused at 1, 2.5 and 4 s, then beside the campfire and the magic (the fixed emitters' code), paused and
+    /// moving for timing. Benchmarks wait for the VFX library's compile.
+    private static func vfx() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .vfxStage))
+        var out: [Config] = []
+        for time: Float in [1, 2.5, 4] { out.append(base.named(String(format: "fireworks %gs", time)).still(at: time)) }
+        let lineUp = base.with { $0.scene.stage.effects = ["campfire", "fireworks", "magic"] }
+        out.append(lineUp.named("line-up").still(at: 4))
+        out.append(lineUp.named("line-up moving"))
+        return out
+    }
+
+    /// The VFX editor's edits reaching the running stage (Renderer.editEffects), the fireworks paused at 3 s: as built in;
+    /// the stars brighter and heavier (values: in place, the same particles); their size wired to a node (code: compiled,
+    /// then replayed from the start); the magic (the scene made again); the wired fireworks made from scratch, which
+    /// "code" should match within the run-to-run noise.
+    private static func vfxEdit() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .vfxStage)).still(at: 3)
+        var fireworks = VFXLibrary.named("fireworks")!
+        fireworks.setParam("starColor", "emission", .float(20))
+        fireworks.setParam("stars.gravity", "share", .float(1))
+        let values = VFXCatalog.register(VFXCatalog(effects: ["fireworks": fireworks]))
+        fireworks.nodes.append(VFXNode(.float, ["value": .float(0.12)], id: "big", at: [40, 520]))
+        fireworks.links.append(VFXLink("big", to: "stars.size", "size"))
+        let code = VFXCatalog.register(VFXCatalog(effects: ["fireworks": fireworks]))
+        return [base.named("before"), base.named("values").with { $0.scene.effects = values },
+                base.named("code").with { $0.scene.effects = code },
+                base.named("other").with { $0.scene.stage.effects = ["magic"] },
+                base.named("code fresh").with { $0.scene.effects = code }]
+    }
+
+    /// The VFX stage's backdrops: the campfire, the fireworks and the magic at 3.5 s in front of each, from the stage's
+    /// default camera (`METALRENDERER_GIZMOS=fireworks/rockets` draws the editor's gizmos).
+    private static func vfxStage() -> [Config] {
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage).still(at: 3.5)
+        return VFXBackdrop.allCases.map { b in base.named(b.rawValue).with { $0.scene.stage.backdrop = b } }
+    }
+
+    /// The VFX stage's backdrops as a video (`recording`; `video.sh -m vfxstagedemo`, run with
+    /// `METALRENDERER_GIZMOS=fireworks/rockets` for the editor's gizmos): 4 s on each, the camera arcing round the
+    /// line-up, the clock from 1.5 s.
+    private static func vfxStageDemo() -> [Config] {
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        return VFXBackdrop.allCases.enumerated().map { k, b in
+            let side: Float = k % 2 == 0 ? 1 : -1
+            let track = CameraTrack([
+                CameraTrack.Key(time: 0, position: [-3.5 * side, 2.2, 9.8], target: [0, 2.4, 0]),
+                CameraTrack.Key(time: 4, position: [3.5 * side, 2.6, 9.8], target: [0, 2.4, 0]),
+            ])
+            var c = Config(b.rawValue, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage) {
+                $0.scene.stage.backdrop = b
+                $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+            }.track(track).recording()
+            c.startTime = 1.5
+            return c
+        }
+    }
+
+    /// The VFX stage's demo video: 16 s of the line-up (the campfire, the fireworks, the magic) along a camera track
+    /// from 1 s in (`recording`; `video.sh -m vfxdemo`): wide, in to the fireworks' bursts from below, across to the
+    /// fire, round to the motes, and back out.
+    private static func vfxDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 2.4, 10.5], [0, 2.6, 0]),
+            key(4, [1.2, 1.2, 5.5], [0, 3.8, 0]),
+            key(8, [-2.2, 1.6, 4.2], [-4, 1.4, 0]),
+            key(12, [2.6, 1.7, 3.6], [4, 1.2, 0]),
+            key(16, [0, 2.4, 10.5], [0, 2.6, 0]),
+        ])
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        var demo = Config("vfx demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage) {
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+        }.track(track).recording()
+        demo.startTime = 0
+        return [demo]
     }
 
     /// The fluids scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens

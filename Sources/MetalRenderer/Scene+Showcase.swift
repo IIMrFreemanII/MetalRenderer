@@ -63,7 +63,7 @@ extension Scene {
         case .workshop: buildWorkshop(stand)
         case .sanctum: buildSanctum(stand)
         }
-        addParticles(stand)
+        addMotes(stand)
         defaultCamera = Scene.showcaseCamera(stand.target, extent: extent, view: look.view)
     }
 
@@ -329,59 +329,23 @@ extension Scene {
 
     // MARK: - Particles
 
-    /// What drifts in the air: small glowing shapes that only the camera sees (maskLights: no shadows, not lights).
-    private func addParticles(_ s: Stand) {
-        let mote = addMesh(Scene.icosphere(subdivisions: 1))
-        var rng = SplitMix64(seed: 0xD057)
+    /// What drifts in the air: GPU particle effects (VFXLibrary's graphs), ray traced as the camera sees them. None
+    /// casts a shadow; embers, bubbles and runes glow (unlit), the dust is lit by the beams (particleLightKernel).
+    private func addMotes(_ s: Stand) {
         switch s.look.particles {
         case .none:
-            break
-        case .embers:   // from the pit (Forge), rising and swaying, round again
-            let pit = SIMD3<Float>(-(s.radius + 1.6), 0.4, -1.6)
-            for _ in 0..<160 {
-                let start = pit + SIMD3(rng.range(-0.6, 0.6), 0, rng.range(-0.6, 0.6))
-                let speed = rng.range(0.35, 0.9), phase = rng.range(0, 1), size = rng.range(0.006, 0.016)
-                let ember = addMaterial(albedo: .zero, emission: SIMD3<Float>(1, 0.42, 0.1) * rng.range(15, 40))
-                addInstance(mote, ember, translate(start) * scale(size), mask: Scene.maskLights) { t in
-                    let y = (t * speed / 4.5 + phase).truncatingRemainder(dividingBy: 1) * 4.5
-                    let drift = SIMD3<Float>(0.25 * sin(1.7 * t + phase * 9) + 0.4 * y / 4.5, y, 0.2 * cos(1.3 * t + phase * 7))
-                    return translate(start + drift) * scale(size * (1 - 0.7 * y / 4.5))
-                }
-            }
+            return
+        case .embers:   // from the pit (Forge), rising and swaying in curl noise, shrinking as they cool
+            addEffect(builtIn: VFXLibrary.embers(at: [-(s.radius + 1.6), 0.4, -1.6]))
         case .bubbles:   // from the sea floor round the model, up and wobbling
-            let glow = addMaterial(albedo: .zero, emission: [0.6, 0.9, 1] * 0.35)
-            for _ in 0..<120 {
-                let a = rng.range(0, 2 * .pi), r = rng.range(0.5, s.radius + 3)
-                let start = SIMD3<Float>(r * sin(a), 0, r * cos(a))
-                let speed = rng.range(0.5, 1.2), phase = rng.range(0, 1), size = rng.range(0.006, 0.02)
-                addInstance(mote, glow, translate(start) * scale(size), mask: Scene.maskLights) { t in
-                    let y = (t * speed / 10 + phase).truncatingRemainder(dividingBy: 1) * 10
-                    return translate(start + [0.05 * sin(5 * t + phase * 20), y, 0.05 * cos(4 * t + phase * 13)]) * scale(size)
-                }
-            }
-        case .dust:   // motes drifting round the model, lit as if by the beams
-            let speck = addMaterial(albedo: .zero, emission: Scene.hue(s.look.key) * 1.5)
-            for _ in 0..<200 {
-                let c = s.target + SIMD3(rng.range(-3, 3), rng.range(-1.2, 1.8), rng.range(-3, 2.5))
-                let amp = SIMD3(rng.range(0.1, 0.4), rng.range(0.05, 0.2), rng.range(0.1, 0.4))
-                let f = SIMD3(rng.range(0.05, 0.2), rng.range(0.05, 0.15), rng.range(0.05, 0.2)), phase = rng.range(0, 6)
-                let size = rng.range(0.003, 0.007)
-                addInstance(mote, speck, translate(c) * scale(size), mask: Scene.maskLights) { t in
-                    translate(c + amp * SIMD3(sin(f.x * t + phase), sin(f.y * t + 2 * phase), cos(f.z * t + phase))) * scale(size)
-                }
-            }
+            addEffect(builtIn: VFXLibrary.bubbles(radius: s.radius + 3))
+        case .dust:   // motes drifting round the model, lit by the beams
+            addEffect(builtIn: VFXLibrary.dust(at: s.target + [0, 0.3, -0.25], half: [3, 1.5, 2.75]))
         case .runes:   // glowing tablets circling the model low, below its knees: never in front of its face
-            let rune = addMaterial(albedo: .zero, emission: Scene.hue(s.look.accent) * 3)
-            let count = 12, radius = s.radius + 0.35, height = s.base + 0.2 * s.extent.y
-            for i in 0..<count {
-                let phase = Float(i) / Float(count) * 2 * .pi
-                addInstance(s.kit.cube, rune, matrix_identity_float4x4, mask: Scene.maskLights) { t in
-                    let a = phase + 0.3 * t
-                    return translate([radius * sin(a), height + 0.08 * sin(0.7 * t + 2 * phase), radius * cos(a)])
-                        * rotate(a, [0, 1, 0]) * scale([0.05, 0.075, 0.006])
-                }
-            }
+            let radius = s.radius + 0.35, height = s.base + 0.2 * s.extent.y, speed: Float = 0.3 * radius
+            addEffect(builtIn: VFXLibrary.runes(height: height, radius: radius, speed: speed, color: Scene.hue(s.look.accent)))
         }
+        addEffects()
     }
 
     // MARK: - Meshes

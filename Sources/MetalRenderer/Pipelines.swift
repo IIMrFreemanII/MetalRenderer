@@ -31,6 +31,11 @@ enum Kernel: Int, CaseIterable {
     case fluidMpmClear, fluidMpmKeys, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
     case fluidSurfaceClear, fluidSurfaceSplat, fluidSurfaceBlur, fluidSurfaceCount, fluidSurfaceVertex, fluidSurfaceQuad, fluidSurfaceTail
     case plantWind              // the plants' variants in the wind (PlantTracing)
+    // Particle effects (ParticlesGPU, Shaders/ParticleSim.metal): a step's begin, emit and simulate, then the frame's
+    // records and boxes for the rays.
+    case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
+    case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
+    case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
     // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.
@@ -39,6 +44,7 @@ enum Kernel: Int, CaseIterable {
     case vgReset, vgCut, vgBoxes
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
     case vsmVGCut               // ...in the shadow maps
+    case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
 
     var function: String { "\(self)Kernel" }
 
@@ -373,7 +379,11 @@ struct Pipelines {
     }
 
     static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
-        let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
+        try compile(device: device, text: ShaderSource.load(url), stats: stats, compiler: compiler)   // Shaders.metal with the pieces in Shaders/ spliced in
+    }
+
+    /// `source` compiled as Shaders.metal is (the VFX library's: VFXCompiler).
+    static func compile(device: MTLDevice, text source: String, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
         let options = MTLCompileOptions()
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
         options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0)]

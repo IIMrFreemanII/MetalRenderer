@@ -341,12 +341,16 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // circle among balls, and on ragdolls tumbling down steps
     case fluids             // liquids (PhysicsFluid.swift): water, blood and honey poured side by side down steps into a
                             // tray, boxes floating and sinking in them, a paddle in each to stir it
+    case particles          // GPU particle effects (Particles.swift), ray traced: fire and smoke, sparks that bounce and
+                            // smoke, magic motes in curl noise, rain that splashes
     case plants             // the plant workshop (Scene+Plants.swift): one species' plants on a lawn under the sun, as the
                             // plant editor shapes them (`SceneSettings.plants`)
     case buildings          // the building workshop (Scene+Buildings.swift): one building, inside and out, on its lot, as
                             // the building editor shapes it (`SceneSettings.buildings`)
     case characters         // the character workshop (Scene+Characters.swift): generated people (CharacterDNA) in a studio,
                             // as the character editor shapes them (`SceneSettings.characterWorkshop`)
+    case vfxStage           // the VFX stage (Scene+Stage.swift): effects (`SceneSettings.stage`) lined up in a studio, as
+                            // the VFX editor shapes them
 
     var title: String {
         switch self {
@@ -375,9 +379,11 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .softBodies: return "Soft bodies"
         case .muscles: return "Muscles and skin"
         case .fluids: return "Fluids"
+        case .particles: return "Particles"
         case .plants: return "Plant workshop"
         case .buildings: return "Building workshop"
         case .characters: return "Character workshop"
+        case .vfxStage: return "VFX stage"
         }
     }
 
@@ -509,6 +515,30 @@ struct ExtraModel: Equatable, Codable {
     var path: String
     var position: SIMD3<Float>
     var yaw: Float
+}
+
+/// A scene's particle effects (Particles.swift; the particles scene's, the showcase's motes). Changing any of it
+/// rebuilds the scene, which starts them again.
+struct ParticleSettings: Equatable, Codable {
+    /// Every emitter's rate, bursts and pool times this: the effects thinner or denser (timing).
+    var budget: Float = 1
+    /// The particles that cast shadows do (shadow rays look through them); off, none does.
+    var shadows = true
+    /// Reflection rays see the particles in front of what they reflect (particleGather); off, mirrors miss them.
+    var reflections = true
+    static let budgetRange: ClosedRange<Float> = 0.25...4
+
+    /// `emitters` as these settings make them.
+    func applied(to emitters: [ParticleEmitter]) -> [ParticleEmitter] {
+        emitters.map { e in
+            var e = e
+            e.capacity = max(Int((Float(e.capacity) * budget).rounded()), 1)
+            e.rate *= budget
+            if let b = e.burst { e.burst = (b.time, max(Int((Float(b.count) * budget).rounded()), 1), b.period, b.repeats) }
+            if !shadows { e.castsShadows = false }
+            return e
+        }
+    }
 }
 
 /// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
@@ -647,11 +677,17 @@ struct SceneSettings: Equatable, Codable {
     var voxelBoxes = false
     /// The physics scene: its bodies and how they are simulated.
     var physics = PhysicsSettings()
+    var particles = ParticleSettings()
     /// The plant workshop: what it shows.
     var plants = PlantSceneSettings()
     /// The species the plants are grown from: a key of PlantCatalog's registry, which the plant editor sets as it
     /// edits; "" the saved species (Assets/Plants), "builtin" the built-in ones. Session state, not a preference.
     var plantCatalog = ""
+    /// The effects that replace the scenes' own of the same name (VFXCatalog): "" the saved ones (Assets/Effects),
+    /// "builtin" none, otherwise a key of the registry the VFX editor fills as it edits. Session state.
+    var effects = ""
+    /// The VFX stage: the effects it shows.
+    var stage = VFXStageSettings()
     /// The building workshop: what it shows.
     var buildings = BuildingSceneSettings()
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
@@ -707,6 +743,20 @@ struct SceneSettings: Equatable, Codable {
         (a.interior, b.interior) = (nil, nil)
         return kind.isWorld && a == b
     }
+}
+
+/// The VFX stage (Scene+Stage.swift): the effects it lines up, by name (VFXLibrary's, or the catalog's: Scene.effect).
+struct VFXStageSettings: Equatable, Codable {
+    var effects = ["fireworks"]
+    var backdrop = VFXBackdrop.dark
+}
+
+/// What the VFX stage's effects are shown against.
+enum VFXBackdrop: String, Codable, CaseIterable {
+    /// A dark room, a key light and a cool one over it; a grey cyclorama (a floor curving up into a wall), softly lit;
+    /// nothing at all, black; a plain under the sun and a blue sky; the plain at night, under the moon.
+    case dark, grey, black, outdoor, night
+    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 
 /// The building workshop (Scene+Buildings.swift): which building it shows, and how.
@@ -924,7 +974,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .plants, .buildings, .characters:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants, .vfxStage, .buildings, .characters:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -1030,7 +1080,7 @@ struct SkySettings: Equatable, Codable {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids:
+             .softBodies, .muscles, .fluids, .particles, .vfxStage:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -1183,6 +1233,8 @@ struct RenderSettings: Equatable, Codable {
     var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     var timeScale: Float = 1           // animation speed (Pause stops it too)
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
+    /// The particles' layer's size, as a share of the traced frame's (1 or 0.5): upsampled by depth over the picture.
+    var particleScale: Float = 1
 
     /// The physics scene's traced resolution (`usePhysicsLook`).
     static let physicsScale: CGFloat = 0.375
@@ -1244,4 +1296,9 @@ struct RenderSettings: Equatable, Codable {
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13
+}
+
+extension SceneKind {
+    /// The camera turns about what the scene shows (the plant workshop's plants, the VFX stage's effects; F frames them).
+    var orbits: Bool { isWorkshop || self == .vfxStage }
 }

@@ -80,7 +80,7 @@ struct TraversalStats {
 /// top-level structure and what a hit reads besides the instance records. One per frame slot, written every frame
 /// (`write`), as its top-level structure and its virtual geometry's tables are the slot's own.
 final class TraceSceneArgs {
-    static let size = 128
+    static let size = 208
     /// The ray queries' counters (RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which recompiles
     /// the shaders): see TraversalStats.
     static var statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
@@ -125,6 +125,20 @@ final class TraceSceneArgs {
         var wind = WindFrame()
         var cutouts: MTLBuffer?
         var clusterInstance = UInt32.max
+        /// The particles' structures this slot (the shadow casters', the others'), their records and flipbooks
+        /// (ParticlesGPU), and how many slots each covers.
+        var particleCasters: MTLAccelerationStructure?
+        var particleOthers: MTLAccelerationStructure?
+        var particleRender: MTLBuffer?
+        var particleAtlas: MTLTexture?
+        var particleCounts = SIMD2<UInt32>()
+        var particleFlags: UInt32 = 0   // MSL PARTICLES_REFLECTED
+        /// The trails' structure this slot, their control points and records, and (trails, control points each).
+        var particleTrails: MTLAccelerationStructure?
+        var trailPoints: MTLBuffer?
+        var trailRecords: MTLBuffer?
+        var trailShape = SIMD2<UInt32>()
+        var frame: UInt32 = 0
     }
 
     /// Writes `slot`'s scene (the CPU writes a slot only once the GPU is done with its last frame).
@@ -144,6 +158,17 @@ final class TraceSceneArgs {
         p.storeBytes(of: stats.gpuAddress, toByteOffset: 96, as: UInt64.self)
         p.storeBytes(of: address(c.indices), toByteOffset: 104, as: UInt64.self)
         p.storeBytes(of: address(c.uvs), toByteOffset: 112, as: UInt64.self)
+        p.storeBytes(of: c.frame, toByteOffset: 120, as: UInt32.self)
+        p.storeBytes(of: c.particleCasters?.gpuResourceID ?? MTLResourceID(), toByteOffset: 128, as: MTLResourceID.self)
+        p.storeBytes(of: c.particleOthers?.gpuResourceID ?? MTLResourceID(), toByteOffset: 136, as: MTLResourceID.self)
+        p.storeBytes(of: address(c.particleRender), toByteOffset: 144, as: UInt64.self)
+        p.storeBytes(of: c.particleAtlas?.gpuResourceID ?? MTLResourceID(), toByteOffset: 152, as: MTLResourceID.self)
+        p.storeBytes(of: c.particleCounts, toByteOffset: 160, as: SIMD2<UInt32>.self)
+        p.storeBytes(of: c.particleFlags, toByteOffset: 168, as: UInt32.self)
+        p.storeBytes(of: c.particleTrails?.gpuResourceID ?? MTLResourceID(), toByteOffset: 176, as: MTLResourceID.self)
+        p.storeBytes(of: address(c.trailPoints), toByteOffset: 184, as: UInt64.self)
+        p.storeBytes(of: address(c.trailRecords), toByteOffset: 192, as: UInt64.self)
+        p.storeBytes(of: c.trailShape, toByteOffset: 200, as: SIMD2<UInt32>.self)
     }
 
     /// What the frames finished since the last read added (in-flight ones in part): read while frames run.

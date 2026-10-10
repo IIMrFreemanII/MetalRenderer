@@ -148,8 +148,24 @@ struct TraceScene {
     device atomic_uint*           stats;      // RT_STATS builds, per ray class: rays, triangle candidates, box candidates
     device const uint*            indices;
     device const float2*          uvs;
+    uint                          frame;      // the frame's number (stochastic particle shadows' seed)
+    uint                          pad2;
+    primitive_acceleration_structure particleCasters;   // PARTICLES: this frame's boxes of the particles that cast
+    primitive_acceleration_structure particleOthers;    // shadows, and of the others (ParticleTrace.metal)
+    device const struct ParticleRender* particleRender;   // ...and what each holds (the others' after the casters')
+    texture2d_array<float>        particleAtlas;  // the flipbooks (ParticleTextures.swift)
+    uint2                         particleCounts; // the casters' boxes (the others' records start there), the others' (0: none)
+    uint                          particleFlags;  // PARTICLES_REFLECTED
+    uint                          pad3;
+    primitive_acceleration_structure particleTrails;   // the trails' ribbons (flat curves), this frame's
+    device const float4*          trailPoints;    // their control points (xyz; w: the trail's radius there)
+    device const struct ParticleTrail* trailRecords;  // their looks
+    uint2                         trailShape;     // trails (0: none), control points each
 };
-static_assert(sizeof(TraceScene) == 128 && __builtin_offsetof(TraceScene, stats) == 96 && __builtin_offsetof(TraceScene, uvs) == 112,
+static_assert(sizeof(TraceScene) == 208 && __builtin_offsetof(TraceScene, particleTrails) == 176
+              && __builtin_offsetof(TraceScene, trailShape) == 200 && __builtin_offsetof(TraceScene, stats) == 96 && __builtin_offsetof(TraceScene, uvs) == 112
+              && __builtin_offsetof(TraceScene, particleCasters) == 128 && __builtin_offsetof(TraceScene, particleAtlas) == 152
+              && __builtin_offsetof(TraceScene, particleCounts) == 160,
               "TraceScene: TraceSceneArgs.write writes these offsets");
 
 // RT_STATS (Pipelines.compile, the Debug window's counters): every query counts its ray and the candidates Metal's

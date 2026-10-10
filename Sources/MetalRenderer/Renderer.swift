@@ -389,6 +389,32 @@ final class Renderer: NSObject {
     private var crowdSkinner: CrowdSkinner?
     /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
     private var physicsGPU: PhysicsGPU?
+    /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
+    /// (a still frame has nothing to pose or build).
+    private var particlesGPU: ParticlesGPU?
+    /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
+    private var vfxSetup: VFXCompiler.Setup {
+        VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
+                          lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4)
+    }
+    private var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
+    private var particlesVersion = 0
+    /// The VFX editor's gizmos (VFX/VFXGizmos.swift): what they show, the selected emitter's handle (where it was last
+    /// drawn), the drag of one of its arrows (its axis, and how far along it the cursor was), and where a drag goes.
+    /// `METALRENDERER_GIZMOS=<effect>[/<emitter>]`: the gizmos from the start (offscreen pictures of them).
+    private var gizmoTarget: VFXGizmos.Target? = ProcessInfo.processInfo.environment["METALRENDERER_GIZMOS"].map {
+        let parts = $0.split(separator: "/", maxSplits: 1).map(String.init)
+        return VFXGizmos.Target(effect: parts.first ?? "", emitter: parts.count > 1 ? parts[1] : nil)
+    }
+    private var gizmoHandle: SIMD3<Float>?
+    private var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
+    private var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
+    private var gizmoViewSize = SIMD2<Float>(1280, 800)
+    /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+    /// The VFX editor's last edit that needs new code (VFXLive.swift), until its library is compiled.
+    private var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
+    private var particlesCamera = SIMD4<Float>.zero
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
     private var virtualTracing: VirtualTracing?
@@ -585,6 +611,8 @@ final class Renderer: NSObject {
         let reflection: MTLTexture
     }
     private var liquidTextures: LiquidTargets?
+    private var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
+    private var particleHazeTexture: MTLTexture?
     private var pathTraceCount: UInt32 = 0
     private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
     private var referenceView: [SIMD4<Float>] = []
@@ -944,6 +972,9 @@ final class Renderer: NSObject {
         plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
         physicsGPU = nil
+        particlesGPU = nil
+        pendingEffects = nil
+        particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
         holding = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
@@ -982,6 +1013,11 @@ final class Renderer: NSObject {
                 if onGPU { scene.runPhysicsOnGPU() }
             }
         }
+        if let particles = scene.particles {
+            particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
+            particlesGPU?.sdfScene = buffers.sdf.scene
+            scene.replayParticles()
+        }
         try createLightBuffers()
         virtualTracing = try prepared?.virtualTracing ?? makeVirtualTracing(scene, poolMB: settings.virtualGeometry.poolMB)
         let lmd = MTLTextureDescriptor()
@@ -996,6 +1032,111 @@ final class Renderer: NSObject {
         guard let lm = device.makeTexture(descriptor: lmd) else { throw RendererError.resourceCreation("texture lightMap") }
         lm.label = "lightMap"
         lightMap = lm
+    }
+
+    /// The VFX editor's edit (`settings.scene.effects`, a catalog's key): run in the scene's particles' place when only
+    /// the effects differ and their layout stays (VFXLive.swift): their values at once, new code once it compiles (the
+    /// old running meanwhile). Otherwise the scene is made again, as for any other change of its settings.
+    private func editEffects() {
+        var same = settings.scene
+        same.effects = scene.settings.effects
+        guard same == scene.settings, let gpu = particlesGPU,
+              let next = scene.particleSystem(replacing: VFXCatalog.resolve(scene.settings.effects),
+                                              with: VFXCatalog.resolve(settings.scene.effects)) else { return }
+        let running = pendingEffects?.system ?? gpu.system
+        let kind = running.edit(to: next.system)
+        if benchmark != nil { print("Effects: the edit is \(kind == .values ? "run in place" : kind == .code ? "new code" : "a new scene")") }
+        guard kind != .rebuild else { pendingEffects = nil; return }
+        _ = next.system.continuing(gpu.system)
+        let key = settings.scene.effects
+        if kind == .values && pendingEffects == nil {
+            do {
+                try gpu.adopt(next.system, kernels: nil, device: device)
+            } catch {
+                print("Effects: the edit isn't run in place (\(error)); the scene is made again")
+                return
+            }
+            scene.adoptEffects(key, system: next.system, effects: next.effects, owners: next.owners, notes: next.notes)
+            particlesVersion += 1   // posed again, paused too
+        } else {
+            pendingEffects = next   // compiled while the running ones go on (the frame's particles step adopts it)
+            scene.adoptEffects(key, system: nil, effects: [], owners: [], notes: [])
+        }
+    }
+
+    /// The pending edit's system in the particles' place, with its code's `kernels`, replayed from the start.
+    private func adoptEffects(_ pending: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String]),
+                              kernels: ParticleKernels?) {
+        pendingEffects = nil
+        guard let gpu = particlesGPU else { return }
+        do {
+            try gpu.adopt(pending.system.continuing(gpu.system), kernels: kernels, device: device)
+        } catch {
+            print("Effects: the edit isn't run (\(error))")
+            return
+        }
+        scene.adoptEffects(scene.settings.effects, system: pending.system, effects: pending.effects, owners: pending.owners, notes: pending.notes)
+        scene.replayParticles()
+        particlesVersion += 1
+    }
+
+    /// What the VFX editor shows of the scene's effects (nil: it has none).
+    private func effectsStatus() -> VFXStatus? {
+        guard let gpu = particlesGPU else { return nil }
+        var s = VFXStatus()
+        let system = gpu.system
+        s.emitters = system.emitters.indices.map { i in
+            VFXStatus.Emitter(effect: scene.effectOwners[safe: i] ?? "", name: system.emitters[i].name,
+                              program: system.programs[i] != nil, capacity: system.emitters[i].capacity)
+        }
+        if let source = pendingEffects?.system.programSource ?? system.programSource {
+            s.failure = VFXCompiler.shared.failure(for: source, setup: vfxSetup)
+            s.compiling = s.failure == nil && (pendingEffects != nil || gpu.programKernels == nil)
+        }
+        s.compileMs = VFXCompiler.shared.lastMilliseconds
+        s.notes = scene.effectNotes
+        s.key = scene.settings.effects
+        for (i, n) in gpu.aliveCounts().enumerated() where i < s.emitters.count { s.emitters[i].alive = n }
+        s.time = animTime
+        return s
+    }
+
+    /// What the VFX editor's gizmos show (nil: none).
+    func setGizmos(_ target: VFXGizmos.Target?) {
+        gizmoTarget = target
+        if target?.emitter == nil { gizmoHandle = nil }
+    }
+
+    /// The scene's clock at `t` (s): the VFX editor's timeline (the particles replay from the start to go back).
+    func setTime(_ t: Float) {
+        animTime = max(t, 0)
+        previousAnimTime = animTime
+    }
+
+    /// The gizmos over the finished frame `output` (Shaders/Gizmo.metal).
+    private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
+        guard let target = gizmoTarget, let gpu = particlesGPU else { gizmoHandle = nil; return }
+        let (segments, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
+        gizmoHandle = handle
+        gizmoViewSize = SIMD2(Float(output.width), Float(output.height))
+        guard !segments.isEmpty else { return }
+        let bytes = segments.count * MemoryLayout<VFXGizmos.Segment>.stride
+        if (gizmoBuffers[slot]?.length ?? 0) < bytes {
+            gizmoBuffers[slot] = device.makeBuffer(length: max(bytes * 2, 4096), options: .storageModeShared)
+            gizmoBuffers[slot]?.label = "gizmos\(slot)"
+        }
+        guard let buffer = gizmoBuffers[slot], let enc = passes.compute("gizmos") else { return }
+        segments.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        let c = camera
+        var view = VFXGizmos.View(position: SIMD4(c.position, 0), right: SIMD4(c.right, 0), up: SIMD4(c.up, 0), forward: SIMD4(c.forward, 0),
+                                  size: gizmoViewSize, tanY: tan(c.fovY / 2), aspect: gizmoViewSize.x / max(gizmoViewSize.y, 1),
+                                  count: UInt32(segments.count), samples: VFXGizmos.samples)
+        enc.setComputePipelineState(pipelines[.gizmoLines])
+        enc.setBytes(&view, length: MemoryLayout<VFXGizmos.View>.stride, index: 0)
+        enc.setBuffer(buffer, offset: 0, index: 1)
+        enc.setTexture(output, index: 0)
+        dispatch(enc, .gizmoLines, width: Int(VFXGizmos.samples), height: segments.count)
+        passes.endCompute()
     }
 
     /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
@@ -1080,13 +1221,17 @@ final class Renderer: NSObject {
         walkGrid = scene.walkColliders.isEmpty && scene.walkGround == nil ? nil : ColliderGrid(scene.walkColliders)
         if walkGrid == nil || !(sameWorkshop || scene.settings.isSameCity(as: oldSettings)) { walker = nil }
         lastLiftY = scene.interiorControls?.lifts.map(\.y) ?? []
+        // The workshops and the VFX stage: the camera turns about what they show, framed on it when that changes (the
+        // stage's effects, not their edits: a capacity's edit makes the scene again).
+        let stageChanged = scene.settings.kind == .vfxStage
+            && (oldSettings.kind != .vfxStage || oldSettings.stage.effects != scene.settings.stage.effects)
         if walker != nil {
             orbit = nil
-        } else if !scene.settings.kind.isWorkshop {
+        } else if !scene.settings.kind.orbits {
             orbit = nil
-        } else if resetCamera || !sameWorkshop || oldSettings.plants.layout != scene.settings.plants.layout
-                    || oldSettings.plants.species != scene.settings.plants.species
-                    || oldSettings.buildings.view != scene.settings.buildings.view {
+        } else if resetCamera || stageChanged || (scene.settings.kind.isWorkshop && (!sameWorkshop
+                    || oldSettings.plants.layout != scene.settings.plants.layout || oldSettings.plants.species != scene.settings.plants.species
+                    || oldSettings.buildings.view != scene.settings.buildings.view)) {
             frameWorkshop()
         } else if orbit == nil, let focus = scene.focus {
             orbit = (focus.centroid, length(camera.position - focus.centroid))
@@ -1823,7 +1968,7 @@ final class Renderer: NSObject {
 
     /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
     func frameWorkshop() {
-        guard scene.settings.kind.isWorkshop, let focus = scene.focus else { return }
+        guard scene.settings.kind.orbits, let focus = scene.focus else { return }
         let framed = Camera.framing(focus, fovY: settings.fovDegrees * .pi / 180, aspect: viewAspect)
         camera = framed.camera
         prevCamera = camera
@@ -1931,6 +2076,7 @@ final class Renderer: NSObject {
             chooseInterior()
         }
         setWorldLights()
+        if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
@@ -1985,6 +2131,8 @@ final class Renderer: NSObject {
             stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
             stages.denoise += svgfStages(plan, targets: t, composite: &composite)
             stages.fog = fogStages(plan, targets: t, composite: &composite)
+            stages.head = particleLightStages(plan) + stages.head
+            stages.fog += particleLayerStages(plan, targets: t, composite: &composite)
         }
 
         if let raster = plan.raster { encodeRaster(plan, raster, passes: passes) }
@@ -2242,6 +2390,7 @@ final class Renderer: NSObject {
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
+        var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
@@ -2299,6 +2448,10 @@ final class Renderer: NSObject {
         p.specular = usesSpecular
         p.glass = scene.hasGlass
         if scene.hasLiquid { p.liquid = liquidTargets(width: width, height: height) }
+        if particlesGPU != nil {
+            let scale = settings.particleScale < 1 ? 0.5 : 1.0
+            p.particles = particleLayerTarget(width: max(Int((Double(width) * scale).rounded()), 1), height: max(Int((Double(height) * scale).rounded()), 1))
+        }
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
@@ -2578,6 +2731,13 @@ final class Renderer: NSObject {
             deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
             passes.endCompute()
         }
+        // Mesh particles (debris): their instances where the particles are, ahead of the top level. (Their steps run
+        // after it, with the billboards': below.)
+        if let particlesGPU, particlesGPU.system.meshCapacity > 0, let enc = passes.compute("particle meshes", serial: true) {
+            particlesGPU.encodeMeshPose(enc, pipelines: pipelines, instances: instanceDataBuffers[slot],
+                                        descriptors: !sceneBuffers.still ? instanceDescBuffers[slot] : nil, descriptorStride: instanceDescriptorStride)
+            passes.endCompute()
+        }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
         //    bottom-level structures around them (a refit: a pose keeps its triangles, so its tree keeps its shape).
         //    Ahead of the top level, which takes the new bounds.
@@ -2637,6 +2797,49 @@ final class Renderer: NSObject {
                                          indirect: sceneBuffers.indirect), pass: "tlas")
             instanceASBuilt.insert(slot)
             slotRefitFrame[slot] = Int(frameIndex)
+        }
+        // 2. Particle effects: the steps since last frame (or a replay from the start; their scene collisions trace this
+        //    frame's TLAS), then this slot's records and boxes and the structures over them, which only the particle
+        //    queries trace (not in the TLAS). A slot built at these steps already (time paused) keeps its structures.
+        if let particlesGPU {
+            // The editor's edit whose code was compiling: in once it is ready.
+            if let pending = pendingEffects {
+                if let source = pending.system.programSource {
+                    if let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                                                                wait: benchmark != nil) {
+                        adoptEffects(pending, kernels: kernels)
+                    } else if VFXCompiler.shared.failure(for: source, setup: vfxSetup) != nil {
+                        pendingEffects = nil   // the old code keeps running; the editor says why
+                    }
+                } else {
+                    adoptEffects(pending, kernels: nil)
+                }
+            }
+            // An effect's programs (VFXProgram): the VFX library's kernels once compiled (benchmarks wait for them), then
+            // a replay from the start with them, so what is drawn doesn't depend on when the compile finished.
+            if particlesGPU.hasPrograms, particlesGPU.programKernels == nil, let source = particlesGPU.system.programSource,
+               let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                                                        wait: benchmark != nil) {
+                particlesGPU.programKernels = kernels
+                scene.replayParticles()
+            }
+            let (steps, restart) = scene.takeParticleSteps(limit: ParticlesGPU.maxStepsPerFrame)
+            // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
+            let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
+            let camera = SIMD4(lod.camPos, 1 / max(lod.pixelScale * layerScale, 1e-6))
+            if steps > 0 || restart || camera != particlesCamera { particlesVersion += 1 }
+            particlesCamera = camera
+            if particlesBuilt[slot] != particlesVersion, let enc = passes.compute("particles", serial: true) {
+                if restart { particlesGPU.encodeReset(enc, pipelines: pipelines, slot: slot) }
+                particlesGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot, wind: windFrame.wind) { [self] in
+                    bindScene($0, slot: slot)
+                }
+                particlesGPU.encodePose(enc, pipelines: pipelines, slot: slot, camera: camera)
+                passes.endCompute()
+                if let build = particlesGPU.build(slot: slot) { passes.updatePrimitives(build, pass: "particle build") }
+                particlesBuilt[slot] = particlesVersion
+                writeTraceScene(slot: slot)   // the structures' new sizes (written above with the last ones)
+            }
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
         if let textureStreamer {
@@ -2748,7 +2951,8 @@ final class Renderer: NSObject {
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
                               plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
-                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D])
+                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D, plan.particles?.color ?? dummy2D,
+                              plan.particles?.depth ?? dummy2D])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -2772,26 +2976,53 @@ final class Renderer: NSObject {
         // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
         if let drawable, let post = plan.post, !size.upscaling {
-            encodePost(plan, post: post, input: post.color, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+            let light = encodeHaze(plan, input: post.color, normalDepth: t.normalDepth[cur], passes: passes)
+            encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
         }
         if let drawable, let upscaler {
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
                                                    reset: upscalerReset), pass: "upscale")
             upscalerReset = false
-            // It leaves linear, unbounded light: the lens and the finish, or only the exposure and the tone curve, into
-            // the drawable.
+            // The particles over what it made (it would smear them: particleOverlayKernel).
+            if let layer = plan.particles, let enc = passes.compute("particle overlay") {
+                bind(enc, .particleOverlay, plan.uniforms, sceneSlot: plan.slot)
+                var fp = plan.fogParams
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                setTextures(enc, [upscaler.hdrOutput, layer.color, layer.depth, t.normalDepth[cur], plan.fog?.grid.integrated ?? dummy3D])
+                dispatch(enc, .particleOverlay, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+            // It leaves linear, unbounded light (bent by the heat haze, if any): the lens and the finish, or only the
+            // exposure and the tone curve, into the drawable.
+            let light = encodeHaze(plan, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], passes: passes)
             if let post = plan.post {
-                encodePost(plan, post: post, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                            output: drawable.texture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
-                setTextures(enc, [upscaler.hdrOutput, drawable.texture])
+                setTextures(enc, [light, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
         }
+        if let drawable { encodeGizmos(drawable.texture, slot: plan.slot, passes: passes) }
         return (drawable, drawableWait)
+    }
+
+    /// 5b. The heat haze (distortion particles: particleDistortKernel): `input`, the frame's linear light at the output
+    /// size, bent where hot air is in front of it, into a texture of its own, which it returns for the lens to take;
+    /// `input` itself when the scene has no distorters (or no particles).
+    private func encodeHaze(_ plan: FramePlan, input: MTLTexture, normalDepth: MTLTexture, passes: FrameEncoder) -> MTLTexture {
+        guard let gpu = particlesGPU, gpu.system.distortCapacity > 0, let haze = particleHazeTarget(width: input.width, height: input.height),
+              let enc = passes.compute("particle distortion", serial: true) else { return input }
+        bind(enc, .particleDistortDiscs, plan.uniforms)
+        gpu.encodeDistortDiscs(enc)
+        bind(enc, .particleDistort, plan.uniforms)
+        setTextures(enc, [input, haze, normalDepth])
+        dispatch(enc, .particleDistort, width: input.width, height: input.height)
+        passes.endCompute()
+        return haze
     }
 
     /// 6. The lens and the finish (Shaders/Post.metal): `input`, the frame's linear light at the output size, through the
@@ -3008,6 +3239,45 @@ final class Renderer: NSObject {
             })
         }
         return stages
+    }
+
+    /// 1c. The particles' light, once a particle (Shaders/ParticleLight.metal): it needs only the structures.
+    private func particleLightStages(_ plan: FramePlan) -> [ComputeStage] {
+        guard plan.particles != nil, let gpu = particlesGPU else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot
+        return [ComputeStage(pass: "particle light") { [self] enc in
+            bind(enc, .particleLight, uniforms, sceneSlot: slot)
+            enc.setBuffer(gpu.render[slot], offset: 0, index: 13)
+            enc.setBuffer(gpu.lighting, offset: 0, index: 14)
+            var n = UInt32(gpu.system.capacity)
+            enc.setBytes(&n, length: 4, index: 15)
+            dispatch(enc, .particleLight, width: gpu.system.capacity, height: 1)
+        }]
+    }
+
+    /// 3e. The particles in front of the camera's surfaces, after the fog's grid (they're fogged where they are). The
+    /// composite puts the layer over the scene, or particleOverlayKernel over MetalFX's output (which would filter it
+    /// with the scene's motion), upsampled by depth where the layer is smaller than the frame (`particleScale`).
+    private func particleLayerStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+        guard let layer = plan.particles else { return [] }
+        if !plan.neuralDenoise { composite.uniforms.flags |= UniformFlags.particles }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        let fogGrid = plan.fog?.grid.integrated
+        var fogParams = plan.fogParams
+        // Its rays through the frame's own (jittered) pixels when it is the frame's size and goes in the composite;
+        // otherwise through its texels' centres, steady (nothing filters it over time). Over MetalFX's output the
+        // overlay traces the thin ones again at its size (`detail`).
+        struct Params { var size: SIMD2<UInt32>; var jitter: UInt32; var detail: UInt32 }
+        let fits = layer.color.width == size.width && layer.color.height == size.height
+        var params = Params(size: SIMD2(UInt32(layer.color.width), UInt32(layer.color.height)), jitter: fits && !plan.neuralDenoise ? 1 : 0,
+                            detail: plan.neuralDenoise ? 1 : 0)
+        return [ComputeStage(pass: "particle layer") { [self] enc in
+            bind(enc, .particleLayer, uniforms, sceneSlot: slot)
+            enc.setBytes(&fogParams, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            enc.setBytes(&params, length: MemoryLayout<Params>.stride, index: 10)
+            setTextures(enc, [t.normalDepth[cur], layer.color, fogGrid ?? dummy3D, layer.depth])
+            dispatch(enc, .particleLayer, width: layer.color.width, height: layer.color.height)
+        }]
     }
 
     /// 2b. The GI technique, if one runs: it writes t.indirect (the path tracer already did, inside traceKernel), after
@@ -3423,13 +3693,20 @@ final class Renderer: NSObject {
             tlas: instanceAS[slot], vgTable: virtualTracing?.vgTable(slot), clusters: clusters,
             pool: virtualTracing?.pool ?? rasterClusters?.streamer.pool, parts: plants?.parts, meshes: sceneBuffers.meshes,
             indices: sceneBuffers.indices, uvs: sceneBuffers.uvs, wind: windFrame, cutouts: plants?.cutouts,
-            clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max))
+            clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max,
+            particleCasters: particlesGPU?.parts[slot].casters?.structure, particleOthers: particlesGPU?.parts[slot].others?.structure,
+            particleRender: particlesGPU?.render[slot], particleAtlas: particlesGPU?.atlas,
+            particleCounts: particlesGPU?.traceCounts(slot: slot) ?? .zero,
+            particleFlags: scene.particlesReflected ? 1 : 0,
+            particleTrails: particlesGPU?.trails[slot]?.structure, trailPoints: particlesGPU?.trailPoints[slot],
+            trailRecords: particlesGPU?.trailRecords[slot], trailShape: particlesGPU?.trailShape ?? .zero,
+            frame: frameIndex))
     }
 
     /// What `slot`'s TraceScene points at besides the structures.
     private func traceSceneResources(slot: Int) -> [MTLResource] {
         (virtualTracing?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? [])
-            + (sceneBuffers.plants?.resources(slot: slot) ?? [])
+            + (sceneBuffers.plants?.resources(slot: slot) ?? []) + (particlesGPU?.resources(slot: slot) ?? [])
     }
 
     /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
@@ -3693,6 +3970,7 @@ final class Renderer: NSObject {
         animTime = c.startTime
         previousAnimTime = c.startTime
         setWorldLights()   // the scene it starts with is the one its time of day asks for
+        if settings.scene.effects != scene.settings.effects { editEffects() }   // the VFX editor's edits, as the app runs them
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }
@@ -3834,6 +4112,31 @@ final class Renderer: NSObject {
         pathTraceAccum = device.makeTexture(descriptor: d)
         pathTraceCount = 0
         return pathTraceAccum
+    }
+
+    private func particleLayerTarget(width: Int, height: Int) -> (color: MTLTexture, depth: MTLTexture)? {
+        if let t = particleLayerTexture, t.color.width == width, t.color.height == height { return t }
+        func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            let t = device.makeTexture(descriptor: d)
+            t?.label = label
+            return t
+        }
+        guard let color = make(.rgba16Float, "particleLayer"), let depth = make(.rg32Float, "particleLayerDepth") else { return nil }
+        particleLayerTexture = (color, depth)
+        return particleLayerTexture
+    }
+
+    private func particleHazeTarget(width: Int, height: Int) -> MTLTexture? {
+        if let t = particleHazeTexture, t.width == width, t.height == height { return t }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        particleHazeTexture = device.makeTexture(descriptor: d)
+        particleHazeTexture?.label = "particleHaze"
+        return particleHazeTexture
     }
 
     private func liquidTargets(width: Int, height: Int) -> LiquidTargets? {
@@ -4390,6 +4693,7 @@ final class Renderer: NSObject {
         var status = RendererStatus(directMode: activeDirectMode, traversalCounters: traversalCounters,
                                     debugInfo: debugActive ? debugInfo() : nil)
         status.plantStats = scene.plantStats
+        status.effects = effectsStatus()
         status.buildingStats = scene.buildingStats
         status.characterStats = scene.characterStats
         status.buildingPlan = scene.buildingPlan
@@ -4401,6 +4705,7 @@ final class Renderer: NSObject {
             let other = passTimeFrameMs / n - times.reduce(0) { $0 + $1.ms }
             if other > 0.005 { times.append((name: "other", ms: other)) }   // MetalFX, its copy, texture streaming
             status.passTimes = times
+            for t in times where t.name.hasPrefix("particle") || t.name == "gizmos" { status.effects?.passMs[t.name] = t.ms }
             passTimeOrder = []
             passTimeSums = [:]
             passTimeFrameMs = 0
@@ -4673,6 +4978,17 @@ final class Renderer: NSObject {
     /// camera.
     func mouseDown(at cursor: SIMD2<Float>) {
         holding = nil
+        gizmoDrag = nil
+        // The VFX editor's handle: an arrow under the cursor is dragged along its axis.
+        if let handle = gizmoHandle, let target = gizmoTarget, let emitter = target.emitter,
+           let k = VFXGizmos.pick(handle: handle, cursor: cursor, camera: camera, aspect: viewAspect, size: gizmoViewSize) {
+            var axis = SIMD3<Float>.zero
+            axis[k] = 1
+            let s = VFXGizmos.along(origin: handle, axis: axis, from: camera.position, dir: cursorRay(cursor))
+            gizmoDrag = (axis, handle, s)
+            onGizmoMoved?(target.effect, emitter, .zero, 0)
+            return
+        }
         clickAt = cursor
         guard let physics = scene.physics else { return }
         let direction = cursorRay(cursor)
@@ -4683,6 +4999,13 @@ final class Renderer: NSObject {
     }
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if let drag = gizmoDrag {
+            let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
+            let move = min(max(s - drag.last, -5), 5)
+            gizmoDrag?.last = s
+            if move != 0, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, drag.axis * move, 1) }
+            return
+        }
         if let c = clickAt, length(c - cursor) > 0.004 { clickAt = nil }
         if holding != nil {
             holding?.cursor = cursor
@@ -4695,6 +5018,8 @@ final class Renderer: NSObject {
 
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
+        if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
+        gizmoDrag = nil
         // A click (no drag) while walking: use what is under the cursor.
         if let c = clickAt, walker != nil, holding == nil { use(cursorRay(c)) }
         clickAt = nil

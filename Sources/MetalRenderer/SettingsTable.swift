@@ -427,6 +427,14 @@ enum SettingsTable {
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
+            S.slider("Particle budget", \.scene.particles.budget, ParticleSettings.budgetRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "budget").when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
+            S.check("Particle shadows", \.scene.particles.shadows).env(.scene, "particleshadows")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .vfxStage },
+            S.check("Particles in reflections", \.scene.particles.reflections).env(.scene, "particlereflections")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .vfxStage },
+            S.popup("Particle layer", \.particleScale, [("Full size", Float(1)), ("Half size", Float(0.5))]).env(.view, "particlescale")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }

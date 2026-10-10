@@ -392,7 +392,8 @@ final class Scene {
     /// Made again at every edit (the workshop): its structures are built to be ready soon, not to trace fastest or
     /// keep least (uncompacted), and its plants keep all their leaves (no leaf fall's variants).
     var remadeOften = false
-    let settings: SceneSettings
+    /// Its settings; only the effects' key changes after it is made (`adoptEffects`).
+    private(set) var settings: SceneSettings
     /// While `init` builds the scene: the load's step that the builders report models to (the loading overlay).
     private(set) var loadStep: LoadStep?
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
@@ -412,6 +413,21 @@ final class Scene {
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
+    /// The scene's particle effects, if it has any (Particles.swift): always on the GPU (ParticlesGPU), which the rays
+    /// meet through a structure of their own (Shaders/ParticleTrace.metal).
+    private(set) var particles: ParticleSystem?
+    /// The effects placed in it (Scene+Effects.swift: addEffect), and the colliders of its own their Collide blocks
+    /// name; what of them couldn't be done (VFXLowering's notes).
+    var effects: [VFXInstance] = []
+    var effectColliders: [(name: String, collider: ParticleCollider)] = []
+    var effectNotes: [String] = []
+    /// Per emitter of `particles`, the effect it is one of (the editor's status).
+    var effectOwners: [String] = []
+    /// Reflection rays see them (ParticleSettings.reflections).
+    var particlesReflected: Bool { particles != nil && settings.particles.reflections }
+    /// The steps `update` asked for since the renderer last took them, and whether from the start.
+    private var particlesPending = (steps: 0, restart: true)
+    var hasParticles: Bool { particles != nil }
     /// The interiors' loose furniture (Scene+Interiors.swift): its clock starts at the scene's first update, not at the
     /// renderer's zero (a scene made ten minutes in doesn't step ten minutes first), and a slow frame skips time rather
     /// than catching up.
@@ -488,7 +504,9 @@ final class Scene {
         case .softBodies: buildSoftBodies(settings.physics)
         case .muscles: buildMuscles(settings.physics)
         case .fluids: buildFluids(settings.physics)
+        case .particles: buildParticles()
         case .plants: buildPlantWorkshop()
+        case .vfxStage: buildVFXStage()
         case .buildings: buildBuildingWorkshop()
         case .characters: buildCharacterWorkshop()
         }
@@ -627,6 +645,10 @@ final class Scene {
                 placeBodies()
             }
         }
+        if let particles {
+            let claim = particles.claim(to: t)
+            particlesPending = claim.restart ? (claim.steps, true) : (particlesPending.steps + claim.steps, particlesPending.restart)
+        }
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
@@ -669,6 +691,49 @@ final class Scene {
         guard let physics else { return }
         physicsOnGPU = true
         physicsPending = (physics.stepIndex, true)
+    }
+
+    /// The particles' steps to encode this frame, `limit` at most (the rest wait for the next frames), and whether
+    /// from the start (a new scene, or time run back).
+    func takeParticleSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+        let taken = (steps: min(particlesPending.steps, limit), restart: particlesPending.restart)
+        particlesPending = (particlesPending.steps - taken.steps, false)
+        return taken
+    }
+
+    /// The renderer made the particles' buffers anew: it replays them from the start up to where they are.
+    func replayParticles() {
+        guard let particles else { return }
+        particlesPending = (particles.stepIndex, true)
+    }
+
+    /// The scene's particle effects (a builder's, once): see `particles`.
+    /// A mesh emitter's particles are instances, one a slot, reserved here (the GPU poses them: ParticlesGPU
+    /// .encodeMeshPose); they move every frame, so the scene isn't still.
+    func addParticles(_ system: ParticleSystem) {
+        precondition(particles == nil, "a scene has one particle system")
+        let p = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders,
+                               fields: Array(system.fields.prefix(system.bakedCurlField ?? system.fields.count)),
+                               programs: system.programs)
+        for (i, e) in p.emitters.enumerated() {
+            guard let (mesh, material) = e.mesh else { continue }
+            let hidden = translate(e.position) * scale(1e-4)
+            p.meshInstances[i] = instances.count
+            for _ in 0..<e.capacity { instances[addInstance(mesh, material, hidden)].simulated = true }
+        }
+        particles = p
+    }
+
+    /// The VFX editor's edit, run in place of the scene's particles (VFXLive.swift): `system` (made `continuing` the
+    /// one it replaces) from `effects`, as `key` names them (SceneSettings.effects), so the scene isn't made again.
+    /// Without `system` only the key: the edit's code compiles meanwhile.
+    func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
+        settings.effects = key
+        guard let system else { return }   // the running ones until their new code is ready (Renderer.editEffects)
+        particles = system
+        self.effects = effects
+        effectOwners = owners
+        effectNotes = notes
     }
 
     /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.
@@ -802,12 +867,14 @@ final class Scene {
         // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
-        // liquid's surface. Bit 17: SKIN, some materials are skin. (Shaders/Types.metal.)
+        // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
+        // (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
             | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasSkin ? 0x0002_0000 : 0)
+            | (hasParticles ? 0x0001_0000 : 0)
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {

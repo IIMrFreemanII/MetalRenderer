@@ -12,6 +12,8 @@ struct RendererStatus {
     var passTimes: [(name: String, ms: Double)]?
     /// The plant workshop's plant: what it costs (Scene.plantStats).
     var plantStats: PlantStats?
+    /// The scene's particle effects as they run (the VFX editor's status line).
+    var effects: VFXStatus?
     /// The building workshop's building: what it costs, and its plan (the Floor Plan window).
     var buildingStats: BuildingStats?
     var buildingPlan: BuildingPlan?
@@ -66,6 +68,7 @@ final class RendererController: InputHandler {
     var onToggleDebug: (() -> Void)?            // I key
     var onToggleLoading: (() -> Void)?          // P key
     var onTogglePlants: (() -> Void)?           // K key
+    var onToggleVFX: (() -> Void)?              // X key
     var onToggleBuildings: (() -> Void)?        // J key
     var onToggleCharacters: (() -> Void)?       // H key
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
@@ -100,6 +103,9 @@ final class RendererController: InputHandler {
         }
         renderer.onTick = { [weak self] status in
             DispatchQueue.main.async { self?.ticked(status) }
+        }
+        renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
+            DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
         }
         renderer.onFrameTime = { [weak self] cpu, gpu in
             DispatchQueue.main.async { self?.onFrameTime?(cpu, gpu) }
@@ -162,6 +168,12 @@ final class RendererController: InputHandler {
     /// The plant workshop's camera at its plants again (F).
     func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
 
+    /// The VFX editor's: the scene's clock at `t` (s), and what its gizmos show (nil: none).
+    func setTime(_ t: Float) { renderer.perform { $0.setTime(t) } }
+    func setGizmos(_ target: VFXGizmos.Target?) { renderer.perform { $0.setGizmos(target) } }
+    /// A gizmo's handle dragged in the view (Renderer.onGizmoMoved), on the main thread.
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+
     func setTraversalCounters(_ on: Bool, then done: @escaping () -> Void) {
         renderer.perform { [weak self] r in
             r.setTraversalCounters(on) {
@@ -181,10 +193,10 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" {
             if !event.isARepeat {
                 (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
-                    : key == "h" ? onToggleCharacters : onToggleBuildings)?()
+                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : onToggleBuildings)?()
             }
             return
         }

@@ -195,6 +195,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
                             texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
+                            texture2d<float, access::read>  particles  [[texture(21)]],  // with FLAG_PARTICLES: their layer
+                            texture2d<float, access::read>  particleDepth [[texture(22)]], // ...and its surfaces' depths
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             uint2 tid [[thread_position_in_grid]])
@@ -305,6 +307,12 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 15: c = geometryDebug.read(tid).rgb; break;          // the visibility buffer (rasterDebugKernel)
         case 16: c = geometryDebug.read(tid).rgb; break;          // the virtual shadow maps' pages (vsmDebugKernel)
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
+    }
+    if (flagOn(u.flags, FLAG_PARTICLES) && u.viewMode == 0) {   // in front of it all (fogged already, particleLayerKernel)
+        // (The frame's size, as it is without upscaling unless it is smaller: read as it is.)
+        float4 layer = particles.get_width() == u.width && particles.get_height() == u.height ? particles.read(tid)
+            : particleUpsample(particles, particleDepth, (float2(tid) + 0.5f) / float2(u.width, u.height), nd.read(tid).w);
+        c = layer.rgb + (1.0f - layer.a) * c;
     }
     if (flagOn(u.flags, FLAG_HDR_OUTPUT)) {
         // MetalFX's denoising scaler takes the light as it is: noisy, linear and unbounded (tonemapKernel follows it),
