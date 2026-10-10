@@ -58,6 +58,10 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
       Sources/MetalRenderer/VFXEditor/*.swift) add VFXEditorTests ;;
       Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ;;
+      Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
+      Sources/MetalRenderer/Painter/UV*.swift|Sources/MetalRenderer/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
+      Sources/MetalRenderer/Painter/*.swift|Sources/MetalRenderer/PainterEditor/*.swift|Sources/MetalRenderer/Scene+Paint*.swift|Sources/MetalRenderer/Renderer+Painter.swift)
+        add PainterTests ;;
       Sources/MetalRenderer/MaterialGraph/*.swift|Sources/MetalRenderer/MaterialShaders/*.metal|Sources/MetalRenderer/ShadersMaterial*.metal)
         add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
       Sources/MetalRenderer/MaterialEditor/*.swift) add MaterialEditorTests ;;

@@ -1881,6 +1881,48 @@ opacity, emissive).
   mesh SDFs and cards (they have the undisplaced mesh); SDF shapes (triplanar, no
   normal maps); Metal 4 (written, not tried: the M1 Max has no Metal 4 ray tracing).
 
+### The Material Painter
+
+The Material Painter (V or ⇧⌘P, a window of its own: `PainterEditor/`, the engine in `Painter/`) paints materials
+onto an object, after Substance Painter: a stack of layers, each a fill (values, or a Material Designer graph's bake
+projected onto it, triplanar or by UV) or what a brush put there, channel by channel (colour, roughness, metallic,
+height, emissive, opacity), through masks, into a texture set of its own (1K, 2K or 4K).
+* **What can be painted:** any object picked in the view (Pick object; a mesh of its own: not virtual geometry, a plant,
+  an SDF shape or the open world's tiles), glTF models, the character creator's people (in their bind pose: the paint
+  follows the skinning), and the painter workshop's object (`METALRENDERER_SCENE=painter`, `,psubject=sphere|cube|
+  cylinder|plane|character|model,pmodel=demon`): a shape, the base character, or a model's largest part, on a plinth.
+* **Its UVs** (`UVCheck`, `UVUnwrap`, `UVPack`): the mesh's own, if each point of it has a texel of its own; otherwise
+  the painter's unwrap, written here: charts grown from the largest triangles while they face within a cone and
+  never across a crease, small ones merged, each flattened by LSCM (a conjugate gradient; its projection on its plane
+  if it folds, and split in two if that folds or overlaps), turned to its smallest rectangle, packed on a skyline
+  with gutters. The corners' UVs (three a triangle) follow the meshes' own on the GPU: nothing is split
+  (`Scene+Painted.swift`, the painted materials' extras say where they start).
+* **Painting** (`PainterSession`, `MaterialShaders/Paint.metal`): every texel knows its triangle and barycentrics (a
+  UV-space pass, dilated into the gutters), so a dab is texels whose point, as the object is now, shows under the
+  brush on the screen (the render's own surface at that pixel: hidden texels aren't painted, and strokes cross seams).
+  Brush: size, hardness, opacity, flow, spacing, pen pressure, stamps (built-in, jittered, following the stroke),
+  symmetry along X, Y or Z, a stencil (a picture or a graph) painted through, an eraser; fills of the whole object, a
+  UV island, a polygon or a material. Only the tiles a stroke touches are composited again; undo keeps its tiles.
+* **Smart masks** (`PaintBake`, `MaterialShaders/PaintBake.metal`): the object's curvature (its vertices' and its
+  creases', convex and concave), ambient occlusion and thickness (Metal RT against the object alone), position and
+  normal; generators of edge wear, dirt in cavities, dust on top, rust and leaks from them (amount, contrast, scale,
+  seed); a graph mask (the Material Designer's Mesh Map node reads them); smart materials (`SmartMaterial`: Worn
+  Painted Metal, Rusty Iron, Dusty Plastic, Old Wood, Grimy Concrete, and saved ones).
+* **Paint mode** (Paint or Tab in the window): left drag paints in the main view, right drag or Option-drag orbits the
+  object, scroll zooms, [ ] the brush's size, Escape leaves; a ring shows the brush on the surface. Shift-V walks.
+* **Saving:** `Assets/Painter/<name>.painter/` (`document.json`, the layers' pixels as 16-bit PNGs, the finished set),
+  the scenes' paint in `Assets/Painter/assignments.json` (`METALRENDERER_PAINTER=none|<folder>`); Export writes the set
+  (PNG 8 or 16-bit, EXR; with the mesh maps) and the unwrapped mesh as GLB.
+* **Checked:** `PainterUnwrapTests` (no fold, no overlap, gutters, area kept, deterministic), `PainterTests` (the
+  painted scene, assignments, documents, dabs, the GLB read back, a composite and a stroke with undo on the GPU, the
+  window's undo); `METALRENDERER_BENCH=painter` (each object's layout under bricks), `paintersmart` (the smart
+  materials), `painterstrokes` (strokes, symmetry, stamps, the eraser, a mask, an island fill: scripted paint mode);
+  `METALRENDERER_PAINTER_EXPORT=<folder>` writes each set as it is first composited.
+* **Not done:** the window and paint mode were never used by hand (offscreen and tests only); the unwrap's charts are
+  packed as rectangles (about a third of the square for a character, two thirds for a box); paint is on a character's
+  bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced, and Lumen sees their
+  original material; Metal 4 untried.
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
