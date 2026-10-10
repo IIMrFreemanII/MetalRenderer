@@ -21,9 +21,14 @@ template <typename P> inline float2 matDirectionalWarpUV(float2 uv, float intens
     return uv - float2(cos(p[1].x * MAT_TAU), sin(p[1].x * MAT_TAU)) * p[0].x * intensity;
 }
 
+#if !MAT_EVAL_ONLY
 kernel void mat_transform(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(IN(0, matTransformUV(uv, p)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_mirror(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(IN(0, matMirrorUV(uv, p)), gid); }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_warp(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float2 t = 1.0 / float2(in1.get_width(), in1.get_height());
@@ -31,14 +36,18 @@ kernel void mat_warp(MAT_KERNEL_ARGS) {
     float dy = INOR(1, uv + float2(0, t.y), float4(0)).r - INOR(1, uv - float2(0, t.y), float4(0)).r;
     out0.write(IN(0, matWarpUV(uv, float2(dx, dy) / (2.0 * t), p)), gid);
 }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_directionalWarp(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     out0.write(IN(0, matDirectionalWarpUV(uv, INOR(1, uv, float4(1)).r, p)), gid);
 }
+#endif
 
 // Blur: a separable Gaussian, `radius` pixels (σ = radius / 2): pass 0 along X, 1 along Y (the engine's temporary
 // between them). Past 24 pixels it steps two at a time, between pixels (the bilinear filter averages each pair).
+#if !MAT_EVAL_ONLY
 kernel void mat_blur(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float radius = p[0].x;
@@ -58,9 +67,11 @@ kernel void mat_blur(MAT_KERNEL_ARGS) {
     }
     out0.write(sum / total, gid);
 }
+#endif
 
 template <typename P> inline float2 matDirection(P p) { return float2(cos(p[1].x * MAT_TAU), sin(p[1].x * MAT_TAU)); }
 
+#if !MAT_EVAL_ONLY
 kernel void mat_directionalBlur(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float2 d = matDirection(p) * p[0].x;
@@ -68,9 +79,11 @@ kernel void mat_directionalBlur(MAT_KERNEL_ARGS) {
     for (int i = 0; i < 16; i++) sum += IN(0, uv + d * ((float(i) + 0.5) / 16.0 - 0.5));
     out0.write(sum / 16.0, gid);
 }
+#endif
 
 // Slope Blur: from the pixel, `samples` steps down (intensity < 0: up) the slope's height, averaging the input
 // along the way (or keeping its min or max).
+#if !MAT_EVAL_ONLY
 kernel void mat_slopeBlur(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     int n = clamp(int(p[0].x), 1, 32);
@@ -90,8 +103,10 @@ kernel void mat_slopeBlur(MAT_KERNEL_ARGS) {
     }
     out0.write(mode == 0 ? acc / float(n + 1) : acc, gid);
 }
+#endif
 
 // Edge Detect: a mask's edges, `width` pixels wide (the thresholded mask differs within that reach).
+#if !MAT_EVAL_ONLY
 kernel void mat_edgeDetect(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float w = p[0].x, th = p[1].x;
@@ -103,3 +118,4 @@ kernel void mat_edgeDetect(MAT_KERNEL_ARGS) {
     }
     out0.write(float4(e), gid);
 }
+#endif

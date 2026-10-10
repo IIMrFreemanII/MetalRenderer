@@ -15,6 +15,7 @@ extension MaterialGraph {
             lines.append("g.surface.\(label) = \(MatSwift.float(value))")
         }
         if surface.normalDirectX { lines.append("g.surface.normalDirectX = true") }
+        if surface.shaderMode { lines.append("g.surface.shaderMode = true") }
         for i in inputs {
             lines.append("g.inputs.append(MatGraphInput(\(MatSwift.string(i.name)), \(MatSwift.string(i.title)), \(MatSwift.param(i.value))"
                          + (i.span.map { ", span: \(MatSwift.float($0.lowerBound))...\(MatSwift.float($0.upperBound))" } ?? "") + "))")

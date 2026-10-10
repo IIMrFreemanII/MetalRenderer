@@ -1,3 +1,4 @@
+#if !MAT_EVAL_ONLY
 // The advanced nodes' passes (MatNodes: Advanced), which the engine runs in sequence (MatEngine.encodeGlobal):
 // Distance and Bevel by jump flooding, Flood Fill by labels propagated and jumped, Auto Levels by a min and max.
 // All wrap: a shape across the tile's edge is one shape.
@@ -156,3 +157,4 @@ kernel void mat_autoLevels(MAT_KERNEL_ARGS, device uint* range [[buffer(4)]]) {
     float lo = as_type<float>(range[0]), hi = as_type<float>(range[1]);
     out0.write(float4(saturate((IN(0, uv).r - lo) / max(hi - lo, 1e-6))), gid);
 }
+#endif

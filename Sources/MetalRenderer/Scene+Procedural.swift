@@ -21,6 +21,11 @@ struct ProceduralMaterial {
     var made: MaterialGraph?
     /// The material's fingerprint before it was made procedural (MaterialAssignments).
     var fingerprint = ""
+    /// Its program, if its graph runs as code (MatShaderCode): its number, its code (what an edit must keep to be
+    /// run in place), where its parameters start in `Scene.proceduralParams`.
+    var program: Int?
+    var code: String?
+    var paramBase = 0
 }
 
 extension Scene {
@@ -54,6 +59,38 @@ extension Scene {
         materialExtras[index] = extra
         procedural.removeAll { $0.material == index }
         procedural.append(ProceduralMaterial(graph: name, material: index, slots: slots, channels: channels, made: g, fingerprint: fingerprint))
+    }
+
+    /// The procedural materials whose graphs ask to run as code (MatSurface.shaderMode) and can: their programs,
+    /// numbered in order, spliced into `proceduralCode`, their parameters one after the other in `proceduralParams`.
+    /// One whose graph can't stays baked (why: MatShaderCode.reasons).
+    func buildProceduralPrograms() {
+        let catalog = MaterialCatalog.resolve(settings.materials)
+        var programs: [(number: Int, program: MatShaderCode.Program)] = []
+        var params: [SIMD4<Float>] = []
+        for k in procedural.indices {
+            guard let g = procedural[k].made, g.surface.shaderMode else { continue }
+            do {
+                let plan = try MatPlan(g, library: { catalog.graph($0) })
+                let p = try MatShaderCode.program(plan, number: programs.count, base: params.count)
+                procedural[k].program = programs.count
+                procedural[k].code = p.functions + p.body
+                procedural[k].paramBase = params.count
+                materialExtras[procedural[k].material]?.textures.w = UInt32(programs.count)
+                programs.append((programs.count, p))
+                params += p.params
+            } catch {
+                print("Materials: \(g.name) runs baked, not as code: \(error)")
+            }
+        }
+        proceduralParams = params
+        do {
+            proceduralCode = try MatShaderCode.splice(programs)
+        } catch {
+            print("Materials: the procedural code isn't spliced: \(error)")
+            proceduralCode = ""
+        }
+        if !programs.isEmpty { print("Materials: \(programs.count) as code, \(params.count) parameters, \(proceduralCode.count / 1024) KB of Metal") }
     }
 
     /// Some procedural material cuts holes (its graph has an opacity output) in a scene whose instances are its own

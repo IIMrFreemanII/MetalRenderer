@@ -152,4 +152,22 @@ final class MaterialGraphTests: XCTestCase {
         loop.links.append(MatLink("sample", to: "position", "x"))
         XCTAssertNoThrow(try loop.code(), "a wire into no pin is ignored")
     }
+
+    /// Which graphs run as code: not one with occlusion (it reads everywhere), the marble yes, within the budget;
+    /// its splice compiles (with Procedural.metal, the stand-in it replaces).
+    func testShaderCode() throws {
+        let bricks = try MatPlan(MaterialLibrary.redBricks(), library: { _ in nil })
+        XCTAssertFalse(MatShaderCode.reasons(bricks).isEmpty)
+        let marble = try MatPlan(MaterialLibrary.marble(), library: { _ in nil })
+        XCTAssertTrue(MatShaderCode.reasons(marble).isEmpty, "\(MatShaderCode.reasons(marble))")
+        XCTAssertLessThanOrEqual(MatShaderCode.evaluations(marble), MatShaderCode.budget)
+        let p = try MatShaderCode.program(marble, number: 0, base: 0)
+        XCTAssertEqual(p.params.count, marble.steps.reduce(0) { $0 + max($1.params.count, 1) + $1.luts.count * MatPlan.lutSize })
+        let splice = try MatShaderCode.splice([(0, p)])
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
+        let stub = try String(contentsOf: MatCompiler.folder.appendingPathComponent("Shaders/Procedural.metal"), encoding: .utf8)
+        let text = "#include <metal_stdlib>\nusing namespace metal;\n" + stub.replacingOccurrences(of: ShaderSource.proceduralMarker, with: splice)
+            + "\nkernel void probe(device float4* out [[buffer(0)]], device const float4* P [[buffer(1)]]) { out[0] = proceduralMaterial(0u, float2(0.3), P).base; }\n"
+        XCTAssertNoThrow(try device.makeLibrary(source: text, options: nil))
+    }
 }

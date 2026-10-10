@@ -173,6 +173,7 @@ final class PipelineCache<Value> {
         var stats: Bool
         var lightTypes: UInt32
         var generation: Int        // the shaders' (Renderer.shaderGeneration): a reload makes every older set stale
+        var procedural = ""        // the procedural materials' code spliced in (MatShaderCode.splice)
     }
     /// How many sets are kept (each is the kernels' pipelines and the variants made for them since).
     let capacity: Int
@@ -207,6 +208,7 @@ struct Pipelines {
     let api: RenderAPI             // Metal 4: compiled and specialised by its compiler (MTL4Compiler)
     let lightTypes: UInt32
     let library: MTLLibrary        // kept: another set of light types specialises it again without recompiling
+    let procedural: String         // the procedural materials' code spliced into it (MatShaderCode.splice; "" none)
     private let states: [MTLComputePipelineState?]
     let variants: KernelVariants
 
@@ -249,11 +251,11 @@ struct Pipelines {
     /// any thread; `stats` (the ray queries' counters, RT_STATS) is read by the caller for that reason.
     /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`. `load`: the load to report the pipelines to.
     init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
-         lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil, load: LoadJob? = nil) throws {
+         lightTypes: UInt32, stats: Bool, procedural: String = "", reusing library: MTLLibrary? = nil, load: LoadJob? = nil) throws {
         let start = CACurrentMediaTime()
         let kernels = Kernel.allCases
         let step = load?.step("Shaders", total: kernels.count + 4, detail: library == nil ? "compiling the source" : "")
-        let library = try library ?? Pipelines.compile(device: device, source: source, stats: stats, compiler: compiler)
+        let library = try library ?? Pipelines.compile(device: device, source: source, stats: stats, compiler: compiler, procedural: procedural)
         let compiled = CACurrentMediaTime()
         step?.set(detail: "pipelines")
         var states = [MTLComputePipelineState?](repeating: nil, count: Kernel.allCases.count)
@@ -287,6 +289,7 @@ struct Pipelines {
         self.api = api
         self.lightTypes = lightTypes
         self.library = library
+        self.procedural = procedural
         self.states = states
         self.variants = KernelVariants(device: device, library: library, compiler: compiler, lightTypes: lightTypes)
         // Worth a line when something was really compiled (Metal keeps what it compiled before in its on-disk cache).
@@ -379,8 +382,10 @@ struct Pipelines {
         return try device.makeRenderPipelineState(descriptor: d, options: []).0
     }
 
-    static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
-        try compile(device: device, text: ShaderSource.load(url), stats: stats, compiler: compiler)   // Shaders.metal with the pieces in Shaders/ spliced in
+    static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?, procedural: String = "") throws -> MTLLibrary {
+        var text = try ShaderSource.load(url)
+        if !procedural.isEmpty { text = text.replacingOccurrences(of: ShaderSource.proceduralMarker, with: procedural) }
+        return try compile(device: device, text: text, stats: stats, compiler: compiler)   // Shaders.metal with the pieces in Shaders/ spliced in
     }
 
     /// `source` compiled as Shaders.metal is (the VFX library's: VFXCompiler).

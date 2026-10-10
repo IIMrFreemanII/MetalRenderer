@@ -14,6 +14,7 @@ template <typename P> inline float matCurvatureFrom(float laplacian, P p) {
     return saturate(0.5 - laplacian * p[0].x * 1e-4);
 }
 
+#if !MAT_EVAL_ONLY
 kernel void mat_normal(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float2 t = 1.0 / float2(in0.get_width(), in0.get_height());
@@ -21,7 +22,9 @@ kernel void mat_normal(MAT_KERNEL_ARGS) {
     float up = IN(0, uv - float2(0, t.y)).r, down = IN(0, uv + float2(0, t.y)).r;
     out0.write(matNormalFromSlope(float2(r - l, up - down) / (2.0 * t), p), gid);
 }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_curvature(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float2 t = 1.0 / float2(in0.get_width(), in0.get_height());
@@ -30,9 +33,11 @@ kernel void mat_curvature(MAT_KERNEL_ARGS) {
               + (IN(0, uv - float2(0, t.y)).r + IN(0, uv + float2(0, t.y)).r - 2.0 * c) / (t.y * t.y);
     out0.write(float4(matCurvatureFrom(lap, p)), gid);
 }
+#endif
 
 // Ambient occlusion from a height (`depth` its range, in UV): in `quality` directions, the highest horizon within
 // `radius`, eight steps out (closer ones denser); the light that comes in above the horizons, cosine weighted.
+#if !MAT_EVAL_ONLY
 kernel void mat_ambientOcclusion(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float radius = p[0].x, depth = p[1].x;
@@ -54,3 +59,4 @@ kernel void mat_ambientOcclusion(MAT_KERNEL_ARGS) {
     }
     out0.write(float4(1.0 - occlusion / float(dirs)), gid);
 }
+#endif

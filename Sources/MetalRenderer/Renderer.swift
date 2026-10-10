@@ -388,6 +388,8 @@ final class Renderer: NSObject {
     private var extrasBuffers: [MTLBuffer] = []
     private var opacityBuffers: [MTLBuffer] = []
     private var extrasWritten: [Int] = []
+    private var procParamBuffers: [MTLBuffer] = []
+    private var procParamsWritten: [Int] = []
     private var proceduralTextures: [UInt32: MTLTexture] = [:]
     private var slotTextures: [[UInt32: MTLTexture]] = []
     private var tablePending: [[UInt32: MTLTexture]] = []
@@ -496,7 +498,8 @@ final class Renderer: NSObject {
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
     private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
     private static let shadingExtrasOffset = shadingVSMOffset + 8    // MaterialExtra's address (MATERIAL_EXTRAS)
-    private static let shadingArgsLength = shadingVSMOffset + 16      // 288: the shader asserts it
+    private static let shadingProcParamsOffset = shadingVSMOffset + 16   // the programs' parameters (PROCEDURAL_CODE)
+    private static let shadingArgsLength = shadingVSMOffset + 32      // 304: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
@@ -722,7 +725,7 @@ final class Renderer: NSObject {
         if benchmark != nil {
             // Benchmarks start with everything in place: the same frames every run.
             pipelines = try Pipelines(device: device, source: shaderURL, api: builtAPI, compiler: compiler(for: builtAPI),
-                                      lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled)
+                                      lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled, procedural: scene.proceduralCode)
             keepPipelines(pipelines, generation: shaderGeneration)
         } else {
             // The app compiles them in the background: a second or two after a shader edit (Metal's cache has them
@@ -866,15 +869,17 @@ final class Renderer: NSObject {
     /// a set made for them before (`pipelineCache`), or compiled here (any thread). Its library is reused when only the
     /// light types differ.
     private func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
-                               current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
-        if current.stats == stats && current.api == api && current.lightTypes == lightTypes { return nil }
-        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation)
+                               procedural: String, current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
+        let sameCode = current.procedural == procedural
+        if current.stats == stats && current.api == api && current.lightTypes == lightTypes && sameCode { return nil }
+        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation, procedural: procedural)
         if let kept = pipelineCache.get(key) {
             load?.step("Shaders", detail: "kept from before").finish()
             return kept
         }
         let made = try Pipelines(device: device, source: shaderURL, api: api, compiler: compiler, lightTypes: lightTypes,
-                                 stats: stats, reusing: current.stats == stats && current.api == api ? current.library : nil,
+                                 stats: stats, procedural: procedural,
+                                 reusing: current.stats == stats && current.api == api && sameCode ? current.library : nil,
                                  load: load)
         pipelineCache.put(key, made)
         return made
@@ -882,7 +887,8 @@ final class Renderer: NSObject {
 
     /// Keeps `made`, of shader generation `generation`, for a later scene with its light types.
     private func keepPipelines(_ made: Pipelines, generation: Int) {
-        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation), made)
+        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation,
+                                                       procedural: made.procedural), made)
     }
 
     /// The scene's virtual geometry for the tracer, if it has virtual meshes (any thread).
@@ -928,7 +934,7 @@ final class Renderer: NSObject {
         // The shaders too, when the API changes (a recompile) or the new scene has other light types.
         let pipelines = try makePipelines(api: options.api, compiler: options.compiler, lightTypes: newScene.lightTypeMask,
                                           stats: options.traversalStats, generation: options.shaderGeneration,
-                                          current: options.pipelines, load: load)
+                                          procedural: newScene.proceduralCode, current: options.pipelines, load: load)
         if let buffers { SceneBuffers.touch(buffers.buffers, device: device, queue: buildQueue) }
         // The open world's scene is made again for every tile the camera comes to, never built from twice: its vertex
         // arrays, now in the buffers, go.
@@ -1102,10 +1108,20 @@ final class Renderer: NSObject {
         guard same == scene.settings else { return }
         let catalog = MaterialCatalog.resolve(settings.scene.materials)
         for pm in scene.procedural {
-            let channels = Set(catalog.graph(pm.graph)?.channels.keys.map { $0 } ?? [])
+            let g = catalog.graph(pm.graph)
+            let channels = Set(g?.channels.keys.map { $0 } ?? [])
             guard channels.contains(.opacity) == pm.channels.contains(.opacity) else { return }
+            // As code: only an edit that keeps its code (its values) runs in place; another compiles it into the shading.
+            guard Renderer.programCode(g, pm, catalog) == pm.code else { return }
         }
         scene.adoptMaterials(settings.scene.materials)
+    }
+
+    /// `g`'s program as `pm`'s would be (its number and where its parameters start kept), if `g` runs as code.
+    private static func programCode(_ g: MaterialGraph?, _ pm: ProceduralMaterial, _ catalog: MaterialCatalog) -> String? {
+        guard let g, g.surface.shaderMode, let plan = try? MatPlan(g, library: { catalog.graph($0) }),
+              let p = try? MatShaderCode.program(plan, number: pm.program ?? 0, base: pm.paramBase) else { return nil }
+        return p.functions + p.body
     }
 
     /// What `slot`'s table holds of the procedural materials' bakes (what its frames declare).
@@ -1125,6 +1141,13 @@ final class Renderer: NSObject {
                 let k = proceduralKeys.keys[pm.graph] ?? MaterialBake.key(g, catalog: catalog)
                 proceduralKeys.keys[pm.graph] = k
                 guard proceduralApplied[pm.material] != k else { continue }
+                if let number = pm.program, let plan = try? MatPlan(g, library: { catalog.graph($0) }),
+                   let p = try? MatShaderCode.program(plan, number: number, base: pm.paramBase), p.functions + p.body == pm.code,
+                   pm.paramBase + p.params.count <= scene.proceduralParams.count {
+                    // As code: its values into the parameters (its bake still gives the height's parallax and the opacity).
+                    scene.proceduralParams.replaceSubrange(pm.paramBase..<(pm.paramBase + p.params.count), with: p.params)
+                    scene.proceduralParamsVersion += 1
+                }
                 if let o = bake.baked(k) ?? (benchmark != nil ? bake.bakeNow(g, key: k, catalog: catalog) : nil) {
                     applyProcedural(pm, outputs: o, key: k)
                 } else {
@@ -1150,6 +1173,13 @@ final class Renderer: NSObject {
                 opacity.withUnsafeBytes { opacityBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             }
             extrasWritten[slot] = scene.extrasVersion
+        }
+        if procParamsWritten[slot] != scene.proceduralParamsVersion {
+            let params = scene.proceduralParams
+            if !params.isEmpty, params.count * 16 <= procParamBuffers[slot].length {
+                params.withUnsafeBytes { procParamBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+            procParamsWritten[slot] = scene.proceduralParamsVersion
         }
         retiredTextures.removeAll { frameIndex &- $0.frame > UInt32(2 * Renderer.maxFramesInFlight + 1) }
     }
@@ -1177,8 +1207,20 @@ final class Renderer: NSObject {
             let live = Set(proceduralTextures.values.map { ObjectIdentifier($0) })
             srgbViews = srgbViews.filter { live.contains(ObjectIdentifier($0.value)) }
         }
-        func has(_ c: ProcSlot) -> Bool { textures[c.rawValue] != nil }
-        func slot(_ c: ProcSlot) -> UInt32 { has(c) ? pm.slots[c.rawValue] : .max }
+        let code = pm.program != nil
+        // As code, the graph's channels are the shading's (its bake's textures stand by unread, but height and opacity).
+        func has(_ c: ProcSlot) -> Bool {
+            if code && c != .height && c != .opacity {
+                switch c {
+                case .baseColor: return pm.channels.contains(.baseColor)
+                case .orm: return !pm.channels.isDisjoint(with: [.ambientOcclusion, .roughness, .metallic])
+                case .normal: return pm.channels.contains(.normal)
+                default: return pm.channels.contains(.emissive)
+                }
+            }
+            return textures[c.rawValue] != nil
+        }
+        func slot(_ c: ProcSlot) -> UInt32 { has(c) && !code ? pm.slots[c.rawValue] : .max }
         let s = o.surface
         var m = scene.materials[pm.material]
         m.textures = SIMD4(slot(.baseColor), slot(.orm), slot(.normal), slot(.emissive))
@@ -1188,7 +1230,7 @@ final class Renderer: NSObject {
         scene.setMaterial(pm.material, m)
         var e = GPUMaterialExtra()
         e.textures = SIMD4(has(.height) && s.heightDepth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
-                           pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, 1, .max)
+                           pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, 1, pm.program.map(UInt32.init) ?? .max)
         e.surface = SIMD4(s.heightDepth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
         if scene.materialExtras[pm.material] != e {
             scene.materialExtras[pm.material] = e
@@ -1340,7 +1382,7 @@ final class Renderer: NSObject {
                 pipelines = ready
             } else if let made = try makePipelines(api: prepared.api, compiler: compiler(for: prepared.api),
                                                    lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled,
-                                                   generation: shaderGeneration, current: pipelines) {
+                                                   generation: shaderGeneration, procedural: scene.proceduralCode, current: pipelines) {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
@@ -1431,6 +1473,8 @@ final class Renderer: NSObject {
         extrasBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(extras, "materialExtras\($0)") }
         opacityBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(opacity, "opacity\($0)") }
         extrasWritten = [Int](repeating: scene.extrasVersion, count: Renderer.maxFramesInFlight)
+        procParamBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(scene.proceduralParams, "proceduralParams\($0)") }
+        procParamsWritten = [Int](repeating: scene.proceduralParamsVersion, count: Renderer.maxFramesInFlight)
         proceduralTextures = [:]
         slotTextures = Array(repeating: [:], count: Renderer.maxFramesInFlight)
         tablePending = Array(repeating: [:], count: Renderer.maxFramesInFlight)
@@ -1453,6 +1497,7 @@ final class Renderer: NSObject {
             p.storeBytes(of: emissiveBuffer.gpuAddress, toByteOffset: 40, as: UInt64.self)
             p.storeBytes(of: triangleMaterialBuffer.gpuAddress, toByteOffset: 48, as: UInt64.self)
             p.storeBytes(of: extrasBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingExtrasOffset, as: UInt64.self)
+            p.storeBytes(of: procParamBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingProcParamsOffset, as: UInt64.self)
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
@@ -1462,7 +1507,7 @@ final class Renderer: NSObject {
         // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
         // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through their boxes'
         // data.
-        let perSlot: [MTLResource] = materialBuffers + textureTables + extrasBuffers + opacityBuffers
+        let perSlot: [MTLResource] = materialBuffers + textureTables + extrasBuffers + opacityBuffers + procParamBuffers
         shadingResources = perSlot + [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
             + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
         shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? [])
@@ -4919,12 +4964,13 @@ final class Renderer: NSObject {
         // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
         let device = device, url = shaderURL
         let lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
+        let procedural = pipelines?.procedural ?? scene.proceduralCode
         let api = pipelines?.api ?? builtAPI, compiler = compiler(for: api)
         let stats = TraceSceneArgs.statsEnabled
         let job = benchmark != nil ? nil : loadActivity.begin("shaders", verbs: ("Compiling", "Compiled"))
         shaderQueue.async { [weak self] in
             let result = Result {
-                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats,
+                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats, procedural: procedural,
                               load: job)
             }
             if case .failure = result { job?.fail() } else { job?.finish() }
@@ -4933,7 +4979,8 @@ final class Renderer: NSObject {
                 switch result {
                 case .success(let made):
                     // A scene with another API or other light types came in meanwhile: compile again, for that one.
-                    if let current = self.pipelines, made.api != current.api || made.lightTypes != current.lightTypes {
+                    if let current = self.pipelines, made.api != current.api || made.lightTypes != current.lightTypes
+                        || made.procedural != current.procedural {
                         return self.reloadShaders(then: done)
                     }
                     self.pipelines = made

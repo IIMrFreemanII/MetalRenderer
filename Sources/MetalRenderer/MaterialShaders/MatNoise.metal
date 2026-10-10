@@ -152,11 +152,27 @@ template <typename P> inline float matGrungeAt(float2 uv, P p, uint seed) {
     return saturate((g - 0.5) * (1.0 + p[1].x * 4.0) + 0.5);
 }
 
+#if !MAT_EVAL_ONLY
 kernel void mat_whiteNoise(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matWhiteNoiseAt(uv, float2(a.size), p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_valueNoise(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matValueNoiseAt(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_perlinNoise(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matPerlinAt(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_fractalSum(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matFractalAt(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_cells(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matCellsValue(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_anisotropicNoise(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matAnisotropicAt(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_scratches(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matScratchesAt(uv, p, a.seed)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_grunge(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matGrungeAt(uv, p, a.seed)), gid); }
+#endif

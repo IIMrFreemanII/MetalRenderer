@@ -134,11 +134,13 @@ struct MatSurface: Codable, Equatable {
     var emissiveIntensity: Float = 4
     /// The normal output's convention: OpenGL (+Y up, the renderer's) or DirectX (green flipped).
     var normalDirectX = false
+    /// The renderer computes it in the shading (MatShaderCode) rather than sampling its bake, when it can.
+    var shaderMode = false
 
     init() {}
 
     // Decoded field by field, each with its default: a file of an older version (fewer fields) still reads.
-    private enum Key: String, CodingKey { case heightDepth, uvScale, alphaCutoff, aoStrength, normalStrength, emissiveIntensity, normalDirectX }
+    private enum Key: String, CodingKey { case heightDepth, uvScale, alphaCutoff, aoStrength, normalStrength, emissiveIntensity, normalDirectX, shaderMode }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let d = MatSurface()
@@ -149,6 +151,7 @@ struct MatSurface: Codable, Equatable {
         normalStrength = try c.decodeIfPresent(Float.self, forKey: .normalStrength) ?? d.normalStrength
         emissiveIntensity = try c.decodeIfPresent(Float.self, forKey: .emissiveIntensity) ?? d.emissiveIntensity
         normalDirectX = try c.decodeIfPresent(Bool.self, forKey: .normalDirectX) ?? d.normalDirectX
+        shaderMode = try c.decodeIfPresent(Bool.self, forKey: .shaderMode) ?? d.shaderMode
     }
 }
 

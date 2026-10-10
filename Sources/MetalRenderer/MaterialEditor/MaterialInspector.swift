@@ -132,6 +132,18 @@ struct MaterialInspector: View {
             VFXSliderRow(title: "Opacity cutoff", value: g.surface.alphaCutoff, span: 0...1) { v in model.setSurface { $0.alphaCutoff = v } }
             VFXSliderRow(title: "Emissive", value: g.surface.emissiveIntensity, span: 0...64) { v in model.setSurface { $0.emissiveIntensity = v } }
             Toggle("Normal map is DirectX (green down)", isOn: Binding(get: { g.surface.normalDirectX }, set: { v in model.setSurface { $0.normalDirectX = v } }))
+            Toggle("Run as code in the shading", isOn: Binding(get: { g.surface.shaderMode }, set: { v in model.setSurface { $0.shaderMode = v } }))
+                .help("The renderer computes it at every shading point (resolution-free) instead of sampling its bake; an edit of its structure recompiles the shaders")
+            if g.surface.shaderMode, let r = model.result {
+                let reasons = MatShaderCode.reasons(r.plan)
+                if reasons.isEmpty {
+                    Text("Runs as code: \(MatShaderCode.evaluations(r.plan)) node evaluations a point").foregroundColor(.secondary)
+                } else {
+                    ForEach(reasons.sorted { $0.key < $1.key }, id: \.key) { id, why in
+                        Text((id.isEmpty ? "" : "\(id): ") + why + " — baked instead").foregroundColor(.orange).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
             Text("Channels: " + MatChannel.allCases.filter { g.channels[$0] != nil }.map(\.title).joined(separator: ", "))
                 .foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
         }

@@ -111,15 +111,32 @@ template <typename P> inline float4 matNormalCombine(float4 base, float4 detail,
     return float4(n * 0.5 + 0.5, 1);
 }
 
+#if !MAT_EVAL_ONLY
 kernel void mat_levels(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matLevels(IN(0, uv), p), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_curve(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matCurve(IN(0, uv), p, lut), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_gradientMap(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matGradientMap(IN(0, uv), p, lut), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_hsl(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matHSL(IN(0, uv), p), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_invert(MAT_KERNEL_ARGS) { MAT_PIXEL; float4 v = IN(0, uv); out0.write(float4(1.0 - v.rgb, v.a), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_grayscale(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matGrayscale(IN(0, uv), p), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_histogramScan(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matHistogramScan(IN(0, uv), p), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_posterize(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(matPosterize(IN(0, uv), p), gid); }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_rgbaSplit(MAT_KERNEL_ARGS4) {
     MAT_PIXEL
     float4 v = IN(0, uv);
@@ -128,28 +145,37 @@ kernel void mat_rgbaSplit(MAT_KERNEL_ARGS4) {
     out2.write(float4(v.b), gid);
     out3.write(float4(v.a), gid);
 }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_rgbaMerge(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float4 f = p[0];
     out0.write(float4(INOR(0, uv, f.rrrr).r, INOR(1, uv, f.gggg).r, INOR(2, uv, f.bbbb).r, INOR(3, uv, f.aaaa).r), gid);
 }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_blend(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float4 f = INOR(0, uv, float4(0, 0, 0, 1)), b = INOR(1, uv, float4(0, 0, 0, 1));
     float m = INOR(2, uv, float4(1)).r;
     out0.write(matBlend(f, b, m, p), gid);
 }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_heightBlend(MAT_KERNEL_ARGS, texture2d<float, access::write> out1 [[texture(9)]]) {
     MAT_PIXEL
     float2 v = matHeightBlend(INOR(0, uv, float4(0)).r, INOR(1, uv, float4(0)).r, INOR(2, uv, float4(1)).r, p);
     out0.write(float4(v.x), gid);
     out1.write(float4(v.y), gid);
 }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_normalCombine(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     out0.write(matNormalCombine(INOR(0, uv, float4(0.5, 0.5, 1, 1)), INOR(1, uv, float4(0.5, 0.5, 1, 1)), p), gid);
 }
+#endif

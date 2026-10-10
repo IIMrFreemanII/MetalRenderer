@@ -4,6 +4,7 @@
 // 256-entry tables in buffer 2). The per-pixel maths of the nodes the shading can also run as code (MatShaderCode) are
 // functions of the values they read, templated on where the parameters are (`constant` here, `device` there).
 
+#if !MAT_EVAL_ONLY
 // One node's dispatch (Swift: MatArgs, the same layout).
 struct MatArgs {
     uint2 size;      // the output's pixels
@@ -16,10 +17,14 @@ struct MatArgs {
     float4 data;     // the pass's own values (a jump's step, a blur's direction)
 };
 
+#endif
+
+// (MAT_EVAL_ONLY: the shading's procedural materials, MatShaderCode, take the functions alone: no kernels, no macros.)
 constexpr sampler matSampler(filter::linear, address::repeat, coord::normalized);
-constexpr sampler matNearest(filter::nearest, address::repeat, coord::normalized);
 constant float3 MAT_LUMA = float3(0.2126, 0.7152, 0.0722);
 constant float MAT_TAU = 6.28318530718;
+
+#if !MAT_EVAL_ONLY
 
 #define MAT_KERNEL_ARGS \
     texture2d<float> in0 [[texture(0)]], texture2d<float> in1 [[texture(1)]], \
@@ -61,6 +66,7 @@ inline float4 matInput4(texture2d<float> in0, texture2d<float> in1, texture2d<fl
         default: return matIn(in3, 3, a, uv);
     }
 }
+#endif
 
 // MARK: - Random
 
@@ -105,21 +111,26 @@ inline float4 matLut(L lut, float index, float x) {
 // MARK: - Simple kernels
 
 // A value everywhere (Uniform Grey, Uniform Colour, an Input's default): parameter 0.
+#if !MAT_EVAL_ONLY
 kernel void mat_uniform(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     out0.write(p[0], gid);
 }
+#endif
 
 // Input 0 as it is (an Output; a subgraph's input wired from outside; a Bitmap's image: as luminance if p[1] is 1).
+#if !MAT_EVAL_ONLY
 kernel void mat_copy(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float4 v = IN(0, uv);
     if (p[1].x == 1.0 && !((a.greyOut) & 1u)) { float l = dot(v.rgb, MAT_LUMA); v = float4(l, l, l, v.a); }
     out0.write(v, gid);
 }
+#endif
 
 // The editor's thumbnails: input 0 downsampled into a slot of the shared atlas (buffer 3: RGBA8, `data.x` the slot,
 // `data.y` its side). Greys as greys; values as they are (colours are sRGB values already).
+#if !MAT_EVAL_ONLY
 kernel void mat_thumbnail(texture2d<float> in0 [[texture(0)]], constant MatArgs& a [[buffer(0)]],
                           device uchar4* atlas [[buffer(3)]], uint2 gid [[thread_position_in_grid]]) {
     uint side = uint(a.data.y);
@@ -133,20 +144,25 @@ kernel void mat_thumbnail(texture2d<float> in0 [[texture(0)]], constant MatArgs&
     if (a.greyIn & 1u) v = float4(v.rrr, 1);
     atlas[uint(a.data.x) * side * side + gid.y * side + gid.x] = uchar4(round(saturate(v) * 255.0));
 }
+#endif
 
 // MARK: - The renderer's textures (MaterialBake)
 
 // A colour channel (base colour, emissive: sRGB values, the renderer views them as sRGB) or a grey one (height,
 // opacity) as it is; a normal with its green flipped when `data.x` is 1 (a DirectX map).
+#if !MAT_EVAL_ONLY
 kernel void mat_packColor(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float4 v = INOR(0, uv, p[0]);
     if (a.data.x != 0) v.g = 1.0 - v.g;
     out0.write(float4(v.rgb, 1), gid);
 }
+#endif
 
 // Occlusion, roughness and metallic (glTF's layout: R, G, B), each from its channel or its fallback.
+#if !MAT_EVAL_ONLY
 kernel void mat_packORM(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     out0.write(float4(INOR(0, uv, p[0]).r, INOR(1, uv, p[1]).r, INOR(2, uv, p[2]).r, 1), gid);
 }
+#endif

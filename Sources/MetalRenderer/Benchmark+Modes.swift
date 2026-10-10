@@ -1413,7 +1413,7 @@ extension Benchmark {
     /// The Material Designer's edits reaching the renderer: the workshop's bricks as built in, then with more rows and
     /// rounder bricks (an edit of values: baked again in place, Renderer.editMaterials); the sun courtyard as made, then
     /// with its ground's material given the bricks and a wall's the perforated metal (assignments: the scene made again,
-    /// the materials procedural, the metal's holes alpha-tested).
+    /// the materials procedural); the marble on a sphere as code (MatShaderCode, compiled into the shading) and baked.
     private static func matEdit() -> [Config] {
         let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
         var bricks = MaterialLibrary.named("Red Bricks")!
@@ -1434,7 +1434,13 @@ extension Benchmark {
         }
         let assigned = MaterialAssignments.register(a)
         let court = Config("", scale: 0.75, gi: .pathTraced, scene: sun).still(at: 20)
+        // The marble as code (its graph's own setting), then baked: the same material, the code sharper up close.
+        var baked = MaterialLibrary.marble()
+        baked.surface.shaderMode = false
+        let bakedMarble = MaterialCatalog.register(MaterialCatalog(graphs: ["Marble": baked]))
+        let marble = base.with { $0.scene.materialWorkshop.graph = "Marble"; $0.scene.materialWorkshop.layout = .sphere }
         return [base.named("bricks"), base.named("bricks edited").with { $0.scene.materials = edited },
+                marble.named("marble code"), marble.named("marble baked").with { $0.scene.materials = bakedMarble },
                 court.named("sun"), court.named("sun assigned").with { $0.scene.materialAssignments = assigned }]
     }
 

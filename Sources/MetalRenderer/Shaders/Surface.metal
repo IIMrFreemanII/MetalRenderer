@@ -21,6 +21,7 @@ struct SceneData {
     constant SkyParams*        skyParams;
     device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
     device const MaterialExtra* extras;         // SceneShading.extras (with MATERIAL_EXTRAS)
+    device const float4*       procParams;      // SceneShading.procParams (with PROCEDURAL_CODE)
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -36,6 +37,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.skyParams = &shading.skyParams;
     s.vsm = shading.vsm;
     s.extras = shading.extras;
+    s.procParams = shading.procParams;
 }
 
 // A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that
@@ -587,7 +589,8 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             t0 = planarUV(w0p, a); t1 = planarUV(w1p, a); t2 = planarUV(w2p, a);
         }
     }
-    if (any(mat.textures != uint4(NO_TEXTURE)) || (MATERIAL_EXTRAS && ex.textures.x != NO_TEXTURE)) {
+    if (any(mat.textures != uint4(NO_TEXTURE)) || (MATERIAL_EXTRAS && ex.textures.x != NO_TEXTURE)
+        || (PROCEDURAL_CODE && ex.textures.w != NO_TEXTURE)) {
         float2 uv = t0 * w0 + t1 * bc.x + t2 * bc.y;
         // Texture level from the ray's footprint: width = distance x spread, stretched by the incidence angle,
         // converted to UV units by the triangle's UV-to-world area ratio.
@@ -619,6 +622,29 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             }
         }
 
+        if (PROCEDURAL_CODE && ex.textures.w != NO_TEXTURE) {
+            // A procedural material as code: its graph at this point (its channels as its textures would hold them).
+            ProcSample ps = proceduralMaterial(ex.textures.w, uv, s.procParams);
+            if ((ps.has & 1u) != 0u) sf.albedo *= procLinear(saturate(ps.base.rgb));
+            if ((ps.has & 2u) != 0u) {
+                sf.roughness *= saturate(ps.orm.g);
+                sf.metallic *= saturate(ps.orm.b);
+                if (ex.surface.w > 0.0f) sf.albedo *= mix(1.0f, saturate(ps.orm.r), ex.surface.w);
+            }
+            if ((ps.has & 8u) != 0u) sf.emission *= procLinear(saturate(ps.emissive.rgb));
+            if ((ps.has & 4u) != 0u && uvArea > 0.0f) {
+                float invDet = 1.0f / (d1.x * d2.y - d1.y * d2.x);
+                float3 T = (e1 * d2.y - e2 * d1.y) * invDet, B = (e2 * d1.x - e1 * d2.x) * invDet;
+                float3 N = sf.normal;
+                T = T - N * dot(N, T);
+                B = B - N * dot(N, B) - T * (dot(T, B) / max(dot(T, T), 1e-12f));
+                if (dot(T, T) > 1e-12f && dot(B, B) > 1e-12f) {
+                    float3 m = saturate(ps.normal.xyz) * 2.0f - 1.0f;
+                    m.xy *= mat.params.y;
+                    sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
+                }
+            }
+        }
         if (mat.textures.x != NO_TEXTURE) sf.albedo *= sampleMaterial(s, mat.textures.x, uv, lodBase, record).rgb;
         if (mat.textures.y != NO_TEXTURE) {
             float4 mr = sampleMaterial(s, mat.textures.y, uv, lodBase, record);

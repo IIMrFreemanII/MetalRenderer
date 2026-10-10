@@ -86,22 +86,35 @@ template <typename P> inline float matWavesAt(float2 uv, P p) {
     }
 }
 
+#if !MAT_EVAL_ONLY
 kernel void mat_shape(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matShapeAt(uv, p)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_gradient(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matGradientAt(uv, p)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_checker(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matCheckerAt(uv, p)), gid); }
+#endif
+#if !MAT_EVAL_ONLY
 kernel void mat_waves(MAT_KERNEL_ARGS) { MAT_PIXEL; out0.write(float4(matWavesAt(uv, p)), gid); }
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_bricks(MAT_KERNEL_ARGS, texture2d<float, access::write> out1 [[texture(9)]]) {
     MAT_PIXEL
     float2 v = matBricksAt(uv, p, a.seed);
     out0.write(float4(v.x), gid);
     out1.write(float4(v.y), gid);
 }
+#endif
 
 // Tile Sampler: per cell of a grid an instance (moved, scaled, turned, darkened at random) of input 0 (a tile of it
 // stretched over the instance), or of a shape; the 3 × 3 cells around a pixel, blended by max or added.
+#if !MAT_EVAL_ONLY
 constant int MAT_SAMPLER_SHAPES[5] = { 1, 0, 4, 6, 8 };   // disc, square, bell, pyramid, hemisphere
+#endif
 
+#if !MAT_EVAL_ONLY
 kernel void mat_tileSampler(MAT_KERNEL_ARGS) {
     MAT_PIXEL
     float2 grid = max(float2(p[0].x, p[1].x), 1.0);
@@ -129,3 +142,4 @@ kernel void mat_tileSampler(MAT_KERNEL_ARGS) {
     }
     out0.write(acc, gid);
 }
+#endif
