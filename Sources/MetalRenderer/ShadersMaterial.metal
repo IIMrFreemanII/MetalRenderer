@@ -11,3 +11,4 @@ using namespace metal;
 #include "MaterialShaders/MatFilters.metal"
 #include "MaterialShaders/MatHeight.metal"
 #include "MaterialShaders/MatAdvanced.metal"
+#include "MaterialShaders/MatDisplace.metal"

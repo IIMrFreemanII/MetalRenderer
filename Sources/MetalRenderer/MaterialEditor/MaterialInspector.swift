@@ -126,6 +126,21 @@ struct MaterialInspector: View {
         }
         VFXSection(title: "In the renderer") {
             VFXSliderRow(title: "Parallax depth", value: g.surface.heightDepth, span: 0...0.2) { v in model.setSurface { $0.heightDepth = v } }
+                .disabled(g.surface.displacement > 0)
+                .help(g.surface.displacement > 0 ? "Off on displaced meshes: their geometry has the height" : "")
+            VFXSliderRow(title: "Displacement (m)", value: g.surface.displacement, span: 0...0.2) { v in model.setSurface { $0.displacement = v } }
+                .help("The height moves the vertices of the meshes the material is on, subdivided for it; switching it on or off, or another detail, makes the scene again")
+            if g.surface.displacement > 0 {
+                VFXSliderRow(title: "Midlevel", value: g.surface.displacementMid, span: 0...1) { v in model.setSurface { $0.displacementMid = v } }
+                Picker("Detail", selection: Binding(get: { g.surface.displacementDetail }, set: { v in model.setSurface { $0.displacementDetail = v } })) {
+                    ForEach(MatSurface.displacementDetails, id: \.self) { Text(String(format: "%g cm edges", $0 * 100)).tag($0) }
+                }
+                .help("The longest edge left on a displaced mesh (finer: more triangles, up to 1M a mesh and 4M a scene)")
+                if g.channels[.height] == nil { Text("No Height output: nothing to displace by").foregroundColor(.orange) }
+                if let summary = model.controller.displacementSummary {
+                    Text(summary).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             VFXSliderRow(title: "UV scale", value: g.surface.uvScale, span: 0.1...16) { v in model.setSurface { $0.uvScale = v } }
             VFXSliderRow(title: "Normal strength", value: g.surface.normalStrength, span: 0...4) { v in model.setSurface { $0.normalStrength = v } }
             VFXSliderRow(title: "AO strength", value: g.surface.aoStrength, span: 0...1) { v in model.setSurface { $0.aoStrength = v } }

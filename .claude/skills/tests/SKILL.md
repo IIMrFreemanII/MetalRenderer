@@ -73,7 +73,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `VFX/*` (the effects' graphs), `ShadersVFX.metal`, `LegacyEffects` (the golden test's fixture) | VFXTests ParticleTests (`ShadersVFX`: + ShaderSourceTests) |
 | `VFXEditor/*` (the VFX editor), `VFX/VFXLive` (its edits in the running scene) | VFXEditorTests (`VFXLive`: + VFXTests ParticleTests) |
 | `GraphEditor/*` (the graph editors' shared canvas) | VFXEditorTests, MaterialEditorTests |
-| `MaterialGraph/*`, `MaterialShaders/*`, `ShadersMaterial*.metal` (the Material Designer's graphs, engine, shader code) | MaterialGraphTests, MaterialEngineTests, MaterialEditorTests |
+| `MaterialGraph/*`, `MaterialShaders/*`, `ShadersMaterial*.metal` (the Material Designer's graphs, engine, shader code) | MaterialGraphTests, MaterialEngineTests, MaterialEditorTests, MaterialDisplacementTests |
 | `MaterialEditor/*` (the Material Designer's window) | MaterialEditorTests covers its model; the views: `MATERIAL_EDITOR_PNG=<folder>` draws them |
 | `Scene+Procedural`, `Scene+Materials` (procedural materials, the material workshop), `Shaders/Procedural.metal`, `Shaders/Pick.metal` | MaterialEditorTests, SceneBuffersTests (the shaders: ShaderSourceTests, KernelVariantsTests, MaterialGraphTests); renders: `-m materials`, `-m matedit` |
 | `MuscleAtlas`, `SkeletonAtlas` | MuscleTests (the écorché and its skeleton), CharacterBaseTests (BodySurface) |

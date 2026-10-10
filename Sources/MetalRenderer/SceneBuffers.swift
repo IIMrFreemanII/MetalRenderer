@@ -223,6 +223,7 @@ struct SceneBuffers {
     private(set) var primitives: [MTLAccelerationStructure] = []        // per mesh
     private(set) var namedPrimitives: [String: MTLAccelerationStructure] = [:]
     private(set) var primitiveRefit: PrimitiveRefit?        // the meshes that deform (the crowd's pose slots)
+    private(set) var displacedBuild: DisplacedBuild?        // the displaced meshes' (built again when a bake moves them)
     /// The strands' control points' radii (Scene.curveRadii), which their curves' structures read.
     private(set) var curveRadii: MTLBuffer?
     private(set) var instanceStructures: [MTLAccelerationStructure] = []   // per slot
@@ -615,6 +616,10 @@ struct SceneBuffers {
         // The poses that take another's tree: (its place in `refitted`, the mesh whose tree it takes).
         var copies: [(refit: Int, of: Int)] = []
         var firstPose: [SIMD2<UInt32>: Int] = [:]   // by the triangles a pose has: its character's
+        // A displaced mesh's vertices move when its material's bake comes: its structure is built again then (not
+        // compacted: built into the same place).
+        let displacedMeshes = scene.displacedMeshSet
+        var displaced: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
         if scene.hasCurves {
             curveRadii = device.makeBuffer(bytes: scene.curveRadii, length: max(scene.curveRadii.count, 1) * MemoryLayout<Float>.stride,
                                            options: .storageModeShared)
@@ -676,6 +681,13 @@ struct SceneBuffers {
                 descriptor.usage = .preferFastBuild
                 let sizes = device.accelerationStructureSizes(descriptor: descriptor)
                 rebuilt.append((i, descriptor, max(sizes.buildScratchBufferSize, 16)))
+                jobs.append((i, descriptor, sizes, true))
+                continue
+            }
+            if displacedMeshes.contains(i) {
+                if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
+                let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+                displaced.append((i, descriptor, max(sizes.buildScratchBufferSize, 16)))
                 jobs.append((i, descriptor, sizes, true))
                 continue
             }
@@ -791,7 +803,30 @@ struct SceneBuffers {
                                             rebuilt: rebuilt.indices.map { (structures[rebuilt[$0].index]!, rebuilt[$0].descriptor, rebuiltOffsets[$0]) },
                                             rebuiltMeshes: rebuilt.map(\.index))
         }
+        if !displaced.isEmpty {
+            guard let scratch = device.makeBuffer(length: displaced.map(\.scratch).max()!, options: .storageModePrivate) else {
+                throw RendererError.resourceCreation("displaced meshes' scratch buffer")
+            }
+            scratch.label = "displacedScratch"
+            displacedBuild = DisplacedBuild(structures: Dictionary(uniqueKeysWithValues: displaced.map { ($0.index, (structures[$0.index]!, $0.descriptor)) }),
+                                            scratch: scratch)
+        }
         primitives = structures.map { $0! }
         for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }
+    }
+}
+
+/// The displaced meshes' structures (Scene+Displacement.swift), built again over their moved vertices: those of
+/// `meshes`, an encoder each (they share one scratch buffer, so one after the other).
+struct DisplacedBuild: PrimitiveWork {
+    let structures: [Int: (structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor)]
+    let scratch: MTLBuffer
+    var meshes: [Int] = []
+
+    var encoderCount: Int { meshes.count }
+
+    func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
+        guard let s = structures[meshes[part]] else { return }
+        enc.build(accelerationStructure: s.structure, descriptor: s.descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
     }
 }

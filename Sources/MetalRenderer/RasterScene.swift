@@ -74,10 +74,11 @@ final class RasterScene {
         // The ordinary meshes, then the virtual ones (meshIndex = meshes.count + v).
         var records: [GPURasterMesh] = [], chunkMeshes: [UInt32] = []
         let holes = scene.holeMeshes   // alpha-tested (a procedural material's opacity): traced, as leaf cards are
+        let displaced = scene.displacedMeshSet   // their vertices move when a bake comes: no chunk bounds, as a pose slot's
         for (m, mesh) in scene.meshes.enumerated() {
             let borrowed = mesh.block != 0 || (m < buffers.blocks.count && buffers.blocks[m] != nil)
             let kind = holes.contains(m) ? .skip : RasterScene.kind(of: mesh, borrowed: borrowed)
-            let deforms = mesh.prevOffset != 0 || mesh.vertexOffset != 0
+            let deforms = mesh.prevOffset != 0 || mesh.vertexOffset != 0 || displaced.contains(m)
             let b = scene.localBounds(mesh: m)
             let first = chunkMeshes.count
             if kind != .skip && !deforms {

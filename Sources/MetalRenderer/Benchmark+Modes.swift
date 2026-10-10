@@ -1413,7 +1413,8 @@ extension Benchmark {
     /// The Material Designer's edits reaching the renderer: the workshop's bricks as built in, then with more rows and
     /// rounder bricks (an edit of values: baked again in place, Renderer.editMaterials); the sun courtyard as made, then
     /// with its ground's material given the bricks and a wall's the perforated metal (assignments: the scene made again,
-    /// the materials procedural); the marble on a sphere as code (MatShaderCode, compiled into the shading) and baked.
+    /// the materials procedural); the cobblestone displaced, deeper and flat; the marble on a sphere as code
+    /// (MatShaderCode, compiled into the shading) and baked.
     private static func matEdit() -> [Config] {
         let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
         var bricks = MaterialLibrary.named("Red Bricks")!
@@ -1439,7 +1440,18 @@ extension Benchmark {
         baked.surface.shaderMode = false
         let bakedMarble = MaterialCatalog.register(MaterialCatalog(graphs: ["Marble": baked]))
         let marble = base.with { $0.scene.materialWorkshop.graph = "Marble"; $0.scene.materialWorkshop.layout = .sphere }
+        // The cobblestone's displacement: as built in, deeper (within the room its meshes were made with: moved in
+        // place), and off (parallax only: the scene made again).
+        func cobbles(_ change: (inout MaterialGraph) -> Void) -> String {
+            var g = MaterialLibrary.cobblestone()
+            change(&g)
+            return MaterialCatalog.register(MaterialCatalog(graphs: ["Cobblestone": g]))
+        }
+        let deeper = cobbles { $0.surface.displacement = 0.06 }, flat = cobbles { $0.surface.displacement = 0 }
+        let stones = base.with { $0.scene.materialWorkshop.graph = "Cobblestone" }
         return [base.named("bricks"), base.named("bricks edited").with { $0.scene.materials = edited },
+                stones.named("cobbles displaced"), stones.named("cobbles deeper").with { $0.scene.materials = deeper },
+                stones.named("cobbles flat").with { $0.scene.materials = flat },
                 marble.named("marble code"), marble.named("marble baked").with { $0.scene.materials = bakedMarble },
                 court.named("sun"), court.named("sun assigned").with { $0.scene.materialAssignments = assigned }]
     }

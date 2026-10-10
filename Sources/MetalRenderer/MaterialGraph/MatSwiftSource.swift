@@ -11,7 +11,9 @@ extension MaterialGraph {
         for (label, value, base) in [("heightDepth", surface.heightDepth, d.heightDepth), ("uvScale", surface.uvScale, d.uvScale),
                                      ("alphaCutoff", surface.alphaCutoff, d.alphaCutoff), ("aoStrength", surface.aoStrength, d.aoStrength),
                                      ("normalStrength", surface.normalStrength, d.normalStrength),
-                                     ("emissiveIntensity", surface.emissiveIntensity, d.emissiveIntensity)] where value != base {
+                                     ("emissiveIntensity", surface.emissiveIntensity, d.emissiveIntensity),
+                                     ("displacement", surface.displacement, d.displacement), ("displacementMid", surface.displacementMid, d.displacementMid),
+                                     ("displacementDetail", surface.displacementDetail, d.displacementDetail)] where value != base {
             lines.append("g.surface.\(label) = \(MatSwift.float(value))")
         }
         if surface.normalDirectX { lines.append("g.surface.normalDirectX = true") }

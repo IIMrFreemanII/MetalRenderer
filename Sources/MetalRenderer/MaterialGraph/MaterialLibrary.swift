@@ -71,6 +71,7 @@ enum MaterialLibrary {
         b.output(.roughness, rough)
         b.output(.ambientOcclusion, ao)
         b.output(.height, height)
+        b.set { $0.surface.displacement = 0.015 }   // the mortar sunk: real relief at the bricks' edges
         return b.graph
     }
 }
@@ -140,7 +141,7 @@ extension MaterialLibrary {
         b.output(.normal, b.node(.normal, ["intensity": .float(3)], ["in": height]))
         b.output(.roughness, b.node(.levels, ["outLow": .float(0.95), "outHigh": .float(0.6)], ["in": height]))
         b.output(.ambientOcclusion, b.node(.ambientOcclusion, ["radius": .float(0.04), "depth": .float(0.05)], ["in": height]))
-        b.set { $0.surface.heightDepth = 0.05 }
+        b.set { $0.surface.heightDepth = 0.05; $0.surface.displacement = 0.03 }
         return b.graph
     }
 
@@ -252,7 +253,7 @@ extension MaterialLibrary {
         b.output(.height, raised)
         b.output(.normal, b.node(.normal, ["intensity": .float(5)], ["in": raised]))
         b.output(.ambientOcclusion, b.node(.ambientOcclusion, ["radius": .float(0.03), "depth": .float(0.06)], ["in": raised]))
-        b.set { $0.surface.heightDepth = 0.06 }
+        b.set { $0.surface.heightDepth = 0.06; $0.surface.displacement = 0.02 }
         return b.graph
     }
 
@@ -275,7 +276,7 @@ extension MaterialLibrary {
         b.output(.height, panels)
         b.output(.normal, b.node(.normal, ["intensity": .float(3)], ["in": panels]))
         b.output(.emissive, cyan)
-        b.set { $0.surface.heightDepth = 0.02; $0.surface.emissiveIntensity = 6 }
+        b.set { $0.surface.heightDepth = 0.02; $0.surface.emissiveIntensity = 6; $0.surface.displacement = 0.008 }
         return b.graph
     }
 }

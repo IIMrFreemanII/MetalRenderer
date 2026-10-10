@@ -16,6 +16,12 @@ protocol MaterialEditorHost: AnyObject {
     /// thread: nil if nothing was there, or the pick was cancelled).
     func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void)
     func cancelPick()
+    /// What the renderer's scene displaces (its meshes and triangles, what it had to leave out), if anything.
+    var displacementSummary: String? { get }
+}
+
+extension MaterialEditorHost {
+    var displacementSummary: String? { nil }
 }
 
 /// What a click in the view found (Renderer.readPick): the instance, its material (its index in the scene), the

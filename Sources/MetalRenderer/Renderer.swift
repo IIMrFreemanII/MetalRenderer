@@ -398,6 +398,11 @@ final class Renderer: NSObject {
     private var proceduralApplied: [Int: String] = [:]
     private var proceduralKeys: (catalog: String, keys: [String: String]) = ("", [:])
     private var srgbViews: [ObjectIdentifier: MTLTexture] = [:]
+    /// The displaced meshes' records (Scene.displaceVertices, displaceMembers), and per displacing material the height
+    /// its meshes were last moved by (and the surface's values then), and the materials whose meshes wait to be moved.
+    private var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
+    private var displaceSource: [Int: (height: MTLTexture, surface: MatSurface)] = [:]
+    private var displacePending = Set<Int>()
     private var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
     private var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
     private var feedbackDummy: MTLBuffer!
@@ -1113,6 +1118,13 @@ final class Renderer: NSObject {
             guard channels.contains(.opacity) == pm.channels.contains(.opacity) else { return }
             // As code: only an edit that keeps its code (its values) runs in place; another compiles it into the shading.
             guard Renderer.programCode(g, pm, catalog) == pm.code else { return }
+            // Displacement switched on or off, another detail, or further than the meshes' bounds were grown by:
+            // other meshes (the scene is made again). Its amount within them: moved in place.
+            let was = pm.made?.surface ?? MatSurface(), now = g?.surface ?? MatSurface()
+            guard (was.displacement > 0) == (now.displacement > 0) else { return }
+            if now.displacement > 0 {
+                guard was.displacementDetail == now.displacementDetail, now.displacementReach <= was.displacementRoom else { return }
+            }
         }
         scene.adoptMaterials(settings.scene.materials)
     }
@@ -1184,6 +1196,40 @@ final class Renderer: NSObject {
         retiredTextures.removeAll { frameIndex &- $0.frame > UInt32(2 * Renderer.maxFramesInFlight + 1) }
     }
 
+    /// The displaced meshes whose material's height (or its displacement's values) changed: their vertices moved from
+    /// where they were (MaterialShaders/MatDisplace.metal), then their structures built again, and the top level's
+    /// (every slot's, as it comes).
+    private func encodeDisplacement(passes: FrameEncoder) {
+        guard !displacePending.isEmpty, let buffers = displaceBuffers, var build = sceneBuffers.displacedBuild,
+              let pipeline = try? MatCompiler.shared.state("matDisplace", device: device) else { return }
+        defer { displacePending = [] }
+        guard let enc = passes.compute("displace", serial: true) else { return }
+        enc.setComputePipelineState(pipeline)
+        enc.setBuffer(buffers.vertices, offset: 0, index: 1)
+        enc.setBuffer(buffers.members, offset: 0, index: 2)
+        enc.setBuffer(uvBuffer, offset: 0, index: 3)
+        enc.setBuffer(positionBuffer, offset: 0, index: 4)
+        enc.useResources([buffers.vertices, buffers.members, uvBuffer], usage: .read)
+        enc.useResource(positionBuffer, usage: [.read, .write])
+        for d in scene.displaced where displacePending.contains(d.material) {
+            guard let (height, s) = displaceSource[d.material] else { continue }
+            // The height's level whose texels are about as far apart as the vertices.
+            let spacing = 0.5 * d.edge * d.uvPerMetre * s.uvScale * Float(height.width)
+            var args = MatDisplaceArgs(first: UInt32(d.first), count: UInt32(d.count), records: UInt32(d.records), members: UInt32(d.members),
+                                       amount: s.displacement / d.scale, mid: s.displacementMid, uvScale: s.uvScale,
+                                       lod: min(max(log2(max(spacing, 1)), 0), Float(height.mipmapLevelCount - 1)))
+            enc.setBytes(&args, length: MemoryLayout<MatDisplaceArgs>.stride, index: 0)
+            enc.setTexture(height, index: 0)
+            enc.useResource(height, usage: .read)
+            enc.dispatchThreads(MTLSize(width: d.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+            build.meshes.append(d.mesh)
+        }
+        passes.endCompute()
+        guard !build.meshes.isEmpty else { return }
+        passes.updatePrimitives(build, pass: "displace")
+        instanceASBuilt.removeAll()
+    }
+
     /// `pm`'s material as its graph's bake `o` says: its textures in its slots (each frame slot takes them as it is
     /// next written), its values (a texture's channel is the value; a channel without one, a neutral value), its
     /// extras (parallax, opacity cutoff, UV scale, occlusion).
@@ -1228,10 +1274,22 @@ final class Renderer: NSObject {
         m.emission = SIMD4(has(.emissive) ? SIMD3(repeating: s.emissiveIntensity) : .zero, has(.orm) ? 1 : 0.6)
         m.params = SIMD4(1, s.normalStrength, 0, 0)
         scene.setMaterial(pm.material, m)
+        // A material whose every instance is displaced: its height moves them (encodeDisplacement), and isn't the
+        // parallax's too.
+        let displaced = scene.displacedMaterials.contains(pm.material) && s.displacement > 0
+        let depth = displaced ? 0 : s.heightDepth
         var e = GPUMaterialExtra()
-        e.textures = SIMD4(has(.height) && s.heightDepth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
+        e.textures = SIMD4(has(.height) && depth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
                            pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, 1, pm.program.map(UInt32.init) ?? .max)
-        e.surface = SIMD4(s.heightDepth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
+        e.surface = SIMD4(depth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
+        if let h = o.height, scene.displaced.contains(where: { $0.material == pm.material }) {
+            let was = displaceSource[pm.material]
+            if was?.height !== h || was?.surface.displacement != s.displacement || was?.surface.displacementMid != s.displacementMid
+                || was?.surface.uvScale != s.uvScale {
+                displaceSource[pm.material] = (h, s)
+                displacePending.insert(pm.material)
+            }
+        }
         if scene.materialExtras[pm.material] != e {
             scene.materialExtras[pm.material] = e
             scene.extrasVersion += 1
@@ -1479,6 +1537,12 @@ final class Renderer: NSObject {
         slotTextures = Array(repeating: [:], count: Renderer.maxFramesInFlight)
         tablePending = Array(repeating: [:], count: Renderer.maxFramesInFlight)
         proceduralApplied = [:]
+        displaceBuffers = nil
+        if !scene.displaced.isEmpty {
+            displaceBuffers = (try makeBuffer(scene.displaceVertices, "displaceVertices"), try makeBuffer(scene.displaceMembers, "displaceMembers"))
+        }
+        displaceSource = [:]
+        displacePending = []
         staticMinLod = try makeBuffer([Float](repeating: 0, count: max(materialTextures.count, 1)), "textureMinLod")
         feedbackDummy = try makeBuffer([UInt32](repeating: 0, count: max(materialTextures.count, 1) * TextureStreamer.levelBins),
                                        "textureFeedback")
@@ -2990,6 +3054,7 @@ final class Renderer: NSObject {
             }
             passes.updatePrimitives(primitiveRefit, pass: "blas")
         }
+        encodeDisplacement(passes: passes)
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
             if let enc = passes.compute("wind", serial: true) {
@@ -4928,6 +4993,7 @@ final class Renderer: NSObject {
         status.effects = effectsStatus()
         status.buildingStats = scene.buildingStats
         status.characterStats = scene.characterStats
+        status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
         status.cameraPosition = camera.position

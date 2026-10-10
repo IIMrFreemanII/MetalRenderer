@@ -1836,6 +1836,17 @@ opacity, emissive).
   scenes that have such materials (`MATERIAL_EXTRAS`): a UV scale, parallax occlusion mapping from the height (camera
   rays), occlusion from the ORM texture's red. Opacity cuts holes (`OPACITY`): those instances aren't opaque, the ray
   queries alpha-test them, the raster leaves them to the rays.
+* **Displacement** (Displacement, Midlevel and Detail in the inspector; `Scene+Displacement.swift`,
+  `MeshSubdivider.swift`, `MaterialShaders/MatDisplace.metal`): the height moves the geometry, so silhouettes,
+  shadows and contacts are bumped, not only the shading. Every mesh the material is on is copied, subdivided until no
+  edge is longer than the detail (1M triangles a mesh, 4M a scene at most), and its vertices are moved along the
+  surface's normal by the height (the midlevel stays put) each time the bake comes; then their acceleration
+  structures are built again. Vertices at one point (a hard edge's, a UV seam's) move together, so the surface stays
+  closed. Normals stay the surface's (the normal map has the height's slopes), and parallax is off on displaced
+  meshes. An edit of the amount (within twice what the scene was made with) moves the vertices in place; switching
+  it on or off, or another detail, makes the scene again. The embedded 3D preview displaces its shape too. Not
+  displaced: plants, SDF shapes, deforming or streamed meshes, meshes of several materials, the open world (they keep
+  parallax). Cobblestone, Red Bricks, Bark and Moss and Sci-fi Panels displace.
 * **The material workshop** (`METALRENDERER_SCENE=materials`, `Scene+Materials.swift`): the graph on a sphere, a cube, a
   cylinder and a tile, in a studio, outdoors or in the dark, path traced (`mgraph=`, `mlayout=`, `mbackdrop=`).
 * **Click-to-pick** (Pick, then a click in the view; `Shaders/Pick.metal`): the material under the click, which Assign
@@ -1850,12 +1861,14 @@ opacity, emissive).
 * **Starters** (`MaterialLibrary.swift`): Red Bricks, Cobblestone, Rusted Paint, Brushed Steel, Scratched Copper,
   Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code). Saved graphs are
   `Assets/Materials/<name>.mat.json` (`METALRENDERER_MATERIALS=builtin|<folder>`).
-* **Checked:** `MaterialGraphTests` (the JSON, the plan: order, types, sizes, precision, hashes, subgraphs, functions,
+* **Checked:** `MaterialDisplacementTests` (subdivision to the detail, the cap, groups across hard edges, the
+  kernel's surface staying closed, the workshop's displaced copies), `MaterialGraphTests` (the JSON, the plan: order, types, sizes, precision, hashes, subgraphs, functions,
   shader code), `MaterialEngineTests` (every node bakes; blend modes, normals, blur, tiling, the cache, distance,
   flood fill, pixel processors, export against the CPU or brute force), `MaterialEditorTests` (the editor's model,
   assignments; `MATERIAL_EDITOR_PNG=<folder>` draws the window); `METALRENDERER_BENCH=materials` renders every starter
   in the workshop, `matedit` an edit in place, assignments in the sun courtyard, and the marble as code and baked.
-* **Not done:** opacity on meshes without UVs, in Lumen and in the virtual shadow maps; SDF shapes (triplanar, no
+* **Not done:** opacity on meshes without UVs, in Lumen and in the virtual shadow maps; displacement in Lumen's
+  mesh SDFs and cards (they have the undisplaced mesh); SDF shapes (triplanar, no
   normal maps); Metal 4 (written, not tried: the M1 Max has no Metal 4 ray tracing).
 
 ### Geometry debug views

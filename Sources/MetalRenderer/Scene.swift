@@ -354,6 +354,16 @@ final class Scene {
     var proceduralCode = ""
     var proceduralParams: [SIMD4<Float>] = []
     var proceduralParamsVersion = 0
+    /// The meshes a procedural material's height moves (Scene+Displacement.swift): their subdivided copies, and what
+    /// the GPU moves their vertices from (`displaceVertices`, two a vertex: where it is and its group's first member,
+    /// the way it moves and its group's size; `displaceMembers`: the groups' vertices).
+    var displaced: [DisplacedMesh] = []
+    var displaceVertices: [SIMD4<Float>] = []
+    var displaceMembers: [UInt32] = []
+    /// The materials whose every instance is displaced (their height isn't the parallax's too), and what the
+    /// displacement had to leave out or cap (the Material Designer's status).
+    var displacedMaterials: Set<Int> = []
+    var displacementNotes: [String] = []
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
@@ -524,6 +534,7 @@ final class Scene {
         }
         applyMaterialAssignments()
         buildProceduralPrograms()
+        displaceProcedural()
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
         for extra in settings.extraModels {
@@ -583,6 +594,8 @@ final class Scene {
         // cover's: the frames update it. Not the open world's, whose instance blocks need a still scene: its plants
         // stand still.)
         isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty && (!hasFoliage || hasGroups)
+        // (A displaced mesh's structure is built again when a bake moves its vertices: the top level's then too.)
+            && displaced.isEmpty
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -1164,6 +1177,18 @@ final class Scene {
         meshBounds[m] = (bounds.lo, bounds.hi)
         deforming.append((mesh: m, first: positions.count - mesh.positions.count, count: mesh.positions.count))
         return m
+    }
+
+    /// Instance `i` on `mesh`, its mesh's displaced copy (Scene+Displacement.swift): its shadows traced (the virtual
+    /// shadow maps would keep their pages of it as it was before a bake moved it).
+    func setDisplacedMesh(_ i: Int, _ mesh: Int) {
+        instances[i].mesh = mesh
+        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
+    /// Mesh `m`'s bounds grown by `d` every way (where its displaced vertices may go).
+    func growBounds(mesh m: Int, by d: Float) {
+        meshBounds[m] = (meshBounds[m].0 - SIMD3(repeating: d), meshBounds[m].1 + SIMD3(repeating: d))
     }
 
     /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).

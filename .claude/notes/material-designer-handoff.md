@@ -27,6 +27,16 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
   (Assets/Materials/assignments.json, SceneSettings.materialAssignments), planar UVs on UV-less meshes; mode `matedit`.
 - P8 MatShaderCode (PROCEDURAL_CODE bit 13, Shaders/Procedural.metal splice marker, SceneShading.procParams; pipeline
   sets know their splice). P9 starters, README, this note.
+- P10 displacement (the user asked, after P9: "some materials should look like real bumped mesh shapes, not only flat
+  ones"). Choices: workshop + assigned objects; a per-material detail (target edge length, 1M triangles a mesh, 4M a
+  scene); displacement + normal map with parallax off on displaced meshes; re-displaced each time a bake lands.
+  `MatSurface.displacement/displacementMid/displacementDetail`; `MeshSubdivider` (per-edge midpoint splits: crack-free;
+  welds of coincident vertices, angle-weighted group normals); `Scene+Displacement` (a subdivided copy per mesh and
+  scale, planar UVs baked for UV-less meshes, bounds grown by `displacementRoom`, shadows traced, scene not still);
+  `MaterialShaders/MatDisplace.metal` (in the material library: group-averaged height, mip at the vertex spacing);
+  `Renderer.encodeDisplacement` (before the TLAS: kernel, then `DisplacedBuild` rebuilds those BLAS in place, every
+  slot's TLAS rebuilt); raster treats them as deforming; `editMaterials` makes the scene again for on/off, another
+  detail, or an amount past the room. The embedded preview displaces on the CPU from a <=256 px readback.
 
 ## Verified (M1 Max, Metal 3)
 

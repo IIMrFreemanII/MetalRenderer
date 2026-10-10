@@ -266,7 +266,7 @@ struct Mat3DView: NSViewRepresentable {
         func draw(in view: MTKView) {
             guard let state, let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
                   let cb = queue?.makeCommandBuffer(), let enc = cb.makeRenderCommandEncoder(descriptor: pass),
-                  let mesh = mesh(shape) else { return }
+                  let mesh = outputs.flatMap({ displaced(shape, $0) }) ?? mesh(shape) else { return }
             enc.setRenderPipelineState(state)
             enc.setDepthStencilState(depth)
             let aspect = Float(view.drawableSize.width / max(view.drawableSize.height, 1))
@@ -276,7 +276,7 @@ struct Mat3DView: NSViewRepresentable {
             let proj = MatPreview.perspective(fovy: 0.7, aspect: aspect, near: 0.05, far: 50)
             let o = outputs, s = o?.surface ?? MatSurface()
             func bit(_ t: MTLTexture?, _ b: UInt32) -> UInt32 { t != nil ? b : 0 }
-            var u = (proj * view4, SIMD4<Float>(eye, o?.height != nil ? s.heightDepth : 0), SIMD4<Float>(normalize(SIMD3<Float>(-0.5, 0.8, 0.6)), 3),
+            var u = (proj * view4, SIMD4<Float>(eye, o?.height != nil && s.displacement <= 0 ? s.heightDepth : 0), SIMD4<Float>(normalize(SIMD3<Float>(-0.5, 0.8, 0.6)), 3),
                      SIMD4<Float>(s.uvScale, s.alphaCutoff, o?.orm != nil ? s.aoStrength : 0, s.emissiveIntensity),
                      SIMD4<UInt32>(bit(o?.baseColor, 1) | bit(o?.orm, 2) | bit(o?.normal, 4) | bit(o?.emissive, 8),
                                    bit(o?.height, 1) | bit(o?.opacity, 2), s.normalStrength.bitPattern, 0))
@@ -297,29 +297,80 @@ struct Mat3DView: NSViewRepresentable {
         /// A shape's triangles (positions, normals, tangents with their handedness, UVs), as the workshop's.
         private func mesh(_ shape: MatPreviewShape) -> (buffer: MTLBuffer, count: Int)? {
             if let m = meshes[shape] { return m }
-            let (g, uvs): (MeshGeometry, [SIMD2<Float>])
+            let (g, uvs) = Renderer3D.geometry(shape)
+            meshes[shape] = soup(g, uvs, MatPreview.tangents(g, uvs))
+            return meshes[shape]
+        }
+
+        private static func geometry(_ shape: MatPreviewShape) -> (MeshGeometry, [SIMD2<Float>]) {
             switch shape {
-            case .sphere: (g, uvs) = (Scene.uvSphere(rings: 32, segments: 64), Scene.uvSphereUVs(rings: 32, segments: 64))
+            case .sphere: return (Scene.uvSphere(rings: 32, segments: 64), Scene.uvSphereUVs(rings: 32, segments: 64))
             case .cube:
                 var b = MeshBuilder()
                 Scene.tiledBox(&b, half: 0.75)
-                (g, uvs) = (b.geometry, b.uvs)
+                return (b.geometry, b.uvs)
             case .cylinder:
                 let (cg, cu) = Scene.uvCylinder(radius: 0.7, height: 1.6, segments: 64)
-                (g, uvs) = ((cg.positions.map { $0 - [0, 0.8, 0] }, cg.normals, cg.indices), cu)
+                return ((cg.positions.map { $0 - [0, 0.8, 0] }, cg.normals, cg.indices), cu)
             case .plane:
-                (g, uvs) = (([[-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1]], [[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]], [0, 2, 1, 0, 3, 2]),
-                            [[0, 0], [2, 0], [2, 2], [0, 2]])
+                return (([[-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1]], [[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]], [0, 2, 1, 0, 3, 2]),
+                        [[0, 0], [2, 0], [2, 2], [0, 2]])
             }
-            let tangents = MatPreview.tangents(g, uvs)
+        }
+
+        private func soup(_ g: MeshGeometry, _ uvs: [SIMD2<Float>], _ tangents: [SIMD4<Float>]) -> (buffer: MTLBuffer, count: Int)? {
             var verts: [Float] = []
+            verts.reserveCapacity(g.indices.count * 16)
             for i in g.indices {
                 let k = Int(i), p = g.positions[k], n = g.normals[k], t = tangents[k], uv = uvs[k]
                 verts += [p.x, p.y, p.z, 0, n.x, n.y, n.z, 0, t.x, t.y, t.z, t.w, uv.x, uv.y, 0, 0]
             }
             guard let buffer = device.makeBuffer(bytes: verts, length: verts.count * 4) else { return nil }
-            meshes[shape] = (buffer, g.indices.count)
-            return meshes[shape]
+            return (buffer, g.indices.count)
+        }
+
+        /// Per shape, its mesh subdivided for displacement (MeshSubdivider), its groups and its tangents.
+        private var fine: [MatPreviewShape: (mesh: MeshSubdivider, welds: MeshSubdivider.Welds, tangents: [SIMD4<Float>])] = [:]
+        private var lastDisplaced: (key: String, mesh: (buffer: MTLBuffer, count: Int))?
+
+        /// The shape with the bake's height displacing it (MatSurface.displacement), as the renderer displaces a
+        /// mesh (MaterialShaders/MatDisplace.metal): its fine mesh's groups moved along their normals by their
+        /// members' mean height, read back from the height at 256 px or less. Nil: the graph doesn't displace.
+        private func displaced(_ shape: MatPreviewShape, _ o: MatOutputs) -> (buffer: MTLBuffer, count: Int)? {
+            let s = o.surface
+            guard s.displacement > 0, let height = o.height else { return nil }
+            let key = "\(ObjectIdentifier(height)) \(shape) \(s.displacement) \(s.displacementMid) \(s.uvScale)"
+            if let d = lastDisplaced, d.key == key { return d.mesh }
+            if fine[shape] == nil {
+                let (g, uvs) = Renderer3D.geometry(shape)
+                var m = MeshSubdivider(positions: g.positions, normals: g.normals, uvs: uvs, indices: g.indices)
+                m.subdivide(edge: 0.04, cap: 200_000)
+                fine[shape] = (m, m.welds(), MatPreview.tangents((m.positions, m.normals, m.indices), m.uvs))
+            }
+            let f = fine[shape]!
+            let level = max(0, Int(log2(Double(height.width) / 256).rounded(.up)))
+            let w = max(height.width >> level, 1), h = max(height.height >> level, 1)
+            let texels = MaterialBake.shared(device).engine.read(height, level: level).map(\.x)
+            guard texels.count == w * h else { return nil }
+            func sample(_ uv: SIMD2<Float>) -> Float {
+                let x = uv.x * Float(w) - 0.5, y = uv.y * Float(h) - 0.5
+                let x0 = x.rounded(.down), y0 = y.rounded(.down), fx = x - x0, fy = y - y0
+                func at(_ i: Float, _ j: Float) -> Float {
+                    let a = (Int(i) % w + w) % w, b = (Int(j) % h + h) % h
+                    return texels[b * w + a]
+                }
+                return (at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx) * (1 - fy) + (at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx) * fy
+            }
+            let heights = f.mesh.uvs.map { sample($0 * s.uvScale) }
+            var moved = f.mesh.positions
+            for v in moved.indices {
+                let members = f.welds.members[Int(f.welds.start[v])..<Int(f.welds.start[v] + f.welds.count[v])]
+                let mean = members.reduce(Float(0)) { $0 + heights[Int($1)] } / Float(members.count)
+                moved[v] += f.welds.direction[v] * ((mean - s.displacementMid) * s.displacement)
+            }
+            guard let mesh = soup((moved, f.mesh.normals, f.mesh.indices), f.mesh.uvs, f.tangents) else { return nil }
+            lastDisplaced = (key, mesh)
+            return mesh
         }
     }
 }

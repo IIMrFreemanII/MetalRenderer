@@ -136,11 +136,26 @@ struct MatSurface: Codable, Equatable {
     var normalDirectX = false
     /// The renderer computes it in the shading (MatShaderCode) rather than sampling its bake, when it can.
     var shaderMode = false
+    /// Real displacement: the height moves the vertices of the meshes it is on (subdivided for it: Scene+Displacement),
+    /// by this many metres from black to white (0: none; the height is then the parallax's). `displacementMid`: the
+    /// height that stays where the surface is. `displacementDetail`: the longest edge left (metres).
+    var displacement: Float = 0
+    var displacementMid: Float = 0.5
+    var displacementDetail: Float = 0.02
+
+    /// How far a displaced vertex may move from the surface.
+    var displacementReach: Float { displacement * max(displacementMid, 1 - displacementMid) }
+    /// How far a displaced mesh's bounds are grown: room for its displacement to grow (an edit within it moves the
+    /// vertices in place; past it, the scene is made again).
+    var displacementRoom: Float { max(2 * displacementReach, 0.05) }
+    /// The detail's choices (metres).
+    static let displacementDetails: [Float] = [0.005, 0.01, 0.02, 0.04, 0.08]
 
     init() {}
 
     // Decoded field by field, each with its default: a file of an older version (fewer fields) still reads.
-    private enum Key: String, CodingKey { case heightDepth, uvScale, alphaCutoff, aoStrength, normalStrength, emissiveIntensity, normalDirectX, shaderMode }
+    private enum Key: String, CodingKey { case heightDepth, uvScale, alphaCutoff, aoStrength, normalStrength, emissiveIntensity, normalDirectX, shaderMode
+        case displacement, displacementMid, displacementDetail }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let d = MatSurface()
@@ -152,6 +167,9 @@ struct MatSurface: Codable, Equatable {
         emissiveIntensity = try c.decodeIfPresent(Float.self, forKey: .emissiveIntensity) ?? d.emissiveIntensity
         normalDirectX = try c.decodeIfPresent(Bool.self, forKey: .normalDirectX) ?? d.normalDirectX
         shaderMode = try c.decodeIfPresent(Bool.self, forKey: .shaderMode) ?? d.shaderMode
+        displacement = try c.decodeIfPresent(Float.self, forKey: .displacement) ?? d.displacement
+        displacementMid = try c.decodeIfPresent(Float.self, forKey: .displacementMid) ?? d.displacementMid
+        displacementDetail = try c.decodeIfPresent(Float.self, forKey: .displacementDetail) ?? d.displacementDetail
     }
 }
 

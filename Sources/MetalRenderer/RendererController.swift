@@ -20,6 +20,8 @@ struct RendererStatus {
     var buildingPlan: BuildingPlan?
     /// The character workshop's character (Scene.characterStats).
     var characterStats: CharacterStats?
+    /// What the procedural materials' displacement made of the scene's meshes (the Material Designer's inspector).
+    var displacement: String?
     /// Walking: where (the Floor Plan window's you-are-here).
     var walker: WalkerStatus?
     /// Where the camera is (the building editor's Pin: the city's building nearest it).
@@ -243,6 +245,7 @@ final class RendererController: InputHandler {
 
 extension RendererController: MaterialEditorHost {
     var metalDevice: MTLDevice? { renderer.metalDevice }
+    var displacementSummary: String? { status?.displacement }
 
     /// Click-to-pick: the next click in the view (not a drag) names the material there.
     func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void) {
