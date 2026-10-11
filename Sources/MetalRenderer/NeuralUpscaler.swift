@@ -42,7 +42,12 @@ final class NeuralWeights {
     let header: Header
     let data: Data            // everything after the header
     let buffer: MTLBuffer     // `data` on the GPU
+    /// The convolutions' weights as neuralConvKernel reads them: per layer [tap][output, padded to 32][input, padded to
+    /// 8] (PyTorch's are [output][input][ky][kx]), zeros in the padding.
+    let packed: MTLBuffer
+    private var packedOffsets: [String: Int] = [:]
     private let tensors: [String: Header.Tensor]
+    static let tileOutputs = 32, tileInputs = 8   // NEURAL_TILE_COUT, and 8 input channels a step
 
     var factor: Int { header.factor }
     /// The kernel head (filter weights, the light in parts).
@@ -66,7 +71,29 @@ final class NeuralWeights {
         guard let buffer = data.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 16), options: .storageModeShared) })
         else { throw NeuralError.format(url.path) }
         self.buffer = buffer
+
+        var packedData: [Float16] = []
+        for t in header.tensors where t.dtype == "f16" && t.shape.count == 4 && t.shape[2] == 3 && t.shape[3] == 3 {
+            let (cout, cin) = (t.shape[0], t.shape[1])
+            let coutPad = (cout + Self.tileOutputs - 1) / Self.tileOutputs * Self.tileOutputs
+            let cinPad = (cin + Self.tileInputs - 1) / Self.tileInputs * Self.tileInputs
+            packedOffsets[t.name] = packedData.count * 2
+            var layer = [Float16](repeating: 0, count: 9 * coutPad * cinPad)
+            data.withUnsafeBytes { raw in
+                let w = raw.baseAddress!.advanced(by: t.offset).assumingMemoryBound(to: Float16.self)
+                for co in 0..<cout { for ci in 0..<cin { for k in 0..<9 {
+                    layer[(k * coutPad + co) * cinPad + ci] = w[(co * cin + ci) * 9 + k]
+                } } }
+            }
+            packedData += layer
+        }
+        guard let packed = packedData.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 16), options: .storageModeShared) })
+        else { throw NeuralError.format(url.path) }
+        self.packed = packed
     }
+
+    /// Byte offset of convolution `name`'s ("enc0.0.weight") repacked weights in `packed`.
+    func packedOffset(_ name: String) -> Int { packedOffsets[name]! }
 
     /// The weights the app uses: `METALRENDERER_NEURAL=<file>`, else Assets/Neural/denoiser.nnw; nil when there are none.
     static func load(device: MTLDevice) -> NeuralWeights? {
@@ -161,12 +188,17 @@ final class NeuralUpscaler {
         hdrOutput = out
     }
 
-    /// The frame's dispatches, in pass `pass`.
+    /// The frame's dispatches, in three passes (timed apart): `pass` + " in" (the history warped, the input tensor),
+    /// `pass` (the U-Net), `pass` + " out" (the head applied: the state and the light).
     func stages(_ p: NeuralPipelines, _ inputs: NeuralInputs, pass: String = "neural") -> [ComputeStage] {
-        [ComputeStage(pass: pass) { [self] enc in encode(p, inputs, into: enc) }]
+        [(Part.inputs, pass + " in"), (.net, pass), (.output, pass + " out")].map { part, name in
+            ComputeStage(pass: name) { [self] enc in encode(p, inputs, part, into: enc) }
+        }
     }
 
-    private func encode(_ p: NeuralPipelines, _ inputs: NeuralInputs, into enc: ComputePass) {
+    private enum Part { case inputs, net, output }
+
+    private func encode(_ p: NeuralPipelines, _ inputs: NeuralInputs, _ part: Part, into enc: ComputePass) {
         let f = factor, s = UInt32(weights.stateChannels), w = weights.header.widths.map { UInt32($0) }
         let g = UInt32(weights.header.guides)
         var params = GPUNeuralParams()
@@ -193,10 +225,13 @@ final class NeuralUpscaler {
             set(lw, lh, ca, cb, cout, flags)
             enc.setBuffer(a, offset: 0, index: 1)
             enc.setBuffer(b ?? a, offset: 0, index: 2)
-            enc.setBuffer(weights.buffer, offset: weights.offset(layer + ".weight"), index: 3)
+            enc.setBuffer(weights.packed, offset: weights.packedOffset(layer + ".weight"), index: 3)
             enc.setBuffer(weights.buffer, offset: weights.offset(layer + ".bias"), index: 4)
             enc.setBuffer(out, offset: 0, index: 5)
-            dispatch(lw, lh, (Int(cout) + 3) / 4)
+            // A threadgroup: 8 rows x 8 pixels x 32 output channels (NEURAL_TILE_*), a simdgroup two rows.
+            enc.dispatchThreadgroups(MTLSize(width: (lw + 7) / 8, height: (lh + 15) / 16,
+                                             depth: (Int(cout) + NeuralWeights.tileOutputs - 1) / NeuralWeights.tileOutputs),
+                                     threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
             barrier()
         }
         func pool(_ a: MTLBuffer, _ channels: UInt32, _ out: MTLBuffer, level: Int) {
@@ -208,6 +243,9 @@ final class NeuralUpscaler {
             barrier()
         }
 
+        let split = inputs.split.map { [$0.diffuse, $0.specular, $0.extra] } ?? Array(repeating: inputs.color, count: 3)
+        switch part {
+        case .inputs:
         // Last frame's output and state, warped; the input tensor.
         enc.setComputePipelineState(p.warp)
         set(width * f, height * f, 0, 0, 0, (inputs.reset ? NeuralUpscaler.reset : 0)
@@ -221,12 +259,13 @@ final class NeuralUpscaler {
         set(width, height, g)
         enc.setBuffer(warped, offset: 0, index: 1)
         enc.setBuffer(x, offset: 0, index: 2)
-        let split = inputs.split.map { [$0.diffuse, $0.specular, $0.extra] } ?? Array(repeating: inputs.color, count: 3)
         for (i, t) in ([inputs.color, inputs.albedo, inputs.specular, inputs.normalDepth, inputs.roughness] + split).enumerated() {
             enc.setTexture(t, index: i)
         }
         dispatch(width, height)
         barrier()
+
+        case .net:
 
         // The U-Net (model.py's forward): at each level two convolutions into its buffers 1 and 2 (2 is the skip
         // connection), pooled into the next level's buffer 0; the last level is "mid"; then back up, each "dec" level
@@ -251,6 +290,8 @@ final class NeuralUpscaler {
         }
         conv("head", cur, curChannels, nil, 0, head, UInt32(f * weights.headChannels * f), level: 0, flags: 0)
 
+        case .output:
+
         // Unfold and apply the head, write the state and the light.
         enc.setComputePipelineState(weights.kernelHead ? p.kernelFinish : p.finish)
         set(width * f, height * f)
@@ -262,5 +303,6 @@ final class NeuralUpscaler {
             for (i, t) in ([inputs.albedo, inputs.specular] + split).enumerated() { enc.setTexture(t, index: i + 1) }
         }
         dispatch(width * f, height * f)
+        }
     }
 }

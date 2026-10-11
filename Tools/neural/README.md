@@ -135,9 +135,17 @@ first net (v1, 968k) was better in Cornell (32.55, 32.19 moving) and worse elsew
 + augmentation -1.25 / -1.99, + v2 inputs -1.27 / -1.95, + kernel head -0.21 / -0.43, + bicubic and a fourth level
 -0.11 / -0.11. Tried and dropped: gating the history by its validity (validity is noisy under jitter in foliage and
 thin lights: still views flickered 10x), capping the history's weight (helped the lag, cost the still views; the held
-clips fixed it instead). The Metal kernels match PyTorch to 68-83 dB on the app's own frames.
+clips fixed it instead). The Metal kernels match PyTorch to 75-83 dB on the app's own frames.
+
+Speed (M4 Max, 640×400 → 1920×1200, `neuralq`, GPU total): ~40 ms a frame (was ~237 ms; MetalFX 1.75 ms). The
+convolutions are implicit matrix products on simdgroup matrices (neuralConvKernel: a threadgroup computes 8 rows × 8
+pixels × 32 output channels, input channels 8 at a time through threadgroup memory with their repacked weights,
+NeuralWeights.packed); the passes `neural in` (~2.4 ms: the warp, the input tensor), `neural` (~35 ms: the U-Net),
+`neural out` (~1.2 ms: the head). Tried and slower: 64 output channels a threadgroup (registers), 16 input channels
+a step (threadgroup memory); sharing the step's memory with the output staging and 8 simdgroups a threadgroup each
+helped ~1 ms.
 
 Next:
-1. Speed: ~230 ms a frame at 1920×1200 (the v1 net ~120 ms, MetalFX 1.75 ms): simdgroup_matrix convolutions, fused
-   layers, then a smaller net (the `performance` skill).
+1. Speed: the U-Net runs at ~10 TFLOPS; the head (351 outputs, ~30% of the work) and enc0.0 (233 inputs, 207 of them
+   last frame's state) are the big layers: per-layer timings, then a slimmer head or state.
 2. Use it where MetalFX's denoiser isn't available (today those GPUs fall back to 1× + SVGF): Capabilities.

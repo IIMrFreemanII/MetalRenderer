@@ -91,7 +91,10 @@ frames) ghosted until the held clips trained long runs (a 20-frame-trained net l
 cap helped but cost still views, so it was dropped. Metal matches PyTorch 68-83 dB on real frames once both start from
 an empty history (the dataset run resets our upscaler at the first saved frame). Resume runs with
 `runs/<name>.sh` (they resume from last.pt). Main merged 2026-10-09 (randomRoom keeps rawValue 19).
-Not done: speed (~230 ms a frame; the performance skill), the fallback for GPUs without MetalFX's denoiser.
+Speed 2026-10-11: simdgroup_matrix implicit-GEMM convs (8 rows x 8 px x 32 outputs a threadgroup, 8 inputs a step
+through threadgroup memory, weights repacked at load): 236.7 -> 40.2 ms a frame (A/B, 2 alternating rounds); Metal vs
+PyTorch still 75-83 dB. The pass is split into `neural in` / `neural` / `neural out` columns.
+Not done: more speed (U-Net ~10 TFLOPS; head and enc0.0 are the big layers), the fallback for GPUs without MetalFX's denoiser.
 
 **Why:** the user wants a denoiser trained on their own scenes that they control.
 **How to apply:** next steps in order: make the dataset (`make-dataset.sh`, detached) and let **all** references

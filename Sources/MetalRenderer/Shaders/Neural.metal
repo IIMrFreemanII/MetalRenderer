@@ -129,45 +129,92 @@ kernel void neuralPrepareKernel(constant NeuralParams&         p         [[buffe
     }
 }
 
-// 3x3 convolution, zero padded, four output channels a thread (the last thread's past channels.z do nothing). Input
-// 1's channels follow input 0's (the U-Net's skip connections); input 0 can be at half the resolution, read as if
-// upsampled by repeating each pixel.
+// 3x3 convolution, zero padded, as an implicit matrix product on simdgroup matrices: a threadgroup (4 simdgroups)
+// computes 8 rows x 8 pixels of 32 output channels, a simdgroup two rows. Input 1's channels follow input 0's (the
+// U-Net's skip connections); input 0 can be at half the resolution, read as if upsampled by repeating each pixel. The
+// input channels go 8 at a time through threadgroup memory: the 10 x 10 pixels the taps read (zero outside the tensor)
+// and their weights, which come repacked (NeuralWeights.packed: [tap][output, padded to 32][input, padded to 8]), so
+// each tap is an 8x8 block of weights times an 8x8 block of inputs. Sums in float, bias and ReLU, then half.
+constant uint NEURAL_TILE_GROUPS = 8, NEURAL_TILE_SG_ROWS = 2;
+constant uint NEURAL_TILE_ROWS = NEURAL_TILE_GROUPS * NEURAL_TILE_SG_ROWS, NEURAL_TILE_COLS = 8, NEURAL_TILE_COUT = 32;
+constant uint NEURAL_TILE_PITCH = NEURAL_TILE_COLS + 2, NEURAL_TILE_PLANE = (NEURAL_TILE_ROWS + 2) * NEURAL_TILE_PITCH;
+// Threadgroup memory, in floats: a step's inputs and weights (half), or the sums on their way out, whichever is more.
+constant uint NEURAL_TILE_STEP = (8 * NEURAL_TILE_PLANE + 9 * NEURAL_TILE_COUT * 8) / 2;
+constant uint NEURAL_TILE_SHARED = NEURAL_TILE_STEP > NEURAL_TILE_GROUPS * NEURAL_TILE_COUT * NEURAL_TILE_COLS
+    ? NEURAL_TILE_STEP : NEURAL_TILE_GROUPS * NEURAL_TILE_COUT * NEURAL_TILE_COLS;
+
 kernel void neuralConvKernel(constant NeuralParams& p       [[buffer(0)]],
                              device const half*     in0     [[buffer(1)]],
                              device const half*     in1     [[buffer(2)]],
-                             device const half*     weights [[buffer(3)]],
+                             device const half*     weights [[buffer(3)]],   // packed
                              device const half*     bias    [[buffer(4)]],
                              device half*           out     [[buffer(5)]],
-                             uint3 tid [[thread_position_in_grid]])
+                             uint3 group [[threadgroup_position_in_grid]],
+                             uint  sg    [[simdgroup_index_in_threadgroup]],
+                             uint  lane  [[thread_index_in_simdgroup]],
+                             uint  t     [[thread_index_in_threadgroup]])
 {
+    // The step's inputs and weights ([tap][output][input]); after the last step, the sums on their way out (staged, a
+    // simdgroup's row at a time): one block, so more threadgroups fit on a core.
+    threadgroup float shared[NEURAL_TILE_SHARED];
+    threadgroup half* tile = (threadgroup half*)shared;
+    threadgroup half* wtile = tile + 8 * NEURAL_TILE_PLANE;
+    threadgroup float* staged = shared + sg * NEURAL_TILE_COUT * NEURAL_TILE_COLS;
     uint w = p.size.x, h = p.size.y, n = w * h;
-    uint co = tid.z * 4;
-    if (tid.x >= w || tid.y >= h || co >= p.channels.z) return;
-    uint c0 = p.channels.x, cin = c0 + p.channels.y;
+    uint c0 = p.channels.x, cin = c0 + p.channels.y, cout = p.channels.z;
+    uint cinPad = (cin + 7) / 8 * 8, coutPad = (cout + NEURAL_TILE_COUT - 1) / NEURAL_TILE_COUT * NEURAL_TILE_COUT;
     bool up = p.channels.w & NEURAL_UPSAMPLE;
     uint w0 = up ? w / 2 : w, n0 = up ? n / 4 : n;
-    uint4 oc = min(uint4(co, co + 1, co + 2, co + 3), p.channels.z - 1);   // past the last channel: the last again, not written
-    float4 acc = float4(bias[oc.x], bias[oc.y], bias[oc.z], bias[oc.w]);
-    uint stride = cin * 9;   // one output channel's weights
-    for (int ky = 0; ky < 3; ky++) {
-        int y = int(tid.y) + ky - 1;
-        if (y < 0 || y >= int(h)) continue;
-        for (int kx = 0; kx < 3; kx++) {
-            int x = int(tid.x) + kx - 1;
-            if (x < 0 || x >= int(w)) continue;
-            uint k = uint(ky * 3 + kx);
-            uint i0 = up ? uint(y / 2) * w0 + uint(x / 2) : uint(y) * w + uint(x), i1 = uint(y) * w + uint(x);
-            for (uint ci = 0; ci < cin; ci++) {
-                float v = ci < c0 ? float(in0[ci * n0 + i0]) : float(in1[(ci - c0) * n + i1]);
-                uint wi = ci * 9 + k;
-                acc += v * float4(weights[oc.x * stride + wi], weights[oc.y * stride + wi], weights[oc.z * stride + wi],
-                                  weights[oc.w * stride + wi]);
+    int x0 = int(group.x * NEURAL_TILE_COLS), y0 = int(group.y * NEURAL_TILE_ROWS);
+    uint co0 = group.z * NEURAL_TILE_COUT;
+    const uint threads = NEURAL_TILE_GROUPS * 32;
+
+    simdgroup_float8x8 acc[NEURAL_TILE_SG_ROWS][4];
+    for (uint r = 0; r < NEURAL_TILE_SG_ROWS; r++)
+        for (uint j = 0; j < 4; j++) acc[r][j] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    for (uint ci0 = 0; ci0 < cin; ci0 += 8) {
+        for (uint e = t; e < 8 * NEURAL_TILE_PLANE; e += threads) {
+            uint c = e / NEURAL_TILE_PLANE, rc = e % NEURAL_TILE_PLANE, ci = ci0 + c;
+            int y = y0 + int(rc / NEURAL_TILE_PITCH) - 1, x = x0 + int(rc % NEURAL_TILE_PITCH) - 1;
+            half v = 0.0h;
+            if (x >= 0 && y >= 0 && x < int(w) && y < int(h) && ci < cin) {
+                v = ci < c0 ? in0[ci * n0 + (up ? uint(y / 2) * w0 + uint(x / 2) : uint(y) * w + uint(x))]
+                            : in1[(ci - c0) * n + uint(y) * w + uint(x)];
+            }
+            tile[e] = v;
+        }
+        for (uint e = t; e < 9 * NEURAL_TILE_COUT * 8; e += threads) {   // [tap][output][8 inputs], 8 at a time
+            uint row = e / 8;   // tap * 32 + output
+            wtile[e] = weights[((row / NEURAL_TILE_COUT) * coutPad + co0 + row % NEURAL_TILE_COUT) * cinPad + ci0 + e % 8];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint k = 0; k < 9; k++) {
+            simdgroup_half8x8 a[4];   // rows: 8 output channels; columns: the 8 input channels
+            for (uint j = 0; j < 4; j++) simdgroup_load(a[j], wtile + (k * NEURAL_TILE_COUT + 8 * j) * 8, 8);
+            for (uint r = 0; r < NEURAL_TILE_SG_ROWS; r++) {
+                simdgroup_half8x8 b;   // rows: 8 input channels; columns: the row's 8 pixels, moved by the tap
+                simdgroup_load(b, tile + (sg * NEURAL_TILE_SG_ROWS + r + k / 3) * NEURAL_TILE_PITCH + k % 3, NEURAL_TILE_PLANE);
+                for (uint j = 0; j < 4; j++) simdgroup_multiply_accumulate(acc[r][j], a[j], b, acc[r][j]);
             }
         }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    if (p.channels.w & NEURAL_RELU) acc = max(acc, 0.0f);
-    uint i = tid.y * w + tid.x;
-    for (uint k = 0; k < 4 && co + k < p.channels.z; k++) out[(co + k) * n + i] = half(acc[k]);
+    for (uint r = 0; r < NEURAL_TILE_SG_ROWS; r++) {
+        for (uint j = 0; j < 4; j++) simdgroup_store(acc[r][j], staged + 8 * j * NEURAL_TILE_COLS, NEURAL_TILE_COLS);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        int y = y0 + int(sg * NEURAL_TILE_SG_ROWS + r);
+        if (y < int(h)) {
+            for (uint e = lane; e < NEURAL_TILE_COUT * NEURAL_TILE_COLS; e += 32) {
+                uint co = co0 + e / NEURAL_TILE_COLS;
+                int x = x0 + int(e % NEURAL_TILE_COLS);
+                if (co >= cout || x >= int(w)) continue;
+                float v = staged[e] + float(bias[co]);
+                if (p.channels.w & NEURAL_RELU) v = max(v, 0.0f);
+                out[co * n + uint(y) * w + uint(x)] = half(v);
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
 }
 
 // 2x2 max pooling: `size` is the output's (half the input's), channels.z its channels.
