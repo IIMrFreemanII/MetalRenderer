@@ -7,10 +7,19 @@ the reference's (temporal stability), L1 of the image gradients (sharp edges); a
 picture as the app shows it (ACES, sRGB), where noise in a saturated colour's dark channels shows and log light hides it. Each sample runs `--length` frames
 from an empty history, so the net learns to start from nothing too, as after a reset.
 
+Held clips (common.held: a still camera on the moving scene, 100 frames, references for the last 20) teach it to drop
+history the scene changed under after a long run, as the app's are: after every `--held-every` batches, a batch of them
+runs a random number of frames (up to `--held-length` - `--length`) without gradients first, then trains on the last
+`--length`.
+
 Paused clips (common.paused: a still view, new noise every frame) teach it to keep accumulating, as MetalFX does while
 a view holds still: after every `--paused-every` batches, a batch of them runs a random number of frames (up to
 `--paused-length` - `--length`) without gradients first, then trains on the next `--length`. "still" scores are the
 last 20 of `--paused-length` frames of the held-out paused clips (MetalFX's came after the clip's warm-up as well).
+
+The architecture (model.py): `--widths` (a U-Net level per width), `--inputs v2` (the light in parts and history
+validity: a dataset made since FLAG_SPLIT_OUTPUT), `--head kernel` (filter weights instead of colours), `--warp bicubic`.
+`--augment` mirrors, turns and recolours the training samples.
 """
 import argparse, math, os, random, time
 import numpy as np
@@ -19,7 +28,7 @@ import torch.nn.functional as F
 
 import common
 from dataset import Sequences
-from model import WIDTHS, DenoisingUpscaler, prepare
+from model import ARCH, SPLIT, WIDTHS, DenoisingUpscaler, prepare
 
 
 def device():
@@ -36,8 +45,10 @@ def run_sequence(net, batch, dev, warm=0):
     state = None
     for t in range(t_len):
         with torch.set_grad_enabled(torch.is_grad_enabled() and t >= warm):
-            g = {k: batch[k][:, t].to(dev) for k in ["color", "albedo", "specular", "normal", "roughness", "motion"]}
-            guides = prepare(g["color"], g["albedo"], g["specular"], g["normal"], g["roughness"], exposure[:, t])
+            g = {k: batch[k][:, t].to(dev) for k in ["color", "albedo", "specular", "normal", "roughness", "motion"]
+                 + (SPLIT if net.arch["inputs"] == "v2" else [])}
+            guides = prepare(g["color"], g["albedo"], g["specular"], g["normal"], g["roughness"], exposure[:, t],
+                             *(g[k] for k in SPLIT if k in g))
             if state is None:
                 b, _, h, w = guides.shape
                 state = net.initial_state(b, h, w, dev)
@@ -130,9 +141,15 @@ def main():
     p.add_argument("--resume", default="", help="carry on a run: its weights, optimizer, schedule and epoch")
     p.add_argument("--init", default="", help="start from a checkpoint's weights (and widths), with a new schedule")
     p.add_argument("--widths", default=",".join(map(str, WIDTHS)), help="the U-Net's channels per level, e.g. 64,96,128")
+    p.add_argument("--inputs", default=ARCH["inputs"], choices=["v1", "v2"], help="v2: the light in parts and history validity")
+    p.add_argument("--head", default=ARCH["head"], choices=["direct", "kernel"], help="kernel: filter weights, not colours (v2)")
+    p.add_argument("--warp", default=ARCH["warp"], choices=["bilinear", "bicubic"], help="how the history is resampled")
+    p.add_argument("--augment", action="store_true", help="mirror, turn and recolour the training samples")
     p.add_argument("--display-weight", type=float, default=0.0, help="weight of the L1 on the displayed picture")
     p.add_argument("--paused-every", type=int, default=4, help="a batch of paused clips after this many (0: none)")
     p.add_argument("--paused-length", type=int, default=80, help="frames of a paused sample, warm-up included")
+    p.add_argument("--held-every", type=int, default=4, help="a batch of held clips after this many (0: none)")
+    p.add_argument("--held-length", type=int, default=100, help="frames of a held sample, warm-up included")
     p.add_argument("--paused-temporal", type=float, default=0.5,
                    help="weight of the frame-to-frame term on paused batches (their reference holds still: it is flicker)")
     args = p.parse_args()
@@ -147,29 +164,41 @@ def main():
     train_scenes = sorted({os.path.basename(c).split("-")[0] for c in train_clips})
     print(f"train on {len(train_clips)} clips of {train_scenes}, validate on {len(val_clips)} of {val_scenes}")
 
-    moving = lambda cs: [c for c in cs if not common.paused(c)]
+    moving = lambda cs: [c for c in cs if not common.paused(c) and not common.held(c)]
+    held = lambda cs: [c for c in cs if common.held(c)] if args.held_every > 0 else []
     still = lambda cs: [c for c in cs if common.paused(c)] if args.paused_every > 0 else []
-    train = Sequences(moving(train_clips), args.length, args.crop, args.samples)
-    val = Sequences(moving(val_clips), args.length, args.crop * 2, samples=max(8, args.batch * 4), exposure_jitter=0)
+    dev = device()
+    # A run's own checkpoint (--resume) or another's (--init) says the net's shape; else the options do.
+    init = torch.load(args.resume or args.init, map_location=dev) if args.resume or args.init else None
+    arch = {**ARCH, **init.get("arch", {})} if init else {"inputs": args.inputs, "head": args.head, "warp": args.warp}
+    inputs = common.INPUTS_V2 if arch["inputs"] == "v2" else common.INPUTS
+    train = Sequences(moving(train_clips), args.length, args.crop, args.samples, inputs=inputs, augment=args.augment)
+    val = Sequences(moving(val_clips), args.length, args.crop * 2, samples=max(8, args.batch * 4), exposure_jitter=0, inputs=inputs)
     torch.manual_seed(0)
     loader = torch.utils.data.DataLoader(train, batch_size=args.batch, num_workers=args.workers, persistent_workers=args.workers > 0)
     val_loader = torch.utils.data.DataLoader(val, batch_size=args.batch, num_workers=args.workers)
     paused_loader = paused_val_loader = None
     if still(train_clips):
-        paused = Sequences(still(train_clips), args.paused_length, args.crop, args.batch * (len(loader) // args.paused_every + 1))
+        paused = Sequences(still(train_clips), args.paused_length, args.crop, args.batch * (len(loader) // args.paused_every + 1),
+                           inputs=inputs, augment=args.augment)
         paused_loader = torch.utils.data.DataLoader(paused, batch_size=args.batch, num_workers=args.workers)
         print(f"{len(still(train_clips))} paused clips, a batch of them every {args.paused_every}")
+    held_loader = None
+    if held(train_clips):
+        held_set = Sequences(held(train_clips), args.held_length, args.crop, args.batch * (len(loader) // args.held_every + 1),
+                             inputs=inputs, augment=args.augment, refs_last=args.length)
+        held_loader = torch.utils.data.DataLoader(held_set, batch_size=args.batch, num_workers=args.workers)
+        print(f"{len(held(train_clips))} held clips, a batch of them every {args.held_every}")
     if still(val_clips):
-        paused_val = Sequences(still(val_clips), args.paused_length, args.crop * 2, samples=max(4, 2 * len(still(val_clips))), exposure_jitter=0)
+        paused_val = Sequences(still(val_clips), args.paused_length, args.crop * 2, samples=max(4, 2 * len(still(val_clips))),
+                               exposure_jitter=0, inputs=inputs)
         paused_val_loader = torch.utils.data.DataLoader(paused_val, batch_size=args.batch, num_workers=args.workers)
 
-    dev = device()
-    init = torch.load(args.init, map_location=dev) if args.init else None
     widths = tuple(init["widths"]) if init else tuple(int(w) for w in args.widths.split(","))
-    net = DenoisingUpscaler(train.factor, widths).to(dev)
-    if init:
+    net = DenoisingUpscaler(train.factor, widths, arch).to(dev)
+    if init and not args.resume:
         net.load_state_dict(init["model"])
-    print(f"{sum(p.numel() for p in net.parameters()):,} parameters, widths {widths}, factor {train.factor}, on {dev}")
+    print(f"{sum(p.numel() for p in net.parameters()):,} parameters, widths {widths}, {arch}, factor {train.factor}, on {dev}")
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     steps = args.epochs * len(loader)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s / steps, 1))))
@@ -183,6 +212,9 @@ def main():
     def step(batch, warm=0, temporal_weight=0.5):
         out, ref, valid = run_sequence(net, batch, dev, warm)
         loss = loss_fn(out, ref, valid, args.display_weight, temporal_weight)
+        if not torch.isfinite(loss):   # a bad batch must not poison the weights
+            print(f"skipped a step: loss {loss.item()}", flush=True)
+            return 0.0
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
@@ -192,6 +224,8 @@ def main():
     for epoch in range(start, args.epochs):
         t0, total, total_paused, n_paused = time.time(), 0.0, 0.0, 0
         paused_batches = iter(paused_loader) if paused_loader else None
+        held_batches = iter(held_loader) if held_loader else None
+        total_held, n_held = 0.0, 0
         for i, batch in enumerate(loader):
             total += step(batch)
             sched.step()
@@ -201,16 +235,24 @@ def main():
                     warm = random.randint(0, args.paused_length - args.length)
                     total_paused += step({k: v[:, :warm + args.length] for k, v in pb.items()}, warm, args.paused_temporal)
                     n_paused += 1
+            if held_batches and (i + 1) % args.held_every == 0:
+                hb = next(held_batches, None)
+                if hb is not None:   # the run's end, where the references are, after a random warm-up
+                    warm = random.randint(0, args.held_length - args.length)
+                    total_held += step({k: v[:, -(warm + args.length):] for k, v in hb.items()}, warm)
+                    n_held += 1
         v = validate(net, val_loader, dev)
         if paused_val_loader:
             v.update(validate(net, paused_val_loader, dev, first=args.paused_length - 20, prefix="still "))
         line = f"epoch {epoch}: loss {total / len(loader):.4f}, "
         if n_paused:
             line += f"paused loss {total_paused / n_paused:.4f}, "
+        if n_held:
+            line += f"held loss {total_held / n_held:.4f}, "
         line += ", ".join(f"{k} {x:.2f}" for k, x in v.items())
         print(line + f" ({time.time() - t0:.0f} s)", flush=True)
         ck = {"model": net.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(), "epoch": epoch,
-              "factor": train.factor, "widths": widths, "best": best}
+              "factor": train.factor, "widths": widths, "arch": arch, "best": best}
         score = (v["net"] + v["still net"]) / 2 if "still net" in v else v["net"]   # moving and still alike
         if score > best:
             best = ck["best"] = score

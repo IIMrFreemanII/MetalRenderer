@@ -78,9 +78,20 @@ forest-2 24.4 vs 24.0). Left: the stress building's static flicker, market, spee
 Demo video (2026-10-08): `Tools/neural/demo-video.sh` -> renders/denoiser-demo.mp4 (88 s, ~20 min to render):
 `denoisedemo` mode records input / MetalFX / ours per scene (stress tour, Cornell, market street, a showcase model
 with `cameraMove(pan:)` so it crosses all three thirds), lens off; ffmpeg crops thirds, labels, concatenates.
-Not done: a net that beats MetalFX
-(only a 1-minute smoke model: 16.7 dB vs MetalFX 34.6), speed (plain kernels ~90 ms/frame at 1920×1200), the
-fallback for GPUs without MetalFX's denoiser.
+v2 SHIPPED 2026-10-11 (the user's choice over the v1 net): Assets/Neural/denoiser.nnw = runs/v2-held -> v2-long
+(--inputs v2 --head kernel --warp bicubic --widths 64,96,128,160, 2.07M params, ~230 ms a frame, v1 ~120). Built: the
+composite's light in parts (FLAG_SPLIT_OUTPUT: diffuse, specularlight, extra + history validity), bulb rooms, 2 more
+stress paused clips, held clips (`-h<n>`: still camera on the moving scene, 100 frames, refs for the last 20), `arch` in
+the .nnw read by NeuralUpscaler, train.py --augment / --held-every. In-app neuralq vs MetalFX: Cornell 32.20/32.01
+static, flicker 0.54/1.11, moving 31.41/31.43, camera 31.16/31.40; stress 25.78/24.57, 0.78/0.62, 25.25/24.43,
+25.04/24.85; held-out market+forest 24.75/24.48 moving, 26.82/26.19 still. v1 was better in Cornell only (32.55, 32.19
+moving, 31.85 camera). Lessons: screening showed the kernel head is the big win (+1 dB); validity-gating the history
+flickered 10x (validity is noisy under jitter in foliage); the in-app "moving" (camera still, animation on, ~300
+frames) ghosted until the held clips trained long runs (a 20-frame-trained net let history weight saturate); a history
+cap helped but cost still views, so it was dropped. Metal matches PyTorch 68-83 dB on real frames once both start from
+an empty history (the dataset run resets our upscaler at the first saved frame). Resume runs with
+`runs/<name>.sh` (they resume from last.pt). Main merged 2026-10-09 (randomRoom keeps rawValue 19).
+Not done: speed (~230 ms a frame; the performance skill), the fallback for GPUs without MetalFX's denoiser.
 
 **Why:** the user wants a denoiser trained on their own scenes that they control.
 **How to apply:** next steps in order: make the dataset (`make-dataset.sh`, detached) and let **all** references

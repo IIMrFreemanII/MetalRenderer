@@ -24,7 +24,7 @@ final class BenchmarkModesTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dataset-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir); unsetenv("METALRENDERER_DATASET_DIR"); unsetenv("METALRENDERER_DATASET") }
         setenv("METALRENDERER_DATASET_DIR", dir.path, 1)
-        setenv("METALRENDERER_DATASET", "scenes=cornell,clips=1,frames=2,spp=8,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=cornell,clips=1,frames=2,spp=8,pausedclips=0,heldclips=0", 1)
         let clip = dir.appendingPathComponent("cornell-1-0")
         XCTAssertEqual(Benchmark.dataset().map(\.name), ["cornell-1-0"])
         XCTAssertTrue(Benchmark.datasetReferences().isEmpty, "no rows yet")
@@ -103,24 +103,28 @@ final class BenchmarkModesTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dataset-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir); unsetenv("METALRENDERER_DATASET_DIR"); unsetenv("METALRENDERER_DATASET") }
         setenv("METALRENDERER_DATASET_DIR", dir.path, 1)
-        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=2,frames=20,pausedframes=50,pausedclips=1", 1)
+        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=2,frames=20,pausedframes=50,pausedclips=1,heldclips=0", 1)
         let clips = Benchmark.DatasetSpec().clipList
-        XCTAssertEqual(clips.map(\.name), ["cornell-1-0", "cornell-1-1", "cornell-1-p0", "stress-1-0", "stress-1-1", "stress-1-p0"])
+        XCTAssertEqual(clips.map(\.name), ["cornell-1-0", "cornell-1-1", "cornell-1-p0", "stress-1-0", "stress-1-1",
+                                           "stress-1-p0", "stress-1-p1", "stress-1-p2"], "the stress building: 2 more")
         let paused = clips.filter(\.paused)
         XCTAssertTrue(paused.allSatisfy { $0.drift == nil && $0.frames == 50 })
         XCTAssertTrue(clips.filter { !$0.paused }.allSatisfy { $0.drift != nil && $0.frames == 20 })
         XCTAssertNotEqual(paused[0].startTime, clips[0].startTime, "a moment of its own")
-        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=2,frames=20,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=2,frames=20,pausedclips=0,heldclips=0", 1)
         XCTAssertEqual(Benchmark.DatasetSpec().clipList.map(\.startTime), clips.filter { !$0.paused }.map(\.startTime),
                        "the moving clips are as they were without paused ones")
 
-        setenv("METALRENDERER_DATASET", "scenes=stress,clips=0,pausedclips=3", 1)
+        setenv("METALRENDERER_DATASET", "scenes=stress,clips=0,pausedclips=3,heldclips=0", 1)
         let stress = Benchmark.DatasetSpec().clipList
-        XCTAssertEqual(stress.map(\.name), ["stress-1-p0", "stress-1-p1", "stress-1-p2"])
+        XCTAssertEqual(stress.map(\.name), ["stress-1-p0", "stress-1-p1", "stress-1-p2", "stress-1-p3", "stress-1-p4"])
         XCTAssertEqual(stress[0].camera?.position, Benchmark.DatasetSpec.stressViews[1].position, "p0 as it was")
         XCTAssertNil(stress[2].camera, "the building's own camera over the aisle")
+        XCTAssertEqual(Set(stress.compactMap { $0.camera.map { "\($0.position)" } }).count, 4, "and every zone")
+        setenv("METALRENDERER_DATASET", "scenes=stress,clips=0,pausedclips=3,stresspausedextra=0,heldclips=0", 1)
+        XCTAssertEqual(Benchmark.DatasetSpec().clipList.count, 3)
 
-        setenv("METALRENDERER_DATASET", "scenes=cornell,clips=0,pausedframes=3,pausedclips=1,spp=8", 1)
+        setenv("METALRENDERER_DATASET", "scenes=cornell,clips=0,pausedframes=3,pausedclips=1,spp=8,heldclips=0", 1)
         let noisy = Benchmark.dataset()
         XCTAssertEqual(noisy.map(\.name), ["cornell-1-p0"])
         XCTAssertTrue(noisy[0].settings.paused && noisy[0].drift == nil && noisy[0].frames == 3)
@@ -139,7 +143,7 @@ final class BenchmarkModesTests: XCTestCase {
     func testDatasetShowcaseClips() {
         defer { unsetenv("METALRENDERER_DATASET"); unsetenv("METALRENDERER_GALLERY"); unsetenv("METALRENDERER_DATASET_DIR") }
         setenv("METALRENDERER_DATASET_DIR", emptyDatasetDirectory(), 1)   // not ./dataset, whose saved clips dataset() skips
-        setenv("METALRENDERER_DATASET", "scenes=showcase|randomroom|cornell,clips=1,rooms=1,frames=1,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=showcase|randomroom|cornell,clips=1,rooms=1,frames=1,pausedclips=0,heldclips=0", 1)
         setenv("METALRENDERER_GALLERY", "owl|demon", 1)
         let clips = Benchmark.DatasetSpec().clipList
         let showcase = clips.filter { $0.scene.kind == .showcase }
@@ -157,10 +161,45 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertTrue(noisy.allSatisfy { !$0.settings.post.isOn && !$0.settings.virtualGeometry.enabled })
         XCTAssertTrue(showcase.allSatisfy { $0.frames == 1 }, "the showcase's clips are as long as the others")
         XCTAssertEqual(clips.first { $0.scene.kind == .cornell }?.frames, 1)
-        setenv("METALRENDERER_DATASET", "scenes=showcase|cornell,clips=1,frames=20,showcaseframes=8,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=showcase|cornell,clips=1,frames=20,showcaseframes=8,pausedclips=0,heldclips=0", 1)
         let short = Benchmark.DatasetSpec().clipList
         XCTAssertTrue(short.filter { $0.scene.kind == .showcase }.allSatisfy { $0.frames == 8 }, "showcaseframes= cuts them")
         XCTAssertEqual(short.first { $0.scene.kind == .cornell }?.frames, 20)
+    }
+
+    /// Bulb rooms: `bulbrooms=` clips, each another room, with full-detail models and no lens like the random rooms.
+    func testDatasetBulbRooms() {
+        defer { unsetenv("METALRENDERER_DATASET"); unsetenv("METALRENDERER_DATASET_DIR") }
+        setenv("METALRENDERER_DATASET_DIR", emptyDatasetDirectory(), 1)
+        setenv("METALRENDERER_DATASET", "scenes=bulbroom|randomroom,rooms=2,bulbrooms=3,frames=20,pausedclips=0,heldclips=0", 1)
+        let clips = Benchmark.DatasetSpec().clipList
+        XCTAssertEqual(clips.map(\.name), ["bulbRoom-1-0", "bulbRoom-1-1", "bulbRoom-1-2", "randomRoom-1-0", "randomRoom-1-1"])
+        XCTAssertEqual(Set(clips.filter { $0.scene.kind == .bulbRoom }.map(\.scene.seed)).count, 3)
+        for clip in clips {
+            var s = RenderSettings()
+            clip.shared(&s)
+            XCTAssertFalse(s.virtualGeometry.enabled, clip.name)
+        }
+    }
+
+    /// Held clips: a still camera on the moving scene, long, with references for the last frames only (the ones before
+    /// build the history); the moving and paused clips are as they were without them.
+    func testDatasetHeldClips() {
+        defer { unsetenv("METALRENDERER_DATASET"); unsetenv("METALRENDERER_DATASET_DIR") }
+        setenv("METALRENDERER_DATASET_DIR", emptyDatasetDirectory(), 1)
+        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=1,pausedclips=1,stresspausedextra=0,heldclips=2,frames=20", 1)
+        let clips = Benchmark.DatasetSpec().clipList
+        XCTAssertEqual(clips.map(\.name), ["cornell-1-0", "cornell-1-p0", "cornell-1-h0", "cornell-1-h1",
+                                           "stress-1-0", "stress-1-p0", "stress-1-h0", "stress-1-h1"])
+        let held = clips.filter { $0.name.contains("-h") }
+        XCTAssertTrue(held.allSatisfy { $0.drift == nil && !$0.paused && $0.frames == 100 && $0.firstReference == 80 },
+                      "long, references for the last 20")
+        XCTAssertTrue(clips.filter { !$0.name.contains("-h") }.allSatisfy { $0.firstReference == 0 })
+        XCTAssertNil(held[2].camera, "the stress building's first: its camera over the aisle")
+        XCTAssertNotNil(held[3].camera, "then a zone")
+        setenv("METALRENDERER_DATASET", "scenes=cornell|stress,clips=1,pausedclips=1,stresspausedextra=0,heldclips=0,frames=20", 1)
+        let without = Benchmark.DatasetSpec().clipList
+        XCTAssertEqual(without.map(\.startTime), clips.filter { !$0.name.contains("-h") }.map(\.startTime))
     }
 
     /// A dataset folder that doesn't exist (so holds no saved clips).
@@ -173,7 +212,7 @@ final class BenchmarkModesTests: XCTestCase {
     func testDatasetStressClips() {
         defer { unsetenv("METALRENDERER_DATASET"); unsetenv("METALRENDERER_DATASET_DIR") }
         setenv("METALRENDERER_DATASET_DIR", emptyDatasetDirectory(), 1)
-        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20,pausedclips=0,heldclips=0", 1)
         let clips = Benchmark.DatasetSpec().clipList
         let stress = clips.filter { $0.scene.kind == .stress }
         XCTAssertEqual(stress.count, 4)
@@ -186,11 +225,11 @@ final class BenchmarkModesTests: XCTestCase {
             XCTAssertEqual(clip.frames, 20)
         }
         XCTAssertTrue(clips.filter { $0.scene.kind == .cornell }.allSatisfy { $0.camera == nil && $0.frames == 20 })
-        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20,stressframes=8,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20,stressframes=8,pausedclips=0,heldclips=0", 1)
         let short = Benchmark.DatasetSpec().clipList
         XCTAssertTrue(short.filter { $0.scene.kind == .stress }.allSatisfy { $0.frames == 8 })
         XCTAssertTrue(short.filter { $0.scene.kind == .cornell }.allSatisfy { $0.frames == 20 })
-        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20,pausedclips=0", 1)
+        setenv("METALRENDERER_DATASET", "scenes=stress|cornell,clips=4,frames=20,pausedclips=0,heldclips=0", 1)
         let noisy = Benchmark.dataset().filter { $0.settings.scene.kind == .stress }
         XCTAssertEqual(noisy.compactMap { $0.camera?.position }, stress.map { $0.camera!.position })
     }

@@ -11,7 +11,7 @@ extension Scene {
         var rng = SplitMix64(seed: (bulbs ? 0xB01B_0000 : 0x7EA1_0000) &+ UInt64(truncatingIfNeeded: seed))
         let kit = Kit(self)
         let w = rng.range(6, 20), d = rng.range(6, 18), h = rng.range(3, 7)
-        let openRoof = rng.next() < 0.33
+        let openRoof = rng.next() < 0.33 && !bulbs   // a bulb room is at night: no sun
 
         /// A colour from hue, saturation and value.
         func color(saturation: ClosedRange<Float> = 0...0.9, value: ClosedRange<Float> = 0.05...0.9) -> SIMD3<Float> {
@@ -121,8 +121,9 @@ extension Scene {
         }
 
         // Lights: 1 to 8 spheres, spots, panels and tubes, warm, cool or neon, some moving; the sun when open.
-        let brightness = (h / 3) * (h / 3)
-        for _ in 0..<(1 + rng.int(8)) {
+        // (A bulb room: up to two, dimmer: the bulbs light it.)
+        let brightness = (h / 3) * (h / 3), dim: Float = bulbs ? 0.25 : 1
+        for _ in 0..<(bulbs ? rng.int(3) : 1 + rng.int(8)) {
             let tint = rng.next() < 0.7 ? Scene.hue(simd_mix(SIMD3<Float>(1, 0.6, 0.3), SIMD3<Float>(0.7, 0.85, 1), SIMD3(repeating: rng.next())))
                                         : Scene.hue(color(saturation: 0.6...1, value: 1...1) + 0.01)
             let p = SIMD3<Float>(rng.range(-w / 2 + 0.5, w / 2 - 0.5), rng.range(0.6, h - 0.3), rng.range(-d / 2 + 0.5, d / 2 - 0.5))
@@ -137,14 +138,14 @@ extension Scene {
             let motion: LightMotion = moving ? .animated : .constant
             switch rng.int(4) {
             case 0:
-                addLight(.sphere(radius: rng.range(0.04, 0.2)), color: tint * rng.range(3, 15) * brightness, proxyMesh: kit.sphere,
+                addLight(.sphere(radius: rng.range(0.04, 0.2)), color: tint * rng.range(3, 15) * brightness * dim, proxyMesh: kit.sphere,
                          motion: motion) { LightPose(position: at($0)) }
             case 1:
                 let inner = rng.range(0.15, 0.5), outer = inner + rng.range(0.05, 0.3)
-                addLight(.spot(radius: rng.range(0.04, 0.1), inner: inner, outer: outer), color: tint * rng.range(20, 80) * brightness,
+                addLight(.spot(radius: rng.range(0.04, 0.1), inner: inner, outer: outer), color: tint * rng.range(20, 80) * brightness * dim,
                          motion: motion) { t in LightPose(position: at(t), direction: normalize(target - at(t))) }
             case 2:   // a panel on the ceiling, facing down (or high on a wall when open to the sky)
-                let size = SIMD2<Float>(rng.range(0.4, 2.5), rng.range(0.3, 1.5)), radiance = tint * rng.range(2, 9)
+                let size = SIMD2<Float>(rng.range(0.4, 2.5), rng.range(0.3, 1.5)), radiance = tint * rng.range(2, 9) * dim
                 if openRoof {
                     addLight(.rect(width: size.x, height: size.y), color: radiance, motion: .constant) { _ in
                         LightPose(position: [p.x, h - 0.3, -d / 2 + 0.03], direction: [0, 0, 1], tangent: [1, 0, 0])
@@ -156,7 +157,7 @@ extension Scene {
                 }
             default:
                 let axis = normalize(SIMD3<Float>(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)))
-                addLight(.tube(length: rng.range(0.5, 3), radius: 0.03), color: tint * rng.range(2, 10) * brightness, motion: motion) { t in
+                addLight(.tube(length: rng.range(0.5, 3), radius: 0.03), color: tint * rng.range(2, 10) * brightness * dim, motion: motion) { t in
                     LightPose(position: at(t), direction: axis)
                 }
             }
@@ -176,15 +177,17 @@ extension Scene {
 }
 
 extension Scene {
-    /// A bulb room's bulbs: 2 to 8 festoon strings sagging across the room and, sometimes, a marquee (a frame of bulbs
-    /// on a wall), 8 to 60 bulbs a string, as small as the market's (Scene+Lights.swift, buildMarket), warm white or
-    /// coloured, some strings chasing. Their total light doesn't depend on the count.
+    /// A bulb room's bulbs: 2 to 8 festoon strings sagging across the room at 2-3 m and, sometimes, a marquee (a frame
+    /// of bulbs on the wall ahead), 8 to 60 bulbs a string, as small as the market's (Scene+Lights.swift, buildMarket),
+    /// warm white or coloured, some strings chasing. Their total light doesn't depend on the count. The camera looks a
+    /// little up, so they are in view.
     fileprivate func addBulbs(width w: Float, depth d: Float, height h: Float, brightness: Float, kit: Kit,
                               rng: inout SplitMix64) {
+        defaultCamera.pitch = rng.range(0, 0.25)
         let palette: [SIMD3<Float>] = [[1.0, 0.15, 0.1], [0.15, 1.0, 0.25], [0.2, 0.35, 1.0], [1.0, 0.6, 0.1], [0.9, 0.2, 1.0]]
         let strings = 2 + rng.int(7), perString = 8 + rng.int(53)
         let marquee = rng.next() < 0.4 ? 24 + rng.int(57) : 0
-        let power = rng.range(4, 16) * brightness / Float(strings * perString + marquee)
+        let power = rng.range(1, 5) * brightness / Float(strings * perString + marquee)
         let radius: Float = rng.next() < 0.5 ? 0.025 : 0.04
         let coloured = rng.next()   // how many bulbs are coloured rather than warm white
         func bulbColor() -> SIMD3<Float> {
@@ -198,8 +201,8 @@ extension Scene {
         for i in 0..<strings {
             // Across the room's width or its depth, from wall to wall, a little under the ceiling.
             let across = rng.next() < 0.5, span = across ? w : d, other = across ? d : w
-            let at = rng.range(-other / 2 + 0.6, other / 2 - 0.6), y0 = h - rng.range(0.2, min(1.2, h * 0.3))
-            let sag = rng.range(0.2, min(1.0, h * 0.2)), skew = rng.range(-1, 1), chase = i % 3 == 1
+            let at = rng.range(-other / 2 + 0.6, other / 2 - 0.6), y0 = min(h - 0.15, rng.range(2.4, 3.4))
+            let sag = rng.range(0.15, 0.6), skew = rng.range(-1, 1), chase = i % 3 == 1
             for j in 0..<perString {
                 let s = (Float(j) + 0.5) / Float(perString)
                 let u = -span / 2 + 0.2 + (span - 0.4) * s, v = at + skew * (s - 0.5), y = y0 - 4 * sag * s * (1 - s)

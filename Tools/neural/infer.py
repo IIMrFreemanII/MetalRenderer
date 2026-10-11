@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 
 import common
-from model import WIDTHS, DenoisingUpscaler, prepare, to_linear
+from model import ARCH, SPLIT, WIDTHS, DenoisingUpscaler, prepare, to_linear
 from train import device
 
 
@@ -26,13 +26,16 @@ def run_clip(net, clip, dev, frames=None):
     state, outs = None, []
     for f in frames:
         r = common.row(clip, f)
-        a = {b: chw(common.load(clip, f, b), dev) for b in common.INPUTS}
+        v2 = net.arch["inputs"] == "v2"
+        a = {b: chw(common.load(clip, f, b), dev) for b in (common.INPUTS_V2 if v2 else common.INPUTS)}
         h, w = a["color"].shape[2:]
-        ph, pw = -h % 4, -w % 4   # the U-Net halves twice
+        step = 2 ** (len(net.widths) - 1)   # the U-Net halves at every level but the last
+        ph, pw = -h % step, -w % step
         if ph or pw:
             a = {b: F.pad(x, (0, pw, 0, ph), mode="replicate") for b, x in a.items()}
         exposure = torch.tensor([r["exposure"]], device=dev)
-        guides = prepare(a["color"], a["albedo"], a["specular"], a["normal"], a["roughness"], exposure)
+        guides = prepare(a["color"], a["albedo"], a["specular"], a["normal"], a["roughness"], exposure,
+                         *(a[k] for k in SPLIT if v2))
         if state is None:
             state = net.initial_state(1, *guides.shape[2:], dev)
         out, state = net(guides, a["motion"], torch.tensor([r["jitter"]], device=dev), state)
@@ -50,7 +53,7 @@ def main():
     args = p.parse_args()
     dev = device()
     ck = torch.load(args.checkpoint, map_location=dev)
-    net = DenoisingUpscaler(ck["factor"], ck.get("widths", WIDTHS)).to(dev)
+    net = DenoisingUpscaler(ck["factor"], ck.get("widths", WIDTHS), ck.get("arch", ARCH)).to(dev)
     net.load_state_dict(ck["model"])
     net.eval()
     scenes = [s for s in args.scenes.split(",") if s] or None

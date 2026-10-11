@@ -18,7 +18,7 @@ enum Kernel: Int, CaseIterable {
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
-    case neuralWarp, neuralPrepare, neuralConv, neuralPool, neuralFinish   // our own denoising upscaler (NeuralUpscaler)
+    case neuralWarp, neuralPrepare, neuralConv, neuralPool, neuralFinish, neuralKernelFinish   // our own denoising upscaler (NeuralUpscaler)
     case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
@@ -231,7 +231,7 @@ struct Pipelines {
     }
     var neural: NeuralPipelines {
         NeuralPipelines(warp: self[.neuralWarp], prepare: self[.neuralPrepare], conv: self[.neuralConv], pool: self[.neuralPool],
-                        finish: self[.neuralFinish])
+                        finish: self[.neuralFinish], kernelFinish: self[.neuralKernelFinish])
     }
     var lumen: LumenPipelines {
         LumenPipelines(probe: self[.lumenProbe], trace: self[.lumenTrace], filter: self[.lumenFilter], sh: self[.lumenSH],

@@ -29,16 +29,26 @@ nohup Tools/neural/make-dataset.sh > /dev/null 2>&1 &   # progress: dataset/run.
 Renders offscreen (no window). First every clip's noisy frames (minutes), then a path-traced reference for every
 frame (the long part: 1,660 of them, 62 GB; 6–54 s each on an M4 Max, ~10 h in all; ~70 s each on an
 M1 Max, 6–9 min for the showcase's and the stress building's). Stop it any time; run it again to carry on. The clip
-list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, the stress building's 4 zones, 24 random rooms
-and the showcase's 11 models, each on its own set; 20 frames a clip (`stressframes=` / `showcaseframes=` cut those two); 512
+list is `METALRENDERER_DATASET` (default: 11 handmade scenes × 4 clips, the stress building's 4 zones, 24 random rooms,
+12 bulb rooms (`bulbrooms=`: random rooms at night strung with dozens to hundreds of small bulbs, the light of the night
+market the other rooms don't have) and the showcase's 11 models, each on its own set; 20 frames a clip (`stressframes=` / `showcaseframes=` cut those two); 512
 spp; keys in `Benchmark.DatasetSpec`). Scenes with glTF models trace them at full detail and every clip
 runs without the lens (bloom, depth of field), in both runs (`DatasetClip.shared`).
 
 Each scene also has **paused clips** (`<scene>-<seed>-p<n>`; `pausedclips=`, `pausedframes=`, default 3 × 100 frames):
 a still camera on the paused scene, at a moment (room, model, stress zone or the building's own camera) of its own. Every frame is new noise over
 the same image, so it needs one reference, frame 0's, for all 100: long, still views cost almost nothing to add, and
-they are what teaches the net to keep accumulating while a view holds still, as MetalFX does. 42 of them: ~4,200 noisy
-frames (~95 GB, a few minutes) and 42 references.
+they are what teaches the net to keep accumulating while a view holds still, as MetalFX does. The stress building has 2
+more (`stresspausedextra=`): every zone and the camera over the aisle, where a still view flickers most.
+
+And **held clips** (`<scene>-<seed>-h<n>`; `heldclips=`, `heldframes=`, `heldrefs=`, default 1 × 100 frames): a still
+camera on the scene as it moves (objects, lights), with references for the last 20 frames only (the 80 before only
+build the history). The app runs for hundreds of frames: a net trained on 20-frame runs alone let moving objects and the
+light around them lag behind there (Cornell, objects moving: 25 dB against MetalFX's 31), and these taught it to drop
+stale history.
+
+`need=<buffer>` renders the noisy frames again of clips saved before that buffer existed (their cameras and times come
+out the same, so their references stay): `need=extra` brought every clip the v2 inputs (below).
 
 Macs with hardware ray tracing (M3 and later) render references much faster. To time a new scene first:
 `METALRENDERER_DATASET="scenes=cornell,clips=1,frames=1,spp=512" Tools/neural/make-dataset.sh -d /tmp/try`.
@@ -51,6 +61,9 @@ pixels next to bright lights; `train.py` leaves non-finite reference pixels out 
 (time, camera, jitter, exposure, sizes) and float16 arrays `fNNNN-<buffer>.npy`:
 - render resolution: `color` (noisy linear light, before exposure), `albedo`, `specular` (specular albedo),
   `normal` (world normal + view depth, sky −1), `depth` (reversed Z), `motion` (previous minus current pixel), `roughness`;
+  and the same light in parts (the composite's FLAG_SPLIT_OUTPUT): `diffuse` (light / albedo), `specularlight`
+  (specular light / specular albedo), `extra` (emission and fog in-scatter; alpha: how much of last frame shows the
+  surface, SVGF's reprojection test), with `color = albedo * diffuse + max(specular, 1e-3) * specularlight + extra.rgb`;
 - output resolution: `metalfx` (MetalFX's output, the baseline to beat), `reference` (supersampled path tracing).
 
 **Look at it:** `Tools/neural/.venv/bin/python Tools/neural/view.py dataset` writes `dataset/preview/*.png`: noisy
@@ -68,10 +81,18 @@ validating on new clips of them measures what it will show. Each epoch prints th
 MetalFX's on the same frames, and with paused clips held out, "still" scores: the last 20 of `--paused-length` (80)
 frames. Paused clips train in a batch every `--paused-every` (4; the shipped net 3): a random warm-up of up to 60 frames
 without gradients, then `--length` frames with. Their frame-to-frame term has its own weight, `--paused-temporal`
-(0.5): at 2 the net froze anything a still camera saw, moving objects included. Checkpoints: `best.pt` (moving and still validation alike), `last.pt`
+(0.5): at 2 the net froze anything a still camera saw, moving objects included. Held clips the same way, a batch every
+`--held-every` (4), a warm-up of up to `--held-length` - `--length` frames, then their last `--length`. Checkpoints: `best.pt` (moving and still validation alike), `last.pt`
 (`--resume`); `--init <checkpoint>` starts from another run's weights with a new schedule. The model (`model.py`): a
 recurrent U-Net at the render resolution over the noisy light, the guides and last frame's output (warped by the
-motion, folded 3×3 into the render resolution); `--widths` 32,48,64 is ~274k parameters, 64,96,128 ~968k.
+motion, folded 3×3 into the render resolution); `--widths` 32,48,64 is ~274k parameters, 64,96,128 ~968k, a level per
+width. Its architecture, kept in the checkpoint: `--inputs v2` (the light in parts and the history validity),
+`--head kernel` (with v2: softmax filter weights over the 3×3 noisy render pixels and the history for each part of the
+light, and the surface's colours accumulated over the jittered frames, instead of a colour of its own), `--warp
+bicubic` (cubic history, PyTorch's grid_sample, a = -0.75). `--augment` mirrors, turns and recolours each training sample (motion and jitter turn
+with it). `runs/v2-screen.sh` (local) compares them one change at a time. The app runs every architecture: `export.py` writes
+it into the .nnw (`arch`), NeuralUpscaler reads it (v2 nets get the composite's light in parts); NeuralUpscalerTests
+checks the kernels against PyTorch for the first net and a v2 one (golden-v2.nnw).
 
 ```bash
 .venv/bin/python infer.py runs/first/best.pt ../../dataset --scenes market,forest --png out/   # whole clips, side by side
@@ -99,14 +120,24 @@ room, the night market's street, a showcase model; the lens off, so nothing blur
 
 ## Status (Oct 2026)
 
-Done and verified on the M1 Max: the exporter (references line up with the noisy frames; MetalFX scores ~33 dB
-against them in the Cornell room), the training pipeline (runs; learns), the Metal kernels (match PyTorch to 0.11%;
-the test fails on deliberately broken kernels), the in-app path (`neuralq` runs; MetalFX frames bit-identical to
-before), random rooms. Not done: **no trained net yet** (only a one-minute smoke test, 16.7 dB vs MetalFX's 34.6).
+The shipped net (Assets/Neural/denoiser.nnw) is v2: `--inputs v2 --head kernel --warp bicubic --widths
+64,96,128,160` (2.07M parameters), 25 screening + 75 epochs, then fine-tuned with the held clips. Against MetalFX in
+the app (`neuralq`, PSNR in dB against 4-bounce references; flicker of a still frame):
+
+| | static | flicker | moving | camera |
+|---|---|---|---|---|
+| Cornell, ours / MetalFX | 32.20 / 32.01 | 0.54 / 1.11 | 31.41 / 31.43 | 31.16 / 31.40 |
+| stress, ours / MetalFX | 25.78 / 24.57 | 0.78 / 0.62 | 25.25 / 24.43 | 25.04 / 24.85 |
+
+and on the held-out market and forest clips (infer.py, whole clips) 24.75 / 24.48 moving, 26.82 / 26.19 still. The
+first net (v1, 968k) was better in Cornell (32.55, 32.19 moving) and worse elsewhere (stress 24.73, market and forest
+24.04 / 25.32). Screening (25 epochs each, the gap to MetalFX on the held-out clips, moving / still): v1 -0.99 / -1.56,
++ augmentation -1.25 / -1.99, + v2 inputs -1.27 / -1.95, + kernel head -0.21 / -0.43, + bicubic and a fourth level
+-0.11 / -0.11. Tried and dropped: gating the history by its validity (validity is noisy under jitter in foliage and
+thin lights: still views flickered 10x), capping the history's weight (helped the lag, cost the still views; the held
+clips fixed it instead). The Metal kernels match PyTorch to 68-83 dB on the app's own frames.
 
 Next:
-1. Make the dataset, let every reference finish (training and reference rendering would share the GPU), then
-   train (quality first).
-2. Speed: the kernels are the plain first version (~90 ms a frame at 1920×1200); simdgroup_matrix convolutions,
-   fused layers, then a smaller net (the `performance` skill).
-3. Use it where MetalFX's denoiser isn't available (today those GPUs fall back to 1× + SVGF): Capabilities.
+1. Speed: ~230 ms a frame at 1920×1200 (the v1 net ~120 ms, MetalFX 1.75 ms): simdgroup_matrix convolutions, fused
+   layers, then a smaller net (the `performance` skill).
+2. Use it where MetalFX's denoiser isn't available (today those GPUs fall back to 1× + SVGF): Capabilities.

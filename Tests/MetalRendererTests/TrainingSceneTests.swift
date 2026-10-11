@@ -33,6 +33,23 @@ final class TrainingSceneTests: XCTestCase {
         XCTAssertGreaterThan(Set(rooms.map(\.instances.count)).count, 1)
     }
 
+    /// A bulb room is another room for the seed, lit mostly by dozens to hundreds of small sphere lights, and the
+    /// same every time.
+    func testBulbRooms() {
+        func bulbRoom(_ seed: Int) -> Scene {
+            var s = SceneSettings(kind: .bulbRoom)
+            s.seed = seed
+            return Scene(s)
+        }
+        for seed in 100..<104 {
+            let a = bulbRoom(seed), b = bulbRoom(seed)
+            XCTAssertEqual(a.lights.count, b.lights.count, "seed \(seed)")
+            XCTAssertEqual(a.instances.map(\.transform), b.instances.map(\.transform), "seed \(seed)")
+            XCTAssertGreaterThanOrEqual(a.lights.count, 16, "seed \(seed)")
+            XCTAssertNotEqual(a.defaultCamera.position, room(seed).defaultCamera.position, "not the random room of the seed")
+        }
+    }
+
     /// The camera starts inside the room (its walls are the first instances: floor, back, left, right).
     func testTheCameraIsInside() {
         for seed in 100..<105 {

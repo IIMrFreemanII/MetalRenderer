@@ -2838,10 +2838,15 @@ final class Renderer: NSObject {
                                                    reset: upscalerReset), pass: "upscale")
             upscaled = (upscaler.hdrOutput, "upscale")
         } else if drawable != nil, let neural = neuralUpscaler {
+            // A dataset clip saved with our upscaler (neural.npy, to check the kernels against PyTorch's infer.py) starts
+            // its history at the first saved frame, as infer.py does.
+            if let benchmark, case .inputs = benchmark.current.dataset, benchmark.frameInConfig == benchmark.warmupFrames {
+                upscalerReset = true
+            }
             passes.run(neural.stages(pipelines.neural, NeuralInputs(
                 color: t.upscaleColor, albedo: t.albedo, specular: t.specularAlbedo, normalDepth: t.normalDepth[cur],
-                roughness: t.roughness, motion: t.pixelMotion, jitter: plan.jitter, exposure: plan.uniforms.post.x,
-                reset: upscalerReset)))
+                roughness: t.roughness, motion: t.pixelMotion, split: neural.weights.wantsSplit ? t.split : nil,
+                jitter: plan.jitter, exposure: plan.uniforms.post.x, reset: upscalerReset)))
             upscaled = (neural.hdrOutput, "neural")
         }
         if let drawable, let upscaled {

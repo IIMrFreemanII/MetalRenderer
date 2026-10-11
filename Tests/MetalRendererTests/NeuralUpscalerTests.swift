@@ -4,7 +4,8 @@ import Metal
 
 /// The neural upscaler's kernels (Shaders/Neural.metal) against the PyTorch model they implement (Tools/neural):
 /// Neural/golden.nnw holds seeded weights, two frames of inputs and PyTorch's output for each (export.py --golden).
-/// Two frames, so the second one checks the warp of the history and the state too.
+/// Two frames, so the second one checks the warp of the history and the state too. golden-v2.nnw is a v2 net: the
+/// light in parts, the kernel head, the bicubic warp and four U-Net levels (the 16 x 12 frame padded to 16 x 16).
 final class NeuralUpscalerTests: XCTestCase {
     private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     private var shaders: URL {
@@ -25,9 +26,13 @@ final class NeuralUpscalerTests: XCTestCase {
         return t
     }
 
-    func testKernelsMatchThePyTorchModel() throws {
+    func testKernelsMatchThePyTorchModel() throws { try check("golden") }
+
+    func testV2KernelsMatchThePyTorchModel() throws { try check("golden-v2") }
+
+    private func check(_ name: String) throws {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
-        let golden = try NeuralWeights(url: root.appendingPathComponent("Neural/golden.nnw"), device: device)
+        let golden = try NeuralWeights(url: root.appendingPathComponent("Neural/\(name).nnw"), device: device)
         let pipelines = try Pipelines(device: device, source: shaders, lightTypes: 0x3F, stats: false)
         let queue = try XCTUnwrap(device.makeCommandQueue())
         let shape = golden.shape("f0.color")
@@ -40,10 +45,12 @@ final class NeuralUpscalerTests: XCTestCase {
                 try texture(device, XCTUnwrap(golden.floats("f\(t).\(name)")), width: w, height: h, channels: channels, format: format)
             }
             let jitter = try XCTUnwrap(golden.floats("f\(t).jitter")), exposure = try XCTUnwrap(golden.floats("f\(t).exposure"))
+            let split = golden.wantsSplit ? (try input("diffuse", 3, .rgba16Float), try input("specularlight", 3, .rgba16Float),
+                                             try input("extra", 4, .rgba16Float)) : nil
             let inputs = NeuralInputs(color: try input("color", 3, .rgba16Float), albedo: try input("albedo", 3, .rgba16Float),
                                       specular: try input("specular", 3, .rgba16Float), normalDepth: try input("normal", 4, .rgba16Float),
                                       roughness: try input("roughness", 1, .r16Float), motion: try input("motion", 2, .rg16Float),
-                                      jitter: SIMD2(jitter[0], jitter[1]), exposure: exposure[0], reset: t == 0)
+                                      split: split, jitter: SIMD2(jitter[0], jitter[1]), exposure: exposure[0], reset: t == 0)
             let frame = try XCTUnwrap(Metal3Frame(queue: queue, profile: nil, split: false, overlap: false))
             frame.run(net.stages(pipelines.neural, inputs))
             frame.capture(net.hdrOutput, into: readback)
@@ -59,7 +66,7 @@ final class NeuralUpscalerTests: XCTestCase {
                     worst = max(worst, abs(g - e) / max(abs(e), floor))
                 }
             }
-            XCTAssertLessThan(worst, 0.01, "frame \(t): worst relative error \(worst)")
+            XCTAssertLessThan(worst, 0.01, "\(name) frame \(t): worst relative error \(worst)")
         }
     }
 }

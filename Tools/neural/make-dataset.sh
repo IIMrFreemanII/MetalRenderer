@@ -24,7 +24,7 @@ while getopts "d:h" opt; do
 done
 mkdir -p "$dir"
 log="$dir/run.log"
-spec=${METALRENDERER_DATASET:-"scenes=cornell|stress|spots|sun|area|tubes|emissive|mixed|fog|valley|market|forest|randomroom|showcase,clips=4,rooms=24,frames=20,spp=512"}
+spec=${METALRENDERER_DATASET:-"scenes=cornell|stress|spots|sun|area|tubes|emissive|mixed|fog|valley|market|forest|randomroom|bulbroom|showcase,clips=4,rooms=24,bulbrooms=12,frames=20,spp=512"}
 render="$repo/.claude/skills/offscreen/scripts/render.sh"
 runs="$dir/.runs"   # render.sh's logs and PNGs
 

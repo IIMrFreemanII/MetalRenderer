@@ -2,6 +2,8 @@
 
     python3 export.py runs/latest/best.pt [--out ../../Assets/Neural/denoiser.nnw]
     python3 export.py --golden ../../Tests/MetalRendererTests/Neural/golden.nnw   # the test's: seeded random weights
+    python3 export.py --golden ../../Tests/MetalRendererTests/Neural/golden-v2.nnw --inputs v2 --head kernel \
+        --warp bicubic --widths 8,12,16,20                                          # ...of a v2 net
 
 The .nnw container: "NNW1", a little-endian u32 length, that much JSON, zero padding to a multiple of 16, then the
 tensors' data. The JSON has the net's shape (factor, guides, hidden, widths) and `tensors`: name, shape, dtype ("f16"
@@ -15,8 +17,9 @@ checkpoint the weights are PyTorch's initialisation from a fixed seed.
 import argparse, json, os, struct
 import numpy as np
 import torch
+import torch.nn.functional as F
 
-from model import DenoisingUpscaler, GUIDES, HIDDEN, WIDTHS, prepare, to_linear
+from model import ARCH, DenoisingUpscaler, HIDDEN, SPLIT, WIDTHS, guides, prepare, to_linear
 
 
 def write_nnw(path, meta, tensors):
@@ -40,8 +43,14 @@ def write_nnw(path, meta, tensors):
 
 
 def golden(net, seed=1, h=12, w=16, frames=2):
+    """With more U-Net levels than the size divides by, the inputs are padded by repeating their edges, as the app
+    does (and infer.py), and the output cropped."""
     g = torch.Generator().manual_seed(seed)
     rand = lambda *s: torch.rand(*s, generator=g)
+    step = 2 ** (len(net.widths) - 1)
+    ph, pw = -h % step, -w % step
+    pad = lambda x: F.pad(x, (0, pw, 0, ph), mode="replicate") if ph or pw else x
+    v2 = net.arch["inputs"] == "v2"
     tensors, state = [], None
     for t in range(frames):
         color = rand(1, 3, h, w) ** 4 * 8          # mostly dim, some bright
@@ -50,14 +59,17 @@ def golden(net, seed=1, h=12, w=16, frames=2):
         normal[:, 3, 0, :3] = -1                     # some sky
         roughness, motion = rand(1, 1, h, w), (rand(1, 2, h, w) - 0.5) * 3
         jitter, exposure = rand(1, 2) - 0.5, torch.tensor([0.8])
+        split = [rand(1, 3, h, w) ** 4 * 8, rand(1, 3, h, w) ** 4 * 4, torch.cat([rand(1, 3, h, w) ** 6 * 4, rand(1, 1, h, w)], 1)] if v2 else []
         with torch.no_grad():
-            guides = prepare(color, albedo, specular, normal, roughness, exposure)
+            guides = prepare(*(pad(x) for x in [color, albedo, specular, normal, roughness]), exposure, *(pad(x) for x in split))
             if state is None:
-                state = net.initial_state(1, h, w, "cpu")
-            out, state = net(guides, motion, jitter, state)
+                state = net.initial_state(1, h + ph, w + pw, "cpu")
+            out, state = net(guides, pad(motion), jitter, state)
+        k = net.factor
+        out = out[..., :h * k, :w * k]
         hwc = lambda x: x[0].permute(1, 2, 0).numpy().astype(np.float32)
         for name, x in [("color", color), ("albedo", albedo), ("specular", specular), ("normal", normal),
-                        ("roughness", roughness), ("motion", motion)]:
+                        ("roughness", roughness), ("motion", motion)] + list(zip(SPLIT, split)):
             tensors.append((f"f{t}.{name}", hwc(x)))
         tensors.append((f"f{t}.jitter", jitter[0].numpy().astype(np.float32)))
         tensors.append((f"f{t}.exposure", exposure.numpy().astype(np.float32)))
@@ -71,16 +83,23 @@ def main():
     p.add_argument("checkpoint", nargs="?", help="none: seeded random weights, for --golden only")
     p.add_argument("--out", default=os.path.join(here, "../../Assets/Neural/denoiser.nnw"))
     p.add_argument("--golden", default="")
+    p.add_argument("--widths", default=",".join(map(str, WIDTHS)), help="without a checkpoint: the golden net's")
+    p.add_argument("--inputs", default=ARCH["inputs"])
+    p.add_argument("--head", default=ARCH["head"])
+    p.add_argument("--warp", default=ARCH["warp"])
     args = p.parse_args()
     if args.checkpoint:
         ck = torch.load(args.checkpoint, map_location="cpu")
-        net = DenoisingUpscaler(ck["factor"], ck.get("widths", WIDTHS))
+        net = DenoisingUpscaler(ck["factor"], ck.get("widths", WIDTHS), ck.get("arch", ARCH))
         net.load_state_dict(ck["model"])
     else:
         torch.manual_seed(0)
-        net = DenoisingUpscaler(3)
+        net = DenoisingUpscaler(3, tuple(int(x) for x in args.widths.split(",")),
+                                {"inputs": args.inputs, "head": args.head, "warp": args.warp})
     net.eval()
-    meta = {"factor": net.factor, "guides": GUIDES, "hidden": HIDDEN, "widths": list(net.widths)}
+    meta = {"factor": net.factor, "guides": guides(net.arch), "hidden": HIDDEN, "widths": list(net.widths)}
+    if net.arch != ARCH:
+        meta["arch"] = net.arch   # the app reads these (NeuralUpscaler); without them, the first net's
     weights = [(k, v.numpy().astype(np.float16)) for k, v in net.state_dict().items()]
     if args.checkpoint:
         write_nnw(args.out, meta, weights)

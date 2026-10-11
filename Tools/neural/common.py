@@ -3,7 +3,9 @@
 A dataset is the folder METALRENDERER_BENCH=dataset / datasetref write (Benchmark+Dataset.swift): one folder per clip,
 and in it per frame `fNNNN.json` (time, camera, jitter, exposure, sizes) and float16 arrays `fNNNN-<buffer>.npy`:
 render resolution: color (noisy linear light), albedo, specular (specular albedo), normal (xyz + view depth, sky -1),
-depth (reversed Z), motion (previous minus current pixel, render pixels), roughness;
+depth (reversed Z), motion (previous minus current pixel, render pixels), roughness; and since the v2 inputs the light
+in parts, color = albedo * diffuse + max(specular, 1e-3) * specularlight + extra (rgb: emission and fog), with in
+extra's alpha how much of last frame shows the pixel's surface;
 output resolution: metalfx (MetalFX's denoising scaler, the baseline) and reference (supersampled, path traced).
 Paused clips (`paused`) have one reference for all their frames.
 """
@@ -11,6 +13,7 @@ import glob, json, os
 import numpy as np
 
 INPUTS = ["color", "albedo", "specular", "normal", "motion", "roughness"]
+INPUTS_V2 = INPUTS + ["diffuse", "specularlight", "extra"]
 
 
 def matches(clip, names):
@@ -44,6 +47,12 @@ def paused(clip):
     """A paused clip (`<scene>-<seed>-p<n>`): a still camera on a paused scene, every frame new noise over the same
     image, so its one reference (frame 0's) is every frame's."""
     return os.path.basename(clip).split("-")[-1].startswith("p")
+
+
+def held(clip):
+    """A held clip (`<scene>-<seed>-h<n>`): a still camera on the moving scene, long, with references for its last
+    frames only (the ones before build the history)."""
+    return os.path.basename(clip).split("-")[-1].startswith("h")
 
 
 def array_path(clip, frame, buffer):

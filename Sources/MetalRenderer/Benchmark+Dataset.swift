@@ -19,14 +19,21 @@ import simd
 extension Benchmark {
     struct DatasetSpec {
         var scenes: [SceneKind] = [.cornell, .stress, .gallery, .spots, .sun, .area, .tubes, .emissive, .mixed, .fog, .valley,
-                                   .market, .forest, .randomRoom, .showcase]
+                                   .market, .forest, .randomRoom, .bulbRoom, .showcase]
         var clips = 4           // per scene, each with its own seed, start time and camera track
         var rooms = 24          // ...but this many random rooms (Scene+Training.swift): each clip is another room
+        var bulbRooms = 12      // ...and bulb rooms (random rooms strung with small bulbs)
                                 // (and the showcase has a clip per model of Assets/, each on its own set)
         var frames = 32         // saved per clip, after the warm-up
         var showcaseFrames: Int? = nil  // fewer of the showcase's, if set: its references are the slowest (fog, full-detail models)
         var stressFrames: Int? = nil    // ...and of the stress building's (32 lights, each traced at every bounce)
         var pausedClips = 3     // per scene, paused clips: long, still views (a model or room of their own)
+        var stressPausedExtra = 2   // ...and the stress building this many more: every zone and the camera over the
+                                    // aisle (thin edges, small lamps, far floors: where a still view flickers)
+        var heldClips = 1       // per scene, held clips: a still camera on the scene as it moves (objects, lights):
+                                // history to drop where things moved, though the camera didn't
+        var heldFrames = 100    // ...each this many frames, long, as the app runs: history that built up for a while
+        var heldReferences = 20 // ...and references for the last this many (the frames before only build the history)
         var pausedFrames = 100  // ...each this many frames, and one reference
         var spp = 1024          // frames averaged per reference
         var seed = 1
@@ -46,11 +53,16 @@ extension Benchmark {
                 case "scenes": scenes = kv[1].split(separator: "|").compactMap { SceneKind(envText: String($0)) }
                 case "clips": clips = Int(kv[1]) ?? clips
                 case "rooms": rooms = Int(kv[1]) ?? rooms
+                case "bulbrooms": bulbRooms = Int(kv[1]) ?? bulbRooms
+                case "stresspausedextra": stressPausedExtra = Int(kv[1]) ?? stressPausedExtra
                 case "frames": frames = Int(kv[1]) ?? frames
                 case "showcaseframes": showcaseFrames = Int(kv[1]) ?? showcaseFrames
                 case "stressframes": stressFrames = Int(kv[1]) ?? stressFrames
                 case "pausedclips": pausedClips = Int(kv[1]) ?? pausedClips
                 case "pausedframes": pausedFrames = Int(kv[1]) ?? pausedFrames
+                case "heldclips": heldClips = Int(kv[1]) ?? heldClips
+                case "heldframes": heldFrames = Int(kv[1]) ?? heldFrames
+                case "heldrefs": heldReferences = Int(kv[1]) ?? heldReferences
                 case "spp": spp = Int(kv[1]) ?? spp
                 case "seed": seed = Int(kv[1]) ?? seed
                 case "bounces": bounces = Int(kv[1]) ?? bounces
@@ -73,38 +85,54 @@ extension Benchmark {
             return c
         }
 
-        /// The clips, scene by scene: its moving clips, then its paused ones.
+        /// The clips, scene by scene: its moving clips, then its paused ones, then its held ones.
         var clipList: [DatasetClip] {
             let models = Scene.galleryFiles().map(Scene.showcaseName)
             return scenes.flatMap { kind -> [DatasetClip] in
-                let moving = kind == .randomRoom ? rooms : kind == .showcase ? models.count : clips
-                let paused = kind == .showcase && models.isEmpty ? 0 : pausedClips
-                return (0..<moving).map { clip(kind, $0, paused: false, models: models) }
-                    + (0..<paused).map { clip(kind, $0, paused: true, models: models) }
+                let moving = kind == .randomRoom ? rooms : kind == .bulbRoom ? bulbRooms : kind == .showcase ? models.count : clips
+                let none = kind == .showcase && models.isEmpty
+                let paused = none ? 0 : pausedClips + (kind == .stress && pausedClips > 0 ? stressPausedExtra : 0)
+                return (0..<moving).map { clip(kind, $0, .moving, models: models) }
+                    + (0..<paused).map { clip(kind, $0, .paused, models: models) }
+                    + (0..<(none ? 0 : heldClips)).map { clip(kind, $0, .held, models: models) }
             }
         }
 
+        enum ClipStyle {
+            case moving   // the camera drifts through the animation
+            case paused   // a still camera on the paused scene: one image under every frame's noise
+            case held     // a still camera on the scene as it moves
+        }
+
         /// Clip `c` of `kind`: a seed for the scene, a start time and, moving, a camera drift through the animation;
-        /// paused, a still camera on the paused scene, at a moment (and in a room, on a model) of its own.
-        private func clip(_ kind: SceneKind, _ c: Int, paused: Bool, models: [String]) -> DatasetClip {
-            let stream = UInt64(paused ? 0x80 + c : c)
+        /// paused or held, a still camera, at a moment (and in a room, on a model) of its own.
+        private func clip(_ kind: SceneKind, _ c: Int, _ style: ClipStyle, models: [String]) -> DatasetClip {
+            let paused = style == .paused
+            let stream = UInt64(style == .moving ? c : style == .paused ? 0x80 + c : 0xC0 + c)
             var rng = BlueNoise.SplitMix64(seed: UInt64(seed) &* 0x1_0000 &+ UInt64(kind.rawValue) &* 0x100 &+ stream)
             var scene = SceneSettings(kind: kind)
             if kind == .market { scene.lights = SceneSettings.marketLights }
-            if kind == .showcase { scene.showcase = models[(paused ? c + models.count / 2 : c) % models.count] }
-            scene.seed = seed * 100 + (paused ? 50 + c : c)
+            if kind == .showcase {
+                scene.showcase = models[(c + (style == .moving ? 0 : style == .paused ? models.count / 2 : models.count / 3)) % models.count]
+            }
+            scene.seed = seed * 100 + (style == .moving ? c : style == .paused ? 50 + c : 70 + c)
             let start = Float.random(in: 0..<(kind.dayCycle ?? 20), using: &rng)
             // Close-up scenes drift less: the showcase's camera is only about 2.4 m from its model; the stress
             // building's clips start inside a zone, a few metres from its partitions.
             let reach: Float = kind == .cornell || kind == .showcase ? 0.3 : kind == .stress ? 0.6 : 1
             let drift = CameraDrift(style: (c + kind.rawValue) % CameraDrift.styles, reach: reach, using: &rng)
-            let frames = paused ? pausedFrames : (kind == .showcase ? showcaseFrames : kind == .stress ? stressFrames : nil) ?? frames
-            // The stress building's paused clips: a zone, another, then the building's own camera high over the aisle.
+            let frames = paused ? pausedFrames : style == .held ? heldFrames
+                : (kind == .showcase ? showcaseFrames : kind == .stress ? stressFrames : nil) ?? frames
+            // The stress building's paused clips: a zone, another, then the building's own camera high over the aisle;
+            // its held ones: the camera over the aisle, then the zones.
             let views = DatasetSpec.stressViews, pausedViews: [Camera?] = [views[1], views[2], nil, views[3], views[0]]
-            return DatasetClip(name: "\(kind)-\(seed)-\(paused ? "p" : "")\(c)", index: c, scene: scene, startTime: start,
-                               drift: paused ? nil : drift, frames: frames,
-                               camera: kind == .stress ? (paused ? pausedViews[c % pausedViews.count] : views[c % views.count]) : nil,
-                               paused: paused)
+            let heldViews: [Camera?] = [nil] + views
+            let camera: Camera? = kind != .stress ? nil : style == .moving ? views[c % views.count]
+                : style == .paused ? pausedViews[c % pausedViews.count] : heldViews[c % heldViews.count]
+            let prefix = style == .moving ? "" : style == .paused ? "p" : "h"
+            return DatasetClip(name: "\(kind)-\(seed)-\(prefix)\(c)", index: c, scene: scene, startTime: start,
+                               drift: style == .moving ? drift : nil, frames: frames, camera: camera, paused: paused,
+                               firstReference: style == .held ? max(frames - heldReferences, 0) : 0)
         }
     }
 
@@ -117,6 +145,7 @@ extension Benchmark {
         var frames: Int         // saved, after the warm-up
         var camera: Camera?     // where it starts, if not the scene's own camera
         var paused = false      // the animation holds still: one image under every frame's noise, one reference
+        var firstReference = 0  // the frames before this have no reference (a held clip's: they only build the history)
 
         /// Settings both of its runs share. glTF models (random rooms, the gallery, the showcase) at full detail and
         /// with every texture level, so the references don't get finer meshes or mips than the noisy frames had (as the
@@ -124,7 +153,7 @@ extension Benchmark {
         /// before it anyway, and it would only change the saved MetalFX picture and cost time.
         func shared(_ s: inout RenderSettings) {
             s.post = PostSettings()
-            guard [.randomRoom, .gallery, .showcase].contains(scene.kind) else { return }
+            guard [.randomRoom, .bulbRoom, .gallery, .showcase].contains(scene.kind) else { return }
             s.virtualGeometry.enabled = false
             s.textureBudgetMB = 4096
         }
@@ -189,7 +218,7 @@ extension Benchmark {
         var list: [Config] = [], missing = 0
         for clip in spec.clipList.enumerated().sorted(by: { ($0.element.index, $0.offset) < ($1.element.index, $1.offset) }).map(\.element) {
             let dir = spec.directory.appendingPathComponent(clip.name)
-            for f in 0..<(clip.paused ? 1 : clip.frames) {
+            for f in (clip.paused ? 0..<1 : clip.firstReference..<clip.frames) {
                 let row = dir.appendingPathComponent(datasetFileName(frame: f, buffer: nil))
                 guard let data = try? Data(contentsOf: row), let frame = try? decoder.decode(DatasetFrame.self, from: data) else {
                     missing += 1

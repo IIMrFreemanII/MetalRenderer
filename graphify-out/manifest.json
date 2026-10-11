@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791495020.177129,
-    "seen": 1791495244.6220438,
-    "ast_hash": "9b7ce32dacb77902d7a99b52a6135b09",
+    "mtime": 1791670252.9273791,
+    "seen": 1791717869.69913,
+    "ast_hash": "da760e3c40d4ea987adfc9168d00a321",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -420,9 +420,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1791494387.585677,
-    "seen": 1791494997.9205492,
-    "ast_hash": "f89f0818cafd7c458a1e36dfcf30f46b",
+    "mtime": 1791604694.2220032,
+    "seen": 1791604934.977803,
+    "ast_hash": "3821a8b544075aa22c756d6d31a698c9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
@@ -450,9 +450,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
-    "mtime": 1791494373.7242234,
-    "seen": 1791494997.920598,
-    "ast_hash": "cb3f0ed80f8dfa5d1238909293acd95b",
+    "mtime": 1791699300.2115536,
+    "seen": 1791717869.6991758,
+    "ast_hash": "1c0b2008ae507b8db62fb9c40da87857",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/KernelVariantsTests.swift": {
@@ -1746,39 +1746,39 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Dataset.swift": {
-    "mtime": 1791495002.0194373,
-    "seen": 1791495244.6219919,
-    "ast_hash": "a4428ef488327d2b70350476cb333ce2",
+    "mtime": 1791699293.58226,
+    "seen": 1791717869.69907,
+    "ast_hash": "732e9299f65307a9ef23598c8afb3f29",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/NeuralUpscaler.swift": {
-    "mtime": 1791223192.0214105,
-    "seen": 1791494997.920543,
-    "ast_hash": "ebc6ab43f358e2ceb326019289dbe2bc",
+    "mtime": 1791717711.4062898,
+    "seen": 1791717869.6991072,
+    "ast_hash": "61acb77942ee3ea2271127dab2afe5ed",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Training.swift": {
-    "mtime": 1791495002.0205348,
-    "seen": 1791495244.6220548,
-    "ast_hash": "551ccb0e0956e40df2ccec0730243eb7",
+    "mtime": 1791495624.1814775,
+    "seen": 1791604934.9778292,
+    "ast_hash": "918fc6e70f0201b4c8bd796154b07c6a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Neural.metal": {
-    "mtime": 1791223192.025349,
-    "seen": 1791494997.920581,
-    "ast_hash": "90d2f0ef33762c460b8a53b40c8d2095",
+    "mtime": 1791717711.4064016,
+    "seen": 1791717869.699156,
+    "ast_hash": "a07977edc2fcd477774e2938b15f8f52",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/NeuralUpscalerTests.swift": {
-    "mtime": 1791494589.4954374,
-    "seen": 1791494997.920607,
-    "ast_hash": "1e195d5ec07cdd4473c1cfc6dd408f18",
+    "mtime": 1791604880.0415435,
+    "seen": 1791604934.97788,
+    "ast_hash": "38fb4b786cabcd84b5ffe698b56a41fc",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/TrainingSceneTests.swift": {
-    "mtime": 1791223192.1357536,
-    "seen": 1791494997.920616,
-    "ast_hash": "4d68564d4e41c376fc248bd1b9faf218",
+    "mtime": 1791495762.7743406,
+    "seen": 1791604934.977891,
+    "ast_hash": "fd8ccf41e4487eaad5a4cb30adb6aa54",
     "semantic_hash": ""
   },
   "Tools/eval/neural.py": {
@@ -1788,15 +1788,15 @@
     "semantic_hash": ""
   },
   "Tools/neural/common.py": {
-    "mtime": 1791347780.593685,
-    "seen": 1791494997.920625,
-    "ast_hash": "d3e82786cd1ae8f6c6b2225e25db0e66",
+    "mtime": 1791699634.0060492,
+    "seen": 1791717869.699212,
+    "ast_hash": "17644be8c018ea19147bdb3b8afe4482",
     "semantic_hash": ""
   },
   "Tools/neural/dataset.py": {
-    "mtime": 1791223192.1461885,
-    "seen": 1791494997.920625,
-    "ast_hash": "9b437f66289e1b22ed933d105c961c0d",
+    "mtime": 1791699634.0064414,
+    "seen": 1791717869.699212,
+    "ast_hash": "ea5e6e2b4a001882b040f240aa327414",
     "semantic_hash": ""
   },
   "Tools/neural/demo-video.sh": {
@@ -1806,33 +1806,33 @@
     "semantic_hash": ""
   },
   "Tools/neural/export.py": {
-    "mtime": 1791263349.493794,
-    "seen": 1791494997.920626,
-    "ast_hash": "0cf43e4c64422f3a8279c3e79252ac12",
+    "mtime": 1791717711.4059594,
+    "seen": 1791717869.699213,
+    "ast_hash": "cf114cb1c8349fa432362d15a58bf441",
     "semantic_hash": ""
   },
   "Tools/neural/infer.py": {
-    "mtime": 1791263354.5238087,
-    "seen": 1791494997.9206269,
-    "ast_hash": "146d8833c95a1e05bdef729a8efd360c",
+    "mtime": 1791495931.8880877,
+    "seen": 1791604934.9779048,
+    "ast_hash": "2a05d27e065395c24d3f7f66173f52cf",
     "semantic_hash": ""
   },
   "Tools/neural/make-dataset.sh": {
-    "mtime": 1791494679.8459365,
-    "seen": 1791494997.9206269,
-    "ast_hash": "505d0e09194e7846563f21130e9d8be4",
+    "mtime": 1791495363.0608037,
+    "seen": 1791604934.977906,
+    "ast_hash": "18d3c72b0fafb4abd04b3e776b706ef8",
     "semantic_hash": ""
   },
   "Tools/neural/model.py": {
-    "mtime": 1791263349.4932904,
-    "seen": 1791494997.9206269,
-    "ast_hash": "67e14825473711daf5e288b8a0221f84",
+    "mtime": 1791717711.4057283,
+    "seen": 1791717869.6992152,
+    "ast_hash": "8be5a216fe74e11e959492d80a289f00",
     "semantic_hash": ""
   },
   "Tools/neural/train.py": {
-    "mtime": 1791404555.2724907,
-    "seen": 1791494997.920628,
-    "ast_hash": "3d45d967a49110198d7057130b649e96",
+    "mtime": 1791717711.4061782,
+    "seen": 1791717869.6992152,
+    "ast_hash": "db1a753496c5facf94e41cf7053db755",
     "semantic_hash": ""
   },
   "Tools/neural/view.py": {
@@ -1908,9 +1908,9 @@
     "semantic_hash": ""
   },
   ".claude/memory/neural-denoiser-status-2026-10.md": {
-    "mtime": 1791439611.7823648,
-    "seen": 1791494997.920634,
-    "ast_hash": "2e4e2646777e12826d88ab542ba3d03d",
+    "mtime": 1791717750.0084457,
+    "seen": 1791717869.699223,
+    "ast_hash": "a37be5084f8b89e6e76cc5a95dc3a2a6",
     "semantic_hash": ""
   },
   ".claude/memory/plans/audit-backlog.md": {
@@ -1926,9 +1926,9 @@
     "semantic_hash": ""
   },
   "Tools/neural/README.md": {
-    "mtime": 1791494679.8461046,
-    "seen": 1791494997.920643,
-    "ast_hash": "4b8ab266a5feb3fa406c42c547b82d02",
+    "mtime": 1791717737.5408201,
+    "seen": 1791717869.6992362,
+    "ast_hash": "fe6109b79c2a310f16dfb73d14020e4e",
     "semantic_hash": ""
   },
   "Tools/neural/requirements.txt": {
@@ -1938,14 +1938,14 @@
     "semantic_hash": ""
   },
   "Tools/eval/refs/neural/cornell-ref-neural.png": {
-    "mtime": 1791403198.5713081,
-    "seen": 1791494997.920647,
+    "mtime": 1791717289.9146166,
+    "seen": 1791717869.699241,
     "ast_hash": "44018553600a2eff98c95390483d2e86",
     "semantic_hash": ""
   },
   "Tools/eval/refs/neural/stress-ref-neural.png": {
-    "mtime": 1791403198.571983,
-    "seen": 1791494997.920647,
+    "mtime": 1791717289.9194598,
+    "seen": 1791717869.699241,
     "ast_hash": "7b1916c2f4d0ef02d00333718cece4e8",
     "semantic_hash": ""
   }
