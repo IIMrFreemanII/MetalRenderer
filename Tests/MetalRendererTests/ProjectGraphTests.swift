@@ -75,7 +75,7 @@ final class ProjectGraphTests: XCTestCase {
         XCTAssertEqual(o.nodes[0].count, 13, "10 objects and 3 lights")
         let spinning = try XCTUnwrap(node(o, "t:Spinning cube"))
         XCTAssertEqual(spinning.info["Moves"], "animated")
-        XCTAssertTrue(spinning.assets.contains(AssetKey(kind: .mesh, name: "cube", local: true)))
+        XCTAssertTrue(spinning.assets.contains(AssetKey(kind: .mesh, name: "box", local: true)))
     }
 
     func testSystemsAndAggregates() throws {
@@ -248,8 +248,8 @@ final class ProjectGraphTests: XCTestCase {
         let floor = try XCTUnwrap(g["cornell:t:Room/Floor"])
         XCTAssertEqual(g.nodes[floor.parent].id, "cornell:t:Room")
         XCTAssertEqual(ProjectGraph.split("cornell:t:Room/Floor")?.outlineID, "t:Room/Floor")
-        // The cube is the Cornell room's own (local) mesh, used by four things: one node they all link to.
-        let cube = try XCTUnwrap(g.index["asset:cornell|mesh|cube"])
+        // The box is the Cornell room's own (local) mesh, used by four things: one node they all link to.
+        let cube = try XCTUnwrap(g.index["asset:cornell|mesh|box"])
         let users = g.edges.filter { $0.b == cube && $0.kind == .sharedAsset }
         XCTAssertGreaterThanOrEqual(users.count, 3)
         // The library's assets are there, used or not.
@@ -315,12 +315,13 @@ final class ProjectGraphTests: XCTestCase {
         let (g, _) = project(source: index)
         let file = try XCTUnwrap(g.index["src:Sources/MetalRenderer/Meshes.swift"])
         XCTAssertTrue(g.edges.contains { $0.b == file && $0.a == g.index["scene:cornell"] && $0.kind == .source })
-        // A system's files: those of an untagged scene's first system.
-        let spots = outline(SceneSettings(kind: .spots))
-        let system = try XCTUnwrap(spots.nodes.first { $0.kind == .system })
+        // A system's files: those of a scene of untagged things.
+        let loose = Scene(SceneSettings(kind: .cornell)) { s in s.addInstance(s.addMesh(Scene.cubeMesh()), s.addMaterial(albedo: .one), matrix_identity_float4x4) }
+            .makeOutline()
+        let system = try XCTUnwrap(loose.nodes.first { $0.kind == .system })
         index.systems[system.name] = index.systems["Physics"]
-        let h = ProjectGraph.build(outlines: ["spots": spots], source: index, kinds: [.spots])
-        XCTAssertTrue(h.edges.contains { $0.kind == .source && h.nodes[$0.a].id == "spots:\(system.id)" })
+        let h = ProjectGraph.build(outlines: ["cornell": loose], source: index, kinds: [.cornell])
+        XCTAssertTrue(h.edges.contains { $0.kind == .source && h.nodes[$0.a].id == "cornell:\(system.id)" })
     }
 
     func testTheRepositorysSourceIndex() throws {

@@ -9,12 +9,14 @@ extension Scene {
     func buildPainterWorkshop() {
         let kit = Kit(self)
         let w = settings.painterWorkshop
-        materialBackdrop(w.backdrop, kit)
+        object("Backdrop") { materialBackdrop(w.backdrop, kit) }
         let plinth = addPBRMaterial(baseColor: [0.16, 0.16, 0.17], metallic: 0, roughness: 0.5)
         let grey = addPBRMaterial(baseColor: [0.5, 0.5, 0.5], metallic: 0, roughness: 0.55)
-        kit.box([0, 0.05, 0], [2, 0.1, 2], plinth)
+        object("Plinth") { kit.box([0, 0.05, 0], [2, 0.1, 2], plinth) }
         let (mesh, transform, size) = painterSubject(w)
-        paintSubject = addInstance(mesh, grey, translate([0, 0.1, 0]) * transform)
+        paintSubject = object("Subject", assets: [AssetKey(kind: .painterDoc, name: w.document)]) {
+            addInstance(mesh, grey, translate([0, 0.1, 0]) * transform)
+        }
         var bounds = AABB()
         bounds.grow([-size.x / 2, 0, -size.z / 2])
         bounds.grow([size.x / 2, 0.1 + size.y, size.z / 2])

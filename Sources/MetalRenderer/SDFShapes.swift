@@ -65,6 +65,22 @@ struct SDFShape {
 
     var nodes: [Node]
 
+    /// What it is, for the outline: its first primitive ("box"), or a blend of it and others.
+    var kindName: String {
+        guard let first = nodes.first else { return "shape" }
+        let name: String
+        switch first.primitive {
+        case .sphere: name = "ball"
+        case .box: name = "box"
+        case .torus: name = "ring"
+        case .capsule: name = "capsule"
+        case .cylinder: name = "cylinder"
+        case .cone: name = "cone"
+        case .volume: name = "baked shape"
+        }
+        return nodes.count > 1 ? "\(name) blend" : name
+    }
+
     init(_ nodes: [Node]) {
         precondition(!nodes.isEmpty && nodes.count <= SDFShape.maxNodes, "an SDF shape has 1...\(SDFShape.maxNodes) nodes")
         self.nodes = nodes

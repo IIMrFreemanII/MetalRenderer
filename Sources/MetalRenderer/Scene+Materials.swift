@@ -14,13 +14,15 @@ extension Scene {
     func buildMaterialWorkshop() {
         let kit = Kit(self)
         let w = settings.materialWorkshop
-        materialBackdrop(w.backdrop, kit)
+        object("Backdrop") { materialBackdrop(w.backdrop, kit) }
         let material = addProceduralMaterial(graph: w.graph, catalog: MaterialCatalog.resolve(settings.materials))
         let plinth = addPBRMaterial(baseColor: [0.16, 0.16, 0.17], metallic: 0, roughness: 0.5)
         let shapes: [MaterialWorkshopSettings.Layout] = w.layout == .lineup ? [.sphere, .cube, .cylinder, .plane] : [w.layout]
         var bounds = AABB()
         for (i, shape) in shapes.enumerated() {
             let x = (Float(i) - Float(shapes.count - 1) / 2) * 2.6
+            beginObject("\(shape)".capitalized, assets: [AssetKey(kind: .materialGraph, name: w.graph)])
+            defer { endObject() }
             let (mesh, transform, size) = materialShape(shape)
             // A low plinth under it.
             kit.box([x, 0.05, 0], [2, 0.1, 2], plinth)

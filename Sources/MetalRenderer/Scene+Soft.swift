@@ -22,6 +22,7 @@ extension Scene {
             addStaticCollider(sdf: s, transform, friction: 0.7, restitution: 0.1)
         }
 
+        section("Steps")
         // The landing, 1.4 m up at the back, and four steps down toward the camera.
         let stone = addPBRMaterial(baseColor: [0.55, 0.52, 0.48], metallic: 0, roughness: 0.6)
         let width: Float = 5, rise: Float = 0.35, run: Float = 0.6, steps = 4, back: Float = -6, landing: Float = -4.5
@@ -34,6 +35,7 @@ extension Scene {
                   translate([0, height / 2, landing + run * (Float(k) - 0.5)]))
         }
         let foot = landing + run * Float(steps - 1)
+        section("Pegs and ring")
         // Pegs past the foot of the steps, and a ring lying on the floor beyond them.
         let wood = addPBRMaterial(baseColor: [0.75, 0.55, 0.35], metallic: 0, roughness: 0.6)
         let peg = SDFShape(.cylinder(halfHeight: 0.3, radius: 0.1, rounding: 0.03))
@@ -41,6 +43,7 @@ extension Scene {
         let rim = addPBRMaterial(baseColor: [0.3, 0.42, 0.6], metallic: 0, roughness: 0.3)
         fixed(SDFShape(.torus(major: 1.0, minor: 0.12)), rim, translate([0, 0.12, foot + 2.3]))
 
+        section("Soft bodies")
         // The soft bodies: a few shapes (each lattice made once), jelly colours, and every fifth one rubber.
         let shapes = [
             SDFShape(.sphere(radius: 0.24)),
@@ -67,6 +70,7 @@ extension Scene {
                         velocity: throwing, density: rubber ? 1100 : 1000, edge: rubber ? 2e-5 : 4e-3, friction: rubber ? 0.8 : 0.6)
         }
 
+        section("Lights")
         addLight(.rect(width: 5, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -1.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }

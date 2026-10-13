@@ -22,6 +22,7 @@ extension Scene {
         let wood = addPBRMaterial(baseColor: [0.55, 0.38, 0.22], metallic: 0, roughness: 0.6)
         let steel = addPBRMaterial(baseColor: [0.6, 0.62, 0.65], metallic: 1, roughness: 0.25)
 
+        section("Brazier")
         // The brazier: a deep bowl on a stand. Deep enough to hold the flames' lower halves (a young flame's picture
         // reaches 0.34 m below where it is born, on the rim): in a shallow one they hung in the air under it, seen
         // from below and in the floor.
@@ -37,6 +38,7 @@ extension Scene {
             return LightPose(position: fire + SIMD3(0, 0.35, 0), scale: SIMD3(repeating: flicker))
         }
 
+        section("Grinder")
         // The grinder: its housing, and on a shaft in front of it the wheel, facing the room, a steel bar pressed on
         // its rim. The wheel turns the other way to a clock as seen from the front (its top moving left; a real one
         // turns too fast to show, so it stands still), and the sparks leave the rim at the bar along it.
@@ -58,6 +60,7 @@ extension Scene {
         let plinthShape = addSDFShape(SDFShape(.cylinder(halfHeight: 0.4, radius: 0.35, rounding: 0.03)))
         let plinthInstance = addInstance(sdf: plinthShape, stone, translate(plinth + SIMD3(0, 0.4, 0)))
 
+        section("Lights")
         // A dim key light, so the smoke and the rain have something to scatter.
         addLight(.rect(width: 3, height: 1.5), color: SIMD3<Float>(0.75, 0.85, 1.0) * 1.2, motion: .constant) { _ in
             LightPose(position: [1.5, 6.97, 0], direction: [0, -1, 0], tangent: [1, 0, 0])
@@ -74,11 +77,12 @@ extension Scene {
             LightPose(position: lamp, direction: [0, -1, 0])
         }
 
+        section("Effects")
         // The effects (VFXLibrary: graphs the VFX editor edits), in the scene's own space; the colliders of its own
         // their Collide blocks name.
         let rainArea = (center: SIMD3<Float>(3.6, 6.5, 1.0), half: SIMD3<Float>(1.6, 0, 2.2))
         let rubbleAt = SIMD3<Float>(-1.9, 0.05, 2.2)
-        let rock = addMesh(Scene.rock(seed: 7))
+        let rock = addMesh(Scene.rock(seed: 7), label: "rock")
         addParticleCollider("floor", .plane(normal: [0, 1, 0], point: [0, 0.001, 0]))
         addParticleCollider("crate", .box(center: crate.center, halfExtents: crate.half))
         addParticleCollider("bowl", .shape(instance: bowl, shape: bowlShape))

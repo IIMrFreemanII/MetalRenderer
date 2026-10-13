@@ -52,18 +52,20 @@ extension Scene {
             print(String(format: "Showcase: %@ (%d triangles), %@ set", model.name, model.triangleCount, "\(look.stage)"))
             loadStep?.set(done: 1, detail: "\(look.stage) set")
         }
-        if !floats { addPlinth(stand, height: plinth) }
-        addKeyLight(stand)
-        switch look.stage {
-        case .studio: buildStudio(stand)
-        case .crypt: buildCrypt(stand)
-        case .forge: buildForge(stand)
-        case .underwater: buildUnderwater(stand)
-        case .neon: buildNeon(stand)
-        case .workshop: buildWorkshop(stand)
-        case .sanctum: buildSanctum(stand)
+        if !floats { object("Plinth") { addPlinth(stand, height: plinth) } }
+        object("Key light") { addKeyLight(stand) }
+        object("\(look.stage)".capitalized + " set") {
+            switch look.stage {
+            case .studio: buildStudio(stand)
+            case .crypt: buildCrypt(stand)
+            case .forge: buildForge(stand)
+            case .underwater: buildUnderwater(stand)
+            case .neon: buildNeon(stand)
+            case .workshop: buildWorkshop(stand)
+            case .sanctum: buildSanctum(stand)
+            }
         }
-        addMotes(stand)
+        object("Motes") { addMotes(stand) }
         defaultCamera = Scene.showcaseCamera(stand.target, extent: extent, view: look.view)
     }
 
@@ -83,7 +85,7 @@ extension Scene {
 
     /// A dark polished drum under the model, a thin ring of the accent colour round its top.
     private func addPlinth(_ s: Stand, height: Float) {
-        let drum = addMesh(Scene.cylinderMesh())
+        let drum = addMesh(Scene.cylinderMesh(), label: "cylinder")
         let r = max(s.radius * 1.15 + 0.2, 0.6)
         let stone = addPBRMaterial(baseColor: [0.05, 0.05, 0.055], metallic: 0, roughness: 0.2)
         addInstance(drum, stone, scale([r, height, r]))
@@ -103,6 +105,8 @@ extension Scene {
     /// Two spots high behind the model, left and right, `irradiance` W/m² on it: its outline, and two beams in the fog
     /// that meet at it.
     private func addRims(_ s: Stand, irradiance: Float = 3) {
+        beginObject("Rim lights")
+        defer { endObject() }
         let dist = max(4, s.extent.y * 2)
         for side: Float in [-1, 1] {
             let at = s.target + normalize(SIMD3<Float>(side * 0.8, 0.9, -1)) * dist
@@ -167,7 +171,7 @@ extension Scene {
         let iron = addPBRMaterial(baseColor: [0.3, 0.3, 0.32], metallic: 1, roughness: 0.45)
         kit.room(width: 12, height: 6, depth: 16, floor: floor, walls: brick, ceiling: true)
         let pit = SIMD3<Float>(-(s.radius + 1.6), 0, -1.6)
-        let drum = addMesh(Scene.cylinderMesh())
+        let drum = addMesh(Scene.cylinderMesh(), label: "cylinder")
         addInstance(drum, addMaterial(albedo: [0.1, 0.09, 0.08]), translate(pit) * scale([1.0, 0.35, 1.0]))
         addInstance(drum, addMaterial(albedo: .zero, emission: Scene.hue(s.look.accent) * 5), translate(pit) * scale([0.82, 0.37, 0.82]))
         addLight(.sphere(radius: 0.15), color: Scene.hue(s.look.accent) * 12, motion: .scaleOnly) { t in
@@ -308,7 +312,7 @@ extension Scene {
         let floor = addPBRMaterial(baseColor: [0.06, 0.06, 0.07], metallic: 0, roughness: 0.35)
         let stone = addMaterial(albedo: [0.3, 0.29, 0.32])
         addInstance(kit.quad, floor, scale([40, 1, 40]))
-        let drum = addMesh(Scene.cylinderMesh())
+        let drum = addMesh(Scene.cylinderMesh(), label: "cylinder")
         let r = max(3.2, s.radius + 2)
         addInstance(drum, stone, scale([r, 0.15, r]))
         addInstance(drum, addMaterial(albedo: .zero, emission: Scene.hue(s.look.accent) * 2),

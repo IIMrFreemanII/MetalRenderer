@@ -31,6 +31,7 @@ extension Scene {
         if let other = BuildingCatalog.registered(p.compare) { catalog = other }   // comparing: the saved definitions
         let kit = BuildingKit(self, textures: true)
 
+        section("Building", assets: [AssetKey(kind: .buildingStyle, name: p.style)])
         // The building: the workshop's own (or a city's, pinned), with its single-building edits.
         let spec = Scene.workshopSpec(p, catalog: catalog).spec
         let building = BuildingGenerator.generate(spec)
@@ -38,6 +39,7 @@ extension Scene {
         var focus = AABB(lo: [-spec.size.x / 2, 0, -spec.size.y / 2], hi: [spec.size.x / 2, building.height, spec.size.y / 2])
         let site = focus
 
+        section("Street")
         // Its street: two neighbours of its style, or the editor's variations of it in a row.
         var others: [(BuildingSpec, SIMD2<Float>)] = []
         if p.layout == .street {
@@ -62,6 +64,7 @@ extension Scene {
             focus.grow(AABB(lo: [at.x - n.size.x / 2, 0, at.y - n.size.y / 2], hi: [at.x + n.size.x / 2, made.height, at.y + n.size.y / 2]))
         }
 
+        section("Ground")
         // The ground: the lot and a pavement round it at the pavement's height, the road in front, a lawn beyond.
         let paving = SurfaceMaterial(color: [0.52, 0.5, 0.47], surface: .paving)
         let asphalt = SurfaceMaterial(color: [0.1, 0.1, 0.11], surface: .asphalt)
@@ -78,6 +81,7 @@ extension Scene {
         kit.addFlashlight()
         walkAreas = [WalkArea(rect: CityPlan.Rect(lo: SIMD2(site.lo.x, site.lo.z), hi: SIMD2(site.hi.x, site.hi.z)), building: building, at: .identity)]
 
+        section("Sky")
         // The sky: a still sun from the camera's left, or the moon and the city's night.
         if p.night {
             skyColor = [0.006, 0.009, 0.02]

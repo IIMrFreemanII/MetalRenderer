@@ -14,8 +14,8 @@ extension Scene {
     func buildVFXStage() {
         let kit = Kit(self)
         let backdrop = settings.stage.backdrop
-        buildBackdrop(backdrop, kit)
-        let rock = addMesh(Scene.rock(seed: 7))
+        object("Backdrop") { buildBackdrop(backdrop, kit) }
+        let rock = addMesh(Scene.rock(seed: 7), label: "rock")
         let stone = addPBRMaterial(baseColor: [0.5, 0.48, 0.45], metallic: 0, roughness: 0.7)
         addParticleCollider("floor", .plane(normal: [0, 1, 0], point: [0, 0.001, 0]))
         let names = settings.stage.effects
