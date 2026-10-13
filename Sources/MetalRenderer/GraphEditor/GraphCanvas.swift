@@ -12,6 +12,8 @@ protocol GraphCanvasModel: ObservableObject {
     /// The canvas's size, and its top left in the window (top-down points): the window's scrolls over it pan it.
     var canvasSize: CGSize { get set }
     var canvasOrigin: CGPoint { get set }
+    /// How far it zooms out and in.
+    var zoomLimits: ClosedRange<CGFloat> { get }
     /// The pointer's place on the canvas: where Tab and a right-click add.
     var hover: CGPoint { get set }
     /// Makes the canvas take the keys (Delete, Tab, Cmd-C) from a text field that had them.
@@ -45,6 +47,8 @@ protocol GraphCanvasModel: ObservableObject {
 }
 
 extension GraphCanvasModel {
+    var zoomLimits: ClosedRange<CGFloat> { 0.25...2 }
+
     /// The graph's point at canvas point `p`, and back.
     func graphPoint(_ p: CGPoint) -> SIMD2<Float> { SIMD2(Float((p.x - pan.x) / zoom), Float((p.y - pan.y) / zoom)) }
     func viewPoint(_ g: SIMD2<Float>) -> CGPoint { CGPoint(x: CGFloat(g.x) * zoom + pan.x, y: CGFloat(g.y) * zoom + pan.y) }
@@ -52,7 +56,7 @@ extension GraphCanvasModel {
     /// Zooms by `factor` about canvas point `about`.
     func zoom(by factor: CGFloat, about: CGPoint) {
         let g = graphPoint(about)
-        zoom = min(max(zoom * factor, 0.25), 2)
+        zoom = min(max(zoom * factor, zoomLimits.lowerBound), zoomLimits.upperBound)
         pan = CGPoint(x: about.x - CGFloat(g.x) * zoom, y: about.y - CGFloat(g.y) * zoom)
     }
 
@@ -60,7 +64,7 @@ extension GraphCanvasModel {
     func frame(_ bounds: CGRect, in size: CGSize) {
         let bounds = bounds.insetBy(dx: -40, dy: -40)
         guard bounds.width > 0, bounds.height > 0, size.width > 0, size.height > 0 else { return }
-        zoom = min(max(min(size.width / bounds.width, size.height / bounds.height), 0.25), 1.2)
+        zoom = min(max(min(size.width / bounds.width, size.height / bounds.height), zoomLimits.lowerBound), min(1.2, zoomLimits.upperBound))
         pan = CGPoint(x: (size.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
                       y: (size.height - bounds.height * zoom) / 2 - bounds.minY * zoom)
     }

@@ -2249,6 +2249,8 @@ final class Scene {
         let start = CFAbsoluteTimeGetCurrent()
         var triangles = 0
         loadStep?.set(done: 0, total: files.count)
+        beginObject("Exhibits")
+        defer { endObject() }
         for (i, url) in files.enumerated() {
             if loadStep?.isCancelled == true { break }   // another scene was asked for: this one is thrown away
             loadStep?.set(detail: url.deletingPathExtension().lastPathComponent)
@@ -2267,8 +2269,6 @@ final class Scene {
             object("Plinths/\(model.name)") { addInstance(cube, plinth, translate(p + [0, plinthHeight / 2, 0]) * scale([1.3, plinthHeight, 1.3])) }
             let base = translate(p + [0, plinthHeight, 0]) * rotate(-a, [0, 1, 0])
             let place = Scene.placement(model, size: 1.6)
-            beginObject("Exhibits")
-            defer { endObject() }
             if i % 5 == 1 {   // turntables
                 let speed: Float = i % 2 == 0 ? 0.25 : -0.2
                 addModel(model, url: url, transform: base * place) { t in base * rotate(speed * t, [0, 1, 0]) * place }

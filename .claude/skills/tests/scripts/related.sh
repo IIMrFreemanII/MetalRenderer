@@ -57,7 +57,8 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
       Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
       Sources/MetalRenderer/VFXEditor/*.swift) add VFXEditorTests ;;
-      Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ;;
+      Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ProjectGraphTests ;;
+      Sources/MetalRenderer/ProjectGraph/*.swift|Sources/MetalRenderer/ProjectGraphEditor/*.swift) add ProjectGraphTests ;;
       Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
       Sources/MetalRenderer/Painter/UV*.swift|Sources/MetalRenderer/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
       Sources/MetalRenderer/Painter/*.swift|Sources/MetalRenderer/PainterEditor/*.swift|Sources/MetalRenderer/Scene+Paint*.swift|Sources/MetalRenderer/Renderer+Painter.swift)
@@ -83,7 +84,7 @@ if [[ $suites == " " ]]; then
           Walker.swift|InteriorControls.swift|InteriorLifts.swift) add WalkerTests BuildingWorkshopTests ;;
           Scene+Buildings.swift|Scene+Interiors.swift) add BuildingWorkshopTests CityTests WorldTests WalkerTests ;;
           CatalogRegistry.swift) add PlantCatalogTests PlantEditorTests BuildingEditorTests ;;
-          CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
+          CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ProjectGraphTests ;;
           Scene+Stress.swift) add StressSceneTests ;;
           SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests CharacterBaseTests CharacterFaceTests ;;   # (the muscles' rig poses its bones by it)
           Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests CharacterBaseTests CharacterFaceTests CharacterHairTests ;;
@@ -93,20 +94,21 @@ if [[ $suites == " " ]]; then
           Face*.swift) add CharacterBaseTests CharacterFaceTests CharacterSkinTests CharacterHairTests ;;
           Scene+Characters.swift) add CharacterBaseTests CharacterHairTests ;;
           FBXReader.swift) add FBXTests ;;
-          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ;;
+          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ProjectGraphTests ;;
           PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
           Plant*.swift|BuiltInPlants.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests FoliageTests ForestTests ;;
           Scene+Plants.swift) add PlantWorkshopTests PlantGoldenTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
           SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests CharacterBaseTests ;;
-          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ;;
+          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ProjectGraphTests ;;
           FluidSurface.swift|Scene+Fluids.swift) add FluidTests ;;
           Particle*.swift|Scene+Particles.swift|Scene+Effects.swift) add ParticleTests VFXTests ;;
           MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests CharacterBaseTests ;;
           HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
-          Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;
+          Scene.swift) add SceneBuffersTests ProjectGraphTests ;;   # (its outline's tags, the overrides' way in)
+          SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
           RasterScene.swift) add RasterSceneTests ;;
           VSM.swift) add VSMTests ;;

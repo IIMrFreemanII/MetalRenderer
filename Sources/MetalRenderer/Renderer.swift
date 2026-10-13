@@ -600,6 +600,8 @@ final class Renderer: NSObject {
     var onSettings: ((_ settings: RenderSettings, _ update: Int, _ persist: Bool) -> Void)?
     /// Twice a second, when the stats (fps, GPU time, `statsLine`) are refreshed.
     var onTick: ((RendererStatus) -> Void)?
+    /// A scene installed: its outline (the Project Graph's).
+    var onOutline: ((SceneOutline) -> Void)?
     /// Every frame once its GPU work is done, while `debugActive`: the CPU time since the previous frame started and
     /// the GPU time, both in ms. For the Debug window's graph.
     var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
@@ -1401,7 +1403,7 @@ final class Renderer: NSObject {
     }
 
     private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
-        var segments = painterRingSegments()   // the Material Painter's brush, where the cursor meets the object
+        var segments = painterRingSegments() + selectionSegments()   // the Material Painter's brush, what the graph showed
         if let target = gizmoTarget, let gpu = particlesGPU {
             let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
             gizmoHandle = handle
@@ -1540,6 +1542,19 @@ final class Renderer: NSObject {
         }
         print(String(format: "Scene: %@, %d instances, %d lights, %@ (installed in %.0f ms)", scene.settings.kind.title,
                      sceneBuffers.instanceCount, scene.lights.count, builtAPI.title, installedMs))
+        if let target = pendingFrame, target.scope == MaterialAssignments.scope(scene.settings) || target.kind == scene.settings.kind {
+            frame(target)
+        }
+        // The Project Graph's outline of it (not of the open world's next tile, or the city's next interior).
+        if !(sameWorld && scene.settings.kind == oldSettings.kind) { publishOutline() }
+    }
+
+    /// The scene's outline to the Project Graph and its file.
+    private func publishOutline() {
+        guard OutlineStore.writes else { return }
+        let outline = scene.makeOutline()
+        onOutline?(outline)
+        OutlineStore.save(outline, wait: benchmark != nil)
     }
 
     /// What shading reads besides the scene's buffers: the textures and their table, and each slot's arguments.
@@ -2121,6 +2136,7 @@ final class Renderer: NSObject {
     }
 
     private func updateCamera(dt: Float) {
+        if flight != nil { fly(); return }
         if walker != nil {
             walk(dt)
             return
@@ -2279,6 +2295,59 @@ final class Renderer: NSObject {
         return status
     }
 
+    // MARK: - The Project Graph's camera
+
+    /// The camera flying to what the Project Graph showed (0.6 s, eased), and where it turns about when there; the
+    /// target asked for before its scene was in; the box drawn round what was shown (for a few seconds).
+    private var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double)?
+    private var pendingFrame: FrameTarget?
+    private var selectionBox: (box: AABB, until: Double)?
+    static let flightSeconds = 0.6
+
+    /// The camera at `target`: now if its scene is in, otherwise once it is.
+    func frame(_ target: FrameTarget) {
+        guard MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind && loading == nil else {
+            pendingFrame = target
+            return
+        }
+        pendingFrame = nil
+        var box = AABB()
+        for i in target.instances where scene.instances.indices.contains(i) && scene.instances[i].mask != 0 {
+            box.grow(scene.worldBounds(of: i))
+        }
+        if box.isEmpty, let b = target.box { box = b.aabb }
+        guard !box.isEmpty, box.lo.x.isFinite, box.hi.x.isFinite else { return }
+        if walker != nil { toggleWalk() }
+        let pitch = min(max(camera.pitch, -0.6), -0.1)
+        let framed = Camera.framing(box, fovY: camera.fovY, aspect: viewAspect, yaw: camera.yaw, pitch: pitch)
+        flight = (camera, framed.camera, framed.target, framed.distance, CACurrentMediaTime())
+        selectionBox = (box, CACurrentMediaTime() + 4)
+    }
+
+    /// The flight's next step (the frame's camera), and where it ends: an orbit in what orbits.
+    private func fly() {
+        guard let f = flight else { return }
+        let t = Float(min((CACurrentMediaTime() - f.start) / Renderer.flightSeconds, 1))
+        let e = t * t * (3 - 2 * t)
+        var c = f.to
+        c.position = f.from.position + (f.to.position - f.from.position) * e
+        var dyaw = (f.to.yaw - f.from.yaw).truncatingRemainder(dividingBy: 2 * .pi)
+        if dyaw > .pi { dyaw -= 2 * .pi } else if dyaw < -.pi { dyaw += 2 * .pi }
+        c.yaw = f.from.yaw + dyaw * e
+        c.pitch = f.from.pitch + (f.to.pitch - f.from.pitch) * e
+        camera = c
+        guard t >= 1 else { return }
+        flight = nil
+        orbit = scene.settings.kind.orbits ? (f.target, f.distance) : nil
+    }
+
+    /// The box round what the graph showed, as gizmo lines.
+    private func selectionSegments() -> [VFXGizmos.Segment] {
+        guard let s = selectionBox else { return [] }
+        guard CACurrentMediaTime() < s.until else { selectionBox = nil; return [] }
+        return VFXGizmos.box(s.box.centroid, (s.box.hi - s.box.lo) / 2, [1, 0.72, 0.25, 1], 2)
+    }
+
     /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
     func frameWorkshop() {
         guard scene.settings.kind.orbits, let focus = scene.focus else { return }
@@ -2344,6 +2413,7 @@ final class Renderer: NSObject {
 
     /// Starts making frames on the render thread (main thread, once, after `init` and the `on…` callbacks are set).
     func startRenderThread() {
+        perform { $0.publishOutline() }   // the first scene's (the others' when they are installed)
         renderThread.start { [weak self] in self?.drawFrame() ?? false }
     }
 

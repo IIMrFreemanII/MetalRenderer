@@ -15,8 +15,21 @@ extension Scene {
         var outline = SceneOutline(kind: settings.kind.envName, title: settings.kind.title, scope: MaterialAssignments.scope(settings),
                                    nodes: b.nodes, links: b.links, instanceCount: instances.count,
                                    lightCount: lights.filter { !$0.isMesh }.count)
+        outline.nodes[0].assets = subjectAssets()
         outline.buildMs = (CACurrentMediaTime() - start) * 1000
         return outline
+    }
+
+    /// What a workshop shows: the asset its editor edits.
+    private func subjectAssets() -> [AssetKey] {
+        switch settings.kind {
+        case .plants: return [AssetKey(kind: .species, name: settings.plants.species)]
+        case .buildings: return [AssetKey(kind: .buildingStyle, name: settings.buildings.style)]
+        case .characters: return [AssetKey(kind: .character, name: settings.characterWorkshop.character)]
+        case .materials: return [AssetKey(kind: .materialGraph, name: settings.materialWorkshop.graph)]
+        case .painter: return [AssetKey(kind: .painterDoc, name: settings.painterWorkshop.document)]
+        default: return []
+        }
     }
 
     /// What instance `i` is as its builder made it: its geometry and its size. An edit made of it (SceneOverrides) holds
@@ -245,8 +258,9 @@ private struct OutlineBuilder {
             assets.append(AssetKey(kind: .mesh, name: l.name, local: !l.shared))
             if let a = l.asset { assets.append(a) }
         } else if let name = scene.meshNames[inst.mesh] {
+            // (A name the renderer's caches know it by: "city <lot> <fingerprint>". Not an asset of the project's.)
             label = name
-            assets.append(AssetKey(kind: .mesh, name: name))
+            assets.append(AssetKey(kind: .mesh, name: name, local: true))
         } else {
             label = "mesh \(inst.mesh)"
             assets.append(AssetKey(kind: .mesh, name: label, local: true))

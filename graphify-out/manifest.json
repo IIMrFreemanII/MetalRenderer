@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791894513.5725067,
-    "seen": 1791895999.1373959,
-    "ast_hash": "6e66b0dbb586ad5da9f7029f859de8fe",
+    "mtime": 1791898421.4875367,
+    "seen": 1791900610.182611,
+    "ast_hash": "75df62dfcb969951388c03d614dd8927",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene.swift": {
-    "mtime": 1791896068.2148318,
-    "seen": 1791896990.1110551,
-    "ast_hash": "7d35aacfc2a7d372bcd016eefa01d538",
+    "mtime": 1791899263.3758304,
+    "seen": 1791900610.18264,
+    "ast_hash": "dd0aeba64a56dc27d09c6c91f540a2b3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
@@ -294,9 +294,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/main.swift": {
-    "mtime": 1791894513.5795546,
-    "seen": 1791895999.137491,
-    "ast_hash": "a5f37c155c145b9bafc2ea3495949fdd",
+    "mtime": 1791898451.490169,
+    "seen": 1791900610.1827211,
+    "ast_hash": "df519188671c6b0882211eda91273a7e",
     "semantic_hash": ""
   },
   "sky-sheet.png": {
@@ -444,9 +444,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791894513.563546,
-    "seen": 1791895999.137249,
-    "ast_hash": "2c35fa2a1927b4c9279d1f5ef6f89e73",
+    "mtime": 1791897210.421203,
+    "seen": 1791900610.182442,
+    "ast_hash": "f4632eb16a52e5fe5da64db0b4a02a9b",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -936,15 +936,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/tests/scripts/related.sh": {
-    "mtime": 1791894513.5618408,
-    "seen": 1791895999.137244,
-    "ast_hash": "772e7fc8046a6d08e335cfb13bdced1f",
+    "mtime": 1791900109.7156818,
+    "seen": 1791900610.1824079,
+    "ast_hash": "5aaf619a5bbf0f2cadc5330a92f37ebc",
     "semantic_hash": ""
   },
   ".claude/skills/tests/SKILL.md": {
-    "mtime": 1791894513.561637,
-    "seen": 1791895999.137562,
-    "ast_hash": "06a3d1f05b6b49754fdfd19af4f68ece",
+    "mtime": 1791900109.715918,
+    "seen": 1791900610.182806,
+    "ast_hash": "3c507f864c986cb1a634324e6d731d1a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VoxelGrids.swift": {
@@ -966,9 +966,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RendererController.swift": {
-    "mtime": 1791894513.5727706,
-    "seen": 1791895999.137397,
-    "ast_hash": "cb500a79d89bc3f858f5ef6bee79337c",
+    "mtime": 1791898248.2327073,
+    "seen": 1791900610.182612,
+    "ast_hash": "7e6fa7bfe09b52f74ce4828acd607b20",
     "semantic_hash": ""
   },
   ".claude/skills/code-graph/scripts/ensure-graph.sh": {
@@ -2118,9 +2118,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/GraphEditor/GraphCanvas.swift": {
-    "mtime": 1791894513.5645292,
-    "seen": 1791895999.137304,
-    "ast_hash": "29448c1978d3a457cea0bf7cfe381fe7",
+    "mtime": 1791898248.233084,
+    "seen": 1791900610.182498,
+    "ast_hash": "73d274c11660c7e9cd8c2fb626083253",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialCanvasView.swift": {
@@ -2532,9 +2532,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/Scene+Outline.swift": {
-    "mtime": 1791896741.9694974,
-    "seen": 1791896990.1110148,
-    "ast_hash": "6f9b52d3929adf950b59e08956f112a2",
+    "mtime": 1791900089.1883488,
+    "seen": 1791900610.182594,
+    "ast_hash": "8e11d830b265cf70965c8e94857664cb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/SceneOutline.swift": {
@@ -2544,15 +2544,273 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ProjectGraphTests.swift": {
-    "mtime": 1791896690.8729398,
-    "seen": 1791896990.1111748,
-    "ast_hash": "bfd01867c25250192a5513aa8aa7495d",
+    "mtime": 1791899947.2804594,
+    "seen": 1791900610.18276,
+    "ast_hash": "9d238c9729ad5eb479469974a79b9d4b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/SceneOverrides.swift": {
     "mtime": 1791896068.2157793,
     "seen": 1791896990.111018,
     "ast_hash": "72cbbf24490f8857a9140a57229302c2",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/area.json": {
+    "mtime": 1791898222.0555723,
+    "seen": 1791900610.182409,
+    "ast_hash": "3d7024c2f3f5a2830408bba49841e9ac",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/buildings.json": {
+    "mtime": 1791900329.0002005,
+    "seen": 1791900610.18241,
+    "ast_hash": "d77847df64eb13a19a65959f7b63ea1a",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/city.json": {
+    "mtime": 1791900323.3591092,
+    "seen": 1791900610.182411,
+    "ast_hash": "6b516a300494b7cfd122c71ac49fa378",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/citynight.json": {
+    "mtime": 1791900323.7173898,
+    "seen": 1791900610.1824121,
+    "ast_hash": "69a3b5c57faf76893dba96f6e7c3d8c8",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/cornell.json": {
+    "mtime": 1791900317.4468813,
+    "seen": 1791900610.182413,
+    "ast_hash": "06c404410e787e0473eff3ab573a92a5",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/crowd.json": {
+    "mtime": 1791898242.6662557,
+    "seen": 1791900610.182413,
+    "ast_hash": "791d2351ed37e6efa1bd97ea8da148cb",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/emissive.json": {
+    "mtime": 1791898225.3081393,
+    "seen": 1791900610.182414,
+    "ast_hash": "602321cb1b496e80a270db4e6183e379",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/fluids.json": {
+    "mtime": 1791898287.2369783,
+    "seen": 1791900610.182415,
+    "ast_hash": "43cefadd56913761bee5bb056f96780c",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/fog.json": {
+    "mtime": 1791898230.624488,
+    "seen": 1791900610.182416,
+    "ast_hash": "bfe37fa5bfb00498c29e7c7093e0a002",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/forest.json": {
+    "mtime": 1791898240.020727,
+    "seen": 1791900610.182417,
+    "ast_hash": "630f6296dd9cb4a7bcf9753978555a78",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/gallery.json": {
+    "mtime": 1791900318.7586534,
+    "seen": 1791900610.182417,
+    "ast_hash": "5f152d162006fbf626da1163e1cb429f",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/hair.json": {
+    "mtime": 1791898279.5459979,
+    "seen": 1791900610.1824179,
+    "ast_hash": "b80b6bd1796b5899a0e23a37d1f73026",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/market.json": {
+    "mtime": 1791898236.8502715,
+    "seen": 1791900610.182419,
+    "ast_hash": "219a1534907f81b4fedbab93d815e706",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/materials.json": {
+    "mtime": 1791898316.6926744,
+    "seen": 1791900610.182419,
+    "ast_hash": "9e0f77bd0f478fa29b7da1e9812b89ec",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/mireland.json": {
+    "mtime": 1791898322.3918781,
+    "seen": 1791900610.18242,
+    "ast_hash": "7547f8c4ec191d97a878c3796cd7ae44",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/mixed.json": {
+    "mtime": 1791898227.8726978,
+    "seen": 1791900610.182421,
+    "ast_hash": "f3b54755791574384c3c661e5be90717",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/muscles.json": {
+    "mtime": 1791898282.1586957,
+    "seen": 1791900610.182422,
+    "ast_hash": "cb836629a11cee625297ee20f7f8dd78",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/painter.json": {
+    "mtime": 1791898325.1084447,
+    "seen": 1791900610.182422,
+    "ast_hash": "608c737b38d3080bd7b1d703a5d6651d",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/particles.json": {
+    "mtime": 1791898292.9857554,
+    "seen": 1791900610.182423,
+    "ast_hash": "acbedce4f6dd27f4da6dc75a612db0e7",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/people.json": {
+    "mtime": 1791898309.8307734,
+    "seen": 1791900610.182424,
+    "ast_hash": "7d02d2ced501c36d7b6374d6b39ae170",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/physics.json": {
+    "mtime": 1791898268.9507601,
+    "seen": 1791900610.182424,
+    "ast_hash": "d20dd424e5f51a7e32ebaba9de558288",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/plants.json": {
+    "mtime": 1791898294.3465934,
+    "seen": 1791900610.182425,
+    "ast_hash": "fba9694cb008b7700ab95b71fb6a02ec",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/ragdolls.json": {
+    "mtime": 1791898274.0038562,
+    "seen": 1791900610.1824262,
+    "ast_hash": "3643744ec780d49f506fcfdd38e3f051",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/shapes.json": {
+    "mtime": 1791898263.9496307,
+    "seen": 1791900610.1824262,
+    "ast_hash": "9b148bfb5d05a232668fa22cbf7deaad",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/showcase.json": {
+    "mtime": 1791898258.4758687,
+    "seen": 1791900610.182427,
+    "ast_hash": "2693f69eeb38aff83fa7d94c5b870d07",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/softbodies.json": {
+    "mtime": 1791898281.7281902,
+    "seen": 1791900610.182428,
+    "ast_hash": "275106ce2f5576632142f89e9b462ad2",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/spots.json": {
+    "mtime": 1791898217.3715105,
+    "seen": 1791900610.182428,
+    "ast_hash": "ae4af76e9bce22439dfbc51cf6db8609",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/stress.json": {
+    "mtime": 1791898142.4403572,
+    "seen": 1791900610.1824288,
+    "ast_hash": "23a3b7ec287fc6087c4b8a2b7db62b55",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/sun.json": {
+    "mtime": 1791898219.9062772,
+    "seen": 1791900610.18243,
+    "ast_hash": "38c2ef902d99f99f0c9e76ebade06484",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/tubes.json": {
+    "mtime": 1791898224.2581294,
+    "seen": 1791900610.182431,
+    "ast_hash": "c87dc1ac5a6d82a346aa6dd6400489c1",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/valley.json": {
+    "mtime": 1791898233.9641492,
+    "seen": 1791900610.182431,
+    "ast_hash": "067da1c9230ac238ae57b78eb6ce6816",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/vfxstage.json": {
+    "mtime": 1791898313.0149577,
+    "seen": 1791900610.182432,
+    "ast_hash": "4fa3c554ab5a419d6c8e9be57504d4eb",
+    "semantic_hash": ""
+  },
+  "Assets/Scenes/Outlines/world.json": {
+    "mtime": 1791900325.4148808,
+    "seen": 1791900610.1824331,
+    "ast_hash": "256e16b3984abed2243dbfe808003d29",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraph/GraphLayout.swift": {
+    "mtime": 1791899567.665667,
+    "seen": 1791900610.182592,
+    "ast_hash": "e4cee18640951aa69975ed16cb1fca4f",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraph/OutlineStore.swift": {
+    "mtime": 1791897115.4968395,
+    "seen": 1791900610.182593,
+    "ast_hash": "60db8f1a5c6d7e94e3056d8207cde4b8",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraph/ProjectGraph.swift": {
+    "mtime": 1791899263.3755088,
+    "seen": 1791900610.182593,
+    "ast_hash": "802dbe7c2cb54816187d9dd467d3ac86",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraph/SourceIndex.swift": {
+    "mtime": 1791897115.5110595,
+    "seen": 1791900610.1825972,
+    "ast_hash": "008ac4fa15ad43b64976913a5d1cd212",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraphEditor/ConeTreeView.swift": {
+    "mtime": 1791898613.0015805,
+    "seen": 1791900610.1825979,
+    "ast_hash": "5565ddab67efc8e39a53e8715176e274",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphCanvas.swift": {
+    "mtime": 1791898320.3356938,
+    "seen": 1791900610.1825979,
+    "ast_hash": "72b1f9dd5870011ab7592a63c3107917",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphModel.swift": {
+    "mtime": 1791899263.3752854,
+    "seen": 1791900610.1825988,
+    "ast_hash": "d8a07bd60c17b2806cfcfab7e02ab4c8",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphPanel.swift": {
+    "mtime": 1791898436.9864392,
+    "seen": 1791900610.1826,
+    "ast_hash": "482191372607c28eba5da1d8f3f47d7e",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphView.swift": {
+    "mtime": 1791898388.9052424,
+    "seen": 1791900610.1826,
+    "ast_hash": "8f0e03e16ff59fb40d3c0c2a593188a0",
+    "semantic_hash": ""
+  },
+  ".claude/notes/project-graph-handoff.md": {
+    "mtime": 1791900128.4154274,
+    "seen": 1791900610.182797,
+    "ast_hash": "5f10764d801b10019275649e2fa9046c",
     "semantic_hash": ""
   }
 }
