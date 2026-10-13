@@ -23,7 +23,7 @@ extension Benchmark {
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
-        "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
+        "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -32,6 +32,15 @@ extension Benchmark {
             print("METALRENDERER_BENCH=\(mode) isn't a mode (\(modes.keys.sorted().joined(separator: ", "))): running the default list")
         }
         return standard()
+    }
+
+    /// Every scene made once, a frame each: their outlines for the Project Graph (OutlineStore writes them).
+    private static func outlines() -> [Config] {
+        SceneKind.allCases.map { kind in
+            var c = Config("outline \(kind.envName)", scale: 0.25, gi: nil, scene: SceneSettings(kind: kind)).still(at: 0)
+            c.frames = 1
+            return c
+        }
     }
 
     // MARK: - Shared pieces

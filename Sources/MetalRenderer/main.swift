@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var painterPanel: PainterPanel?
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
+    private var projectGraph: ProjectGraphPanel?
     private var loadingOverlay: LoadingOverlay?
     private var offscreen: OffscreenSurface?
 
@@ -102,6 +103,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           X / Shift-Cmd-E   show the VFX Editor (particle effects as node graphs; its window: Tab adds a node, Delete removes)
           O / Shift-Cmd-M   show the Material Designer (procedural materials as node graphs, baked on the GPU; the
                        material workshop shows them path traced; Pick gives a material in the view a graph)
+          Y / Shift-Cmd-G   show the Project Graph (the scenes, what they are made of and the assets they share, as a
+                       graph: click selects, double-click opens its editor, Return flies the camera to it, Pick selects
+                       what you click in the view)
           V / Shift-Cmd-P   show the Material Painter (layers of materials painted onto an object: Pick one, or the
                        painter workshop; Paint or Tab in its window: drag paints, right-drag orbits, [ ] brush size)
           Shift-V      walk (in the building workshop, the city): W A S D, Shift runs, Space jumps, C or Control
@@ -144,6 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.painterPanel = painterPanel
         if PainterPanel.wasVisible || controller.settings.scene.kind == .painter { painterPanel.show(nextTo: window) }
         controller.onTogglePainter = { [weak self] in self?.togglePainter(nil) }
+        let graph = ProjectGraphPanel(host: controller) { [weak self] target in self?.open(target) }
+        projectGraph = graph
+        if ProjectGraphPanel.wasVisible { graph.show(nextTo: window) }
+        controller.onToggleProjectGraph = { [weak self] in self?.toggleProjectGraph(nil) }
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
         controller.observeSettings { [weak self] s in
@@ -173,6 +181,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let vfx = vfxEditor, vfx.isVisible, controller.settings.scene.kind != .plants { return vfx.model.undo }
         return plantEditor?.model.undo
+    }
+
+    @objc private func toggleProjectGraph(_ sender: Any?) {
+        projectGraph?.toggle(nextTo: window)
+    }
+
+    /// The Project Graph's double-click: the editor of what was clicked, at it.
+    private func open(_ target: EditorTarget) {
+        switch target {
+        case .material(let name):
+            materialEditor?.show(nextTo: window)
+            materialEditor?.model.select(name)
+        case .effect(let name):
+            vfxEditor?.show(nextTo: window)
+            vfxEditor?.model.select(name)
+        case .plant(let id):
+            plantEditor?.show(nextTo: window)
+            plantEditor?.model.select(id)
+        case .building(let id):
+            buildingEditor?.show(nextTo: window)
+            buildingEditor?.model.select(id)
+        case .character(let id):
+            characterEditor?.show(nextTo: window)
+            characterEditor?.model.select(id)
+        case .painter(let document):
+            guard let painter = painterPanel else { return }
+            painter.show(nextTo: window)
+            if let k = painter.model.status.objects.firstIndex(where: { $0.document == document }) { painter.model.object = k }
+        }
     }
 
     @objc private func toggleVFX(_ sender: Any?) {
@@ -209,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         renderer?.stopRenderThread()   // no frame half encoded while the app exits
         SettingsStore.flush()
+        projectGraph?.model.save()
     }
 
     /// File > Open…: glTF models, placed in front of the camera, or an HDR environment image for the sky.
@@ -256,6 +294,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let painterItem = appMenu.addItem(withTitle: "Material Painter…", action: #selector(togglePainter(_:)), keyEquivalent: "p")
         painterItem.keyEquivalentModifierMask = [.command, .shift]
         painterItem.target = self
+        let graphItem = appMenu.addItem(withTitle: "Project Graph…", action: #selector(toggleProjectGraph(_:)), keyEquivalent: "g")
+        graphItem.keyEquivalentModifierMask = [.command, .shift]
+        graphItem.target = self
         if !Benchmark.isEnabled {
             let item = appMenu.addItem(withTitle: "Loading Progress (P)", action: #selector(toggleLoading(_:)), keyEquivalent: "")
             item.target = self

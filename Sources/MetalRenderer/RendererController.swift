@@ -76,6 +76,10 @@ final class RendererController: InputHandler {
     var onToggleCharacters: (() -> Void)?       // H key
     var onToggleMaterials: (() -> Void)?        // O key
     var onTogglePainter: (() -> Void)?          // V key (Shift-V walks)
+    var onToggleProjectGraph: (() -> Void)?     // Y key
+    /// The last scene's outline (the Project Graph's), and who wants them.
+    private(set) var lastOutline: SceneOutline?
+    private var outlineObservers: [(SceneOutline) -> Void] = []
     /// The painter's status as the renderer last sent it, and who wants it.
     private(set) var painterStatus = PainterStatus()
     private var painterObservers: [(PainterStatus) -> Void] = []
@@ -115,6 +119,13 @@ final class RendererController: InputHandler {
             DispatchQueue.main.async { self?.ticked(status) }
         }
         renderer.onPainter = { [weak self] status in self?.painterChanged(status) }
+        renderer.onOutline = { [weak self] outline in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lastOutline = outline
+                for o in self.outlineObservers { o(outline) }
+            }
+        }
         renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
             DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
         }
@@ -204,10 +215,11 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" || key == "y" {
             if !event.isARepeat {
                 (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
-                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials : onToggleBuildings)?()
+                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials
+                    : key == "y" ? onToggleProjectGraph : onToggleBuildings)?()
             }
             return
         }
@@ -299,6 +311,15 @@ extension RendererController: PainterHost {
             for o in self.painterObservers { o(s) }
         }
     }
+}
+
+extension RendererController: ProjectGraphHost {
+    func observeOutline(_ observer: @escaping (SceneOutline) -> Void) {
+        outlineObservers.append(observer)
+        if let lastOutline { observer(lastOutline) }
+    }
+
+    func frame(_ target: FrameTarget) { renderer.perform { $0.frame(target) } }
 }
 
 extension RendererController: MaterialEditorHost {

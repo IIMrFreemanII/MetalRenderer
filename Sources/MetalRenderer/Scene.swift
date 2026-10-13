@@ -141,6 +141,8 @@ final class Scene {
         var proxyMaterial = -1
         var proxyEmission = SIMD3<Float>(repeating: 0)   // its radiance at scale 1
         var group = 0                         // shadow-denoiser channel (see assignLightGroups)
+        /// Its place among the lights as they were added (assignLightGroups sorts them): what the outline names it by.
+        var order = 0
 
         var isMesh: Bool { if case .mesh = kind { return true }; return false }
     }
@@ -331,6 +333,64 @@ final class Scene {
     func addGroup(name: String, count: Int, make: @escaping () -> [Instance]) {
         groups.append(InstanceGroup(name: name, count: count, make: make))
     }
+
+    /// What the builders say the scene's things are (the Project Graph's outline, Scene+Outline.swift): named objects
+    /// (`object`), each the instances, lights and effects added while it was open; and the meshes', assemblies' and SDF
+    /// shapes' names. Builders only append, so an object's things are ranges. Its lights are by `Light.order`.
+    struct ObjectTag {
+        var path: [String]
+        var instances: Range<Int>
+        var lights: Range<Int>
+        var effects: Range<Int>
+        /// What it is made from (a model file, a building's style).
+        var assets: [AssetKey]
+    }
+    private(set) var objectTags: [ObjectTag] = []
+    private var openTags: [(name: String, assets: [AssetKey], instances: Int, lights: Int, effects: Int)] = []
+    /// `shared`: the same mesh in every scene that has it (a model file's), not the scene's own. `asset`: what it is
+    /// part of (a plant species' wood).
+    private(set) var meshLabels: [Int: (name: String, shared: Bool, asset: AssetKey?)] = [:]
+    private(set) var assemblyLabels: [Int: String] = [:]
+    private(set) var sdfLabels: [Int: String] = [:]
+
+    /// What `body` adds is the object `path` ("Harbor/Crane": an object in a folder), inside the one open now, if any.
+    @discardableResult
+    func object<T>(_ path: String, assets: [AssetKey] = [], _ body: () throws -> T) rethrows -> T {
+        beginObject(path, assets: assets)
+        defer { endObject() }
+        return try body()
+    }
+
+    func beginObject(_ path: String, assets: [AssetKey] = []) {
+        openTags.append((path, assets, instances.count, lights.count, effects.count))
+    }
+
+    func endObject() {
+        guard let open = openTags.popLast() else { return }
+        let parent = openTags.flatMap { $0.name.split(separator: "/").map(String.init) }
+        objectTags.append(ObjectTag(path: parent + open.name.split(separator: "/").map(String.init),
+                                    instances: open.instances..<instances.count, lights: open.lights..<lights.count,
+                                    effects: open.effects..<effects.count, assets: open.assets))
+    }
+
+    /// What the Project Graph's edits did to the scene (Scene.applySceneOverrides).
+    var sceneOverrides = AppliedOverrides()
+
+    /// The edits' way in (SceneOverrides.swift): an instance changed, one appended, lights taken out.
+    func editInstance(_ i: Int, _ change: (inout Instance) -> Void) { change(&instances[i]) }
+    @discardableResult
+    func appendInstance(_ instance: Instance) -> Int {
+        instances.append(instance)
+        return instances.count - 1
+    }
+    func removeLights(where shouldRemove: (Light) -> Bool) { lights.removeAll(where: shouldRemove) }
+
+    /// Names a mesh, an assembly or an SDF shape for the outline ("oak", "lamp post"): unlike `meshNames`, only a label.
+    func label(mesh: Int, _ name: String, shared: Bool = false, asset: AssetKey? = nil) {
+        if mesh >= 0 { meshLabels[mesh] = (name, shared, asset) }
+    }
+    func label(assembly: Int, _ name: String) { if assembly >= 0 { assemblyLabels[assembly] = name } }
+    func label(sdf: Int, _ name: String) { if sdf >= 0 { sdfLabels[sdf] = name } }
     private(set) var meshes: [GPUMesh] = []
     /// Shapes given by signed distance fields (SDFShapes.swift), the baked grids their nodes may be, and each shape's box.
     private(set) var sdfShapes: [SDFShape] = []
@@ -564,6 +624,7 @@ final class Scene {
         finishLiquids()
         physics?.finish()
         applyPaintAssignments()
+        applySceneOverrides()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }
@@ -1005,6 +1066,9 @@ final class Scene {
         let quad = addMesh(Scene.quadMesh())
         let cube = addMesh(Scene.cubeMesh())
         let sphere = addMesh(Scene.icosphere(subdivisions: 3))
+        label(mesh: quad, "quad")
+        label(mesh: cube, "cube")
+        label(mesh: sphere, "sphere")
 
         let white = addMaterial(albedo: [0.75, 0.75, 0.75])
         let red = addMaterial(albedo: [0.65, 0.06, 0.05])
@@ -1014,35 +1078,45 @@ final class Scene {
 
         // Room: 10 wide, 5 high, 10 deep, open at the front (+Z) so a little sky light leaks in.
         let w: Float = 10, h: Float = 5, d: Float = 10
-        addInstance(quad, white, translate([0, 0, 0]) * scale([w, 1, d]))                                         // floor
-        addInstance(quad, white, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d]))                // ceiling
-        addInstance(quad, white, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))   // back
-        addInstance(quad, red, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))    // left
-        addInstance(quad, green, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))    // right
+        object("Room/Floor") { addInstance(quad, white, translate([0, 0, 0]) * scale([w, 1, d])) }
+        object("Room/Ceiling") { addInstance(quad, white, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d])) }
+        object("Room/Back wall") { addInstance(quad, white, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h])) }
+        object("Room/Left wall") { addInstance(quad, red, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
+        object("Room/Right wall") { addInstance(quad, green, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
 
         // Static objects
-        addInstance(cube, white, translate([-2.0, 1.6, -2.2]) * rotate(0.35, [0, 1, 0]) * scale([1.4, 3.2, 1.4]))
-        addInstance(cube, white, translate([2.2, 0.75, -1.2]) * rotate(-0.3, [0, 1, 0]) * scale(1.5))
-        addInstance(sphere, blue, translate([0.6, 0.7, 0.8]) * scale(0.7))
+        object("Tall box") { addInstance(cube, white, translate([-2.0, 1.6, -2.2]) * rotate(0.35, [0, 1, 0]) * scale([1.4, 3.2, 1.4])) }
+        object("Short box") { addInstance(cube, white, translate([2.2, 0.75, -1.2]) * rotate(-0.3, [0, 1, 0]) * scale(1.5)) }
+        object("Blue ball") { addInstance(sphere, blue, translate([0.6, 0.7, 0.8]) * scale(0.7)) }
 
         // Dynamic objects: their transforms change every frame, which only requires
         // rebuilding the (cheap) instance acceleration structure.
-        addInstance(cube, gold, matrix_identity_float4x4) { t in
-            translate([0, 2.8 + 0.25 * sin(1.3 * t), -2.0]) * rotate(0.8 * t, [1, 1, 0]) * scale(0.9)
+        object("Spinning cube") {
+            addInstance(cube, gold, matrix_identity_float4x4) { t in
+                translate([0, 2.8 + 0.25 * sin(1.3 * t), -2.0]) * rotate(0.8 * t, [1, 1, 0]) * scale(0.9)
+            }
         }
-        addInstance(sphere, white, matrix_identity_float4x4) { t in
-            translate([2.8 * sin(0.6 * t), 0.5, 2.0]) * scale(0.5)
+        object("Rolling ball") {
+            addInstance(sphere, white, matrix_identity_float4x4) { t in
+                translate([2.8 * sin(0.6 * t), 0.5, 2.0]) * scale(0.5)
+            }
         }
 
         // Moving sphere lights
-        addLight(color: SIMD3<Float>(1.0, 0.80, 0.60) * 30, radius: 0.15, sphereMesh: sphere) { t in
-            [2.2 * cos(0.5 * t), 4.0, -1.0 + 2.2 * sin(0.5 * t)]
+        object("Lights/Warm") {
+            addLight(color: SIMD3<Float>(1.0, 0.80, 0.60) * 30, radius: 0.15, sphereMesh: sphere) { t in
+                [2.2 * cos(0.5 * t), 4.0, -1.0 + 2.2 * sin(0.5 * t)]
+            }
         }
-        addLight(color: SIMD3<Float>(0.30, 0.50, 1.0) * 20, radius: 0.12, sphereMesh: sphere) { t in
-            [3.5 * sin(0.37 * t), 1.6 + 0.6 * sin(0.9 * t), -3.6]
+        object("Lights/Blue") {
+            addLight(color: SIMD3<Float>(0.30, 0.50, 1.0) * 20, radius: 0.12, sphereMesh: sphere) { t in
+                [3.5 * sin(0.37 * t), 1.6 + 0.6 * sin(0.9 * t), -3.6]
+            }
         }
-        addLight(color: SIMD3<Float>(1.0, 0.45, 0.15) * 15, radius: 0.12, sphereMesh: sphere) { t in
-            [-3.9 + 0.5 * sin(0.7 * t), 0.6, 0.8 + 1.6 * cos(0.45 * t)]
+        object("Lights/Orange") {
+            addLight(color: SIMD3<Float>(1.0, 0.45, 0.15) * 15, radius: 0.12, sphereMesh: sphere) { t in
+                [-3.9 + 0.5 * sin(0.7 * t), 0.6, 0.8 + 1.6 * cos(0.45 * t)]
+            }
         }
     }
 
@@ -1858,7 +1932,7 @@ final class Scene {
     @discardableResult
     func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, motion: LightMotion = .animated, proxy: Bool = true,
                   pose: @escaping (Float) -> LightPose) -> Int {
-        var light = Light(kind: kind, color: color, pose: pose, motion: motion)
+        var light = Light(kind: kind, color: color, pose: pose, motion: motion, order: lights.count)
         var mesh = -1, emission = SIMD3<Float>(repeating: 0)
         if !proxy {
             // Nothing drawn where it is (the walker's flashlight, at the eye).
@@ -2049,6 +2123,8 @@ final class Scene {
     /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
     /// materials and textures. `animation`, if given, replaces `transform` over time.
     func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+        beginObject(model.name, assets: [AssetKey(kind: .model, name: url.lastPathComponent)])   // the outline's: its parts, its lights
+        defer { endObject() }
         var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
         func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
             guard let ref else { return .max }
@@ -2086,6 +2162,7 @@ final class Scene {
         }
         for (i, mesh) in model.meshes.enumerated() where meshOf[i] == nil {
             meshOf[i] = (addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs), -1)
+            label(mesh: meshOf[i]!.mesh, "\(model.name)#\(i)", shared: true)
         }
         for part in model.parts {
             let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
@@ -2159,17 +2236,21 @@ final class Scene {
         let wall = addMaterial(albedo: [0.70, 0.70, 0.68])
         let plinth = addPBRMaterial(baseColor: [0.62, 0.62, 0.64], metallic: 1, roughness: 0.35)   // brushed steel
 
+        label(mesh: quad, "quad")
+        label(mesh: cube, "cube")
         let w: Float = 26, h: Float = 7, d: Float = 18
-        addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d]))
-        addInstance(quad, wall, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))
-        addInstance(quad, wall, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-        addInstance(quad, wall, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
+        object("Hall/Floor") { addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d])) }
+        object("Hall/Back wall") { addInstance(quad, wall, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h])) }
+        object("Hall/Left wall") { addInstance(quad, wall, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
+        object("Hall/Right wall") { addInstance(quad, wall, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
 
         let files = Scene.galleryFiles()
         let plinthHeight: Float = 0.3
         let start = CFAbsoluteTimeGetCurrent()
         var triangles = 0
         loadStep?.set(done: 0, total: files.count)
+        beginObject("Exhibits")
+        defer { endObject() }
         for (i, url) in files.enumerated() {
             if loadStep?.isCancelled == true { break }   // another scene was asked for: this one is thrown away
             loadStep?.set(detail: url.deletingPathExtension().lastPathComponent)
@@ -2185,7 +2266,7 @@ final class Scene {
             // Arc of radius 6 around (0, 0, 1), from -60 to +60 degrees, each model facing the arc's centre.
             let a = files.count > 1 ? (-60 + 120 * Float(i) / Float(files.count - 1)) * .pi / 180 : 0
             let p = SIMD3<Float>(6 * sin(a), 0, 1 - 6 * cos(a))
-            addInstance(cube, plinth, translate(p + [0, plinthHeight / 2, 0]) * scale([1.3, plinthHeight, 1.3]))
+            object("Plinths/\(model.name)") { addInstance(cube, plinth, translate(p + [0, plinthHeight / 2, 0]) * scale([1.3, plinthHeight, 1.3])) }
             let base = translate(p + [0, plinthHeight, 0]) * rotate(-a, [0, 1, 0])
             let place = Scene.placement(model, size: 1.6)
             if i % 5 == 1 {   // turntables
@@ -2202,6 +2283,8 @@ final class Scene {
         // 8 lights drifting above the arc, warm and cool.
         var rng = SplitMix64(seed: 0x6A11_E7)
         let colors: [SIMD3<Float>] = [[1.0, 0.85, 0.65], [1.0, 0.55, 0.25], [0.45, 0.65, 1.0], [0.85, 0.75, 1.0]]
+        beginObject("Lights")
+        defer { endObject() }
         for j in 0..<8 {
             let color = colors[j % colors.count] / dot(colors[j % colors.count], [0.2126, 0.7152, 0.0722])
             let c = SIMD3<Float>(rng.range(-6, 6), rng.range(2.2, 3.6), rng.range(-4, 3))
