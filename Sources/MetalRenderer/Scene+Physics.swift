@@ -13,7 +13,7 @@ extension Scene {
         let floor = addPBRMaterial(baseColor: [0.16, 0.16, 0.17], metallic: 0, roughness: 0.35)
         let wall = addMaterial(albedo: [0.62, 0.62, 0.64])
         let rim = addPBRMaterial(baseColor: [0.85, 0.85, 0.82], metallic: 0, roughness: 0.5)
-        kit.room(width: 14, height: 6, depth: 14, floor: floor, walls: wall, ceiling: true)
+        object("Room") { kit.room(width: 14, height: 6, depth: 14, floor: floor, walls: wall, ceiling: true) }
         addStaticPlane(point: .zero, normal: [0, 1, 0], friction: 0.6, restitution: 0.3)
         for (point, normal) in [(SIMD3<Float>(-7, 0, 0), SIMD3<Float>(1, 0, 0)), ([7, 0, 0], [-1, 0, 0]), ([0, 0, -7], [0, 0, 1]),
                                 ([0, 0, 7], [0, 0, -1])] {
@@ -31,18 +31,22 @@ extension Scene {
         let side = SDFShape(.box(halfExtents: [half + 2 * thick, height / 2, thick], rounding: 0.03))
         for k in 0..<4 {
             let angle = Float(k) * .pi / 2
-            fixed(side, rim, rotate(angle, [0, 1, 0]) * translate([0, height / 2, -(half + thick)]))
+            object("Arena/Rim \(k + 1)") { fixed(side, rim, rotate(angle, [0, 1, 0]) * translate([0, height / 2, -(half + thick)])) }
         }
         // A ramp in the back left, its top 2 m up.
         let tilt: Float = 0.42
+        beginObject("Arena/Ramp")
         fixed(SDFShape(.box(halfExtents: [1.9, 0.08, 0.9], rounding: 0.02)),
               addPBRMaterial(baseColor: [0.3, 0.42, 0.6], metallic: 0, roughness: 0.25),
               translate([-2.2, 1.05, -2.6]) * rotate(-tilt, [0, 0, 1]))
+        endObject()
         // A torus knot, baked into a distance grid, on a pedestal in front on the right.
+        beginObject("Knot on a pedestal")
         let knot = addSDFVolume(SDFVolume.cached(Scene.torusKnotMesh(), resolution: 64))
         fixed(SDFShape([SDFShape.Node(.volume(knot), at: [0, 0.85, 0], rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0])),
                         SDFShape.Node(.cylinder(halfHeight: 0.2, radius: 0.5, rounding: 0.04), smooth: 0.1, at: [0, 0.2, 0])]),
               addPBRMaterial(baseColor: [0.95, 0.75, 0.4], metallic: 0, roughness: 0.25), translate([2.6, 0, 2.4]))
+        endObject()
 
         // The shapes the bodies are, each in a few colours. Nothing is metal: the scene's look has no reflections
         // (RenderSettings.usePhysicsLook), and a metal without them is black.
@@ -60,6 +64,7 @@ extension Scene {
                       SDFShape.Node(.sphere(radius: 0.1), smooth: 0.1, at: [0, 0.17, 0.04])]),
         ]
         let shapeIndices = shapes.map { addSDFShape($0) }
+        for (s, name) in zip(shapeIndices, ["ball", "box", "capsule", "cylinder", "cone", "ring", "hollow box", "blob"]) { label(sdf: s, name) }
         let colours: [SIMD3<Float>] = [[0.8, 0.12, 0.08], [0.95, 0.6, 0.1], [0.15, 0.5, 0.25], [0.12, 0.3, 0.75],
                                        [0.85, 0.85, 0.82], [0.55, 0.2, 0.6], [0.1, 0.6, 0.65], [0.9, 0.35, 0.45]]
         let materials = colours.enumerated().map { i, c in
@@ -68,6 +73,8 @@ extension Scene {
 
         // A tower of blocks on the right: two by two, crossed layer on layer.
         let block = addSDFShape(SDFShape(.box(halfExtents: [0.36, 0.12, 0.12], rounding: 0.015)))
+        label(sdf: block, "block")
+        beginObject("Tower")
         let wood = addPBRMaterial(baseColor: [0.75, 0.55, 0.35], metallic: 0, roughness: 0.6)
         let layers = min(8, physics.bodies / 12)
         var placed = 0
@@ -82,8 +89,11 @@ extension Scene {
             }
         }
 
+        endObject()
         // A heavy ball rolled in from the left at the tower's foot.
         if placed < physics.bodies {
+            beginObject("Heavy ball")
+            defer { endObject() }
             addBody(sdf: addSDFShape(SDFShape(.sphere(radius: 0.3))), addPBRMaterial(baseColor: [0.1, 0.1, 0.11], metallic: 0, roughness: 0.15),
                     translate([-3.8, 0.3, -0.6]), density: 3000, friction: 0.4, restitution: 0.1, velocity: [7, 0, 0])
             placed += 1
@@ -93,6 +103,7 @@ extension Scene {
         var random = SplitMix(seed: 7)
         let columns = 8, rows = 6, spacing: Float = 0.78
         var n = 0
+        beginObject("Dropped shapes")
         while placed < physics.bodies {
             let layer = n / (columns * rows), cell = n % (columns * rows)
             let x = -3.0 + spacing * Float(cell % columns) + (layer % 2 == 0 ? 0 : spacing / 2)
@@ -107,14 +118,15 @@ extension Scene {
             placed += 1
             n += 1
         }
+        endObject()
 
         // A bin in front on the left, and a block of particles above it, a little off to one side so that some spill.
         let binCentre = SIMD3<Float>(-2.4, 0, 2.3), binHalf: Float = 0.6, binHeight: Float = 0.45, binWall: Float = 0.05
         let binSide = SDFShape(.box(halfExtents: [binHalf + binWall, binHeight / 2, binWall / 2], rounding: 0.01))
         let binMaterial = addPBRMaterial(baseColor: [0.6, 0.62, 0.66], metallic: 0, roughness: 0.35)
         for k in 0..<4 {
-            fixed(binSide, binMaterial, translate(binCentre) * rotate(Float(k) * .pi / 2, [0, 1, 0])
-                  * translate([0, binHeight / 2, binHalf + binWall / 2]))
+            object("Bin/Side \(k + 1)") { fixed(binSide, binMaterial, translate(binCentre) * rotate(Float(k) * .pi / 2, [0, 1, 0])
+                  * translate([0, binHeight / 2, binHalf + binWall / 2])) }
         }
         let radius: Float = 0.035, gap = 2.2 * radius, across = 14
         let grains = (0..<physics.particles).map { i -> SIMD3<Float> in
@@ -123,11 +135,15 @@ extension Scene {
             return binCentre + SIMD3(0.25, 0.9, 0) + jitter
                 + SIMD3(Float(cell % across) - Float(across - 1) / 2, Float(layer), Float(cell / across) - Float(across - 1) / 2) * gap
         }
-        addParticles(addPBRMaterial(baseColor: [0.95, 0.72, 0.25], metallic: 0, roughness: 0.4), radius: radius, positions: grains,
-                     friction: 0.6)
+        object("Bin/Grains") {
+            addParticles(addPBRMaterial(baseColor: [0.95, 0.72, 0.25], metallic: 0, roughness: 0.4), radius: radius, positions: grains,
+                         friction: 0.6)
+        }
 
         // A cloth by two corners from a rod between two posts, over a ball.
         if physics.cloth >= 2 {
+            beginObject("Cloth on a rod")
+            defer { endObject() }
             let steel = addPBRMaterial(baseColor: [0.7, 0.7, 0.72], metallic: 0, roughness: 0.3)
             let rodY: Float = 1.5, rodZ: Float = 1.55, x0: Float = 0.9, half: Float = 0.75
             for side: Float in [-1, 1] {
@@ -142,6 +158,8 @@ extension Scene {
         }
 
         // A panel overhead and two lamps.
+        beginObject("Lights")
+        defer { endObject() }
         addLight(.rect(width: 5, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -0.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }

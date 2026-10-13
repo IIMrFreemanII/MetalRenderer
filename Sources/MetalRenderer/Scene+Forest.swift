@@ -288,8 +288,12 @@ extension Scene {
             let wood = shades[s][shade % shades[s].count]
             switch known {
             case .assembly(let assembly):
+                scene.label(assembly: assembly, catalog[species].id)
                 scene.addInstance(assembly: assembly, wood, transform)
             case .flat(let woodMesh, let leafMesh):
+                let plant = AssetKey(kind: .species, name: catalog[species].id)
+                scene.label(mesh: woodMesh, "\(plant.name) wood", asset: plant)
+                scene.label(mesh: leafMesh, "\(plant.name) leaves", asset: plant)
                 if woodMesh >= 0 { scene.addInstance(woodMesh, wood, transform) }
                 if leafMesh >= 0 { scene.addInstance(leafMesh, wood + 1, transform) }
             }

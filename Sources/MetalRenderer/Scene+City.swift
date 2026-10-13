@@ -179,12 +179,14 @@ extension Scene {
                         }
                     }
                 }
-                if building.placements.isEmpty {
-                    // Named: another scene of the same city (another building's interior in it) keeps its structures.
-                    kit.addBuilding(building, at: plan.lots[first + i].transform,
-                                    name: building.interior == nil ? "city \(refs[first + i].key) \(catalog.fingerprint)" : nil)
-                } else {
-                    addBuilding(building, at: plan.lots[first + i].transform)
+                object("Buildings/Lot \(first + i)", assets: [AssetKey(kind: .buildingStyle, name: specs[first + i].def.id)]) {
+                    if building.placements.isEmpty {
+                        // Named: another scene of the same city (another building's interior in it) keeps its structures.
+                        kit.addBuilding(building, at: plan.lots[first + i].transform,
+                                        name: building.interior == nil ? "city \(refs[first + i].key) \(catalog.fingerprint)" : nil)
+                    } else {
+                        addBuilding(building, at: plan.lots[first + i].transform)
+                    }
                 }
                 windows += building.windows
                 rooms += building.rooms
