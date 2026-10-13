@@ -240,15 +240,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene.swift": {
-    "mtime": 1791895663.7324617,
-    "seen": 1791895999.137423,
-    "ast_hash": "a03d26367f78a23083e1a01450ba1a54",
+    "mtime": 1791896068.2148318,
+    "seen": 1791896990.1110551,
+    "ast_hash": "7d35aacfc2a7d372bcd016eefa01d538",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1791894513.5753045,
-    "seen": 1791895999.137425,
-    "ast_hash": "f45f439627f124ffb0c409ab9f5ebc77",
+    "mtime": 1791896068.215359,
+    "seen": 1791896990.1110568,
+    "ast_hash": "1cbce29548200fba6cf3fc9f4efe210e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
@@ -360,9 +360,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsStore.swift": {
-    "mtime": 1791894513.5755758,
-    "seen": 1791895999.1374269,
-    "ast_hash": "345946a8bf0da2b14e44d7a0476e468f",
+    "mtime": 1791896068.2155943,
+    "seen": 1791896990.11106,
+    "ast_hash": "f7cab9f7fbaddcb6fa8e4f77275a9868",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/DebugPanel.swift": {
@@ -2532,21 +2532,27 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/Scene+Outline.swift": {
-    "mtime": 1791895663.733095,
-    "seen": 1791895999.137388,
-    "ast_hash": "b075b37c503d8bcbcdeada864e696cf2",
+    "mtime": 1791896741.9694974,
+    "seen": 1791896990.1110148,
+    "ast_hash": "6f9b52d3929adf950b59e08956f112a2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/SceneOutline.swift": {
-    "mtime": 1791894761.8397493,
-    "seen": 1791895999.137389,
-    "ast_hash": "b9d2dda8e39bcd29f66f95eabde36bcd",
+    "mtime": 1791896088.956055,
+    "seen": 1791896990.111016,
+    "ast_hash": "3f8e74da43847047ddcb89edee154de6",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ProjectGraphTests.swift": {
-    "mtime": 1791895663.7333386,
-    "seen": 1791895999.137524,
-    "ast_hash": "c778da22ea525335fb4f4f4c19b2fc96",
+    "mtime": 1791896690.8729398,
+    "seen": 1791896990.1111748,
+    "ast_hash": "bfd01867c25250192a5513aa8aa7495d",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/ProjectGraph/SceneOverrides.swift": {
+    "mtime": 1791896068.2157793,
+    "seen": 1791896990.111018,
+    "ast_hash": "72cbbf24490f8857a9140a57229302c2",
     "semantic_hash": ""
   }
 }

@@ -40,7 +40,7 @@ extension Scene {
     func worldBounds(of i: Int) -> AABB {
         guard instances.indices.contains(i) else { return AABB() }
         let (lo, hi) = localBounds(of: instances[i])
-        return AABB(lo: lo, hi: hi).transformed(instances[i].transform)
+        return AABB(lo: lo, hi: hi).transformed(sceneOverrides.hiddenTransforms[i] ?? instances[i].transform)
     }
 }
 
@@ -76,8 +76,11 @@ private struct OutlineBuilder {
     mutating func build() {
         add(SceneOutline.Node(id: "scene", parent: -1, kind: .scene, name: scene.settings.kind.title))
         let tags = makeTagContainers()
-        let lightByOrder = Dictionary(uniqueKeysWithValues: scene.lights.indices.filter { !scene.lights[$0].isMesh }
-            .map { (scene.lights[$0].order, $0) })
+        // (The lights the graph hid are out of the scene's: the outline keeps them, hidden.)
+        let lightByOrder = Dictionary((scene.lights + scene.sceneOverrides.hiddenLights).filter { !$0.isMesh }.map { ($0.order, $0) },
+                                      uniquingKeysWith: { a, _ in a })
+        let copies = scene.sceneOverrides.duplicates
+        let copiedInstances = Set(copies.flatMap(\.instances)), copiedLights = Set(copies.flatMap(\.lights))
 
         // The innermost tag of each thing: outer tags first, inner ones over them.
         var instanceOwner = [Int](repeating: -1, count: scene.instances.count)
@@ -94,12 +97,12 @@ private struct OutlineBuilder {
 
         // A light's shape is the light's: not an instance of its own.
         var proxies = Set<Int>()
-        for l in scene.lights where l.proxyInstance >= 0 { proxies.insert(l.proxyInstance) }
+        for l in lightByOrder.values where l.proxyInstance >= 0 { proxies.insert(l.proxyInstance) }
         let particleSlots = particleSlotOwners()
         let bodies = Set(scene.physics?.bodies.map { Int($0.info.z) } ?? [])
         let walkers = Set(scene.crowd?.walkers.map(\.instance) ?? [])
 
-        for i in scene.instances.indices where !proxies.contains(i) {
+        for i in scene.instances.indices where !proxies.contains(i) && !copiedInstances.contains(i) {
             if instanceOwner[i] >= 0 { containers[instanceOwner[i]].instances.append(i); continue }
             let inst = scene.instances[i]
             let system: String
@@ -117,7 +120,7 @@ private struct OutlineBuilder {
             else { system = "Meshes" }
             containers[self.system(system)].instances.append(i)
         }
-        for order in lightByOrder.keys.sorted() {
+        for order in lightByOrder.keys.sorted() where !copiedLights.contains(order) {
             containers[lightOwner[order] ?? system("Lights")].lights.append(order)
         }
         for e in scene.effects.indices { containers[effectOwner[e] >= 0 ? effectOwner[e] : system("Effects")].effects.append(e) }
@@ -130,8 +133,34 @@ private struct OutlineBuilder {
                                       name: g.name, count: g.count, locked: "Streams in with the open world"))
             }
         }
+        addCopies(lightByOrder: lightByOrder)
+        for n in nodes.indices where scene.sceneOverrides.hidden.contains(nodes[n].id) { nodes[n].hidden = true }
         sumUp()
         makeLinks(particleSlots: particleSlots)
+    }
+
+    /// The graph's duplicates, each beside what it copies.
+    private mutating func addCopies(lightByOrder: [Int: Scene.Light]) {
+        for copy in scene.sceneOverrides.duplicates {
+            let source = copy.edit.source.id
+            let at = index[source] ?? SceneOutline.member(of: source).flatMap { index[$0.aggregate] }
+            let parent = at.map { nodes[$0].parent >= 0 ? nodes[$0].parent : 0 } ?? 0
+            let n = add(SceneOutline.Node(id: copy.edit.id, parent: parent, kind: .object, name: copy.edit.name,
+                                          assets: at.map { nodes[$0].assets } ?? [], copyOf: source))
+            if copy.instances.count == 1 && copy.lights.isEmpty {
+                setMembers(n, copy.instances)
+                nodes[n].fingerprint = scene.outlineFingerprint(copy.instances[0])
+                nodes[n].info = info(copy.instances[0])
+            } else if copy.instances.isEmpty && copy.lights.count == 1, let l = lightByOrder[copy.lights[0]] {
+                makeLight(l, node: n)
+            } else {
+                // A copy of many things: one node of them all.
+                nodes[n].kind = .aggregate
+                setMembers(n, copy.instances)
+                nodes[n].count += copy.lights.count
+            }
+            nodes[n].info["Copy of"] = at.map { nodes[$0].name } ?? source
+        }
     }
 
     // MARK: - Containers
@@ -257,7 +286,7 @@ private struct OutlineBuilder {
     }
 
     /// Container `c`'s children: its instances by what they are, its lights, its effects.
-    private mutating func fill(_ c: Int, lightByOrder: [Int: Int], particleSlots: [Int: Int]) {
+    private mutating func fill(_ c: Int, lightByOrder: [Int: Scene.Light], particleSlots: [Int: Int]) {
         let container = containers[c]
         let parent = container.node, cid = nodes[parent].id
         // A named object of one instance (or one light) is that instance.
@@ -345,8 +374,7 @@ private struct OutlineBuilder {
         nodes[n].count = members.count
     }
 
-    private mutating func makeLight(_ l: Int, node n: Int) {
-        let light = scene.lights[l]
+    private mutating func makeLight(_ light: Scene.Light, node n: Int) {
         let kind: String
         var radius: Float = 0.1
         switch light.kind {

@@ -373,6 +373,18 @@ final class Scene {
                                     effects: open.effects..<effects.count, assets: open.assets))
     }
 
+    /// What the Project Graph's edits did to the scene (Scene.applySceneOverrides).
+    var sceneOverrides = AppliedOverrides()
+
+    /// The edits' way in (SceneOverrides.swift): an instance changed, one appended, lights taken out.
+    func editInstance(_ i: Int, _ change: (inout Instance) -> Void) { change(&instances[i]) }
+    @discardableResult
+    func appendInstance(_ instance: Instance) -> Int {
+        instances.append(instance)
+        return instances.count - 1
+    }
+    func removeLights(where shouldRemove: (Light) -> Bool) { lights.removeAll(where: shouldRemove) }
+
     /// Names a mesh, an assembly or an SDF shape for the outline ("oak", "lamp post"): unlike `meshNames`, only a label.
     func label(mesh: Int, _ name: String, shared: Bool = false, asset: AssetKey? = nil) {
         if mesh >= 0 { meshLabels[mesh] = (name, shared, asset) }
@@ -612,6 +624,7 @@ final class Scene {
         finishLiquids()
         physics?.finish()
         applyPaintAssignments()
+        applySceneOverrides()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }

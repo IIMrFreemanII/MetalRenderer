@@ -712,6 +712,9 @@ struct SceneSettings: Equatable, Codable {
     /// (Assets/Painter/assignments.json), otherwise a key of the registry the painter fills. A change makes the scene
     /// again. Session state.
     var paintAssignments = ""
+    /// What the Project Graph hid and duplicated (SceneOverrides): "" the saved ones (Assets/Scenes/Overrides), otherwise
+    /// a key of the registry the graph fills. A change makes the scene again. Session state.
+    var sceneOverrides = ""
     /// The building workshop: what it shows.
     var buildings = BuildingSceneSettings()
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the

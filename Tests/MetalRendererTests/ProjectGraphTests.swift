@@ -118,6 +118,82 @@ final class ProjectGraphTests: XCTestCase {
         XCTAssertTrue(species.allSatisfy { !$0.hasPrefix("plant ") }, "named by the species' ids: \(species)")
     }
 
+    // MARK: - Edits
+
+    private func ref(_ o: SceneOutline, _ id: String) throws -> SceneOverrides.Ref {
+        SceneOverrides.Ref(id: id, fingerprint: try XCTUnwrap(node(o, id)).fingerprint ?? "")
+    }
+
+    func testHideAndDuplicate() throws {
+        var settings = SceneSettings(kind: .cornell)
+        let before = Scene(settings), o = before.makeOutline()
+        var edits = SceneOverrides()
+        let scope = o.scope
+        edits[scope].hidden = [try ref(o, "t:Blue ball"), try ref(o, "t:Lights/Warm")]
+        edits[scope].duplicates = [SceneOverrides.Duplicate(id: "copy:1", name: "Tall box 2", source: try ref(o, "t:Tall box"),
+                                                             offset: SceneOverrides.Duplicate.flat(translate([3, 0, 0])))]
+        settings.sceneOverrides = SceneOverrides.register(edits)
+        let after = Scene(settings), edited = after.makeOutline()
+
+        XCTAssertEqual(after.instances.count, before.instances.count + 1, "the copy is an instance more")
+        XCTAssertEqual(after.lights.filter { !$0.isMesh }.count, before.lights.filter { !$0.isMesh }.count - 1, "the hidden light is out")
+        let ball = try XCTUnwrap(node(edited, "t:Blue ball"))
+        XCTAssertTrue(ball.hidden, "a hidden thing stays in the outline")
+        XCTAssertEqual(after.instances[ball.members.first!].mask, 0)
+        XCTAssertEqual(ball.bounds, try XCTUnwrap(node(o, "t:Blue ball")).bounds, "where it was")
+        XCTAssertTrue(try XCTUnwrap(node(edited, "t:Lights/Warm")).hidden)
+        let copy = try XCTUnwrap(node(edited, "copy:1"))
+        XCTAssertEqual(copy.copyOf, "t:Tall box")
+        XCTAssertEqual(edited.nodes[copy.parent].id, "scene", "beside what it copies")
+        let tall = try XCTUnwrap(node(edited, "t:Tall box"))
+        XCTAssertEqual(copy.bounds!.center.x, tall.bounds!.center.x + 3, accuracy: 1e-4)
+        XCTAssertEqual(edited.nodes[0].count, o.nodes[0].count + 1)
+        // The ids of everything else hold.
+        XCTAssertEqual(Set(o.nodes.map(\.id)).subtracting(edited.nodes.map(\.id)), [])
+    }
+
+    func testStaleAndLockedEditsAreDropped() throws {
+        var settings = SceneSettings(kind: .physics)
+        let o = Scene(settings).makeOutline()
+        var edits = SceneOverrides()
+        edits[o.scope].hidden = [SceneOverrides.Ref(id: "t:Knot on a pedestal", fingerprint: "stale")]
+        let body = try XCTUnwrap(o.nodes.first { $0.locked != nil && !$0.members.isEmpty })
+        edits[o.scope].hidden.append(SceneOverrides.Ref(id: body.id, fingerprint: body.fingerprint ?? ""))
+        settings.sceneOverrides = SceneOverrides.register(edits)
+        let scene = Scene(settings)
+        XCTAssertTrue(scene.sceneOverrides.hidden.isEmpty)
+        XCTAssertEqual(scene.sceneOverrides.notes.count, 2)
+    }
+
+    func testOnlySceneEditsMakeTheSceneAgain() {
+        var a = SceneOverrides()
+        a["cornell"].renames["t:Blue ball"] = "Ball"
+        a["cornell"].pins["t:Room"] = [1, 2]
+        a["cornell"].folders["t:Blue ball"] = "Props"
+        XCTAssertEqual(SceneOverrides.register(a), SceneOverrides.register(SceneOverrides()))
+        var b = a
+        b["cornell"].hidden = [SceneOverrides.Ref(id: "t:Room", fingerprint: "")]
+        XCTAssertNotEqual(SceneOverrides.register(b), SceneOverrides.register(a))
+        XCTAssertEqual(SceneOverrides.resolve(SceneOverrides.register(b))["cornell"].hidden.count, 1)
+    }
+
+    func testOverridesFiles() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ProjectGraphTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var a = SceneOverrides()
+        a["cornell"].renames["t:Blue ball"] = "Ball"
+        a["city,seed=1,style=mixed"].hidden = [SceneOverrides.Ref(id: "t:Buildings/Lot 3", fingerprint: "")]
+        a["city,seed=2,style=mixed"].pins["s:Meshes"] = [4, 5]
+        try a.save(to: folder, comparedTo: nil)
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("Overrides").path).sorted()
+        XCTAssertEqual(names, ["city.json", "cornell.json"], "one file per kind of scene")
+        XCTAssertEqual(SceneOverrides.load(from: folder), a)
+        var b = a
+        b["cornell"] = SceneOverrides.Scope()
+        try b.save(to: folder, comparedTo: a)
+        XCTAssertEqual(SceneOverrides.load(from: folder), b, "a kind without edits loses its file")
+    }
+
     func testIndexRuns() throws {
         var r = IndexRuns([3, 4, 5, 9, 10, 20])
         XCTAssertEqual(Array(r), [3, 4, 5, 9, 10, 20])

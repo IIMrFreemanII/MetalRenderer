@@ -58,6 +58,9 @@ struct SceneOutline: Codable, Equatable {
         var locked: String? = nil
         /// What the inspector shows of it.
         var info: [String: String] = [:]
+        /// The Project Graph hid it (SceneOverrides); a duplicate's: the id of what it copies.
+        var hidden = false
+        var copyOf: String? = nil
     }
 
     struct Link: Codable, Equatable, Hashable {
