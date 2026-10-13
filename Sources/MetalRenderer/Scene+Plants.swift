@@ -129,6 +129,7 @@ extension Scene {
         if focus.isEmpty { focus = AABB(lo: [-1, 0, -1], hi: [1, 2, 1]) }
         self.focus = focus
 
+        section("Lawn and sun")
         // A lawn to the horizon, a still sun from the camera's left, a little above the plants.
         let kit = Kit(self)
         addInstance(kit.quad, addMaterial(albedo: [0.2, 0.22, 0.16]), scale([20_000, 1, 20_000]))

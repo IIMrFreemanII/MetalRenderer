@@ -14,7 +14,7 @@ extension Scene {
         var rng = SplitMix64(seed: UInt64(settings.seed) &* 0x9E37_79B9_7F4A_7C15 ^ 0x3A1E)
         let catalog = MaterialCatalog.resolve(settings.materials)
         func material(_ name: String) -> Int { addProceduralMaterial(graph: name, catalog: catalog) }
-        func add(_ m: (MeshGeometry, [SIMD2<Float>])) -> Int { addMesh(m.0, uvs: m.1) }
+        func add(_ m: (MeshGeometry, [SIMD2<Float>]), _ label: String) -> Int { addMesh(m.0, uvs: m.1, label: label) }
         // (The order is the displacement's: the ground first, then what stands on it.)
         let mud = material("Swamp Mud"), water = material("Swamp Ground"), dirt = material("Swamp Loose Dirt")
         let deadGrass = material("Swamp Dead Grass"), gnarly = material("Swamp Gnarly Bark"), birch = material("Swamp Birch Bark")
@@ -25,6 +25,7 @@ extension Scene {
         let farGnarly = material("Swamp Gnarly Bark"), farBirch = material("Swamp Birch Bark")
         undisplacedMaterials = [mud, dirt, deadGrass, birch, farGnarly, farBirch]
 
+        section("Ground and water")
         // The ground: low, rolling, level where the camera stands; the water at the height half of it is under.
         let spot = SIMD2<Float>(0, 16)
         let terrain = Terrain(size: 72, cells: 144, seed: UInt64(settings.seed) &+ 0x5A3, relief: 0.8, flat: (spot, 2.5, 7))
@@ -32,8 +33,10 @@ extension Scene {
         let waterY = min(level, -0.15)
         var ground = terrain.mesh()
         ground.uvs = ground.uvs.map { $0 * terrain.size }   // a tile a metre
-        addInstance(addMesh(ground), mud, matrix_identity_float4x4)
-        addInstance(add(Scene.flatGrid(size: terrain.size, cells: 8, uvPerMetre: 1)), water, translate([0, waterY, 0]))
+        let groundMesh = addMesh(ground)
+        label(mesh: groundMesh, "ground")
+        addInstance(groundMesh, mud, matrix_identity_float4x4)
+        addInstance(add(Scene.flatGrid(size: terrain.size, cells: 8, uvPerMetre: 1), "water"), water, translate([0, waterY, 0]))
         func dry(_ x: Float, _ z: Float, above: Float = 0.12) -> Bool { terrain.height(x, z) > waterY + above }
         func random(in r: ClosedRange<Float>) -> SIMD2<Float> {
             let a = rng.range(0, 2 * .pi), d = sqrt(rng.range(r.lowerBound * r.lowerBound, r.upperBound * r.upperBound))
@@ -41,13 +44,15 @@ extension Scene {
         }
         func near(_ p: SIMD2<Float>, _ list: [SIMD2<Float>], _ gap: Float) -> Bool { list.contains { simd_distance($0, p) < gap } }
 
+        section("Path")
         // A path of loose dirt from the camera down to the water.
         var at = spot + SIMD2(0.4, 1.5)
         for _ in 0..<12 {
-            addInstance(add(patch(terrain, at, radius: rng.range(1.0, 1.5), lift: 0.03, uvPerMetre: 1, ragged: 0.25, rng: &rng)), dirt, matrix_identity_float4x4)
+            addInstance(add(patch(terrain, at, radius: rng.range(1.0, 1.5), lift: 0.03, uvPerMetre: 1, ragged: 0.25, rng: &rng), "dirt"), dirt, matrix_identity_float4x4)
             at += SIMD2(rng.range(-0.5, 0.5), -1.6)
             if !dry(at.x, at.y, above: 0.02) { break }
         }
+        section("Grass, crusts and puddles")
         // Dead grass on the rises, cracked crusts and puddles on the flats.
         // (A clump of a few overlapping ragged discs, each a little higher than the last: no seam shows where they cross.)
         for _ in 0..<30 {
@@ -55,7 +60,7 @@ extension Scene {
             guard dry(p.x, p.y, above: 0.2) else { continue }
             for k in 0..<4 {
                 let q = p + SIMD2(rng.range(-1.6, 1.6), rng.range(-1.6, 1.6))
-                addInstance(add(patch(terrain, q, radius: rng.range(0.9, 1.8), lift: 0.03 + 0.004 * Float(k), uvPerMetre: 1, ragged: 0.35, rng: &rng)),
+                addInstance(add(patch(terrain, q, radius: rng.range(0.9, 1.8), lift: 0.03 + 0.004 * Float(k), uvPerMetre: 1, ragged: 0.35, rng: &rng), "dead grass"),
                             deadGrass, matrix_identity_float4x4)
             }
         }
@@ -65,10 +70,11 @@ extension Scene {
             guard above > 0.04, above < 0.5, terrain.normal(p.x, p.y).y > 0.97 else { continue }
             let crust = rng.next() < 0.5
             addInstance(add(decal(terrain, p, size: crust ? rng.range(1.6, 2.6) : rng.range(1.2, 2.2), yaw: rng.range(0, 2 * .pi),
-                                      lift: crust ? 0.035 : 0.025)), crust ? cracks : puddle, matrix_identity_float4x4)
+                                      lift: crust ? 0.035 : 0.025), crust ? "cracked crust" : "puddle"), crust ? cracks : puddle, matrix_identity_float4x4)
             decals += 1
         }
 
+        section("Trees")
         // Trees: old gnarly trunks, some standing in the water, and slim birches; fallen leaves round them.
         var trunks: [SIMD2<Float>] = []
         for k in 0..<30 {
@@ -79,28 +85,30 @@ extension Scene {
             let old = k % 3 == 0
             let y = terrain.height(p.x, p.y)
             let tree = old ? Scene.gnarlyTree(&rng) : Scene.birchTree(&rng)
-            addInstance(addMesh(tree.geometry, uvs: tree.uvs), old ? gnarly : birch,
+            addInstance(addMesh(tree.geometry, uvs: tree.uvs, label: old ? "gnarly tree" : "birch"), old ? gnarly : birch,
                         translate([p.x, y - 0.25, p.y]) * rotate(rng.range(0, 2 * .pi), [0, 1, 0]))
             if dry(p.x, p.y, above: 0.03) {
                 addInstance(add(decal(terrain, p + SIMD2(rng.range(-0.6, 0.6), rng.range(-0.6, 0.6)), size: old ? 3.6 : 2.6,
-                                          yaw: rng.range(0, 2 * .pi), lift: 0.04, tiles: 4)), leaves, matrix_identity_float4x4)
+                                          yaw: rng.range(0, 2 * .pi), lift: 0.04, tiles: 4), "fallen leaves"), leaves, matrix_identity_float4x4)
             }
         }
 
+        section("Far trees")
         // Far off in the mist, more trees: the swamp goes on past the ground's edge.
         for k in 0..<40 {
             let a = Float(k) / 40 * 2 * .pi + rng.range(-0.06, 0.06), d = rng.range(33, 46)
             let p = SIMD2(cos(a), sin(a)) * d
             let old = rng.next() < 0.35
             let tree = old ? Scene.gnarlyTree(&rng) : Scene.birchTree(&rng)
-            addInstance(addMesh(tree.geometry, uvs: tree.uvs), old ? farGnarly : farBirch,
+            addInstance(addMesh(tree.geometry, uvs: tree.uvs, label: old ? "far gnarly tree" : "far birch"), old ? farGnarly : farBirch,
                         translate([p.x, waterY - 0.3, p.y]) * rotate(rng.range(0, 2 * .pi), [0, 1, 0]) * scale(rng.range(1.1, 1.6)))
         }
         let far = Scene.flatGrid(size: 140, cells: 4, uvPerMetre: 1)
-        addInstance(add(far), water, translate([0, waterY - 0.02, 0]))
+        addInstance(add(far, "water"), water, translate([0, waterY - 0.02, 0]))
 
+        section("Reeds")
         // Grass clumps and leafy stems along the water's edge (crossed cards, cut out).
-        let card = addMesh(Scene.crossedCards(), uvs: Scene.crossedCardUVs())
+        let card = addMesh(Scene.crossedCards(), uvs: Scene.crossedCardUVs(), label: "grass cards")
         var tufts = 0
         for _ in 0..<4000 where tufts < 420 {
             let p = random(in: 2...30), h = terrain.height(p.x, p.y) - waterY
@@ -112,6 +120,7 @@ extension Scene {
             tufts += 1
         }
 
+        section("Sun and mist")
         // A low morning sun through the mist, behind the trees; mist over the water.
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: SIMD3<Float>(1, 0.9, 0.75) * 2.2, motion: .constant) { _ in
             let e = Scene.degrees(13), a = Scene.degrees(-100)

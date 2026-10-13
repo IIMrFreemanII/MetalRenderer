@@ -86,12 +86,13 @@ final class BuildingKit {
     /// lights each an instance of their own. Returns the instances.
     @discardableResult
     func add(_ parts: [(material: SurfaceMaterial, mesh: MeshBuilder)], at transform: float4x4 = matrix_identity_float4x4,
-             name: String? = nil) -> [Int] {
+             name: String? = nil, label: String = "surfaces") -> [Int] {
         var merged = MeshBuilder(), offsets: [UInt8] = [], first = -1, made: [Int] = []
         for (k, (m, mesh)) in parts.enumerated() where !mesh.isEmpty {
             triangles += mesh.triangleCount
             if m.glass || m.emission != .zero {
-                made.append(scene.addInstance(scene.addMesh(mesh.geometry, uvs: mesh.uvs, name: name.map { "\($0) part \(k)" }), sharedMaterial(m), transform,
+                made.append(scene.addInstance(scene.addMesh(mesh.geometry, uvs: mesh.uvs, name: name.map { "\($0) part \(k)" },
+                                                            label: "\(label) \(m.glass ? "glass" : "lights")"), sharedMaterial(m), transform,
                                               mask: m.glass ? Scene.maskGlass : Scene.maskGeometry))
             } else {
                 let index = scene.addMaterial(gpuMaterial(m))
@@ -101,7 +102,7 @@ final class BuildingKit {
             }
         }
         if first >= 0 {
-            made.append(scene.addInstance(scene.addMesh(merged.geometry, uvs: merged.uvs, materials: offsets, name: name), first, transform))
+            made.append(scene.addInstance(scene.addMesh(merged.geometry, uvs: merged.uvs, materials: offsets, name: name, label: label), first, transform))
         }
         return made
     }
@@ -109,11 +110,11 @@ final class BuildingKit {
     /// A building at `transform`: its shell, and its fill or (if it has one) its interior. `name`: what its meshes
     /// are made from, said in full (Scene.meshNames), if they are to be kept from scene to scene.
     func addBuilding(_ b: Building, at transform: float4x4, name: String? = nil) {
-        add(b.parts.filter { !$0.slot.isFill }.map { ($0.material, $0.mesh) }, at: transform, name: name.map { "\($0) shell" })
+        add(b.parts.filter { !$0.slot.isFill }.map { ($0.material, $0.mesh) }, at: transform, name: name.map { "\($0) shell" }, label: "shell")
         if let interior = b.interior {
-            addInterior(interior, at: transform)
+            scene.object("Interior") { addInterior(interior, at: transform) }
         } else {
-            add(b.parts.filter { $0.slot.isFill }.map { ($0.material, $0.mesh) }, at: transform, name: name.map { "\($0) fill" })
+            add(b.parts.filter { $0.slot.isFill }.map { ($0.material, $0.mesh) }, at: transform, name: name.map { "\($0) fill" }, label: "fill")
         }
     }
 
@@ -126,7 +127,9 @@ final class BuildingKit {
             var merged = MeshBuilder(), offsets: [UInt8] = []
             var first = -1
             for part in storey.parts where !part.mesh.isEmpty && (part.material.glass || part.material.emission != .zero) {
-                apart[index, default: []].append((scene.addMesh(part.mesh.geometry, uvs: part.mesh.uvs), sharedMaterial(part.material), part.material.glass))
+                apart[index, default: []].append((scene.addMesh(part.mesh.geometry, uvs: part.mesh.uvs,
+                                                                label: "storey \(index + 1) \(part.material.glass ? "glass" : "lights")"),
+                                                  sharedMaterial(part.material), part.material.glass))
             }
             for part in storey.parts where !part.mesh.isEmpty && !part.material.glass && part.material.emission == .zero {
                 let m = scene.addMaterial(gpuMaterial(part.material))
@@ -136,7 +139,7 @@ final class BuildingKit {
                 merged.append(part.mesh)
             }
             guard first >= 0 else { continue }
-            meshes[index] = (scene.addMesh(merged.geometry, uvs: merged.uvs, materials: offsets), first)
+            meshes[index] = (scene.addMesh(merged.geometry, uvs: merged.uvs, materials: offsets, label: "storey \(index + 1)"), first)
         }
         for p in interior.placements {
             let at = transform * translate([0, p.y, 0])
@@ -173,7 +176,7 @@ final class BuildingKit {
                     offsets += [UInt8](repeating: UInt8(min(m - first, 255)), count: part.mesh.triangleCount)
                     merged.append(part.mesh)
                 }
-                let made = (scene.addMesh(merged.geometry, uvs: merged.uvs, materials: offsets), first)
+                let made = (scene.addMesh(merged.geometry, uvs: merged.uvs, materials: offsets, label: prop.item.kind.rawValue), first)
                 propMeshes[key] = made
                 return made
             }()
@@ -254,7 +257,7 @@ final class BuildingKit {
                 out[FurnishPalette.chrome].box([d.width - 0.16, 1.0, t / 2], [d.width - 0.06, 1.03, t / 2 + 0.05])
                 out[FurnishPalette.chrome].box([d.width - 0.16, 1.0, -t / 2 - 0.05], [d.width - 0.06, 1.03, -t / 2])
                 let made = out.parts.filter { !$0.mesh.isEmpty }.map { part -> (mesh: Int, material: Int, glass: Bool) in
-                    (scene.addMesh(part.mesh.geometry, uvs: part.mesh.uvs), part.material.glass ? sharedMaterial(part.material) : scene.addMaterial(gpuMaterial(part.material)),
+                    (scene.addMesh(part.mesh.geometry, uvs: part.mesh.uvs, label: "door"), part.material.glass ? sharedMaterial(part.material) : scene.addMaterial(gpuMaterial(part.material)),
                      part.material.glass)
                 }
                 leaves[key] = made
@@ -303,7 +306,7 @@ final class BuildingKit {
             let base = SIMD3(cr.lo.x, 0, cr.lo.y)
             for part in cab.parts where !part.mesh.isEmpty {
                 let material = part.material.emission != .zero ? sharedMaterial(part.material) : scene.addMaterial(gpuMaterial(part.material))
-                let mesh = scene.addMesh(part.mesh.geometry, uvs: part.mesh.uvs)
+                let mesh = scene.addMesh(part.mesh.geometry, uvs: part.mesh.uvs, label: "lift car")
                 if still { scene.addInstance(mesh, material, translate(base + [0, lift.y, 0])); continue }
                 scene.addInstance(mesh, material, translate(base + [0, lift.y, 0])) { [unowned c] _ in
                     translate(base + [0, c.lifts[index].y, 0])
@@ -312,7 +315,7 @@ final class BuildingKit {
             // The landing doors: two steel panels in each storey's doorway, parting to either side into the shaft's
             // wall (a lift at the core's corner has no more wall than that beside its door).
             let half = lift.doorWidth / 2
-            let panel = scene.addMesh({ var m = MeshBuilder(); m.box([-half / 2, 0, -0.02], [half / 2, 2.1, 0.02]); return m.geometry }())
+            let panel = scene.addMesh({ var m = MeshBuilder(); m.box([-half / 2, 0, -0.02], [half / 2, 2.1, 0.02]); return m.geometry }(), label: "lift door")
             let steelIndex = scene.addMaterial(gpuMaterial(steel))
             let doorMid = inside.center + lift.doorSide * ((lift.doorSide.x != 0 ? inside.size.x : inside.size.y) / 2 + plan(partition: 0))
             for (k, f) in lift.floors.enumerated() {

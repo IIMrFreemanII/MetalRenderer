@@ -36,6 +36,7 @@ extension Scene {
         }
         let lane = Scene.fluidLane, t = Scene.fluidWall, rim = Scene.fluidRim, z0 = Scene.fluidTrayZ
         let width = Float(kinds.count) * lane.x + Float(kinds.count + 1) * t
+        section("Tray")
         // The tray's walls: front, back, the two ends, and the dividers between the lanes.
         let tray = addPBRMaterial(baseColor: [0.85, 0.85, 0.83], metallic: 0, roughness: 0.4)
         let long = SDFShape(.box(halfExtents: [width / 2, rim / 2, t / 2], rounding: 0.01))
@@ -57,6 +58,8 @@ extension Scene {
         let rise: Float = 0.08, run: Float = 0.15, back = z0 - lane.z / 2
         for (k, kind) in kinds.enumerated() {
             let x = -width / 2 + t + lane.x / 2 + Float(k) * (lane.x + t)
+            beginObject("\(kind) lane".capitalized)
+            defer { endObject() }
             // Three steps at the back, the top one 0.24 m up.
             for s in 0..<3 {
                 let height = rise * Float(3 - s)
@@ -85,6 +88,7 @@ extension Scene {
                       nozzle: nozzle, capacity: physics.fluidParticles)
         }
 
+        section("Lights")
         addLight(.rect(width: 4, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -0.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }

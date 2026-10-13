@@ -32,6 +32,7 @@ extension Scene {
         case .mutate: shown += CharacterCatalog.registered(w.mutants)?.characters ?? []
         }
 
+        section("Studio")
         // The studio: a floor to the horizon, a sun from the camera's left a little above, the sky.
         let kit = Kit(self)
         addInstance(kit.quad, addMaterial(albedo: [0.32, 0.31, 0.3]), scale([20_000, 1, 20_000]))
@@ -58,6 +59,7 @@ extension Scene {
         crowd.expression = w.expression
         adopt(crowd)
 
+        section("Characters")
         // In a row along x, a metre apart (wider for the wide), facing the camera.
         let gap: Float = shown.count > 1 ? 0.95 : 0
         var focus = AABB(), face = AABB()
@@ -67,9 +69,11 @@ extension Scene {
             let skin = addCharacterMaterials(shown[k].look, skin: c.color, maps: addSkinTextures(shown[k], kit: generator),
                                              hair: CharacterHair.colour(shown[k].look, age: shown[k].macro.age),
                                              strandBrows: strands && shown[k].hair.brows > 0)
+            beginObject(shown[k].name, assets: [AssetKey(kind: .character, name: shown[k].id)])
             let instance = addInstance(crowd.slots[k].mesh, skin, translate([x, 0, 0]))
             setSkinned(instance, travels: false)
             if strands { addHair(shown[k], slot: k, crowd: crowd, kit: generator, transform: translate([x, 0, 0]), density: shown.count > 1 ? 0.35 : 1) }
+            endObject()
             if w.lookAt { crowd.lookers[k] = translate([x, 0, 0]) }
             let level = c.level(0)
             var box = level.positions.reduce(AABB()) { var b = $0; b.grow($1); return b }

@@ -18,13 +18,13 @@ import simd
 extension Scene {
     func buildStress(objects objectCount: Int, lights lightCount: Int) {
         var rng = SplitMix64(seed: 0x5EED_1234)
-        let cube = addMesh(Scene.cubeMesh())
-        let quad = addMesh(Scene.quadMesh())
+        let cube = addMesh(Scene.cubeMesh(), label: "box")
+        let quad = addMesh(Scene.quadMesh(), label: "quad")
 
         func matte(_ c: SIMD3<Float>) -> GPUMaterial { Props.matte(c) }
         func shiny(_ c: SIMD3<Float>, metallic: Float = 0, roughness: Float) -> GPUMaterial { Props.shiny(c, metallic: metallic, roughness: roughness) }
         /// Parts that belong together as one mesh of several materials (added side by side, so the offsets reach them).
-        func prop(_ parts: [(GPUMaterial, MeshBuilder)]) -> (mesh: Int, material: Int) {
+        func prop(_ parts: [(GPUMaterial, MeshBuilder)], _ name: String) -> (mesh: Int, material: Int) {
             var merged = MeshBuilder(), offsets: [UInt8] = []
             let first = materials.count
             for (k, (m, b)) in parts.enumerated() {
@@ -32,13 +32,14 @@ extension Scene {
                 offsets += [UInt8](repeating: UInt8(k), count: b.triangleCount)
                 merged.append(b)
             }
-            return (addMesh(merged.geometry, uvs: merged.uvs, materials: offsets), first)
+            return (addMesh(merged.geometry, uvs: merged.uvs, materials: offsets, label: name), first)
         }
         func slab(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, _ material: Int, mask: UInt32 = Scene.maskGeometry) {
             guard hi.x > lo.x, hi.y > lo.y, hi.z > lo.z else { return }
             addInstance(cube, material, translate((lo + hi) / 2) * scale(hi - lo), mask: mask)
         }
 
+        section("Building")
         // MARK: The building
 
         let concrete = addPBRMaterial(baseColor: [0.42, 0.41, 0.39], metallic: 0, roughness: 0.45)
@@ -92,6 +93,7 @@ extension Scene {
         partitionWall(alongX: true, at: 2, from: 2, to: 20, height: 3.5, door: 6 ... 9, material: partition)
         for x: Float in [-2, 2] { for z: Float in [-2, 2] { slab([x - 0.2, 0, z - 0.2], [x + 0.2, h, z + 0.2], steel) } }
 
+        section("Warehouse")
         // MARK: Warehouse: racks and the overhead conveyor
 
         do {
@@ -108,7 +110,7 @@ extension Scene {
                     for dz in Hall.palletOffsets { pallets.box([0.1, level, zu + dz - 0.6], [1.1, level + 0.14, zu + dz + 0.6]) }
                 }
             }
-            let rack = prop([(matte([0.12, 0.22, 0.5]), uprights), (matte([0.85, 0.35, 0.05]), beams), (matte([0.55, 0.42, 0.26]), pallets)])
+            let rack = prop([(matte([0.12, 0.22, 0.5]), uprights), (matte([0.85, 0.35, 0.05]), beams), (matte([0.55, 0.42, 0.26]), pallets)], "rack")
             for lo in Hall.rackFaces { addInstance(rack.mesh, rack.material, translate([lo, 0, 0])) }
         }
 
@@ -147,17 +149,19 @@ extension Scene {
             b.frame = matrix_identity_float4x4
             return b
         }
-        let overhead = prop([(shiny([0.3, 0.32, 0.35], metallic: 1, roughness: 0.5), conveyor(Hall.overheadLoop, width: 0.6, hung: true))])
+        let overhead = prop([(shiny([0.3, 0.32, 0.35], metallic: 1, roughness: 0.5), conveyor(Hall.overheadLoop, width: 0.6, hung: true))], "overhead conveyor")
         addInstance(overhead.mesh, overhead.material, matrix_identity_float4x4)
 
+        section("Factory")
         // MARK: Factory: conveyor loops, gantry rails
 
         var beds = conveyor(Hall.factoryLoops[0], width: 0.6, hung: false)
         beds.append(conveyor(Hall.factoryLoops[1], width: 0.6, hung: false))
-        let belt = prop([(shiny([0.08, 0.08, 0.09], roughness: 0.6), beds)])
+        let belt = prop([(shiny([0.08, 0.08, 0.09], roughness: 0.6), beds)], "conveyor belts")
         addInstance(belt.mesh, belt.material, matrix_identity_float4x4)
         for z in Hall.railZ { slab([2.3, Hall.railY, z - 0.15], [19.7, Hall.railY + 0.25, z + 0.15], yellowPaint) }
 
+        section("Garage")
         // MARK: Garage: the deck, its ramp and columns, the bays' lines
 
         let deckTop = Hall.deck
@@ -173,7 +177,7 @@ extension Scene {
             ramp.triangle(c, b + down, b)
             ramp.triangle(d, a, a + down)
             ramp.box([-17.15, deckTop, 2], [-17, deckTop + 1.0, 6])   // the landing's rail
-            let r = prop([(shiny([0.42, 0.41, 0.39], roughness: 0.45), ramp)])
+            let r = prop([(shiny([0.42, 0.41, 0.39], roughness: 0.45), ramp)], "ramp")
             addInstance(r.mesh, r.material, matrix_identity_float4x4)
         }
         for x: Float in [-16.6, -9.5, -2.4] {
@@ -189,12 +193,13 @@ extension Scene {
                     lines.box([lo + 0.3, y, z - 0.05], [hi - 0.3, y + 0.005, z + 0.05], faces: .top)
                 }
             }
-            let l = prop([(matte([0.85, 0.85, 0.8]), lines)])
+            let l = prop([(matte([0.85, 0.85, 0.8]), lines)], "bay lines")
             addInstance(l.mesh, l.material, matrix_identity_float4x4)
         }
         // The deck's parapet over the aisle sides is the partitions' upper part; along the ramp, a rail.
         slab([-17.15, deckTop, 6], [-17, deckTop + 1.0, 20], whitePaint)
 
+        section("Office")
         // MARK: Office: carpet, glass meeting rooms
 
         addInstance(quad, carpet, translate([11, 0.01, 11]) * scale([18, 1, 18]))
@@ -217,42 +222,43 @@ extension Scene {
                 }
             }
             let rooms = prop([(shiny([0.15, 0.15, 0.16], metallic: 1, roughness: 0.35), frames),
-                              (shiny([0.55, 0.42, 0.3], roughness: 0.35), tables), (matte([0.18, 0.18, 0.2]), seats)])
+                              (shiny([0.55, 0.42, 0.3], roughness: 0.35), tables), (matte([0.18, 0.18, 0.2]), seats)], "meeting rooms")
             addInstance(rooms.mesh, rooms.material, matrix_identity_float4x4)
         }
 
+        section("Props")
         // MARK: Props
 
         let cartons = [[0.62, 0.45, 0.28], [0.7, 0.55, 0.36], [0.82, 0.8, 0.76]].map { addMaterial(albedo: SIMD3<Float>($0.map(Float.init))) }
-        let forklift = prop(Props.forklift())
-        let agv = prop(Props.agv())
-        let pickerMesh = prop(Props.person(shirt: [0.95, 0.75, 0.05], trousers: [0.12, 0.13, 0.16]))
+        let forklift = prop(Props.forklift(), "forklift")
+        let agv = prop(Props.agv(), "AGV")
+        let pickerMesh = prop(Props.person(shirt: [0.95, 0.75, 0.05], trousers: [0.12, 0.13, 0.16]), "picker")
         let parcelMeshes = [[0.62, 0.45, 0.28], [0.7, 0.55, 0.36]].map { c -> (mesh: Int, material: Int) in
             var b = MeshBuilder()
             b.box([-0.2, 0, -0.17], [0.2, 0.3, 0.17])
-            return prop([(matte(SIMD3<Float>(c.map(Float.init))), b)])
+            return prop([(matte(SIMD3<Float>(c.map(Float.init))), b)], "parcel")
         }
         let partMeshes: [(mesh: Int, material: Int)] = {
             var drum = MeshBuilder(), crate = MeshBuilder(), tote = MeshBuilder()
             drum.cylinder([0, 0, 0], radius: 0.15, height: 0.3, segments: 12)
             crate.box([-0.18, 0, -0.18], [0.18, 0.32, 0.18])
             tote.box([-0.22, 0, -0.16], [0.22, 0.22, 0.16])
-            return [prop([(shiny([0.75, 0.76, 0.78], metallic: 1, roughness: 0.25), drum)]),
-                    prop([(matte([0.5, 0.36, 0.2]), crate)]),
-                    prop([(shiny([0.1, 0.3, 0.7], roughness: 0.5), tote)])]
+            return [prop([(shiny([0.75, 0.76, 0.78], metallic: 1, roughness: 0.25), drum)], "drum"),
+                    prop([(matte([0.5, 0.36, 0.2]), crate)], "crate"),
+                    prop([(shiny([0.1, 0.3, 0.7], roughness: 0.5), tote)], "tote")]
         }()
-        let arm = prop(Props.robotArm())
-        let machine = prop(Props.machine())
-        let trolley = prop(Props.trolley())
+        let arm = prop(Props.robotArm(), "robot arm")
+        let machine = prop(Props.machine(), "machine")
+        let trolley = prop(Props.trolley(), "trolley")
         let carMeshes = [[0.6, 0.05, 0.04], [0.08, 0.1, 0.14], [0.75, 0.75, 0.77], [0.1, 0.25, 0.55], [0.85, 0.85, 0.82]]
-            .map { prop(Props.car(paint: SIMD3<Float>($0.map(Float.init)))) }
-        let desk = prop(Props.desk())
-        let chair = prop(Props.chair())
+            .map { prop(Props.car(paint: SIMD3<Float>($0.map(Float.init))), "car") }
+        let desk = prop(Props.desk(), "desk")
+        let chair = prop(Props.chair(), "chair")
         let personMeshes = [[0.2, 0.3, 0.55], [0.7, 0.7, 0.72], [0.45, 0.12, 0.15]].map {
-            prop(Props.person(shirt: SIMD3<Float>($0.map(Float.init)), trousers: [0.15, 0.15, 0.2]))
+            prop(Props.person(shirt: SIMD3<Float>($0.map(Float.init)), trousers: [0.15, 0.15, 0.2]), "person")
         }
-        let robot = prop(Props.robot())
-        let drone = prop(Props.drone())
+        let robot = prop(Props.robot(), "robot")
+        let drone = prop(Props.drone(), "drone")
 
         // Places for what stands still, in a shuffled order, so a few props spread over the whole zone.
         func shuffled<T>(_ a: [T]) -> [T] {
@@ -348,6 +354,7 @@ extension Scene {
             }
         }
 
+        section("Lights")
         // MARK: Lights
 
         var fixtures = [Int](repeating: 0, count: 4), movers = [Int](repeating: 0, count: 4)

@@ -22,6 +22,7 @@ extension Scene {
         options.spacing = physics.fleshCell / 100
         options.muscleGain = physics.muscleGain
 
+        section("Dancer and balls")
         // The character on its spot, and the balls in a ring round it, in reach of a breakdance's legs.
         let spot = SIMD3<Float>(1.2, 0, 3.1)
         if physics.muscleCharacter, addFleshCharacter(spot: spot, options: options, body: physics.body,
@@ -36,6 +37,7 @@ extension Scene {
             }
         }
 
+        section("Steps and ragdolls")
         // The steps at the back on the left, from a landing 1.5 m up, and the ragdolls thrown down them.
         func fixed(_ shape: SDFShape, _ material: Int, _ transform: float4x4) {
             let s = addSDFShape(shape)
@@ -69,6 +71,7 @@ extension Scene {
                             bounds: room)
         }
 
+        section("Lights")
         addLight(.rect(width: 5, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -0.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }

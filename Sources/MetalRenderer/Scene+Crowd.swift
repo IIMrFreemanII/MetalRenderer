@@ -21,11 +21,12 @@ extension Scene {
     }
 
     func buildCrowd(characters count: Int, poses: Int, detail: Int) {
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
+        let quad = addMesh(Scene.quadMesh(), label: "quad")
+        let cube = addMesh(Scene.cubeMesh(), label: "box")
         let paving = addMaterial(albedo: [0.42, 0.4, 0.37])
         let stone = addMaterial(albedo: [0.7, 0.66, 0.6])
 
+        section("Square")
         // The square: lanes along x, `perRow` members to a lane, a row every `rowSpacing` in z.
         let count = max(count, 1)
         let lane = min(max(2.4 * Float(count).squareRoot(), 24), 400)
@@ -33,6 +34,7 @@ extension Scene {
         let rowSpacing: Float = 1.15
         let depth = Float(rows) * rowSpacing
         addInstance(quad, paving, scale([lane + 80, 1, depth + 80]))
+        section("Blocks")
         // Blocks along the far side and at the ends, for scale and long shadows.
         var rng = SplitMix64(seed: 0xC0_FFEE)
         for i in 0..<max(Int(lane / 9), 2) {
@@ -44,6 +46,7 @@ extension Scene {
             addInstance(cube, stone, translate([side * (lane / 2 + 6), 1.5, 0]) * scale([1.2, 3, min(depth, 30)]))
         }
 
+        section("Sun")
         // The sun, high and to the side so the crowd throws shadows across the lanes; its colour is the atmosphere's.
         let elevation: Float = 48 * .pi / 180, azimuth: Float = 0.7
         let toward = SIMD3<Float>(cos(elevation) * sin(azimuth), sin(elevation), cos(elevation) * cos(azimuth))
@@ -99,6 +102,7 @@ extension Scene {
                 let yaw = travels ? direction * .pi / 2 : rng.range(0, 2 * .pi)
                 let rotation = rotate(yaw, [0, 1, 0])
                 let origin = SIMD3<Float>(travels ? -direction * lane / 2 : along - lane / 2, 0, z + (travels ? 0 : rng.range(-0.2, 0.2)))
+                label(mesh: crowd.slots[slot].mesh, crowd.characters[crowd.states[state].character].name)
                 let instance = addInstance(crowd.slots[slot].mesh, material, translate(origin) * rotation * scale(size))
                 setSkinned(instance, travels: travels)
                 if travels {

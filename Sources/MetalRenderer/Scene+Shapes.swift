@@ -21,6 +21,7 @@ extension Scene {
         /// Two materials in a row: a node's offset 1 is the second.
         func pair(_ a: Int, _ b: GPUMaterial) -> Int { let first = a; _ = addMaterial(b); return first }
 
+        section("Primitives")
         // The primitives, each on a plinth, its foot on the plinth's top.
         let z0: Float = -0.6, top: Float = 0.3
         let primitives: [(SDFShape.Primitive, Float, Int, simd_quatf)] = [
@@ -40,6 +41,7 @@ extension Scene {
             addInstance(sdf: shape([node(p)]), material, translate([x, top + half, z0]) * float4x4(rotation))
         }
 
+        section("Cuts and blends")
         // Cuts and blends, between the primitives and behind them.
         let z1: Float = -3.0
         let x1 = (0..<6).map { -4.8 + 1.6 * Float($0) }
@@ -74,12 +76,14 @@ extension Scene {
         addInstance(sdf: shape([node(.cylinder(halfHeight: 0.45, radius: 0.3, rounding: 0.05)),
                                 node(.torus(major: 0.33, minor: 0.12), .subtract, smooth: 0.08)]),
                     addPBRMaterial(baseColor: [0.6, 0.35, 0.2], metallic: 1, roughness: 0.35), translate([x1[4], 0.45, z1]))
+        section("Baked knot")
         // A mesh baked into a distance grid (a torus knot), melted onto a pedestal.
         let knot = addSDFVolume(SDFVolume.cached(Scene.torusKnotMesh(), resolution: 64))
         addInstance(sdf: shape([node(.volume(knot), at: [0, 0.62, 0], rotation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0])),
                                 node(.box(halfExtents: [0.4, 0.1, 0.4], rounding: 0.03), smooth: 0.12, at: [0, 0.1, 0])]),
                     addPBRMaterial(baseColor: [0.85, 0.5, 0.35], metallic: 1, roughness: 0.25), translate([x1[5], 0, z1]))
 
+        section("Glowing shapes")
         // Glowing shapes: a blob lamp on a stand in the back left, and a ring turning in the back right.
         kit.box([-5.2, 0.4, -5.4], [0.7, 0.8, 0.7], plinth)
         addInstance(sdf: shape([node(.sphere(radius: 0.3)),
@@ -90,6 +94,7 @@ extension Scene {
         addInstance(sdf: shape([node(.torus(major: 0.5, minor: 0.05))]), addMaterial(albedo: .zero, emission: Scene.hue([0.15, 0.85, 1.0]) * 5),
                     matrix_identity_float4x4) { t in translate([5, 2.0, -5]) * rotate(0.5 * t, [0, 1, 0]) * rotate(1.1, [1, 0, 0]) }
 
+        section("Lights")
         // A panel overhead and a light circling the shapes.
         addLight(.rect(width: 4, height: 1.2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 4.97, -1.8], direction: [0, -1, 0], tangent: [1, 0, 0])

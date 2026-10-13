@@ -12,8 +12,13 @@ is made of, and the assets they share, drawn as a graph. Key **Y**, or **⇧⌘G
   - Everything else is grouped by system (Plants, Buildings, Lights, Physics, …), then by what it is an instance of.
   - More than 24 instances of one thing become one *aggregate* node, whose members are paged in the window.
   - Ids are stable while the builder doesn't change.
-  - Tagged so far: the Cornell room, the gallery, physics, city lots (with their style), forest species, and every
-    glTF model (in `addModel`). Other scenes fall back to auto-groups.
+  - Builders mark their parts with `section("Props")`. It closes the part before it, and `Scene.init` closes the last.
+    Named objects use `object("Car") { … }`.
+  - Every scene is tagged except the forest and the open world, whose systems and tiles already read well.
+  - Meshes are labeled where they're made: `addMesh(…, label:)`, the kit's box, ball and quad, the stress scene's props,
+    building shells, storeys, furniture, doors and lifts, soft bodies, cloth, flesh and liquids.
+  - SDF shapes are named by their primitive (`SDFShape.kindName`) unless a builder names them, like the ragdolls' parts.
+    Each ragdoll is an object.
 - **Outline files** (`OutlineStore`)
   - Each installed scene writes `Assets/Scenes/Outlines/<scene>.json`, so the graph knows scenes that aren't loaded.
   - `METALRENDERER_BENCH=outlines` makes every scene once, headless (about 3 minutes on the M1 Max), and writes them all.
@@ -54,6 +59,8 @@ is made of, and the assets they share, drawn as a graph. Key **Y**, or **⇧⌘G
 
 ## Next
 
-- Tag more builders where the auto-groups read poorly (stress, market, crowd, mireland, showcase).
+- About 90 meshes are still unnamed: fur bodies, a character's parts, Mireland's far trees. Label them where they're
+  added if they matter.
+- Materials are still "material 12"; a material label (like the mesh's) would name the shared-material assets.
 - The tree layout is very wide when many nodes are open. A left-to-right tree, or framing the selection, would help.
 - Reparenting is folders only (as decided). Real transform parenting would need a parent pass when edits are applied.

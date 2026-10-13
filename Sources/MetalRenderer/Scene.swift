@@ -365,8 +365,19 @@ final class Scene {
         openTags.append((path, assets, instances.count, lights.count, effects.count))
     }
 
+    /// A builder's next part ("Stage", "Props", "Lights"): what it adds from here, until the next `section` (or the end of
+    /// the builder), is that object. It closes the section open before it, and what was opened in that.
+    func section(_ name: String, assets: [AssetKey] = []) {
+        if let d = sectionDepth { while openTags.count > d { endObject() } }
+        let depth = openTags.count
+        beginObject(name, assets: assets)
+        sectionDepth = depth
+    }
+    private var sectionDepth: Int?
+
     func endObject() {
         guard let open = openTags.popLast() else { return }
+        if let d = sectionDepth, openTags.count <= d { sectionDepth = nil }
         let parent = openTags.flatMap { $0.name.split(separator: "/").map(String.init) }
         objectTags.append(ObjectTag(path: parent + open.name.split(separator: "/").map(String.init),
                                     instances: open.instances..<instances.count, lights: open.lights..<lights.count,
@@ -605,6 +616,7 @@ final class Scene {
         case .mireland: buildMireland()
         case .painter: buildPainterWorkshop()
         }
+        while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
         buildProceduralPrograms()
         displaceProcedural()
@@ -1063,12 +1075,9 @@ final class Scene {
     // MARK: - Scene construction
 
     private func buildCornell() {
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
-        let sphere = addMesh(Scene.icosphere(subdivisions: 3))
-        label(mesh: quad, "quad")
-        label(mesh: cube, "cube")
-        label(mesh: sphere, "sphere")
+        let quad = addMesh(Scene.quadMesh(), label: "quad")
+        let cube = addMesh(Scene.cubeMesh(), label: "box")
+        let sphere = addMesh(Scene.icosphere(subdivisions: 3), label: "ball")
 
         let white = addMaterial(albedo: [0.75, 0.75, 0.75])
         let red = addMaterial(albedo: [0.65, 0.06, 0.05])
@@ -1158,8 +1167,11 @@ final class Scene {
     /// `materials`: for a mesh of several materials, each triangle's material as an offset from the material its
     /// instance names (which is then the first of a run of materials added one after the other).
     /// `name`: see `meshNames`.
-    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil) -> Int {
+    /// `label`: what the outline calls it (`label(mesh:)`).
+    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil,
+                 label: String? = nil) -> Int {
         if let name { meshNames[meshes.count] = name }
+        if let label { meshLabels[meshes.count] = (label, false, nil) }
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
         if let offsets {
@@ -1261,8 +1273,9 @@ final class Scene {
     /// A mesh whose vertices the GPU rewrites every frame (a cloth's: PhysicsGPU), within `bounds` whatever it does.
     /// Its vertices are its own (`vertexOffset` 0), and `finishDeforming` puts last frame's after everything else.
     /// `materials`: per triangle, its material's offset from the instance's (as `addMesh`'s).
-    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB) -> Int {
-        let m = addMesh(mesh, uvs: uvs, materials: materials)
+    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB,
+                          label: String? = nil) -> Int {
+        let m = addMesh(mesh, uvs: uvs, materials: materials, label: label)
         meshBounds[m] = (bounds.lo, bounds.hi)
         deforming.append((mesh: m, first: positions.count - mesh.positions.count, count: mesh.positions.count))
         return m
@@ -1461,6 +1474,7 @@ final class Scene {
 
     /// An SDF shape for instances to place (`addInstance(sdf:)`).
     func addSDFShape(_ shape: SDFShape) -> Int {
+        sdfLabels[sdfShapes.count] = shape.kindName   // (a builder's own name replaces it: `label(sdf:)`)
         sdfShapes.append(shape)
         sdfBounds.append(shape.bounds(volumes: sdfVolumes))
         return sdfShapes.count - 1
@@ -1550,7 +1564,7 @@ final class Scene {
                       materials: [UInt8]? = nil, own: [Int], rigid: [Int], weld: Bool, material: Int, bounds: AABB, skin: SkinShell? = nil) {
         var drawn = flesh
         drawn.model.embed(mesh, in: own, weld: weld)
-        let m = addDeformingMesh(mesh, uvs: uvs, materials: materials, bounds: bounds)
+        let m = addDeformingMesh(mesh, uvs: uvs, materials: materials, bounds: bounds, label: skin == nil ? "flesh" : "skin")
         addDeformingInstance(m, material)
         softMeshes.append(m)
         let world = physicsWorld(), base = deforming.last!.first, firstVertex = world.softVertices.count
@@ -1587,7 +1601,8 @@ final class Scene {
         let reach = max(length(across), length(down)) + 0.1
         box.lo = simd_min(box.lo - reach, SIMD3(box.lo.x - reach, -0.1, box.lo.z - reach))
         box.hi += reach
-        let mesh = addDeformingMesh((positions, [SIMD3<Float>](repeating: normal, count: positions.count), indices), uvs: uvs, bounds: box)
+        let mesh = addDeformingMesh((positions, [SIMD3<Float>](repeating: normal, count: positions.count), indices), uvs: uvs, bounds: box,
+                                    label: "cloth")
         addDeformingInstance(mesh, material)
         clothMeshes.append(mesh)
         physicsWorld().addCloth(origin: origin, across: across, down: down, columns: columns, rows: rows, pinned: pinned,
@@ -1606,7 +1621,8 @@ final class Scene {
         let rotation = simd_float3x3(columns: (PhysicsMath.xyz(transform.columns.0), PhysicsMath.xyz(transform.columns.1),
                                                PhysicsMath.xyz(transform.columns.2)))
         let positions = model.surface.positions.map { PhysicsMath.xyz(transform * SIMD4($0, 1)) }
-        let mesh = addDeformingMesh((positions, model.surface.normals.map { rotation * $0 }, model.surface.indices), bounds: bounds)
+        let mesh = addDeformingMesh((positions, model.surface.normals.map { rotation * $0 }, model.surface.indices), bounds: bounds,
+                                    label: "soft body")
         addDeformingInstance(mesh, material)
         softMeshes.append(mesh)
         physicsWorld().addSoftBody(model, transform: transform, vertexBase: deforming.last!.first, velocity: velocity, density: density,
@@ -1646,7 +1662,7 @@ final class Scene {
         let bounds = s.surfaceBounds(s.surface), middle = (bounds.lo + bounds.hi) / 2
         let v = Int(s.surface.mesh.w) + 1, t = Int(s.surface.triangles.x)
         let mesh = addDeformingMesh(([SIMD3<Float>](repeating: middle, count: v), [SIMD3<Float>](repeating: SIMD3(0, 1, 0), count: v),
-                                     [UInt32](repeating: UInt32(v - 1), count: 3 * t)), bounds: bounds)
+                                     [UInt32](repeating: UInt32(v - 1), count: 3 * t)), bounds: bounds, label: "\(kind) surface")
         rebuiltMeshes.insert(mesh)
         if let material {
             addDeformingInstance(mesh, material)
@@ -1941,11 +1957,11 @@ final class Scene {
         }
         switch kind {
         case .sphere(let r), .spot(let r, _, _):
-            if proxyMesh == nil && lightSphereMesh < 0 { lightSphereMesh = addMesh(Scene.icosphere(subdivisions: 2)) }
+            if proxyMesh == nil && lightSphereMesh < 0 { lightSphereMesh = addMesh(Scene.icosphere(subdivisions: 2), label: "ball") }
             mesh = proxyMesh ?? lightSphereMesh
             emission = color / (.pi * r * r)
         case .rect:
-            if proxyMesh == nil && lightQuadMesh < 0 { lightQuadMesh = addMesh(Scene.quadMesh()) }
+            if proxyMesh == nil && lightQuadMesh < 0 { lightQuadMesh = addMesh(Scene.quadMesh(), label: "quad") }
             mesh = proxyMesh ?? lightQuadMesh
             emission = color
         case .tube(let length, let r):
@@ -2229,15 +2245,13 @@ final class Scene {
     /// Gallery: the models in `Assets/` on plinths in an arc, 1.6 m at their largest side, under 8 moving lights.
     /// Two of them turn slowly (dynamic instances); the rest are static.
     private func buildGallery() {
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
-        let sphere = addMesh(Scene.icosphere(subdivisions: 2))
+        let quad = addMesh(Scene.quadMesh(), label: "quad")
+        let cube = addMesh(Scene.cubeMesh(), label: "box")
+        let sphere = addMesh(Scene.icosphere(subdivisions: 2), label: "ball")
         let floor = addPBRMaterial(baseColor: [0.32, 0.31, 0.30], metallic: 0, roughness: 0.25)   // polished stone
         let wall = addMaterial(albedo: [0.70, 0.70, 0.68])
         let plinth = addPBRMaterial(baseColor: [0.62, 0.62, 0.64], metallic: 1, roughness: 0.35)   // brushed steel
 
-        label(mesh: quad, "quad")
-        label(mesh: cube, "cube")
         let w: Float = 26, h: Float = 7, d: Float = 18
         object("Hall/Floor") { addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d])) }
         object("Hall/Back wall") { addInstance(quad, wall, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h])) }
