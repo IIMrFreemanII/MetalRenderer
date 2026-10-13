@@ -63,6 +63,15 @@ struct Material {
     uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
 };
 
+// A procedural material's extras (GPUTypes.swift GPUMaterialExtra; MATERIAL_EXTRAS: one per material, defaults for
+// the others): its height (parallax) and opacity textures, and how it is sampled.
+struct MaterialExtra {
+    uint4  textures;    // x = height, y = opacity; ~0 = none; z = 1: procedural (a mesh without UVs gets planar ones);
+                        // w = its program (PROCEDURAL_CODE: computed in the shading, MatShaderCode), ~0: baked
+    float4 surface;     // x = parallax depth (UV units), y = UV scale, z = opacity cutoff, w = AO strength (the
+                        //   metallic-roughness texture's R darkens the base colour by it; 0: R isn't occlusion)
+};
+
 // Bindless material textures (Renderer: an array of MTLResourceIDs).
 struct MaterialTexture {
     texture2d<float> t;
@@ -110,8 +119,11 @@ struct SceneShading {
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
     device const VSMScene*        vsm;         // with FLAG_VSM: the virtual shadow maps (VSMTargets.writeScene)
+    device const MaterialExtra*   extras;      // with MATERIAL_EXTRAS: per material (procedural materials' extras)
+    device const float4*          procParams;  // with PROCEDURAL_CODE: the programs' parameters (MatShaderCode)
 };
-static_assert(sizeof(SceneShading) == 288, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset)");
+static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 280 && __builtin_offsetof(SceneShading, procParams) == 288,
+              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset, shadingExtrasOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -165,6 +177,15 @@ constant bool SKIN = (LIGHT_SPEC & 0x00020000u) != 0;
 // shadow rays, reflections and the path tracer look through.
 constant bool PARTICLES = (LIGHT_SPEC & 0x00010000u) != 0;
 constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
+// Bit 15 = MATERIAL_EXTRAS: some materials are procedural (Material Designer graphs, Scene+Procedural.swift): the
+// shading reads their extras (SceneShading.extras): a UV scale, parallax from a height, occlusion.
+constant bool MATERIAL_EXTRAS = (LIGHT_SPEC & 0x00008000u) != 0;
+// Bit 14 = OPACITY: some of their instances cut holes by an opacity texture (TraceScene.opacity), which the queries
+// alpha-test (OpacityLevels, Intersect.metal); always with ALPHA_TEST (its query loop).
+constant bool OPACITY = (LIGHT_SPEC & 0x00004000u) != 0;
+// Bit 13 = PROCEDURAL_CODE: some of them are code the shading runs (proceduralMaterial, Procedural.metal) rather than
+// baked textures.
+constant bool PROCEDURAL_CODE = (LIGHT_SPEC & 0x00002000u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).

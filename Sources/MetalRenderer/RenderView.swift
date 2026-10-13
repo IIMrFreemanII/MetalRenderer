@@ -11,6 +11,21 @@ protocol InputHandler: AnyObject {
     func mouseDragged(dx: Float, dy: Float, at: SIMD2<Float>)
     func mouseUp()
     func scrolled(dy: Float)
+    /// The right button (the Material Painter's paint mode orbits with it), the cursor moving with no button down,
+    /// and a pen's pressure (1 for a mouse) ahead of the press or drag it comes with.
+    func rightMouseDown(at: SIMD2<Float>)
+    func rightMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>)
+    func rightMouseUp()
+    func mouseMoved(at: SIMD2<Float>)
+    func pressure(_ p: Float)
+}
+
+extension InputHandler {
+    func rightMouseDown(at: SIMD2<Float>) {}
+    func rightMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>) {}
+    func rightMouseUp() {}
+    func mouseMoved(at: SIMD2<Float>) {}
+    func pressure(_ p: Float) {}
 }
 
 /// The window's view: its layer is the CAMetalLayer the render thread draws into (`surface`), and it forwards keyboard
@@ -92,11 +107,29 @@ final class RenderView: NSView {
         return SIMD2(Float(p.x / max(bounds.width, 1)), Float(1 - p.y / max(bounds.height, 1)))
     }
 
-    override func mouseDown(with event: NSEvent) { inputHandler?.mouseDown(at: cursor(event)) }
+    override func mouseDown(with event: NSEvent) {
+        inputHandler?.pressure(event.subtype == .tabletPoint ? event.pressure : 1)
+        inputHandler?.mouseDown(at: cursor(event))
+    }
     override func mouseUp(with event: NSEvent) { inputHandler?.mouseUp() }
     override func mouseDragged(with event: NSEvent) {
+        inputHandler?.pressure(event.subtype == .tabletPoint ? event.pressure : 1)
         inputHandler?.mouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event))
     }
+    override func rightMouseDown(with event: NSEvent) { inputHandler?.rightMouseDown(at: cursor(event)) }
+    override func rightMouseUp(with event: NSEvent) { inputHandler?.rightMouseUp() }
+    override func rightMouseDragged(with event: NSEvent) {
+        inputHandler?.rightMouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event))
+    }
+    override func mouseMoved(with event: NSEvent) { inputHandler?.mouseMoved(at: cursor(event)) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let moves { removeTrackingArea(moves) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        moves = area
+    }
+    private var moves: NSTrackingArea?
     override func scrollWheel(with event: NSEvent) {
         // A trackpad's deltas are in points, a wheel's in lines.
         inputHandler?.scrolled(dy: Float(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.1 : 1))

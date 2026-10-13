@@ -80,7 +80,7 @@ struct TraversalStats {
 /// top-level structure and what a hit reads besides the instance records. One per frame slot, written every frame
 /// (`write`), as its top-level structure and its virtual geometry's tables are the slot's own.
 final class TraceSceneArgs {
-    static let size = 208
+    static let size = 224
     /// The ray queries' counters (RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which recompiles
     /// the shaders): see TraversalStats.
     static var statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
@@ -139,6 +139,9 @@ final class TraceSceneArgs {
         var trailRecords: MTLBuffer?
         var trailShape = SIMD2<UInt32>()
         var frame: UInt32 = 0
+        /// OPACITY: the instances' alpha tests (Scene.opacityRecords) and the material textures' table.
+        var opacity: MTLBuffer?
+        var textures: MTLBuffer?
     }
 
     /// Writes `slot`'s scene (the CPU writes a slot only once the GPU is done with its last frame).
@@ -169,6 +172,8 @@ final class TraceSceneArgs {
         p.storeBytes(of: address(c.trailPoints), toByteOffset: 184, as: UInt64.self)
         p.storeBytes(of: address(c.trailRecords), toByteOffset: 192, as: UInt64.self)
         p.storeBytes(of: c.trailShape, toByteOffset: 200, as: SIMD2<UInt32>.self)
+        p.storeBytes(of: address(c.opacity), toByteOffset: 208, as: UInt64.self)
+        p.storeBytes(of: address(c.textures), toByteOffset: 216, as: UInt64.self)
     }
 
     /// What the frames finished since the last read added (in-flight ones in part): read while frames run.

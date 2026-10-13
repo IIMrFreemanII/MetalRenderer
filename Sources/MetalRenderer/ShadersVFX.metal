@@ -16,5 +16,6 @@ using namespace metal::raytracing;
 #include "Shaders/SDF.metal"
 #include "Shaders/Intersect.metal"
 #include "Shaders/ParticleTrace.metal"
+#include "Shaders/Procedural.metal"
 #include "Shaders/Surface.metal"
 #include "Shaders/ParticleSim.metal"

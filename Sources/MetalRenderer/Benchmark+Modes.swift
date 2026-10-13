@@ -23,6 +23,7 @@ extension Benchmark {
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
+        "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ]
 
     static func configs(for mode: String) -> [Config] {
@@ -1385,6 +1386,173 @@ extension Benchmark {
                 base.named("code").with { $0.scene.effects = code },
                 base.named("other").with { $0.scene.stage.effects = ["magic"] },
                 base.named("code fresh").with { $0.scene.effects = code }]
+    }
+
+    /// The material workshop (Scene+Materials.swift): every built-in graph on the line-up in the studio, path traced at
+    /// three quarters of the window (each graph baked when its scene is made: its bake's time printed), then the first
+    /// on each shape alone and against each backdrop.
+    private static func materials() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
+        var out = MaterialLibrary.names.map { name in base.named(VFXEffect.slug(name)).with { $0.scene.materialWorkshop.graph = name } }
+        let first = MaterialLibrary.names[0]
+        for layout in MaterialWorkshopSettings.Layout.allCases where layout != .lineup {
+            out.append(base.named("\(VFXEffect.slug(first)) \(layout.rawValue)").with {
+                $0.scene.materialWorkshop.graph = first
+                $0.scene.materialWorkshop.layout = layout
+            })
+        }
+        // The cut-outs (an opacity output: a plant, a decal) as a card and a tile on the ground.
+        for g in MaterialLibrary.all where g.channels[.opacity] != nil && g.name.hasPrefix("Swamp") {
+            out.append(base.named("\(VFXEffect.slug(g.name)) card").with {
+                $0.scene.materialWorkshop.graph = g.name
+                $0.scene.materialWorkshop.layout = .card
+            })
+        }
+        for backdrop in MaterialWorkshopSettings.Backdrop.allCases where backdrop != .studio {
+            out.append(base.named("\(VFXEffect.slug(first)) \(backdrop.rawValue)").with {
+                $0.scene.materialWorkshop.graph = first
+                $0.scene.materialWorkshop.backdrop = backdrop
+            })
+        }
+        return out
+    }
+
+    /// The painter workshop: each object it paints, its texture set a brick graph laid on its layout (UV projection: the
+    /// unwrap's charts, Painter/UVUnwrap.swift, as seams; their texels per metre as the bricks' size).
+    private static func painterModes() -> [Config] {
+        var d = PaintDocument(name: "Bench layout")
+        var bricks = PaintLayer.fill("Bricks", PaintValues(), channels: [.color, .roughness, .metallic, .height])
+        bricks.graph = "Red Bricks"
+        bricks.projection = .uv
+        bricks.tiling = 2
+        d.layers = [PaintDocument.baseLayer, bricks]
+        PaintDocuments.shared.update(d)
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        return PainterWorkshopSettings.Subject.allCases.map { subject in
+            base.named(subject.rawValue).with {
+                $0.scene.painterWorkshop.subject = subject
+                $0.scene.painterWorkshop.model = "demon"
+                $0.scene.painterWorkshop.document = d.name
+            }
+        }
+    }
+
+    /// The smart materials (SmartMaterial.builtIn), each on another object: their masks generated from its bakes
+    /// (curvature, occlusion: PaintBake).
+    private static func painterSmart() -> [Config] {
+        let subjects: [PainterWorkshopSettings.Subject] = [.cube, .model, .sphere, .character, .cylinder]
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        return SmartMaterial.builtIn.enumerated().map { k, m in
+            var d = PaintDocument(name: "Bench \(m.name)")
+            d.layers = [PaintDocument.baseLayer] + m.instantiate()
+            PaintDocuments.shared.update(d)
+            return base.named(VFXEffect.slug(m.name)).with {
+                $0.scene.painterWorkshop.subject = subjects[k % subjects.count]
+                $0.scene.painterWorkshop.model = "demon"
+                $0.scene.painterWorkshop.document = d.name
+            }
+        }
+    }
+
+    /// Strokes in paint mode (Renderer.runPainterScript): red across the sphere (over its seams), blue mirrored
+    /// (symmetry X), leaves stamped and scattered, the eraser through the red, gold revealed through a black mask,
+    /// a UV island filled green; then the same on the demon model.
+    private static func painterStrokes() -> [Config] {
+        var d = PaintDocument(name: "Bench strokes")
+        var paint = PaintLayer(name: "Paint")
+        paint.channels = [.color, .roughness, .metallic, .height]
+        var gold = PaintLayer.fill("Gold", PaintValues(color: [1, 0.72, 0.3], roughness: 0.25, metallic: 1), channels: [.color, .roughness, .metallic])
+        gold.mask = PaintMask(base: 0, generator: nil, painted: true)
+        var fills = PaintLayer(name: "Fills")
+        fills.channels = [.color, .roughness]
+        d.layers = [PaintDocument.baseLayer, paint, gold, fills]
+        PaintDocuments.shared.update(d)
+        func brush(_ c: SIMD3<Float>, size: Float = 22, _ change: (inout PaintBrush) -> Void = { _ in }) -> PaintBrush {
+            var b = PaintBrush()
+            b.size = size
+            b.values.color = c
+            b.values.roughness = 0.35
+            b.values.height = 0.8
+            b.channels = [.color, .roughness, .height]
+            b.flow = 1
+            change(&b)
+            return b
+        }
+        func line(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ n: Int = 24) -> [SIMD2<Float>] { (0...n).map { a + (b - a) * Float($0) / Float(n) } }
+        let steps: [PainterStep] = [
+            .mode(0),
+            .brush(brush([0.8, 0.05, 0.03]), layer: 1, mask: false, tool: .brush), .stroke(line([0.3, 0.42], [0.7, 0.46])),
+            .brush(brush([0.05, 0.15, 0.8]) { $0.symmetry = .x }, layer: 1, mask: false, tool: .brush), .stroke(line([0.4, 0.3], [0.44, 0.36])),
+            .brush(brush([0.2, 0.45, 0.08], size: 30) { $0.stamp = 3; $0.scatter = 0.6; $0.angleJitter = 180; $0.spacing = 0.6 },
+                   layer: 1, mask: false, tool: .brush), .stroke(line([0.35, 0.3], [0.65, 0.32])),
+            .brush(brush(.zero, size: 12) { $0.eraser = true }, layer: 1, mask: false, tool: .brush), .stroke(line([0.5, 0.36], [0.52, 0.52])),
+            .brush(brush([1, 1, 1], size: 26), layer: 2, mask: true, tool: .brush), .stroke(line([0.38, 0.53], [0.62, 0.52])),
+            .brush(brush([0.1, 0.7, 0.2]) { $0.channels = [.color, .roughness] }, layer: 3, mask: false, tool: .fillIsland), .fill([0.5, 0.58]),
+            .wait, .wait,
+        ]
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        let sphere = base.named("sphere").with { $0.scene.painterWorkshop.subject = .sphere; $0.scene.painterWorkshop.document = d.name }
+        let model = base.named("model").with {
+            $0.scene.painterWorkshop.subject = .model
+            $0.scene.painterWorkshop.model = "demon"
+            $0.scene.painterWorkshop.document = d.name
+        }
+        return [sphere, model].map { c in var c = c; c.events = [(0, .paint(steps))]; return c }
+    }
+
+    /// The Mireland swamp (every material procedural): from the bank, closer to the water's edge, and wide.
+    private static func mireland() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .mireland)).still(at: 1)
+        var edge = base.named("edge"), wide = base.named("wide")
+        edge.camera = Scene.camera([3, 0.9, 9], yaw: 0.5, pitch: -0.12)
+        wide.camera = Scene.camera([-12, 4, 22], yaw: -0.45, pitch: -0.14)
+        return [base.named("bank"), edge, wide]
+    }
+
+    /// The Material Designer's edits reaching the renderer: the workshop's bricks as built in, then with more rows and
+    /// rounder bricks (an edit of values: baked again in place, Renderer.editMaterials); the sun courtyard as made, then
+    /// with its ground's material given the bricks and a wall's the perforated metal (assignments: the scene made again,
+    /// the materials procedural); the cobblestone displaced, deeper and flat; the marble on a sphere as code
+    /// (MatShaderCode, compiled into the shading) and baked.
+    private static func matEdit() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
+        var bricks = MaterialLibrary.named("Red Bricks")!
+        if let k = bricks.nodes.firstIndex(where: { $0.kind == .bricks }) {
+            bricks.nodes[k].params["rows"] = .int(16)
+            bricks.nodes[k].params["roundness"] = .float(0.8)
+        }
+        let edited = MaterialCatalog.register(MaterialCatalog(graphs: ["Red Bricks": bricks]))
+        // The sun scene's two most used materials (its ground, a wall), by their fingerprints as it makes them.
+        let sun = SceneSettings(kind: .sun)
+        let made = Scene(sun)
+        var uses: [Int: Int] = [:]
+        for i in made.instances where i.mesh >= 0 { uses[i.material, default: 0] += 1 }
+        let top = uses.sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }.prefix(2).map(\.key)
+        var a = MaterialAssignments()
+        a.scenes[MaterialAssignments.scope(sun)] = zip(top, ["Red Bricks", "Perforated Metal"]).map {
+            .init(material: $0.0, fingerprint: MaterialAssignments.fingerprint(made.materials[$0.0]), graph: $0.1)
+        }
+        let assigned = MaterialAssignments.register(a)
+        let court = Config("", scale: 0.75, gi: .pathTraced, scene: sun).still(at: 20)
+        // The marble as code (its graph's own setting), then baked: the same material, the code sharper up close.
+        var baked = MaterialLibrary.marble()
+        baked.surface.shaderMode = false
+        let bakedMarble = MaterialCatalog.register(MaterialCatalog(graphs: ["Marble": baked]))
+        let marble = base.with { $0.scene.materialWorkshop.graph = "Marble"; $0.scene.materialWorkshop.layout = .sphere }
+        // The cobblestone's displacement: as built in, deeper (within the room its meshes were made with: moved in
+        // place), and off (parallax only: the scene made again).
+        func cobbles(_ change: (inout MaterialGraph) -> Void) -> String {
+            var g = MaterialLibrary.cobblestone()
+            change(&g)
+            return MaterialCatalog.register(MaterialCatalog(graphs: ["Cobblestone": g]))
+        }
+        let deeper = cobbles { $0.surface.displacement = 0.06 }, flat = cobbles { $0.surface.displacement = 0 }
+        let stones = base.with { $0.scene.materialWorkshop.graph = "Cobblestone" }
+        return [base.named("bricks"), base.named("bricks edited").with { $0.scene.materials = edited },
+                stones.named("cobbles displaced"), stones.named("cobbles deeper").with { $0.scene.materials = deeper },
+                stones.named("cobbles flat").with { $0.scene.materials = flat },
+                marble.named("marble code"), marble.named("marble baked").with { $0.scene.materials = bakedMarble },
+                court.named("sun"), court.named("sun assigned").with { $0.scene.materialAssignments = assigned }]
     }
 
     /// The VFX stage's backdrops: the campfire, the fireworks and the magic at 3.5 s in front of each, from the stage's

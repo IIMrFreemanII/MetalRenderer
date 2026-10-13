@@ -30,7 +30,7 @@ extension RendererController: VFXEditorHost {
 /// effect of that name (the VFX stage, the particles scene, the showcase) runs the edited one, in place if only its
 /// values changed, after a compile if its code did, or made again (Renderer.editEffects). Unsaved edits are a draft
 /// until saved or reverted. One undo step per edit; a drag (a slider's, a node's) is one edit.
-final class VFXEditorModel: ObservableObject {
+final class VFXEditorModel: GraphCanvasModel {
     let controller: VFXEditorHost
     let undo = UndoManager()
     /// Where Save writes (nil: nowhere), and whether unsaved edits are kept as a draft.
@@ -655,27 +655,19 @@ final class VFXEditorModel: ObservableObject {
         search = Search(at: g, context: target)
     }
 
-    // MARK: - The canvas's view
+    // MARK: - The canvas's view (GraphCanvasModel)
 
-    /// The graph's point at canvas point `p`, and back.
-    func graphPoint(_ p: CGPoint) -> SIMD2<Float> { SIMD2(Float((p.x - pan.x) / zoom), Float((p.y - pan.y) / zoom)) }
-    func viewPoint(_ g: SIMD2<Float>) -> CGPoint { CGPoint(x: CGFloat(g.x) * zoom + pan.x, y: CGFloat(g.y) * zoom + pan.y) }
+    var searchAt: SIMD2<Float>? { search?.at }
+    func closeSearch() { search = nil }
 
-    /// Zooms by `factor` about canvas point `about`.
-    func zoom(by factor: CGFloat, about: CGPoint) {
-        let g = graphPoint(about)
-        zoom = min(max(zoom * factor, 0.25), 2)
-        pan = CGPoint(x: about.x - CGFloat(g.x) * zoom, y: about.y - CGFloat(g.y) * zoom)
+    func selectAll() { selection = Set(effect.nodes.map(\.id)).union(effect.emitters.map(\.id)) }
+
+    func wire(into owner: String, _ input: String) -> (from: String, output: String)? {
+        effect.link(into: owner, input).map { ($0.from, $0.output) }
     }
 
     /// The whole graph in a canvas of `size`.
-    func frameAll(in size: CGSize) {
-        let bounds = VFXLayout(effect).bounds.insetBy(dx: -40, dy: -40)
-        guard bounds.width > 0, bounds.height > 0, size.width > 0, size.height > 0 else { return }
-        zoom = min(max(min(size.width / bounds.width, size.height / bounds.height), 0.25), 1.2)
-        pan = CGPoint(x: (size.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
-                      y: (size.height - bounds.height * zoom) / 2 - bounds.minY * zoom)
-    }
+    func frameAll(in size: CGSize) { frame(VFXLayout(effect).bounds, in: size) }
 }
 
 // MARK: - The graph's edits and checks
