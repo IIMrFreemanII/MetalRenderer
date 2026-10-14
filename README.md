@@ -105,6 +105,15 @@ The window opens first; the shaders compile in the background (after an edit tha
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
+**Build times.** The code is one library target (`Sources/MetalRenderer`), and the app (`Sources/MetalRendererApp`) is only its entry point, so the app and the tests share one build of it. Release compiles the module whole: about 4 minutes after any Swift edit on an M1 Max. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 12 s, and it draws the same images at the same speed. Quote release numbers.
+
+```bash
+Tools/build.sh                                  # builds it and prints the binary's path
+Tools/build.sh test --filter 'CityTests'        # tests in it
+```
+
+A debug build warns about any function that takes the type checker over 600 ms, or an expression over 300 ms. Give it explicit types or split it.
+
 ### Benchmark mode
 
 ```bash

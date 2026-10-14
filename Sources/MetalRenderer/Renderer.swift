@@ -1608,11 +1608,18 @@ final class Renderer: NSObject {
         // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
         // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through their boxes'
         // data.
-        let perSlot: [MTLResource] = materialBuffers + textureTables + extrasBuffers + opacityBuffers + procParamBuffers
-        shadingResources = perSlot + [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
-            + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
-        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? [])
-            + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
+        // One += per part: a single expression of them all took the type checker over half a second.
+        var resources: [MTLResource] = []
+        for perSlot in [materialBuffers, textureTables, extrasBuffers, opacityBuffers, procParamBuffers] { resources += perSlot }
+        let shared: [MTLResource] = [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
+        resources += shared
+        if textureStreamer?.placement != false { resources += materialTextures }
+        resources += sceneBuffers.blockBuffers
+        resources += sceneBuffers.instanceResources
+        let voxels: [MTLBuffer] = sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? []
+        resources += voxels
+        if sceneBuffers.sdf.shapeCount > 0 { resources += sceneBuffers.sdf.buffers }
+        shadingResources = resources
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
