@@ -739,6 +739,24 @@ struct SceneSettings: Equatable, Codable {
     static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 
+    /// The settings whose values differ from `other`'s, by name ("effects", "city.style"): why a scene is made again.
+    func changes(from other: SceneSettings) -> [String] {
+        func object(_ s: SceneSettings) -> [String: Any] {
+            let encoder = JSONEncoder()
+            encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
+            guard let data = try? encoder.encode(s) else { return [:] }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        }
+        func walk(_ a: [String: Any], _ b: [String: Any], _ path: String) -> [String] {
+            Set(a.keys).union(b.keys).sorted().flatMap { k -> [String] in
+                let name = path.isEmpty ? k : "\(path).\(k)"
+                if let x = a[k] as? [String: Any], let y = b[k] as? [String: Any] { return walk(x, y, name) }
+                return (a[k] as? NSObject) == (b[k] as? NSObject) ? [] : [name]
+            }
+        }
+        return walk(object(self), object(other), "")
+    }
+
     /// The plant workshop both, showing the same species the same way (only the species' definitions and which of its
     /// plants differ): what an edit changes.
     func isSameWorkshop(as other: SceneSettings) -> Bool {
