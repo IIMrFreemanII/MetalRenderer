@@ -78,7 +78,7 @@ extension Scene {
         case .vfxStage: return camera([0, 2.4, 10.5], pitch: 0.02)
         case .materials: return camera([0, 2.0, 6.6], pitch: -0.17)
         case .painter: return camera([0, 1.5, 3.4], pitch: -0.16)
-        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings, .characters, .mireland:
+        case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings, .characters, .mireland, .terrain:
             return nil   // the crowd's, the city's, the world's and the showcase's are their scenes' to say
         }
     }
@@ -524,19 +524,29 @@ extension Scene {
     /// over it, so their shadows cross the fields.
     func buildValley() {
         let kit = Kit(self)
-        let grass = addMaterial(albedo: [0.22, 0.36, 0.13])
         let wheat = addMaterial(albedo: [0.62, 0.52, 0.24])
         let meadow = addMaterial(albedo: [0.3, 0.42, 0.16])
         let road = addMaterial(albedo: [0.32, 0.3, 0.28])
         let wall = addMaterial(albedo: [0.78, 0.74, 0.66])
         let roof = addMaterial(albedo: [0.55, 0.2, 0.12])
         let slate = addMaterial(albedo: [0.25, 0.26, 0.3])
-        let hill = addMaterial(albedo: [0.24, 0.34, 0.15])
         let wood = addMaterial(albedo: [0.45, 0.33, 0.2])
         let pond = addPBRMaterial(baseColor: [0.03, 0.05, 0.06], metallic: 0, roughness: 0.04)
 
         section("Ground")
-        addInstance(kit.quad, grass, scale([400, 1, 400]))
+        // The terrain "valley" (Terrain Editor): 800 m of level ground at 2 m a cell, with the hills on three sides (the
+        // tops of ellipsoids sunk into it), the hills' own green where they rise.
+        let lawn = addMaterial(albedo: [0.22, 0.36, 0.13])
+        _ = addMaterial(albedo: [0.24, 0.34, 0.15])   // lawn + 1: kind 1, the hills'
+        let hills: [FlatTerrainBase.Hill] = [
+            .init(center: [-150, -20, -170], radii: [140, 70, 70]), .init(center: [60, -25, -190], radii: [170, 80, 60]),
+            .init(center: [190, -15, -40], radii: [60, 55, 140]), .init(center: [-190, -18, 20], radii: [50, 50, 120]),
+        ]
+        let valleyGrid = TerrainGrid.square(size: 800, cells: 400)
+        let valley = Scene.openTerrain("valley", base: FlatTerrainBase(grid: valleyGrid, level: 0, hills: hills, kinds: true),
+                                       layers: TerrainDocument.sceneLayers())
+        addTerrain(name: "valley", field: valley.field, tiles: valleyGrid.tiles!.map { ($0, 0) },
+                   style: TerrainMeshStyle(uvOrigin: valleyGrid.origin, uvScale: 1, rock: 1), material: lawn)
         // Fields and the road.
         section("Fields and roads")
         for (lo, hi, m) in [(SIMD3<Float>(-90, 0, -60), SIMD3<Float>(-20, 0.02, 10), wheat),
@@ -547,12 +557,6 @@ extension Scene {
         kit.slab([-200, 0, -3], [200, 0.04, 3], road)
         kit.slab([-3, 0, -200], [3, 0.04, -3], road)
         kit.slab([-40, 0, 18], [-22, 0.05, 30], pond)
-        // Hills on three sides (flattened spheres sunk into the ground).
-        section("Hills")
-        for (c, sz) in [(SIMD3<Float>(-150, -20, -170), SIMD3<Float>(140, 70, 70)), (SIMD3<Float>(60, -25, -190), SIMD3<Float>(170, 80, 60)),
-                        (SIMD3<Float>(190, -15, -40), SIMD3<Float>(60, 55, 140)), (SIMD3<Float>(-190, -18, 20), SIMD3<Float>(50, 50, 120))] {
-            addInstance(kit.sphere, hill, translate(c) * scale(sz))
-        }
         // The village around the crossroads: houses with pitched roofs, and a church with a tower.
         func house(_ x: Float, _ z: Float, _ yaw: Float, _ w: Float = 6, _ d: Float = 8, _ h: Float = 4) {
             let t = translate([x, 0, z]) * rotate(yaw, [0, 1, 0])

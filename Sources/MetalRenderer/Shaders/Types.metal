@@ -40,8 +40,12 @@ struct MeshData {
     device const float3* block;
     uint vertexCount;
     uint lod;           // level of detail + 1, 0 = none (GPUMesh.lod): the geometry debug views' LOD level
+    // TERRAIN: a terrain's sector: 1 + its layer table's first record in SceneShading.procParams (Shaders/Terrain.metal);
+    // its block has a layer weight per vertex (16 bytes) after its triangles' materials. 0: not a terrain's.
+    uint terrain;
+    uint pad;
 };
-static_assert(sizeof(MeshData) == 40, "MeshData: GPUMesh");
+static_assert(sizeof(MeshData) == 48, "MeshData: GPUMesh");
 
 struct InstanceData {
     float4x4 transform;
@@ -186,6 +190,9 @@ constant bool OPACITY = (LIGHT_SPEC & 0x00004000u) != 0;
 // Bit 13 = PROCEDURAL_CODE: some of them are code the shading runs (proceduralMaterial, Procedural.metal) rather than
 // baked textures.
 constant bool PROCEDURAL_CODE = (LIGHT_SPEC & 0x00002000u) != 0;
+// Bit 12 = TERRAIN: the scene's ground is a terrain (Scene+Terrain.swift): its sectors' vertices carry 16 layer
+// weights, and the shading blends the layers over their own material (terrainLayers, Surface.metal).
+constant bool TERRAIN = (LIGHT_SPEC & 0x00001000u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).

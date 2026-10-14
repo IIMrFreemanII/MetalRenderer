@@ -402,6 +402,14 @@ final class Renderer: NSObject {
     var painter = PainterGPU()
     /// A benchmark's painting still to do (Benchmark.Config.Event.paint), a step a frame.
     var painterScript: [PainterStep] = []
+    /// The Terrain Editor's side (Renderer+Terrain.swift): sculpt mode, the brush, the sectors' buffers' revisions.
+    var terrain = TerrainGPU()
+    /// Its status, when it changes (on the render thread).
+    var onTerrain: ((TerrainStatus) -> Void)?
+    /// A benchmark's terrain edits still to do (Benchmark.Config.Event.terrain), frames to wait, the changes undone.
+    var terrainScript: [TerrainStep] = []
+    var terrainScriptWait = 0
+    var terrainUndone = Set<Int>()
     /// The displaced meshes' records (Scene.displaceVertices, displaceMembers), and per displacing material the height
     /// its meshes were last moved by (and the surface's values then), and the materials whose meshes wait to be moved.
     private var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
@@ -1281,6 +1289,51 @@ final class Renderer: NSObject {
         instanceASBuilt.removeAll()
     }
 
+    /// Instances moved for good (Scene.moveInstances: a terrain's scatter, what stands on it): their records and
+    /// descriptors written again, the top level refitted. A still scene's are one set for every slot: written once.
+    private func writeInstanceEdits(slot: Int, still: Bool) {
+        let edits = scene.takeInstanceEdits()
+        while pendingInstanceEdits.count < Renderer.maxFramesInFlight { pendingInstanceEdits.append([]) }
+        if !edits.isEmpty { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s].formUnion(edits) } }
+        let list = pendingInstanceEdits[slot]
+        guard !list.isEmpty else { return }
+        if still { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s] = [] } } else { pendingInstanceEdits[slot] = [] }
+        let records = instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count)
+        for i in list where i < scene.instances.count {
+            scene.writeInstanceData(into: records, all: true, range: i..<(i + 1))
+            sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: true, range: i..<(i + 1))
+        }
+        if still { stillRefitPending = true } else { instanceASStale[slot] = true }
+    }
+    private var pendingInstanceEdits: [Set<Int>] = []
+    private var stillRefitPending = false
+
+    /// The terrain's sectors the brushes changed (Renderer+Terrain.swift): their new vertices copied into their
+    /// buffers, their structures built again, the top level's after them (a still scene's refitted, another's built
+    /// again in every slot as it comes); the raster's bounds of them grown to hold them; the reference starts over.
+    private func encodeTerrain(slot: Int, passes: FrameEncoder) {
+        guard let work = prepareTerrainFrame(slot: slot, buffers: sceneBuffers), !work.meshes.isEmpty, var build = sceneBuffers.terrainBuild else {
+            // (Instances moved for good in a still scene: its one top level refitted.)
+            if stillRefitPending, let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") }
+            stillRefitPending = false
+            return
+        }
+        stillRefitPending = false
+        passes.copyBuffers(work.copies, pass: "terrain copy")
+        build.meshes = work.meshes
+        passes.updatePrimitives(build, pass: "terrain")
+        if let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") } else { instanceASBuilt.removeAll() }
+        if let rs = rasterScene {
+            let records = rs.meshes.contents().bindMemory(to: GPURasterMesh.self, capacity: rs.meshCount)
+            for (m, box) in work.bounds where m < rs.meshCount && !box.isEmpty {
+                let r = records[m]
+                records[m].lo = SIMD4(simd_min(SIMD3(r.lo.x, r.lo.y, r.lo.z), box.lo), r.lo.w)
+                records[m].hi = SIMD4(simd_max(SIMD3(r.hi.x, r.hi.y, r.hi.z), box.hi), r.hi.w)
+            }
+        }
+        resetReference()
+    }
+
     /// An RGBA8 texture's sRGB view (made once a texture).
     func srgbView(_ t: MTLTexture) -> MTLTexture {
         if let v = srgbViews[ObjectIdentifier(t)] { return v }
@@ -1453,7 +1506,7 @@ final class Renderer: NSObject {
     }
 
     private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
-        var segments = painterRingSegments() + selectionSegments()   // the Material Painter's brush, what the graph showed
+        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments()   // the brushes, what the graph showed
         if let target = gizmoTarget, let gpu = particlesGPU {
             let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
             gizmoHandle = handle
@@ -1517,6 +1570,7 @@ final class Renderer: NSObject {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
+            terrain.sceneChanged(scene, blocks: sceneBuffers.blocks)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old.parts!.scene
@@ -2112,6 +2166,7 @@ final class Renderer: NSObject {
         if scene.motionThisFrame { lastMotionFrame = Int(frameIndex) }
         let moved = !scene.movingInstances.isEmpty && slotRefitFrame[slot] <= lastMotionFrame
         instanceASStale[slot] = first || moved || virtualTracing != nil || scene.hasDeformingMeshes
+        writeInstanceEdits(slot: slot, still: still)   // (after: it may make the slot's structure stale)
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
                                                                first: sceneBuffers.instanceCount, scene: scene) {
@@ -3306,6 +3361,7 @@ final class Renderer: NSObject {
             passes.updatePrimitives(primitiveRefit, pass: "blas")
         }
         encodeDisplacement(passes: passes)
+        encodeTerrain(slot: slot, passes: passes)
         encodePainting(passes: passes)
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
@@ -4498,14 +4554,24 @@ final class Renderer: NSObject {
             }
         }
         runPainterScript()
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
+            if case .terrain(let steps) = e.event {
+                benchmarkFired.insert(k)
+                terrainScript += steps
+            }
+        }
+        runTerrainScript()
         guard let controls = scene.interiorControls else { return }
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
+            // (A painting's or a terrain edit's steps: theirs to fire, above, a few frames in.)
+            if case .paint = e.event { continue }
+            if case .terrain = e.event { continue }
             benchmarkFired.insert(k)
             switch e.event {
             case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
             case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
             case .flashlight(let on): controls.flashlight.on = on
-            case .paint: break
+            case .paint, .terrain: break
             }
         }
         if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
@@ -5270,6 +5336,7 @@ final class Renderer: NSObject {
             passTimeFrames = 0
         }
         onTick?(status)
+        if scene.terrain != nil { reportTerrain() }   // (the Terrain Editor's map follows the camera)
     }
 
     /// One frame's pass timings, summed until the stats line shows their average.
@@ -5546,6 +5613,8 @@ final class Renderer: NSObject {
     func mouseDown(at cursor: SIMD2<Float>) {
         // Paint mode: a stroke (Option: the camera turns about the object).
         if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
+        // Sculpt mode: a stroke of the terrain's brush (Option: the camera's, as always).
+        if terrainMouseDown(at: cursor, pressure: penPressure, option: optionHeld, invert: controlHeld, smooth: shiftHeld) { return }
         holding = nil
         gizmoDrag = nil
         navDrag = nil
@@ -5576,6 +5645,7 @@ final class Renderer: NSObject {
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
+        if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
         if let drag = gizmoDrag {
             let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
             let move = min(max(s - drag.last, -5), 5)
@@ -5598,6 +5668,7 @@ final class Renderer: NSObject {
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
         if paintMouseUp() { return }
+        if terrainMouseUp() { return }
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
         // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
@@ -5689,6 +5760,16 @@ final class Renderer: NSObject {
         flight = nil
         pivot = camera.dolly(by: exp(dy * 0.05), pivot: pivot)
     }
+
+    /// Lumen's fields of a terrain's sectors baked again (Renderer+Terrain.swift), if Lumen traces fields now.
+    func rebakeLumenFields(_ meshes: [(mesh: Int, positions: [SIMD3<Float>], indices: [UInt32])]) {
+        guard let lumenScene, lumenSceneOf === scene else { return }
+        for m in meshes { lumenScene.rebake(field: m.mesh, positions: m.positions, indices: m.indices) }
+    }
+    var lumenTracesFields: Bool { lumenScene != nil && lumenSceneOf === scene }
+
+    /// What the terrain's colliders write to (Renderer+Terrain.swift).
+    var physicsGPUForTerrain: PhysicsGPU? { physicsGPU }
 
     // MARK: - What the painter (Renderer+Painter.swift) reads of the renderer
 

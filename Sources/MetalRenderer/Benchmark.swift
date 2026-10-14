@@ -41,6 +41,8 @@ final class Benchmark {
             /// The Material Painter in paint mode on the scene's first painted object (the camera kept), its steps
             /// one a frame (Renderer.runPainterScript).
             case paint([PainterStep])
+            /// The Terrain Editor's steps (sculpt mode, brushes, strokes, undo), one a frame (Renderer.runTerrainScript).
+            case terrain([TerrainStep])
         }
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false

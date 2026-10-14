@@ -28,14 +28,17 @@ extension Scene {
         section("Ground and water")
         // The ground: low, rolling, level where the camera stands; the water at the height half of it is under.
         let spot = SIMD2<Float>(0, 16)
-        let terrain = Terrain(size: 72, cells: 144, seed: UInt64(settings.seed) &+ 0x5A3, relief: 0.8, flat: (spot, 2.5, 7))
-        let level = terrain.heights.sorted()[terrain.heights.count * 50 / 100]
+        // (The terrain "mireland-<seed>": its edits over the seed's ground, Terrain Editor. The water is where the
+        // ground was before them.)
+        let base = NoiseTerrainBase(size: 72, cells: 144, seed: UInt64(settings.seed) &+ 0x5A3, relief: 0.8, flat: (spot, 2.5, 7))
+        let entry = Scene.openTerrain("mireland-\(settings.seed)", base: base, layers: TerrainDocument.sceneLayers())
+        let snapshot = entry.field.snapshot()
+        let terrain = Terrain(snapshot, relief: 0.8)
+        let unedited = Terrain(TerrainSnapshot(base: base, baseCache: TerrainBaseCache()), relief: 0.8)
+        let level = unedited.heights.sorted()[unedited.heights.count * 50 / 100]
         let waterY = min(level, -0.15)
-        var ground = terrain.mesh()
-        ground.uvs = ground.uvs.map { $0 * terrain.size }   // a tile a metre
-        let groundMesh = addMesh(ground)
-        label(mesh: groundMesh, "ground")
-        addInstance(groundMesh, mud, matrix_identity_float4x4)
+        addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, tiles: base.grid.tiles!.map { ($0, 0) },
+                   style: TerrainMeshStyle(uvOrigin: base.grid.origin, uvScale: 1), material: mud)   // a tile a metre
         addInstance(add(Scene.flatGrid(size: terrain.size, cells: 8, uvPerMetre: 1), "water"), water, translate([0, waterY, 0]))
         func dry(_ x: Float, _ z: Float, above: Float = 0.12) -> Bool { terrain.height(x, z) > waterY + above }
         func random(in r: ClosedRange<Float>) -> SIMD2<Float> {

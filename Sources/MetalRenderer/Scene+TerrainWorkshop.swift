@@ -1,0 +1,83 @@
+import Foundation
+import simd
+
+/// The terrain workshop (`SceneSettings.terrainWorkshop`): a terrain of its own to make with the Terrain Editor, from
+/// half a kilometre to four across, on level ground or rolling hills, under the valley's sky and day. Its document is
+/// `TerrainWorkshopSettings.document` (TerrainDocuments), kept apart from every other scene's terrain.
+extension Scene {
+    func buildTerrainWorkshop() {
+        let w = settings.terrainWorkshop
+        let size = Float(w.size.metres), cell = w.size.cell, cells = Int(size / cell)
+        let base: TerrainBase
+        switch w.base {
+        case .flat:
+            base = FlatTerrainBase(grid: .square(size: size, cells: cells))
+        case .hills:
+            base = NoiseTerrainBase(size: size, cells: cells, seed: UInt64(max(w.seed, 0)), relief: 6 + size / 64, featureSize: size / 5,
+                                    octaves: 7)
+        }
+        let entry = Scene.openTerrain(TerrainWorkshopSettings.terrainName(w), base: base)
+        section("Terrain")
+        let ground = addMaterial(albedo: [0.2, 0.24, 0.13])
+        let grid = entry.field.grid
+        addTerrain(name: entry.document.name, field: entry.field, tiles: grid.tiles!.map { ($0, 0) },
+                   style: TerrainMeshStyle(uvOrigin: grid.origin, uvScale: 1), material: ground)
+        if w.bodies > 0 { dropBodies(w.bodies, on: entry.field.snapshot(), seed: UInt64(max(w.seed, 0))) }
+        section("Sun")
+        addDaySun()
+        // From a corner, high over the ground's middle third.
+        let snapshot = entry.field.snapshot(), corner = SIMD2<Float>(-0.32, 0.32) * size
+        let h = snapshot.height(x: Double(corner.x), z: Double(corner.y))
+        defaultCamera = Scene.camera([corner.x, h + 25 + size / 25, corner.y], yaw: .pi / 4, pitch: -0.18)
+        focus = AABB(lo: [-size / 2, -50, -size / 2], hi: [size / 2, 200, size / 2])
+    }
+}
+
+extension Scene {
+    /// `count` rigid bodies (balls, boxes, rounded blocks) dropped from a few metres over the middle of the ground: they
+    /// roll down its slopes and come to rest on it (the terrain's heightfield colliders: addTerrainColliders).
+    func dropBodies(_ count: Int, on s: TerrainSnapshot, seed: UInt64) {
+        section("Bodies")
+        var rng = SplitMix64(seed: seed ^ 0xB0D1E5)
+        let shapes = [addSDFShape(SDFShape(.sphere(radius: 0.6))), addSDFShape(SDFShape(.box(halfExtents: [0.5, 0.5, 0.5], rounding: 0.06))),
+                      addSDFShape(SDFShape(.box(halfExtents: [0.9, 0.35, 0.6], rounding: 0.15)))]
+        let colours: [SIMD3<Float>] = [[0.75, 0.2, 0.15], [0.9, 0.7, 0.2], [0.2, 0.45, 0.8], [0.85, 0.85, 0.82]]
+        let materials = colours.map { addPBRMaterial(baseColor: $0, metallic: 0, roughness: 0.45) }
+        let side = Int(Float(count).squareRoot().rounded(.up))
+        for k in 0..<count {
+            let x = (Float(k % side) - Float(side) / 2) * 3 + rng.range(-0.8, 0.8), z = (Float(k / side) - Float(side) / 2) * 3 + rng.range(-0.8, 0.8)
+            let y = s.height(x: Double(x), z: Double(z)) + 3 + rng.range(0, 4)
+            let turn = simd_quatf(angle: rng.range(0, .pi), axis: simd_normalize(SIMD3(rng.range(-1, 1), 1, rng.range(-1, 1))))
+            addBody(sdf: shapes[k % shapes.count], materials[k % materials.count], translate([x, y, z]) * float4x4(turn), density: 600,
+                    friction: 0.6, restitution: 0.15)
+        }
+    }
+}
+
+/// The terrain workshop's settings: how big its terrain is (and so how fine), what it starts from, and the document it
+/// is edited into.
+struct TerrainWorkshopSettings: Equatable, Codable {
+    var size = Size.km1
+    var base = Base.hills
+    var seed = 1
+    var document = "Workshop"
+    /// Rigid bodies dropped onto it (0: none).
+    var bodies = 0
+
+    /// How far across (`metres`); each at most 1024 cells a side.
+    enum Size: Int, Codable, CaseIterable {
+        case m512, km1, km2, km4
+        var metres: Int { 512 << rawValue }
+        var cell: Float { Float(max(metres / 1024, 1)) }
+        var title: String { metres < 1024 ? "\(metres) m" : "\(metres / 1024) km (\(Int(cell)) m cells)" }
+    }
+    enum Base: String, Codable, CaseIterable {
+        case flat, hills
+        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+
+    /// The terrain's document: its own name, its size and base and seed (another of any is another ground).
+    static func terrainName(_ w: TerrainWorkshopSettings) -> String {
+        "workshop-\(w.document)-\(w.size.metres)-\(w.base.rawValue)" + (w.base == .hills ? "-\(w.seed)" : "")
+    }
+}

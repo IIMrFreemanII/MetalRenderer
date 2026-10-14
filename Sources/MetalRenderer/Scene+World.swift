@@ -164,11 +164,29 @@ extension Scene {
             }
         }
 
+        // The ground: the world's terrain "world-<seed>" (its edits: Terrain Editor), each tile's sectors at its level,
+        // in the world's ground materials (a cell's kind is its material's offset from the first).
+        let worldTerrain = Scene.openTerrain("world-\(world.seed)", base: WorldTerrainBase(world: world), layers: TerrainDocument.worldLayers())
+        if let base = worldTerrain.field.base as? WorldTerrainBase {
+            for (k, job) in jobs.enumerated() {
+                guard let tile = tiles[k] else { continue }
+                base.setKinds(tile.groundKinds, tile: SIMD2(job.x, job.z), level: job.level)
+                base.setHeights(tile.groundHeights, tile: SIMD2(job.x, job.z), level: job.level)
+            }
+        }
+        let snapshot = worldTerrain.field.snapshot()
+        // The next tiles' heights in full, from their files (what the brushes reach and the sectors read).
+        for (k, job) in jobs.enumerated() where job.level == 0 {
+            if let tile = tiles[k], !snapshot.baseCache.isCached(SIMD2(job.x, job.z)) {
+                snapshot.baseCache.set(SIMD2(job.x, job.z), heights: tile.groundHeights.array)
+            }
+        }
         var triangles = 0, trees = 0
         // (A plant is an instance, or where plants are baked two: its wood and its leaves.) A tile's trees are a group
         // of their own, not among the scene's instances; the ground cover changes with the middle tile and is.
         let placements = cover.reduce(0) { $0 + $1.count }
-        reserveGeometry(vertices: 0, indices: 0, instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2))
+        reserveGeometry(vertices: 0, indices: 0, instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2)
+                        + jobs.count * 16)
         for (k, tile) in tiles.enumerated() {
             guard let tile else { continue }
             let origin = WorldTile.origin(jobs[k].x, jobs[k].z)
@@ -227,23 +245,49 @@ extension Scene {
             }
             let count = standing.reduce(0) { $0 + flora.instanceCount(species($1), Int($1.plant)) }
             guard count > 0 else { continue }
-            addGroup(name: "trees of \(WorldTile.place(world, x: jobs[k].x, z: jobs[k].z)) from \(anchorTile.x) \(anchorTile.y), \(flora.name)",
+            // (On the terrain as its edits have it: a tree stands as much higher or lower as they moved the ground; the
+            // group's name says which edits, so another is made once they change.)
+            let tileOrigin = WorldTile.origin(jobs[k].x, jobs[k].z), edited = snapshot.tiles[SIMD2(jobs[k].x, jobs[k].z)]?.revision ?? 0
+            addGroup(name: "trees of \(WorldTile.place(world, x: jobs[k].x, z: jobs[k].z)) from \(anchorTile.x) \(anchorTile.y), \(flora.name)"
+                        + (edited > 0 ? " edits \(worldTerrain.document.name) \(edited)" : ""),
                      count: count) {
                 var out: [Instance] = []
                 out.reserveCapacity(count)
                 for t in standing {
-                    flora.instances(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw, size: t.size,
+                    let lift = edited > 0 ? snapshot.delta(x: tileOrigin.x + Double(t.x), z: tileOrigin.y + Double(t.z)) : 0
+                    flora.instances(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y + lift, t.z), yaw: t.yaw, size: t.size,
                                     shade: Int(t.shade), into: &out)
                 }
                 return out
             }
         }
 
+        var firstGround = -1
+        for m in World.groundMaterials {
+            var material = m
+            if m.textures.x == World.groundDetail { material.textures.x = detail }
+            if m.textures.x == World.fieldRows { material.textures.x = rows }
+            let added = addMaterial(material)
+            if firstGround < 0 { firstGround = added }
+        }
+        let terrain = addTerrain(name: worldTerrain.document.name, field: worldTerrain.field, snapshot: snapshot,
+                                 tiles: jobs.map { (SIMD2($0.x, $0.z), $0.level) },
+                                 style: TerrainMeshStyle(uvScale: 1 / World.groundTile, tileLocal: true, skirts: true, rock: UInt8(World.Ground.rock)),
+                                 material: firstGround, offset: anchor) { k in
+            var m = World.groundMaterials[k]
+            if m.textures.x == World.groundDetail { m.textures.x = detail }
+            if m.textures.x == World.fieldRows { m.textures.x = rows }
+            return m
+        }
+        triangles += terrain.parts.reduce(0) { $0 + $1.sector.triangleCount }
+
         var plants = 0
         for (c, placements) in cover.enumerated() {
             let corner = SIMD3(Float(lo.x + Double(c % cells) * cell - anchor.x), 0, Float(lo.y + Double(c / cells) * cell - anchor.y))
+            let cellOrigin = SIMD2(lo.x + Double(c % cells) * cell, lo.y + Double(c / cells) * cell)
             for p in placements {
-                flora.place(Foliage.Species(rawValue: Int(p.species)), Int(p.plant), at: corner + SIMD3(p.x, p.y, p.z), yaw: p.yaw,
+                let lift = snapshot.delta(x: cellOrigin.x + Double(p.x), z: cellOrigin.y + Double(p.z))
+                flora.place(Foliage.Species(rawValue: Int(p.species)), Int(p.plant), at: corner + SIMD3(p.x, p.y + lift, p.z), yaw: p.yaw,
                             size: p.size, shade: Int(p.shade))
             }
             plants += placements.count
@@ -272,9 +316,7 @@ extension Scene {
                 }
             }
         }
-        walkColliders = kit.colliders
-        let terrain = world, from = anchor
-        walkGround = { x, z in terrain.height(Double(x) + from.x, Double(z) + from.y) }
+        walkColliders = kit.colliders   // (and the terrain's walkGround)
         kit.addFlashlight()
 
         // The light from the sky: the sun, and once it has set the moon (its colour is the atmosphere's to say).

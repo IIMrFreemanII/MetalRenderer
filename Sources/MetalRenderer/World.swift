@@ -38,8 +38,9 @@ struct World {
     var interior: String?
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
-    /// 7: buildings with thick walls, made from their floor plans.
-    static let version = 7
+    /// 7: buildings with thick walls, made from their floor plans. 8: the ground is the world's terrain (a tile keeps
+    /// its cells' kinds, not a mesh of them).
+    static let version = 8
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.

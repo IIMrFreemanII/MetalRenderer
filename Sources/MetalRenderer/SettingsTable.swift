@@ -98,6 +98,8 @@ extension CharacterSceneSettings.View: EnvNamed {}
 extension MaterialWorkshopSettings.Layout: EnvNamed {}
 extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
 extension PainterWorkshopSettings.Subject: EnvNamed {}
+extension TerrainWorkshopSettings.Base: EnvNamed {}
+extension TerrainWorkshopSettings.Size: EnvNamed { var envName: String { "\(metres)" } }
 extension FaceExpression: EnvNamed {}
 extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
@@ -397,6 +399,13 @@ enum SettingsTable {
             S.value(\.scene.painterWorkshop.model).env(.scene, "pmodel"),
             S.value(\.scene.painterWorkshop.document).env(.scene, "pdocument"),
             S.popup("Backdrop", \.scene.painterWorkshop.backdrop, titled(\.title)).env(.scene, "pbackdrop").when { $0.scene.kind == .painter },
+            S.popup("Terrain size", \.scene.terrainWorkshop.size, titled(\.title)).env(.scene, "tsize").when { $0.scene.kind == .terrain },
+            S.popup("Starts from", \.scene.terrainWorkshop.base, titled(\.title)).env(.scene, "tbase").when { $0.scene.kind == .terrain },
+            S.slider("Terrain seed", \.scene.terrainWorkshop.seed, SceneSettings.seedRange, live: false).env(.scene, "tseed")
+                .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
+            S.slider("Bodies dropped", \.scene.terrainWorkshop.bodies, 0...400, live: false).env(.scene, "tbodies")
+                .when { $0.scene.kind == .terrain },
+            S.value(\.scene.terrainWorkshop.document).env(.scene, "tdocument"),
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
             S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),

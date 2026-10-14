@@ -298,6 +298,8 @@ struct HitVertices {
     uint triangle;    // its place in the index buffer / 3 (~0: virtual geometry, which has no index buffer)
     uint prevOffset;  // MeshData.prevOffset (0 = the previous frame's object-space positions are these ones)
     uint material;    // STREAMED: the triangle's material offset, read where its vertices are
+    uint terrain;     // TERRAIN: MeshData.terrain (1 + its layer table's place), 0 = not a terrain's sector
+    device const uchar4* weights;   // ...and its vertices' layer weights (4 uchar4 a vertex)
     bool   leaf;   // a leaf of an assembly's part: shaded with the material after the instance's
     bool   sways;  // ground cover, which leans in the wind (MeshData.sways)
 };
@@ -312,6 +314,8 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     v.prevOffset = 0;
     v.material = 0;
     v.triangle = ~0u;
+    v.terrain = 0;
+    v.weights = nullptr;
     v.leaf = v.sways = false;
     uint meshIndex = inst.meshIndex;
     if (res.cluster != HIT_NO_CLUSTER) {
@@ -355,11 +359,18 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         device const uint* indices = (device const uint*)(uvs + mesh.vertexCount);
         for (uint k = 0; k < 3; ++k) {
             uint i = indices[res.primitive * 3 + k];
+            v.i[k] = i;
             v.p[k] = mesh.block[i];
             v.n[k] = normals[i];
             v.t[k] = uvs[i];
         }
         if (MULTI_MATERIAL) v.material = ((device const uchar*)(indices + mesh.indexCount))[res.primitive];
+        if (TERRAIN && mesh.terrain != 0u) {
+            // After the materials, on 16 bytes (MeshBlock.weightsOffset).
+            uint offset = (mesh.vertexCount * 40u + mesh.indexCount * 4u + mesh.indexCount / 3u + 15u) & ~15u;
+            v.terrain = mesh.terrain;
+            v.weights = (device const uchar4*)((device const uchar*)mesh.block + offset);
+        }
     } else {
         uint base = mesh.firstIndex + res.primitive * 3;
         v.triangle = base / 3;
@@ -380,6 +391,92 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
         }
     }
     return v;
+}
+
+// TERRAIN: a terrain's sector (Scene+Terrain.swift). Its vertices' layer weights at the hit (layer 0: the sector's own
+// material, as it is shaded; layers 1...15 the layer table's materials, TerrainDocument.layers), the three strongest
+// layers blended over it: each sampled in the world's x, z (its table's UV per metre), and where the ground is steeper
+// than its table says, projected from the sides too (biplanar, by how squarely the ground faces each axis).
+inline void terrainLayers(thread Surface& sf, thread const HitVertices& hv, float w0, float2 bc, thread const SceneData& s,
+                          float footprint, bool record) {
+    uint table = hv.terrain - 1u;
+    float4 head = s.procParams[table];
+    float4 w[4];
+    for (uint q = 0; q < 4; ++q) {
+        w[q] = (float4(hv.weights[hv.i[0] * 4u + q]) * w0 + float4(hv.weights[hv.i[1] * 4u + q]) * bc.x
+              + float4(hv.weights[hv.i[2] * 4u + q]) * bc.y) * (1.0f / 255.0f);
+    }
+    uint best[3] = {0u, 0u, 0u};
+    float strongest[3] = {0.0f, 0.0f, 0.0f};
+    for (uint l = 1; l < 16; ++l) {
+        float x = w[l >> 2][l & 3u];
+        if (x <= strongest[2]) continue;
+        if (x > strongest[0]) {
+            strongest[2] = strongest[1]; best[2] = best[1];
+            strongest[1] = strongest[0]; best[1] = best[0];
+            strongest[0] = x; best[0] = l;
+        } else if (x > strongest[1]) {
+            strongest[2] = strongest[1]; best[2] = best[1];
+            strongest[1] = x; best[1] = l;
+        } else {
+            strongest[2] = x; best[2] = l;
+        }
+    }
+    float layers = strongest[0] + strongest[1] + strongest[2];
+    if (layers < 1e-3f) return;
+    float total = w[0].x + layers;
+    float own = w[0].x / total;
+    float3 albedo = sf.albedo * own, normal = sf.normal * own;
+    float roughness = sf.roughness * own, metallic = sf.metallic * own, specular = sf.specular * own;
+    float3 world = sf.position + float3(head.y, 0.0f, head.z);
+    float3 g = abs(sf.geomNormal);
+    float3 pw = g * g;
+    pw *= pw;
+    pw /= max(pw.x + pw.y + pw.z, 1e-6f);
+    for (uint k = 0; k < 3; ++k) {
+        if (strongest[k] <= 0.0f) continue;
+        uint l = best[k];
+        float share = strongest[k] / total;
+        uint mi = uint(head.x) + l - 1u;
+        Material m = s.materials[mi];
+        float4 rec = s.procParams[table + l];
+        float scale = rec.x * (MATERIAL_EXTRAS ? s.extras[mi].surface.y : 1.0f);
+        float lodBase = log2(max(footprint * scale, 1e-8f));
+        // Level ground: from above only; steeper than the table's slope: from the sides too.
+        bool sides = sf.geomNormal.y < rec.y;
+        float3 c = m.albedo.rgb;
+        float rough = m.emission.a, metal = m.albedo.a;
+        if (m.textures.x != NO_TEXTURE || m.textures.y != NO_TEXTURE) {
+            float4 base = 0.0f, mr = 0.0f;
+            float2 uvs[3] = {world.zy * scale, world.xz * scale, world.xy * scale};
+            float3 pick = sides ? pw : float3(0.0f, 1.0f, 0.0f);
+            for (uint a = 0; a < 3; ++a) {
+                if (pick[a] < 0.02f) continue;
+                if (m.textures.x != NO_TEXTURE) base += pick[a] * sampleMaterial(s, m.textures.x, uvs[a], lodBase, record);
+                if (m.textures.y != NO_TEXTURE) mr += pick[a] * sampleMaterial(s, m.textures.y, uvs[a], lodBase, record);
+            }
+            if (m.textures.x != NO_TEXTURE) c *= base.rgb;
+            if (m.textures.y != NO_TEXTURE) { rough *= mr.g; metal *= mr.b; }
+        }
+        float3 n = sf.normal;
+        if (m.textures.z != NO_TEXTURE && !sides) {
+            // A normal map from above: the world's x and z its tangents.
+            float3 t = sampleMaterial(s, m.textures.z, world.xz * scale, lodBase, false).xyz * 2.0f - 1.0f;
+            t.xy *= m.params.y;
+            float3 N = sf.normal, T = normalize(float3(1, 0, 0) - N * N.x), B = normalize(cross(T, N));
+            n = normalize(T * t.x - B * t.y + N * max(t.z, 1e-3f));
+        }
+        albedo += c * share;
+        roughness += rough * share;
+        metallic += metal * share;
+        specular += m.params.x * share;
+        normal += n * share;
+    }
+    sf.albedo = albedo;
+    sf.roughness = roughness;
+    sf.metallic = metallic;
+    sf.specular = specular;
+    sf.normal = normalize(normal);
 }
 
 // A hit's material, as it is before its textures.
@@ -674,6 +771,10 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
                 sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
             }
         }
+    }
+    if (TERRAIN && hv.terrain != 0u) {
+        float cosTheta = max(abs(dot(normalize(r.direction), sf.geomNormal)), 0.2f);
+        terrainLayers(sf, hv, w0, bc, s, res.distance * length(r.direction) * spread / cosTheta, record);
     }
     surfaceSpecular(sf);
     return sf;

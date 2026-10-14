@@ -356,6 +356,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     case mireland           // a misty swamp (Scene+Mireland.swift) made of the Mireland materials, every one procedural
     case painter            // the painter workshop (Scene+Painter.swift): one object on a plinth, painted with the Material
                             // Painter (`SceneSettings.painterWorkshop`)
+    case terrain            // the terrain workshop (Scene+TerrainWorkshop.swift): a terrain of its own, 0.5 to 4 km, made with
+                            // the Terrain Editor (`SceneSettings.terrainWorkshop`)
 
     var title: String {
         switch self {
@@ -392,6 +394,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .materials: return "Material workshop"
         case .mireland: return "Mireland swamp"
         case .painter: return "Painter workshop"
+        case .terrain: return "Terrain workshop"
         }
     }
 
@@ -404,7 +407,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
     /// open world's whole day, with its night), or nil.
     var dayCycle: Float? {
-        self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : self == .world ? Heavens.day : nil
+        self == .sun ? 60 : self == .valley || self == .forest || self == .city || self == .terrain ? 180 : self == .world ? Heavens.day : nil
     }
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
@@ -413,7 +416,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop || self == .mireland }   // these frame what they hold
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop || self == .mireland || self == .terrain }   // these frame what they hold
     /// The editors' scenes: one thing (a plant, a building) made again at every edit, an orbit camera round it.
     var isWorkshop: Bool { self == .plants || self == .buildings || self == .characters }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
@@ -708,6 +711,11 @@ struct SceneSettings: Equatable, Codable {
     var materialAssignments = ""
     /// The painter workshop: what it shows, painted with which document.
     var painterWorkshop = PainterWorkshopSettings()
+    /// The terrain workshop: how big its terrain is, what it starts from, its document.
+    var terrainWorkshop = TerrainWorkshopSettings()
+    /// Changed by the Terrain Editor when an edit of a terrain's document needs the scene made again (a layer's Material
+    /// Designer graph, its water): any new value does. Session state.
+    var terrainKey = ""
     /// Which scene objects the Material Painter paints (PaintAssignments): "" the saved ones
     /// (Assets/Painter/assignments.json), otherwise a key of the registry the painter fills. A change makes the scene
     /// again. Session state.
@@ -1063,6 +1071,9 @@ struct FogSettings: Equatable, Codable {
         case .valley:
             f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
             f.maxDistance = 150
+        case .terrain:   // a light haze: the far side of kilometres of ground fades
+            f.enabled = true; f.density = 0.0003; f.heightFalloff = 0.006; f.anisotropy = 0.5; f.noise = 0.1
+            f.maxDistance = 400; f.haze = 0.25
         case .forest:
             f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
@@ -1186,6 +1197,9 @@ struct SkySettings: Equatable, Codable {
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
+        case .terrain:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
+            s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
         case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
             s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }

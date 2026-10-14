@@ -249,6 +249,10 @@ struct GPUMesh {
     /// The level of detail it was made at, + 1 (0 = it has no levels): an open-world tile's ring, a crowd character's
     /// detail, a baked plant (its finest). Only the LOD debug view reads it (Scene.setDetailLevel).
     var lod: UInt32 = 0
+    /// A terrain's sector (TERRAIN, Shaders/Terrain.metal): 1 + where its terrain's layer table starts in the procedural
+    /// parameters; its block has its vertices' layer weights after its triangles' materials. 0: not a terrain's.
+    var terrain: UInt32 = 0
+    var pad: UInt32 = 0
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
@@ -791,7 +795,7 @@ struct GPUParticleStep {
 /// Catches accidental layout drift between Swift and MSL at startup.
 func validateGPULayouts() {
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
-    precondition(MemoryLayout<GPUMesh>.stride == 40 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
+    precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
     precondition(MemoryLayout<GPUJoint>.stride == 48, "GPUJoint layout mismatch")

@@ -161,7 +161,7 @@ final class ForestTests: XCTestCase {
         XCTAssertFalse(zip(a.instances, Scene(settings).instances).allSatisfy { $0.transform == $1.transform })
         settings.trees = 0
         settings.undergrowth = 0
-        XCTAssertEqual(Scene(settings).instances.count, 1)   // just the ground
+        XCTAssertEqual(Scene(settings).instances.count, 25)   // just the ground: its terrain's 5 x 5 sectors
     }
 
     /// The same forest as assemblies (the custom tracer's) and baked flat (Metal's): the same plants in the same

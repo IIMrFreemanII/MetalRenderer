@@ -248,6 +248,8 @@ protocol FrameEncoder: AnyObject {
     /// Builds or refits per-mesh structures (the deforming ones after the skinning, the cut's clusters after the cut),
     /// ahead of the TLAS update.
     func updatePrimitives(_ work: PrimitiveWork, pass: String)
+    /// Copies buffers' ranges into others (a terrain's sectors' new vertices into their buffers), ahead of what reads them.
+    func copyBuffers(_ copies: [BufferCopy], pass: String)
     /// Maps and uploads the texture levels last frame's hits asked for, ahead of this frame's work.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
     /// MetalFX's denoising scaler, into its own texture (`Upscaler.hdrOutput`), which tonemapKernel then reads.
@@ -358,6 +360,17 @@ final class Metal3Frame: FrameEncoder {
             work.encode(into: enc, part: part)
             if part == 0 { profile.end(enc) } else { enc.endEncoding() }
         }
+    }
+
+    func copyBuffers(_ copies: [BufferCopy], pass: String) {
+        guard !copies.isEmpty else { return }
+        endCompute()
+        guard let blit = buffer(pass).makeBlitCommandEncoder() else { return }
+        blit.label = pass
+        for c in copies {
+            blit.copy(from: c.source, sourceOffset: c.sourceOffset, to: c.destination, destinationOffset: c.destinationOffset, size: c.size)
+        }
+        blit.endEncoding()
     }
 
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {

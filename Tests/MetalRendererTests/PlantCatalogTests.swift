@@ -174,7 +174,9 @@ final class PlantCatalogTests: XCTestCase {
         settings.plantCatalog = PlantCatalog.register(edited)
         let other = Scene(settings, assemblies: true, voxelBoxes: true)
         XCTAssertTrue(Set(builtIn.voxelPlants.map(\.key)).isDisjoint(with: other.voxelPlants.map(\.key)))
-        XCTAssertTrue(Set(builtIn.meshNames.values).isDisjoint(with: other.meshNames.values))
+        // (The terrain's sectors are the same ground in both.)
+        func plants(_ s: Scene) -> Set<String> { Set(s.meshNames.values.filter { !$0.hasPrefix("terrain ") }) }
+        XCTAssertTrue(plants(builtIn).isDisjoint(with: plants(other)))
         XCTAssertTrue(other.voxelPlants.allSatisfy { $0.key.contains("recipes \(edited.fingerprint)") })
 
         var recoloured = PlantCatalog.builtIn

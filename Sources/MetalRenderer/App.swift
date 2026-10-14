@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var vfxEditor: VFXEditorPanel?
     private var materialEditor: MaterialEditorPanel?
     private var painterPanel: PainterPanel?
+    private var terrainEditor: TerrainEditorPanel?
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
     private var projectGraph: ProjectGraphPanel?
@@ -143,6 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                        what you click in the view)
           V / Shift-Cmd-P   show the Material Painter (layers of materials painted onto an object: Pick one, or the
                        painter workshop; Paint or Tab in its window: drag paints, right-drag orbits, [ ] brush size)
+          Shift-T / Shift-Cmd-T   show the Terrain Editor (sculpt, paint layers, generate, erode, scatter and water on the
+                       scene's ground: the terrain workshop, the Forest, Mireland, the valley, the city, the open world;
+                       Sculpt or Tab in its window: drag shapes the ground, Ctrl inverts, Shift smooths, [ ] size, { } strength)
           Shift-V      walk (in the building workshop, the city): drag looks, W A S D, Shift runs, Space jumps, C or Control
                        crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
@@ -183,6 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.painterPanel = painterPanel
         if PainterPanel.wasVisible || controller.settings.scene.kind == .painter { painterPanel.show(nextTo: window) }
         controller.onTogglePainter = { [weak self] in self?.togglePainter(nil) }
+        let terrain = TerrainEditorPanel(host: controller)
+        terrainEditor = terrain
+        if TerrainEditorPanel.wasVisible || controller.settings.scene.kind == .terrain { terrain.show(nextTo: window) }
+        controller.onToggleTerrain = { [weak self] in self?.toggleTerrain(nil) }
         let graph = ProjectGraphPanel(host: controller) { [weak self] target in self?.open(target) }
         projectGraph = graph
         if ProjectGraphPanel.wasVisible { graph.show(nextTo: window) }
@@ -197,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if kind == .characters, self.characterEditor?.isVisible == false { self.characterEditor?.show(nextTo: self.window) }
             if kind == .materials, self.materialEditor?.isVisible == false { self.materialEditor?.show(nextTo: self.window) }
             if kind == .painter, self.painterPanel?.isVisible == false { self.painterPanel?.show(nextTo: self.window) }
+            if kind == .terrain, self.terrainEditor?.isVisible == false { self.terrainEditor?.show(nextTo: self.window) }
         }
     }
 
@@ -213,6 +222,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if controller.settings.scene.kind == .materials, let m = materialEditor { return m.model.undo }
         if let p = painterPanel, p.isVisible && (controller.settings.scene.kind == .painter || controller.painterStatus.active != nil) {
             return p.model.undo
+        }
+        if let t = terrainEditor, t.isVisible && (controller.settings.scene.kind == .terrain || controller.terrainStatus.active) {
+            return t.model.undo
         }
         if let vfx = vfxEditor, vfx.isVisible, controller.settings.scene.kind != .plants { return vfx.model.undo }
         return plantEditor?.model.undo
@@ -257,6 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func togglePainter(_ sender: Any?) {
         painterPanel?.toggle(nextTo: window)
+    }
+
+    @objc private func toggleTerrain(_ sender: Any?) {
+        terrainEditor?.toggle(nextTo: window)
     }
 
     @objc private func togglePlants(_ sender: Any?) {
@@ -335,6 +351,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let painterItem = appMenu.addItem(withTitle: "Material Painter…", action: #selector(togglePainter(_:)), keyEquivalent: "p")
         painterItem.keyEquivalentModifierMask = [.command, .shift]
         painterItem.target = self
+        let terrainItem = appMenu.addItem(withTitle: "Terrain Editor…", action: #selector(toggleTerrain(_:)), keyEquivalent: "t")
+        terrainItem.keyEquivalentModifierMask = [.command, .shift]
+        terrainItem.target = self
         let graphItem = appMenu.addItem(withTitle: "Project Graph…", action: #selector(toggleProjectGraph(_:)), keyEquivalent: "g")
         graphItem.keyEquivalentModifierMask = [.command, .shift]
         graphItem.target = self

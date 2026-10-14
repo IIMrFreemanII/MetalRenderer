@@ -317,6 +317,9 @@ extension Scene {
         /// The library and how the scene holds its plants: what a group of these instances is named by.
         var name: String { "\(library) assemblies \(scene.usesAssemblies)" }
 
+        /// How many plants the library has of a species.
+        func plantCount(_ species: Foliage.Species) -> Int { sets[species.rawValue]?.plants.count ?? 0 }
+
         /// How many instances a plant is (after `addAll`): one, or where plants are baked its wood and its leaves.
         func instanceCount(_ species: Foliage.Species, _ plant: Int) -> Int {
             switch placed[species.rawValue][plant] {
@@ -359,7 +362,11 @@ extension Scene {
     /// day cycle. `settings.undergrowth` scales the bushes, ferns and grass.
     func buildForest() {
         let seed = UInt64(max(settings.seed, 0))
-        let terrain = Terrain(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        // The ground: the terrain "forest-<seed>" (its edits, Terrain Editor), over the seed's rolling hills.
+        let base = NoiseTerrainBase(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        let entry = Scene.openTerrain("forest-\(seed)", base: base, layers: TerrainDocument.sceneLayers())
+        let snapshot = entry.field.snapshot()
+        let terrain = Terrain(snapshot, relief: 9)
         let half = terrain.size / 2, undergrowth = Float(settings.undergrowth) / 100
         let noiseSeed = UInt32(truncatingIfNeeded: seed) &+ 101
         func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
@@ -372,7 +379,8 @@ extension Scene {
 
         // The ground's colours, a texel every 31 cm: leaf litter and soil under the trees, moss in patches, greener in
         // the clearing, the trail's bare earth, rock where it is steep.
-        let colors = addGeneratedTexture(name: "ground", width: 1024, height: 1024, key: "seed \(seed) v\(FoliageTextures.version)") {
+        let colors = addGeneratedTexture(name: "ground", width: 1024, height: 1024,
+                                         key: "seed \(seed) v\(FoliageTextures.version)\(snapshot.editsFingerprint)") {
             FoliageTextures.image(1024, 1024) { u, v in
                 let x = (u - 0.5) * terrain.size, z = (v - 0.5) * terrain.size, p = SIMD2(x, z)
                 var color = SIMD3<Float>(0.15, 0.13, 0.075)
@@ -384,7 +392,15 @@ extension Scene {
             }
         }
         let ground = addMaterial(albedo: [1, 1, 1], texture: colors)
-        addInstance(addMesh(terrain.mesh()), ground, matrix_identity_float4x4)
+        // Its first sector where the ground's one mesh was, the others after the plants: a plant's sway goes by its
+        // instance's number, which then stays what it was.
+        let sectors = base.grid.tiles!.flatMap { TerrainSector.sectors(of: $0, level: 0, grid: base.grid) }
+        let style = TerrainMeshStyle(uvOrigin: base.grid.origin, uvScale: 1 / terrain.size)
+        addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.prefix(1)), style: style, material: ground)
+        defer {
+            addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.dropFirst()), style: style,
+                       material: ground)
+        }
 
         let flora = Flora(self, seed: seed, catalog: PlantCatalog.resolve(settings.plantCatalog))
         var rng = SplitMix64(seed: seed &* 0x2545_F491_4F6C_DD1D &+ 0xF07E57)

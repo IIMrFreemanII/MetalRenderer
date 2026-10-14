@@ -66,21 +66,23 @@ final class PlantGoldenTests: XCTestCase {
         XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "9f62104e307d")
     }
 
+    /// (Oct 2026: the ground became the terrain's sectors, its layer materials added: the plants as they were, the
+    /// pictures the same as main's.)
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "030968abcca8")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "e2437d8c2503")
+        XCTAssertEqual(scene(Scene(settings)), "54ec3614a19f")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "be3537d7d8cf")
         settings.leafCards = true
-        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "e219abcfc11d")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "1c752e70e93c")
     }
 
     func testTheValleyIsAsItWas() {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
-        XCTAssertEqual(scene(Scene(settings)), "345d569c562c")
+        XCTAssertEqual(scene(Scene(settings)), "a29289b49176")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {
