@@ -670,8 +670,17 @@ final class Renderer: NSObject {
     private var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
-    /// The plant workshop's camera turns about what it shows: the point it looks at, and how far it is from it.
+    /// What the camera turns about (the scene view's pivot, `pivot`): the point it looks at, and how far it is from it.
+    /// The workshops frame theirs on what they show; elsewhere navigation sets it (nil: 8 m in front).
     private var orbit: (target: SIMD3<Float>, distance: Float)?
+    /// The scene view's mouse (SceneNavigation.swift): what a drag does, chosen when its button went down, and where
+    /// the cursor last was; the right button held (W A S D Q E fly only then); Command held (Option-Command-drag pans).
+    private enum NavDrag { case orbit, look, pan, dolly }
+    private var navDrag: NavDrag?
+    private var rightDrag: NavDrag?
+    private var navCursor: SIMD2<Float>?
+    private var rightHeld = false
+    private var commandHeld = false
     /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
     private var walker: Walker?
     /// The frame something last moved in, and each slot's last top-level refit (`writeFrameData`).
@@ -689,7 +698,14 @@ final class Renderer: NSObject {
     private var pickRequest: SIMD2<Float>?
     private var pickPending: Int?
     private var pickBuffer: MTLBuffer?
+    /// The pick is a plain click's: what it finds is selected (`selectedInView`), not told to `onMaterialPicked`.
+    private var pickSelects = false
     var onMaterialPicked: ((MaterialPick?) -> Void)?
+    /// A click in the view selected instance `i` (nil: nothing, the sky); the Project Graph selects its node.
+    var onSelectedInView: ((Int?) -> Void)?
+    /// The camera's yaw and pitch, each frame they change (the scene gizmo).
+    var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
+    private var sentAngles: SIMD2<Float>?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
     let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
@@ -1367,7 +1383,10 @@ final class Renderer: NSObject {
     /// The gizmos over the finished frame `output` (Shaders/Gizmo.metal).
     /// Arms click-to-pick (the controller's, for the Material Designer).
     func armPick() { pickArmed = true }
-    func disarmPick() { pickArmed = false; pickRequest = nil }
+    func disarmPick() {
+        pickArmed = false
+        if !pickSelects { pickRequest = nil }
+    }
 
     /// The pick's ray, traced this frame (one thread: pickKernel): its answer is read when this slot is next written.
     private func encodePick(_ plan: FramePlan, passes: FrameEncoder) {
@@ -1393,6 +1412,13 @@ final class Renderer: NSObject {
         guard pickPending == slot, let buffer = pickBuffer else { return }
         pickPending = nil
         let v = buffer.contents().bindMemory(to: SIMD4<Float>.self, capacity: 3)
+        if pickSelects {
+            pickSelects = false
+            let i = v[0].x >= 0 ? Int(v[0].x) : nil
+            select(i.map { FrameTarget(kind: scene.settings.kind, scope: MaterialAssignments.scope(scene.settings), instances: [$0], box: nil) })
+            onSelectedInView?(i)
+            return
+        }
         guard v[0].x >= 0 else { onMaterialPicked?(nil); return }
         let material = Int(v[0].y)
         // Its fingerprint as the scene made it: a procedural one's from before it was (Scene.makeProcedural).
@@ -1518,10 +1544,12 @@ final class Renderer: NSObject {
         // stage's effects, not their edits: a capacity's edit makes the scene again).
         let stageChanged = scene.settings.kind == .vfxStage
             && (oldSettings.kind != .vfxStage || oldSettings.stage.effects != scene.settings.stage.effects)
+        // (Another scene's selection names other instances.)
+        if let s = selection, !inScene(s.target) { select(nil) }
         if walker != nil {
             orbit = nil
         } else if !scene.settings.kind.orbits {
-            orbit = nil
+            if resetCamera { orbit = nil }   // (the pivot navigation set stays while the camera does)
         } else if resetCamera || stageChanged || (scene.settings.kind.isWorkshop && (!sameWorkshop
                     || oldSettings.plants.layout != scene.settings.plants.layout || oldSettings.plants.species != scene.settings.plants.species
                     || oldSettings.buildings.view != scene.settings.buildings.view)) {
@@ -2141,6 +2169,7 @@ final class Renderer: NSObject {
             walk(dt)
             return
         }
+        followLocked()
         // (A benchmark's walking camera: a body for the doors and the furniture.)
         let body = benchmark?.current.body == true ? camera.position - SIMD3(0, Walker.eyeStanding, 0) : nil
         scene.interiorControls?.advance(dt, walker: body)
@@ -2158,10 +2187,12 @@ final class Renderer: NSObject {
         if heldKeys.contains("a") { move -= right }
         if heldKeys.contains("e") { move.y += 1 }
         if heldKeys.contains("q") { move.y -= 1 }
-        if length(move) > 0 {
+        // Flythrough: only while the right button is held, as in Unity's scene view.
+        if length(move) > 0, rightHeld {
             let speed = settings.moveSpeed * (shiftHeld ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
-            orbit?.target += normalize(move) * speed * dt   // the workshop's: it moves what it turns about with it
+            orbit?.target += normalize(move) * speed * dt   // it moves what it turns about with it
+            pivotLock = nil
         }
     }
 
@@ -2295,56 +2326,126 @@ final class Renderer: NSObject {
         return status
     }
 
-    // MARK: - The Project Graph's camera
+    // MARK: - The selection, and where the camera flies
 
-    /// The camera flying to what the Project Graph showed (0.6 s, eased), and where it turns about when there; the
-    /// target asked for before its scene was in; the box drawn round what was shown (for a few seconds).
-    private var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double)?
+    /// The camera flying (0.6 s, eased) to what the Project Graph showed or F framed, or (`about`) turning about the
+    /// pivot to the scene gizmo's view; where it turns about when there; the target asked for before its scene was in.
+    private var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double, seconds: Double, about: Bool)?
     private var pendingFrame: FrameTarget?
-    private var selectionBox: (box: AABB, until: Double)?
-    static let flightSeconds = 0.6
+    static let flightSeconds = 0.6, turnSeconds = 0.25
+    /// What is selected in the view (a click, the Project Graph): its instances, and the box round them now (drawn
+    /// while it is selected); Shift-F's lock: where the box's centre was last frame (the camera follows it).
+    private var selection: (target: FrameTarget, box: AABB)?
+    private var pivotLock: SIMD3<Float>?
 
-    /// The camera at `target`: now if its scene is in, otherwise once it is.
+    /// The pivot: the workshops' orbit, or the one navigation set, or 8 m in front.
+    private var pivot: ViewPivot {
+        get { orbit.map { ViewPivot(target: $0.target, distance: $0.distance) } ?? camera.pivot() }
+        set { orbit = (newValue.target, newValue.distance) }
+    }
+
+    /// `target` is of the scene that is in.
+    private func inScene(_ target: FrameTarget) -> Bool {
+        MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind
+    }
+
+    /// Where `target` is now: its instances that are shown (at most `limit` of them), or failing those its box.
+    private func bounds(of target: FrameTarget, limit: Int = .max) -> AABB {
+        var box = AABB()
+        for i in target.instances.prefix(limit) where scene.instances.indices.contains(i) && scene.instances[i].mask != 0 {
+            box.grow(scene.worldBounds(of: i))
+        }
+        if box.isEmpty, let b = target.box { box = b.aabb }
+        return box
+    }
+
+    /// Selects `target` in the view (nil: nothing); another scene's is ignored. It ends Shift-F's lock.
+    func select(_ target: FrameTarget?) {
+        pivotLock = nil
+        guard let target, inScene(target) else { selection = nil; return }
+        let box = bounds(of: target)
+        selection = box.isEmpty || !box.lo.x.isFinite || !box.hi.x.isFinite ? nil : (target, box)
+    }
+
+    /// The camera at `target`: now if its scene is in, otherwise once it is. It is selected.
     func frame(_ target: FrameTarget) {
         guard MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind && loading == nil else {
             pendingFrame = target
             return
         }
         pendingFrame = nil
-        var box = AABB()
-        for i in target.instances where scene.instances.indices.contains(i) && scene.instances[i].mask != 0 {
-            box.grow(scene.worldBounds(of: i))
-        }
-        if box.isEmpty, let b = target.box { box = b.aabb }
-        guard !box.isEmpty, box.lo.x.isFinite, box.hi.x.isFinite else { return }
+        select(target)
+        guard let box = selection?.box else { return }
         if walker != nil { toggleWalk() }
         let pitch = min(max(camera.pitch, -0.6), -0.1)
         let framed = Camera.framing(box, fovY: camera.fovY, aspect: viewAspect, yaw: camera.yaw, pitch: pitch)
-        flight = (camera, framed.camera, framed.target, framed.distance, CACurrentMediaTime())
-        selectionBox = (box, CACurrentMediaTime() + 4)
+        flight = (camera, framed.camera, framed.target, framed.distance, CACurrentMediaTime(), Renderer.flightSeconds, false)
     }
 
-    /// The flight's next step (the frame's camera), and where it ends: an orbit in what orbits.
+    /// F: the camera at the selection (nothing selected: the workshop's at what it shows). Shift-F: and it follows the
+    /// selection as it moves, until Shift-F again (or a pan, a flight, another selection).
+    private func frameSelection(lock: Bool) {
+        if lock, pivotLock != nil { pivotLock = nil; return }
+        guard let s = selection else { frameWorkshop(); return }
+        frame(s.target)
+        if lock, let box = selection?.box { pivotLock = box.centroid }
+    }
+
+    /// Shift-F's lock: the camera and its pivot moved as the selection's centre moved since the last frame.
+    private func followLocked() {
+        guard let last = pivotLock, let s = selection else { return }
+        let box = bounds(of: s.target, limit: 64)
+        guard !box.isEmpty else { return }
+        let d = box.centroid - last
+        pivotLock = box.centroid
+        guard d != .zero else { return }
+        camera.position += d
+        orbit?.target += d
+    }
+
+    /// The scene gizmo: the view from `axis`'s side (its cone clicked), or 45° steps on (dragged), turning about the
+    /// pivot.
+    func snapView(_ axis: ViewAxis) { turnView(to: Camera.angles(viewing: axis, yaw: camera.yaw)) }
+    func stepView(yawSteps: Int, pitchSteps: Int) {
+        turnView(to: Camera.stepped(yaw: camera.yaw, pitch: camera.pitch, yawSteps: yawSteps, pitchSteps: pitchSteps))
+    }
+    private func turnView(to angles: (yaw: Float, pitch: Float)) {
+        guard walker == nil, painter.active == nil else { return }
+        let p = pivot
+        var to = camera
+        to.yaw = angles.yaw
+        to.pitch = angles.pitch
+        to.position = p.target - to.forward * p.distance
+        flight = (camera, to, p.target, p.distance, CACurrentMediaTime(), Renderer.turnSeconds, true)
+    }
+
+    /// The flight's next step (the frame's camera), and where it ends: the pivot.
     private func fly() {
         guard let f = flight else { return }
-        let t = Float(min((CACurrentMediaTime() - f.start) / Renderer.flightSeconds, 1))
+        let t = Float(min((CACurrentMediaTime() - f.start) / f.seconds, 1))
         let e = t * t * (3 - 2 * t)
         var c = f.to
-        c.position = f.from.position + (f.to.position - f.from.position) * e
         var dyaw = (f.to.yaw - f.from.yaw).truncatingRemainder(dividingBy: 2 * .pi)
         if dyaw > .pi { dyaw -= 2 * .pi } else if dyaw < -.pi { dyaw += 2 * .pi }
         c.yaw = f.from.yaw + dyaw * e
         c.pitch = f.from.pitch + (f.to.pitch - f.from.pitch) * e
+        // Turning about the pivot: on its sphere all the way; flying to a thing: straight there.
+        c.position = f.about ? f.target - c.forward * f.distance : f.from.position + (f.to.position - f.from.position) * e
         camera = c
         guard t >= 1 else { return }
         flight = nil
-        orbit = scene.settings.kind.orbits ? (f.target, f.distance) : nil
+        camera.yaw = f.from.yaw + dyaw   // (the yaw it was asked for, give or take whole turns)
+        orbit = (f.target, f.distance)
     }
 
-    /// The box round what the graph showed, as gizmo lines.
+    /// The box round the selection, as gizmo lines (a few hundred instances' boxes are measured again each frame, so it
+    /// follows them as they move).
     private func selectionSegments() -> [VFXGizmos.Segment] {
-        guard let s = selectionBox else { return [] }
-        guard CACurrentMediaTime() < s.until else { selectionBox = nil; return [] }
+        guard var s = selection else { return [] }
+        if s.target.instances.count <= 256 {
+            let box = bounds(of: s.target)
+            if !box.isEmpty { s.box = box; selection = s }
+        }
         return VFXGizmos.box(s.box.centroid, (s.box.hi - s.box.lo) / 2, [1, 0.72, 0.25, 1], 2)
     }
 
@@ -2639,6 +2740,11 @@ final class Renderer: NSObject {
             }
         }
         updateCamera(dt: dt)
+        let angles = SIMD2(camera.yaw, camera.pitch)
+        if angles != sentAngles {
+            sentAngles = angles
+            onCameraTurned?(angles.x, angles.y)
+        }
         camera.fovY = settings.fovDegrees * .pi / 180
         viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
         moveGrab()
@@ -5359,7 +5465,7 @@ final class Renderer: NSObject {
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r": reloadShaders { if $0 { print("Shaders reloaded") } }
-        case "f": frameWorkshop()
+        case "f": frameSelection(lock: shiftHeld)
         default: break
         }
     }
@@ -5375,17 +5481,28 @@ final class Renderer: NSObject {
 
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
-    /// Option: in paint mode a drag turns the camera instead of painting.
+    /// Option: a drag orbits the pivot (Option-right: dollies); in paint mode it turns the camera instead of painting.
     func setOption(_ held: Bool) { optionHeld = held }
     private var optionHeld = false
+    /// Command: Option-Command-drag pans (a trackpad's middle drag, as in Unity).
+    func setCommand(_ held: Bool) { commandHeld = held }
 
-    /// A click on a body grabs it where the cursor meets it (Physics.swift's `grab`); anywhere else, the drag turns the
-    /// camera.
+    // The scene view's mouse, as Unity's: a click selects, Option-drag orbits the pivot, Option-Command-drag and a
+    // middle drag pan, a right drag looks around (W A S D Q E fly while it is held), Option-right-drag and the scroll
+    // wheel dolly. A press on a body grabs it (Physics.swift's `grab`). Walking: a drag looks, a click uses.
+
     func mouseDown(at cursor: SIMD2<Float>) {
         // Paint mode: a stroke (Option: the camera turns about the object).
         if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
         holding = nil
         gizmoDrag = nil
+        navDrag = nil
+        navCursor = cursor
+        if walker == nil, optionHeld {
+            navDrag = commandHeld ? .pan : .orbit
+            flight = nil
+            return
+        }
         // The VFX editor's handle: an arrow under the cursor is dragged along its axis.
         if let handle = gizmoHandle, let target = gizmoTarget, let emitter = target.emitter,
            let k = VFXGizmos.pick(handle: handle, cursor: cursor, camera: camera, aspect: viewAspect, size: gizmoViewSize) {
@@ -5419,9 +5536,11 @@ final class Renderer: NSObject {
             holding?.cursor = cursor
             return
         }
-        camera.yaw += dx * 0.004
-        camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
-        placeOrbitingCamera()
+        if let nav = navDrag {
+            navigate(nav, dx: dx, dy: dy, at: cursor)
+        } else if walker != nil {
+            walkLook(dx: dx, dy: dy)
+        }
     }
 
     /// Lets go: the body keeps its speed (a flick throws it).
@@ -5429,37 +5548,94 @@ final class Renderer: NSObject {
         if paintMouseUp() { return }
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
-        // A click (no drag) with a pick armed: pick what is under it; while walking: use it.
-        if let c = clickAt, pickArmed, holding == nil {
-            pickRequest = c
-            pickArmed = false
-        } else if let c = clickAt, walker != nil, holding == nil {
-            use(cursorRay(c))
+        // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
+        if let c = clickAt, holding == nil, navDrag == nil {
+            if pickArmed {
+                pickRequest = c
+                pickSelects = false
+                pickArmed = false
+            } else if walker != nil {
+                use(cursorRay(c))
+            } else {
+                pickRequest = c
+                pickSelects = true
+            }
         }
         clickAt = nil
+        navDrag = nil
         holding = nil
         scene.physics?.grab.target.w = 0
     }
 
-    /// The right button: in paint mode the camera turns about the object; elsewhere as the left one's drag.
-    func rightMouseDown(at cursor: SIMD2<Float>) { _ = paintMouseDown(at: cursor, pressure: 1, orbit: true) }
+    /// The right button: looks around (Option: dollies); W A S D Q E fly while it is held. In paint mode the camera
+    /// turns about the object.
+    func rightMouseDown(at cursor: SIMD2<Float>) {
+        if paintMouseDown(at: cursor, pressure: 1, orbit: true) { return }
+        rightHeld = true
+        rightDrag = walker == nil && optionHeld ? .dolly : .look
+        navCursor = cursor
+        flight = nil
+    }
     func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: 1) { return }
-        camera.yaw += dx * 0.004
-        camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
-        placeOrbitingCamera()
+        if walker != nil { walkLook(dx: dx, dy: dy); return }
+        navigate(rightDrag ?? .look, dx: dx, dy: dy, at: cursor)
     }
-    func rightMouseUp() { _ = paintMouseUp() }
+    func rightMouseUp() {
+        rightHeld = false
+        rightDrag = nil
+        _ = paintMouseUp()
+    }
 
-    /// While holding: the body nearer (down) or farther (up).
+    /// The middle button: pans.
+    func otherMouseDown(at cursor: SIMD2<Float>) {
+        navCursor = cursor
+        flight = nil
+    }
+    func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        guard walker == nil, painter.active == nil else { return }
+        navigate(.pan, dx: dx, dy: dy, at: cursor)
+    }
+
+    /// A drag's step (`dx`, `dy`: in points; `cursor`: where it is now, 0...1 across and down).
+    private func navigate(_ nav: NavDrag, dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        flight = nil
+        switch nav {
+        case .orbit:
+            let p = pivot
+            camera.orbit(dx: dx, dy: dy, about: p)
+            pivot = p
+        case .look:
+            pivot = camera.look(dx: dx, dy: dy, pivot: pivot)
+        case .pan:
+            pivot = camera.pan(by: cursor - (navCursor ?? cursor), pivot: pivot, aspect: viewAspect)
+            pivotLock = nil
+        case .dolly:
+            pivot = camera.dolly(by: exp((dy - dx) * 0.005), pivot: pivot)
+        }
+        navCursor = cursor
+    }
+
+    /// Walking: a drag turns the head.
+    private func walkLook(dx: Float, dy: Float) {
+        camera.yaw += dx * Camera.turnRate
+        camera.pitch = min(max(camera.pitch - dy * Camera.turnRate, -1.5), 1.5)
+    }
+
+    /// The scroll wheel: the held body nearer (down) or farther (up); the right button held: the fly speed; otherwise
+    /// the camera nearer the pivot or farther.
     func scrolled(dy: Float) {
-        if holding == nil, let o = orbit {   // the workshop: nearer (down) or farther (up)
-            orbit?.distance = min(max(o.distance * exp(dy * 0.05), 0.3), 1000)
-            placeOrbitingCamera()
+        if let depth = holding?.depth {
+            holding?.depth = max(depth * exp(dy * 0.05), 0.3)
             return
         }
-        guard let depth = holding?.depth else { return }
-        holding?.depth = max(depth * exp(dy * 0.05), 0.3)
+        guard walker == nil else { return }
+        if rightHeld {
+            settings.moveSpeed = RenderSettings.moveSpeedRange.clamp(settings.moveSpeed * exp(dy * 0.05))
+            return
+        }
+        flight = nil
+        pivot = camera.dolly(by: exp(dy * 0.05), pivot: pivot)
     }
 
     // MARK: - What the painter (Renderer+Painter.swift) reads of the renderer
