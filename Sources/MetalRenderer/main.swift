@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var characterEditor: CharacterEditorPanel?
     private var projectGraph: ProjectGraphPanel?
     private var loadingOverlay: LoadingOverlay?
+    private var sceneGizmo: SceneGizmo?
     private var offscreen: OffscreenSurface?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -82,12 +83,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             overlay.attach(to: view)
             loadingOverlay = overlay
             controller.onToggleLoading = { [weak self] in self?.toggleLoading(nil) }
+            // The scene gizmo: the axes as the camera sees them; a cone clicked views from there, a drag turns 45°.
+            let gizmo = SceneGizmo()
+            gizmo.attach(to: view)
+            gizmo.onSnap = { [weak self] axis in self?.controller.snapView(axis) }
+            gizmo.onStep = { [weak self] yaw, pitch in self?.controller.stepView(yawSteps: yaw, pitchSteps: pitch) }
+            controller.onCameraTurned = { [weak gizmo] yaw, pitch in gizmo?.show(yaw: yaw, pitch: pitch) }
+            sceneGizmo = gizmo
         }
         renderer.startRenderThread()
 
         print("""
         MetalRenderer controls
-          Drag mouse   look around          W A S D / Q E   move (hold Shift = faster)
+          Click        select (the Project Graph selects it too); press on a body to grab it, scroll moves it
+          Right-drag   look around; while held, W A S D / Q E fly (Shift = faster) and scroll sets the speed
+          Option-drag  orbit the pivot          Middle-drag / Option-Cmd-drag   pan
+          Scroll       zoom to the pivot        Option-right-drag   zoom
+          F            frame the selection      Shift-F         frame it and follow it (again: stop)
+          Gizmo        (top right) click an axis: view from that side; drag: turn in 45° steps
           Space        pause animation      G               toggle global illumination
           B            toggle blue-noise sampling   M   GI method: path traced, radiance cascades, ReSTIR GI
           N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
@@ -97,9 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           Tab / Cmd-,  show or hide the Render Settings panel
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           P            show or hide the loading overlay (what loads in the background, and how far it is)
-          K / Cmd-E    show or hide the Plant Editor (the plant workshop: drag orbits, scroll zooms, F frames, hold C compares)
+          K / Cmd-E    show or hide the Plant Editor (the plant workshop: Option-drag orbits, scroll zooms, F frames, hold C compares)
           J / Cmd-B    show or hide the Building Editor and its Floor Plan window (the building workshop)
-          H / Cmd-Y    show or hide the Character Editor (the character workshop: drag orbits, F frames, hold C compares)
+          H / Cmd-Y    show or hide the Character Editor (the character workshop: Option-drag orbits, F frames, hold C compares)
           X / Shift-Cmd-E   show the VFX Editor (particle effects as node graphs; its window: Tab adds a node, Delete removes)
           O / Shift-Cmd-M   show the Material Designer (procedural materials as node graphs, baked on the GPU; the
                        material workshop shows them path traced; Pick gives a material in the view a graph)
@@ -108,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                        what you click in the view)
           V / Shift-Cmd-P   show the Material Painter (layers of materials painted onto an object: Pick one, or the
                        painter workshop; Paint or Tab in its window: drag paints, right-drag orbits, [ ] brush size)
-          Shift-V      walk (in the building workshop, the city): W A S D, Shift runs, Space jumps, C or Control
+          Shift-V      walk (in the building workshop, the city): drag looks, W A S D, Shift runs, Space jumps, C or Control
                        crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
         """)

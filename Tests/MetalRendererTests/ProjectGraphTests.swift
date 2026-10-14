@@ -33,6 +33,11 @@ final class ProjectGraphTests: XCTestCase {
         func observeOutline(_ observer: @escaping (SceneOutline) -> Void) { outlineObservers.append(observer) }
         func send(_ o: SceneOutline) { outlineObservers.forEach { $0(o) } }
         func frame(_ target: FrameTarget) { frames.append(target) }
+        var selected: [FrameTarget?] = []
+        private var viewObservers: [(Int?) -> Void] = []
+        func select(_ target: FrameTarget?) { selected.append(target) }
+        func observeViewportSelection(_ observer: @escaping (Int?) -> Void) { viewObservers.append(observer) }
+        func click(_ instance: Int?) { viewObservers.forEach { $0(instance) } }
         func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void) { self.picked = picked }
         func cancelPick() { picked?(nil); picked = nil }
     }
@@ -509,6 +514,27 @@ final class ProjectGraphTests: XCTestCase {
         XCTAssertEqual(opened, [.effect("campfire")])
         m.activate("scene:physics")
         XCTAssertFalse(m.isOpen("scene:physics"), "a double-click closes a branch")
+    }
+
+    func testSelectionWithTheView() throws {
+        let (m, host) = model()
+        // A click in the view selects the thing's node here, and its whole object in the view.
+        let floor = try XCTUnwrap(m.graph["cornell:t:Room/Floor"])
+        host.click(floor.members.first)
+        XCTAssertEqual(m.focus, "cornell:t:Room/Floor")
+        XCTAssertEqual(host.selected.last??.instances, Array(floor.members))
+        // A node selected here is selected in the view; another scene's or an asset isn't.
+        m.select("cornell:t:Spinning cube")
+        XCTAssertEqual(host.selected.last??.kind, .cornell)
+        XCTAssertFalse(try XCTUnwrap(host.selected.last ?? nil).instances.isEmpty)
+        m.select("physics:t:Tower")
+        XCTAssertNil(host.selected.last ?? nil, "another scene's thing: nothing in the view")
+        m.select("asset:vfxGraph|campfire")
+        XCTAssertNil(host.selected.last ?? nil)
+        // A click on nothing deselects.
+        host.click(nil)
+        XCTAssertNil(m.focus)
+        XCTAssertTrue(m.selection.isEmpty)
     }
 
     func testEditsAreSaved() throws {

@@ -75,6 +75,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `GraphEditor/*` (the graph editors' shared canvas) | VFXEditorTests, MaterialEditorTests, ProjectGraphTests |
 | `ProjectGraph/*`, `ProjectGraphEditor/*` (the Project Graph: outlines, overrides, the graph, its layouts, its window) | ProjectGraphTests covers the model; the views: `PROJECT_GRAPH_PNG=<folder>` draws them (and the 3D cone into a texture); `-m outlines` writes every scene's outline |
 | `Scene.swift`, `Scene+City`, `Scene+Forest`, `Scene+Physics` (the builders' outline tags) | their own suites and ProjectGraphTests |
+| `SceneNavigation.swift`, `SceneGizmo.swift` (the scene view's camera about its pivot, the gizmo) | SceneNavigationTests; the gizmo's pictures: `SCENE_GIZMO_PNG=<folder>`; the mouse itself (Renderer's input) by hand |
 | `MaterialGraph/*`, `MaterialShaders/*`, `ShadersMaterial*.metal` (the Material Designer's graphs, engine, shader code) | MaterialGraphTests, MaterialEngineTests, MaterialEditorTests, MaterialDisplacementTests |
 | `MaterialEditor/*` (the Material Designer's window) | MaterialEditorTests covers its model; the views: `MATERIAL_EDITOR_PNG=<folder>` draws them |
 | `Scene+Procedural`, `Scene+Materials` (procedural materials, the material workshop), `Shaders/Procedural.metal`, `Shaders/Pick.metal` | MaterialEditorTests, SceneBuffersTests (the shaders: ShaderSourceTests, KernelVariantsTests, MaterialGraphTests); renders: `-m materials`, `-m matedit` |

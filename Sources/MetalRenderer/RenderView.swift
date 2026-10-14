@@ -16,6 +16,9 @@ protocol InputHandler: AnyObject {
     func rightMouseDown(at: SIMD2<Float>)
     func rightMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>)
     func rightMouseUp()
+    /// The middle button (the scene view pans with it).
+    func otherMouseDown(at: SIMD2<Float>)
+    func otherMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>)
     func mouseMoved(at: SIMD2<Float>)
     func pressure(_ p: Float)
 }
@@ -24,6 +27,8 @@ extension InputHandler {
     func rightMouseDown(at: SIMD2<Float>) {}
     func rightMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>) {}
     func rightMouseUp() {}
+    func otherMouseDown(at: SIMD2<Float>) {}
+    func otherMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>) {}
     func mouseMoved(at: SIMD2<Float>) {}
     func pressure(_ p: Float) {}
 }
@@ -120,6 +125,12 @@ final class RenderView: NSView {
     override func rightMouseUp(with event: NSEvent) { inputHandler?.rightMouseUp() }
     override func rightMouseDragged(with event: NSEvent) {
         inputHandler?.rightMouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event))
+    }
+    override func otherMouseDown(with event: NSEvent) {
+        if event.buttonNumber == 2 { inputHandler?.otherMouseDown(at: cursor(event)) }
+    }
+    override func otherMouseDragged(with event: NSEvent) {
+        if event.buttonNumber == 2 { inputHandler?.otherMouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event)) }
     }
     override func mouseMoved(with event: NSEvent) { inputHandler?.mouseMoved(at: cursor(event)) }
     override func updateTrackingAreas() {
