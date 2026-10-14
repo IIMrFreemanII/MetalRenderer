@@ -480,7 +480,7 @@ extension Scene {
         }
         print("Forest: " + flora.catalog.all.map { "\(counts[$0.rawValue]) \(flora.catalog[$0].id)" }.joined(separator: ", "))
 
-        addDaySun(half: 90)
+        addDaySun()
         defaultCamera = Scene.demoCamera(.forest)!
     }
 }

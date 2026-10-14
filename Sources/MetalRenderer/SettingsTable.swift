@@ -144,7 +144,7 @@ struct SettingSpec {
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
     enum Custom {
-        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption
+        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
     }
     /// The setting as text in an environment variable.
     struct Env {
@@ -185,6 +185,13 @@ struct SettingSpec {
     func advanced(_ on: Bool = true) -> SettingSpec { var s = self; s.advanced = on; return s }
     func when(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.visible = condition; return s }
     func enabled(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.enabled = condition; return s }
+    /// A slider's value shown as `text` says, from all the settings.
+    func text(_ text: @escaping (RenderSettings) -> String) -> SettingSpec {
+        guard case .slider(let m)? = control else { preconditionFailure("\(title): not a slider") }
+        var s = self
+        s.control = .slider(Slider(range: m.range, ticks: m.ticks, live: m.live, position: m.position, move: m.move, text: text))
+        return s
+    }
     /// A popup's items by index: the panel greys out the ones `item` rejects.
     func available(_ item: @escaping (Int) -> Bool) -> SettingSpec { var s = self; s.available = item; return s }
 
@@ -499,8 +506,12 @@ enum SettingsTable {
         S.slider("Move speed", \.moveSpeed, RenderSettings.moveSpeedRange, step: 0.5, log: true, fmt("%g m/s")).env(.view, "speed"),
         S.check("Pause animation", \.paused).env(.view, "paused", interactiveOnly: true),
         S.slider("Time scale", \.timeScale, RenderSettings.timeScaleRange, step: 0.05, fmt("%.2f×")).env(.view, "timescale"),
+        // The day: its times (DayClock), held there; or an offset into the running day.
+        S.custom(.dayPresets, "Time").when { DayClock.of($0.scene.kind) != nil },
         S.slider("Time of day", \.timeOfDay, 0...1, step: 0.01) { String(format: "%.0f%%", $0 * 100) }
+            .text { s in s.heldHour.map(DayClock.label) ?? String(format: "+%.0f%%", s.timeOfDay * 100) }
             .env(.view, "tod").when { $0.scene.kind.dayCycle != nil },
+        S.check("Hold time of day", \.dayHeld).env(.view, "dayhold").when { $0.scene.kind.dayCycle != nil },
     ])
 
     private static let directLight: Section = {

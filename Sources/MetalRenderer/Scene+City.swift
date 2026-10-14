@@ -212,9 +212,8 @@ extension Scene {
             // The sun: from the south-east in the morning (+x, +z) over the south to the west and back, 90 s each
             // way; t = 0 is mid-morning. It stays 12 degrees or more above the horizon (the exposure is fixed) and
             // never looks straight down a street. Its colour comes from the atmosphere.
-            let half: Float = 90
             addLight(.sun(angularRadius: 0.27 * .pi / 180), color: [1, 1, 1]) { t in
-                let phase = 0.5 - 0.5 * cos(.pi * (t / half + 0.3))   // 0 = morning, 1 = evening
+                let phase = DaySweep.city.phase(t)   // 0 = morning, 1 = evening
                 let elevation = (12 + 46 * sin(.pi * phase)) * Float.pi / 180, azimuth = (25 + 130 * phase) * Float.pi / 180
                 return LightPose(position: .zero, direction: [cos(elevation) * cos(azimuth), sin(elevation), cos(elevation) * sin(azimuth)])
             }

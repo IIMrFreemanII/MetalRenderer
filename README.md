@@ -252,6 +252,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | Tab, ⌘, | Show or hide the Render Settings panel |
 | I, ⌘I | Show or hide the Debug window |
 | P | Show or hide the loading overlay (see "The loading overlay" below) |
+| Z, ⇧⌘D | Show or hide the day bar (see "The day bar" below) |
 | K, ⌘E | Show or hide the Plant Editor (see "The plant editor" below) |
 | J, ⌘B | Show or hide the Building Editor and its Floor Plan window (see "The building editor" below) |
 | X, ⇧⌘E | Show the VFX Editor (see "The VFX editor" below) |
@@ -263,6 +264,10 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | Walking: E or a click | Open or shut the door, flip the light switch, call the lift you look at |
 | Walking: F, 0–9 | The flashlight; in a lift, its floor (0 the ground floor) |
 | ⌘Z, ⇧⌘Z | Undo, redo the plant editor's or the building editor's edits |
+
+### The day bar
+
+In the scenes with a day (the open world, the city, the valley, the forest, the sun courtyard) a bar at the bottom of the view shows the time of day as a clock. Dawn, Noon, Sunset and Night switch to that time and hold the day there, while the rest of the scene goes on moving; the slider picks any hour; the play button lets the day run again from where it is (and un-pauses), pause holds it. The open world's clock goes round the 24 hours with its night. The valley, the forest, the city and the sun courtyard only have a sun that goes from morning to evening (and back), shown as 07:00 to 19:00. In the city, Night switches to the City at night scene, and the day's times switch back. Render Settings has the same times in "Camera and time", with `Hold time of day` (`METALRENDERER_VIEW=dayhold=1,tod=…`: with the day held, `tod` is the time of the day itself, as a share of the scene's cycle, not an offset from the running clock). A jump of more than half an hour of the day starts the GI's history over, so the old light doesn't smear into the new. `DayClock.swift` has the clocks; `DayBar.swift` the bar.
 
 The window title and the Debug window show the resolution, frame rate and GPU time. The panels never take keyboard focus, so the keys above keep working while it's open, and changes you make with the keys show up in it.
 

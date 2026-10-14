@@ -580,6 +580,7 @@ final class Renderer: NSObject {
                 return
             }
             if settings.giMode != oldValue.giMode { resetGIState() }
+            dayChanged(from: oldValue)
             // Any change can change the picture: the reference starts over (a benchmark's starts with its config).
             if !benchmarkAccumulating { resetReference() }
             publishSettings()
@@ -706,6 +707,9 @@ final class Renderer: NSObject {
     /// The camera's yaw and pitch, each frame they change (the scene gizmo).
     var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
     private var sentAngles: SIMD2<Float>?
+    /// The time on the scene's day clock (`dayTime`), when it has moved a minute of the day (the day bar).
+    var onDayTime: ((Float) -> Void)?
+    private var sentDayTime: Float?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
     let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
@@ -2760,6 +2764,7 @@ final class Renderer: NSObject {
         if !settings.paused && painter.active == nil { animTime += dt * settings.timeScale }
         scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
+        sendDayTime()
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }
 
@@ -2769,8 +2774,28 @@ final class Renderer: NSObject {
         if settings.scene.kind.isWorld { settings.scene.worldLit = Heavens(at: dayTime).sunElevation < World.lightsReady }
     }
 
-    /// The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
-    private var dayTime: Float { animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0) }
+    /// The sun's day cycle can be offset or held (Time of day, DayClock); everything else keeps the animation time.
+    private var dayTime: Float { settings.dayTime(animTime: animTime) }
+
+    /// A settings change that moved the day: a hold turned on or off keeps the day where it is, and a day that jumped
+    /// draws its sky again at once, and drops what the frames before had gathered of the light if it went far.
+    private func dayChanged(from old: RenderSettings) {
+        guard settings.scene.kind == old.scene.kind, let cycle = settings.scene.kind.dayCycle else { return }
+        settings.keepDay(from: old, animTime: animTime)
+        let moved = abs(settings.dayTime(animTime: animTime) - old.dayTime(animTime: animTime)) / cycle
+        let jump = min(moved - moved.rounded(.down), 1 - (moved - moved.rounded(.down)))
+        guard jump > 1e-5 else { return }
+        if jump > DayClock.lightJump { resetGIState() } else { skyRefreshed = nil }
+    }
+
+    /// Tells the day bar the day's time once it has moved a minute of the day (and at a new scene).
+    private func sendDayTime() {
+        guard let onDayTime, let cycle = settings.scene.kind.dayCycle else { sentDayTime = nil; return }
+        let day = dayTime
+        if let sent = sentDayTime, abs(day - sent) < cycle / (24 * 60) { return }
+        sentDayTime = day
+        onDayTime(day)
+    }
 
     /// The wind on the plants this frame (Shaders/Foliage.metal).
     private var windFrame: WindFrame {

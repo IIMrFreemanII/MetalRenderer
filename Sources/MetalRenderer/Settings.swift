@@ -1300,6 +1300,9 @@ struct RenderSettings: Equatable, Codable {
     var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     var timeScale: Float = 1           // animation speed (Pause stops it too)
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
+    /// The day is held where `timeOfDay` puts it (the day bar, DayClock): `timeOfDay` is then the time of the day
+    /// itself, as a fraction of the cycle, and the rest of the scene goes on moving.
+    var dayHeld = false
     /// The particles' layer's size, as a share of the traced frame's (1 or 0.5): upsampled by depth over the picture.
     var particleScale: Float = 1
 
