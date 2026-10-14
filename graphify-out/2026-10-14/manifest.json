@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1791991061.4819682,
-    "seen": 1791991143.149923,
-    "ast_hash": "4ccd07e3510330ef7828502a74840ecc",
+    "mtime": 1792000404.0487618,
+    "seen": 1792000896.925947,
+    "ast_hash": "29992b09fe47640b40aa4e708d779afb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -246,9 +246,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1791980628.5685236,
-    "seen": 1791991143.149952,
-    "ast_hash": "1cbce29548200fba6cf3fc9f4efe210e",
+    "mtime": 1792000124.0453649,
+    "seen": 1792000896.925982,
+    "ast_hash": "9e21b7d6c2935c95b43297b217e25299",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
@@ -2658,9 +2658,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/particles.json": {
-    "mtime": 1791980628.5087335,
-    "seen": 1791991143.149767,
-    "ast_hash": "a1f151c315453da1a4d1bc0504a15917",
+    "mtime": 1792000459.8746397,
+    "seen": 1792000896.925746,
+    "ast_hash": "3246d9f49a7374e188718ce3973d0b0f",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/people.json": {

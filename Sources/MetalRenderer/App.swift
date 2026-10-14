@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var projectGraph: ProjectGraphPanel?
     private var loadingOverlay: LoadingOverlay?
     private var sceneGizmo: SceneGizmo?
+    private var dayBar: DayBar?
     private var offscreen: OffscreenSurface?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -90,6 +91,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             gizmo.onStep = { [weak self] yaw, pitch in self?.controller.stepView(yawSteps: yaw, pitchSteps: pitch) }
             controller.onCameraTurned = { [weak gizmo] yaw, pitch in gizmo?.show(yaw: yaw, pitch: pitch) }
             sceneGizmo = gizmo
+            // The day bar: the time of day, and the day's times to switch to (held there until play).
+            let bar = DayBar()
+            bar.attach(to: view)
+            let controller = self.controller!
+            bar.onPreset = { preset in
+                let defaults = controller.defaultSettings
+                controller.update { $0.holdDay(preset, defaults: defaults) }
+            }
+            bar.onHour = { hour in controller.update { $0.holdDay(hour: hour) } }
+            bar.onPlay = { run in
+                controller.update { s in
+                    if run { s.dayHeld = false; s.paused = false } else { s.dayHeld = true }
+                }
+            }
+            controller.observeSettings { [weak bar] in bar?.show($0) }
+            controller.onDayTime = { [weak bar] in bar?.show(dayTime: $0) }
+            controller.onToggleDayBar = { [weak self] in self?.toggleDayBar(nil) }
+            bar.show(controller.settings)
+            dayBar = bar
         }
         renderer.startRenderThread()
 
@@ -102,6 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           F            frame the selection      Shift-F         frame it and follow it (again: stop)
           Gizmo        (top right) click an axis: view from that side; drag: turn in 45° steps
           Space        pause animation      G               toggle global illumination
+          Z / Shift-Cmd-D   show or hide the day bar (scenes with a day: Dawn, Noon, Sunset, Night hold the day there,
+                       the slider picks an hour, play lets it run again)
           B            toggle blue-noise sampling   M   GI method: path traced, radiance cascades, ReSTIR GI
           N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
           - / =        lower / raise render resolution   U   upscaling (MetalFX denoiser): off, 1.5x, 2x, 3x
@@ -287,6 +309,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private var loadingItem: NSMenuItem?
 
+    @objc private func toggleDayBar(_ sender: Any?) {
+        dayBar?.toggle()
+        dayBarItem?.state = DayBar.isEnabled ? .on : .off
+    }
+    private var dayBarItem: NSMenuItem?
+
     private func buildMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -315,6 +343,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             item.target = self
             item.state = LoadingOverlay.isEnabled ? .on : .off
             loadingItem = item
+            let day = appMenu.addItem(withTitle: "Day Bar (Z)", action: #selector(toggleDayBar(_:)), keyEquivalent: "d")
+            day.keyEquivalentModifierMask = [.command, .shift]
+            day.target = self
+            day.state = DayBar.isEnabled ? .on : .off
+            dayBarItem = day
         }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit MetalRenderer",

@@ -77,6 +77,9 @@ final class RendererController: InputHandler {
     var onToggleMaterials: (() -> Void)?        // O key
     var onTogglePainter: (() -> Void)?          // V key (Shift-V walks)
     var onToggleProjectGraph: (() -> Void)?     // Y key
+    var onToggleDayBar: (() -> Void)?           // Z key
+    /// The time on the scene's day clock as the day runs (the day bar).
+    var onDayTime: ((Float) -> Void)?
     /// The last scene's outline (the Project Graph's), and who wants them.
     private(set) var lastOutline: SceneOutline?
     private var outlineObservers: [(SceneOutline) -> Void] = []
@@ -138,6 +141,9 @@ final class RendererController: InputHandler {
         }
         renderer.onCameraTurned = { [weak self] yaw, pitch in
             DispatchQueue.main.async { self?.onCameraTurned?(yaw, pitch) }
+        }
+        renderer.onDayTime = { [weak self] t in
+            DispatchQueue.main.async { self?.onDayTime?(t) }
         }
         renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
             DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
@@ -232,11 +238,12 @@ final class RendererController: InputHandler {
         // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
         if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" || key == "y" {
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" || key == "y"
+            || key == "z" {
             if !event.isARepeat {
                 (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
                     : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials
-                    : key == "y" ? onToggleProjectGraph : onToggleBuildings)?()
+                    : key == "y" ? onToggleProjectGraph : key == "z" ? onToggleDayBar : onToggleBuildings)?()
             }
             return
         }

@@ -60,6 +60,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ProjectGraphTests ;;
       Sources/MetalRenderer/ProjectGraph/*.swift|Sources/MetalRenderer/ProjectGraphEditor/*.swift) add ProjectGraphTests ;;
       Sources/MetalRenderer/SceneNavigation.swift|Sources/MetalRenderer/SceneGizmo.swift) add SceneNavigationTests ;;   # the gizmo's pictures: SCENE_GIZMO_PNG=<folder>
+      Sources/MetalRenderer/DayClock.swift|Sources/MetalRenderer/DayBar.swift) add DayClockTests ;;   # the bar's pictures: DAY_BAR_PNG=<folder>
       Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
       Sources/MetalRenderer/Painter/UV*.swift|Sources/MetalRenderer/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
       Sources/MetalRenderer/Painter/*.swift|Sources/MetalRenderer/PainterEditor/*.swift|Sources/MetalRenderer/Scene+Paint*.swift|Sources/MetalRenderer/Renderer+Painter.swift)

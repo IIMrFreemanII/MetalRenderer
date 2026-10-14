@@ -246,11 +246,11 @@ extension Scene {
 
         // The day: elevation 8 to 62 degrees and back, the azimuth swinging with it.
         section("Sun")
-        let day: Float = 60
-        func elevation(_ t: Float) -> Float { Scene.degrees(35 - 27 * cos(2 * .pi * (t + 12) / day)) }   // t = 0: mid-morning
+        let sweep = DaySweep.courtyard
+        func elevation(_ t: Float) -> Float { Scene.degrees(35 - 27 * cos(2 * .pi * sweep.phase(t))) }   // t = 0: mid-morning
         func warmth(_ t: Float) -> Float { simd_smoothstep(Scene.degrees(6), Scene.degrees(35), elevation(t)) }
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { t in
-            let e = elevation(t), az = -0.9 + 1.4 * sin(2 * .pi * (t + 12) / day)
+            let e = elevation(t), az = -0.9 + 1.4 * sin(2 * .pi * sweep.phase(t))
             let tint = simd_mix(SIMD3<Float>(1.0, 0.5, 0.25) * 1.4, SIMD3<Float>(1.0, 0.95, 0.88) * 1.8, SIMD3(repeating: warmth(t)))
             return LightPose(position: .zero, direction: [cos(e) * sin(az), sin(e), cos(e) * cos(az)], scale: tint)
         }
@@ -593,15 +593,16 @@ extension Scene {
         kit.box([28.75, 0.5, 22], [37.5, 0.08, 0.08], wood)
 
         section("Sun")
-        addDaySun(half: 90)
+        addDaySun()
         defaultCamera = Scene.demoCamera(.valley)!
     }
 
     /// The valley's and the forest's sun: morning in the east (+x) to evening in the west (-x), passing ahead of the
-    /// camera (-z), and back, `half` seconds each way; t = 0 is mid-morning. Its colour comes from the atmosphere.
-    func addDaySun(half: Float) {
+    /// camera (-z), and back, 90 seconds each way (`DaySweep.valley`); t = 0 is mid-morning. Its colour comes from the
+    /// atmosphere.
+    func addDaySun() {
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { t in
-            let phase = 0.5 - 0.5 * cos(.pi * (t / half + 0.35))   // 0 = morning, 1 = evening
+            let phase = DaySweep.valley.phase(t)   // 0 = morning, 1 = evening
             let e = Scene.degrees(10 + 50 * sin(.pi * phase)), a = Scene.degrees(20 + 140 * phase)
             return LightPose(position: .zero, direction: [cos(e) * cos(a), sin(e), -cos(e) * sin(a)])
         }
