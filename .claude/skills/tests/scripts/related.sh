@@ -7,7 +7,7 @@
 #   related.sh <Suite>...         run these suites (e.g. CityTests BuildingTests), skip the map
 #
 # Maps each changed file to its suites with the table below (the same as the tests skill's SKILL.md) and runs
-# swift test --filter on them. Files no suite covers are listed: prove those with images (the offscreen skill).
+# swift test --filter on them, in the dev build (Tools/build.sh test: optimised, incremental). Files no suite covers are listed: prove those with images (the offscreen skill).
 # A new source or test file goes into the table here and in SKILL.md.
 set -euo pipefail
 
@@ -149,4 +149,4 @@ filter=${list// /|}
 echo "suites: $list"
 ((dry)) && exit 0
 cd "$repo"
-exec swift test --filter "$filter"
+exec "$repo/Tools/build.sh" test --filter "$filter"

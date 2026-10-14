@@ -24,7 +24,7 @@ Workshop reload, scene + buffers (`PlantWorkshopTests.testRemakingIsQuick`): one
 scene is about 2 ms.
 
 ## To do on the M4 Max
-1. **Re-time the reloads** there (`swift test -c release -Xswiftc -enable-testing --filter PlantWorkshopTests`, read the
+1. **Re-time the reloads** there (`swift test -c release --filter PlantWorkshopTests`, read the
    `Workshop ...` lines). Hardware RT builds should make them shorter; if the lineup is still over ~50 ms, the
    next knob is fewer wind phases while editing (`Wind.phases` is 8 per assembly).
 2. **Metal 4**: never run with the workshop. `METALRENDERER_API=metal4` with `-m plants`, and in the window drag a

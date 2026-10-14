@@ -343,60 +343,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 }
 
-/// `METALRENDERER_VG_TEST=<model.glb>`: builds the model's virtual geometry, checks the DAG, round-trips the cache file
-/// and exits (no window).
-if let path = ProcessInfo.processInfo.environment["METALRENDERER_VG_TEST"] {
-    let url = URL(fileURLWithPath: path)
-    do {
-        let model = try GLTFLoader.load(url)
-        var built: [(index: Int, mesh: VirtualMesh)] = []
-        for (i, m) in model.meshes.enumerated() where m.indices.count / 3 >= (Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_MIN"] ?? "") ?? VirtualGeometryBuilder.minTriangles) {
-            let mesh = VirtualGeometryBuilder.build(positions: m.positions, normals: m.normals, uvs: m.uvs, indices: m.indices,
-                                                    name: "\(model.name)#\(i)")
-            let problems = VirtualGeometryBuilder.check(mesh)
-            print(problems.isEmpty ? "  DAG check: ok" : "  DAG check: \(problems.count) problems\n    " + problems.joined(separator: "\n    "))
-            let levels = Dictionary(grouping: mesh.clusters, by: { mesh.groups[Int($0.group)].level })
-            for l in levels.keys.sorted() {
-                let cs = levels[l]!
-                print(String(format: "    level %2d: %6d clusters, %8d triangles, error %.5f", l, cs.count,
-                             cs.reduce(0) { $0 + Int($1.triangles) }, cs.map(\.lo.w).max() ?? 0))
+/// The app's start: the executable target (`Sources/MetalRendererApp/main.swift`) only calls `run()`. The code lives in
+/// this library so that the app and the tests share one build of it.
+public enum AppMain {
+    /// NSApplication holds its delegate weakly.
+    private static let delegate = AppDelegate()
+
+    public static func run() -> Never {
+        // `METALRENDERER_VG_TEST=<model.glb>`: builds the model's virtual geometry, checks the DAG, round-trips the cache file
+        // and exits (no window).
+        if let path = ProcessInfo.processInfo.environment["METALRENDERER_VG_TEST"] {
+            let url = URL(fileURLWithPath: path)
+            do {
+                let model = try GLTFLoader.load(url)
+                var built: [(index: Int, mesh: VirtualMesh)] = []
+                for (i, m) in model.meshes.enumerated() where m.indices.count / 3 >= (Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_MIN"] ?? "") ?? VirtualGeometryBuilder.minTriangles) {
+                    let mesh = VirtualGeometryBuilder.build(positions: m.positions, normals: m.normals, uvs: m.uvs, indices: m.indices,
+                                                            name: "\(model.name)#\(i)")
+                    let problems = VirtualGeometryBuilder.check(mesh)
+                    print(problems.isEmpty ? "  DAG check: ok" : "  DAG check: \(problems.count) problems\n    " + problems.joined(separator: "\n    "))
+                    let levels = Dictionary(grouping: mesh.clusters, by: { mesh.groups[Int($0.group)].level })
+                    for l in levels.keys.sorted() {
+                        let cs = levels[l]!
+                        print(String(format: "    level %2d: %6d clusters, %8d triangles, error %.5f", l, cs.count,
+                                     cs.reduce(0) { $0 + Int($1.triangles) }, cs.map(\.lo.w).max() ?? 0))
+                    }
+                    built.append((i, mesh))
+                }
+                let cache = VirtualGeometryBuilder.cacheURL(for: url)
+                try VirtualGeometryBuilder.write(built, to: cache)
+                let back = try VirtualGeometryBuilder.read(cache)
+                for (i, m) in built {
+                    let r = back[i]!
+                    let same = r.clusters.count == m.clusters.count && r.groups.count == m.groups.count && r.pageData == m.pageData
+                    print("  cache round trip mesh \(i): \(same ? "ok" : "MISMATCH") (\(cache.lastPathComponent))")
+                }
+            } catch {
+                print("VG test failed: \(error)")
             }
-            built.append((i, mesh))
+            exit(0)
         }
-        let cache = VirtualGeometryBuilder.cacheURL(for: url)
-        try VirtualGeometryBuilder.write(built, to: cache)
-        let back = try VirtualGeometryBuilder.read(cache)
-        for (i, m) in built {
-            let r = back[i]!
-            let same = r.clusters.count == m.clusters.count && r.groups.count == m.groups.count && r.pageData == m.pageData
-            print("  cache round trip mesh \(i): \(same ? "ok" : "MISMATCH") (\(cache.lastPathComponent))")
+
+        // `METALRENDERER_FOLIAGE_TEST=<seed>`: builds the procedural plants, times and checks them, and exits (no window).
+        if let seed = ProcessInfo.processInfo.environment["METALRENDERER_FOLIAGE_TEST"] {
+            Foliage.runTest(seed: UInt64(seed) ?? 1)
+            // `METALRENDERER_FOLIAGE_TEXTURES=<folder>`: the plants' generated textures as PNGs there.
+            if let folder = ProcessInfo.processInfo.environment["METALRENDERER_FOLIAGE_TEXTURES"] {
+                try? FoliageTextures.writePNGs(to: URL(fileURLWithPath: folder))
+            }
+            exit(0)
         }
-    } catch {
-        print("VG test failed: \(error)")
+
+        // `METALRENDERER_WORLD_TEST=<seed>`: makes the open world's tiles around its first city, times them, and exits.
+        if let seed = ProcessInfo.processInfo.environment["METALRENDERER_WORLD_TEST"] {
+            WorldTile.runTest(seed: UInt64(seed) ?? 1)
+            exit(0)
+        }
+
+        setlinebuf(stdout)   // whole lines also into a pipe or a file: a log is complete when the app is stopped
+        let app = NSApplication.shared
+        app.delegate = delegate
+        // Headless: no Dock icon, and the app never becomes active, so the focus stays where it was.
+        app.setActivationPolicy(Headless.isEnabled ? .prohibited : .regular)
+        app.run()
+        exit(0)
     }
-    exit(0)
 }
-
-/// `METALRENDERER_FOLIAGE_TEST=<seed>`: builds the procedural plants, times and checks them, and exits (no window).
-if let seed = ProcessInfo.processInfo.environment["METALRENDERER_FOLIAGE_TEST"] {
-    Foliage.runTest(seed: UInt64(seed) ?? 1)
-    // `METALRENDERER_FOLIAGE_TEXTURES=<folder>`: the plants' generated textures as PNGs there.
-    if let folder = ProcessInfo.processInfo.environment["METALRENDERER_FOLIAGE_TEXTURES"] {
-        try? FoliageTextures.writePNGs(to: URL(fileURLWithPath: folder))
-    }
-    exit(0)
-}
-
-/// `METALRENDERER_WORLD_TEST=<seed>`: makes the open world's tiles around its first city, times them, and exits.
-if let seed = ProcessInfo.processInfo.environment["METALRENDERER_WORLD_TEST"] {
-    WorldTile.runTest(seed: UInt64(seed) ?? 1)
-    exit(0)
-}
-
-setlinebuf(stdout)   // whole lines also into a pipe or a file: a log is complete when the app is stopped
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-// Headless: no Dock icon, and the app never becomes active, so the focus stays where it was.
-app.setActivationPolicy(Headless.isEnabled ? .prohibited : .regular)
-app.run()

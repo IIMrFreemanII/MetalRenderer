@@ -5,7 +5,8 @@
 #
 #   -m  benchmark mode (default: shot, one still of the app's default look; see Benchmark+Modes.swift)
 #   -o  folder for the PNGs and run.log (default: a new folder under $TMPDIR)
-#   -b  binary (default: <repo>/.build/release/MetalRenderer, rebuilt first when a Swift source is newer)
+#   -b  binary (default: the dev build <repo>/.build-dev/debug/MetalRenderer, Tools/build.sh, rebuilt first when a
+#       Swift source is newer; it draws the same images as release, and its timings are close: quote release ones)
 #   -q  quiet: print only the PNG paths
 #   KEY=VALUE  any METALRENDERER_* override, e.g. METALRENDERER_SCENE=stress METALRENDERER_GI="mode=pt"
 #
@@ -19,7 +20,7 @@ usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 mode=shot
 out=""
-bin="$repo/.build/release/MetalRenderer"
+bin="$repo/.build-dev/debug/MetalRenderer"
 custom_bin=0
 quiet=0
 while getopts "m:o:b:qh" opt; do
@@ -40,14 +41,14 @@ done
 
 # Swift changes need a build; shader changes don't (the binary compiles Shaders.metal at launch).
 if [[ $custom_bin == 0 ]] && { [[ ! -x $bin ]] || [[ -n $(find "$repo/Sources" "$repo/Package.swift" -name '*.swift' -newer "$bin" -print -quit) ]]; }; then
-  echo "building (release)…" >&2
-  swift build -c release --package-path "$repo" 2>&1 | grep -E "error:|Build complete" >&2 || true
+  echo "building (dev: Tools/build.sh)…" >&2
+  "$repo/Tools/build.sh" 2>&1 >/dev/null | grep -E "error:|Build complete" >&2 || true
   [[ -x $bin ]] || { echo "render.sh: build failed" >&2; exit 1; }
 fi
 
 [[ -n $out ]] || out="${TMPDIR:-/tmp}/metalrenderer-render-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
-root=$(cd "$(dirname "$bin")/../.." && pwd)   # <root>/.build/release/MetalRenderer: its own shaders and assets
+root=$(cd "$(dirname "$bin")/../.." && pwd)   # <root>/.build(-dev)/<config>/MetalRenderer: its own shaders and assets
 start=$SECONDS
 touch "$out/.started"   # the PNGs this run writes are newer than it
 if ! (cd "$root" && env METALRENDERER_BENCH="$mode" METALRENDERER_BENCH_DIR="$out" "$@" "$bin") >"$out/run.log" 2>&1; then

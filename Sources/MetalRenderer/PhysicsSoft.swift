@@ -84,7 +84,10 @@ struct SoftModel {
                     let c = SIMD3<Int32>(Int32(x), Int32(y), Int32(z))
                     let corner = lo + SIMD3<Float>(c) * s
                     guard eroded(corner + 0.5 * s) < 0 else { continue }
-                    if (0..<8).allSatisfy({ eroded(corner + SIMD3<Float>(Float($0 & 1), Float(($0 >> 1) & 1), Float(($0 >> 2) & 1)) * s) < 0.4 * s }) {
+                    if (0..<8).allSatisfy({ (k: Int) -> Bool in
+                        let offset = SIMD3<Float>(Float(k & 1), Float((k >> 1) & 1), Float((k >> 2) & 1))
+                        return eroded(corner + offset * s) < 0.4 * s
+                    }) {
                         cubes.append(c)
                     }
                 }

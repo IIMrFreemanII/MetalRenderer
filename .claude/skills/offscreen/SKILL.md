@@ -24,8 +24,10 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
 * Run anything longer than about 30 s with `run_in_background`, then wait for the notification.
 * Don't rebuild, and don't edit `Shaders.metal` or `Shaders/`, while a run is launching: it compiles the shaders it
   finds at launch.
-* Swift edits need `swift build -c release`; shader edits don't (the binary compiles the shaders at launch).
-  `render.sh` rebuilds when a Swift source is newer than the binary.
+* Swift edits need a build; shader edits don't (the binary compiles the shaders at launch). `render.sh` uses the
+  dev build (`Tools/build.sh`: the debug configuration with `-O`, in `.build-dev`, a one-file edit rebuilds in about
+  12 s) and rebuilds it when a Swift source is newer than the binary. It draws the same images as release, bit for
+  bit. Timings to quote come from release (`swift build -c release`, the `performance` skill).
 
 ## Render something: `scripts/render.sh`
 
@@ -80,8 +82,8 @@ python3 Tools/eval/pngdiff.py "$SCRATCH/before" "$SCRATCH/after"
 * A shader-only change needs only one binary: copy `Sources/MetalRenderer/Shaders.metal` and `Shaders/` to the
   scratchpad, then run the copy with `METALRENDERER_SHADERS=<copy>/Shaders.metal` on one side.
 * A Swift change needs the baseline built in the scratchpad (`git archive HEAD Sources Package.swift Tools | tar -x
-  -C "$SCRATCH/base"`, then `swift build -c release` there). Run it with `-b "$SCRATCH/base/.build/release/MetalRenderer"`
-  and `METALRENDERER_ASSETS=<repo>/Assets`.
+  -C "$SCRATCH/base"`, then `"$SCRATCH/base/Tools/build.sh"`). Run it with
+  `-b "$SCRATCH/base/.build-dev/debug/MetalRenderer"` and `METALRENDERER_ASSETS=<repo>/Assets`.
 * An image that must not change: max 0.0 everywhere. Fast-math variants can flip a few stochastic pixels; see
   measuring.md, "Kernel variants".
 
@@ -117,5 +119,5 @@ along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 
 The mechanism: `RenderSurface` (RenderSurface.swift) is either the window's `LayerSurface` (its view's CAMetalLayer) or
 an `OffscreenSurface` (a ring of textures in the drawable's format). Either way the frames are drawn on the render
-thread (RenderThread.swift). `Headless.isEnabled` picks the surface in main.swift, and the app runs with the
+thread (RenderThread.swift). `Headless.isEnabled` picks the surface in App.swift, and the app runs with the
 `.prohibited` activation policy.

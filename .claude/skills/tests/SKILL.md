@@ -24,15 +24,19 @@ development down, so run only the suites that cover what you changed.
 .claude/skills/tests/scripts/related.sh
 ```
 * It reads the files changed against `HEAD` (uncommitted and untracked), maps them to suites and runs
-  `swift test --filter '<A>|<B>'`.
+  `Tools/build.sh test --filter '<A>|<B>'`: the dev build (the debug configuration with `-O`, in `.build-dev`). It
+  rebuilds a one-file edit in about 20 s and runs the CPU-stepped physics suites as fast as release does.
 * `--base <rev>` takes the changes since a revision instead, for example `--base main` for a whole branch.
 * `--dry-run` prints the suites and the uncovered files and runs nothing.
 * `related.sh CityTests BuildingTests` runs the suites you name and skips the map.
 
 By hand, with the same filter:
 ```bash
-swift test --filter 'CityTests|BuildingTests'
+Tools/build.sh test --filter 'CityTests|BuildingTests'
 ```
+In release, when a check needs that exact build: `swift test -c release --filter …`. Release builds are testable
+(`Package.swift`), so it shares `.build/release` with `swift build -c release` and needs no `-Xswiftc -enable-testing`;
+but a Swift edit recompiles the whole module there (about 4 min).
 For one test, use `--filter CityTests/testThePlanIsSeeded`.
 
 ## Map

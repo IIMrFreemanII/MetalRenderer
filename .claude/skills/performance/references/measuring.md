@@ -7,6 +7,9 @@ pieces in `Shaders/`) from the source folder it was built from (`#filePath`, `Re
 swift build -c release
 METALRENDERER_BENCH=<mode> .build/release/MetalRenderer
 ```
+Release compiles the module whole (about 4 min after any Swift edit). While iterating on a change, build and check it
+with the dev build, `Tools/build.sh` (the debug configuration with `-O`, incremental: about 12 s an edit; same images,
+same frame times and `cpu` within noise on the M1 Max), and build release for the numbers you quote and for `ab.sh`.
 
 A benchmark renders 60 warm-up frames and then 240 measured frames per setting, back to back without vsync. It prints
 a table and quits. It runs offscreen: no window, no Dock icon, no focus change (the `offscreen` skill). Don't add

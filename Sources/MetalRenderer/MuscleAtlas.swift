@@ -362,11 +362,13 @@ struct MuscleAtlas {
                    tendons: tendons)
         }
         // The rectus abdominis: four segments up each side of the midline, the tendinous bands between them.
-        let rectus = [(-0.24, 0.17), (0.19, 0.33), (0.35, 0.48), (0.5, 0.63)].enumerated().map { k, span in
-            sheet("rectus abdominis \(k + 1)", [[t(Float(span.0), 6), t(Float(span.1), 6)], [t(Float(span.0), 13), t(Float(span.1), 24)]],
-                  half: 0.009, tendons: [0.06, 0.06])
+        let spans: [(Float, Float)] = [(-0.24, 0.17), (0.19, 0.33), (0.35, 0.48), (0.5, 0.63)]
+        let rectus = spans.enumerated().map { k, span -> Muscle in
+            let left: [Mark] = [t(span.0, 6), t(span.1, 6)], right: [Mark] = [t(span.0, 13), t(span.1, 24)]
+            return sheet("rectus abdominis \(k + 1)", [left, right], half: 0.009, tendons: [0.06, 0.06])
         }
-        return [
+        // Typed parts joined with += (one literal with + between parts took the type checker seconds).
+        var list: [Muscle] = [
             // Neck and shoulders.
             tube("sternocleidomastoid", [t(0.97, 8), neck(0.5, 45), head(0.05, 105)], radius: 0.011, tendons: [0.12, 0.1]),
             tube("deltoid, front", [t(0.95, 48), arm(0.12, 25), arm(0.45, 75)], radius: 0.022, peak: 0.4, tendons: [0.05, 0.18]),
@@ -379,7 +381,9 @@ struct MuscleAtlas {
             sheet("pectoralis major", [[t(0.95, 28), t(0.96, 55), arm(0.16, 15)], [t(0.88, 4), t(0.86, 45), arm(0.15, 0)],
                                        [t(0.77, 4), t(0.76, 40), arm(0.14, -15)], [t(0.66, 12), t(0.68, 50), arm(0.13, -30)]],
                   half: 0.016, peak: 0.4, tendons: [0.04, 0.16]),
-        ] + rectus + [
+        ]
+        list += rectus
+        list += [
             sheet("external oblique", [[t(0.58, 70), t(0.25, 55), t(0.05, 45)], [t(0.5, 95), t(0.2, 85), t(0.06, 72)],
                                        [t(0.42, 115), t(0.2, 108), t(0.12, 100)]],
                   half: 0.011, peak: 0.4, tendons: [0.04, 0.2]),
@@ -430,6 +434,7 @@ struct MuscleAtlas {
             tube("tibialis anterior", [shin(0.08, 30), shin(0.6, 25), shin(1.02, -25)], radius: 0.014, peak: 0.35, tendons: [0.05, 0.35]),
             tube("peroneus", [shin(0.1, 100), shin(0.6, 110), shin(0.98, 145)], radius: 0.012, peak: 0.35, tendons: [0.05, 0.35]),
         ]
+        return list
     }
 
     /// Both sides', the right's first.

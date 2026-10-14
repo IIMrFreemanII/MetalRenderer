@@ -135,8 +135,8 @@ final class PhysicsWorld {
     /// For the GPU: per cloth its first particle, columns, rows and first vertex, then its last frame's vertices'
     /// offset (Scene.finishDeforming), as MSL PhysicsCloth has them.
     func clothTable(prevOffsets: [UInt32]) -> [SIMD4<UInt32>] {
-        zip(cloths, prevOffsets).flatMap { c, prev in
-            [SIMD4(UInt32(c.first), UInt32(c.columns), UInt32(c.rows), UInt32(c.vertexBase)), SIMD4(prev, 0, 0, 0)]
+        zip(cloths, prevOffsets).flatMap { c, prev -> [SIMD4<UInt32>] in
+            [SIMD4<UInt32>(UInt32(c.first), UInt32(c.columns), UInt32(c.rows), UInt32(c.vertexBase)), SIMD4<UInt32>(prev, 0, 0, 0)]
         }
     }
     var unsortedConstraints: [GPUPhysicsConstraint] = []
