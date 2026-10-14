@@ -1,2846 +1,2864 @@
 {
   ".claude/settings.json": {
-    "mtime": 1791980628.3791373,
-    "seen": 1791991143.149737,
+    "mtime": 1792001738.6970348,
+    "seen": 1792005249.734657,
     "ast_hash": "4bb5b3bd29eceda3665133dfeb75a9a2",
     "semantic_hash": ""
   },
   "Package.swift": {
-    "mtime": 1791989796.946782,
-    "seen": 1791991143.1497788,
+    "mtime": 1792001738.8231778,
+    "seen": 1792005249.734698,
     "ast_hash": "0de4861ca5454cdba65f091c4e991149",
     "semantic_hash": ""
   },
   "Tools/eval/columns.py": {
-    "mtime": 1791980628.537939,
-    "seen": 1791991143.1500669,
+    "mtime": 1792001738.8354936,
+    "seen": 1792005249.734986,
     "ast_hash": "27b0bc4a6897015682404057192549fb",
     "semantic_hash": "27b0bc4a6897015682404057192549fb"
   },
   "Tools/eval/evalcommon.py": {
-    "mtime": 1791980628.538208,
-    "seen": 1791991143.150068,
+    "mtime": 1792001738.8358006,
+    "seen": 1792005249.734987,
     "ast_hash": "c8ae67f07e6a3a70e51557b02658c1f7",
     "semantic_hash": ""
   },
   "Tools/eval/gallery.py": {
-    "mtime": 1791980628.5385888,
-    "seen": 1791991143.150069,
+    "mtime": 1792001738.8360245,
+    "seen": 1792005249.734988,
     "ast_hash": "3401007c4778fd7e85615bd6461cac9e",
     "semantic_hash": ""
   },
   "Tools/eval/gi.py": {
-    "mtime": 1791980628.5387592,
-    "seen": 1791991143.150069,
+    "mtime": 1792001738.8365757,
+    "seen": 1792005249.7349892,
     "ast_hash": "bf61492a032aa62b78c22eb0e8abf74c",
     "semantic_hash": ""
   },
   "Tools/eval/noise.py": {
-    "mtime": 1791980628.5392706,
-    "seen": 1791991143.150072,
+    "mtime": 1792001738.83763,
+    "seen": 1792005249.734991,
     "ast_hash": "ab742d6d7d2b2074df1cefe116c72422",
     "semantic_hash": ""
   },
   "Tools/eval/pngdiff.py": {
-    "mtime": 1791980628.5393918,
-    "seen": 1791991143.150073,
+    "mtime": 1792001738.8381534,
+    "seen": 1792005249.7349918,
     "ast_hash": "cc107af27c181312107a2720cd3595f0",
     "semantic_hash": "cc107af27c181312107a2720cd3595f0"
   },
   "Tools/eval/shadow.py": {
-    "mtime": 1791980628.7078161,
-    "seen": 1791991143.150075,
+    "mtime": 1792001739.0380158,
+    "seen": 1792005249.734994,
     "ast_hash": "1a830875cf041f37961e4cf394db7167",
     "semantic_hash": ""
   },
   "Tools/eval/stress.py": {
-    "mtime": 1791980628.7081327,
-    "seen": 1791991143.1500769,
+    "mtime": 1792001739.0381866,
+    "seen": 1792005249.734995,
     "ast_hash": "3a762d7a4a33e06b04934e708e806357",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1791980628.3827066,
-    "seen": 1791991143.150093,
+    "mtime": 1792001738.7018077,
+    "seen": 1792005249.735015,
     "ast_hash": "94e786d8a9423efe241acec9e58a78ed",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1791990319.753448,
-    "seen": 1791991143.150094,
-    "ast_hash": "64da6d15bd49e7649adf8a390f964b74",
+    "mtime": 1792004239.0216086,
+    "seen": 1792005249.7350159,
+    "ast_hash": "51ce5bb39db445e0187d9f592afefb21",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
-    "mtime": 1791980628.5373445,
-    "seen": 1791991143.150094,
+    "mtime": 1792001738.8349009,
+    "seen": 1792005249.7350159,
     "ast_hash": "4c286bcbd14c87c2859ecb4c806f8261",
     "semantic_hash": ""
   },
   "Tools/eval/refs/gallery/ref-closeup.png": {
-    "mtime": 1791980628.544369,
-    "seen": 1791991143.150095,
+    "mtime": 1792001738.8449674,
+    "seen": 1792005249.735017,
     "ast_hash": "2d4fd6847334a651e23f3d47a8154ec2",
     "semantic_hash": "2d4fd6847334a651e23f3d47a8154ec2"
   },
   "Tools/eval/refs/gallery/ref-overview.png": {
-    "mtime": 1791980628.547578,
-    "seen": 1791991143.150096,
+    "mtime": 1792001738.8478818,
+    "seen": 1792005249.735018,
     "ast_hash": "5fa3ca51fe66093194c9aa4b5363058d",
     "semantic_hash": "5fa3ca51fe66093194c9aa4b5363058d"
   },
   "Tools/eval/refs/gi/ref8-0.5x.png": {
-    "mtime": 1791980628.550967,
-    "seen": 1791991143.150097,
+    "mtime": 1792001738.8515878,
+    "seen": 1792005249.735019,
     "ast_hash": "b317cd965b4aad3bcd7fd70de78a8ca9",
     "semantic_hash": "b317cd965b4aad3bcd7fd70de78a8ca9"
   },
   "Tools/eval/refs/gi/ref8-1.5x.png": {
-    "mtime": 1791980628.5861976,
-    "seen": 1791991143.1500978,
+    "mtime": 1792001738.8963068,
+    "seen": 1792005249.735019,
     "ast_hash": "3a444fcb54562732e657c0bec510b70d",
     "semantic_hash": "3a444fcb54562732e657c0bec510b70d"
   },
   "Tools/eval/refs/gi/ref8-indirect-0.5x.png": {
-    "mtime": 1791980628.5919073,
-    "seen": 1791991143.1500978,
+    "mtime": 1792001738.903506,
+    "seen": 1792005249.73502,
     "ast_hash": "d43b48ef9554da22dca5659cc660da7c",
     "semantic_hash": "d43b48ef9554da22dca5659cc660da7c"
   },
   "Tools/eval/refs/shadow/ref-direct.png": {
-    "mtime": 1791980628.676579,
-    "seen": 1791991143.1501062,
+    "mtime": 1792001739.0038211,
+    "seen": 1792005249.735028,
     "ast_hash": "df9f9dc161d15dd7bfbc39f59568a7bc",
     "semantic_hash": "df9f9dc161d15dd7bfbc39f59568a7bc"
   },
   "Tools/eval/refs/stress/ref-albedo-1.5x.png": {
-    "mtime": 1791980628.686133,
-    "seen": 1791991143.1501088,
+    "mtime": 1792001739.0178106,
+    "seen": 1792005249.7350311,
     "ast_hash": "6301a997096acbbce73554fbc2fb5dfc",
     "semantic_hash": ""
   },
   "Tools/eval/refs/stress/ref-direct-1.5x.png": {
-    "mtime": 1791980628.700044,
-    "seen": 1791991143.15011,
+    "mtime": 1792001739.031533,
+    "seen": 1792005249.7350311,
     "ast_hash": "4c4292c129492cc570c771902079ee23",
     "semantic_hash": ""
   },
   "Tools/eval/refs/stress/ref-direct-128.png": {
-    "mtime": 1791980628.7035153,
-    "seen": 1791991143.15011,
+    "mtime": 1792001739.0325027,
+    "seen": 1792005249.735032,
     "ast_hash": "0a7fda4fb9d1656e6721d17038c9a57d",
     "semantic_hash": ""
   },
   "Tools/eval/refs/stress/ref-direct-32.png": {
-    "mtime": 1791980628.703917,
-    "seen": 1791991143.150111,
+    "mtime": 1792001739.0329766,
+    "seen": 1792005249.735033,
     "ast_hash": "907299babd31ab73fa4f714c11435ddc",
     "semantic_hash": ""
   },
   "Tools/eval/refs/stress/ref8-final-32.png": {
-    "mtime": 1791980628.7049665,
-    "seen": 1791991143.150112,
+    "mtime": 1792001739.0366628,
+    "seen": 1792005249.7350342,
     "ast_hash": "d714c62772bf5d5754aca486ceee4cba",
     "semantic_hash": ""
   },
   "Tools/test-assets/make-test-sky.py": {
-    "mtime": 1791980628.7083383,
-    "seen": 1791991143.1500769,
+    "mtime": 1792001739.0408268,
+    "seen": 1792005249.734996,
     "ast_hash": "51a01c1ef2e7525de89cf42a7b8d95a6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Atmosphere.swift": {
-    "mtime": 1791980628.5366971,
-    "seen": 1791991143.149781,
+    "mtime": 1792001738.8308532,
+    "seen": 1792005249.7347,
     "ast_hash": "82c044c9462ea79dbb54c1848dbb0660",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BVH.swift": {
-    "mtime": 1791980628.5370471,
-    "seen": 1791991143.149782,
+    "mtime": 1792001738.8314261,
+    "seen": 1792005249.7347012,
     "ast_hash": "c633a03cef9d78a54c266bf93d3b70c1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark.swift": {
-    "mtime": 1791980628.5430863,
-    "seen": 1791991143.149785,
+    "mtime": 1792001738.8338234,
+    "seen": 1792005249.734703,
     "ast_hash": "d04091d30d9d5d67c95cc9ef8383946a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BlueNoise.swift": {
-    "mtime": 1791980628.5434496,
-    "seen": 1791991143.149785,
+    "mtime": 1792001738.8349662,
+    "seen": 1792005249.734704,
     "ast_hash": "23fa4d32d6c8a3bddd05cc31a5f12158",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FogNoise.swift": {
-    "mtime": 1791980628.5635157,
-    "seen": 1791991143.149822,
+    "mtime": 1792001738.8622358,
+    "seen": 1792005249.734742,
     "ast_hash": "a571ef1c512a7a2aeb5911469169186c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/GLTFLoader.swift": {
-    "mtime": 1791980628.5673342,
-    "seen": 1791991143.149827,
+    "mtime": 1792001738.8666155,
+    "seen": 1792005249.73475,
     "ast_hash": "d8541d5dfbc4e845a76667e7d73e95a7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/GPUTypes.swift": {
-    "mtime": 1791980628.568193,
-    "seen": 1791991143.1498282,
+    "mtime": 1792001738.8693206,
+    "seen": 1792005249.734752,
     "ast_hash": "5b1df162a94504aacd51c1a2cedfa89b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialTextures.swift": {
-    "mtime": 1791980628.5928519,
-    "seen": 1791991143.1498618,
+    "mtime": 1792001738.8917112,
+    "seen": 1792005249.734786,
     "ast_hash": "4ebaab33295165594fccc165082dad3f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MathUtil.swift": {
-    "mtime": 1791990647.112976,
-    "seen": 1791991143.149863,
+    "mtime": 1792001738.8922977,
+    "seen": 1792005249.734787,
     "ast_hash": "b72e5aed50a25a6b42f564fee0a11929",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MeshClusterizer.swift": {
-    "mtime": 1791980628.5938573,
-    "seen": 1791991143.149865,
+    "mtime": 1792001738.8937302,
+    "seen": 1792005249.7347882,
     "ast_hash": "606e69f220a2e90fbd57a736b5408b3a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MeshSimplifier.swift": {
-    "mtime": 1791980628.5954356,
-    "seen": 1791991143.1498659,
+    "mtime": 1792001738.8949656,
+    "seen": 1792005249.7347898,
     "ast_hash": "680bcdad29e122c32bf5f5682a1f8da3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RadianceCascades.swift": {
-    "mtime": 1791980628.525134,
-    "seen": 1791991143.1499178,
+    "mtime": 1792001738.8249764,
+    "seen": 1792005249.734839,
     "ast_hash": "1a2d5fb75118081dae17cca3106baf7d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RenderView.swift": {
-    "mtime": 1791991061.4809997,
-    "seen": 1791991143.1499221,
+    "mtime": 1792001738.8283598,
+    "seen": 1792005249.7348428,
     "ast_hash": "e36e276a1d03726b48b7de914b94f7fd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792000404.0487618,
-    "seen": 1792000896.925947,
-    "ast_hash": "29992b09fe47640b40aa4e708d779afb",
+    "mtime": 1792005161.072215,
+    "seen": 1792005249.734844,
+    "ast_hash": "bbb7475b0fb09e06d99c3798d7e0aa5b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
-    "mtime": 1791980628.5447845,
-    "seen": 1791991143.149935,
-    "ast_hash": "7b445c07898f0cebbb08370f6f25c67f",
+    "mtime": 1792003831.997572,
+    "seen": 1792005249.734855,
+    "ast_hash": "09fcafbb4eb1c202a57fc95253996c62",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene.swift": {
-    "mtime": 1791980628.5603487,
-    "seen": 1791991143.149947,
+    "mtime": 1792001738.877417,
+    "seen": 1792005249.734868,
     "ast_hash": "db3766c1554e8e95f3223c5728cefa75",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1792000124.0453649,
-    "seen": 1792000896.925982,
-    "ast_hash": "9e21b7d6c2935c95b43297b217e25299",
+    "mtime": 1792005161.0725653,
+    "seen": 1792005249.734872,
+    "ast_hash": "dd277535468009b54a3f5a98033cc6cc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
-    "mtime": 1791980628.5691476,
-    "seen": 1791991143.1499531,
-    "ast_hash": "61a59cdee23364152be00b1cc9ee843f",
+    "mtime": 1792003991.9927979,
+    "seen": 1792005249.734873,
+    "ast_hash": "aeac6c28c0c75ebb8e676f5b5d7dad26",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders.metal": {
-    "mtime": 1791980628.572031,
-    "seen": 1791991143.149956,
+    "mtime": 1792001738.887306,
+    "seen": 1792005249.734876,
     "ast_hash": "29ea7ce7b066939ffe18598beca456a6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/TextureStreamer.swift": {
-    "mtime": 1791980628.4873862,
-    "seen": 1791991143.149993,
+    "mtime": 1792001738.9181447,
+    "seen": 1792005249.734913,
     "ast_hash": "4a01dd4b4f1cf85370918bbc4b489c79",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Upscaler.swift": {
-    "mtime": 1791980628.4889307,
-    "seen": 1791991143.149994,
+    "mtime": 1792001738.91887,
+    "seen": 1792005249.734914,
     "ast_hash": "d72095867f49d89676f90699e962eaf8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualBLAS.swift": {
-    "mtime": 1791980628.5029142,
-    "seen": 1791991143.1500108,
+    "mtime": 1792001738.7900157,
+    "seen": 1792005249.73493,
     "ast_hash": "f99b731ca2d75b64cb1839c0f1d39057",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualGeometry.swift": {
-    "mtime": 1791980628.5031214,
-    "seen": 1791991143.150012,
+    "mtime": 1792001738.7902153,
+    "seen": 1792005249.734931,
     "ast_hash": "38c2e1a30eaacd8ff440a5e7449d4e12",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualGeometryBuilder.swift": {
-    "mtime": 1791980628.5033064,
-    "seen": 1791991143.150013,
+    "mtime": 1792001738.7912245,
+    "seen": 1792005249.734932,
     "ast_hash": "307dc6f328f3f1fcf2a004d83ef8f2a3",
     "semantic_hash": ""
   },
   "sky-sheet.png": {
-    "mtime": 1791980628.7318165,
-    "seen": 1791991143.150113,
+    "mtime": 1792001739.0282698,
+    "seen": 1792005249.735035,
     "ast_hash": "e73001e70ce539c6c47eb8fbcc00b99c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LightTable.swift": {
-    "mtime": 1791980628.5720243,
-    "seen": 1791991143.149833,
+    "mtime": 1792001738.8721967,
+    "seen": 1792005249.734756,
     "ast_hash": "b721a0adc2175fb019058e2370d33c31",
     "semantic_hash": ""
   },
   "Tools/eval/restir.py": {
-    "mtime": 1791980628.7076046,
-    "seen": 1791991143.150073,
+    "mtime": 1792001739.0378306,
+    "seen": 1792005249.7349918,
     "ast_hash": "1f5c17f4e03728dbde9a01a9c7a2ddae",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-direct-1024.png": {
-    "mtime": 1791980628.6635513,
-    "seen": 1791991143.150101,
+    "mtime": 1792001738.9903429,
+    "seen": 1792005249.735022,
     "ast_hash": "88a2706cdc8dc6cca6602ed2a19c086a",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-direct-128.png": {
-    "mtime": 1791980628.6645477,
-    "seen": 1791991143.150101,
+    "mtime": 1792001738.9910588,
+    "seen": 1792005249.735023,
     "ast_hash": "b76189e5b5491f9a6692fbbf5b057355",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-direct-32.png": {
-    "mtime": 1791980628.6669948,
-    "seen": 1791991143.150102,
+    "mtime": 1792001738.993178,
+    "seen": 1792005249.7350242,
     "ast_hash": "907299babd31ab73fa4f714c11435ddc",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-direct-4096.png": {
-    "mtime": 1791980628.669008,
-    "seen": 1791991143.150103,
+    "mtime": 1792001738.9939697,
+    "seen": 1792005249.735025,
     "ast_hash": "58f68709d98ceec33d2d4edebc8b7895",
     "semantic_hash": ""
   },
   "Tools/eval/restirgi.py": {
-    "mtime": 1791980628.707713,
-    "seen": 1791991143.150074,
+    "mtime": 1792001739.0379274,
+    "seen": 1792005249.734993,
     "ast_hash": "62209ce9ef32726ed7218fe2e85c7497",
     "semantic_hash": ""
   },
   "Tools/eval/refs/stress/ref8-indirect-32.png": {
-    "mtime": 1791980628.7074187,
-    "seen": 1791991143.150113,
+    "mtime": 1792001739.0376563,
+    "seen": 1792005249.7350342,
     "ast_hash": "98f53f0472990a9ceb5c5e472bffbd2e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/GPUProfiler.swift": {
-    "mtime": 1791980628.5678194,
-    "seen": 1791991143.1498282,
+    "mtime": 1792001738.8686051,
+    "seen": 1792005249.734751,
     "ast_hash": "6bdf130b88585b0abbb2a9edc077c052",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsStore.swift": {
-    "mtime": 1791980628.5706182,
-    "seen": 1791991143.149954,
+    "mtime": 1792001738.8860438,
+    "seen": 1792005249.734874,
     "ast_hash": "f7cab9f7fbaddcb6fa8e4f77275a9868",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/DebugPanel.swift": {
-    "mtime": 1791980628.5614593,
-    "seen": 1791991143.149817,
+    "mtime": 1792001738.8602147,
+    "seen": 1792005249.7347379,
     "ast_hash": "41e44f9bae398e3806036b14bf6d58be",
     "semantic_hash": ""
   },
   ".claude/skills/performance/SKILL.md": {
-    "mtime": 1791980628.380082,
-    "seen": 1791991143.1500869,
+    "mtime": 1792001738.6984372,
+    "seen": 1792005249.735009,
     "ast_hash": "d24d8c2583ee91eab05ac007e6f8ce3a",
     "semantic_hash": ""
   },
   ".claude/skills/performance/references/cpu-swift.md": {
-    "mtime": 1791990307.59554,
-    "seen": 1791991143.1500878,
+    "mtime": 1792001738.6988215,
+    "seen": 1792005249.735009,
     "ast_hash": "b1243907349752ca91a3d74ccae1c56a",
     "semantic_hash": ""
   },
   ".claude/skills/performance/references/gpu-metal.md": {
-    "mtime": 1791980628.3806074,
-    "seen": 1791991143.150089,
+    "mtime": 1792001738.6990318,
+    "seen": 1792005249.7350101,
     "ast_hash": "46d186ffad0cdb32938ffe62302b1af8",
     "semantic_hash": ""
   },
   ".claude/skills/performance/references/measuring.md": {
-    "mtime": 1791990307.5952535,
-    "seen": 1791991143.150089,
+    "mtime": 1792001738.6995463,
+    "seen": 1792005249.735011,
     "ast_hash": "d5c5ddbcad397144b9dc37c04f956eef",
     "semantic_hash": ""
   },
   ".claude/skills/performance/scripts/ab.sh": {
-    "mtime": 1791980628.3810046,
-    "seen": 1791991143.149746,
+    "mtime": 1792001738.6997645,
+    "seen": 1792005249.734667,
     "ast_hash": "fa765b9adbff8b448c801f04133f6aad",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-direct-market.png": {
-    "mtime": 1791980628.671176,
-    "seen": 1791991143.150104,
+    "mtime": 1792001738.996907,
+    "seen": 1792005249.735025,
     "ast_hash": "9ba85daeaeffb7c4d49b667e5bf58a1a",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-indirect-market.png": {
-    "mtime": 1791980628.6731403,
-    "seen": 1791991143.150104,
+    "mtime": 1792001739.0008814,
+    "seen": 1792005249.735026,
     "ast_hash": "8865f0ad816615f8ab6133d290766cad",
     "semantic_hash": ""
   },
   "Tools/eval/refs/restir/ref-scattering-market.png": {
-    "mtime": 1791980628.675917,
-    "seen": 1791991143.150105,
+    "mtime": 1792001739.0031912,
+    "seen": 1792005249.7350268,
     "ast_hash": "236f19f05bcd33b17e47a6f73e00fc60",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1791980628.4991724,
-    "seen": 1791991143.149896,
+    "mtime": 1792001738.7987406,
+    "seen": 1792005249.734817,
     "ast_hash": "6831d44fc337cc2fcbc3b73962d6f22f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
-    "mtime": 1791980628.5688496,
-    "seen": 1791991143.149952,
+    "mtime": 1792001738.884726,
+    "seen": 1792005249.734872,
     "ast_hash": "433c1b621d2199377c16d155807eceef",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsTable.swift": {
-    "mtime": 1791980628.5713663,
-    "seen": 1791991143.149954,
-    "ast_hash": "cf69364140d7bd270802afd806b4d87c",
+    "mtime": 1792003975.0703273,
+    "seen": 1792005249.734875,
+    "ast_hash": "ab1b17121a8b9a334986737ac0a5241a",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SettingsTableTests.swift": {
-    "mtime": 1791980628.5312703,
-    "seen": 1791991143.150057,
+    "mtime": 1792001738.82873,
+    "seen": 1792005249.734976,
     "ast_hash": "0f79c697c46d1286e10320245cd4a3d9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1791980628.5425956,
-    "seen": 1791991143.149784,
+    "mtime": 1792001738.8333852,
+    "seen": 1792005249.734702,
     "ast_hash": "f4632eb16a52e5fe5da64db0b4a02a9b",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
-    "mtime": 1791980628.5095496,
-    "seen": 1791991143.1500201,
+    "mtime": 1792001738.7978654,
+    "seen": 1792005249.7349389,
     "ast_hash": "477440a94b4c7ceabea4677b9625e9c0",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/KernelVariantsTests.swift": {
-    "mtime": 1791980628.5156212,
-    "seen": 1791991143.1500359,
+    "mtime": 1792001738.8130586,
+    "seen": 1792005249.734955,
     "ast_hash": "ff83466fa9df14c2ccc6f993b309083a",
     "semantic_hash": ""
   },
   "Tools/eval/specular.py": {
-    "mtime": 1791980628.7079625,
-    "seen": 1791991143.150076,
+    "mtime": 1792001739.0380976,
+    "seen": 1792005249.734995,
     "ast_hash": "c7530320e42d4d51d3d0879b9e25cacd",
     "semantic_hash": ""
   },
   "Tools/eval/refs/speccheck/area-ref.png": {
-    "mtime": 1791980628.6776824,
-    "seen": 1791991143.150107,
+    "mtime": 1792001739.0080006,
+    "seen": 1792005249.735028,
     "ast_hash": "967e54da24e8fc1b794770c5d30a5aa8",
     "semantic_hash": ""
   },
   "Tools/eval/refs/speccheck/spots-ref.png": {
-    "mtime": 1791980628.6791253,
-    "seen": 1791991143.150107,
+    "mtime": 1792001739.009506,
+    "seen": 1792005249.735029,
     "ast_hash": "27e6216fb7256164e99486ac3cb841e8",
     "semantic_hash": ""
   },
   "Tools/eval/refs/speccheck/tubes-ref.png": {
-    "mtime": 1791980628.68137,
-    "seen": 1791991143.1501079,
+    "mtime": 1792001739.0150764,
+    "seen": 1792005249.73503,
     "ast_hash": "9fa040f912af3d6b5eaef213751a573b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ShaderSource.swift": {
-    "mtime": 1791980628.5716453,
-    "seen": 1791991143.149955,
+    "mtime": 1792001738.8870573,
+    "seen": 1792005249.734876,
     "ast_hash": "d4b185b7dfd018d74c87a817500ab1da",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Denoise.metal": {
-    "mtime": 1791980628.5740452,
-    "seen": 1791991143.149958,
+    "mtime": 1792001738.8896925,
+    "seen": 1792005249.734878,
     "ast_hash": "e695a56e5d6d22183562fb74c2b1f61c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Fog.metal": {
-    "mtime": 1791980628.5755055,
-    "seen": 1791991143.14996,
+    "mtime": 1792001738.8927615,
+    "seen": 1792005249.73488,
     "ast_hash": "79b4657a6f3aad9be5362664adc56bad",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Intersect.metal": {
-    "mtime": 1791980628.5780327,
-    "seen": 1791991143.149964,
+    "mtime": 1792001738.8960762,
+    "seen": 1792005249.734884,
     "ast_hash": "a61c2bdb48fb87625fce53b8b7735c61",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/LightSampling.metal": {
-    "mtime": 1791980628.5793772,
-    "seen": 1791991143.149964,
+    "mtime": 1792001738.896457,
+    "seen": 1792005249.7348852,
     "ast_hash": "e60ffa1b4c7c9f147a3be162d824f63f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Lights.metal": {
-    "mtime": 1791980628.5796227,
-    "seen": 1791991143.149965,
+    "mtime": 1792001738.8969164,
+    "seen": 1792005249.7348852,
     "ast_hash": "65030f9cb5cac47bdb239cbb93c07ff9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Output.metal": {
-    "mtime": 1791980628.5819001,
-    "seen": 1791991143.1499698,
+    "mtime": 1792001738.9012299,
+    "seen": 1792005249.73489,
     "ast_hash": "03bf69a300f71183e5649101c6a0cda7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RadianceCascades.metal": {
-    "mtime": 1791980628.5883176,
-    "seen": 1791991143.149976,
+    "mtime": 1792001738.9087014,
+    "seen": 1792005249.734897,
     "ast_hash": "b4c6ab68e501423eda6b502303b011ab",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Reflections.metal": {
-    "mtime": 1791980628.58987,
-    "seen": 1791991143.1499789,
+    "mtime": 1792001738.9100802,
+    "seen": 1792005249.734899,
     "ast_hash": "dfcf9484c32fe51a08ae1dbdba19f05d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Regir.metal": {
-    "mtime": 1791980628.5902684,
-    "seen": 1791991143.1499789,
+    "mtime": 1792001738.9102798,
+    "seen": 1792005249.734899,
     "ast_hash": "38e345ee07f3235394d93f3630ab09d8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RestirDI.metal": {
-    "mtime": 1791980628.5906549,
-    "seen": 1791991143.1499798,
+    "mtime": 1792001738.9105725,
+    "seen": 1792005249.7349,
     "ast_hash": "2f9ab5a118e58d35b97ff43c9b53283d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RestirGI.metal": {
-    "mtime": 1791980628.5910327,
-    "seen": 1791991143.149981,
+    "mtime": 1792001738.9108646,
+    "seen": 1792005249.734901,
     "ast_hash": "80952df97aab93559d3a51eb8cdb362d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Sampling.metal": {
-    "mtime": 1791980628.592494,
-    "seen": 1791991143.149982,
+    "mtime": 1792001738.9128945,
+    "seen": 1792005249.734902,
     "ast_hash": "96898b9d503bbe6c4f5a43a2af93de21",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Sky.metal": {
-    "mtime": 1791980628.5931437,
-    "seen": 1791991143.149983,
+    "mtime": 1792001738.91315,
+    "seen": 1792005249.734903,
     "ast_hash": "5aeea84081293805a09da71f756b08df",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Surface.metal": {
-    "mtime": 1791980628.5936456,
-    "seen": 1791991143.149984,
+    "mtime": 1792001738.9134734,
+    "seen": 1792005249.734904,
     "ast_hash": "1423fb468b2600ecf31441481a8f46e4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Trace.metal": {
-    "mtime": 1791980628.5942976,
-    "seen": 1791991143.149985,
+    "mtime": 1792001738.9136508,
+    "seen": 1792005249.734905,
     "ast_hash": "91878c90e29e2a72c6720a50695f27f2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Types.metal": {
-    "mtime": 1791980628.5948603,
-    "seen": 1791991143.149985,
+    "mtime": 1792001738.9138288,
+    "seen": 1792005249.734905,
     "ast_hash": "9d460adb86b49640cdeddb6c8c616ac7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/VirtualGeometry.metal": {
-    "mtime": 1791980628.5959466,
-    "seen": 1791991143.149987,
+    "mtime": 1792001738.9142783,
+    "seen": 1792005249.734907,
     "ast_hash": "f77f4b960127133e7aa6e78a07313310",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ShaderSourceTests.swift": {
-    "mtime": 1791980628.5314128,
-    "seen": 1791991143.150057,
+    "mtime": 1792001738.8290768,
+    "seen": 1792005249.734976,
     "ast_hash": "a99e3e07b868b925f90a0b3d15b60251",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CacheFile.swift": {
-    "mtime": 1791980628.5528445,
-    "seen": 1791991143.149801,
+    "mtime": 1792001738.8478086,
+    "seen": 1792005249.73472,
     "ast_hash": "3d5e3eb20ffc87d75bb6c3084f346c5c",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CacheTests.swift": {
-    "mtime": 1791980628.5107918,
-    "seen": 1791991143.150024,
+    "mtime": 1792001738.8010433,
+    "seen": 1792005249.734942,
     "ast_hash": "47792b638eec39a3378444d4141cec81",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BVHTests.swift": {
-    "mtime": 1791980628.5093787,
-    "seen": 1791991143.1500192,
+    "mtime": 1792001738.7959294,
+    "seen": 1792005249.7349381,
     "ast_hash": "9688ac3764d9d34982bc869b402058bf",
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/scripts/render.sh": {
-    "mtime": 1791990281.3084724,
-    "seen": 1791991143.149744,
+    "mtime": 1792001738.6981282,
+    "seen": 1792005249.734665,
     "ast_hash": "6e7409b716ef53b549675146b3a1538f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RenderSurface.swift": {
-    "mtime": 1791980628.5279799,
-    "seen": 1791991143.14992,
+    "mtime": 1792001738.827027,
+    "seen": 1792005249.734841,
     "ast_hash": "9e68ef83f911b7777eeb6961dafe086a",
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/SKILL.md": {
-    "mtime": 1791990684.8515377,
-    "seen": 1791991143.150086,
+    "mtime": 1792001738.6977718,
+    "seen": 1792005249.735008,
     "ast_hash": "f86ab9aac3c1af0af39badf54479e4ce",
     "semantic_hash": ""
   },
   ".claude/skills/refactor/scripts/baseline.sh": {
-    "mtime": 1791980628.3816135,
-    "seen": 1791991143.149747,
+    "mtime": 1792001738.7004037,
+    "seen": 1792005249.734668,
     "ast_hash": "bb669d2a9a24600bc083171764445327",
     "semantic_hash": ""
   },
   ".claude/skills/refactor/scripts/same.sh": {
-    "mtime": 1791990287.6603854,
-    "seen": 1791991143.149748,
+    "mtime": 1792001738.7006688,
+    "seen": 1792005249.734668,
     "ast_hash": "8cb012af99594599a0b7b14bf35529c8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Capabilities.swift": {
-    "mtime": 1791990684.8546202,
-    "seen": 1791991143.149802,
+    "mtime": 1792001738.8488524,
+    "seen": 1792005249.73472,
     "ast_hash": "27cb74f366ed84183b8b040178033cb7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ComputePass.swift": {
-    "mtime": 1791980628.560239,
-    "seen": 1791991143.149815,
+    "mtime": 1792001738.8591325,
+    "seen": 1792005249.734733,
     "ast_hash": "d1dab3e489bd125029da73873ad3de07",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1791980628.5958147,
-    "seen": 1791991143.149867,
+    "mtime": 1792001738.8958337,
+    "seen": 1792005249.7347898,
     "ast_hash": "ac4ba82ac58647139d9b732f3cfc7fe0",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
-    "mtime": 1791980628.5109541,
-    "seen": 1791991143.150024,
+    "mtime": 1792001738.803065,
+    "seen": 1792005249.734943,
     "ast_hash": "dabd7c6dae0113f7808110f9772d6ae3",
     "semantic_hash": ""
   },
   "Tools/eval/hwrt.py": {
-    "mtime": 1791980628.5389793,
-    "seen": 1791991143.15007,
+    "mtime": 1792001738.836847,
+    "seen": 1792005249.7349892,
     "ast_hash": "6f32d4c0ac296ea197c789fd0c612f0b",
     "semantic_hash": ""
   },
   ".claude/skills/refactor/SKILL.md": {
-    "mtime": 1791980628.3811793,
-    "seen": 1791991143.15009,
+    "mtime": 1792001738.6999547,
+    "seen": 1792005249.735012,
     "ast_hash": "41ec72224008ac743467df154905bcf6",
     "semantic_hash": ""
   },
   ".claude/skills/refactor/references/proving.md": {
-    "mtime": 1791980628.3813453,
-    "seen": 1791991143.150091,
+    "mtime": 1792001738.7001429,
+    "seen": 1792005249.735013,
     "ast_hash": "03a10241c7b9bd433b1189da545d0ba0",
     "semantic_hash": ""
   },
   ".claude/skills/refactor/references/structures.md": {
-    "mtime": 1791980628.381459,
-    "seen": 1791991143.150091,
+    "mtime": 1792001738.7002697,
+    "seen": 1792005249.735013,
     "ast_hash": "88b472a51de2eac51528b81b7cec80b3",
     "semantic_hash": ""
   },
   "Tools/eval/refs/hwrt/cornell-ref-final.png": {
-    "mtime": 1791980628.6174104,
-    "seen": 1791991143.150099,
+    "mtime": 1792001738.946096,
+    "seen": 1792005249.735021,
     "ast_hash": "e57946ec319a18a7937e3d8c06a02074",
     "semantic_hash": ""
   },
   "Tools/eval/refs/hwrt/stress-ref-final.png": {
-    "mtime": 1791980628.656917,
-    "seen": 1791991143.1501,
+    "mtime": 1792001738.987193,
+    "seen": 1792005249.735022,
     "ast_hash": "0fbb28c6136b8776d26e5dea18f4a734",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Crowd.swift": {
-    "mtime": 1791980628.5606859,
-    "seen": 1791991143.149816,
+    "mtime": 1792001738.8595877,
+    "seen": 1792005249.734734,
     "ast_hash": "381b6c3d57a856d8535ed9d29aa66906",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CrowdSkinner.swift": {
-    "mtime": 1791980628.5611231,
-    "seen": 1791991143.149817,
+    "mtime": 1792001738.8598354,
+    "seen": 1792005249.734735,
     "ast_hash": "ed2a81e49d183e3032bb1f350c746878",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FBXReader.swift": {
-    "mtime": 1791980628.5621595,
-    "seen": 1791991143.1498182,
+    "mtime": 1792001738.8604743,
+    "seen": 1792005249.7347388,
     "ast_hash": "2991eb96e8468748ee885056f4cb5b92",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Crowd.swift": {
-    "mtime": 1791980628.5397096,
-    "seen": 1791991143.149929,
+    "mtime": 1792001738.8432708,
+    "seen": 1792005249.73485,
     "ast_hash": "6449e2d09e8a4fa9cfafabb5e866d684",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Crowd.metal": {
-    "mtime": 1791980628.5728931,
-    "seen": 1791991143.1499572,
+    "mtime": 1792001738.8881528,
+    "seen": 1792005249.7348769,
     "ast_hash": "294bcfb7596000cff869bfe1fd5ee4e6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SkinnedCharacter.swift": {
-    "mtime": 1791980628.4869854,
-    "seen": 1791991143.149992,
+    "mtime": 1792001738.9172904,
+    "seen": 1792005249.734911,
     "ast_hash": "05cac12ae9e392942248d013df8143f8",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CrowdTests.swift": {
-    "mtime": 1791980628.5133867,
-    "seen": 1791991143.150031,
+    "mtime": 1792001738.8060935,
+    "seen": 1792005249.734949,
     "ast_hash": "8482fcd6e8829ec4a928b46fc9a520e0",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/FBXTests.swift": {
-    "mtime": 1791990906.8088174,
-    "seen": 1791991143.150031,
+    "mtime": 1792001738.8098328,
+    "seen": 1792005249.734951,
     "ast_hash": "3df8f4b420e8d782657fbf66339df2bd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Building+Facade.swift": {
-    "mtime": 1791980628.5441718,
-    "seen": 1791991143.149786,
+    "mtime": 1792001738.835695,
+    "seen": 1792005249.734705,
     "ast_hash": "b47109fa1340772646ed1e017690d46b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Building+Roof.swift": {
-    "mtime": 1791980628.5452104,
-    "seen": 1791991143.149788,
+    "mtime": 1792001738.8370495,
+    "seen": 1792005249.7347069,
     "ast_hash": "956bda1edad9857e5a8516128d59d2fe",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Building.swift": {
-    "mtime": 1791980628.5457954,
-    "seen": 1791991143.1497889,
+    "mtime": 1792001738.837431,
+    "seen": 1792005249.734708,
     "ast_hash": "452fe303db8248dacb9379ac09d71f67",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingStyle.swift": {
-    "mtime": 1791980628.5511444,
-    "seen": 1791991143.149798,
+    "mtime": 1792001738.8458018,
+    "seen": 1792005249.734717,
     "ast_hash": "5a5f5e069f0b084ce2dbb19af993b961",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CityPlan.swift": {
-    "mtime": 1791980628.5597239,
-    "seen": 1791991143.1498141,
+    "mtime": 1792001738.8575068,
+    "seen": 1792005249.734733,
     "ast_hash": "e40fd7fe5c8100191df87797c7d7d218",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MeshBuilder.swift": {
-    "mtime": 1791980628.5933394,
-    "seen": 1791991143.149864,
+    "mtime": 1792001738.8929048,
+    "seen": 1792005249.734787,
     "ast_hash": "8542bf3dce59635eefb605d126b56beb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProceduralTextures.swift": {
-    "mtime": 1791980628.5078185,
-    "seen": 1791991143.1499069,
+    "mtime": 1792001738.8109524,
+    "seen": 1792005249.734827,
     "ast_hash": "d81979f662f3c425a26f6304a2be30b0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+City.swift": {
-    "mtime": 1791980628.5379794,
-    "seen": 1791991143.149929,
-    "ast_hash": "510b13c6a620fa16ac62a91dbd9b6fcd",
+    "mtime": 1792003831.9979815,
+    "seen": 1792005249.734849,
+    "ast_hash": "75ad7457ed733e4b14e39aec67df2fd3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Glass.metal": {
-    "mtime": 1791980628.5770864,
-    "seen": 1791991143.149962,
+    "mtime": 1792001738.8945646,
+    "seen": 1792005249.734883,
     "ast_hash": "b89fadfe9413ece1de3ac8e624e534e0",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BuildingTests.swift": {
-    "mtime": 1791980628.5103939,
-    "seen": 1791991143.1500218,
+    "mtime": 1792001738.7998507,
+    "seen": 1792005249.734941,
     "ast_hash": "8985abd91d89216c0639869fa796d7ef",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CityTests.swift": {
-    "mtime": 1791980628.5128443,
-    "seen": 1791991143.1500301,
+    "mtime": 1792001738.8058243,
+    "seen": 1792005249.7349482,
     "ast_hash": "c5ed16df1792b644f6bbb211d0711274",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ProceduralTextureTests.swift": {
-    "mtime": 1791980628.52584,
-    "seen": 1791991143.150051,
+    "mtime": 1792001738.8236654,
+    "seen": 1792005249.73497,
     "ast_hash": "d3696b77c7d06cecf6f7c928190a64e3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Foliage.swift": {
-    "mtime": 1791980628.5638447,
-    "seen": 1791991143.149822,
+    "mtime": 1792001738.862685,
+    "seen": 1792005249.734743,
     "ast_hash": "77cf25cb2fd102f6069a366791ac643d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FoliageMesh.swift": {
-    "mtime": 1791980628.564269,
-    "seen": 1791991143.149823,
+    "mtime": 1792001738.8632548,
+    "seen": 1792005249.734744,
     "ast_hash": "001bb19fb73fa99c31afe98968537fd6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FoliageSpecies.swift": {
-    "mtime": 1791980628.5648186,
-    "seen": 1791991143.149824,
+    "mtime": 1792001738.8643005,
+    "seen": 1792005249.734744,
     "ast_hash": "5b8e2c79ad18f6d85f9c7b9fe2fcc941",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FoliageTextures.swift": {
-    "mtime": 1791980628.5652685,
-    "seen": 1791991143.149825,
+    "mtime": 1792001738.8648698,
+    "seen": 1792005249.734745,
     "ast_hash": "6fdd3c82750b6b4ba289faff6fbb2324",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FoliageVoxels.swift": {
-    "mtime": 1791980628.5658355,
-    "seen": 1791991143.149825,
+    "mtime": 1792001738.8654134,
+    "seen": 1792005249.7347462,
     "ast_hash": "955ebca6fa101b7df9698b6ef68e8bf6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Forest.swift": {
-    "mtime": 1791980628.5423033,
-    "seen": 1791991143.1499321,
-    "ast_hash": "6f7d604e0f18cb93b036004f995026ca",
+    "mtime": 1792003831.997813,
+    "seen": 1792005249.734853,
+    "ast_hash": "5eb60b79ce0602b40adf14a30d146e53",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Foliage.metal": {
-    "mtime": 1791980628.5756676,
-    "seen": 1791991143.149961,
+    "mtime": 1792001738.8937178,
+    "seen": 1792005249.734881,
     "ast_hash": "82ec045b65f3c9007241b6984b897b2f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain.swift": {
-    "mtime": 1791980628.4872096,
-    "seen": 1791991143.149992,
+    "mtime": 1792001738.9178333,
+    "seen": 1792005249.734912,
     "ast_hash": "4363f956173489e435e1f28a3aa801a4",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/FoliageTests.swift": {
-    "mtime": 1791980628.5147924,
-    "seen": 1791991143.150033,
+    "mtime": 1792001738.8112998,
+    "seen": 1792005249.734952,
     "ast_hash": "de72c1824fe5f0a449fbee13900ae3fa",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/GLTFLoaderTests.swift": {
-    "mtime": 1791980628.5150316,
-    "seen": 1791991143.150034,
+    "mtime": 1792001738.8118424,
+    "seen": 1792005249.734953,
     "ast_hash": "138697213e9bcd04c200149b67f9267d",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/TextureStreamerTests.swift": {
-    "mtime": 1791980628.5325177,
-    "seen": 1791991143.15006,
+    "mtime": 1792001738.8299968,
+    "seen": 1792005249.7349792,
     "ast_hash": "4abc18f6ac9eb7ed24b91a57d0c88435",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+World.swift": {
-    "mtime": 1791980628.558685,
-    "seen": 1791991143.149947,
+    "mtime": 1792001738.8735693,
+    "seen": 1792005249.7348669,
     "ast_hash": "58c874257583fdb5d85a72b91aa7cc86",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SceneBuffers.swift": {
-    "mtime": 1791980628.5612197,
-    "seen": 1791991143.149948,
+    "mtime": 1792001738.8781948,
+    "seen": 1792005249.734868,
     "ast_hash": "6ed1d5d163b678f4150cad0d2254bd8d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SectionFile.swift": {
-    "mtime": 1791980628.5631702,
-    "seen": 1791991143.149951,
+    "mtime": 1792001738.882794,
+    "seen": 1792005249.7348711,
     "ast_hash": "358a4f1a5800cad92dacd3aa0b48d495",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/World.swift": {
-    "mtime": 1791980628.5064814,
-    "seen": 1791991143.150017,
+    "mtime": 1792001738.7930722,
+    "seen": 1792005249.734936,
     "ast_hash": "6a691c64f4872c40c337e7ca502858a0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/WorldTile.swift": {
-    "mtime": 1791980628.5076575,
-    "seen": 1791991143.150017,
+    "mtime": 1792001738.793789,
+    "seen": 1792005249.734936,
     "ast_hash": "7af01c981038583479ba3e029b4bfafe",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SceneBuffersTests.swift": {
-    "mtime": 1791980628.5307465,
-    "seen": 1791991143.150055,
+    "mtime": 1792001738.8272543,
+    "seen": 1792005249.734974,
     "ast_hash": "cbb37700f730295bc4063c7356565924",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/WorldTests.swift": {
-    "mtime": 1791980628.5366452,
-    "seen": 1791991143.150065,
+    "mtime": 1792001738.8330555,
+    "seen": 1792005249.7349849,
     "ast_hash": "27a1b7a2aad233fc5c7be8193d5398b4",
     "semantic_hash": ""
   },
   ".claude/skills/tests/scripts/related.sh": {
-    "mtime": 1791991061.479583,
-    "seen": 1791991143.149749,
-    "ast_hash": "ccee51282a484574c2ae7339102c612a",
+    "mtime": 1792004061.5074937,
+    "seen": 1792005249.734669,
+    "ast_hash": "80f43204a80c5cc5261b0d762cbd246b",
     "semantic_hash": ""
   },
   ".claude/skills/tests/SKILL.md": {
-    "mtime": 1791991061.479337,
-    "seen": 1791991143.1500921,
-    "ast_hash": "95bccac4bdcc6f64a4f8f37da9adc219",
+    "mtime": 1792004061.507682,
+    "seen": 1792005249.735014,
+    "ast_hash": "f0716108fa9c29214b9b9f99c1217d62",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VoxelGrids.swift": {
-    "mtime": 1791980628.5036626,
-    "seen": 1791991143.1500149,
+    "mtime": 1792001738.7915623,
+    "seen": 1792005249.734933,
     "ast_hash": "53eccd1dd674486e091ff7cbfcaa42cb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VoxelLOD.swift": {
-    "mtime": 1791980628.5038738,
-    "seen": 1791991143.1500149,
+    "mtime": 1792001738.7918649,
+    "seen": 1792005249.734934,
     "ast_hash": "f4b867838e2b47a1df199389dec53109",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RenderThread.swift": {
-    "mtime": 1791980628.5282195,
-    "seen": 1791991143.149921,
+    "mtime": 1792001738.8274863,
+    "seen": 1792005249.734842,
     "ast_hash": "d36f35a8a4e9a6cea8ae10167b4a16d2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RendererController.swift": {
-    "mtime": 1791991061.4825869,
-    "seen": 1791991143.149924,
-    "ast_hash": "3660709a57cc05a79b2db28f796cbcd7",
+    "mtime": 1792003952.9558518,
+    "seen": 1792005249.734845,
+    "ast_hash": "af7a2dd62d5c943e924ba1fab0f527ab",
     "semantic_hash": ""
   },
   ".claude/skills/code-graph/scripts/ensure-graph.sh": {
-    "mtime": 1791980628.3794866,
-    "seen": 1791991143.1497421,
+    "mtime": 1792001738.697393,
+    "seen": 1792005249.734663,
     "ast_hash": "ef5e98e68a6bbb607a924e6afdbdeb4e",
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/scripts/video.sh": {
-    "mtime": 1791980628.3799155,
-    "seen": 1791991143.149745,
+    "mtime": 1792001738.6982281,
+    "seen": 1792005249.7346659,
     "ast_hash": "59e173f7fbb7ec19f869c5977fb65778",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/HairBSDF.swift": {
-    "mtime": 1791980628.571158,
-    "seen": 1791991143.1498299,
+    "mtime": 1792001738.8707907,
+    "seen": 1792005249.7347531,
     "ast_hash": "f5d538eec09c265f0a0c6e09d8ed6625",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LightTree.swift": {
-    "mtime": 1791980628.5724797,
-    "seen": 1791991143.149833,
+    "mtime": 1792001738.8733275,
+    "seen": 1792005249.734756,
     "ast_hash": "6b96ae6b4d900e9e3831ea29b1748898",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Lumen.swift": {
-    "mtime": 1791980628.573373,
-    "seen": 1791991143.149835,
+    "mtime": 1792001738.8743744,
+    "seen": 1792005249.7347589,
     "ast_hash": "1f8d447cb9439a344da33058bb816294",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LumenCards.swift": {
-    "mtime": 1791980628.5737019,
-    "seen": 1791991143.149836,
+    "mtime": 1792001738.8748577,
+    "seen": 1792005249.7347589,
     "ast_hash": "b38444fc5b6df8d2c175e341feaefa27",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LumenGlobalSDF.swift": {
-    "mtime": 1791980628.5743077,
-    "seen": 1791991143.149837,
+    "mtime": 1792001738.8751428,
+    "seen": 1792005249.73476,
     "ast_hash": "48cd7bebd101137ef0596c6cdd6c3cde",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LumenScene.swift": {
-    "mtime": 1791980628.575079,
-    "seen": 1791991143.149838,
+    "mtime": 1792001738.8754873,
+    "seen": 1792005249.734761,
     "ast_hash": "7cce432466e3d7ca8396bf5f07e6027c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MeshSDFBuilder.swift": {
-    "mtime": 1791980628.5946004,
-    "seen": 1791991143.1498659,
+    "mtime": 1792001738.8942053,
+    "seen": 1792005249.7347891,
     "ast_hash": "1f50c14a90a522752d1d1fbb8650deee",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Physics.swift": {
-    "mtime": 1791982093.3217657,
-    "seen": 1791991143.149887,
+    "mtime": 1792001738.789477,
+    "seen": 1792005249.734807,
     "ast_hash": "5210cbbc2be3d10d44a8c9137a872586",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsCPU.swift": {
-    "mtime": 1791980628.4940133,
-    "seen": 1791991143.149888,
+    "mtime": 1792001738.7905948,
+    "seen": 1792005249.734808,
     "ast_hash": "9b8dae0a7f09e75e297f7f87196d6690",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsCollide.swift": {
-    "mtime": 1791980628.494394,
-    "seen": 1791991143.149889,
+    "mtime": 1792001738.7908165,
+    "seen": 1792005249.7348092,
     "ast_hash": "b5d2329da7342db7638581b13383ac88",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsGPU.swift": {
-    "mtime": 1791980628.496838,
-    "seen": 1791991143.149892,
+    "mtime": 1792001738.7936063,
+    "seen": 1792005249.734813,
     "ast_hash": "1a41e7c7f061c756198ea5ec3d80950e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsHair.swift": {
-    "mtime": 1791980628.4970005,
-    "seen": 1791991143.149893,
+    "mtime": 1792001738.793871,
+    "seen": 1792005249.734814,
     "ast_hash": "ccc33f1b1c879a8d5f5d93258ada88b0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsSoft.swift": {
-    "mtime": 1791982084.5492363,
-    "seen": 1791991143.149896,
+    "mtime": 1792001738.797413,
+    "seen": 1792005249.734816,
     "ast_hash": "2a87c2c3198c73f95c5d941aef766de0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantTracing.swift": {
-    "mtime": 1791980628.507382,
-    "seen": 1791991143.149906,
+    "mtime": 1792001738.8104372,
+    "seen": 1792005249.734827,
     "ast_hash": "7625ffb802f07686501bba39a87d340f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RasterClusters.swift": {
-    "mtime": 1791980628.525681,
-    "seen": 1791991143.149919,
+    "mtime": 1792001738.8260505,
+    "seen": 1792005249.734839,
     "ast_hash": "2f934b87163469e1ac0abb6d6647ac4c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RasterScene.swift": {
-    "mtime": 1791980628.5259924,
-    "seen": 1791991143.149919,
+    "mtime": 1792001738.8266845,
+    "seen": 1792005249.7348402,
     "ast_hash": "7a07c3dd219304fb9c4a752605360f81",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SDFBuffers.swift": {
-    "mtime": 1791980628.5334268,
-    "seen": 1791991143.1499252,
+    "mtime": 1792001738.8352065,
+    "seen": 1792005249.7348459,
     "ast_hash": "b838f5bd88d3e8360f7d46c8fd6f09b6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SDFShapes.swift": {
-    "mtime": 1791980628.5351999,
-    "seen": 1791991143.149926,
+    "mtime": 1792001738.8367817,
+    "seen": 1792005249.7348459,
     "ast_hash": "5b8603a15c08c257597f74d7fa2e46b0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SDFVolume.swift": {
-    "mtime": 1791980628.5357857,
-    "seen": 1791991143.149926,
+    "mtime": 1792001738.837477,
+    "seen": 1792005249.734847,
     "ast_hash": "b41997c24ae8e7dd87ee359f9f1be0b6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Hair.swift": {
-    "mtime": 1791980628.5431142,
-    "seen": 1791991143.149933,
+    "mtime": 1792001738.8486178,
+    "seen": 1792005249.734854,
     "ast_hash": "499ca036a1007bec6712069b06a14ba8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Physics.swift": {
-    "mtime": 1791980628.549729,
-    "seen": 1791991143.14994,
+    "mtime": 1792001738.864339,
+    "seen": 1792005249.7348611,
     "ast_hash": "cec9d28c1c1cd36279ff37ed5b039c06",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Ragdolls.swift": {
-    "mtime": 1791980628.5521226,
-    "seen": 1791991143.149942,
+    "mtime": 1792001738.8688493,
+    "seen": 1792005249.734863,
     "ast_hash": "6268d7b9a832d60176feb51f3f49918e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Shapes.swift": {
-    "mtime": 1791980628.5533009,
-    "seen": 1791991143.149943,
+    "mtime": 1792001738.8704984,
+    "seen": 1792005249.734863,
     "ast_hash": "9602081ebf3a8a7f05db454a6e9a78bc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Showcase.swift": {
-    "mtime": 1791980628.5553994,
-    "seen": 1791991143.149943,
+    "mtime": 1792001738.871082,
+    "seen": 1792005249.7348638,
     "ast_hash": "3fbcedc2a11abcf6f019d90e9466891d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Soft.swift": {
-    "mtime": 1791980628.5558012,
-    "seen": 1791991143.149944,
+    "mtime": 1792001738.871582,
+    "seen": 1792005249.734865,
     "ast_hash": "2f2e65888907cd3cd35eb7c9328b65d9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Stress.swift": {
-    "mtime": 1791980628.5577316,
-    "seen": 1791991143.1499462,
+    "mtime": 1792001738.8730412,
+    "seen": 1792005249.734866,
     "ast_hash": "e3301d831e52df2630d101136565fcb8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Hair.metal": {
-    "mtime": 1791980628.5773985,
-    "seen": 1791991143.149963,
+    "mtime": 1792001738.8953602,
+    "seen": 1792005249.734883,
     "ast_hash": "bd5aa1be8dd157d22f44bace7f4da36a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Lumen.metal": {
-    "mtime": 1791980628.5807467,
-    "seen": 1791991143.1499672,
+    "mtime": 1792001738.897701,
+    "seen": 1792005249.734887,
     "ast_hash": "e777e7828de46bf360aaaddd2b2e6d49",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/LumenCards.metal": {
-    "mtime": 1791980628.5810761,
-    "seen": 1791991143.1499672,
+    "mtime": 1792001738.8984818,
+    "seen": 1792005249.7348878,
     "ast_hash": "e946ab445305bd66e96ce07f39e31785",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/LumenSDF.metal": {
-    "mtime": 1791980628.5812783,
-    "seen": 1791991143.149968,
+    "mtime": 1792001738.9003382,
+    "seen": 1792005249.7348878,
     "ast_hash": "fdffbc2adaafe3e977b98726294ec5f0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/MegaLights.metal": {
-    "mtime": 1791980628.5816107,
-    "seen": 1791991143.1499689,
+    "mtime": 1792001738.900721,
+    "seen": 1792005249.734889,
     "ast_hash": "b4de89b4db3ee6de4f525803d0270a6b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/PathTrace.metal": {
-    "mtime": 1791980628.5846448,
-    "seen": 1791991143.149973,
+    "mtime": 1792001738.9039893,
+    "seen": 1792005249.734893,
     "ast_hash": "4df61eaf6b9df1093f92f967629b611e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Physics.metal": {
-    "mtime": 1791980628.5868504,
-    "seen": 1791991143.149973,
+    "mtime": 1792001738.9074774,
+    "seen": 1792005249.734894,
     "ast_hash": "0aa5a0f23e893cd55546cb6d09de0ed1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Post.metal": {
-    "mtime": 1791980628.5877016,
-    "seen": 1791991143.149975,
+    "mtime": 1792001738.908235,
+    "seen": 1792005249.734895,
     "ast_hash": "d121ecd15322ae18c4ca8f5c8b838286",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Raster.metal": {
-    "mtime": 1791980628.5890563,
-    "seen": 1791991143.1499772,
+    "mtime": 1792001738.9092352,
+    "seen": 1792005249.734897,
     "ast_hash": "2234b33b7d6d12701602af9d205270bd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RasterClusters.metal": {
-    "mtime": 1791980628.5894647,
-    "seen": 1791991143.1499782,
+    "mtime": 1792001738.9098015,
+    "seen": 1792005249.7348979,
     "ast_hash": "09d27e3052ac9bf211265f8483beadfc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/SDF.metal": {
-    "mtime": 1791980628.5915728,
-    "seen": 1791991143.149982,
+    "mtime": 1792001738.9124336,
+    "seen": 1792005249.734902,
     "ast_hash": "5d7b26d03bc664ac79333c72ed167a21",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/VSM.metal": {
-    "mtime": 1791980628.595504,
-    "seen": 1791991143.149986,
+    "mtime": 1792001738.9140685,
+    "seen": 1792005249.7349062,
     "ast_hash": "9f5badd22efbeebcd5420dfad037ca22",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Showcase.swift": {
-    "mtime": 1791980628.5971196,
-    "seen": 1791991143.1499898,
+    "mtime": 1792001738.9159193,
+    "seen": 1792005249.73491,
     "ast_hash": "25dc5fa03973db1cc3996a5521600e83",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/TraceScene.swift": {
-    "mtime": 1791980628.4883788,
-    "seen": 1791991143.149994,
+    "mtime": 1792001738.9184268,
+    "seen": 1792005249.734913,
     "ast_hash": "f0cd8d41b45a7d805ee479173bfc00a8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VGStreamer.swift": {
-    "mtime": 1791980628.5024056,
-    "seen": 1791991143.1500092,
+    "mtime": 1792001738.789452,
+    "seen": 1792005249.7349288,
     "ast_hash": "e0b468ecc63208b0b2ae87120bec2df3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VSM.swift": {
-    "mtime": 1791980628.5026908,
-    "seen": 1791991143.15001,
+    "mtime": 1792001738.7898152,
+    "seen": 1792005249.73493,
     "ast_hash": "a8ba57bcba6564892c6b33aef260b23b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualTracing.swift": {
-    "mtime": 1791980628.5035033,
-    "seen": 1791991143.150014,
+    "mtime": 1792001738.7914226,
+    "seen": 1792005249.734933,
     "ast_hash": "59eccdcd1ab33511756f91e9b84aa924",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/GlobalSDFTests.swift": {
-    "mtime": 1791980628.5151641,
-    "seen": 1791991143.150034,
+    "mtime": 1792001738.8127353,
+    "seen": 1792005249.734953,
     "ast_hash": "e0a7644a890a8c6744db69d204049a5c",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/HairTests.swift": {
-    "mtime": 1791980628.5154173,
-    "seen": 1791991143.150035,
+    "mtime": 1792001738.81291,
+    "seen": 1792005249.7349539,
     "ast_hash": "f1900cf3c606e9d30b675c0716c336c8",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/LightTreeTests.swift": {
-    "mtime": 1791980628.5161426,
-    "seen": 1791991143.150037,
+    "mtime": 1792001738.8135679,
+    "seen": 1792005249.734956,
     "ast_hash": "a465cf5cd111dfbf090c3d3344783e20",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MeshSDFBuilderTests.swift": {
-    "mtime": 1791980628.5199711,
-    "seen": 1791991143.150042,
+    "mtime": 1792001738.8174975,
+    "seen": 1792005249.7349608,
     "ast_hash": "66af652f3d99d25c21df7cc09e78a2fd",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PhysicsTests.swift": {
-    "mtime": 1791980628.523086,
-    "seen": 1791991143.1500459,
+    "mtime": 1792001738.8208883,
+    "seen": 1792005249.734965,
     "ast_hash": "120b476318b60fb8db60919dc4405de5",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantTracingTests.swift": {
-    "mtime": 1791980628.5251095,
-    "seen": 1791991143.150049,
+    "mtime": 1792001738.8225148,
+    "seen": 1792005249.734968,
     "ast_hash": "7bbee3d523ad5cc908a629c24fa91337",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/RagdollTests.swift": {
-    "mtime": 1791980628.5292587,
-    "seen": 1791991143.150053,
+    "mtime": 1792001738.825196,
+    "seen": 1792005249.7349708,
     "ast_hash": "b96ec82d5e9c2cacdc59c165bf617521",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/RasterSceneTests.swift": {
-    "mtime": 1791980628.5297675,
-    "seen": 1791991143.150053,
+    "mtime": 1792001738.8260539,
+    "seen": 1792005249.734972,
     "ast_hash": "965b38ca9f5dfa367e44d4a76617a908",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SDFTests.swift": {
-    "mtime": 1791980628.5302052,
-    "seen": 1791991143.150054,
+    "mtime": 1792001738.8267534,
+    "seen": 1792005249.734973,
     "ast_hash": "6ee74b4ea9539b3863db842a48f70f91",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ShowcaseTests.swift": {
-    "mtime": 1791980628.5315857,
-    "seen": 1791991143.150058,
+    "mtime": 1792001738.8293467,
+    "seen": 1792005249.734977,
     "ast_hash": "9ac13f48b4f1fbb712c8312122c7b6da",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SoftBodyTests.swift": {
-    "mtime": 1791980628.532099,
-    "seen": 1791991143.150059,
+    "mtime": 1792001738.8295596,
+    "seen": 1792005249.734978,
     "ast_hash": "d16e7d979c485e3273a6d51327ccfed2",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/StressSceneTests.swift": {
-    "mtime": 1791980628.5322626,
-    "seen": 1791991143.150059,
+    "mtime": 1792001738.8297722,
+    "seen": 1792005249.734978,
     "ast_hash": "d2d5eb8989129c8af61f8653d4285492",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VGCutTests.swift": {
-    "mtime": 1791980628.5350785,
-    "seen": 1791991143.150062,
+    "mtime": 1792001738.831024,
+    "seen": 1792005249.7349818,
     "ast_hash": "ffc045ac52414cd37a446b72024edb95",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VGStreamerTests.swift": {
-    "mtime": 1791980628.535539,
-    "seen": 1791991143.150063,
+    "mtime": 1792001738.8320334,
+    "seen": 1792005249.7349818,
     "ast_hash": "97c3bcafd548c8e7a7881677381673fe",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VSMTests.swift": {
-    "mtime": 1791980628.5359292,
-    "seen": 1791991143.1500642,
+    "mtime": 1792001738.8323514,
+    "seen": 1792005249.734983,
     "ast_hash": "79854b9ed89775b20bd777f30ed3e54f",
     "semantic_hash": ""
   },
   "Tools/eval/lumen.py": {
-    "mtime": 1791980628.5391412,
-    "seen": 1791991143.1500711,
+    "mtime": 1792001738.8372946,
+    "seen": 1792005249.7349901,
     "ast_hash": "e21aa81bbdf10fe0e318e1f5ed6072d1",
     "semantic_hash": ""
   },
   ".claude/notes/metal-tracer-handoff.md": {
-    "mtime": 1791980628.378395,
-    "seen": 1791991143.150082,
+    "mtime": 1792001738.6956685,
+    "seen": 1792005249.735003,
     "ast_hash": "053696ea21cf1d900a83f3898b2dbdb0",
     "semantic_hash": ""
   },
   ".claude/skills/code-graph/SKILL.md": {
-    "mtime": 1791980628.3793352,
-    "seen": 1791991143.150086,
+    "mtime": 1792001738.6972406,
+    "seen": 1792005249.735007,
     "ast_hash": "30eb05cfd111409e7ed162c07f25e275",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFlesh.swift": {
-    "mtime": 1791980628.49504,
-    "seen": 1791991143.149889,
+    "mtime": 1792001738.7920053,
+    "seen": 1792005249.73481,
     "ast_hash": "0756fe631791ac32055653554a5973dd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsRig.swift": {
-    "mtime": 1791980628.4972832,
-    "seen": 1791991143.149894,
+    "mtime": 1792001738.7958066,
+    "seen": 1792005249.734814,
     "ast_hash": "00887c2c4056f6c0b20c2561d09487c1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsSkin.swift": {
-    "mtime": 1791980628.4977648,
-    "seen": 1791991143.149895,
+    "mtime": 1792001738.7969491,
+    "seen": 1792005249.734815,
     "ast_hash": "626e62776007411dae38efeb7781fe82",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Muscles.swift": {
-    "mtime": 1791980628.547137,
-    "seen": 1791991143.149937,
+    "mtime": 1792001738.8570633,
+    "seen": 1792005249.734858,
     "ast_hash": "a87dd98b464ca35883ea383334f9a3dc",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MuscleTests.swift": {
-    "mtime": 1791980628.5205026,
-    "seen": 1791991143.1500428,
+    "mtime": 1792001738.8191586,
+    "seen": 1792005249.734962,
     "ast_hash": "89f5fe5e56cf4652e8d5630337ff7b80",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MuscleAtlas.swift": {
-    "mtime": 1791982062.4064822,
-    "seen": 1791991143.149868,
+    "mtime": 1792001738.899707,
+    "seen": 1792005249.7347908,
     "ast_hash": "d73943a08b641ef511d169729b95782d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SkeletonAtlas.swift": {
-    "mtime": 1791980628.5974805,
-    "seen": 1791991143.1499908,
+    "mtime": 1792001738.9168203,
+    "seen": 1792005249.734911,
     "ast_hash": "051e2859693471ff98468122e38ca493",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LoadActivity.swift": {
-    "mtime": 1791980628.5729072,
-    "seen": 1791991143.149834,
+    "mtime": 1792001738.8737152,
+    "seen": 1792005249.7347572,
     "ast_hash": "d331643f341de90f06cb65b28303a16b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/LoadingOverlay.swift": {
-    "mtime": 1791980628.5731535,
-    "seen": 1791991143.149835,
+    "mtime": 1792001738.874088,
+    "seen": 1792005249.734758,
     "ast_hash": "b6eccc8c05b488765e9492bb6e3048a8",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/LoadActivityTests.swift": {
-    "mtime": 1791980628.5168185,
-    "seen": 1791991143.150038,
+    "mtime": 1792001738.814063,
+    "seen": 1792005249.734957,
     "ast_hash": "52225a20561b85941a3799d0d23623a8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FluidSurface.swift": {
-    "mtime": 1791980628.5633078,
-    "seen": 1791991143.149821,
+    "mtime": 1792001738.8618488,
+    "seen": 1792005249.734741,
     "ast_hash": "99e1c566d2ca8652642b53003f7e8454",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFluid.swift": {
-    "mtime": 1791980628.495825,
-    "seen": 1791991143.14989,
+    "mtime": 1792001738.792329,
+    "seen": 1792005249.7348108,
     "ast_hash": "88b6ddd24919e4ae7d503979550a6245",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFluidCPU.swift": {
-    "mtime": 1791980628.4960513,
-    "seen": 1791991143.1498911,
+    "mtime": 1792001738.7929308,
+    "seen": 1792005249.734812,
     "ast_hash": "827c1384b0c2d4466ee33e7944d13b14",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsFluidGPU.swift": {
-    "mtime": 1791980628.4962919,
-    "seen": 1791991143.149892,
+    "mtime": 1792001738.7931705,
+    "seen": 1792005249.734812,
     "ast_hash": "556019f1e5557af96a27e5dc351505a0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Fluids.swift": {
-    "mtime": 1791980628.5416358,
-    "seen": 1791991143.1499321,
+    "mtime": 1792001738.8449697,
+    "seen": 1792005249.734852,
     "ast_hash": "09d82d83b306f90e7648453c8b8b2973",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Fluid.metal": {
-    "mtime": 1791980628.5746634,
-    "seen": 1791991143.149958,
+    "mtime": 1792001738.890506,
+    "seen": 1792005249.734879,
     "ast_hash": "bf117cc79196731eaaaa1aa7a556c000",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/FluidSurface.metal": {
-    "mtime": 1791980628.574856,
-    "seen": 1791991143.1499588,
+    "mtime": 1792001738.8915906,
+    "seen": 1792005249.734879,
     "ast_hash": "2cf1d20f14f3e8eb3e888890ebab9f6a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Liquid.metal": {
-    "mtime": 1791980628.5802357,
-    "seen": 1791991143.149966,
+    "mtime": 1792001738.8972697,
+    "seen": 1792005249.734886,
     "ast_hash": "0284d27e7d236ceada0051dafad45d18",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/FluidTests.swift": {
-    "mtime": 1791980628.5142188,
-    "seen": 1791991143.1500318,
+    "mtime": 1792001738.8107586,
+    "seen": 1792005249.734951,
     "ast_hash": "48264d5f7c5159d8d1220b0c8ab03a75",
     "semantic_hash": ""
   },
   ".claude/notes/fluids-handoff.md": {
-    "mtime": 1791980628.3774042,
-    "seen": 1791991143.15008,
+    "mtime": 1792001738.695236,
+    "seen": 1792005249.735001,
     "ast_hash": "8d126c034d511c9e71f59e89047b4ecf",
     "semantic_hash": ""
   },
   ".claude/settings.local.json": {
-    "mtime": 1791998718.9278386,
-    "seen": 1791999686.858667,
+    "mtime": 1792001738.7133014,
+    "seen": 1792005249.734661,
     "ast_hash": "6f0546f4ce70b38225c82a939c0376b9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuiltInPlants.swift": {
-    "mtime": 1791980628.5524642,
-    "seen": 1791991143.1497998,
+    "mtime": 1792001738.8468559,
+    "seen": 1792005249.734719,
     "ast_hash": "1772ddace11db3c247a8ea64f393497b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantCurve.swift": {
-    "mtime": 1791980628.5009437,
-    "seen": 1791991143.149898,
+    "mtime": 1792001738.800724,
+    "seen": 1792005249.734818,
     "ast_hash": "eed28c0abd2b818895e09f643079402a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantHabitat.swift": {
-    "mtime": 1791980628.5061853,
-    "seen": 1791991143.149902,
+    "mtime": 1792001738.8052661,
+    "seen": 1792005249.734823,
     "ast_hash": "cfe47526665055a6f751767259c24b68",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantSpecies.swift": {
-    "mtime": 1791980628.5068429,
-    "seen": 1791991143.149905,
+    "mtime": 1792001738.8078995,
+    "seen": 1792005249.734825,
     "ast_hash": "b0d36bc2422b621338701678121b3312",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantStore.swift": {
-    "mtime": 1791980628.5070882,
-    "seen": 1791991143.149906,
+    "mtime": 1792001738.8098736,
+    "seen": 1792005249.734826,
     "ast_hash": "6f52cdee12511b5d144bf45047bf3013",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantCatalogTests.swift": {
-    "mtime": 1791980628.5234747,
-    "seen": 1791991143.150047,
+    "mtime": 1792001738.8216178,
+    "seen": 1792005249.734966,
     "ast_hash": "c9a2f60ea3ab62b507c954de50837d3a",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantGoldenTests.swift": {
-    "mtime": 1791980628.5248997,
-    "seen": 1791991143.150049,
+    "mtime": 1792001738.8222399,
+    "seen": 1792005249.734967,
     "ast_hash": "8fda0fe5aaaac2443ccee12f33e342d3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantControls.swift": {
-    "mtime": 1791980628.5011194,
-    "seen": 1791991143.149899,
+    "mtime": 1792001738.8030708,
+    "seen": 1792005249.7348192,
     "ast_hash": "5c8b142c89df3b1e9966b30c545fc570",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantEditorModel.swift": {
-    "mtime": 1791980628.5014858,
-    "seen": 1791991143.149899,
+    "mtime": 1792001738.8035822,
+    "seen": 1792005249.7348201,
     "ast_hash": "bf0f1aa885fbead059535ed3f8059dfc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantEditorPanel.swift": {
-    "mtime": 1791980628.502418,
-    "seen": 1791991143.1499,
+    "mtime": 1792001738.8038776,
+    "seen": 1792005249.734821,
     "ast_hash": "113634c6a9b67e9721584821cf7c43a4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantEditorView.swift": {
-    "mtime": 1791980628.5036693,
-    "seen": 1791991143.1499012,
+    "mtime": 1792001738.8043747,
+    "seen": 1792005249.7348218,
     "ast_hash": "fb63844973127a9c3d3a218a9cd287f9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantTabs.swift": {
-    "mtime": 1791980628.5038955,
-    "seen": 1791991143.149902,
+    "mtime": 1792001738.8046517,
+    "seen": 1792005249.7348218,
     "ast_hash": "c962e2277a9aa7ea640b6dbdc2781624",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantMutate.swift": {
-    "mtime": 1791980628.5064392,
-    "seen": 1791991143.149903,
+    "mtime": 1792001738.8055396,
+    "seen": 1792005249.734824,
     "ast_hash": "79aab306e5784624cf76e5100bd32d1e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantParams.swift": {
-    "mtime": 1791980628.5066264,
-    "seen": 1791991143.1499038,
+    "mtime": 1792001738.805852,
+    "seen": 1792005249.734825,
     "ast_hash": "a9582d92f389da23eb3b9fd59eee1b4a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Plants.swift": {
-    "mtime": 1791980628.5504522,
-    "seen": 1791991143.14994,
+    "mtime": 1792001738.8665159,
+    "seen": 1792005249.7348611,
     "ast_hash": "7716b71e27a54f897b65543a31e13753",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantEditorTests.swift": {
-    "mtime": 1791980628.5239534,
-    "seen": 1791991143.150048,
+    "mtime": 1792001738.8218348,
+    "seen": 1792005249.734967,
     "ast_hash": "36b5ecb9ecc3b4c6559aa6e28a45fccd",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantWorkshopTests.swift": {
-    "mtime": 1791980628.5254107,
-    "seen": 1791991143.1500502,
+    "mtime": 1792001738.82341,
+    "seen": 1792005249.7349691,
     "ast_hash": "2b47ec728080055aab19797ea4defe8e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Building+Interior.swift": {
-    "mtime": 1791980628.544837,
-    "seen": 1791991143.149787,
+    "mtime": 1792001738.8363407,
+    "seen": 1792005249.734706,
     "ast_hash": "cb32bcf7814ef61efc76614dd0df3921",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingEditor/BuildingEditorModel.swift": {
-    "mtime": 1791980628.5464528,
-    "seen": 1791991143.1497889,
+    "mtime": 1792001738.838366,
+    "seen": 1792005249.734709,
     "ast_hash": "902ab8b9dd429c36fef2865dddf4066b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingEditor/BuildingEditorPanel.swift": {
-    "mtime": 1791980628.5469353,
-    "seen": 1791991143.14979,
+    "mtime": 1792001738.8388855,
+    "seen": 1792005249.734709,
     "ast_hash": "d36d14556872931a47b79650f4f68c9b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingEditor/BuildingEditorView.swift": {
-    "mtime": 1791980628.5474744,
-    "seen": 1791991143.149791,
+    "mtime": 1792001738.8409038,
+    "seen": 1792005249.73471,
     "ast_hash": "e41070b10a773d26350cb8f89bfd4892",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingEditor/BuildingTabs.swift": {
-    "mtime": 1791980628.5480657,
-    "seen": 1791991143.149792,
+    "mtime": 1792001738.8412712,
+    "seen": 1792005249.734711,
     "ast_hash": "0bb791a21949f5c5b22b55871409c24e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingEditor/FloorPlanView.swift": {
-    "mtime": 1791980628.5485704,
-    "seen": 1791991143.149792,
+    "mtime": 1792001738.8421054,
+    "seen": 1792005249.7347121,
     "ast_hash": "dd0ae3be2ce80fc0f457c531d098759c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingFurnish.swift": {
-    "mtime": 1791980628.5490148,
-    "seen": 1791991143.149793,
+    "mtime": 1792001738.8428378,
+    "seen": 1792005249.734713,
     "ast_hash": "ecca3a290513df0345fa7178de84cbee",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingParams.swift": {
-    "mtime": 1791980628.5493553,
-    "seen": 1791991143.149794,
+    "mtime": 1792001738.843131,
+    "seen": 1792005249.734714,
     "ast_hash": "672f66bf9e3123eb6a88452129bfc396",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingPlan.swift": {
-    "mtime": 1791980628.5495794,
-    "seen": 1791991143.149795,
+    "mtime": 1792001738.8437524,
+    "seen": 1792005249.734714,
     "ast_hash": "7281d3dec1560be9e38e4d25aa789235",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingPlanner.swift": {
-    "mtime": 1791980628.5500977,
-    "seen": 1791991143.149796,
+    "mtime": 1792001738.8449364,
+    "seen": 1792005249.734715,
     "ast_hash": "d55e54314cf304d53eff2c15b461bf5e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingStore.swift": {
-    "mtime": 1791980628.5507457,
-    "seen": 1791991143.1497972,
+    "mtime": 1792001738.845404,
+    "seen": 1792005249.734716,
     "ast_hash": "0c6d645d8235e5905d4364c8a15dd629",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuildingStyleDef.swift": {
-    "mtime": 1791980628.5516603,
-    "seen": 1791991143.1497989,
+    "mtime": 1792001738.846142,
+    "seen": 1792005249.7347178,
     "ast_hash": "87f614d8b28c2030b6afa12232414181",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BuiltInBuildings.swift": {
-    "mtime": 1791980628.552241,
-    "seen": 1791991143.1497989,
+    "mtime": 1792001738.846515,
+    "seen": 1792005249.7347178,
     "ast_hash": "e52dda520db3afc9f698555aca48ec8d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CatalogRegistry.swift": {
-    "mtime": 1791980628.5536954,
-    "seen": 1791991143.149802,
+    "mtime": 1792001738.8491788,
+    "seen": 1792005249.734721,
     "ast_hash": "e8e953020774089674013d7147158bd0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FurnitureKit.swift": {
-    "mtime": 1791980628.566339,
-    "seen": 1791991143.149826,
+    "mtime": 1792001738.8661005,
+    "seen": 1792005249.734747,
     "ast_hash": "c1192512438a455771cfbb6f3a2a8ec1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/InteriorControls.swift": {
-    "mtime": 1791980628.5714934,
-    "seen": 1791991143.1498308,
+    "mtime": 1792001738.8712842,
+    "seen": 1792005249.734754,
     "ast_hash": "1d2267eea3e441549e180dec6d24cfb1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/InteriorLifts.swift": {
-    "mtime": 1791980628.5717707,
-    "seen": 1791991143.149832,
+    "mtime": 1792001738.8716364,
+    "seen": 1792005249.734755,
     "ast_hash": "485234b1081b3fee84917aaa5b38dee1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlanEdits.swift": {
-    "mtime": 1791980628.499542,
-    "seen": 1791991143.1498969,
+    "mtime": 1792001738.799348,
+    "seen": 1792005249.734817,
     "ast_hash": "52c640c02890cf1436b71fb0c744387b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PropLibrary.swift": {
-    "mtime": 1791980628.5241222,
-    "seen": 1791991143.149917,
+    "mtime": 1792001738.8245006,
+    "seen": 1792005249.734838,
     "ast_hash": "0957417e11c140eba56a78f574eae3aa",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Buildings.swift": {
-    "mtime": 1791980628.5364585,
-    "seen": 1791991143.149927,
+    "mtime": 1792001738.8381205,
+    "seen": 1792005249.734848,
     "ast_hash": "9e38f4d8f4b608949b8491401c1eec1c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Interiors.swift": {
-    "mtime": 1791980628.5437424,
-    "seen": 1791991143.149934,
+    "mtime": 1792001738.8491857,
+    "seen": 1792005249.734855,
     "ast_hash": "8fa96dd37dbade1697f0bfeeb8692352",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Walker.swift": {
-    "mtime": 1791980628.5055528,
-    "seen": 1791991143.150016,
+    "mtime": 1792001738.792785,
+    "seen": 1792005249.734935,
     "ast_hash": "4de06b226b344d578893cc9047da64ff",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BuildingEditorTests.swift": {
-    "mtime": 1791980628.5098777,
-    "seen": 1791991143.150021,
+    "mtime": 1792001738.7981715,
+    "seen": 1792005249.7349389,
     "ast_hash": "bfbacb04f474f3c2b486ffc2d1c3cf69",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BuildingPlanTests.swift": {
-    "mtime": 1791980628.5102022,
-    "seen": 1791991143.150021,
+    "mtime": 1792001738.7993743,
+    "seen": 1792005249.7349398,
     "ast_hash": "39b20d1ab82baf67ed60baab10e4421a",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BuildingWorkshopTests.swift": {
-    "mtime": 1791980628.5105357,
-    "seen": 1791991143.150023,
+    "mtime": 1792001738.8006277,
+    "seen": 1792005249.734942,
     "ast_hash": "5768bef63e3c3d24d84b631d13454e62",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/WalkerTests.swift": {
-    "mtime": 1791980628.5361888,
-    "seen": 1791991143.150065,
+    "mtime": 1792001738.8325408,
+    "seen": 1792005249.734984,
     "ast_hash": "4d0eebea04b8c07ce9c679b3774995b3",
     "semantic_hash": ""
   },
   ".claude/notes/building-editor-handoff.md": {
-    "mtime": 1791980628.3771534,
-    "seen": 1791991143.150078,
+    "mtime": 1792001738.6949518,
+    "seen": 1792005249.734997,
     "ast_hash": "788b037ad17cfb0dd28a724349ce4ead",
     "semantic_hash": ""
   },
   ".claude/notes/plant-editor-handoff.md": {
-    "mtime": 1791990307.5958788,
-    "seen": 1791991143.150083,
+    "mtime": 1792001738.6961732,
+    "seen": 1792005249.735005,
     "ast_hash": "ac0e029b52982749b1def09863f3fa03",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+BuildingsDemo.swift": {
-    "mtime": 1791980628.5376532,
-    "seen": 1791991143.1497831,
+    "mtime": 1792001738.832119,
+    "seen": 1792005249.734702,
     "ast_hash": "10b7988c88f88356ad437505662708fc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterBase.swift": {
-    "mtime": 1791980628.5542235,
-    "seen": 1791991143.149803,
+    "mtime": 1792001738.8498762,
+    "seen": 1792005249.7347221,
     "ast_hash": "33643c1d2a4d62ec79e79614e6ba05dd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterBuilder.swift": {
-    "mtime": 1791980628.5545034,
-    "seen": 1791991143.149804,
+    "mtime": 1792001738.8506756,
+    "seen": 1792005249.734723,
     "ast_hash": "22175cdc8f4aefafd6245a4215b09ff8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterDNA.swift": {
-    "mtime": 1791980628.5547853,
-    "seen": 1791991143.149805,
+    "mtime": 1792001738.8510113,
+    "seen": 1792005249.734723,
     "ast_hash": "c8c06e00abb5992d59f5061369282e3b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterEditor/CharacterEditorModel.swift": {
-    "mtime": 1791980628.5550008,
-    "seen": 1791991143.149805,
+    "mtime": 1792001738.8514788,
+    "seen": 1792005249.734724,
     "ast_hash": "c0b33f781b67f9ac7329800bc7e51d8c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterEditor/CharacterEditorPanel.swift": {
-    "mtime": 1791980628.555135,
-    "seen": 1791991143.149806,
+    "mtime": 1792001738.8526356,
+    "seen": 1792005249.7347252,
     "ast_hash": "062a1d966ddec83510e35efa4fd79391",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterEditor/CharacterEditorView.swift": {
-    "mtime": 1791980628.5553722,
-    "seen": 1791991143.1498072,
+    "mtime": 1792001738.8532293,
+    "seen": 1792005249.734726,
     "ast_hash": "d25f5a10d9a2ff23337459b5ad8a9a35",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterFace.swift": {
-    "mtime": 1791980628.5559115,
-    "seen": 1791991143.1498072,
+    "mtime": 1792001738.853577,
+    "seen": 1792005249.734727,
     "ast_hash": "11caabad807f0395e2dd5044ff4cba53",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterFaceMorphs.swift": {
-    "mtime": 1791980628.5562472,
-    "seen": 1791991143.1498082,
+    "mtime": 1792001738.853878,
+    "seen": 1792005249.734727,
     "ast_hash": "0676272eb186bb3fa8636f014e5f8481",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterMorphs.swift": {
-    "mtime": 1791980628.5579069,
-    "seen": 1791991143.149811,
+    "mtime": 1792001738.8555222,
+    "seen": 1792005249.73473,
     "ast_hash": "0b44266c517d547ae9f8c4d2d4a197ea",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterParams.swift": {
-    "mtime": 1791980628.5590389,
-    "seen": 1791991143.149812,
+    "mtime": 1792001738.855861,
+    "seen": 1792005249.73473,
     "ast_hash": "822a5a5fda6970f120d0afad873ff340",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterStore.swift": {
-    "mtime": 1791980628.5593863,
-    "seen": 1791991143.149813,
+    "mtime": 1792001738.8564696,
+    "seen": 1792005249.7347322,
     "ast_hash": "fe7810659cc6816cace51b79466f593a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FaceParts.swift": {
-    "mtime": 1791980628.5625124,
-    "seen": 1791991143.149819,
+    "mtime": 1792001738.8610015,
+    "seen": 1792005249.73474,
     "ast_hash": "4c51bd0cf46f45a50edcb57a948c10ec",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FaceSculpt.swift": {
-    "mtime": 1791980628.5628989,
-    "seen": 1791991143.1498199,
+    "mtime": 1792001738.861571,
+    "seen": 1792005249.73474,
     "ast_hash": "57d83ea6ade9e88bda4aff94ee89e23c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Characters.swift": {
-    "mtime": 1791980628.5371027,
-    "seen": 1791991143.1499279,
+    "mtime": 1792001738.8388124,
+    "seen": 1792005249.734849,
     "ast_hash": "d9b660264024d37b4955eee74a72a0e3",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterBaseTests.swift": {
-    "mtime": 1791980628.5111134,
-    "seen": 1791991143.150025,
+    "mtime": 1792001738.8036518,
+    "seen": 1792005249.734944,
     "ast_hash": "095b19f9a6b1da1d250d419ded7f2df1",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterDNATests.swift": {
-    "mtime": 1791980628.5112264,
-    "seen": 1791991143.150026,
+    "mtime": 1792001738.804095,
+    "seen": 1792005249.734945,
     "ast_hash": "b732a1a190521cb5e0794d382ea280b5",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterEditorTests.swift": {
-    "mtime": 1791980628.5113776,
-    "seen": 1791991143.150027,
+    "mtime": 1792001738.8043177,
+    "seen": 1792005249.734945,
     "ast_hash": "505176d0472bd11a21ed7cbf1817dc20",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterFaceTests.swift": {
-    "mtime": 1791980628.5115592,
-    "seen": 1791991143.150028,
+    "mtime": 1792001738.8048503,
+    "seen": 1792005249.734946,
     "ast_hash": "d376aeb7628029dbabf9466e4e3c787c",
     "semantic_hash": ""
   },
   ".claude/notes/character-creator-handoff.md": {
-    "mtime": 1791980628.3773208,
-    "seen": 1791991143.150079,
+    "mtime": 1792001738.6951518,
+    "seen": 1792005249.734998,
     "ast_hash": "855a0b49babffcbce8422aeb3695bcfd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterHair.swift": {
-    "mtime": 1791980628.5569854,
-    "seen": 1791991143.1498098,
+    "mtime": 1792001738.8542056,
+    "seen": 1792005249.7347279,
     "ast_hash": "eeae9d8bebe64fadf4ed87c9b1548fc9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterHairCap.swift": {
-    "mtime": 1791980628.557465,
-    "seen": 1791991143.1498098,
+    "mtime": 1792001738.85458,
+    "seen": 1792005249.734729,
     "ast_hash": "39cb7756e679fcc7c25b92e9b2137505",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterSkin.swift": {
-    "mtime": 1791980628.559223,
-    "seen": 1791991143.149813,
+    "mtime": 1792001738.856224,
+    "seen": 1792005249.734731,
     "ast_hash": "93e24f58d3535a2f01087b5f1e0deccd",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterHairTests.swift": {
-    "mtime": 1791980628.5119584,
-    "seen": 1791991143.150028,
+    "mtime": 1792001738.805154,
+    "seen": 1792005249.734947,
     "ast_hash": "a7b7ac271c25c34a7911089c504f7154",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterSkinTests.swift": {
-    "mtime": 1791980628.5127323,
-    "seen": 1791991143.150029,
+    "mtime": 1792001738.8056178,
+    "seen": 1792005249.7349482,
     "ast_hash": "33c1d6a7ec5f6217c38b7ebe0bb6ab96",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ParticleMath.swift": {
-    "mtime": 1791980628.4917312,
-    "seen": 1791991143.149884,
+    "mtime": 1792001738.7861297,
+    "seen": 1792005249.734804,
     "ast_hash": "ad9a5c07d44fdfdd15ed016d439ff824",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ParticleTextures.swift": {
-    "mtime": 1791980628.4922092,
-    "seen": 1791991143.149885,
+    "mtime": 1792001738.786395,
+    "seen": 1792005249.734805,
     "ast_hash": "d11a3883090bcaf5e494927a7d15e7d9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Particles.swift": {
-    "mtime": 1791980628.4929032,
-    "seen": 1791991143.149885,
+    "mtime": 1792001738.7871215,
+    "seen": 1792005249.734806,
     "ast_hash": "1d6b71f3f7899af5020717db6a723cec",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ParticlesGPU.swift": {
-    "mtime": 1791980628.4931996,
-    "seen": 1791991143.149886,
+    "mtime": 1792001738.7874165,
+    "seen": 1792005249.734807,
     "ast_hash": "3a79b88cc647e5fc655d897145d751cf",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Effects.swift": {
-    "mtime": 1791980628.5406153,
-    "seen": 1791991143.149931,
+    "mtime": 1792001738.8443365,
+    "seen": 1792005249.734852,
     "ast_hash": "387de3a2de831a5d110a3539dcc9c2d0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Particles.swift": {
-    "mtime": 1791980628.5488431,
-    "seen": 1791991143.149939,
+    "mtime": 1792001738.8625486,
+    "seen": 1792005249.73486,
     "ast_hash": "f8c127e7fedd3d65da50a3319721dc6c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Stage.swift": {
-    "mtime": 1791980628.5564454,
-    "seen": 1791991143.149945,
+    "mtime": 1792001738.8720908,
+    "seen": 1792005249.734866,
     "ast_hash": "8899d6984a2e1d5f98e0adaa85739e0f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Gizmo.metal": {
-    "mtime": 1791980628.5765727,
-    "seen": 1791991143.149961,
+    "mtime": 1792001738.8940852,
+    "seen": 1792005249.734882,
     "ast_hash": "221923ca836f62554c714461a5794247",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/ParticleLight.metal": {
-    "mtime": 1791980628.582359,
-    "seen": 1791991143.1499698,
+    "mtime": 1792001738.9017973,
+    "seen": 1792005249.734891,
     "ast_hash": "133eac59b8fbc4c8929905ab65134990",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/ParticleSim.metal": {
-    "mtime": 1791980628.583369,
-    "seen": 1791991143.149971,
+    "mtime": 1792001738.9026802,
+    "seen": 1792005249.734891,
     "ast_hash": "81bd92913ba0e4cb62821aa5ee256226",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/ParticleTrace.metal": {
-    "mtime": 1791980628.584126,
-    "seen": 1791991143.149972,
+    "mtime": 1792001738.9031024,
+    "seen": 1792005249.7348921,
     "ast_hash": "6f696987f7ef795adb078c69222e7267",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ShadersVFX.metal": {
-    "mtime": 1791980628.5968516,
-    "seen": 1791991143.1499891,
+    "mtime": 1792001738.9150722,
+    "seen": 1792005249.7349088,
     "ast_hash": "e7c8c9e444a4e6c18c268e933684c9fe",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXBuilder.swift": {
-    "mtime": 1791980628.4894207,
-    "seen": 1791991143.149995,
+    "mtime": 1792001738.7804406,
+    "seen": 1792005249.734915,
     "ast_hash": "ab1b552dadd53204699f55e7f00c0db3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXCodegen.swift": {
-    "mtime": 1791980628.4897757,
-    "seen": 1791991143.149996,
+    "mtime": 1792001738.7809424,
+    "seen": 1792005249.7349162,
     "ast_hash": "254d319b7c2373f335b32428f7c32c8b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXCompiler.swift": {
-    "mtime": 1791980628.4904306,
-    "seen": 1791991143.149997,
+    "mtime": 1792001738.781189,
+    "seen": 1792005249.7349162,
     "ast_hash": "2fcf018bdbae4fc25f52b3a1ab29bdf4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXGizmos.swift": {
-    "mtime": 1791980628.4908693,
-    "seen": 1791991143.149997,
+    "mtime": 1792001738.781449,
+    "seen": 1792005249.7349172,
     "ast_hash": "8fb345f309205d152d24d0a0ae9b9d88",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXGraph.swift": {
-    "mtime": 1791980628.4916704,
-    "seen": 1791991143.1499982,
+    "mtime": 1792001738.7824647,
+    "seen": 1792005249.7349179,
     "ast_hash": "a58ef36aaa1d8fb5fb9667a90bb0e662",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXInterpreter.swift": {
-    "mtime": 1791980628.4923413,
-    "seen": 1791991143.1499991,
+    "mtime": 1792001738.783224,
+    "seen": 1792005249.7349179,
     "ast_hash": "b81d04266cc39105577fb91319f91bee",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXLibrary.swift": {
-    "mtime": 1791980628.4928467,
-    "seen": 1791991143.15,
+    "mtime": 1792001738.783471,
+    "seen": 1792005249.7349188,
     "ast_hash": "4970fca551ed1bf03e3ee44b93a7d3b1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXLive.swift": {
-    "mtime": 1791980628.4938362,
-    "seen": 1791991143.1500008,
+    "mtime": 1792001738.7837768,
+    "seen": 1792005249.73492,
     "ast_hash": "e90df0f0b950086a0e10c53df74844ac",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXLowering.swift": {
-    "mtime": 1791980628.4942293,
-    "seen": 1791991143.1500008,
+    "mtime": 1792001738.7840233,
+    "seen": 1792005249.734921,
     "ast_hash": "5242e1df8e36a270716d4e776219f85c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXNodes.swift": {
-    "mtime": 1791980628.4950416,
-    "seen": 1791991143.150002,
+    "mtime": 1792001738.784283,
+    "seen": 1792005249.734921,
     "ast_hash": "f9b9507012ac75a1015209210239c7fd",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXProgram.swift": {
-    "mtime": 1791980628.4960654,
-    "seen": 1791991143.150003,
+    "mtime": 1792001738.7846887,
+    "seen": 1792005249.734922,
     "ast_hash": "feb21bdafd4839f6410893a43909c8f3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFX/VFXStore.swift": {
-    "mtime": 1791980628.4963145,
-    "seen": 1791991143.150003,
+    "mtime": 1792001738.7850707,
+    "seen": 1792005249.7349231,
     "ast_hash": "b200a1783b2aa700efee089d18f86ab5",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXCanvasView.swift": {
-    "mtime": 1791980628.4974988,
-    "seen": 1791991143.150004,
+    "mtime": 1792001738.7857192,
+    "seen": 1792005249.734924,
     "ast_hash": "74bed3672393330fa7003277bd66e295",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorModel.swift": {
-    "mtime": 1791980628.4977903,
-    "seen": 1791991143.150005,
+    "mtime": 1792001738.7862096,
+    "seen": 1792005249.734924,
     "ast_hash": "f90436cee08d9fb422d1cb2a2a918818",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorPanel.swift": {
-    "mtime": 1791980628.4982076,
-    "seen": 1791991143.150006,
+    "mtime": 1792001738.786465,
+    "seen": 1792005249.734925,
     "ast_hash": "16ab560def2a94e685559ef64945fc07",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorScript.swift": {
-    "mtime": 1791980628.4984014,
-    "seen": 1791991143.150006,
+    "mtime": 1792001738.78713,
+    "seen": 1792005249.734926,
     "ast_hash": "4828dd7bf5ab085411907fd870be19b2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXEditorView.swift": {
-    "mtime": 1791980628.498553,
-    "seen": 1791991143.150007,
+    "mtime": 1792001738.7880309,
+    "seen": 1792005249.7349272,
     "ast_hash": "b76abc89aa9199d59416065b8601893b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXInspector.swift": {
-    "mtime": 1791980628.4987073,
-    "seen": 1791991143.150008,
+    "mtime": 1792001738.7888272,
+    "seen": 1792005249.7349272,
     "ast_hash": "a4c9024e9375a408bfb6a1e5eefc3631",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VFXEditor/VFXLayout.swift": {
-    "mtime": 1791980628.4995446,
-    "seen": 1791991143.1500092,
+    "mtime": 1792001738.7890255,
+    "seen": 1792005249.734928,
     "ast_hash": "f136b6b3249e30f9496dd23f4fa71a11",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/LegacyEffects.swift": {
-    "mtime": 1791980628.5159621,
-    "seen": 1791991143.150037,
+    "mtime": 1792001738.8132281,
+    "seen": 1792005249.734956,
     "ast_hash": "26eb9e65137039eeb5668940cce9010a",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ParticleTests.swift": {
-    "mtime": 1791980628.5221944,
-    "seen": 1791991143.1500459,
+    "mtime": 1792001738.8202481,
+    "seen": 1792005249.734964,
     "ast_hash": "12f0a898d93edcfc832b1cc213804b23",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VFXEditorTests.swift": {
-    "mtime": 1791980628.5327525,
-    "seen": 1791991143.1500611,
+    "mtime": 1792001738.8303092,
+    "seen": 1792005249.73498,
     "ast_hash": "0d3365238146e64369a85e5a802766f8",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/VFXTests.swift": {
-    "mtime": 1791980628.5339959,
-    "seen": 1791991143.150062,
+    "mtime": 1792001738.830561,
+    "seen": 1792005249.734981,
     "ast_hash": "94f3d39bfef9d0f0a2e0519d17133639",
     "semantic_hash": ""
   },
   ".claude/notes/particles-handoff.md": {
-    "mtime": 1791980628.3785162,
-    "seen": 1791991143.150083,
+    "mtime": 1792001738.6957743,
+    "seen": 1792005249.735004,
     "ast_hash": "14b75d49f86341480eab3dc03d2d5282",
     "semantic_hash": ""
   },
   ".claude/notes/vfx-editor-handoff.md": {
-    "mtime": 1791990691.145264,
-    "seen": 1791991143.1500852,
+    "mtime": 1792001738.6969168,
+    "seen": 1792005249.7350059,
     "ast_hash": "73679e0835e9e0c4e965785f5c8bfae6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/GraphEditor/GraphCanvas.swift": {
-    "mtime": 1791980628.5708113,
-    "seen": 1791991143.1498291,
+    "mtime": 1792001738.870579,
+    "seen": 1792005249.734752,
     "ast_hash": "73d274c11660c7e9cd8c2fb626083253",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialCanvasView.swift": {
-    "mtime": 1791980628.5767179,
-    "seen": 1791991143.149838,
+    "mtime": 1792001738.8760183,
+    "seen": 1792005249.734762,
     "ast_hash": "0e4cd948d421e42b972a5d0455be0823",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialEditorModel.swift": {
-    "mtime": 1791980628.5778055,
-    "seen": 1791991143.1498392,
+    "mtime": 1792001738.8765922,
+    "seen": 1792005249.734763,
     "ast_hash": "994026211e7d89c2223f3404f02815eb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialEditorPanel.swift": {
-    "mtime": 1791980628.5788863,
-    "seen": 1791991143.1498399,
+    "mtime": 1792001738.8768706,
+    "seen": 1792005249.734764,
     "ast_hash": "88b677eb47630f87109610d4074c0d00",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialEditorView.swift": {
-    "mtime": 1791980628.5792181,
-    "seen": 1791991143.1498408,
+    "mtime": 1792001738.8779633,
+    "seen": 1792005249.734764,
     "ast_hash": "4b0d7a7b47b8200f011c64c1e2334d5f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialInspector.swift": {
-    "mtime": 1791980628.5800552,
-    "seen": 1791991143.1498408,
+    "mtime": 1792001738.8785386,
+    "seen": 1792005249.734765,
     "ast_hash": "9c4cc180e726795214d3552fa8e95c2e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialEditor/MaterialPreviews.swift": {
-    "mtime": 1791980628.5803988,
-    "seen": 1791991143.149842,
+    "mtime": 1792001738.8789933,
+    "seen": 1792005249.734766,
     "ast_hash": "a81db67ff55e111984134d9a24fe4c65",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatCompiler.swift": {
-    "mtime": 1791980628.5811036,
-    "seen": 1791991143.149843,
+    "mtime": 1792001738.8792374,
+    "seen": 1792005249.7347672,
     "ast_hash": "74a5d07ec6630f3f494a129d979ef8c9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatEngine.swift": {
-    "mtime": 1791999036.8633194,
-    "seen": 1791999686.8587909,
+    "mtime": 1792005161.0711207,
+    "seen": 1792005249.7347682,
     "ast_hash": "be28ec05e3cdfb69b4e366c54e93f369",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatExport.swift": {
-    "mtime": 1791980628.581895,
-    "seen": 1791991143.149844,
+    "mtime": 1792001738.880101,
+    "seen": 1792005249.7347682,
     "ast_hash": "ac67f5b7b7f3018b7492e2ae38b4d04e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatFunction.swift": {
-    "mtime": 1791980628.5821767,
-    "seen": 1791991143.149845,
+    "mtime": 1792001738.8804572,
+    "seen": 1792005249.7347689,
     "ast_hash": "037c463a51b0b05971ac3a073dbe5f9c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatNodes.swift": {
-    "mtime": 1791980628.5830405,
-    "seen": 1791991143.149846,
+    "mtime": 1792001738.8807685,
+    "seen": 1792005249.7347698,
     "ast_hash": "a0d179fe1ea849c840fa7abc63698275",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatPlan.swift": {
-    "mtime": 1791980628.5835679,
-    "seen": 1791991143.149847,
+    "mtime": 1792001738.881665,
+    "seen": 1792005249.734771,
     "ast_hash": "97cb867173d346eb56ae183904da5eea",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatShaderCode.swift": {
-    "mtime": 1791980628.5841107,
-    "seen": 1791991143.149847,
+    "mtime": 1792001738.882535,
+    "seen": 1792005249.734771,
     "ast_hash": "d1c23d918e68f4dc2b6f1861b5721ea9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MatSwiftSource.swift": {
-    "mtime": 1791980628.5844505,
-    "seen": 1791991143.149848,
+    "mtime": 1792001738.8833175,
+    "seen": 1792005249.734772,
     "ast_hash": "eec212b849ad4af2db312c149c947490",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MaterialAssignments.swift": {
-    "mtime": 1791980628.5846322,
-    "seen": 1791991143.1498492,
+    "mtime": 1792001738.8836594,
+    "seen": 1792005249.734773,
     "ast_hash": "dd21d831eef6e885902221f7701c93f5",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MaterialBake.swift": {
-    "mtime": 1791999666.842113,
-    "seen": 1791999686.858798,
+    "mtime": 1792005161.0714169,
+    "seen": 1792005249.734773,
     "ast_hash": "4818ac286ceacf3c7675cea9d3da2544",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MaterialGraph.swift": {
-    "mtime": 1791980628.586947,
-    "seen": 1791991143.1498508,
+    "mtime": 1792001738.8842428,
+    "seen": 1792005249.734774,
     "ast_hash": "b651d92052eca71a8baff6353032db14",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MaterialLibrary.swift": {
-    "mtime": 1791980628.587756,
-    "seen": 1791991143.1498518,
+    "mtime": 1792001738.8850515,
+    "seen": 1792005249.734776,
     "ast_hash": "35290c328d498bbd98832b33f297f0b0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MaterialStore.swift": {
-    "mtime": 1791980628.5882487,
-    "seen": 1791991143.149853,
+    "mtime": 1792001738.8856952,
+    "seen": 1792005249.734777,
     "ast_hash": "6fda6768d83002712a143445ffc2c69c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatAdjust.metal": {
-    "mtime": 1791980628.5886028,
-    "seen": 1791991143.149854,
+    "mtime": 1792001738.8863347,
+    "seen": 1792005249.7347782,
     "ast_hash": "b5fa945e3f6b3a9198653f61d22be544",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatAdvanced.metal": {
-    "mtime": 1791980628.5887403,
-    "seen": 1791991143.149855,
+    "mtime": 1792001738.886869,
+    "seen": 1792005249.734779,
     "ast_hash": "05b64cc6b19c2d20934fe87304123205",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatCommon.metal": {
-    "mtime": 1791980628.5889168,
-    "seen": 1791991143.149856,
+    "mtime": 1792001738.8873708,
+    "seen": 1792005249.7347798,
     "ast_hash": "9721db01cacee8cd8b547413bd2219ab",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatFilters.metal": {
-    "mtime": 1791980628.589832,
-    "seen": 1791991143.149857,
+    "mtime": 1792001738.8884885,
+    "seen": 1792005249.734781,
     "ast_hash": "6cbf1bfe30921934c22b7e87f8cccb6f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatHeight.metal": {
-    "mtime": 1791980628.5900738,
-    "seen": 1791991143.149858,
+    "mtime": 1792001738.8887813,
+    "seen": 1792005249.734782,
     "ast_hash": "2af84559251ce3523f9902d08fe0108c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatNoise.metal": {
-    "mtime": 1791980628.5904298,
-    "seen": 1791991143.1498592,
+    "mtime": 1792001738.889093,
+    "seen": 1792005249.734783,
     "ast_hash": "7165484e34c2af6e91c7efe7147f07d3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatPatterns.metal": {
-    "mtime": 1791980628.5908177,
-    "seen": 1791991143.1498601,
+    "mtime": 1792001738.8897254,
+    "seen": 1792005249.734783,
     "ast_hash": "dc7a9d30fdbc15bd36b8e16d46d074af",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Materials.swift": {
-    "mtime": 1791980628.5456972,
-    "seen": 1791991143.149935,
+    "mtime": 1792001738.8528004,
+    "seen": 1792005249.734856,
     "ast_hash": "08c0c7f806395c482cecdec69c104fdc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Procedural.swift": {
-    "mtime": 1791980628.5512214,
-    "seen": 1791991143.149941,
+    "mtime": 1792001738.867072,
+    "seen": 1792005249.734862,
     "ast_hash": "fcc150d492fd8150fd99cd4600d4c195",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Pick.metal": {
-    "mtime": 1791980628.5872803,
-    "seen": 1791991143.149974,
+    "mtime": 1792001738.907887,
+    "seen": 1792005249.734894,
     "ast_hash": "bf584308e5db004d8b4af969136c00c3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Procedural.metal": {
-    "mtime": 1791980628.5878341,
-    "seen": 1791991143.149976,
+    "mtime": 1792001738.908488,
+    "seen": 1792005249.7348962,
     "ast_hash": "d8705880101e20e8caac29e87d596ce3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ShadersMaterial.metal": {
-    "mtime": 1791980628.5961463,
-    "seen": 1791991143.1499882,
+    "mtime": 1792001738.9144704,
+    "seen": 1792005249.734907,
     "ast_hash": "1c4a239ce045c9adb84fd2029135e94c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ShadersMaterialCode.metal": {
-    "mtime": 1791980628.5966945,
-    "seen": 1791991143.1499882,
+    "mtime": 1792001738.914651,
+    "seen": 1792005249.7349079,
     "ast_hash": "7c09a352710ede3fc3db15a82e4d5bb2",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MaterialEditorTests.swift": {
-    "mtime": 1791980628.5189097,
-    "seen": 1791991143.1500401,
+    "mtime": 1792001738.8151803,
+    "seen": 1792005249.7349591,
     "ast_hash": "b2fd67a06399e7df390194160c5608b2",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MaterialEngineTests.swift": {
-    "mtime": 1791999058.3689666,
-    "seen": 1791999686.8590279,
+    "mtime": 1792005161.0752883,
+    "seen": 1792005249.7349591,
     "ast_hash": "f6fadfa017b7dbc72e5553bde9b66e99",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MaterialGraphTests.swift": {
-    "mtime": 1791980628.51972,
-    "seen": 1791991143.150041,
+    "mtime": 1792001738.816349,
+    "seen": 1792005249.73496,
     "ast_hash": "8dbddd76f8f256191ec79f996e1a7779",
     "semantic_hash": ""
   },
   ".claude/notes/material-designer-handoff.md": {
-    "mtime": 1791980628.3778768,
-    "seen": 1791991143.15008,
+    "mtime": 1792001738.6954381,
+    "seen": 1792005249.735002,
     "ast_hash": "db4c6043e9516d6d0a64b9b77287f29d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MeshSubdivider.swift": {
-    "mtime": 1791980628.5884533,
-    "seen": 1791991143.149854,
+    "mtime": 1792001738.8859804,
+    "seen": 1792005249.734777,
     "ast_hash": "32e1a08f0d63b22fdd811c437bd53f8e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/MatDisplace.metal": {
-    "mtime": 1791980628.5894313,
-    "seen": 1791991143.149856,
+    "mtime": 1792001738.8878431,
+    "seen": 1792005249.7347798,
     "ast_hash": "86ba9018c0d7de2b9ba1aac30f120471",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Displacement.swift": {
-    "mtime": 1791980628.5400245,
-    "seen": 1791991143.14993,
+    "mtime": 1792001738.8438056,
+    "seen": 1792005249.7348511,
     "ast_hash": "9ef9a5e6044b10d5fb1d4d056d69d656",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MaterialDisplacementTests.swift": {
-    "mtime": 1791980628.518533,
-    "seen": 1791991143.150039,
+    "mtime": 1792001738.8143823,
+    "seen": 1792005249.7349582,
     "ast_hash": "94bb46495b8bb60f906df722f464373c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MaterialLibrary+Mireland.swift": {
-    "mtime": 1791980628.5874133,
-    "seen": 1791991143.1498508,
+    "mtime": 1792001738.8845725,
+    "seen": 1792005249.734775,
     "ast_hash": "14898d002f395f8623adf16c813b8619",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Mireland.swift": {
-    "mtime": 1791980628.546486,
-    "seen": 1791991143.1499362,
+    "mtime": 1792001738.8550096,
+    "seen": 1792005249.7348568,
     "ast_hash": "137bd176150f8e372580fdc0c12609c3",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MirelandTests.swift": {
-    "mtime": 1791980628.520197,
-    "seen": 1791991143.1500428,
+    "mtime": 1792001738.81813,
+    "seen": 1792005249.7349608,
     "ast_hash": "e62255ca1781175757b26a575d94ba59",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/Paint.metal": {
-    "mtime": 1791980628.5916092,
-    "seen": 1791991143.149861,
+    "mtime": 1792001738.8901625,
+    "seen": 1792005249.734784,
     "ast_hash": "8cc26fcd58fdd3ff13077de57d2d4795",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialShaders/PaintBake.metal": {
-    "mtime": 1791980628.5923874,
-    "seen": 1791991143.149861,
+    "mtime": 1792001738.8908162,
+    "seen": 1792005249.734785,
     "ast_hash": "96fb14e29e1a5b8f9a7d8f93910d733a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/GLBWriter.swift": {
-    "mtime": 1791980628.5966053,
-    "seen": 1791991143.149869,
+    "mtime": 1792001738.900292,
+    "seen": 1792005249.734792,
     "ast_hash": "b5326135b327ae187fc279c2b91a4e5c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintAssignments.swift": {
-    "mtime": 1791980628.596835,
-    "seen": 1791991143.1498702,
+    "mtime": 1792001738.900561,
+    "seen": 1792005249.734793,
     "ast_hash": "5b639f5e1c402b1f6f261304bbc98c5d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintBake.swift": {
-    "mtime": 1791980628.5971928,
-    "seen": 1791991143.149871,
+    "mtime": 1792001738.9008794,
+    "seen": 1792005249.734793,
     "ast_hash": "e5abad21e79f8552e874c8a6aca7f25d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintBrush.swift": {
-    "mtime": 1791980628.597552,
-    "seen": 1791991143.149871,
+    "mtime": 1792001738.9014611,
+    "seen": 1792005249.734794,
     "ast_hash": "fbbfc519aec55f4f2948eff53f1ebdf7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintDocument.swift": {
-    "mtime": 1791980628.59797,
-    "seen": 1791991143.149872,
+    "mtime": 1792001738.9018612,
+    "seen": 1792005249.734795,
     "ast_hash": "20d0ac6070e813962d55177b345da50a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintMesh.swift": {
-    "mtime": 1791980628.486385,
-    "seen": 1791991143.1498728,
+    "mtime": 1792001738.9023304,
+    "seen": 1792005249.734796,
     "ast_hash": "a1d2127a1cc54359fbefd1719593a197",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PaintMeshMaps.swift": {
-    "mtime": 1791980628.4868083,
-    "seen": 1791991143.149874,
+    "mtime": 1792001738.902811,
+    "seen": 1792005249.734796,
     "ast_hash": "1b1358a904ccd2619e6d4c82bee40952",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PainterPixels.swift": {
-    "mtime": 1791980628.4871402,
-    "seen": 1791991143.1498759,
+    "mtime": 1792001738.9031408,
+    "seen": 1792005249.734797,
     "ast_hash": "58502310fbe03f0475df085f612516e7",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PainterSession.swift": {
-    "mtime": 1791980628.48749,
-    "seen": 1791991143.149877,
+    "mtime": 1792001738.7819667,
+    "seen": 1792005249.7347982,
     "ast_hash": "15a89a95aea33064f2f99a20347c461b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/PainterStore.swift": {
-    "mtime": 1791980628.487698,
-    "seen": 1791991143.149877,
+    "mtime": 1792001738.782603,
+    "seen": 1792005249.7347991,
     "ast_hash": "cdf2b4995de1b47e6b3e72887eb1e1bb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/SmartMaterial.swift": {
-    "mtime": 1791980628.4878466,
-    "seen": 1791991143.149878,
+    "mtime": 1792001738.782957,
+    "seen": 1792005249.7347991,
     "ast_hash": "9b389f843264644ed4ec2f4931bcb10b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/UVCheck.swift": {
-    "mtime": 1791980628.4881792,
-    "seen": 1791991143.149879,
+    "mtime": 1792001738.7832282,
+    "seen": 1792005249.7347999,
     "ast_hash": "ed09e28cbbb33bb1e788591d88abb048",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/UVPack.swift": {
-    "mtime": 1791980628.4884007,
-    "seen": 1791991143.1498802,
+    "mtime": 1792001738.7841573,
+    "seen": 1792005249.7348008,
     "ast_hash": "b5e3cbc655de36d292ec3dcc1a582019",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Painter/UVUnwrap.swift": {
-    "mtime": 1791980628.48865,
-    "seen": 1791991143.1498811,
+    "mtime": 1792001738.7845483,
+    "seen": 1792005249.7348008,
     "ast_hash": "0e793b56aed85dfabc4a88500760226c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PainterEditor/PainterModel.swift": {
-    "mtime": 1791980628.4893432,
-    "seen": 1791991143.1498811,
+    "mtime": 1792001738.7849805,
+    "seen": 1792005249.734802,
     "ast_hash": "fb519e7e73f39831b9214b395edb74b1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PainterEditor/PainterPanel.swift": {
-    "mtime": 1791980628.4897096,
-    "seen": 1791991143.149882,
+    "mtime": 1792001738.7853425,
+    "seen": 1792005249.734803,
     "ast_hash": "2824574842a18e8feb778ed588269474",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PainterEditor/PainterView.swift": {
-    "mtime": 1791980628.489908,
-    "seen": 1791991143.1498828,
+    "mtime": 1792001738.7855475,
+    "seen": 1792005249.734804,
     "ast_hash": "6adaed0c5842fda91ef8bcf315067d0c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer+Painter.swift": {
-    "mtime": 1791980628.5292463,
-    "seen": 1791991143.1499221,
+    "mtime": 1792001738.828933,
+    "seen": 1792005249.7348428,
     "ast_hash": "43e4862bcd4ded7861205d4d5ce19504",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Painted.swift": {
-    "mtime": 1791980628.5474222,
-    "seen": 1791991143.149937,
+    "mtime": 1792001738.8586185,
+    "seen": 1792005249.734858,
     "ast_hash": "9930353f61d5b18bc88781de840148af",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Painter.swift": {
-    "mtime": 1791980628.5482771,
-    "seen": 1791991143.1499379,
+    "mtime": 1792001738.8608072,
+    "seen": 1792005249.734859,
     "ast_hash": "c711d12f54c01e06cec92fa3df9b0375",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PainterTests.swift": {
-    "mtime": 1791980628.520852,
-    "seen": 1791991143.150044,
+    "mtime": 1792001738.819535,
+    "seen": 1792005249.734963,
     "ast_hash": "cd8e569dac903dd85199ade47c85c194",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PainterUnwrapTests.swift": {
-    "mtime": 1791980628.5213628,
-    "seen": 1791991143.150045,
+    "mtime": 1792001738.8198879,
+    "seen": 1792005249.734964,
     "ast_hash": "fdee84da1fd3619e09ffd3fe49e4c66e",
     "semantic_hash": ""
   },
   ".claude/notes/material-painter-handoff.md": {
-    "mtime": 1791980628.3782616,
-    "seen": 1791991143.150081,
+    "mtime": 1792001738.6955585,
+    "seen": 1792005249.735002,
     "ast_hash": "c02d04c5449e9df54d7bda11a6cf666f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/Scene+Outline.swift": {
-    "mtime": 1791980628.5125158,
-    "seen": 1791991143.14991,
+    "mtime": 1792001738.8151915,
+    "seen": 1792005249.734831,
     "ast_hash": "8e11d830b265cf70965c8e94857664cb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/SceneOutline.swift": {
-    "mtime": 1791980628.5129793,
-    "seen": 1791991143.149911,
+    "mtime": 1792001738.8158288,
+    "seen": 1792005249.734831,
     "ast_hash": "3f8e74da43847047ddcb89edee154de6",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ProjectGraphTests.swift": {
-    "mtime": 1791991061.4835627,
-    "seen": 1791991143.150052,
+    "mtime": 1792001738.8243694,
+    "seen": 1792005249.73497,
     "ast_hash": "c5deb2c0e17a8c76824d052583e39d33",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/SceneOverrides.swift": {
-    "mtime": 1791980628.5135643,
-    "seen": 1791991143.149912,
+    "mtime": 1792001738.8168612,
+    "seen": 1792005249.734832,
     "ast_hash": "72cbbf24490f8857a9140a57229302c2",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/area.json": {
-    "mtime": 1791980628.4865732,
-    "seen": 1791991143.14975,
+    "mtime": 1792001738.7807274,
+    "seen": 1792005249.7346702,
     "ast_hash": "b5c0ef72f9cab972578df10e93f9f74a",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/buildings.json": {
-    "mtime": 1791980628.4870553,
-    "seen": 1791991143.1497521,
+    "mtime": 1792001738.7814887,
+    "seen": 1792005249.734671,
     "ast_hash": "cb51e019c9ed6211c7ac1ccb4b6f6352",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/city.json": {
-    "mtime": 1791980628.487879,
-    "seen": 1791991143.149753,
+    "mtime": 1792001738.7836208,
+    "seen": 1792005249.7346718,
     "ast_hash": "2bdc1a9148d61a0249eca01539707d41",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/citynight.json": {
-    "mtime": 1791980628.4904666,
-    "seen": 1791991143.149754,
+    "mtime": 1792001738.7858684,
+    "seen": 1792005249.7346728,
     "ast_hash": "b9a09917a5f5d1a3bbb946a25e017bd6",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/cornell.json": {
-    "mtime": 1791980628.491042,
-    "seen": 1791991143.1497548,
+    "mtime": 1792001738.7867692,
+    "seen": 1792005249.734674,
     "ast_hash": "a6a5f39c072e44a7416e275cdb860d3b",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/crowd.json": {
-    "mtime": 1791980628.4918694,
-    "seen": 1791991143.149756,
+    "mtime": 1792001738.7872148,
+    "seen": 1792005249.734675,
     "ast_hash": "be6caeda6d7680e93420152953457eb1",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/emissive.json": {
-    "mtime": 1791980628.4929528,
-    "seen": 1791991143.149757,
+    "mtime": 1792001738.787864,
+    "seen": 1792005249.734676,
     "ast_hash": "e00bd79de1115ef0e290baf68c988078",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/fluids.json": {
-    "mtime": 1791980628.4933436,
-    "seen": 1791991143.149757,
+    "mtime": 1792001738.7882466,
+    "seen": 1792005249.734676,
     "ast_hash": "2eac2303b34cdea1823c9f3f20f394d8",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/fog.json": {
-    "mtime": 1791980628.4939487,
-    "seen": 1791991143.1497579,
+    "mtime": 1792001738.7886972,
+    "seen": 1792005249.734677,
     "ast_hash": "bde01ced016d78400ddb0a1fa4a4aaf1",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/forest.json": {
-    "mtime": 1791980628.4946232,
-    "seen": 1791991143.149759,
+    "mtime": 1792001738.789191,
+    "seen": 1792005249.734678,
     "ast_hash": "630f6296dd9cb4a7bcf9753978555a78",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/gallery.json": {
-    "mtime": 1791980628.4951854,
-    "seen": 1791991143.14976,
+    "mtime": 1792001738.7899735,
+    "seen": 1792005249.734679,
     "ast_hash": "531e2631661b97e5d33176934fade7c7",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/hair.json": {
-    "mtime": 1791980628.4974437,
-    "seen": 1791991143.149761,
+    "mtime": 1792001738.7903726,
+    "seen": 1792005249.7346802,
     "ast_hash": "1c8547020184ac278c5b8d1ed6e922a5",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/market.json": {
-    "mtime": 1791980628.5007262,
-    "seen": 1791991143.149761,
+    "mtime": 1792001738.791355,
+    "seen": 1792005249.7346811,
     "ast_hash": "9b23c71fcb39a4864ce81724539c9224",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/materials.json": {
-    "mtime": 1791980628.5010862,
-    "seen": 1791991143.1497622,
+    "mtime": 1792001738.7931478,
+    "seen": 1792005249.734682,
     "ast_hash": "af97ad31571f519b84a3621064e298cc",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/mireland.json": {
-    "mtime": 1791980628.5032127,
-    "seen": 1791991143.149763,
+    "mtime": 1792001738.7949464,
+    "seen": 1792005249.7346828,
     "ast_hash": "967b2908cffce0963609b8664fa2faa6",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/mixed.json": {
-    "mtime": 1791980628.5040646,
-    "seen": 1791991143.149764,
+    "mtime": 1792001738.796419,
+    "seen": 1792005249.734684,
     "ast_hash": "acfd127c2c2521b62fa6caf944f9e8db",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/muscles.json": {
-    "mtime": 1791980628.5074623,
-    "seen": 1791991143.149765,
+    "mtime": 1792001738.7993746,
+    "seen": 1792005249.734684,
     "ast_hash": "2d9246f15249658d15bc1c6dea392ea6",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/painter.json": {
-    "mtime": 1791980628.5081837,
-    "seen": 1791991143.149766,
+    "mtime": 1792001738.8013048,
+    "seen": 1792005249.734685,
     "ast_hash": "cdb39d2575f0d556d9da07cda795fa2f",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/particles.json": {
-    "mtime": 1792000459.8746397,
-    "seen": 1792000896.925746,
-    "ast_hash": "3246d9f49a7374e188718ce3973d0b0f",
+    "mtime": 1792005155.8712108,
+    "seen": 1792005249.734686,
+    "ast_hash": "a1f151c315453da1a4d1bc0504a15917",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/people.json": {
-    "mtime": 1791980628.5091603,
-    "seen": 1791991143.149767,
+    "mtime": 1792001738.8035684,
+    "seen": 1792005249.734687,
     "ast_hash": "3f339fca255ed85cca8c6d724e0a81d0",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/physics.json": {
-    "mtime": 1791980628.5112033,
-    "seen": 1791991143.1497679,
+    "mtime": 1792001738.804567,
+    "seen": 1792005249.734688,
     "ast_hash": "c7b3fe59957b63207be8472c703fecc0",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/plants.json": {
-    "mtime": 1791980628.5118017,
-    "seen": 1791991143.149769,
+    "mtime": 1792001738.8050728,
+    "seen": 1792005249.734688,
     "ast_hash": "24975146cd12a04784fd8c2b1799b078",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/ragdolls.json": {
-    "mtime": 1791980628.513272,
-    "seen": 1791991143.14977,
+    "mtime": 1792001738.8081503,
+    "seen": 1792005249.734689,
     "ast_hash": "930079554c03ad11a76045b0836c0a9e",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/shapes.json": {
-    "mtime": 1791980628.5141501,
-    "seen": 1791991143.149771,
+    "mtime": 1792001738.810726,
+    "seen": 1792005249.73469,
     "ast_hash": "c5456bbf8b2478cc93f81313c5351b3b",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/showcase.json": {
-    "mtime": 1791980628.51612,
-    "seen": 1791991143.149771,
+    "mtime": 1792001738.8114364,
+    "seen": 1792005249.7346911,
     "ast_hash": "c02aafaecd8b73611aaffccfaf957368",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/softbodies.json": {
-    "mtime": 1791980628.5166564,
-    "seen": 1791991143.149772,
+    "mtime": 1792001738.8123188,
+    "seen": 1792005249.7346911,
     "ast_hash": "ec619552e4b7541329aa3a20be2fedb1",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/spots.json": {
-    "mtime": 1791980628.5173433,
-    "seen": 1791991143.1497731,
+    "mtime": 1792001738.8140805,
+    "seen": 1792005249.734692,
     "ast_hash": "b78966f42064bb489ebe18c09449af1a",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/stress.json": {
-    "mtime": 1791980628.519003,
-    "seen": 1791991143.149774,
+    "mtime": 1792001738.8149812,
+    "seen": 1792005249.734693,
     "ast_hash": "516b9d6dd246c6000d5b3ccd5882e2ba",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/sun.json": {
-    "mtime": 1791980628.5212908,
-    "seen": 1791991143.149775,
+    "mtime": 1792001738.8156326,
+    "seen": 1792005249.734694,
     "ast_hash": "dfe4ab3c928a9575e4bb7dcd882dc21a",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/tubes.json": {
-    "mtime": 1791980628.522859,
-    "seen": 1791991143.149775,
+    "mtime": 1792001738.8168547,
+    "seen": 1792005249.734694,
     "ast_hash": "6f79a54b5a1d9570805c5ca368399ad1",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/valley.json": {
-    "mtime": 1791980628.5238934,
-    "seen": 1791991143.149776,
+    "mtime": 1792001738.8176317,
+    "seen": 1792005249.734695,
     "ast_hash": "d1e9d3c09960ff08bf56270be513fd5d",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/vfxstage.json": {
-    "mtime": 1791980628.524217,
-    "seen": 1791991143.149777,
+    "mtime": 1792001738.818218,
+    "seen": 1792005249.734696,
     "ast_hash": "dddd04c74163f05c51bc468b69a7feed",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/world.json": {
-    "mtime": 1791980628.528566,
-    "seen": 1791991143.149778,
+    "mtime": 1792001738.8222692,
+    "seen": 1792005249.7346969,
     "ast_hash": "256e16b3984abed2243dbfe808003d29",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/GraphLayout.swift": {
-    "mtime": 1791980628.5086768,
-    "seen": 1791991143.149908,
+    "mtime": 1792001738.8118293,
+    "seen": 1792005249.734828,
     "ast_hash": "e4cee18640951aa69975ed16cb1fca4f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/OutlineStore.swift": {
-    "mtime": 1791980628.5114741,
-    "seen": 1791991143.149909,
+    "mtime": 1792001738.8123577,
+    "seen": 1792005249.734829,
     "ast_hash": "60db8f1a5c6d7e94e3056d8207cde4b8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/ProjectGraph.swift": {
-    "mtime": 1791980628.5119243,
-    "seen": 1791991143.149909,
+    "mtime": 1792001738.8142757,
+    "seen": 1792005249.7348301,
     "ast_hash": "802dbe7c2cb54816187d9dd467d3ac86",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraph/SourceIndex.swift": {
-    "mtime": 1791980628.5139709,
-    "seen": 1791991143.149913,
+    "mtime": 1792001738.8180861,
+    "seen": 1792005249.734833,
     "ast_hash": "008ac4fa15ad43b64976913a5d1cd212",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraphEditor/ConeTreeView.swift": {
-    "mtime": 1791980628.5167563,
-    "seen": 1791991143.149913,
+    "mtime": 1792001738.8207428,
+    "seen": 1792005249.734834,
     "ast_hash": "5565ddab67efc8e39a53e8715176e274",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphCanvas.swift": {
-    "mtime": 1791980628.5183113,
-    "seen": 1791991143.149914,
+    "mtime": 1792001738.8220596,
+    "seen": 1792005249.734835,
     "ast_hash": "72b1f9dd5870011ab7592a63c3107917",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphModel.swift": {
-    "mtime": 1791991061.4806488,
-    "seen": 1791991143.149915,
+    "mtime": 1792001738.8229127,
+    "seen": 1792005249.734835,
     "ast_hash": "2864842cd7ae68980996d63ffeb60d9d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphPanel.swift": {
-    "mtime": 1791980628.5228894,
-    "seen": 1791991143.149916,
+    "mtime": 1792001738.8234243,
+    "seen": 1792005249.7348359,
     "ast_hash": "482191372607c28eba5da1d8f3f47d7e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ProjectGraphEditor/ProjectGraphView.swift": {
-    "mtime": 1791980628.5239244,
-    "seen": 1791991143.149916,
+    "mtime": 1792001738.823778,
+    "seen": 1792005249.734837,
     "ast_hash": "8f0e03e16ff59fb40d3c0c2a593188a0",
     "semantic_hash": ""
   },
   ".claude/notes/project-graph-handoff.md": {
-    "mtime": 1791991061.4790125,
-    "seen": 1791991143.150084,
+    "mtime": 1792001738.6966186,
+    "seen": 1792005249.7350059,
     "ast_hash": "48ef54545eec967cfbff32a1b9bcbc87",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SceneGizmo.swift": {
-    "mtime": 1791991061.4828956,
-    "seen": 1791991143.1499488,
+    "mtime": 1792001738.8791103,
+    "seen": 1792005249.734869,
     "ast_hash": "033b32e4f4d4a85cd66fe5cb74fbadf0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SceneNavigation.swift": {
-    "mtime": 1791991061.483145,
-    "seen": 1791991143.14995,
+    "mtime": 1792001738.882535,
+    "seen": 1792005249.73487,
     "ast_hash": "7246787d5da4d4f82d1bdbe678650244",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SceneNavigationTests.swift": {
-    "mtime": 1791991061.4838374,
-    "seen": 1791991143.150056,
+    "mtime": 1792001738.8281276,
+    "seen": 1792005249.7349749,
     "ast_hash": "8adcd528305d7f4f8fc9ecfdf54a19ab",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/App.swift": {
-    "mtime": 1791991061.4798295,
-    "seen": 1791991143.14978,
-    "ast_hash": "6e3b2f27baaca754310432730369d20e",
+    "mtime": 1792003963.0845313,
+    "seen": 1792005249.734699,
+    "ast_hash": "dfc15b9af31770b5b59bf164a495f5ba",
     "semantic_hash": ""
   },
   "Sources/MetalRendererApp/main.swift": {
-    "mtime": 1791982041.3350844,
-    "seen": 1791991143.150018,
+    "mtime": 1792001738.7948692,
+    "seen": 1792005249.7349372,
     "ast_hash": "8157428f371e2f2463160192ffd6b33a",
     "semantic_hash": ""
   },
   "Tools/build.sh": {
-    "mtime": 1791982105.5839264,
-    "seen": 1791991143.150066,
+    "mtime": 1792001738.8346992,
+    "seen": 1792005249.7349849,
     "ast_hash": "7219966f8d2214ed5716156ef2d367a6",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/DayBar.swift": {
+    "mtime": 1792003952.9556062,
+    "seen": 1792005249.734736,
+    "ast_hash": "5a6231731caf6304852b7315c9c351a2",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/DayClock.swift": {
+    "mtime": 1792004118.3304007,
+    "seen": 1792005249.734737,
+    "ast_hash": "e51b8c58eeb53c2dd4f481bfcad31570",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/DayClockTests.swift": {
+    "mtime": 1792004118.3306165,
+    "seen": 1792005249.7349498,
+    "ast_hash": "208fd1b0d3090555869610dbcb526396",
     "semantic_hash": ""
   }
 }
