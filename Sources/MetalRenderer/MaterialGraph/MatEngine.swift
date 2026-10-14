@@ -52,8 +52,9 @@ struct MatResult {
 /// the images it had; what isn't in the plan goes once the cache is over its budget. Then the renderer's textures
 /// from the output nodes (MatOutputs), and thumbnails of the nodes baked.
 ///
-/// Evaluations run one at a time, in the background: one asked for while another runs waits, and only the latest
-/// waits (a slider's drag asks 30 times a second; what it shows is its last).
+/// Evaluations run one at a time, in the background: one asked for while another runs waits. Of the editor's, only the
+/// latest waits (a slider's drag asks 30 times a second; what it shows is its last); a bake's (MaterialBake) waits in
+/// line, each to the end (a scene asks for all its materials at once). The editor's goes first.
 final class MatEngine {
     let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -66,6 +67,7 @@ final class MatEngine {
     private var evaluations = 0
     private var busy = false
     private var pending: (MatPlan, Set<UInt64>, (MatResult) -> Void)?
+    private var queued: [(MatPlan, Set<UInt64>, (MatResult) -> Void)] = []
     private lazy var dummy: MTLTexture = {
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 1, height: 1, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]   // bound for unused outputs too
@@ -85,27 +87,33 @@ final class MatEngine {
         budget = max(Int(device.recommendedMaxWorkingSetSize / 8), 512 << 20)
     }
 
-    /// Bakes `plan` (after the evaluation running now, if one is; replacing one waiting), then calls `done` on the
-    /// main thread. Thumbnails are made for the nodes baked and for those whose hashes aren't in `known`.
-    func evaluate(_ plan: MatPlan, known: Set<UInt64> = [], done: @escaping (MatResult) -> Void) {
+    /// Bakes `plan` (after the evaluation running now, if one is: `latestOnly`, replacing the one waiting; otherwise
+    /// in line after those waiting), then calls `done` on the main thread. Thumbnails are made for the nodes baked and
+    /// for those whose hashes aren't in `known`.
+    func evaluate(_ plan: MatPlan, known: Set<UInt64> = [], latestOnly: Bool = true, done: @escaping (MatResult) -> Void) {
         lock.lock()
         if busy {
-            pending = (plan, known, done)
+            if latestOnly { pending = (plan, known, done) } else { queued.append((plan, known, done)) }
             lock.unlock()
             return
         }
         busy = true
         lock.unlock()
+        start(plan, known: known, done: done)
+    }
+
+    /// Runs `plan` in the background, then the next one waiting (the editor's, else the first in line), until none is.
+    private func start(_ plan: MatPlan, known: Set<UInt64>, done: @escaping (MatResult) -> Void) {
         work.async { [self] in
             let result = run(plan, known: known)
             DispatchQueue.main.async {
                 done(result)
                 self.lock.lock()
-                let next = self.pending
+                let next = self.pending ?? (self.queued.isEmpty ? nil : self.queued.removeFirst())
                 self.pending = nil
-                self.busy = false
+                self.busy = next != nil
                 self.lock.unlock()
-                if let (p, k, d) = next { self.evaluate(p, known: k, done: d) }
+                if let (p, k, d) = next { self.start(p, known: k, done: d) }
             }
         }
     }

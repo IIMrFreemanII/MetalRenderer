@@ -58,7 +58,7 @@ final class MaterialBake {
         guard outputs[key] == nil, asked.insert(key).inserted else { lock.unlock(); return }
         lock.unlock()
         guard let plan = plan(graph, key: key, catalog: catalog) else { return }
-        engine.evaluate(plan) { [self] result in
+        engine.evaluate(plan, latestOnly: false) { [self] result in
             keep(key, result)
             done()
         }
