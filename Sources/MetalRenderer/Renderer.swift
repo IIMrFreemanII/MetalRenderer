@@ -991,7 +991,20 @@ final class Renderer: NSObject {
         if let loading, loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
             return
         }
+        // Only the effects' catalog changed (the VFX editor's draft, restored at launch): the load goes on, and the
+        // scene it makes takes the catalog when it is in (editEffects), in place if it can.
+        if let loading, loading.api == wanted.api, wanted.scene.effects != loading.scene.effects {
+            var same = wanted.scene
+            same.effects = loading.scene.effects
+            if same == loading.scene { return }
+        }
         loading = wanted
+        // Why the scene is made again (not a workshop's edit or the world's next tile: those are expected).
+        if wanted.scene.kind == scene.settings.kind, benchmark == nil, !wanted.scene.isSameWorkshop(as: scene.settings),
+           !wanted.scene.isSameWorld(as: scene.settings), !wanted.scene.isSameCity(as: scene.settings) {
+            let changes = wanted.scene.changes(from: scene.settings) + (wanted.api != builtAPI ? ["api"] : [])
+            print("\(wanted.scene.kind.title) made again: \(changes.isEmpty ? "virtual geometry or the season" : changes.joined(separator: ", ")) changed")
+        }
         let reuse = wanted.scene == scene.settings ? scene : nil   // only the API changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
@@ -1104,7 +1117,14 @@ final class Renderer: NSObject {
     private func editEffects() {
         var same = settings.scene
         same.effects = scene.settings.effects
-        guard same == scene.settings, let gpu = particlesGPU,
+        guard same == scene.settings else { return }
+        // A scene that placed no effects (but the stage, which places what the catalog names) is the same with any
+        // catalog: only its key changes (the VFX editor's draft, restored at launch, set it).
+        if scene.effects.isEmpty && scene.settings.kind != .vfxStage {
+            scene.adoptEffects(settings.scene.effects, system: nil, effects: [], owners: [], notes: [])
+            return
+        }
+        guard let gpu = particlesGPU,
               let next = scene.particleSystem(replacing: VFXCatalog.resolve(scene.settings.effects),
                                               with: VFXCatalog.resolve(settings.scene.effects)) else { return }
         let running = pendingEffects?.system ?? gpu.system

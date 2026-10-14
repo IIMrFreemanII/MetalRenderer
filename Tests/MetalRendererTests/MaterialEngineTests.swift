@@ -281,4 +281,28 @@ final class MaterialEngineTests: XCTestCase {
         }
         XCTAssertEqual(MaterialLibrary.mireland.filter { $0.channels[.opacity] != nil }.count, 5)
     }
+
+    /// A scene asks for all its bakes at once (Renderer.updateProcedural), and the editor asks for its own in the
+    /// middle of them: every bake finishes (none is replaced by the next, as the editor's are).
+    func testQueuedBakesAllFinish() throws {
+        let bake = MaterialBake(device: engine.device)
+        let catalog = MaterialCatalog()
+        var keys: [String] = [], waits: [XCTestExpectation] = []
+        for (i, var g) in MaterialLibrary.mireland.enumerated() {
+            g.size = 6
+            let key = MaterialBake.key(g, catalog: catalog)
+            keys.append(key)
+            let done = expectation(description: g.name)
+            waits.append(done)
+            bake.request(g, key: key, catalog: catalog) { done.fulfill() }
+            if i == 4 {
+                let edited = expectation(description: "the editor's")
+                waits.append(edited)
+                let plan = try MatPlan(graph(4, [MatNode(.uniformColor, ["color": .color([0.3, 0.6, 0.9, 1])], id: "u")]), library: { _ in nil })
+                bake.engine.evaluate(plan) { _ in edited.fulfill() }
+            }
+        }
+        wait(for: waits, timeout: 60)
+        for (g, key) in zip(MaterialLibrary.mireland, keys) { XCTAssertNotNil(bake.baked(key), g.name) }
+    }
 }
