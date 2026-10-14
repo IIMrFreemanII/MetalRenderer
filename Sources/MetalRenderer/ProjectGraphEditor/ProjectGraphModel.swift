@@ -12,6 +12,10 @@ protocol ProjectGraphHost: AnyObject {
     func observeOutline(_ observer: @escaping (SceneOutline) -> Void)
     /// The camera flies to `target` (in the scene now, or once its scene is in).
     func frame(_ target: FrameTarget)
+    /// `target` is selected in the view (its box drawn, F frames it); nil: nothing.
+    func select(_ target: FrameTarget?)
+    /// Every click in the view: the instance it selected (nil: nothing).
+    func observeViewportSelection(_ observer: @escaping (Int?) -> Void)
     /// Click-to-pick: the next click in the view (MaterialPick: its instance).
     func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void)
     func cancelPick()
@@ -143,6 +147,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
         rebuild(keep: false)
         host.observeOutline { [weak self] o in self?.received(o) }
         host.observeSettings { [weak self] s in self?.settingsChanged(s) }
+        host.observeViewportSelection { [weak self] i in self?.selectedInView(i) }
         if loadSource {
             DispatchQueue.global(qos: .utility).async { [weak self] in
                 let index = SourceIndex.load()
@@ -303,6 +308,9 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
         reveal(id)
         selection = [id]
         focus = id
+        // In the view too: what of this scene it is (another scene's, or an asset: nothing there).
+        let target = frameTarget(id)
+        host.select(target?.kind.envName == currentScene ? target : nil)
         if center, let k = visible.index[id], positions.indices.contains(k) {
             let p = viewPoint(positions[k])
             if p.x < 40 || p.y < 40 || p.x > canvasSize.width - 40 || p.y > canvasSize.height - 40 {
@@ -321,9 +329,37 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
 
     // MARK: - The viewport
 
+    /// A click in the view selected instance `i` (nil: nothing): its node is selected here.
+    private func selectedInView(_ i: Int?) {
+        guard let i else {
+            selection = []
+            focus = nil
+            return
+        }
+        guard let id = id(ofInstance: i) else { return }
+        select(id)
+    }
+
     /// The camera at `id`'s thing (its scene made first if it is another).
     func showInViewport(_ id: String) {
-        guard let n = node(id), let env = n.scene, let kind = SceneKind.allCases.first(where: { $0.envName == env }) else { return }
+        guard let target = frameTarget(id) else { return }
+        let kind = target.kind
+        if kind.envName != currentScene {
+            let key = pendingKey ?? settingsKey
+            pendingKey = nil
+            host.update { s in
+                s.scene.kind = kind
+                s.scene.sceneOverrides = key
+            }
+            status = "Loading \(kind.title)…"
+        }
+        host.frame(target)
+    }
+
+    /// What of its scene `id` is: its instances (and those under it, a few thousand at most) or its box. Nil: not a
+    /// scene's thing.
+    func frameTarget(_ id: String) -> FrameTarget? {
+        guard let n = node(id), let env = n.scene, let kind = SceneKind.allCases.first(where: { $0.envName == env }) else { return nil }
         var instances: [Int] = []
         var box = n.bounds
         if let (_, k) = SceneOutline.member(of: id), graph[id] == nil, let i = n.members[k] {
@@ -337,17 +373,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
                 stack += graph.children[m]
             }
         }
-        let scope = outlines[env]?.scope ?? env
-        if env != currentScene {
-            let key = pendingKey ?? settingsKey
-            pendingKey = nil
-            host.update { s in
-                s.scene.kind = kind
-                s.scene.sceneOverrides = key
-            }
-            status = "Loading \(kind.title)…"
-        }
-        host.frame(FrameTarget(kind: kind, scope: scope, instances: instances, box: box))
+        return FrameTarget(kind: kind, scope: outlines[env]?.scope ?? env, instances: instances, box: box)
     }
 
     /// The next click in the view selects what it meets.

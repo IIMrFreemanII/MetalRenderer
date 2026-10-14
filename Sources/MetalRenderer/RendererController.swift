@@ -85,6 +85,10 @@ final class RendererController: InputHandler {
     private var painterObservers: [(PainterStatus) -> Void] = []
     /// An armed pick's answer (the Material Designer's).
     var onMaterialPicked: ((MaterialPick?) -> Void)?
+    /// Who wants to know what a click in the view selected (its instance; nil: nothing).
+    private var viewSelectionObservers: [(Int?) -> Void] = []
+    /// The camera's yaw and pitch as they change (the scene gizmo).
+    var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
     /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
     var onCompare: ((Bool) -> Void)?
     /// ...and in the character workshop: the saved character.
@@ -125,6 +129,15 @@ final class RendererController: InputHandler {
                 self.lastOutline = outline
                 for o in self.outlineObservers { o(outline) }
             }
+        }
+        renderer.onSelectedInView = { [weak self] instance in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for o in self.viewSelectionObservers { o(instance) }
+            }
+        }
+        renderer.onCameraTurned = { [weak self] yaw, pitch in
+            DispatchQueue.main.async { self?.onCameraTurned?(yaw, pitch) }
         }
         renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
             DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
@@ -189,6 +202,10 @@ final class RendererController: InputHandler {
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
     /// The plant workshop's camera at its plants again (F).
     func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
+
+    /// The scene gizmo: the view from `axis`'s side, or 45° steps on, turning about the pivot.
+    func snapView(_ axis: ViewAxis) { renderer.perform { $0.snapView(axis) } }
+    func stepView(yawSteps: Int, pitchSteps: Int) { renderer.perform { $0.stepView(yawSteps: yawSteps, pitchSteps: pitchSteps) } }
 
     /// The VFX editor's: the scene's clock at `t` (s), and what its gizmos show (nil: none).
     func setTime(_ t: Float) { renderer.perform { $0.setTime(t) } }
@@ -257,8 +274,8 @@ final class RendererController: InputHandler {
 
     func flagsChanged(_ event: NSEvent) {
         let shift = event.modifierFlags.contains(.shift), control = event.modifierFlags.contains(.control)
-        let option = event.modifierFlags.contains(.option)
-        renderer.perform { $0.setShift(shift); $0.setControl(control); $0.setOption(option) }
+        let option = event.modifierFlags.contains(.option), command = event.modifierFlags.contains(.command)
+        renderer.perform { $0.setShift(shift); $0.setControl(control); $0.setOption(option); $0.setCommand(command) }
     }
 
     func mouseDown(at cursor: SIMD2<Float>) {
@@ -280,6 +297,8 @@ final class RendererController: InputHandler {
     func rightMouseDown(at cursor: SIMD2<Float>) { renderer.perform { $0.rightMouseDown(at: cursor) } }
     func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) { renderer.perform { $0.rightMouseDragged(dx: dx, dy: dy, at: cursor) } }
     func rightMouseUp() { renderer.perform { $0.rightMouseUp() } }
+    func otherMouseDown(at cursor: SIMD2<Float>) { renderer.perform { $0.otherMouseDown(at: cursor) } }
+    func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) { renderer.perform { $0.otherMouseDragged(dx: dx, dy: dy, at: cursor) } }
     func mouseMoved(at cursor: SIMD2<Float>) {
         guard painterStatus.active != nil else { return }
         renderer.perform { $0.paintMouseMoved(at: cursor) }
@@ -320,6 +339,10 @@ extension RendererController: ProjectGraphHost {
     }
 
     func frame(_ target: FrameTarget) { renderer.perform { $0.frame(target) } }
+
+    func select(_ target: FrameTarget?) { renderer.perform { $0.select(target) } }
+
+    func observeViewportSelection(_ observer: @escaping (Int?) -> Void) { viewSelectionObservers.append(observer) }
 }
 
 extension RendererController: MaterialEditorHost {

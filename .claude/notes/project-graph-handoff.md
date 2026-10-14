@@ -42,6 +42,22 @@ is made of, and the assets they share, drawn as a graph. Key **Y**, or **⇧⌘G
   - Double-click opens the asset's editor.
   - The cone view is its own Metal view, `ConeTreeView.swift`, with inline shaders.
 
+## Scene navigation (branch `claude/scene-navigation`)
+
+Unity's scene view mouse, in every scene:
+- **Click:** selects what is under the cursor (`Renderer.select`), and the Project Graph selects its node. Selecting
+  a node in the graph selects it in the view. A box stays drawn round the selection.
+- **Option-drag:** orbits the pivot.
+- **Middle-drag, or Option-Cmd-drag:** pans.
+- **Right-drag:** looks around. W A S D Q E fly only while it is held, and scroll then sets the speed.
+- **Scroll, Option-right-drag:** zoom to the pivot.
+- **F:** frames the selection. **Shift-F** frames it and follows it.
+- **Scene gizmo** (`SceneGizmo.swift`, top right): click an axis to view from that side; drag to turn in 45° steps.
+
+The maths is in `SceneNavigation.swift` (`ViewPivot`, `Camera.orbit/look/pan/dolly`). The pivot is the renderer's
+`orbit`, now kept in every scene. Walk mode and paint mode keep their own controls. Covered by `SceneNavigationTests`;
+`SCENE_GIZMO_PNG=<folder>` draws the gizmo. The mouse itself is untested by hand.
+
 ## Checked
 
 - `ProjectGraphTests` (31 tests): outlines, overrides, merge, search, sources, layouts, the model with a stand-in host,
