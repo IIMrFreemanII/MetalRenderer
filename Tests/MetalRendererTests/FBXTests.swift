@@ -30,9 +30,11 @@ final class FBXTests: XCTestCase {
             XCTAssertEqual(c.jointNames[0], "mixamorig:Hips")
             XCTAssertEqual(c.joints[0].parent, -1)
             for (j, joint) in c.joints.enumerated().dropFirst() { XCTAssertTrue(joint.parent >= 0 && joint.parent < j, "parents first") }
-            XCTAssertEqual(c.clips.map(\.name), ["Idle (1)", "Idle", "Running", "Walking"])
-            XCTAssertEqual(c.clips.map(\.keyCount), [118, 501, 39, 63])
-            XCTAssertEqual(c.clips.map(\.rate), [60, 60, 60, 60])
+            XCTAssertEqual(c.clips.map(\.name), ["Breakdance Freeze Var 2", "Breakdance Freeze Var 3", "Hip Hop Dancing (1)",
+                                                 "Hip Hop Dancing (2)", "Hip Hop Dancing", "Idle (1)", "Idle",
+                                                 "Receive Uppercut To The Face", "Running", "Walking"])
+            XCTAssertEqual(c.clips.map(\.keyCount), [293, 370, 819, 1035, 269, 118, 501, 75, 39, 63])
+            XCTAssertTrue(c.clips.allSatisfy { $0.rate == 60 })
             XCTAssertEqual(c.normals.count, c.positions.count)
             XCTAssertEqual(c.skin.count, c.positions.count)
             XCTAssertTrue(c.indices.allSatisfy { Int($0) < c.positions.count })
@@ -78,6 +80,10 @@ final class FBXTests: XCTestCase {
         }
     }
 
+    /// The clips the dance routine plays once and whole, crossfaded (CharacterRig.routine): they needn't loop. A
+    /// breakdance freeze ends in another pose than it starts in.
+    private static let playedOnce = Set(CharacterRig.routine.filter { $0.seconds == nil }.map(\.clip))
+
     func testClipsLoopAndTravel() throws {
         for c in try library().characters {
             let count = c.joints.count
@@ -86,7 +92,9 @@ final class FBXTests: XCTestCase {
                 for j in 0..<count {
                     worst = max(worst, 1 - abs(simd_dot(clip.rotations[j], clip.rotations[(clip.keyCount - 1) * count + j])))
                 }
-                XCTAssertLessThan(worst, 2e-3, "\(c.name) / \(clip.name): the last key doesn't repeat the first")
+                if !FBXTests.playedOnce.contains(clip.name) {
+                    XCTAssertLessThan(worst, 2e-3, "\(c.name) / \(clip.name): the last key doesn't repeat the first")
+                }
                 XCTAssertLessThan(simd_distance(clip.root[0], clip.root[clip.keyCount - 1]), 1e-4)
                 for q in clip.rotations { XCTAssertEqual(simd_length(q), 1, accuracy: 1e-4) }
             }
@@ -97,15 +105,17 @@ final class FBXTests: XCTestCase {
         }
     }
 
-    /// Every pose stays inside the character's bounds, on its feet.
+    /// Every pose stays inside the character's bounds, on the ground; upright, but for the breakdance freezes' floor
+    /// work (crouched to 0.8 m, legs up to 2 m).
     func testPosesStandOnTheGround() throws {
         for c in try library().characters {
             for (i, clip) in c.clips.enumerated() {
+                let top: ClosedRange<Float> = clip.name.hasPrefix("Breakdance") ? 0.6...2.2 : 1.4...2.0
                 for key in stride(from: 0, to: clip.keyCount - 1, by: max(clip.keyCount / 6, 1)) {
                     let p = c.skin(c.palette(clipA: i, timeA: Float(key) + 0.5)).positions
                     let lo = p.reduce(SIMD3<Float>(repeating: .infinity), simd_min), hi = p.reduce(-lo, simd_max)
                     XCTAssertTrue(lo.y > -0.08 && lo.y < 0.25, "\(c.name) / \(clip.name) key \(key): feet at \(lo.y) m")
-                    XCTAssertTrue(hi.y > 1.4 && hi.y < 2.0, "\(c.name) / \(clip.name) key \(key): head at \(hi.y) m")
+                    XCTAssertTrue(top.contains(hi.y), "\(c.name) / \(clip.name) key \(key): top at \(hi.y) m")
                     XCTAssertTrue(simd_reduce_min(lo - c.boundsMin) >= 0 && simd_reduce_min(c.boundsMax - hi) >= 0,
                                   "\(c.name) / \(clip.name) key \(key) leaves the bounds")
                 }
