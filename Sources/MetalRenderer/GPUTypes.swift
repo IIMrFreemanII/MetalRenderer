@@ -30,6 +30,8 @@ struct Uniforms {
     var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
                                          // (gradeOn, meterOn)
     var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
+    var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Scene.interiorBox), empty: lo > hi;
+    var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // GI's hits in it see the sun through a shadow ray
     static let gradeOn: Float = 1, meterOn: Float = 2
 
     /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
@@ -405,6 +407,8 @@ struct GPUFogParams {
     var wind = SIMD4<Float>()            // xyz = wind (m/s): the noise drifts with it; w = haze (FogSettings.haze)
     var grid = SIMD4<Float>()            // x = near, y = far (view depth), z = log(far / near), w = depth slices
     var counts = SIMD4<UInt32>()         // x, y = froxel columns and rows, z = volume count, w = FogParams flags
+    var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Uniforms.interiorLo / Hi): the sky's
+    var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // ambient light in the fog is occluded in it
     var volumes = (GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume(),
                    GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume())
 
@@ -839,7 +843,7 @@ struct GPUWaterScene {
 func validateGPULayouts() {
     precondition(MemoryLayout<GPUWaterLook>.stride == 64, "GPUWaterLook layout mismatch")
     precondition(MemoryLayout<GPUWaterScene>.stride == 256, "GPUWaterScene layout mismatch")
-    precondition(MemoryLayout<Uniforms>.stride == 272, "Uniforms layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 304, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
@@ -867,7 +871,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUSDFNode>.stride == 96, "GPUSDFNode layout mismatch")
     precondition(MemoryLayout<GPUSDFShape>.stride == 48, "GPUSDFShape layout mismatch")
     precondition(MemoryLayout<GPUSDFVolume>.stride == 48, "GPUSDFVolume layout mismatch")
-    precondition(MemoryLayout<GPUFogParams>.stride == 96 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
+    precondition(MemoryLayout<GPUFogParams>.stride == 128 + 64 * GPUFogParams.maxVolumes, "GPUFogParams layout mismatch")
     precondition(MemoryLayout<GPUSkyParams>.stride == 192, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")

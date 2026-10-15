@@ -2,8 +2,8 @@ import Foundation
 import simd
 
 extension Interior {
-    /// A ceiling light (a rect light facing down), in the lot's frame: on at night if its room's light is, and
-    /// switched with its room (`switchID`).
+    /// A ceiling light (a rect light facing down), in the lot's frame: on at night if its room's light is, on by day
+    /// too in a room that is dark without it (`day`, RoomType.litByDay), and switched with its room (`switchID`).
     struct Light {
         var position: SIMD3<Float>
         var size: SIMD2<Float>
@@ -12,6 +12,7 @@ extension Interior {
         var room: Int
         var on: Bool
         var switchID: Int
+        var day = false
     }
     /// A light switch by a room's door: where its plate is (the lot's frame) and which way it faces.
     struct Switch {

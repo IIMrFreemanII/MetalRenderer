@@ -256,11 +256,15 @@ extension MatParam {
     var isText: Bool { if case .text = self { return true }; return false }
 }
 
-/// FNV-1a over what is added: a plan step's hash.
+/// FNV-1a over what is added: a plan step's hash, and a seed that is the same on every launch (Swift's `Hasher` is
+/// seeded per process).
 struct Hasher64 {
     private(set) var value: UInt64 = 14_695_981_039_346_656_037
     mutating func add(_ bytes: UnsafeRawBufferPointer) { for b in bytes { value = (value ^ UInt64(b)) &* 1_099_511_628_211 } }
     mutating func add(_ v: UInt64) { withUnsafeBytes(of: v) { add($0) } }
+    mutating func add(_ v: Int) { add(UInt64(bitPattern: Int64(v))) }
+    mutating func add(_ v: Float) { add(UInt64(v.bitPattern)) }
+    mutating func add(_ v: Bool) { add(UInt64(v ? 1 : 0)) }
     mutating func add(_ v: SIMD4<Float>) { withUnsafeBytes(of: v) { add($0) } }
     mutating func add(_ s: String) {
         add(UInt64(s.utf8.count))

@@ -569,6 +569,9 @@ final class Scene {
     var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
     private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
+    /// The walkable interiors' box, world space (BuildingKit.addInterior): where GI's hits see the sun through rays and the
+    /// fog's sky light is occluded (Renderer.interiorBox). Nil: no interiors.
+    var interiorBox: (lo: SIMD3<Float>, hi: SIMD3<Float>)?
     /// Every light and emissive triangle by power, for ReSTIR DI's candidates (built once, after the lights).
     private(set) var lightTable = LightTable()
 
