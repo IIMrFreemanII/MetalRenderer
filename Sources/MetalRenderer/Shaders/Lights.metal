@@ -29,18 +29,27 @@ inline float sunVisibilityScale(Light light, float3 p, constant SceneShading& sh
 
 // Shadow ray from `from` to `to`: true if nothing (but light spheres) is in the way. `blocker` = distance to an
 // occluder (any one, not necessarily the nearest), 0 if visible: the shadow denoiser estimates penumbrae from it.
-bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& blocker) {
+bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& blocker, uint cls = RAY_SHADOW) {
     float3 d = to - from;
     float dist = length(d);
     float t;
-    bool hit = intersectAny(makeRay(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), MASK_GEOMETRY, accel, t);
+    bool hit = intersectAny(makeRay(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_GEOMETRY, cls), accel, t);
+    if (PARTICLES && !hit) {
+        // The particles that cast shadows let T of the light through: the ray gets through with that chance (the
+        // denoisers and the averages make it a soft shadow, as the voxels' stochastic leaves are).
+        float T = particleTransmittance(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f), accel);
+        if (T < 1.0f) {
+            uint h = pcgHash(as_type<uint>(from.x) ^ pcgHash(as_type<uint>(from.y) + pcgHash(as_type<uint>(to.z) ^ pcgHash(accel.frame))));
+            if (float(h >> 8) * (1.0f / 16777216.0f) >= T) { blocker = 0.5f * dist; return false; }
+        }
+    }
     blocker = hit ? max(t, 1e-3f) : 0.0f;
     return !hit;
 }
 
-bool isVisible(float3 from, float3 to, SCENE_ACCEL accel) {
+bool isVisible(float3 from, float3 to, SCENE_ACCEL accel, uint cls = RAY_SHADOW) {
     float b;
-    return isVisibleBlocker(from, to, accel, b);
+    return isVisibleBlocker(from, to, accel, b, cls);
 }
 
 // Spot lights: smooth falloff from the inner to the outer cone, for the unit direction from the light to a point.

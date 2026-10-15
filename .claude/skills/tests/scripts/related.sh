@@ -7,7 +7,7 @@
 #   related.sh <Suite>...         run these suites (e.g. CityTests BuildingTests), skip the map
 #
 # Maps each changed file to its suites with the table below (the same as the tests skill's SKILL.md) and runs
-# swift test --filter on them. Files no suite covers are listed: prove those with images (the offscreen skill).
+# swift test --filter on them, in the dev build (Tools/build.sh test: optimised, incremental). Files no suite covers are listed: prove those with images (the offscreen skill).
 # A new source or test file goes into the table here and in SKILL.md.
 set -euo pipefail
 
@@ -38,45 +38,95 @@ if [[ $suites == " " ]]; then
     name=${f##*/}
     case $f in
       Tests/MetalRendererTests/FoliageTests.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;   # three suites in one file
+      Tests/MetalRendererTests/LegacyEffects.swift) add VFXTests ;;   # the golden test's fixture
       Tests/MetalRendererTests/*Tests.swift) add "${name%.swift}" ;;
       Tests/*) add MetalRendererTests ;;                     # a shared helper: every suite uses it
       Sources/MetalRenderer/Shaders/Crowd.metal) add CrowdTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Foliage.metal) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Intersect.metal) add ShaderSourceTests KernelVariantsTests PlantTracingTests ;;
       Sources/MetalRenderer/Shaders/SDF.metal) add SDFTests PhysicsTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests SoftBodyTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Fluid.metal|Sources/MetalRenderer/Shaders/FluidSurface.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Liquid.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Water.metal|Sources/MetalRenderer/Shaders/WaterCommon.metal) add WaterTests ShaderSourceTests KernelVariantsTests ;;   # and images (waterKernel: the offscreen skill)
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
+      Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
+      Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
+      Sources/MetalRenderer/VFXEditor/*.swift) add VFXEditorTests ;;
+      Sources/MetalRenderer/Water/*.swift) add WaterTests ;;
+      Sources/MetalRenderer/Terrain/TerrainWater.swift) add WaterTests TerrainDocumentTests ;;
+      Sources/MetalRenderer/Terrain/*.swift) add TerrainDocumentTests TerrainEditorTests ;;
+      Sources/MetalRenderer/TerrainEditor/*.swift) add TerrainEditorTests ;;
+      Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ProjectGraphTests ;;
+      Sources/MetalRenderer/ProjectGraph/*.swift|Sources/MetalRenderer/ProjectGraphEditor/*.swift) add ProjectGraphTests ;;
+      Sources/MetalRenderer/SceneNavigation.swift|Sources/MetalRenderer/SceneGizmo.swift) add SceneNavigationTests ;;   # the gizmo's pictures: SCENE_GIZMO_PNG=<folder>
+      Sources/MetalRenderer/DayClock.swift|Sources/MetalRenderer/DayBar.swift) add DayClockTests ;;   # the bar's pictures: DAY_BAR_PNG=<folder>
+      Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
+      Sources/MetalRenderer/Painter/UV*.swift|Sources/MetalRenderer/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
+      Sources/MetalRenderer/Painter/*.swift|Sources/MetalRenderer/PainterEditor/*.swift|Sources/MetalRenderer/Scene+Paint*.swift|Sources/MetalRenderer/Renderer+Painter.swift)
+        add PainterTests ;;
+      Sources/MetalRenderer/MaterialGraph/*.swift|Sources/MetalRenderer/MaterialShaders/*.metal|Sources/MetalRenderer/ShadersMaterial*.metal)
+        add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
+      Sources/MetalRenderer/MaterialEditor/*.swift) add MaterialEditorTests ;;
+      Sources/MetalRenderer/Scene+Procedural.swift|Sources/MetalRenderer/Scene+Materials.swift|Sources/MetalRenderer/Scene+Displacement.swift)
+        add MaterialEditorTests MaterialDisplacementTests SceneBuffersTests RasterSceneTests MirelandTests ;;
+      Sources/MetalRenderer/Scene+Mireland.swift) add MirelandTests MaterialEngineTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;
           Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
           Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
-          ShaderSource.swift|Pipelines.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
+          ShaderSource.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
+          Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;
           BVH.swift) add BVHTests CacheTests ;;
           CacheFile.swift|SectionFile.swift|BlueNoise.swift) add CacheTests ;;
-          Building*.swift|MeshBuilder.swift) add BuildingTests CityTests ;;
-          CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ;;
+          Building*.swift|MeshBuilder.swift|BuiltInBuildings.swift) add BuildingTests CityTests BuildingPlanTests BuildingEditorTests BuildingWorkshopTests WalkerTests ;;
+          PlanEdits.swift|FloorPlanView.swift|PropLibrary.swift) add BuildingEditorTests BuildingPlanTests ;;
+          FurnitureKit.swift) add BuildingPlanTests BuildingWorkshopTests ;;
+          Walker.swift|InteriorControls.swift|InteriorLifts.swift) add WalkerTests BuildingWorkshopTests ;;
+          Scene+Buildings.swift|Scene+Interiors.swift) add BuildingWorkshopTests CityTests WorldTests WalkerTests ;;
+          CatalogRegistry.swift) add PlantCatalogTests PlantEditorTests BuildingEditorTests ;;
+          CityPlan.swift|Scene+City.swift) add CityTests BuildingTests ProjectGraphTests ;;
           Scene+Stress.swift) add StressSceneTests ;;
-          Crowd*.swift|SkinnedCharacter.swift|Scene+Crowd.swift) add CrowdTests FBXTests ;;
+          SkinnedCharacter.swift) add CrowdTests FBXTests MuscleTests CharacterBaseTests CharacterFaceTests ;;   # (the muscles' rig poses its bones by it)
+          Crowd*.swift|Scene+Crowd.swift) add CrowdTests FBXTests CharacterBaseTests CharacterFaceTests CharacterHairTests ;;
+          CharacterSkin.swift) add CharacterSkinTests CharacterBaseTests ;;
+          CharacterHair*.swift) add CharacterHairTests ;;
+          Character*.swift) add CharacterDNATests CharacterBaseTests CharacterFaceTests CharacterSkinTests CharacterHairTests CharacterEditorTests ;;   # (and CharacterEditor/*: its model)
+          Face*.swift) add CharacterBaseTests CharacterFaceTests CharacterSkinTests CharacterHairTests ;;
+          Scene+Characters.swift) add CharacterBaseTests CharacterHairTests ;;
           FBXReader.swift) add FBXTests ;;
-          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests ;;
+          Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ProjectGraphTests ;;
           PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
+          Plant*.swift|BuiltInPlants.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests FoliageTests ForestTests ;;
+          Scene+Plants.swift) add PlantWorkshopTests PlantGoldenTests ;;
           Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
-          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests ;;
-          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests ;;
+          SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests CharacterBaseTests ;;
+          Physics*.swift|Scene+Physics.swift|Scene+Ragdolls.swift|Scene+Hair.swift|Scene+Soft.swift|Scene+Muscles.swift) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ProjectGraphTests ;;
+          FluidSurface.swift|Scene+Fluids.swift) add FluidTests ;;
+          Particle*.swift|Scene+Particles.swift|Scene+Effects.swift) add ParticleTests VFXTests ;;
+          MuscleAtlas.swift|SkeletonAtlas.swift) add MuscleTests CharacterBaseTests ;;
           HairBSDF.swift) add HairTests ;;
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
-          Scene.swift|SceneBuffers.swift) add SceneBuffersTests ;;
+          Scene.swift) add SceneBuffersTests ProjectGraphTests ;;   # (its outline's tags, the overrides' way in)
+          SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
           RasterScene.swift) add RasterSceneTests ;;
           VSM.swift) add VSMTests ;;
           MeshSDFBuilder.swift|LumenScene.swift) add MeshSDFBuilderTests ;;
           LumenGlobalSDF.swift) add GlobalSDFTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
+          LoadActivity.swift) add LoadActivityTests ;;
+          World+Water.swift) add WorldTests WaterTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
+          Scene+Water.swift|Renderer+Water.swift) add WaterTests ;;   # and images (the offscreen skill: METALRENDERER_BENCH=water)
+          Scene+Terrain*.swift|Renderer+Terrain.swift) add TerrainDocumentTests TerrainEditorTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
           Scene+Storeroom.swift) add GLTFLoaderTests BenchmarkModesTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
@@ -109,4 +159,4 @@ filter=${list// /|}
 echo "suites: $list"
 ((dry)) && exit 0
 cd "$repo"
-exec swift test --filter "$filter"
+exec "$repo/Tools/build.sh" test --filter "$filter"

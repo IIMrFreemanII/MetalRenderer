@@ -275,7 +275,7 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
         Light light = s.lights[picked & ELEMENT_INDEX];
         float T = exp(-fogOpticalDepth(p, l, sun ? sunFogDistance(light, p) : length(target - p), f))
                 * (sun ? sunVisibilityScale(light, p, s) : 1.0f);
-        if (T < 1e-4f || !isVisible(p, target, accel)) return ambient;
+        if (T < 1e-4f || !isVisible(p, target, accel, RAY_GI)) return ambient;
         return ambient + E * (T * phaseHG(-dot(l, v), g) * (wSum / pickedTarget));
     }
     uint li = pickFogLight(s.lights, s.lightCount, p, v, g, float3(u.xy, uMix), sunsOnly, pdf);
@@ -286,7 +286,7 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
     if (all(E <= 0.0f)) return ambient;
     float T = exp(-fogOpticalDepth(p, l, lightType(light) == LIGHT_SUN ? sunFogDistance(light, p) : length(target - p), f))
             * sunVisibilityScale(light, p, s);
-    if (T < 1e-4f || !isVisible(p, target, accel)) return ambient;
+    if (T < 1e-4f || !isVisible(p, target, accel, RAY_GI)) return ambient;
     return ambient + E * (T * phaseHG(-dot(l, v), g) / pdf);
 }
 

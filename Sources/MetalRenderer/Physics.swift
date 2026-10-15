@@ -25,10 +25,13 @@ import simd
 final class PhysicsWorld {
     static let staticBit: UInt32 = 0x8000_0000
     static let none: UInt32 = ~0
-    /// info.y flags: a body's, and a particle's.
+    /// info.y flags: a body's, and a particle's. A kinematic body's column in the pose table is in its flags above
+    /// bit 8 (PhysicsFlesh.swift).
     static let asleep: UInt32 = 1
+    static let kinematicBit: UInt32 = 2
     static let clothBit: UInt32 = 1
     static let softBit: UInt32 = 2
+    static let skinBit: UInt32 = 4
     /// How many pairs a body may be in (more are dropped: statics and the lowest bodies stay) and contacts a pair may have.
     static let maxPairs = 16
     static let maxContacts = PhysicsManifold.capacity
@@ -92,6 +95,8 @@ final class PhysicsWorld {
     var bodies: [GPUPhysicsBody] = []
     private(set) var statics: [GPUPhysicsBody] = []
     private(set) var staticBounds: [AABB] = []
+    /// The statics that are heightfields (a terrain's sectors), in the order they were added.
+    private(set) var heightfields: [Int] = []
     /// The state at the start (what a replay starts from).
     private(set) var initialBodies: [GPUPhysicsBody] = []
     /// Per body, `maxPairs` entries (`pairCounts` of them used), and per entry `maxContacts` contacts.
@@ -132,8 +137,8 @@ final class PhysicsWorld {
     /// For the GPU: per cloth its first particle, columns, rows and first vertex, then its last frame's vertices'
     /// offset (Scene.finishDeforming), as MSL PhysicsCloth has them.
     func clothTable(prevOffsets: [UInt32]) -> [SIMD4<UInt32>] {
-        zip(cloths, prevOffsets).flatMap { c, prev in
-            [SIMD4(UInt32(c.first), UInt32(c.columns), UInt32(c.rows), UInt32(c.vertexBase)), SIMD4(prev, 0, 0, 0)]
+        zip(cloths, prevOffsets).flatMap { c, prev -> [SIMD4<UInt32>] in
+            [SIMD4<UInt32>(UInt32(c.first), UInt32(c.columns), UInt32(c.rows), UInt32(c.vertexBase)), SIMD4<UInt32>(prev, 0, 0, 0)]
         }
     }
     var unsortedConstraints: [GPUPhysicsConstraint] = []
@@ -164,6 +169,21 @@ final class PhysicsWorld {
     private(set) var initialHairVertices: [GPUHairVertex] = []
     var hairGroups: [GPUHairGroup] = []
     var wind = SIMD4<Float>()
+
+    /// Flesh (PhysicsFlesh.swift): the kinematic bodies' poses, a row of `kinematicColumns` (position, rotation) per
+    /// step, repeating after `kinematicRows`; the muscles and how active each is now; the particles held to bones; the
+    /// muscles' tets' fibres; the skin's holds on the flesh (PhysicsSkin.swift).
+    var kinematicTable: [SIMD4<Float>] = []
+    private(set) var kinematicColumns = 0
+    var kinematicRows: Int { kinematicColumns == 0 ? 0 : kinematicTable.count / (2 * kinematicColumns) }
+    var muscles: [GPUMuscle] = []
+    var activations: [Float] = []
+    var pins: [GPUFleshPin] = []
+    var fibres: [GPUFleshFibre] = []
+    var skinAttachments: [GPUSkinAttach] = []
+
+    /// Liquids (PhysicsFluid.swift), if there are any.
+    var fluid: FluidWorld?
 
     /// How far the simulation has gone (whole steps).
     var stepIndex = 0
@@ -225,6 +245,31 @@ final class PhysicsWorld {
         return bodies.count - 1
     }
 
+    /// A kinematic body moving `instance`, SDF shape `sdf`, placed by `transform` (no scale) at the start: it goes where
+    /// its column of the pose table says, step by step (PhysicsFlesh.swift), whatever touches it. What it touches it
+    /// pushes, carries along by friction and wakes; nothing pushes it back.
+    @discardableResult
+    func addKinematicBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, friction: Float = 0.6,
+                          restitution: Float = 0.1) -> Int {
+        let s = self.shape(sdf: sdf, shape)
+        let (p, q) = pose(shape: s, transform)
+        var b = GPUPhysicsBody()
+        b.position = SIMD4(p, 0)
+        b.rotation = q
+        b.velocity = SIMD4(.zero, friction)
+        b.angular = SIMD4(.zero, restitution)
+        b.prevPosition = SIMD4(p, 0)
+        b.prevRotation = q
+        b.invInertia = SIMD4(.zero, shapes[s].comPosition.w)
+        b.info = SIMD4(UInt32(s), PhysicsWorld.kinematicBit | UInt32(kinematicColumns) << 8, UInt32(instance), 0)
+        kinematicColumns += 1
+        bodies.append(b)
+        return bodies.count - 1
+    }
+
+    /// The pose (centre of mass, rotation) of body `i` whose shape space is placed by `transform`: a pose table's entry.
+    func bodyPose(_ i: Int, _ transform: float4x4) -> (SIMD3<Float>, SIMD4<Float>) { pose(shape: Int(bodies[i].info.x), transform) }
+
     /// A static collider: SDF shape `sdf` placed by `transform` (it needn't be drawn).
     func addStatic(sdf: Int, _ shape: SDFShape, transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
         let s = self.shape(sdf: sdf, shape)
@@ -240,6 +285,77 @@ final class PhysicsWorld {
         b.info = SIMD4(UInt32(s), 0, PhysicsWorld.none, 0)
         statics.append(b)
         staticBounds.append(shape.bounds(volumes: sdfVolumes).transformed(transform))
+    }
+
+    /// A static heightfield (a terrain's sector, in the scene): `side` samples (x, z) `cell` metres apart from `lo` (x, z),
+    /// rows along z. Its index among the statics (`updateHeightfield` changes its heights).
+    @discardableResult
+    func addStaticHeightfield(lo: SIMD2<Float>, cell: Float, side: SIMD2<Int>, heights: [Float], friction: Float = 0.7,
+                              restitution: Float = 0.1) -> Int {
+        precondition(heights.count == side.x * side.y && side.x > 1 && side.y > 1, "a height per sample")
+        var shape = GPUPhysicsShape(comPosition: SIMD4(Float(side.y), 1, 0, 0),
+                                    info: SIMD4(PhysicsShapeKind.heightfield.rawValue, UInt32(samples.count), 0, UInt32(samples.count)))
+        shape.params = SIMD4(lo.x, lo.y, cell, Float(side.x))
+        shape.comRotation = SIMD4(0, 0, 0, 1)
+        samples += PhysicsWorld.packHeights(heights)
+        shapes.append(shape)
+        let s = shapes.count - 1
+        shapes[s].comPosition.y = PhysicsWorld.slopeBound(heights, side: side, cell: cell)
+        var b = GPUPhysicsBody()
+        b.position = SIMD4(.zero, 0)
+        b.rotation = SIMD4(0, 0, 0, 1)
+        b.velocity = SIMD4(.zero, friction)
+        b.angular = SIMD4(.zero, restitution)
+        b.prevPosition = b.position
+        b.prevRotation = b.rotation
+        b.invInertia = SIMD4(.zero, 0)   // no bounding sphere: its box (staticBounds) is what the broad phase tests
+        b.info = SIMD4(UInt32(s), 0, PhysicsWorld.none, 0)
+        statics.append(b)
+        let lowest = heights.min() ?? 0, highest = heights.max() ?? 0
+        staticBounds.append(AABB(lo: SIMD3(lo.x, lowest - 1, lo.y),
+                                 hi: SIMD3(lo.x + cell * Float(side.x - 1), highest + 0.5, lo.y + cell * Float(side.y - 1))))
+        heightfields.append(statics.count - 1)
+        return statics.count - 1
+    }
+
+    /// Heightfield static `k`'s heights changed (a brush moved the ground): its samples, slope bound and box. The range
+    /// of `samples` that changed (the GPU's copy is written again there: PhysicsGPU.updateSamples).
+    @discardableResult
+    func updateHeightfield(_ k: Int, heights: [Float]) -> Range<Int> {
+        let s = Int(statics[k].info.x), shape = shapes[s]
+        let side = SIMD2(Int(shape.params.w), Int(shape.comPosition.x)), first = Int(shape.info.w)
+        guard heights.count == side.x * side.y else { return first..<first }
+        let packed = PhysicsWorld.packHeights(heights)
+        samples.replaceSubrange(first..<(first + packed.count), with: packed)
+        shapes[s].comPosition.y = PhysicsWorld.slopeBound(heights, side: side, cell: shape.params.z)
+        let b = staticBounds[k]
+        staticBounds[k] = AABB(lo: SIMD3(b.lo.x, (heights.min() ?? 0) - 1, b.lo.z), hi: SIMD3(b.hi.x, (heights.max() ?? 0) + 0.5, b.hi.z))
+        return first..<(first + packed.count)
+    }
+
+    private static func packHeights(_ heights: [Float]) -> [SIMD4<Float>] {
+        stride(from: 0, to: heights.count, by: 4).map { k in
+            SIMD4(heights[k], k + 1 < heights.count ? heights[k + 1] : 0, k + 2 < heights.count ? heights[k + 2] : 0,
+                  k + 3 < heights.count ? heights[k + 3] : 0)
+        }
+    }
+
+    /// 1 / sqrt(1 + steepest slope squared): a height over the ground times it is no more than the distance to it.
+    private static func slopeBound(_ h: [Float], side: SIMD2<Int>, cell: Float) -> Float {
+        var steepest: Float = 0
+        for j in 0..<side.y {
+            for i in 0..<side.x {
+                let k = j * side.x + i
+                if i + 1 < side.x { steepest = max(steepest, abs(h[k + 1] - h[k]) / cell) }
+                if j + 1 < side.y { steepest = max(steepest, abs(h[k + side.x] - h[k]) / cell) }
+            }
+        }
+        return 1 / (1 + steepest * steepest).squareRoot()
+    }
+
+    /// Every body awake (the ground under them moved).
+    func wakeAll() {
+        for i in bodies.indices { bodies[i].info.y &= ~PhysicsWorld.asleep }
     }
 
     /// An endless static plane through `point`, facing `normal`.
@@ -402,6 +518,7 @@ final class PhysicsWorld {
         initialBodies = bodies
         initialParticles = particles
         initialHairVertices = hairVertices
+        resetFluids()
     }
 
     /// Back to the start.
@@ -410,6 +527,7 @@ final class PhysicsWorld {
         particles = initialParticles
         hairVertices = initialHairVertices
         for i in hairStrands.indices { hairStrands[i].info.w = 0 }
+        resetFluids()
         stepIndex = 0
     }
 
@@ -442,7 +560,7 @@ final class PhysicsWorld {
                                       UInt32(ragdolls.count)),
                          rolling: SIMD4(PhysicsWorld.rollingResistance, PhysicsWorld.spinningResistance, 0.1, PhysicsWorld.wakeTurn),
                          soft: SIMD4(UInt32(tets.count), UInt32(tetStarts.count - 1), UInt32(softVertices.count), UInt32(softBodies.count)),
-                         softDamping: SIMD4(PhysicsWorld.softDrag, PhysicsWorld.softLinkDamping, 0, 0))
+                         softDamping: SIMD4(PhysicsWorld.softDrag, PhysicsWorld.softLinkDamping, Float(substeps), 0))
     }
 
     // MARK: - Time
@@ -458,6 +576,14 @@ final class PhysicsWorld {
     func advance(to time: Float) {
         let (steps, restart) = stepsTo(time)
         if restart { reset() }
+        for _ in 0..<steps { step() }
+    }
+
+    /// ...`atMost` steps a call: further behind (a slow frame), the world skips the rest of the time.
+    func advance(to time: Float, atMost limit: Int) {
+        var (steps, restart) = stepsTo(time)
+        if restart { reset() }
+        if steps > limit { stepIndex += steps - limit; steps = limit }
         for _ in 0..<steps { step() }
     }
 
@@ -481,7 +607,7 @@ final class PhysicsWorld {
     /// and how far along: each body whose bounding sphere the ray crosses, sphere-traced through its distance.
     func pick(origin: SIMD3<Float>, direction: SIMD3<Float>) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
         var best: (body: Int, anchor: SIMD3<Float>, distance: Float)?
-        for i in bodies.indices {
+        for i in bodies.indices where bodies[i].position.w > 0 {   // (not what nothing moves: a kinematic body, a mount)
             let (x, q) = drawnPose(i)
             let radius = bodies[i].invInertia.w, oc = origin - x
             let b = dot(oc, direction), c = dot(oc, oc) - radius * radius, disc = b * b - c

@@ -9,12 +9,17 @@ import Metal
 enum MaterialTextures {
     static let maxSize = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_SIZE"] ?? "") ?? 2048
 
-    static func load(_ sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue) throws -> [MTLTexture] {
+    /// `load`: the load to report the decoded images to.
+    static func load(_ sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue,
+                     load: LoadJob? = nil) throws -> [MTLTexture] {
         guard !sources.isEmpty else { return [] }
         let start = CFAbsoluteTimeGetCurrent()
+        let step = load?.step("Textures", total: sources.count, detail: "decoding")
+        defer { step?.finish() }
         var decoded = [(pixels: MTLBuffer, width: Int, height: Int)?](repeating: nil, count: sources.count)
         decoded.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: sources.count) { i in
+                defer { step?.advance() }
                 if let raw = sources[i].raw {   // generated: the pixels as they are
                     guard let buffer = sources[i].rawPixels.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) })
                     else { return }

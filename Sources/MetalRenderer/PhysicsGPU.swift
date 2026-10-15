@@ -95,6 +95,12 @@ final class PhysicsGPU {
     private let hairClock: MTLBuffer
     private let hairUploads: [(vertices: MTLBuffer, bodies: MTLBuffer)]
     private let strandCount: Int
+    /// The flesh (PhysicsFlesh.swift: GPUFleshHeader, then the pose table, the muscles, the pins...); and when the CPU
+    /// steps it, the bodies as it left them per frame slot (what heads and hands are drawn on).
+    private let flesh: MTLBuffer
+    private let bodyUploads: [MTLBuffer]
+    /// The liquids (PhysicsFluidGPU.swift), stepped before each group's narrow phase.
+    let fluid: FluidGPU?
     /// It steps the world; otherwise it only draws the CPU's cloths and hair.
     let simulates: Bool
     var hasCloth: Bool { clothTable != nil }
@@ -107,12 +113,25 @@ final class PhysicsGPU {
 
     /// `simulates`: it steps the world; otherwise the CPU does and this only draws its cloths, soft bodies and hair. `clothPrevOffsets`: per
     /// cloth, its mesh's last-frame offset (GPUMesh.prevOffset).
+    /// The statics' heightfields changed (a terrain's sectors under a brush): their samples, shapes and boxes copied
+    /// again (shared buffers: a frame in flight may see them a frame early).
+    func refreshStatics(_ world: PhysicsWorld) {
+        func copy<T>(_ array: [T], into b: MTLBuffer) {
+            array.withUnsafeBytes { raw in
+                if !raw.isEmpty && raw.count <= b.length { b.contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count) }
+            }
+        }
+        copy(world.samples, into: samples)
+        copy(world.shapes, into: shapes)
+        copy(world.staticBounds.flatMap { [SIMD4($0.lo, 0), SIMD4($0.hi, 0)] }, into: staticBounds)
+    }
+
     init(device: MTLDevice, world: PhysicsWorld, sdfScene: MTLBuffer, sdfResources: [MTLBuffer], slots: Int, simulates: Bool = true,
          clothPrevOffsets: [UInt32] = []) throws {
         self.world = world
         self.simulates = simulates
         func buffer<T>(_ array: [T], _ label: String, length: Int? = nil) throws -> MTLBuffer {
-            let size = max(length ?? array.count * MemoryLayout<T>.stride, 16)
+            let size = max(length ?? array.count * MemoryLayout<T>.stride, 256)   // (an empty one still holds a record: validation)
             guard let b = device.makeBuffer(length: size, options: .storageModeShared) else {
                 throw RendererError.resourceCreation("buffer \(label)")
             }
@@ -185,20 +204,42 @@ final class PhysicsGPU {
         hairUploads = simulates || world.hairGroups.isEmpty ? [] : try (0..<slots).map {
             (try buffer(world.initialHairVertices, "physicsHairUpload\($0)"), try buffer(world.initialBodies, "physicsBodyUpload\($0)"))
         }
+        flesh = try buffer(world.fleshWords(), "physicsFlesh")
+        bodyUploads = simulates || !world.softEmbeds.contains(where: { $0.ids.w == GPUSoftEmbed.bodyKind }) ? []
+            : try (0..<slots).map { try buffer(world.initialBodies, "physicsFleshBodies\($0)") }
         self.sdfScene = sdfScene
         self.sdfResources = sdfResources
+        if simulates, let liquids = world.fluid {
+            fluid = try FluidGPU(device: device, fluid: liquids, bodies: n,
+                                 world: FluidGPU.World(params: params, bodies: bodies, statics: statics, staticBounds: staticBounds,
+                                                       shapes: shapes, samples: samples, sdfScene: sdfScene))
+        } else {
+            fluid = nil
+        }
     }
 
     // MARK: - Encoding
 
+    /// The pass runs its dispatches together (with liquids, `Renderer.encodeSceneUpdate`): a barrier ahead of each of
+    /// the bodies' (theirs run in order), and the liquids' side by side (FluidGPU).
+    var concurrent = false {
+        didSet { fluid?.concurrent = concurrent }
+    }
+
+    /// Ahead of a dispatch in a concurrent pass: what came before it is done.
+    private func barrier(_ enc: ComputePass) {
+        if concurrent { enc.memoryBarrier(scope: .buffers) }
+    }
+
     private func dispatch(_ enc: ComputePass, _ state: MTLComputePipelineState, _ threads: Int) {
+        barrier(enc)
         let width = min(state.threadExecutionWidth, max(threads, 1))
         enc.dispatchThreads(MTLSize(width: max(threads, 1), height: 1, depth: 1),
                             threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
     }
 
     /// Back to the start (a replay).
-    private var empty: Bool { count + particleCount == 0 }
+    private var empty: Bool { count + particleCount == 0 && fluid == nil }
 
     func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
         guard !empty else { return }
@@ -211,7 +252,9 @@ final class PhysicsGPU {
         enc.setBuffer(initialParticles, offset: 0, index: 5)
         enc.setBuffer(particles[0], offset: 0, index: 6)
         enc.setBuffer(lastParticle, offset: 0, index: 7)
-        dispatch(enc, pipelines[.physicsReset], max(count, particleCount))
+        enc.setBuffer(flesh, offset: 0, index: 8)
+        dispatch(enc, pipelines[.physicsReset], max(count, particleCount, 1))
+        fluid?.encodeReset(enc, pipelines: pipelines)
         guard strandCount > 0 else { return }
         var vertexCount = UInt32(world.initialHairVertices.count)
         enc.setComputePipelineState(pipelines[.physicsHairReset])
@@ -234,6 +277,11 @@ final class PhysicsGPU {
         guard !empty, steps > 0 else { return }
         enc.useResources(sdfResources, usage: .read)
         enc.setBuffer(params, offset: 0, index: 0)
+        // Liquids alone (no bodies, no particles): only their groups (the bodies' stages have nothing to dispatch).
+        if count + particleCount == 0, let fluid {
+            for _ in 0..<(steps * groupCount) { fluid.encodeGroup(enc, pipelines: pipelines) }
+            return
+        }
         for _ in 0..<steps {
             enc.setComputePipelineState(pipelines[.physicsClear])
             enc.setBuffer(heads, offset: 0, index: 1)
@@ -282,6 +330,7 @@ final class PhysicsGPU {
             enc.setBuffer(colliderCounts, offset: 0, index: 13)
             dispatch(enc, pipelines[.physicsParticleNeighbours], particleCount)
             for g in 0..<groupCount {
+                fluid?.encodeGroup(enc, pipelines: pipelines)
                 encodeNarrow(enc, pipelines: pipelines, group: g)
                 encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
             }
@@ -348,6 +397,7 @@ final class PhysicsGPU {
         enc.setBuffer(pairCounts, offset: 0, index: 7)
         enc.setBuffer(contacts, offset: 0, index: 8)
         enc.setBuffer(groups, offset: group * MemoryLayout<Group>.stride, index: 9)
+        barrier(enc)
         enc.dispatchThreads(MTLSize(width: count * PhysicsWorld.maxPairs * simd, height: 1, depth: 1),
                             threadsPerThreadgroup: MTLSize(width: min(narrow.maxTotalThreadsPerThreadgroup / simd, 4) * simd, height: 1, depth: 1))
     }
@@ -385,8 +435,10 @@ final class PhysicsGPU {
         enc.setBuffer(ragdolls, offset: 0, index: 27)
         enc.setBuffer(tets, offset: 0, index: 28)
         enc.setBuffer(tetStarts, offset: 0, index: 29)
+        enc.setBuffer(flesh, offset: 0, index: 30)
         let lanes = substeps.threadExecutionWidth
         let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
+        barrier(enc)
         enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
     }
 
@@ -426,6 +478,9 @@ final class PhysicsGPU {
                 if !$0.isEmpty { hairUploads[slot].bodies.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             }
         }
+        if !bodyUploads.isEmpty {
+            world.bodies.withUnsafeBytes { bodyUploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        }
     }
 
     /// The cloths' vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.
@@ -451,12 +506,28 @@ final class PhysicsGPU {
         enc.setBuffer(softVertices, offset: 0, index: 2)
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(softEmbeds, offset: 0, index: 4)
+        enc.setBuffer(simulates ? bodies : bodyUploads.isEmpty ? bodies : bodyUploads[slot], offset: 0, index: 5)
         dispatch(enc, pipelines[.physicsSoftMesh], Int(n))
         enc.setComputePipelineState(pipelines[.physicsSoftNormals])
         enc.setBuffer(softVertices, offset: 0, index: 1)
         enc.setBuffer(softRings, offset: 0, index: 2)
         enc.setBuffer(normals, offset: 0, index: 4)
         dispatch(enc, pipelines[.physicsSoftNormals], Int(n))
+    }
+
+    /// The liquids' surfaces into the scene's vertex and index buffers, ahead of the structures' builds.
+    func encodeFluidSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {
+        fluid?.encodeSurfaces(enc, pipelines: pipelines, positions: positions, normals: normals, indices: indices)
+    }
+    var hasFluid: Bool { fluid != nil }
+    /// The frames its liquids' surfaces are still made for (the renderer's count): some more after the last step or
+    /// reset, as the structure built over one takes its size from a count read back a few frames late.
+    var liquidFrames = Renderer.maxFramesInFlight + 1
+
+    /// The flesh's buffer as the GPU has it (tests: its clock, the muscles' activations).
+    func readFlesh() -> [SIMD4<UInt32>] {
+        let n = flesh.length / 16
+        return Array(UnsafeBufferPointer(start: flesh.contents().bindMemory(to: SIMD4<UInt32>.self, capacity: n), count: n))
     }
 
     /// The particles as the GPU has them (tests).

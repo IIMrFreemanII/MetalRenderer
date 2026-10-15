@@ -248,6 +248,20 @@ final class SettingsPanel: NSObject {
             return [label(title), well]
         case .denoiserCaption:
             return [denoiserCaption]
+        case .dayPresets:   // the day's times (DayClock): the day held there; Night by day is the night city
+            let times = NSSegmentedControl(labels: DayPreset.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+            times.controlSize = .small
+            onChange(times) { [unowned self] in
+                guard let preset = DayPreset(rawValue: times.selectedSegment) else { return }
+                let defaults = self.renderer.defaultSettings
+                self.renderer.update { $0.holdDay(preset, defaults: defaults) }
+            }
+            refreshers.append { s in
+                guard let clock = DayClock.of(s.scene.kind) else { return }
+                for p in DayPreset.allCases { times.setEnabled(clock.offers(p), forSegment: p.rawValue) }
+                times.selectedSegment = (s.dayHeld || !clock.runs ? clock.preset(at: s.heldHour) : nil)?.rawValue ?? -1
+            }
+            return [label(title), times]
         }
     }
 

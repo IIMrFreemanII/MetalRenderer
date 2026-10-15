@@ -2,9 +2,10 @@ import Foundation
 import simd
 
 /// What a physics shape's distance is (GPUPhysicsShape.info.x): exact formulas for the simple primitives, the SDF
-/// shape's field for everything else, and a plane (static colliders only) whose body-space y is the distance.
+/// shape's field for everything else, a plane (static colliders only) whose body-space y is the distance, and a
+/// heightfield (static colliders only: a terrain's sector) whose height over its ground is.
 enum PhysicsShapeKind: UInt32 {
-    case sdf = 0, sphere, capsule, box, plane
+    case sdf = 0, sphere, capsule, box, plane, heightfield
 }
 
 /// The collision code the CPU step runs, written as Shaders/Physics.metal has it (same steps, same order), so that
@@ -142,6 +143,36 @@ struct PhysicsManifold {
 }
 
 extension PhysicsWorld {
+    // MARK: - A terrain's heightfield
+
+    /// A heightfield's height under (x, z) (its body's space): bilinear between its samples, held at its edges. Its
+    /// samples are four to an entry of `samples` from `info.w`; `params` = (x, z of its first sample, its cell, its
+    /// samples along x), `comPosition.x` its samples along z, `.y` its slope bound (a distance is the height over the
+    /// ground times it).
+    @inline(__always) func heightfieldHeight(_ shape: GPUPhysicsShape, _ x: Float, _ z: Float) -> Float {
+        let k = shape.params, nx = Int(k.w), nz = Int(shape.comPosition.x), first = Int(shape.info.w)
+        @inline(__always) func h(_ i: Int, _ j: Int) -> Float {
+            let n = min(max(j, 0), nz - 1) * nx + min(max(i, 0), nx - 1)
+            return samples[first + n / 4][n % 4]
+        }
+        let gx = (x - k.x) / k.z, gz = (z - k.y) / k.z
+        let fx = min(max(gx, 0), Float(nx - 1)), fz = min(max(gz, 0), Float(nz - 1))
+        let i = min(Int(fx), nx - 2), j = min(Int(fz), nz - 2), u = fx - Float(i), v = fz - Float(j)
+        let a = h(i, j) + (h(i + 1, j) - h(i, j)) * u, b = h(i, j + 1) + (h(i + 1, j + 1) - h(i, j + 1)) * u
+        return a + (b - a) * v
+    }
+
+    @inline(__always) func heightfieldDistance(_ shape: GPUPhysicsShape, _ p: SIMD3<Float>) -> Float {
+        (p.y - heightfieldHeight(shape, p.x, p.z)) * shape.comPosition.y
+    }
+
+    func heightfieldGradient(_ shape: GPUPhysicsShape, _ p: SIMD3<Float>) -> SIMD3<Float> {
+        let e = shape.params.z * 0.5
+        let dx = heightfieldHeight(shape, p.x + e, p.z) - heightfieldHeight(shape, p.x - e, p.z)
+        let dz = heightfieldHeight(shape, p.x, p.z + e) - heightfieldHeight(shape, p.x, p.z - e)
+        return normalize(SIMD3(-dx, 2 * e, -dz))
+    }
+
     // MARK: - A shape's distance
 
     /// Shape `s`'s distance at `p` (its body's space).
@@ -153,6 +184,7 @@ extension PhysicsWorld {
         case .capsule: return PhysicsMath.capsule(p, k.x, k.y)
         case .box: return PhysicsMath.box(p, PhysicsMath.xyz(k), k.w)
         case .plane: return p.y
+        case .heightfield: return heightfieldDistance(shape, p)
         case .sdf:
             let q = PhysicsMath.qrot(shape.comRotation, p) + PhysicsMath.xyz(shape.comPosition)
             return sdfShapes[Int(shape.info.w)].distance(q, volumes: sdfVolumes).d
@@ -166,6 +198,7 @@ extension PhysicsWorld {
         let k = shapes[s].params
         switch PhysicsShapeKind(rawValue: shapes[s].info.x)! {
         case .plane: return SIMD3(0, 1, 0)
+        case .heightfield: return heightfieldGradient(shapes[s], p)
         case .sphere: return PhysicsMath.direction(p)
         case .capsule: return PhysicsMath.direction(SIMD3(p.x, p.y - min(max(p.y, -k.x), k.x), p.z))
         case .box: return PhysicsMath.boxGradient(p, PhysicsMath.xyz(k), k.w)
@@ -195,7 +228,8 @@ extension PhysicsWorld {
         let pa = Pose(a), pb = Pose(b)
         let ra = a.invInertia.w, rb = b.invInertia.w
         let merge = 0.05 * min(ra, rb > 0 ? rb : ra)
-        let plane = shapes[sb].info.x == PhysicsShapeKind.plane.rawValue
+        // (A plane, a terrain's heightfield: no bounding sphere to reach.)
+        let plane = shapes[sb].info.x == PhysicsShapeKind.plane.rawValue || shapes[sb].info.x == PhysicsShapeKind.heightfield.rawValue
         var manifold = PhysicsManifold()
 
         // A's samples against B's distance.

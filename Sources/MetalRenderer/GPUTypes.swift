@@ -1,3 +1,4 @@
+import Metal
 import simd
 
 // Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).
@@ -26,7 +27,10 @@ struct Uniforms {
     var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
     var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
     var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value)
+    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
+                                         // (gradeOn, meterOn)
+    var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
+    static let gradeOn: Float = 1, meterOn: Float = 2
 
     /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
     static let traceBounces: UInt32 = 1      // the path tracer's indirect light (`bounces` > 0)
@@ -58,6 +62,7 @@ enum UniformFlags {
     static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
     static let vsm: UInt32 = 2097152         // the camera's surfaces' shadows through virtual shadow maps (VSM.swift)
     static let giRadiance: UInt32 = 4194304  // the composite keeps the lit diffuse light for Lumen's screen traces
+    static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
 /// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.
@@ -248,6 +253,10 @@ struct GPUMesh {
     /// The level of detail it was made at, + 1 (0 = it has no levels): an open-world tile's ring, a crowd character's
     /// detail, a baked plant (its finest). Only the LOD debug view reads it (Scene.setDetailLevel).
     var lod: UInt32 = 0
+    /// A terrain's sector (TERRAIN, Shaders/Terrain.metal): 1 + where its terrain's layer table starts in the procedural
+    /// parameters; its block has its vertices' layer weights after its triangles' materials. 0: not a terrain's.
+    var terrain: UInt32 = 0
+    var pad: UInt32 = 0
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
@@ -310,9 +319,20 @@ struct GPUMaterial {
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
     var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
                                             // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
-                                            // w = a leaf's translucency
+                                            // w = a leaf's translucency; < 0: skin, -w its strength (0...1), + 2
+                                            // where it is thin (Hair.metal skinUnshadowed)
     var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
+}
+
+/// What a procedural material (a Material Designer graph's: MaterialBake) has past GPUMaterial, one per material of
+/// a scene that has any (MSL MaterialExtra, read with MATERIAL_EXTRAS): its height for parallax and its opacity, its
+/// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
+struct GPUMaterialExtra: Equatable {
+    var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none; z = 1: procedural
+                                                    // (a mesh without UVs gets planar ones), 2: a scan (TextureSets.swift)
+    var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
+                                                     // w = AO strength (0: the R channel isn't occlusion)
 }
 
 /// One light; see the MSL struct for what each field holds per type (Scene.LightKind).
@@ -545,7 +565,8 @@ struct GPUPhysicsParams {
                                              // than this (m/s, PhysicsWorld.wakeTurn)
     var soft = SIMD4<UInt32>()               // soft bodies (PhysicsSoft.swift): x = tets, y = their colours, z = drawn
                                              // vertices, w = soft bodies
-    var softDamping = SIMD4<Float>()         // x = their air drag (1/s), y = their links' damping (s), z = w = 0
+    var softDamping = SIMD4<Float>()         // x = their air drag (1/s), y = their links' damping (s), z = substeps a
+                                             // step (a kinematic body's share of the step a substep), w = 0
 }
 
 /// A soft body's tetrahedron (PhysicsSoft.swift): its four particles and its rest volume, which an XPBD constraint
@@ -555,7 +576,7 @@ struct GPUPhysicsTet {
     var rest: Float = 0                      // six times its volume at rest (m^3)
     var compliance: Float = 0                // m^3/N: 0 keeps its volume
     var damping: Float = 0                   // s (XPBD's beta)
-    var pad: Float = 0
+    var fibre: UInt32 = 0                    // a muscle's tet: its fibre (PhysicsWorld.fibres) + 1; 0: none
 }
 
 /// A soft body's drawn vertex (PhysicsSoft.swift): MSL PhysicsSoftVertex.
@@ -566,23 +587,267 @@ struct GPUSoftVertex {
     var embeds = SIMD4<UInt32>()             // x = its first place in its tets (PhysicsWorld.softEmbeds), y = how many
 }
 
-/// Where a soft body's drawn vertex is in one of the tets it follows (PhysicsSoft.swift): MSL PhysicsSoftEmbed.
+/// Where a soft body's drawn vertex is in one of the tets it follows (PhysicsSoft.swift): MSL PhysicsSoftEmbed. Or,
+/// with `ids.w` = `bodyKind` or `triangleKind` (PhysicsFlesh.swift), on a body (`ids.x`; `bary.xyz` in its space) or on
+/// a skin's triangle (`ids.xyz` its particles; `bary.xy` the weights of the last two, `bary.z` how far out along its
+/// normal).
 struct GPUSoftEmbed {
     var bary = SIMD4<Float>()                // its weights for the tet's last three particles (the first's is 1 - their
                                              // sum); w = this tet's share of where it goes
     var ids = SIMD4<UInt32>()                // the tet's particles
+    static let bodyKind: UInt32 = 0x8000_0001
+    static let triangleKind: UInt32 = 0x8000_0002
+}
+
+/// The flesh's part of the physics (PhysicsFlesh.swift), packed in one buffer after this header: MSL PhysicsFleshHeader.
+struct GPUFleshHeader {
+    var counts = SIMD4<UInt32>()             // x = kinematic bodies (the pose table's columns), y = its rows (steps), z =
+                                             // muscles, w = pins
+    var more = SIMD4<UInt32>()               // x = fibres, y = skin attachments, z = the clock: steps run (the GPU's), w = 0
+    var at = SIMD4<UInt32>()                 // where each part starts (16-byte words): x = the pose table, y = the
+                                             // muscles, z = their activations, w = the fibres
+    var at2 = SIMD4<UInt32>()                // x = the pins, y = the skin's attachments
+}
+
+/// A flesh particle held to its bones (PhysicsFlesh.swift): MSL PhysicsFleshPin. Its target is where two bodies put a
+/// point (each in its own space), blended by their weights.
+struct GPUFleshPin {
+    var restA = SIMD4<Float>()               // in body A's space; w = A's weight
+    var restB = SIMD4<Float>()               // in body B's space; w = B's weight
+    var particle: UInt32 = 0
+    var bodyA: UInt32 = 0
+    var bodyB: UInt32 = 0
+    var compliance: Float = 0                // m/N (a particle of no mass sits on its target)
+}
+
+/// A muscle's activation from the angle between two bones' axes (PhysicsFlesh.swift): MSL PhysicsMuscle.
+struct GPUMuscle {
+    var axisA = SIMD4<Float>()               // body A's axis, in its space
+    var axisB = SIMD4<Float>()               // body B's, in its space
+    var range = SIMD4<Float>()               // x = the angle it starts at, y = the one it is full at, z = how full (0...1)
+    var bodyA: UInt32 = 0
+    var bodyB: UInt32 = 0
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// A muscle's tet's fibre (PhysicsFlesh.swift): MSL PhysicsFleshFibre. Its direction at rest through the tet's rest
+/// edges' inverse (Dm^-1 f), so that the edges now times it is the fibre now.
+struct GPUFleshFibre {
+    var g = SIMD4<Float>()                   // w = how far it shortens at full activation (a share of its length)
+    var muscle: UInt32 = 0
+    var compliance: Float = 0
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// A skin particle's hold on the flesh beneath it (PhysicsSkin.swift): MSL PhysicsSkinAttach.
+struct GPUSkinAttach {
+    var bary = SIMD4<Float>()                // where it rests in the tet (the last three particles' weights); w = how far
+                                             // it may slide (m)
+    var deep = SIMD4<Float>()                // a point under it, in the same tet (its normal: from there); w = the slide's
+                                             // compliance
+    var ids = SIMD4<UInt32>()                // the tet's particles
+    var particle: UInt32 = 0
+    var compliance: Float = 0                // along the normal
+    var pad0: UInt32 = 0
+    var pad1: UInt32 = 0
+}
+
+/// A liquid's particle (PhysicsFluid.swift): MSL FluidParticle.
+struct GPUFluidParticle {
+    var position = SIMD4<Float>()            // w = MPM: its volume now over its volume at rest (J)
+    var velocity = SIMD4<Float>()            // w = 0
+    var affine0 = SIMD4<Float>()             // MPM: its velocity's gradient (APIC's C), by rows; PBF: row 0 is its
+    var affine1 = SIMD4<Float>()             // vorticity
+    var affine2 = SIMD4<Float>()
+}
+
+/// What a liquid's kernels are told (PhysicsFluid.swift): MSL FluidParams. Written once.
+struct GPUFluidParams {
+    var gravity = SIMD4<Float>()             // w = the solver's substep (s)
+    var lo = SIMD4<Float>()                  // the domain's low corner; w = the grid's cell (PBF: the kernel's radius h;
+                                             // MPM: dx)
+    var hi = SIMD4<Float>()                  // its high corner; w = 1 / the cell
+    var dims = SIMD4<UInt32>()               // the grid's cells (PBF) or nodes (MPM) along x, y, z; w = all of them
+    var counts = SIMD4<UInt32>()             // x = capacity (particles), y = substeps a group, z = static colliders it
+                                             // meets, w = solver (0 PBF, 1 MPM)
+    var material = SIMD4<Float>()            // x = rest density (PBF: sum of W over a rest lattice, 1/m^3; MPM: kg/m^3),
+                                             // y = a particle's mass (kg), z = bulk modulus K (Pa), w = Tait's gamma
+    var viscosity = SIMD4<Float>()           // Carreau: x = mu0, y = mu infinity (Pa s), z = lambda (s), w = n
+    var pbf = SIMD4<Float>()                 // x = h, y = relaxation (CFM), z = s_corr k, w = 1 / W(dq)
+    var pbf2 = SIMD4<Float>()                // x = XSPH c, y = vorticity confinement, z = wall friction, w = stickiness
+    var fixed = SIMD4<Float>()               // fixed point: x = mass, y = momentum, z = a body's impulse (per N s);
+                                             // w = the top speed (m/s)
+    var nozzle = SIMD4<Float>()              // where it pours from; w = the nozzle's radius
+    var direction = SIMD4<Float>()           // which way (unit); w = how fast (m/s)
+    var emission = SIMD4<UInt32>()           // x = particles a layer, y = ticks between layers x 256, z = the tick it
+                                             // starts at, w = PBF iterations
+    var extra = SIMD4<Float>()               // x = a particle's radius against colliders, y = the spacing it pours at,
+                                             // z = particle volume (m^3, MPM), w = the group's length (s)
+}
+
+/// A liquid's drawn surface (FluidSurface.swift): MSL FluidSurface. Written once the scene's meshes are in.
+struct GPUFluidSurface {
+    var lo = SIMD4<Float>()                  // the grid's first node; w = its cell (m)
+    var dims = SIMD4<UInt32>()               // nodes along x, y, z; w = all of them
+    var field = SIMD4<Float>()               // x = the iso level (particles a cell), y = the splat's fixed point, z = 1 / cell
+    var mesh = SIMD4<UInt32>()               // x = its first vertex in the scene's vertex buffer, y = its first index,
+                                             // z = its last-frame offset (GPUMesh.prevOffset), w = vertices it holds
+    var triangles = SIMD4<UInt32>()          // x = triangles it holds
+}
+
+/// A particle effect's particle (Particles.swift): MSL Particle. Its slot in the pool is its emitter's until it dies.
+struct GPUParticle {
+    var position = SIMD4<Float>()            // w = age (s)
+    var velocity = SIMD4<Float>()            // w = lifetime (s)
+    var info = SIMD4<UInt32>()               // x = spawn id (its emitter's count, or its parent's x 8 + which child),
+                                             // y = seed, z = emitter, w = flags (ParticleSystem.alive)
+}
+
+/// What rays meet of a particle this frame (Shaders/ParticleTrace.metal): MSL ParticleRender. One per frame slot,
+/// written by particlePoseKernel, its radiance by particleLightKernel.
+struct GPUParticleRender {
+    var centerRadius = SIMD4<Float>()        // w = radius (0: no particle)
+    var axis = SIMD4<Float>()                // velocity / axis: the long axis's half (its length the half length);
+                                             // world: the normal; w = spin (rad)
+    var color = SIMD4<Float16>()             // rgb: albedo (lit) or emitted light (emissive), a: opacity
+    var radiance = SIMD4<Float16>()          // rgb: the light it scatters to the eye (particleLightKernel), a: unused
+    var info = SIMD4<UInt32>()               // x = pool slot | ParticleEmitter.Flags << 24, y = flipbook frames
+                                             // (ParticleTrace.metal), z = soft distance (m, half) | shadow density
+                                             // x 255 << 16 | atlas layer << 24, w = seed
+    var keyLight = SIMD4<Float16>()          // rgb: the light of its brightest light (particleLightKernel), apart from
+    var keyDir = SIMD4<Float16>()            // `radiance` for six-way smoke; xyz: where it comes from (unit)
+}
+
+/// An emitter as the kernels read it (Particles.swift): MSL ParticleEmitter. Written once.
+struct GPUParticleEmitter {
+    var origin = SIMD4<Float>()              // w = the shape's radius
+    var axis = SIMD4<Float>()                // the shape's and the velocity's axis (unit); w = the velocity's spread
+                                             // about it (half angle, rad)
+    var extent = SIMD4<Float>()              // a box's half extents; w = the shape (ParticleEmitter.Shape.code)
+    var velocity = SIMD4<Float>()            // added to every particle's; w = a child's share of its parent's
+    var speed = SIMD4<Float>()               // x...y = speed (m/s), z = 1: outward from the origin, w = the step it starts
+                                             // at (steps count from the start, ParticleSystem.stepLength each)
+    var life = SIMD4<Float>()                // x...y = lifetime (s), z = particles a step, w = the step it stops at
+    var burst = SIMD4<Float>()               // x = the step it bursts at, y = how many, z = every (steps, 0: once),
+                                             // w = bursts (0: no end)
+    var forces = SIMD4<Float>()              // x = gravity's share, y = drag (1/s), z = the wind's share, w = curl noise (m/s^2)
+    var noise = SIMD4<Float>()               // x = curl noise's frequency (1/m), y = its scroll (1/s), z = vortex
+                                             // (m/s^2), w = attraction (m/s^2)
+    var attractor = SIMD4<Float>()           // the vortex's and attraction's centre; w = restitution
+    var size = SIMD4<Float>()                // x = radius at birth, y = at death (m), z = random shrink (0...1),
+                                             // w = stretch (velocity: s; the long axis's half grows by speed x it)
+    var color0 = SIMD4<Float>()              // rgba at birth
+    var color1 = SIMD4<Float>()              // at `look.x`
+    var color2 = SIMD4<Float>()              // at death
+    var look = SIMD4<Float>()                // x = color1's place in the life (0...1), y = emitted light's scale
+                                             // (0: lit), z = soft distance (m), w = most spin (rad/s)
+    var flip = SIMD4<Float>()                // x = frames, y = frames a second (0: the whole life), z = 1: random first
+                                             // frame, w = the atlas kind's trim (its picture's radius, 0...1)
+    var lock = SIMD4<Float>()                // axis: the axis (unit); world: the normal; w = friction
+    var ids = SIMD4<UInt32>()                // x = first slot, y = capacity, z = parent (ParticleSystem.none), w = flags
+    var ids2 = SIMD4<UInt32>()               // x = children an event, y = colliders (mask), z = orientation code,
+                                             // w = atlas layer | shadow density x 255 << 8
+    var ids3 = SIMD4<UInt32>()               // x = a mesh emitter's first instance (ParticleSystem.none: billboards),
+                                             // y = a trail's places (0: none), z = its first trail, w = steps apart
+    var extra = SIMD4<Float>()               // x = collision radius (m), y = a trail's width (of the particle's),
+                                             // z = distortion (rad), w = its seeds' salt (bits: ParticleEmitter.seed)
+    var field = SIMD4<Float>()               // x = its vector field (-1: none), y = strength, z = 1: a velocity it
+                                             // follows (else an acceleration), w = the baked curl's field (-1: none)
+}
+
+/// An emitter's program as the VFX library's kernels read it (VFXProgram; MSL VFXEmitterInfo).
+struct GPUVFXEmitter {
+    var ids = SIMD4<UInt32>()                // x = program (0: none), y = its parameters' first float4, z = hooks
+                                             // (VFXProgram.Hooks), w = its rate curve's first float4
+    var attributes = SIMD4<UInt32>()         // x = the attributes a slot keeps (the system's)
+}
+
+/// A vector field as the kernels read it (ParticleField): MSL ParticleFieldInfo.
+struct GPUParticleField {
+    var lo = SIMD4<Float>()                  // the box's corner; w = 1: periodic
+    var size = SIMD4<Float>()                // its size (a periodic one's period)
+    var dims = SIMD4<UInt32>()               // nodes along x, y, z; w = where its nodes start
+}
+
+/// An analytic shape particles bounce off (Particles.swift): MSL ParticleCollider.
+struct GPUParticleCollider {
+    var a = SIMD4<Float>()                   // plane: normal, w = offset (n.x = w on it); sphere: centre, w = radius;
+                                             // box: centre
+    var b = SIMD4<Float>()                   // box: half extents; w = kind (ParticleCollider.code)
+}
+
+/// One step of the particles (ParticlesGPU.encodeSteps): MSL ParticleStep, set as bytes.
+struct GPUParticleStep {
+    var wind = SIMD4<Float>()                // the air's velocity (m/s); w = the curl noise's clock (s)
+    var time: Float = 0                      // the step's start (s)
+    var dt: Float = 0
+    var step: UInt32 = 0                     // from the start
+    var parity: UInt32 = 0                   // the alive list it reads (step & 1); bit 1: the scene is bound
+    var emitters: UInt32 = 0
+    var colliders: UInt32 = 0
+    var capacity: UInt32 = 0
+    var gravity: Float = 9.81
+    // The pose's (ParticlesGPU.encodePose):
+    var casters: UInt32 = 0                  // the shadow casters' slots (the pool's first)
+    var casterBound: UInt32 = 0              // the casters' structure's boxes; the others' start there in the records
+    var othersBound: UInt32 = 0              // the others' structure's boxes
+    var pose: UInt32 = 0                     // which pair of the pose's counters it counts in (the other pair it clears)
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
+/// One body of water's look (MSL WaterLook, WaterLook.gpu): a table of them, which the water map and the water's
+/// surfaces' triangles name.
+struct GPUWaterLook {
+    var absorption: SIMD4<Float>   // rgb = per metre, w = index of refraction
+    var scattering: SIMD4<Float>   // rgb = per metre, w = phase g
+    var waves: SIMD4<Float>        // x = share of the wind's sea, y = chop, z = ripples, w = roughness
+    var foam: SIMD4<Float>         // x = crest foam, y = shore foam width (m), z = white water, w = flow speed (m/s)
+}
+
+/// The water this frame (MSL WaterScene, Shaders/WaterCommon.metal), its address in the shading arguments
+/// (SceneShading.water): the time and wind of its waves, its map's two levels around the camera, the near patch, the
+/// looks, and its textures (the map, the FFT cascades, the caustics) by their resource IDs.
+struct GPUWaterScene {
+    var time = SIMD4<Float>.zero       // x = now (s), y = the last frame's, z = dt, w = the highest any water's surface reaches (its waves too)
+    var wind = SIMD4<Float>.zero       // xy = toward where it blows (unit; x, z), z = speed (m/s), w = 0
+    var cascades = SIMD4<Float>.zero   // xyz = the FFT cascades' tile sides (m), w = how many (0: no waves)
+    var phase0 = SIMD4<Float>.zero     // where the scene's origin is in each cascade's tile (m): xy = 0th, zw = 1st
+    var phase1 = SIMD4<Float>.zero     // xy = the 2nd's
+    var map0 = SIMD4<Float>.zero       // the map's near level: xy = scene x, z of texel (0, 0)'s corner, z = metres a texel, w = texels a side
+    var map1 = SIMD4<Float>.zero       // ...its far level
+    var near = SIMD4<Float>.zero       // xyz = the near patch's centre (scene), w = its radius (0: none)
+    var counts = SIMD4<UInt32>.zero    // x = looks, y = WATER_* flags, w = METALRENDERER_WATER_DEBUG
+    var looks: UInt64 = 0              // GPUWaterLook per look
+    var level = MTLResourceID()        // map: 2D array [near, far], r = surface (< -1e8: dry), g = ground
+    var info = MTLResourceID()         // map: rg = flow (m/s, 0.5 = still, 1/8 m/s a step: (v / 8) + 0.5), b = look / 255, a = turbulence
+    var waves = MTLResourceID()        // FFT: 2D array per cascade, xyz = displacement (m), w = foam
+    var slopes = MTLResourceID()       // FFT: 2D array per cascade, xy = height's slope (x, z), zw = sideways push's
+    var caustics = MTLResourceID()     // the sun's caustics on a bed a few metres down, tiled as cascade 1
+    var surfaces = MTLResourceID()     // the still surfaces' own structure (a primitive one, the scene's coordinates)
+    var surfaceVertices: UInt64 = 0    // ...their vertices (float4), indices, and a look per triangle (a byte)
+    var surfaceIndices: UInt64 = 0
+    var surfaceLooks: UInt64 = 0
+    var nearPatch = MTLResourceID()    // the near patch's structure (WATER_NEAR), refitted every frame
+    var nearVertices: UInt64 = 0       // ...its vertices as the waves moved them (float4: w = the look)
+    var nearIndices: UInt64 = 0
+    var nearRest: UInt64 = 0           // ...and where each is at rest (float2: x, z)
+    static let fft: UInt32 = 1, nearPatch: UInt32 = 2, causticsOn: UInt32 = 4, mapped: UInt32 = 8
+}
+
 func validateGPULayouts() {
-    precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
-    precondition(MemoryLayout<GPUMesh>.stride == 40 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
+    precondition(MemoryLayout<GPUWaterLook>.stride == 64, "GPUWaterLook layout mismatch")
+    precondition(MemoryLayout<GPUWaterScene>.stride == 256, "GPUWaterScene layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 272, "Uniforms layout mismatch")
+    precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
     precondition(MemoryLayout<GPUJoint>.stride == 48, "GPUJoint layout mismatch")
     precondition(MemoryLayout<GPUJointMatrix>.stride == 48, "GPUJointMatrix layout mismatch")
     precondition(MemoryLayout<GPUPoseSlot>.stride == 32, "GPUPoseSlot layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
+    precondition(MemoryLayout<GPUMaterialExtra>.stride == 32, "GPUMaterialExtra layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")
@@ -619,6 +884,11 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsTet>.stride == 32, "GPUPhysicsTet layout mismatch")
     precondition(MemoryLayout<GPUSoftVertex>.stride == 32, "GPUSoftVertex layout mismatch")
     precondition(MemoryLayout<GPUSoftEmbed>.stride == 32, "GPUSoftEmbed layout mismatch")
+    precondition(MemoryLayout<GPUFleshHeader>.stride == 64, "GPUFleshHeader layout mismatch")
+    precondition(MemoryLayout<GPUFleshPin>.stride == 48, "GPUFleshPin layout mismatch")
+    precondition(MemoryLayout<GPUMuscle>.stride == 64, "GPUMuscle layout mismatch")
+    precondition(MemoryLayout<GPUFleshFibre>.stride == 32, "GPUFleshFibre layout mismatch")
+    precondition(MemoryLayout<GPUSkinAttach>.stride == 64, "GPUSkinAttach layout mismatch")
     precondition(MemoryLayout<GPUPhysicsConstraint>.stride == 16, "GPUPhysicsConstraint layout mismatch")
     precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
     precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")
@@ -627,5 +897,14 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUHairVertex>.stride == 64, "GPUHairVertex layout mismatch")
     precondition(MemoryLayout<GPUHairParams>.stride == 64, "GPUHairParams layout mismatch")
     precondition(MemoryLayout<GPUHairGroup>.stride == 64, "GPUHairGroup layout mismatch")
+    precondition(MemoryLayout<GPUFluidParticle>.stride == 80, "GPUFluidParticle layout mismatch")
+    precondition(MemoryLayout<GPUFluidParams>.stride == 224, "GPUFluidParams layout mismatch")
+    precondition(MemoryLayout<GPUFluidSurface>.stride == 80, "GPUFluidSurface layout mismatch")
+    precondition(MemoryLayout<GPUParticle>.stride == 48, "GPUParticle layout mismatch")
+    precondition(MemoryLayout<GPUParticleRender>.stride == 80, "GPUParticleRender layout mismatch")
+    precondition(MemoryLayout<GPUParticleField>.stride == 48, "GPUParticleField layout mismatch")
+    precondition(MemoryLayout<GPUParticleEmitter>.stride == 352, "GPUParticleEmitter layout mismatch")
+    precondition(MemoryLayout<GPUParticleCollider>.stride == 32, "GPUParticleCollider layout mismatch")
+    precondition(MemoryLayout<GPUParticleStep>.stride == 64, "GPUParticleStep layout mismatch")
     precondition(MemoryLayout<SIMD3<Float>>.stride == 16, "float3 must be 16 bytes to match MSL")
 }

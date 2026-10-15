@@ -12,9 +12,9 @@ extension Scene {
 
         init(_ scene: Scene) {
             self.scene = scene
-            quad = scene.addMesh(Scene.quadMesh())
-            cube = scene.addMesh(Scene.cubeMesh())
-            sphere = scene.addMesh(Scene.icosphere(subdivisions: 3))
+            quad = scene.addMesh(Scene.quadMesh(), label: "quad")
+            cube = scene.addMesh(Scene.cubeMesh(), label: "box")
+            sphere = scene.addMesh(Scene.icosphere(subdivisions: 3), label: "ball")
         }
 
         /// An axis-aligned box (rotated about Y by `yaw`) given by its centre and size.
@@ -36,11 +36,13 @@ extension Scene {
 
         /// Floor, back and side walls (and a ceiling if `ceiling`) of a room open toward +Z.
         func room(width w: Float, height h: Float, depth d: Float, floor: Int, walls: Int, ceiling: Bool) {
-            scene.addInstance(quad, floor, scale([w, 1, d]))
-            scene.addInstance(quad, walls, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))
-            scene.addInstance(quad, walls, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-            scene.addInstance(quad, walls, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-            if ceiling { scene.addInstance(quad, walls, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d])) }
+            scene.object("Room") {
+                scene.object("Floor") { scene.addInstance(quad, floor, scale([w, 1, d])) }
+                scene.object("Back wall") { scene.addInstance(quad, walls, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h])) }
+                scene.object("Left wall") { scene.addInstance(quad, walls, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
+                scene.object("Right wall") { scene.addInstance(quad, walls, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
+                if ceiling { scene.object("Ceiling") { scene.addInstance(quad, walls, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d])) } }
+            }
         }
     }
 
@@ -70,7 +72,13 @@ extension Scene {
         case .ragdolls: return camera([3.2, 3.4, 7.6], yaw: -0.36, pitch: -0.3)
         case .hair: return camera([0.1, 1.9, 4.8], yaw: -0.02, pitch: -0.21)
         case .softBodies: return camera([0, 2.3, 3.0], pitch: -0.42)
-        case .cornell, .stress, .gallery, .storeroom, .crowd, .city, .cityNight, .world, .showcase:
+        case .muscles: return camera([0, 2.4, 8.2], pitch: -0.24)
+        case .fluids: return camera([0, 1.25, 1.05], pitch: -0.64)
+        case .particles: return camera([0.3, 1.7, 6.2], yaw: 0.02, pitch: -0.12)
+        case .vfxStage: return camera([0, 2.4, 10.5], pitch: 0.02)
+        case .materials: return camera([0, 2.0, 6.6], pitch: -0.17)
+        case .painter: return camera([0, 1.5, 3.4], pitch: -0.16)
+        case .cornell, .stress, .gallery, .storeroom, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings, .characters, .mireland, .terrain:
             return nil   // the crowd's, the city's, the world's and the showcase's are their scenes' to say
         }
     }
@@ -145,9 +153,11 @@ extension Scene {
 
         kit.room(width: 24, height: 9, depth: 16, floor: stage, walls: wall, ceiling: false)
         // Steps up to a riser at the back.
+        section("Riser")
         kit.slab([-6, 0, -8], [6, 0.4, -5], white)
         kit.slab([-4, 0.4, -8], [4, 0.8, -6.2], white)
         // Props.
+        section("Props")
         for x: Float in [-5, 5] { kit.box([x, 2.0, -6.5], [0.6, 4, 0.6], white) }
         kit.ball([-2.2, 0.7, -1.5], 0.7, steel)
         kit.ball([1.2, 1.3, -6.8], 0.5, gold)
@@ -156,8 +166,10 @@ extension Scene {
         kit.ball([4.5, 0.45, 1.5], 0.45, white)
         kit.box([-5, 0.35, 1], [0.7, 0.7, 0.7], gold, yaw: 0.8)
         // Truss the spots hang from.
+        section("Truss")
         kit.box([0, 6.0, 1.5], [15, 0.25, 0.25], truss)
 
+        section("Spot lights")
         let colors: [SIMD3<Float>] = [[1.0, 0.9, 0.75], [1.0, 0.25, 0.15], [0.3, 1.0, 0.35], [0.25, 0.45, 1.0],
                                       [0.95, 0.3, 1.0], [1.0, 0.65, 0.2]]
         for i in 0..<6 {
@@ -191,16 +203,28 @@ extension Scene {
         let green = addMaterial(albedo: [0.2, 0.42, 0.18])
         let blue = addMaterial(albedo: [0.15, 0.3, 0.65])
 
+        section("Ground")
         addInstance(kit.quad, ground, scale([60, 1, 60]))
+        // Beyond it meadows over hills (a terrain of its own, a little under the courtyard's ground), a plain beyond them.
+        let meadow = addMaterial(albedo: [0.26, 0.31, 0.15])
+        addGroundTerrain("sun-courtyard", base: ShapedTerrainBase(NoiseTerrainBase(size: 768, cells: 192, seed: 0x5A11, relief: 12, featureSize: 160),
+                                                                  shapes: TerrainShapes(flats: [TerrainShapes.Flat(lo: [-30, -30], hi: [30, 30], level: -0.03,
+                                                                                                                   blend: 50)])),
+                         material: meadow)
+        addGroundLook(GroundLook.meadow(lo: [-384, -384], size: [768, 768], texels: 1024, key: "sun-courtyard", seed: 0x5A11))
+        addInstance(kit.quad, meadow, translate([0, -20, 0]) * scale([20_000, 1, 20_000]))
         // Courtyard walls (open toward the camera).
+        section("Courtyard walls")
         kit.slab([-10, 0, -10.4], [10, 4.5, -10], plaster)
         kit.slab([-10.4, 0, -10.4], [-10, 4.5, 4], plaster)
         kit.slab([10, 0, -10.4], [10.4, 3, 0], plaster)
         // Colonnade: a roof on eight columns.
+        section("Colonnade")
         kit.slab([-9.6, 3.6, -6], [1, 3.9, -2.4], terracotta)
         for x: Float in stride(from: -9, through: 0.5, by: 1.35) { kit.box([x, 1.8, -2.7], [0.35, 3.6, 0.35], stone) }
         kit.slab([-9.6, 0, -6], [1, 0.12, -2.4], stone)
         // A room on the right: thick walls, a roof, two windows and a door toward the courtyard.
+        section("Room")
         let (x0, x1, z0, z1, h): (Float, Float, Float, Float, Float) = (3, 10, -10, -4, 3.4)
         kit.slab([x0, h, z0], [x1, h + 0.3, z1], terracotta)
         kit.slab([x0, 0, z0], [x0 + 0.3, h, z1], plaster)                          // left wall
@@ -217,7 +241,17 @@ extension Scene {
         kit.box([6.5, 0.4, -8], [2, 0.8, 1], blue)                                   // furniture inside
         kit.ball([8.6, 0.5, -8.6], 0.5, plaster)
         // Courtyard: a fountain, planters, a few objects.
-        kit.box([-3, 0.3, 0.5], [3, 0.6, 3], stone)
+        section("Fountain and planters")
+        // The fountain: a raised reflecting pool (a stone rim, a dark floor, still water a little under the rim's top)
+        // round its column.
+        let (p0, p1): (SIMD2<Float>, SIMD2<Float>) = ([-4.5, -1], [-1.5, 2]), rim: Float = 0.25
+        kit.slab([p0.x, 0, p0.y], [p1.x, 0.6, p0.y + rim], stone)
+        kit.slab([p0.x, 0, p1.y - rim], [p1.x, 0.6, p1.y], stone)
+        kit.slab([p0.x, 0, p0.y + rim], [p0.x + rim, 0.6, p1.y - rim], stone)
+        kit.slab([p1.x - rim, 0, p0.y + rim], [p1.x, 0.6, p1.y - rim], stone)
+        kit.slab([p0.x + rim, 0, p0.y + rim], [p1.x - rim, 0.12, p1.y - rim], addMaterial(albedo: [0.1, 0.11, 0.11]))
+        addPoolWater([[p0.x + rim, p0.y + rim], [p1.x - rim, p0.y + rim], [p1.x - rim, p1.y - rim], [p0.x + rim, p1.y - rim]],
+                     level: 0.5, floor: 0.12, key: "sun-pool")
         kit.box([-3, 0.9, 0.5], [0.4, 1.2, 0.4], stone)
         kit.ball([-3, 1.7, 0.5], 0.4, stone)
         for x: Float in [-8, 7.5] {
@@ -228,11 +262,12 @@ extension Scene {
         kit.ball([1, 0.6, 3.5], 0.6, plaster)
 
         // The day: elevation 8 to 62 degrees and back, the azimuth swinging with it.
-        let day: Float = 60
-        func elevation(_ t: Float) -> Float { Scene.degrees(35 - 27 * cos(2 * .pi * (t + 12) / day)) }   // t = 0: mid-morning
+        section("Sun")
+        let sweep = DaySweep.courtyard
+        func elevation(_ t: Float) -> Float { Scene.degrees(35 - 27 * cos(2 * .pi * sweep.phase(t))) }   // t = 0: mid-morning
         func warmth(_ t: Float) -> Float { simd_smoothstep(Scene.degrees(6), Scene.degrees(35), elevation(t)) }
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { t in
-            let e = elevation(t), az = -0.9 + 1.4 * sin(2 * .pi * (t + 12) / day)
+            let e = elevation(t), az = -0.9 + 1.4 * sin(2 * .pi * sweep.phase(t))
             let tint = simd_mix(SIMD3<Float>(1.0, 0.5, 0.25) * 1.4, SIMD3<Float>(1.0, 0.95, 0.88) * 1.8, SIMD3(repeating: warmth(t)))
             return LightPose(position: .zero, direction: [cos(e) * sin(az), sin(e), cos(e) * cos(az)], scale: tint)
         }
@@ -257,9 +292,11 @@ extension Scene {
         kit.room(width: 16, height: 6, depth: 14, floor: floor, walls: wall, ceiling: true)
 
         // A ramp of red dielectric spheres from mirror-smooth to rough, then metals.
+        section("Roughness ramp")
         for (i, r) in [Float(0.05), 0.15, 0.3, 0.5, 0.8].enumerated() {
             kit.ball([-3.2 + 1.6 * Float(i), 0.55, -1.5], 0.55, addPBRMaterial(baseColor: [0.75, 0.1, 0.08], metallic: 0, roughness: r))
         }
+        section("Metals and props")
         kit.ball([-1.6, 0.6, -4], 0.6, addPBRMaterial(baseColor: [1.0, 0.78, 0.35], metallic: 1, roughness: 0.2))
         kit.box([1.6, 0.6, -4], [1.2, 1.2, 1.2], addPBRMaterial(baseColor: [0.95, 0.95, 0.97], metallic: 1, roughness: 0.05), yaw: 0.6)
         kit.box([0, 0.15, -4.3], [1.2, 0.3, 1.2], white)
@@ -267,6 +304,7 @@ extension Scene {
         kit.box([-4.6, 1.0, -4.5], [0.6, 2, 0.6], white, yaw: 0.4)
 
         // Softboxes face the objects; the window panel sits on the back wall, the long panel on the ceiling.
+        section("Softboxes and panels")
         let target = SIMD3<Float>(0, 0.6, -2.6)
         let left = SIMD3<Float>(-4.5, 3.2, 1.2)
         addLight(.rect(width: 1.6, height: 1.2), color: SIMD3<Float>(1.0, 0.92, 0.82) * 7, motion: .constant) { _ in
@@ -300,20 +338,25 @@ extension Scene {
         let tyre = addMaterial(albedo: [0.04, 0.04, 0.04])
         let yellow = addMaterial(albedo: [0.8, 0.65, 0.1])
         kit.room(width: 20, height: 3.4, depth: 16, floor: concrete, walls: wall, ceiling: true)
+        section("Pillars")
         for x: Float in [-5, 5] {
             for z: Float in [-5, 1] { kit.box([x, 1.7, z], [0.5, 3.4, 0.5], wall) }
         }
         // Parking lines.
+        section("Parking lines")
         for x: Float in [-2.6, 2.6] { kit.slab([x - 0.06, 0, -6], [x + 0.06, 0.005, 0], yellow) }
         // The car.
+        section("Car")
         kit.box([0, 0.75, -3], [1.9, 0.7, 4.2], paint)
         kit.box([0, 1.35, -3.2], [1.7, 0.55, 2.2], glass)
         for (x, z) in [(Float(-0.9), Float(-1.6)), (0.9, -1.6), (-0.9, -4.4), (0.9, -4.4)] {
             addInstance(kit.sphere, tyre, translate([x, 0.36, z]) * rotate(.pi / 2, [0, 0, 1]) * scale([0.36, 0.15, 0.36]))
         }
+        section("Crate")
         kit.box([-7, 0.5, -6.5], [1.2, 1, 1.6], wall, yaw: 0.2)
 
         // Fluorescent tubes: three rows of two along X, just below the ceiling.
+        section("Fluorescent tubes")
         for z: Float in [-5, -2, 1] {
             for x: Float in [-3.2, 3.2] {
                 addLight(.tube(length: 1.5, radius: 0.025), color: SIMD3<Float>(0.95, 0.97, 1.0) * 2.2, motion: .constant) { _ in
@@ -322,6 +365,7 @@ extension Scene {
             }
         }
         // Neon: pink along the back wall, a cyan upright on the left (flickering), an amber one on the right.
+        section("Neon")
         addLight(.tube(length: 4, radius: 0.03), color: Scene.hue([1.0, 0.2, 0.6]) * 2.5, motion: .constant) { _ in
             LightPose(position: [0, 2.5, -7.9], direction: [1, 0, 0])
         }
@@ -354,6 +398,7 @@ extension Scene {
         kit.room(width: 16, height: 5, depth: 14, floor: floor, walls: wall, ceiling: true)
 
         // "GI" in neon bars, 1.2 m tall, on the back wall.
+        section("GI sign")
         let pink = addMaterial(albedo: .zero, emission: Scene.hue([1.0, 0.15, 0.55]) * 6)
         let cyan = addMaterial(albedo: .zero, emission: Scene.hue([0.1, 0.85, 1.0]) * 6)
         let (z, t): (Float, Float) = (-6.9, 0.08)
@@ -366,17 +411,21 @@ extension Scene {
         kit.box([-0.6, 2.0, z], [0.5, t, t], cyan)
 
         // A warm orb on a plinth, and a cool screen on the right wall.
+        section("Orb")
         kit.box([-5, 0.5, -3], [0.8, 1, 0.8], white)
         kit.ball([-5, 1.45, -3], 0.4, addMaterial(albedo: .zero, emission: [1.0, 0.55, 0.2] * 5))
         fogVolumes.append(FogVolume(shape: .sphere(radius: 1.8), center: [-5, 1.45, -3], density: 0.15, edge: 1, noise: 0.8))
+        section("Screen")
         addInstance(kit.quad, addMaterial(albedo: .zero, emission: [0.55, 0.7, 1.0] * 2.5),
                     translate([7.95, 2.2, -2.5]) * rotate(.pi / 2, [0, 0, 1]) * scale([1.8, 1, 3.2]))
 
         // Objects in the middle, and a ring of emissive cubes spinning around them.
+        section("Objects")
         kit.box([0, 0.9, -2.5], [0.6, 1.8, 0.6], white, yaw: 0.4)
         kit.ball([1.2, 0.5, -1.5], 0.5, steel)
         kit.box([-1.3, 0.4, -1.2], [0.8, 0.8, 0.8], white, yaw: 0.9)
         kit.ball([0.8, 0.35, -3.8], 0.35, white)
+        section("Spinning ring")
         let ringColors: [SIMD3<Float>] = [[1, 0.2, 0.15], [1, 0.6, 0.1], [0.9, 1, 0.2], [0.2, 1, 0.3],
                                           [0.1, 0.9, 1], [0.2, 0.35, 1], [0.7, 0.2, 1], [1, 0.2, 0.7]]
         for (i, c) in ringColors.enumerated() {
@@ -405,6 +454,7 @@ extension Scene {
         let wood = addMaterial(albedo: [0.4, 0.26, 0.15])
         let bronze = addPBRMaterial(baseColor: [0.85, 0.6, 0.35], metallic: 1, roughness: 0.3)
         let (x0, x1, z0, z1, h): (Float, Float, Float, Float, Float) = (-6, 6, -24, 4, 9)
+        section("Hall")
         addInstance(kit.quad, floor, translate([0, 0, (z0 + z1) / 2]) * scale([x1 - x0, 1, z1 - z0]))
         kit.slab([x0 - 0.4, h, z0 - 0.4], [x1 + 0.3, h + 0.3, z1 + 0.3], stone)   // ceiling
         kit.slab([x0, 0, z1], [x1, h, z1 + 0.3], stone)                           // wall behind the camera
@@ -433,30 +483,37 @@ extension Scene {
                    wall: { a, b, y0, y1 in kit.slab([x0 - 0.4, y0, a], [x0, y1, b], stone) },
                    bar: { a, b, y0, y1 in kit.slab([x0 - 0.3, y0, a], [x0 - 0.1, y1, b], dark) })
         // Columns along both sides, a balcony on the right, benches and a statue.
+        section("Columns")
         for cz: Float in [-22, -17, -12, -7, -2] {
             for cx: Float in [-4.6, 4.6] { kit.box([cx, h / 2, cz], [0.7, h, 0.7], stone) }
         }
+        section("Balcony")
         kit.slab([4.95, 4.0, -20], [x1, 4.25, -8], stone)
         kit.slab([4.95, 4.25, -20], [5.05, 4.7, -8], dark)                      // its railing
+        section("Benches")
         for bz: Float in [-4.5, -9.5] {
             kit.box([-1.6, 0.25, bz], [0.5, 0.5, 2.4], wood)
             kit.box([1.6, 0.25, bz], [0.5, 0.5, 2.4], wood)
         }
+        section("Statue")
         kit.box([0, 0.5, -13], [1.4, 1, 1.4], stone)
         kit.box([0, 1.6, -13], [0.5, 1.2, 0.5], bronze, yaw: 0.4)
         kit.ball([0, 2.55, -13], 0.35, bronze)
         // The far end: a low dais with a glowing orb in its own cloud.
+        section("Dais and orb")
         kit.slab([x0, 0, z0], [x1, 0.3, -21.5], stone)
         kit.box([3.4, 0.8, -20.5], [0.6, 1, 0.6], stone)
         kit.ball([3.4, 1.7, -20.5], 0.4, addMaterial(albedo: .zero, emission: [1.0, 0.6, 0.3] * 6))
 
         // The low sun beyond the far wall, a little to the left, swinging +-10 degrees.
+        section("Sun")
         let e = Scene.degrees(24)
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: SIMD3<Float>(1.0, 0.88, 0.72) * 5) { t in
             let a = Scene.degrees(-14 + 10 * sin(0.12 * t))
             return LightPose(position: .zero, direction: [cos(e) * sin(a), sin(e), -cos(e) * cos(a)])
         }
         // A searchlight high on the left wall, between two columns, sweeping the right half of the hall.
+        section("Searchlight")
         let searchlight = SIMD3<Float>(-3.9, 7.3, -14.5)
         kit.box(searchlight + [-0.45, 0.1, 0], [0.5, 0.4, 0.4], dark)
         kit.slab([-5.4, 7.1, -14.6], [-4.6, 7.2, -14.4], dark)                   // its bracket
@@ -465,6 +522,7 @@ extension Scene {
             return LightPose(position: searchlight, direction: normalize(target - searchlight))
         }
         // A lantern in the mist, bobbing a little.
+        section("Lantern")
         addLight(.sphere(radius: 0.08), color: SIMD3<Float>(1.0, 0.6, 0.25) * 5) { t in
             LightPose(position: [-3, 1.0 + 0.1 * sin(0.8 * t), -17])
         }
@@ -478,36 +536,82 @@ extension Scene {
     // MARK: - Open valley
 
     /// An open valley under the sky (the atmosphere and clouds preset): fields, a road and a small village with a
-    /// church tower, trees and fences, hills around, and a day cycle from morning to evening and back (90 s each
+    /// church tower, trees and fences, hills around, a stream running down the western hill into a lake by the
+    /// village, and a day cycle from morning to evening and back (90 s each
     /// way; the sun stays 10 degrees or more above the horizon, as the exposure is fixed). Low, small clouds drift
     /// over it, so their shadows cross the fields.
     func buildValley() {
         let kit = Kit(self)
-        let grass = addMaterial(albedo: [0.22, 0.36, 0.13])
         let wheat = addMaterial(albedo: [0.62, 0.52, 0.24])
         let meadow = addMaterial(albedo: [0.3, 0.42, 0.16])
         let road = addMaterial(albedo: [0.32, 0.3, 0.28])
         let wall = addMaterial(albedo: [0.78, 0.74, 0.66])
         let roof = addMaterial(albedo: [0.55, 0.2, 0.12])
         let slate = addMaterial(albedo: [0.25, 0.26, 0.3])
-        let hill = addMaterial(albedo: [0.24, 0.34, 0.15])
         let wood = addMaterial(albedo: [0.45, 0.33, 0.2])
-        let pond = addPBRMaterial(baseColor: [0.03, 0.05, 0.06], metallic: 0, roughness: 0.04)
 
-        addInstance(kit.quad, grass, scale([400, 1, 400]))
-        // Fields and the road.
-        for (lo, hi, m) in [(SIMD3<Float>(-90, 0, -60), SIMD3<Float>(-20, 0.02, 10), wheat),
-                            (SIMD3<Float>(25, 0, -80), SIMD3<Float>(110, 0.02, -15), wheat),
-                            (SIMD3<Float>(25, 0, 5), SIMD3<Float>(90, 0.02, 60), meadow)] as [(SIMD3<Float>, SIMD3<Float>, Int)] {
-            kit.slab(lo, hi, m)
+        section("Ground")
+        // The terrain "valley" (Terrain Editor): 800 m of level ground at 2 m a cell, with the hills on three sides (the
+        // tops of ellipsoids sunk into it), the hills' own green where they rise.
+        let lawn = addMaterial(albedo: [0.22, 0.36, 0.13])
+        _ = addMaterial(albedo: [0.24, 0.34, 0.15])   // lawn + 1: kind 1, the hills'
+        let hills: [FlatTerrainBase.Hill] = [
+            .init(center: [-150, -20, -170], radii: [140, 70, 70]), .init(center: [60, -25, -190], radii: [170, 80, 60]),
+            .init(center: [190, -15, -40], radii: [60, 55, 140]), .init(center: [-190, -18, 20], radii: [50, 50, 120]),
+        ]
+        let valleyGrid = TerrainGrid.square(size: 800, cells: 400)
+        let ground = FlatTerrainBase(grid: valleyGrid, level: 0, hills: hills, kinds: true)
+        // Its water, shaped into it: a stream from high on the western hill, down and across the level ground north of
+        // the fields, into a lake beside the village (where its pond was).
+        let stream = SceneWaterMaker.river(name: "Stream", base: ground, from: [-178, 46], to: [-43, 27], width: 5, depth: 1.1, meander: 9,
+                                           seed: 7)
+        let lake = SceneWaterMaker.pond(name: "Lake", center: [-31, 23], radii: [12, 8],
+                                        level: min(SceneWaterMaker.endLevel(stream.body), -0.25), depth: 2)
+        let valley = Scene.openTerrain("valley", base: ShapedTerrainBase(ground, shapes: TerrainShapes(bowls: [lake.bowl], channels: [stream.channel])),
+                                       layers: TerrainDocument.sceneLayers())
+        addTerrain(name: "valley", field: valley.field, tiles: valleyGrid.tiles!.map { ($0, 0) },
+                   style: TerrainMeshStyle(uvOrigin: valleyGrid.origin, uvScale: 1, rock: 1), material: lawn,
+                   generatedWater: [stream.body, lake.body])
+        let waterField = water?.field
+        func dry(_ x: Float, _ z: Float) -> Bool { !(waterField?.wet(Double(x), Double(z), margin: 2.5) ?? false) }
+        // The realistic look: meadow, worn to earth round the village; the fields and roads in the ground itself (wheat as
+        // ripe dry grass, the meadow field's lusher grass, gravel roads), mud by the stream and the lake.
+        let realistic = settings.realism != .off
+        let fields: [(lo: SIMD2<Float>, hi: SIMD2<Float>, wheat: Bool)] = [([-90, -60], [-20, 10], true), ([25, -80], [110, -15], true),
+                                                                          ([25, 5], [90, 60], false)]
+        if realistic {
+            let meadow = GroundLook.meadow(lo: [-400, -400], size: [800, 800], texels: 2048, key: "", seed: 0x7A11, water: waterField) { x, z in
+                (1 - GroundLook.smooth(0, 14, simd_length(SIMD2(x, z)) - 30)) * 0.45
+            }
+            var look = meadow
+            look.layers += [.init(set: "gravel", color: [0.35, 0.33, 0.3], tint: [0.85, 0.83, 0.8], metres: 3, contrast: 0.6),
+                            .init(set: "dry-grass", color: [0.42, 0.36, 0.15], tint: [1.15, 1.0, 0.62], metres: 2.5, contrast: 0.5)]
+            look.key = "valley \(valley.field.snapshot().editsFingerprint) v1"
+            look.weights = { x, z in
+                var w = meadow.weights(x, z) + [0, 0]
+                func over(_ k: Int, _ amount: Float) {
+                    guard amount > 0 else { return }
+                    for i in w.indices { w[i] *= 1 - amount }
+                    w[k] += amount
+                }
+                for f in fields {
+                    let d = max(max(f.lo.x - x, x - f.hi.x), max(f.lo.y - z, z - f.hi.y))
+                    let inside = 1 - GroundLook.smooth(-1.5, 0.5, d)
+                    over(f.wheat ? 7 : 0, inside)
+                }
+                let road = min(abs(z) - 3, max(abs(x) - 3, z + 3))
+                over(6, 1 - GroundLook.smooth(-0.3, 0.8, road))
+                over(2, (1 - GroundLook.smooth(0.5, 2.5, road)) * GroundLook.smooth(-0.3, 0.8, road) * 0.7)
+                return w
+            }
+            addGroundLook(look)
         }
-        kit.slab([-200, 0, -3], [200, 0.04, 3], road)
-        kit.slab([-3, 0, -200], [3, 0.04, -3], road)
-        kit.slab([-40, 0, 18], [-22, 0.05, 30], pond)
-        // Hills on three sides (flattened spheres sunk into the ground).
-        for (c, sz) in [(SIMD3<Float>(-150, -20, -170), SIMD3<Float>(140, 70, 70)), (SIMD3<Float>(60, -25, -190), SIMD3<Float>(170, 80, 60)),
-                        (SIMD3<Float>(190, -15, -40), SIMD3<Float>(60, 55, 140)), (SIMD3<Float>(-190, -18, 20), SIMD3<Float>(50, 50, 120))] {
-            addInstance(kit.sphere, hill, translate(c) * scale(sz))
+        // Fields and the road.
+        section("Fields and roads")
+        if !realistic {
+            for f in fields { kit.slab(SIMD3(f.lo.x, 0, f.lo.y), SIMD3(f.hi.x, 0.02, f.hi.y), f.wheat ? wheat : meadow) }
+            kit.slab([-200, 0, -3], [200, 0.04, 3], road)
+            kit.slab([-3, 0, -200], [3, 0.04, -3], road)
         }
         // The village around the crossroads: houses with pitched roofs, and a church with a tower.
         func house(_ x: Float, _ z: Float, _ yaw: Float, _ w: Float = 6, _ d: Float = 8, _ h: Float = 4) {
@@ -518,40 +622,67 @@ extension Scene {
                             * scale([w * 0.62, 0.25, d + 0.6]))
             }
         }
+        section("Village")
         for (x, z, yaw) in [(Float(-12), Float(-12), Float(0)), (-24, -14, 0.1), (-13, 12, 0), (12, -13, 0.05), (24, -12, -0.1),
                             (13, 13, 0), (-36, -11, 0.2), (36, 12, -0.15)] {
             house(x, z, yaw)
         }
+        section("Church")
         addInstance(kit.cube, wall, translate([-8, 4, -36]) * scale([10, 8, 18]))                    // church
         addInstance(kit.cube, slate, translate([-8, 9.2, -36]) * rotate(.pi / 4, [0, 0, 1]) * scale([7.4, 7.4, 18.4]))
         addInstance(kit.cube, wall, translate([-8, 10, -24]) * scale([5, 20, 5]))                    // tower
         addInstance(kit.cube, slate, translate([-8, 22, -24]) * rotate(.pi / 4, [0, 1, 0]) * scale([3.2, 4, 3.2]))
         // Trees (Foliage): young oaks and birches along the road, grown trees in a copse and alone in the fields.
-        let flora = Flora(self, seed: UInt64(max(settings.seed, 0)), species: [.oak, .birch, .conifer])
+        section("Trees")
+        let flora = Flora(self, seed: UInt64(max(settings.seed, 0)), catalog: PlantCatalog.resolve(settings.plantCatalog),
+                          species: realistic ? [.oak, .birch, .conifer, .grass] : [.oak, .birch, .conifer])
         var pick = SplitMix64(seed: 0x7EE5 &+ UInt64(max(settings.seed, 0)))
         func tree(_ x: Float, _ z: Float, _ species: Foliage.Species, _ age: Foliage.Age, _ size: Float) {
             let plants = flora.plants(species, age)
-            flora.place(species, plants[pick.int(plants.count)], at: [x, -0.1, z], yaw: pick.range(0, 2 * .pi), size: size,
-                        shade: pick.int(16))
+            let plant = plants[pick.int(plants.count)], yaw = pick.range(0, 2 * .pi), shade = pick.int(16)
+            guard dry(x, z) else { return }   // (its numbers drawn all the same: the next tree's stay its own)
+            flora.place(species, plant, at: [x, -0.1, z], yaw: yaw, size: size, shade: shade)
         }
         for i in 0..<8 { tree(-60 + Float(i) * 14, 6, i % 2 == 0 ? .oak : .birch, .young, 0.75 + 0.08 * Float(i % 3)) }
         for (i, (x, z)) in [(Float(55), Float(-30)), (60, -24), (66, -32), (58, -38), (70, -26), (-60, 40), (80, 30), (-110, -20)].enumerated() {
             tree(x, z, [.oak, .conifer, .birch, .oak][i % 4], .mature, 0.6)
         }
+        // The realistic look's rocks: along the stream and the lake, and at the hills' feet.
+        if realistic {
+            addRocks(count: 6000, lo: [-260, -260], hi: [260, 120], seed: 0x7A14) { x, z in
+                let near = !dry(x, z) ? Float(0) : (waterField?.wet(Double(x), Double(z), margin: 4) == true ? 1 : 0)
+                let h = self.terrain?.height(x, z) ?? 0
+                let foot = h > 0.5 ? Float(0.35) : 0
+                return (max(near * 0.7, foot), 0.25...(0.8 + 1.8 * foot))
+            }
+        }
+        // The realistic look's grass round the village and the camera: not on the roads, the wheat or in the water.
+        if realistic {
+            addMeadowGrass(center: [-10, 30], reach: 80, seed: 0x7A12, flora: flora) { x, z in
+                guard dry(x, z) else { return 0 }
+                let road = min(abs(z) - 3, max(abs(x) - 3, z + 3))
+                if road < 1.5 { return 0 }
+                for f in fields where f.wheat && x > f.lo.x - 1 && x < f.hi.x + 1 && z > f.lo.y - 1 && z < f.hi.y + 1 { return 0 }
+                return 0.75 + 0.25 * GroundLook.smooth(-0.3, 0.4, Terrain.noise(SIMD2(x, z) / 17, seed: 0x7A13))
+            }
+        }
         // A fence along the meadow, close to the camera.
+        section("Fence")
         for i in 0..<16 { kit.box([10 + Float(i) * 2.5, 0.6, 22], [0.12, 1.2, 0.12], wood) }
         kit.box([28.75, 0.9, 22], [37.5, 0.08, 0.08], wood)
         kit.box([28.75, 0.5, 22], [37.5, 0.08, 0.08], wood)
 
-        addDaySun(half: 90)
+        section("Sun")
+        addDaySun()
         defaultCamera = Scene.demoCamera(.valley)!
     }
 
     /// The valley's and the forest's sun: morning in the east (+x) to evening in the west (-x), passing ahead of the
-    /// camera (-z), and back, `half` seconds each way; t = 0 is mid-morning. Its colour comes from the atmosphere.
-    func addDaySun(half: Float) {
+    /// camera (-z), and back, 90 seconds each way (`DaySweep.valley`); t = 0 is mid-morning. Its colour comes from the
+    /// atmosphere.
+    func addDaySun() {
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { t in
-            let phase = 0.5 - 0.5 * cos(.pi * (t / half + 0.35))   // 0 = morning, 1 = evening
+            let phase = DaySweep.valley.phase(t)   // 0 = morning, 1 = evening
             let e = Scene.degrees(10 + 50 * sin(.pi * phase)), a = Scene.degrees(20 + 140 * phase)
             return LightPose(position: .zero, direction: [cos(e) * cos(a), sin(e), -cos(e) * sin(a)])
         }
@@ -572,6 +703,7 @@ extension Scene {
         let black = addPBRMaterial(baseColor: [0.03, 0.03, 0.03], metallic: 0, roughness: 0.2)
         let ground = addMaterial(albedo: [0.35, 0.33, 0.3])
         let (w, h, d): (Float, Float, Float) = (10, 3.2, 8)
+        section("Room")
         addInstance(kit.quad, ground, translate([0, -0.01, 0]) * scale([60, 1, 60]))
         addInstance(kit.quad, floor, scale([w, 1, d]))
         addInstance(kit.quad, wall, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d]))
@@ -585,6 +717,7 @@ extension Scene {
         kit.slab([x, 2.5, -2.5], [-w / 2, h, 1], wall)
 
         // Furniture.
+        section("Furniture")
         kit.slab([1.0, 0, -1.6], [4.4, 0.01, 1.2], rug)
         kit.slab([1.6, 0, -1.3], [2.4, 0.45, 0.9], fabric)                          // sofa facing the TV
         kit.slab([1.3, 0, -1.3], [1.6, 1.0, 0.9], fabric)
@@ -598,19 +731,23 @@ extension Scene {
         kit.slab([-1.8, 1.9, -4.0], [1.2, 1.95, -3.7], wood)                        // shelf
         for i in 0..<6 { kit.box([-1.5 + 0.45 * Float(i), 2.12, -3.85], [0.12, 0.35 + 0.05 * Float(i % 3), 0.22], i % 2 == 0 ? fabric : rug) }
         // TV on the right wall: a black frame and an emissive screen (an emissive-mesh light).
+        section("TV")
         kit.slab([4.9, 1.0, -1.2], [5.0, 2.1, 0.8], black)
         addInstance(kit.quad, addMaterial(albedo: .zero, emission: [0.5, 0.65, 1.0] * 1.2),
                     translate([4.89, 1.55, -0.2]) * rotate(.pi / 2, [0, 0, 1]) * scale([1.0, 1, 1.9]))
 
         // The lights.
+        section("Sun")
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: SIMD3<Float>(1.0, 0.55, 0.3) * 3.5) { t in
             let e = Scene.degrees(11 + 2 * sin(0.1 * t)), az = Scene.degrees(-100 + 6 * sin(0.07 * t))
             return LightPose(position: .zero, direction: [cos(e) * sin(az), sin(e), cos(e) * cos(az)])
         }
         skyColor = SIMD3<Float>(0.35, 0.3, 0.45) * 0.3
+        section("Ceiling panel")
         addLight(.rect(width: 1.2, height: 0.6), color: SIMD3<Float>(1.0, 0.85, 0.65) * 4, motion: .constant) { _ in
             LightPose(position: [0, h - 0.02, 0], direction: [0, -1, 0], tangent: [1, 0, 0])
         }
+        section("Desk lamp")
         let lamp = SIMD3<Float>(4.4, 1.35, -3.6)
         kit.box(lamp + [0, 0.1, 0], [0.18, 0.12, 0.18], black)
         kit.slab([4.38, 0.8, -3.62], [4.42, 1.3, -3.58], black)
@@ -618,9 +755,11 @@ extension Scene {
             let target = SIMD3<Float>(3.5 + 0.4 * sin(0.3 * t), 0.8, -3.3)
             return LightPose(position: lamp, direction: normalize(target - lamp))
         }
+        section("Shelf tube")
         addLight(.tube(length: 2.4, radius: 0.02), color: SIMD3<Float>(0.8, 0.9, 1.0) * 1.2, motion: .constant) { _ in
             LightPose(position: [-0.3, 1.86, -3.8], direction: [1, 0, 0])
         }
+        section("Floor lamp")
         kit.slab([-3.82, 0, -3.22], [-3.78, 1.55, -3.18], black)                    // floor lamp stand
         addLight(.sphere(radius: 0.12), color: SIMD3<Float>(1.0, 0.7, 0.4) * 3, motion: .constant) { _ in LightPose(position: [-3.8, 1.7, -3.2]) }
         defaultCamera = Scene.demoCamera(.mixed)!
@@ -647,8 +786,10 @@ extension Scene {
         let wire = addMaterial(albedo: [0.05, 0.05, 0.05])
         let (halfWidth, halfLength): (Float, Float) = (5, 32)
 
+        section("Street")
         addInstance(kit.quad, cobbles, scale([2 * halfWidth + 6, 1, 2 * halfLength + 10]))
         // Facades: eight buildings a side, 6-12 m tall, each with a grid of lit windows (rect lights facing the street).
+        section("Facades")
         let warmWindow: [SIMD3<Float>] = [[1.0, 0.72, 0.4], [1.0, 0.82, 0.55], [0.9, 0.9, 1.0]]
         for side: Float in [-1, 1] {
             for b in 0..<8 {
@@ -669,6 +810,7 @@ extension Scene {
             }
         }
         // Stalls along both sides: a counter, posts and a tilted canopy with a warm panel under it.
+        section("Stalls")
         for side: Float in [-1, 1] {
             for k in 0..<20 {
                 let z = -halfLength + 2 + Float(k) * 3.1, x = side * 3.7
@@ -688,6 +830,7 @@ extension Scene {
             }
         }
         // Festoon strings across the street: a sagging wire between the facades and the bulbs along it.
+        section("Festoons")
         let strings = 32
         let perString = max(1, settings.lights / strings)
         let bulbPower: Float = 24 / Float(strings * perString)   // the strings' total intensity doesn't depend on the count
@@ -716,6 +859,7 @@ extension Scene {
             }
         }
         // Paper lanterns over the stalls, swaying.
+        section("Lanterns")
         for k in 0..<80 {
             let side: Float = k % 2 == 0 ? -1 : 1
             let anchor = SIMD3<Float>(side * rng.range(2.6, 4.4), rng.range(2.7, 3.3), -halfLength + 1.5 + Float(k / 2) * 1.55)
@@ -727,7 +871,8 @@ extension Scene {
             }
         }
         // Neon signs on the facades: three tubes each (emissive capsules, sampled per triangle as mesh lights).
-        let tube = addMesh(Scene.capsuleMesh(halfLength: 0.45, radius: 0.035, segments: 10, rings: 3))
+        section("Neon signs")
+        let tube = addMesh(Scene.capsuleMesh(halfLength: 0.45, radius: 0.035, segments: 10, rings: 3), label: "neon tube")
         let neon: [SIMD3<Float>] = [[1.0, 0.1, 0.5], [0.1, 0.8, 1.0], [0.3, 1.0, 0.2], [1.0, 0.45, 0.05], [0.7, 0.2, 1.0]]
         for k in 0..<24 {
             let side: Float = k % 2 == 0 ? -1 : 1
@@ -738,7 +883,8 @@ extension Scene {
             }
         }
         // Shoppers: capsules walking up and down the street (moving occluders).
-        let body = addMesh(Scene.capsuleMesh(halfLength: 0.55, radius: 0.24, segments: 12, rings: 3))
+        section("Shoppers")
+        let body = addMesh(Scene.capsuleMesh(halfLength: 0.55, radius: 0.24, segments: 12, rings: 3), label: "shopper")
         for _ in 0..<60 {
             let x = rng.range(-2.4, 2.4), z0 = rng.range(-halfLength, halfLength), speed = rng.range(0.6, 1.4) * (rng.next() < 0.5 ? -1 : 1)
             let m = coat[rng.int(coat.count)]
@@ -750,6 +896,7 @@ extension Scene {
             }
         }
         // The moon.
+        section("Moon")
         addLight(.sun(angularRadius: 0.0045), color: [0.035, 0.045, 0.07]) { _ in
             LightPose(position: .zero, direction: normalize([0.3, 0.8, -0.5]))
         }

@@ -1,7 +1,8 @@
 # CPU (Swift) practices for MetalRenderer
 
 Always measure release builds (`swift build -c release`). Debug Swift is 10–100× slower in hot loops and tells you
-nothing.
+nothing. The dev build (`Tools/build.sh`, debug configuration with `-O`) is close to release and fine for iterating,
+but quote release numbers.
 
 ## 1. The frame loop (`Renderer.draw`)
 

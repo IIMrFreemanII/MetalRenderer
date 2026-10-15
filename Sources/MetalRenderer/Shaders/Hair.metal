@@ -19,13 +19,18 @@ constant float HAIR_MIN_ALBEDO = 0.02f; // its colour (the G-buffer's albedo) is
 constant float HAIR_SHADOW_SKIP = 0.002f;
 
 // A hit on a strand, as the lights see it: its tangent, the direction to the viewer, where across the strand the
-// view ray met it (h, -1...1: pbrt's offset), and its colour.
+// view ray met it (h, -1...1: pbrt's offset), and its colour. Or skin (not `on`): how strongly it scatters light under
+// its surface, and whether it is thin enough for light through it (ears, nostrils).
 struct HairPoint {
     bool   on;
     float3 tangent;
     float3 view;
     float  h;
     float3 albedo;
+    float  skin;
+    bool   thin;
+    float  leaf;      // LEAF_TRANSMIT: a two-sided leaf's share of light through it (0: not one)
+    bool   flipped;   // ...one of those whose normal faces away (Surface.backlit), its colour tinted for that
 };
 
 inline HairPoint noHair() {
@@ -33,6 +38,30 @@ inline HairPoint noHair() {
     hp.on = false;
     hp.tangent = hp.view = hp.albedo = float3(0.0f);
     hp.h = 0.0f;
+    hp.skin = 0.0f;
+    hp.thin = false;
+    hp.leaf = 0.0f;
+    hp.flipped = false;
+    return hp;
+}
+
+// A two-sided leaf letting `share` of the light through, its normal flipped or not (G-buffer code 4 + share, + 2 if
+// flipped: hairFromGBuffer).
+inline HairPoint leafPoint(float share, bool flipped) {
+    HairPoint hp = noHair();
+    hp.leaf = share;
+    hp.flipped = flipped;
+    return hp;
+}
+inline float leafCode(float share, bool flipped) { return 4.0f + share + (flipped ? 2.0f : 0.0f); }
+// What comes through a leaf: the light's colour after a leaf's thickness of chlorophyll (yellow-green).
+constant float3 LEAF_THROUGH_TINT = float3(1.05f, 1.25f, 0.5f);
+
+// Skin of Material.params.w = -`code`: its strength, 0...1, + 2 where it is thin.
+inline HairPoint skinPoint(float code) {
+    HairPoint hp = noHair();
+    hp.thin = code > 2.0f;
+    hp.skin = hp.thin ? code - 2.0f : code;
     return hp;
 }
 
@@ -50,6 +79,11 @@ inline float3 hairOctDecode(float2 e) {
     return normalize(t);
 }
 inline HairPoint hairFromGBuffer(float4 albedo, float geoW, float3 n, float3 view) {
+    if (LEAF_TRANSMIT && geoW < -3.5f) {   // a leaf: minus its code (leafCode)
+        float code = -geoW - 4.0f;
+        return code > 1.5f ? leafPoint(code - 2.0f, true) : leafPoint(code, false);
+    }
+    if (SKIN && geoW < -1e-4f) return skinPoint(-geoW);   // skin: minus its code (traceKernel)
     HairPoint hp = noHair();
     if (geoW < 0.5f) return hp;
     hp.on = true;
@@ -169,9 +203,55 @@ inline float3 hairUnshadowed(Light light, float3 p, HairPoint hp) {
     return facing * (hairScatter(hp, l) + hairMultiple(hp, l)) / hp.albedo;
 }
 
-// lightUnshadowed for any surface: a strand's by its BSDF.
+// ---------------------------------------------------------------------------------------------
+// Skin: light goes in, scatters under the surface and comes out further on, redder the further (blood takes the
+// green and blue first). Two approximations of that, in the light term (so the denoisers' albedo and ReSTIR's target
+// stay as they are; indirect light stays Lambertian):
+// - wrapped diffuse per channel: the light reaches round past where the surface turns from it, red furthest, which
+//   softens and reddens the shadow's edge on a face (Jimenez's and Penner's skin, as wrap lighting);
+// - light through thin parts (ears, the nostrils' wings), from behind: their shadow rays start past them
+//   (skinShadowOrigin), so they glow where nothing else is in the way.
+// ---------------------------------------------------------------------------------------------
+constant float3 SKIN_WRAP = float3(0.32f, 0.12f, 0.07f);      // per channel, at strength 1: cos theta + w over 1 + w
+constant float3 SKIN_TRANSMIT = float3(0.55f, 0.13f, 0.05f);  // a thin part's light through it, of what lights its back
+constant float SKIN_LIFT = 0.003f;     // a shadow ray in the wrap (light past the edge) starts this far out (m)...
+constant float SKIN_THROUGH = 0.006f;  // ...and through a thin part this far along toward the light: past it if it is thinner
+
+inline float3 skinUnshadowed(Light light, float3 p, float3 n, HairPoint hp) {
+    float3 l = hairLightDirection(light, p);
+    float3 facing = lightUnshadowed(light, p, l, l);   // a surface's facing the light
+    float c = dot(n, l);
+    float3 w = SKIN_WRAP * hp.skin;
+    float3 e = facing * (max(c + w, 0.0f) / (1.0f + w));
+    if (hp.thin && c < 0.0f) e += facing * (SKIN_TRANSMIT * (hp.skin * -c));
+    return e;
+}
+
+// Where a shadow ray from skin at `position` toward `target` starts: `p` (off its surface) on its lit side; past the
+// edge, a little out from it (light round the edge), or through a thin part.
+inline float3 skinShadowOrigin(HairPoint hp, float3 position, float3 n, float3 p, float3 target) {
+    float3 l = normalize(target - position);
+    if (dot(l, n) >= 0.0f) return p;
+    return hp.thin ? position + l * SKIN_THROUGH : p + n * (SKIN_LIFT * hp.skin);
+}
+
+// A two-sided leaf's light: on its near side as any surface's, minus what passes through; from its far side the share
+// that comes through, tinted.
+// (A flipped leaf's colour is tinted already, and its normal faces away: both undone here.)
+inline float3 leafUnshadowed(Light light, float3 p, float3 n, HairPoint hp) {
+    float3 l = hairLightDirection(light, p);
+    float3 facing = lightUnshadowed(light, p, l, l);
+    float c = dot(hp.flipped ? -n : n, l);
+    float3 e = c >= 0.0f ? facing * ((1.0f - hp.leaf) * c) : facing * (LEAF_THROUGH_TINT * (hp.leaf * -c));
+    return hp.flipped ? e / LEAF_TRANSMIT_TINT : e;
+}
+
+// lightUnshadowed for any surface: a strand's by its BSDF, skin's wrapped, a two-sided leaf's from both sides.
 inline float3 litUnshadowed(Light light, float3 p, float3 n, float3 ng, HairPoint hp) {
-    return hp.on ? hairUnshadowed(light, p, hp) : lightUnshadowed(light, p, n, ng);
+    if (hp.on) return hairUnshadowed(light, p, hp);
+    if (LEAF_TRANSMIT && hp.leaf > 0.0f) return leafUnshadowed(light, p, n, hp);
+    if (SKIN && hp.skin > 0.0f) return skinUnshadowed(light, p, n, hp);
+    return lightUnshadowed(light, p, n, ng);
 }
 
 // Where a shadow ray from a strand's point toward `target` starts: off its surface on the near side, or past the
@@ -182,7 +262,10 @@ inline float3 hairShadowOrigin(float3 position, float3 n, float3 target) {
 }
 
 // A shadow ray's start toward `target` for a surface at `position` (`p`: already off it): a strand's own
-// (hairShadowOrigin), else `p`.
+// (hairShadowOrigin), skin's (skinShadowOrigin), else `p`.
 inline float3 hairOrSurface(HairPoint hp, float3 position, float3 n, float3 p, float3 target) {
-    return hp.on ? hairShadowOrigin(position, n, target) : p;
+    if (hp.on) return hairShadowOrigin(position, n, target);
+    // A two-sided leaf: off the side the light is on.
+    if (LEAF_TRANSMIT && hp.leaf > 0.0f) return dot(target - position, n) >= 0.0f ? p : 2.0f * position - p;
+    return SKIN && hp.skin > 0.0f ? skinShadowOrigin(hp, position, n, p, target) : p;
 }

@@ -30,11 +30,25 @@ final class Benchmark {
         var camera: Camera? = nil           // a fixed camera instead of the scene's default
         var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
         var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
+        var body = false                    // the camera is a walker's body: doors open for it, it shoves loose furniture
+        var ride: Int? = nil                // the camera rides lift `ride` (its track keyed at the lift's lowest floor)
+        var events: [(time: Float, event: Event)] = []   // what happens at times of its track (`at`)
+        /// Something done in a building at a moment of a setting's track, as the walker would (InteriorControls).
+        enum Event {
+            case callLift(Int, floor: Int)          // lift n to that floor
+            case lights(on: Bool, within: Float)    // the switches that near the camera, on or off
+            case flashlight(Bool)
+            /// The Material Painter in paint mode on the scene's first painted object (the camera kept), its steps
+            /// one a frame (Renderer.runPainterScript).
+            case paint([PainterStep])
+            /// The Terrain Editor's steps (sculpt mode, brushes, strokes, undo), one a frame (Renderer.runTerrainScript).
+            case terrain([TerrainStep])
+        }
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
         /// Benchmark settings differ from the app's defaults (radiance cascades, 3x from 0.5x): they path trace at 0.75x
-        /// without upscaling unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
+        /// without upscaling or temporal AA unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
         /// `upscale`: the upscaling factor, 0 = off; `gi`: the GI method, nil = GI off. The scene brings its fog and sky
         /// presets (`fog` and `sky` edit them); `change` edits anything else.
         init(_ name: String, scale: CGFloat = 0.75, upscale: CGFloat = 0, gi: GIMode? = .pathTraced,
@@ -42,11 +56,12 @@ final class Benchmark {
             var s = RenderSettings()
             s.renderScale = scale
             s.upscaleFactor = upscale
+            s.taa = false   // (the native settings' references and scores are from before it)
             s.giEnabled = gi != nil
             s.giMode = gi ?? .pathTraced
             s.scene = scene
             s.fog = FogSettings.preset(for: scene)
-            s.sky = SkySettings.preset(for: scene.kind)
+            s.sky = SkySettings.preset(for: scene)
             s.foliage = FoliageSettings.preset(for: scene.kind)
             s.post = PostSettings.preset(for: scene)
             change(&s)
@@ -76,6 +91,12 @@ final class Benchmark {
             c.frames = Int((track.duration * 60).rounded()) + 1
             return c
         }
+        /// The camera walks: doors open as it comes up to them, it shoves the loose furniture it walks into.
+        func walking() -> Config { var c = self; c.body = true; return c }
+        /// The camera rides lift `n`: its track's heights are from the lift's lowest floor, carried up with the cab.
+        func riding(_ n: Int) -> Config { var c = self; c.ride = n; return c }
+        /// `event` at `time` seconds of the track.
+        func at(_ time: Float, _ event: Event) -> Config { var c = self; c.events.append((time, event)); return c }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
         func still(at time: Float = 5, previous: Bool = false) -> Config {
@@ -111,9 +132,11 @@ final class Benchmark {
             if s.scene.kind.simulates && !settings.scene.kind.simulates { s.usePhysicsLook() }
             // The fog and sky of the scene the run ends up with, unless this config set its own.
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
-            if !ownSky { s.sky = SkySettings.preset(for: s.scene.kind) }
+            if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
-            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase { s.post = PostSettings.preset(for: s.scene) }
+            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase || s.scene.realism != settings.scene.realism {
+                s.post = PostSettings.preset(for: s.scene)
+            }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
             for variable in [EnvVariable.restir, .restirGI, .megaLights, .vsm, .lumen, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
@@ -393,10 +416,13 @@ struct CameraTrack {
         var target: SIMD3<Float>
     }
     var keys: [Key]
+    /// Straight from key to key at a steady pace (a walk's dense keys), not curved and eased at each.
+    var linear = false
 
-    init(_ keys: [Key]) {
+    init(_ keys: [Key], linear: Bool = false) {
         precondition(!keys.isEmpty && zip(keys, keys.dropFirst()).allSatisfy { $0.time < $1.time }, "a track's keys in time")
         self.keys = keys
+        self.linear = linear
     }
 
     var duration: Float { keys.last!.time }
@@ -407,6 +433,7 @@ struct CameraTrack {
         guard next > 0 else { return (keys[0].position, keys[0].target) }
         let a = keys[next - 1], b = keys[next]
         let u = (t - a.time) / (b.time - a.time), s = u * u * (3 - 2 * u)
+        if linear { return (a.position + (b.position - a.position) * u, a.target + (b.target - a.target) * u) }
         let before = keys[max(next - 2, 0)], after = keys[min(next + 1, keys.count - 1)]
         func curve(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>) -> SIMD3<Float> {
             let s2 = s * s, s3 = s2 * s

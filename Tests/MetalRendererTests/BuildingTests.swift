@@ -70,6 +70,55 @@ final class BuildingTests: XCTestCase {
         }
     }
 
+    /// Windows as modules: the building's own meshes and its placed modules are the same triangles as the building made
+    /// whole, slot by slot (the modules snapped to 0.1 mm), and a window's shell is made once for every window like it.
+    func testModulesAreTheWholeBuilding() {
+        for spec in specs().prefix(60) {
+            var split = spec
+            split.modules = true
+            let whole = BuildingGenerator.generate(spec), parts = BuildingGenerator.generate(split)
+            let name = "\(spec.style) \(spec.size) \(spec.floors) floors, seed \(spec.seed)"
+            XCTAssertTrue(whole.placements.isEmpty, name)
+            XCTAssertEqual(whole.windows, parts.windows, name)
+            func area(_ m: MeshBuilder, _ t: float4x4 = matrix_identity_float4x4) -> Double {
+                stride(from: 0, to: m.indices.count, by: 3).reduce(0.0) { sum, i in
+                    let p = (0..<3).map { k -> SIMD3<Float> in
+                        let q = t * SIMD4(m.positions[Int(m.indices[i + k])], 1)
+                        return SIMD3(q.x, q.y, q.z)
+                    }
+                    return sum + Double(length(cross(p[1] - p[0], p[2] - p[0]))) / 2
+                }
+            }
+            for slot in Building.Slot.allCases {
+                var triangles = parts.meshes[slot.rawValue].triangleCount, a = area(parts.meshes[slot.rawValue])
+                for (module, t) in parts.placements {
+                    triangles += parts.modules[module].meshes[slot.rawValue].triangleCount
+                    a += area(parts.modules[module].meshes[slot.rawValue], t)
+                }
+                XCTAssertEqual(triangles, whole.meshes[slot.rawValue].triangleCount, "\(name) \(slot)")
+                XCTAssertEqual(a, area(whole.meshes[slot.rawValue]), accuracy: 1e-3 * max(1, a), "\(name) \(slot)")
+            }
+            if parts.placements.count > 4 { XCTAssertLessThan(parts.modules.count, parts.placements.count, "\(name): no module shared") }
+        }
+    }
+
+    /// A flat building (the open world's far tiles) has fewer triangles than the full one, as many windows, and valid
+    /// meshes.
+    func testFlatBuildingsAreLighter() {
+        for spec in specs().prefix(60) {
+            var flat = spec
+            flat.detail = .flat
+            let full = BuildingGenerator.generate(spec), lighter = BuildingGenerator.generate(flat)
+            let name = "\(spec.style) \(spec.size) \(spec.floors) floors, seed \(spec.seed)"
+            XCTAssertLessThan(lighter.triangleCount, full.triangleCount, name)
+            XCTAssertEqual(lighter.windows, full.windows, name)
+            for part in lighter.parts {
+                XCTAssertTrue(part.mesh.indices.allSatisfy { Int($0) < part.mesh.positions.count }, name)
+                XCTAssertTrue(part.mesh.normals.allSatisfy { abs(length($0) - 1) < 1e-3 }, name)
+            }
+        }
+    }
+
     func testABuildingIsItsSpecs() {
         for spec in specs().prefix(40) {
             let a = BuildingGenerator.generate(spec), b = BuildingGenerator.generate(spec)

@@ -12,6 +12,9 @@
 // lights the diffuse lobe, the specular lobe meets them. Samples are Owen-scrambled Sobol points per pixel
 // (Sampling.metal) for the first bounces. Russian roulette after 3 bounces, no firefly clamp. Each frame's paths
 // join a running mean (rgba32Float), which the renderer restarts when the picture would change.
+// Liquids (LIQUID: Liquid.metal's material) as exact dielectrics: a path reflects off one with Fresnel's probability or
+// refracts into it (total internal reflection turns it back), and inside absorbs along its way (Beer-Lambert); shadow
+// rays go through them straight, (1 - Fresnel) at each crossing and the absorption inside (no caustics).
 // Not here: refraction through thick glass (the panes are thin), the fog's haze (a realtime stand-in).
 // ---------------------------------------------------------------------------------------------
 
@@ -493,6 +496,36 @@ float3 ptTransmittance(float3 from, float3 to, SCENE_ACCEL accel, thread const S
             o = g.position + d * RAY_EPSILON;
         }
     }
+    if (LIQUID) {
+        // Each liquid's surface on the way: Fresnel's share kept out, and the absorption over the part inside it (up
+        // to a crossing that leaves it: its normal faces along the ray).
+        float reach = dist;
+        float3 o = from;
+        for (uint crossing = 0; crossing < 8 && reach > 0.0f && any(T > 0.0f); ++crossing) {
+            Surface w = traceSurface(makeRay(o, d, 0.0f, reach), MASK_LIQUID, accel, s, GI_RAY_SPREAD);
+            if (!w.hit) break;
+            float roughness;
+            float4 m = liquidMaterial(s, w.instanceId, roughness);
+            float3 n = normalize(w.normal);
+            float along = distance(w.position, o);
+            bool leaving = dot(d, n) > 0.0f;
+            if (leaving) T *= exp(-m.rgb * along);
+            T *= 1.0f - liquidFresnel(abs(dot(d, n)), leaving ? m.a : 1.0f / m.a);
+            reach -= along + RAY_EPSILON;
+            o = w.position + d * RAY_EPSILON;
+        }
+    }
+    if (WATER && any(T > 0.0f)) {
+        // Water's surface on the way (one crossing): Fresnel's share kept out, and from under it what the water
+        // absorbs up to it. (Straight through, as a liquid's: no caustics.)
+        WaterHit wh = waterIntersect(s.water, from, d, dist);
+        if (wh.hit) {
+            WaterLook look = s.water->looks[wh.look];
+            bool leaving = dot(d, wh.normal) > 0.0f;
+            if (leaving) T *= exp(-look.absorption.rgb * wh.distance);
+            T *= 1.0f - waterFresnel(abs(dot(d, wh.normal)), leaving ? look.absorption.w : 1.0f / look.absorption.w);
+        }
+    }
     if (fogOn && any(T > 0.0f)) T *= ptFogTransmittance(fog, from, d, dist, rng);
     return T;
 }
@@ -508,12 +541,14 @@ struct PTMaterial {
     float  f90;
     float  a;       // GGX alpha
     float  pSpec;   // probability of sampling the specular lobe (0: diffuse only)
+    HairPoint skin; // skin (Hair.metal): its diffuse wrapped, light through its thin parts
 };
 
 inline PTMaterial ptMaterial(thread const Surface& h, float NoV, bool specular) {
     PTMaterial m;
     float roughness = max(h.roughness, MIN_ROUGHNESS);
     m.albedo = h.albedo; m.f0 = h.f0; m.f90 = h.specular; m.a = roughness * roughness; m.pSpec = 0.0f;
+    m.skin = SKIN && h.skin > 0.0f ? skinPoint(h.skin) : noHair();
     if (specular && h.specular > 0.0f && !h.backlit) {   // (a leaf lit from behind: the light through it is diffuse)
         float ls = luminance(specularAlbedo(m.f0, m.f90, roughness, NoV)), ld = luminance(m.albedo);
         m.pSpec = ls + ld > 0.0f ? ls / (ls + ld) : 0.0f;
@@ -525,8 +560,14 @@ inline PTMaterial ptMaterial(thread const Surface& h, float NoV, bool specular) 
 inline void ptEval(thread const PTMaterial& m, float3 n, float3 v, float3 l, thread float3& fd, thread float3& fs, thread float& pdf) {
     float NoL = dot(n, l);
     fd = float3(0.0f); fs = float3(0.0f); pdf = 0.0f;
+    if (SKIN && m.skin.skin > 0.0f) {
+        // Skin as the frame's passes light it (skinUnshadowed): wrapped past the edge, and through a thin part.
+        float3 w = SKIN_WRAP * m.skin.skin;
+        fd = m.albedo * (max(NoL + w, 0.0f) / (1.0f + w)) / M_PI_F;
+        if (m.skin.thin && NoL < 0.0f) fd += m.albedo * SKIN_TRANSMIT * (m.skin.skin * -NoL) / M_PI_F;
+    }
     if (NoL <= 0.0f) return;
-    fd = m.albedo * (NoL / M_PI_F);
+    if (!SKIN || m.skin.skin <= 0.0f) fd = m.albedo * (NoL / M_PI_F);
     pdf = (1.0f - m.pSpec) * NoL / M_PI_F;
     if (m.pSpec > 0.0f) {
         float NoV = max(dot(n, v), 1e-4f);
@@ -596,14 +637,21 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
         bool cameraRay = true;     // meets the lights' shapes and camera-only geometry, as the frame's camera rays do
         float spread = pixelSpread;
         uint bounce = 0;
+        float4 medium = float4(0.0f);   // LIQUID, WATER: the liquid or water the path is in (absorption, index), 0: none
+        // (A camera under water starts in it.)
+        if (WATER) {
+            WaterPlace at = waterAt(s.water, origin.xz);
+            if (at.wet && origin.y < at.level) medium = s.water->looks[at.look].absorption;
+        }
 
         for (uint event = 0; event < 2 * params.samples.z + 16u; ++event) {
-            uint mask = cameraRay ? MASK_ALL & ~MASK_GLASS : treeLights ? MASK_GEOMETRY | MASK_LIGHTS : MASK_GEOMETRY;
+            uint mask = (cameraRay ? MASK_ALL & ~MASK_GLASS : treeLights ? MASK_GEOMETRY | MASK_LIGHTS : MASK_GEOMETRY) & ~MASK_LIQUID;
             Ray ray = makeRay(origin, dir, 0.0f, INFINITY);
             Hit hit = intersectClosest(ray, mask, accel);
             Surface h = surfaceFromHit(hit, ray, accel, s, spread, record && event == 0);
             float tNear = h.hit ? distance(origin, h.position) : FAR_DISTANCE;
-            // What the ray meets first: 0 the sky, 1 a surface, 2 a light, 3 a pane, 4 a shape to pass through.
+            // What the ray meets first: 0 the sky, 1 a surface, 2 a light, 3 a pane, 4 a shape to pass through,
+            // 5 a liquid's surface.
             uint kind = h.hit ? 1u : 0u;
             uint metLight = 0;
             float3 metLe = float3(0.0f);
@@ -627,6 +675,20 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 pane = traceSurface(makeRay(origin, dir, 0.0f, tNear), MASK_GLASS, accel, s, spread);
                 if (pane.hit) { tNear = distance(origin, pane.position); kind = 3u; }
             }
+            // A liquid's surface in front of it.
+            Surface wet;
+            wet.hit = false;
+            if (LIQUID) {
+                wet = traceSurface(makeRay(origin, dir, 0.0f, tNear), MASK_LIQUID, accel, s, spread);
+                if (wet.hit) { tNear = distance(origin, wet.position); kind = 5u; }
+            }
+            // Water's surface in front of it (its own structures: the near patch's waves, the still surfaces).
+            WaterHit waterHit;
+            waterHit.hit = false;
+            if (WATER) {
+                waterHit = waterIntersect(s.water, origin, dir, tNear);
+                if (waterHit.hit) { tNear = waterHit.distance; kind = 7u; }
+            }
             // Few lights: an analytic light in front of all that.
             if (fewLights && !cameraRay) {
                 for (uint j = 0; j < analytic; ++j) {
@@ -635,6 +697,19 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                     if (ptHitLight(lights[j], origin, dir, tNear, prev.p, tl, Le, pdfL)) {
                         tNear = tl; kind = 2u; metLight = j; metLe = Le; metPdf = pdfL;
                     }
+                }
+            }
+            // The particles on the way (PARTICLES): the emitters' light up to the first that stops the path, and that
+            // one: an emissive one ends it, a lit one is a scattering point (isotropic, as the fog's).
+            ParticleScatter particle;
+            particle.hit = false;
+            if (PARTICLES) {
+                particle = particleScatter(origin, dir, isFar(tNear) ? FAR_DISTANCE : tNear, rng.nextUint(), accel);
+                L_ += throughput * particle.emission;
+                if (particle.hit) {
+                    tNear = particle.t;
+                    kind = 6u;
+                    if (particle.emissive) break;
                 }
             }
             // The fog on the way: a collision there is a scattering point in the medium.
@@ -685,6 +760,109 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 }
             }
 
+            if (kind == 6u) {
+                // A lit particle: next-event estimation with the isotropic phase, then on in a random direction.
+                float3 p = origin + dir * tNear;
+                throughput *= particle.albedo;
+                PTVertex x = { p, float3(0.0f), float3(0.0f), true };
+                float2 rPick = ptRandom(smp, bounce, PT_SLOT_PICK, rng);
+                float2 rLight = ptRandom(smp, bounce, PT_SLOT_LIGHT, rng);
+                const float phase = 1.0f / (4.0f * M_PI_F);
+                if (u.lightCount > 0) {
+                    float pick;
+                    uint li = ptPickLight(L, x, rPick.x, rng.next(), pick);
+                    if (li < u.lightCount && pick > 0.0f) {
+                        PTLightSample ls = ptSampleLight(lights[li], p, rLight, s, u.flags);
+                        if (ls.pdf > 0.0f) {
+                            float3 T = ptTransmittance(p, p + ls.dir * ls.dist, accel, s, fogOn, fog, rng);
+                            if (any(T > 0.0f)) {
+                                float lightPdf = pick * ls.pdf;
+                                bool found = lightHits && !ls.delta && !ls.mesh && (!treeLights || lightType(lights[li]) == LIGHT_SUN
+                                    || ptProxyReaches(p, ls.dir, ls.dist, li, accel, proxies, params.config.y, lights));
+                                float w = found ? ptPowerHeuristic(lightPdf, phase) : 1.0f;
+                                L_ += throughput * ls.Le * T * (phase * sunVisibilityScale(lights[li], p, s) * w / lightPdf);
+                            }
+                        }
+                    }
+                }
+                // The sky's light, which the real-time light pass gives the particles too (skyAmbient), is found by the
+                // bounce that leaves.
+                if (bounce >= params.samples.z) break;
+                float3 l = ptSampleHG(dir, 0.0f, ptRandom(smp, bounce, PT_SLOT_DIRECTION, rng));
+                prev = x;
+                prevPdf = phase;
+                prevDelta = false;
+                cameraRay = false;
+                emitterThroughput = float3(0.0f);
+                origin = p;
+                dir = l;
+                spread = GI_RAY_SPREAD;
+                ++bounce;
+                if (bounce >= 3) {
+                    float q = min(max(throughput.x, max(throughput.y, throughput.z)), 0.95f);
+                    if (ptRandom(smp, bounce - 1, PT_SLOT_ROULETTE, rng).x >= q) break;
+                    throughput /= q;
+                }
+                continue;
+            }
+            // Inside a liquid (or water), what it absorbed on the way here.
+            if ((LIQUID || WATER) && medium.a > 0.0f) {
+                float3 kept = exp(-medium.rgb * (isFar(tNear) ? 1e3f : tNear));
+                throughput *= kept;
+                emitterThroughput *= kept;
+            }
+            if (kind == 5u) {
+                // A dielectric: reflected with Fresnel's probability (all of it past the critical angle), else bent
+                // through, into the liquid or out of it.
+                float roughness;
+                float4 m = liquidMaterial(s, wet.instanceId, roughness);
+                float3 n = normalize(wet.normal);
+                bool entering = dot(dir, n) < 0.0f;
+                float3 facing = entering ? n : -n;
+                float eta = entering ? 1.0f / m.a : m.a;
+                float fresnel = liquidFresnel(saturate(dot(-dir, facing)), eta);
+                float3 bent = refract(dir, facing, eta);
+                if (fresnel >= 1.0f || length_squared(bent) == 0.0f || rng.next() < fresnel) {
+                    dir = reflect(dir, facing);
+                    origin = wet.position + facing * RAY_EPSILON;
+                    emitterThroughput = throughput;
+                    cameraRay = false;
+                } else {
+                    dir = normalize(bent);
+                    origin = wet.position - facing * RAY_EPSILON;
+                    medium = entering ? m : float4(0.0f);
+                }
+                prevDelta = true;
+                continue;
+            }
+            if (kind == 7u) {
+                // Water: a dielectric whose surface the waves shape (the same normal as the frame's water), its look's
+                // absorption inside.
+                device const WaterScene* ws = s.water;
+                float3 at = origin + dir * waterHit.distance;
+                WaterPlace place = waterAt(ws, waterHit.rest);
+                WaterLook look = ws->looks[place.wet ? place.look : waterHit.look];
+                float shore = place.wet ? smoothstep(0.0f, 0.25f, place.level - place.ground) : 1.0f;
+                WaterSurface surface = waterSurfaceAt(ws, look, waterHit.rest, place.flow, spread * waterHit.distance);
+                float3 n = normalize(mix(float3(0.0f, 1.0f, 0.0f), surface.normal, shore));
+                bool entering = dot(dir, n) < 0.0f;
+                float3 facing = entering ? n : -n;
+                float eta = entering ? 1.0f / look.absorption.w : look.absorption.w;
+                float fresnel = waterFresnel(saturate(dot(-dir, facing)), eta) * (entering ? shore : 1.0f);
+                float3 bent = refract(dir, facing, eta);
+                if (fresnel >= 1.0f || length_squared(bent) == 0.0f || rng.next() < fresnel) {
+                    dir = reflect(dir, facing);
+                    origin = at + facing * RAY_EPSILON;
+                    emitterThroughput = throughput;
+                    cameraRay = false;
+                } else {
+                    dir = normalize(mix(dir, normalize(bent), entering ? shore : 1.0f));
+                    origin = at - facing * RAY_EPSILON;
+                    medium = entering ? look.absorption : float4(0.0f);
+                }
+                prevDelta = true;
+                continue;
+            }
             if (kind == 2u) {
                 float w = prevDelta ? 1.0f : ptPowerHeuristic(prevPdf, ptPickPdf(L, prev, metLight) * metPdf);
                 L_ += throughput * metLe * w;
@@ -752,13 +930,15 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 float2 r = ptRandom(smp, bounce, PT_SLOT_LIGHT, rng);
                 if (li < u.lightCount && pick > 0.0f) {
                     PTLightSample ls = ptSampleLight(lights[li], p, r, s, u.flags);
-                    if (ls.pdf > 0.0f && dot(ls.dir, ng) > 0.0f) {
+                    if (ls.pdf > 0.0f && (dot(ls.dir, ng) > 0.0f || (SKIN && mat.skin.skin > 0.0f))) {
                         float3 fd, fs;
                         float pdfB;
                         ptEval(mat, n, v, ls.dir, fd, fs, pdfB);
                         float3 f = ls.mesh ? fd : fd + fs;
                         if (any(f > 0.0f)) {
-                            float3 T = ptTransmittance(p, p + ls.dir * ls.dist, accel, s, fogOn, fog, rng);
+                            // (Skin past its edge: the shadow ray from a little out, or past a thin part: skinShadowOrigin.)
+                            float3 from = SKIN && mat.skin.skin > 0.0f ? skinShadowOrigin(mat.skin, h.position, n, p, p + ls.dir) : p;
+                            float3 T = ptTransmittance(from, p + ls.dir * ls.dist, accel, s, fogOn, fog, rng);
                             if (any(T > 0.0f)) {
                                 float lightPdf = pick * ls.pdf;
                                 bool found = lightHits && !ls.delta && !ls.mesh && (!treeLights || lightType(lights[li]) == LIGHT_SUN

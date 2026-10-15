@@ -7,6 +7,9 @@ import Foundation
 enum ShaderSource {
     struct Failure: Error, CustomStringConvertible { let description: String }
 
+    /// Where a scene's procedural materials' code goes (Shaders/Procedural.metal; Pipelines.compile splices it in).
+    static let proceduralMarker = "// @procedural-code"
+
     /// The path in a line of the form `#include "path"` (a comment may follow); nil for anything else, `<...>` too.
     static func includePath(in line: Substring) -> String? {
         let text = line.drop { $0 == " " || $0 == "\t" }

@@ -14,12 +14,17 @@ final class MeshBlock {
     let vertexCount: Int, indexCount: Int
     var indexOffset: Int { MeshBlock.indexOffset(vertices: vertexCount) }
     static func indexOffset(vertices: Int) -> Int { vertices * (2 * MemoryLayout<SIMD3<Float>>.stride + MemoryLayout<SIMD2<Float>>.stride) }
+    /// A terrain's sector's layer weights (16 bytes a vertex): after the materials, on a 16-byte boundary.
+    static func weightsOffset(vertices: Int, indices: Int) -> Int { (indexOffset(vertices: vertices) + indices * 4 + indices / 3 + 15) & ~15 }
+    /// The bytes a mesh takes, with weights or without.
+    static func length(vertices: Int, indices: Int, weights: Bool) -> Int {
+        weights ? weightsOffset(vertices: vertices, indices: indices) + vertices * 16 : indexOffset(vertices: vertices) + indices * 4 + indices / 3
+    }
 
     init(device: MTLDevice, name: String, mesh: Scene.BorrowedMesh) throws {
         self.name = name
         (vertexCount, indexCount) = (mesh.positions.count, mesh.indices.count)
-        let indexOffset = MeshBlock.indexOffset(vertices: vertexCount)
-        let length = indexOffset + indexCount * MemoryLayout<UInt32>.stride + indexCount / 3
+        let length = MeshBlock.length(vertices: vertexCount, indices: indexCount, weights: mesh.weights != nil)
         guard let buffer = device.makeBuffer(length: max((length + 15) & ~15, 16), options: .storageModeShared) else {
             throw RendererError.resourceCreation("buffer \(name)")
         }
@@ -35,6 +40,10 @@ final class MeshBlock {
         copy(mesh.uvs)
         copy(mesh.indices)
         if let materials = mesh.materials { copy(materials) }   // (a new buffer is zeros: one material)
+        if let weights = mesh.weights {
+            at = buffer.contents() + MeshBlock.weightsOffset(vertices: vertexCount, indices: indexCount)
+            copy(weights)
+        }
     }
 }
 
@@ -189,6 +198,8 @@ struct SceneBuffers {
         var extraInstances = 0
         /// The share of the leaves that have fallen (Scene.leafFall): which variants a still scene's plants name.
         var leafFall: Float = 0
+        /// The load to report the buffers and the structures' batches to; the batches stop when it is cancelled.
+        var load: LoadJob?
     }
 
     /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
@@ -201,6 +212,10 @@ struct SceneBuffers {
     /// The SDF shapes, and their boxes, which come after the meshes' structures in `primitives`.
     let sdf: SDFBuffers
     let still: Bool                                         // the instances are written, and their structure built
+    /// A still scene with a terrain: its one top-level structure is refitted after the brushes rebuild the sectors'
+    /// (`stillRefit`, with the scratch buffer it keeps).
+    let editableStill: Bool
+    private(set) var stillRefit: TLASUpdate?
     /// The plants' structures (assemblies, by multi-level instancing), if the scene has any.
     private(set) var plants: PlantTracing?
     /// What `plants`' variants were chosen for in a still scene (a moving one's frames choose theirs).
@@ -221,6 +236,8 @@ struct SceneBuffers {
     private(set) var primitives: [MTLAccelerationStructure] = []        // per mesh
     private(set) var namedPrimitives: [String: MTLAccelerationStructure] = [:]
     private(set) var primitiveRefit: PrimitiveRefit?        // the meshes that deform (the crowd's pose slots)
+    private(set) var displacedBuild: DisplacedBuild?        // the displaced meshes' (built again when a bake moves them)
+    private(set) var terrainBuild: TerrainBuild?            // a terrain's sectors' (built again as the brushes change them)
     /// The strands' control points' radii (Scene.curveRadii), which their curves' structures read.
     private(set) var curveRadii: MTLBuffer?
     private(set) var instanceStructures: [MTLAccelerationStructure] = []   // per slot
@@ -295,11 +312,15 @@ struct SceneBuffers {
             made.label = label
             return made
         }
+        options.load?.step("Buffers", detail: scene.hasSDFShapes ? "arrays, SDF shapes" : "arrays")
         positions = try buffer(scene.positions, "positions")
         sdf = try SDFBuffers(device: device, scene: scene)
         normals = try buffer(scene.normals, "normals")
         indices = try buffer(scene.indices, "indices")
-        uvs = try buffer(scene.uvs, "uvs")
+        // The painted corners after the vertices' UVs (PaintedObject.cornerBase counts from the vertices' end: nothing
+        // adds UVs after the painter's).
+        precondition(scene.painted.allSatisfy { $0.cornerBase >= scene.uvs.count }, "UVs added after the painted corners")
+        uvs = try buffer(scene.paintUVs.isEmpty ? scene.uvs : scene.uvs + scene.paintUVs, "uvs")
         // (Zeros for the arrays' triangles where only borrowed meshes have several materials: a hit reads one for each.)
         triangleMaterials = scene.triangleMaterials.isEmpty && scene.hasMaterialOffsets
             ? try empty(scene.indices.count / 3, "triangleMaterials") : try buffer(scene.triangleMaterials, "triangleMaterials")
@@ -313,7 +334,8 @@ struct SceneBuffers {
         var new: [Scene.BorrowedMesh] = []
         for mesh in scene.borrowed {
             if let name = scene.meshNames[mesh.mesh], let known = options.blocks[name], known.vertexCount == mesh.positions.count,
-               known.indexCount == mesh.indices.count {
+               known.indexCount == mesh.indices.count,
+               known.geometry.length >= MeshBlock.length(vertices: known.vertexCount, indices: known.indexCount, weights: mesh.weights != nil) {
                 blocks[mesh.mesh] = known
             } else {
                 new.append(mesh)
@@ -340,6 +362,7 @@ struct SceneBuffers {
         emissive = try buffer(scene.emissiveTriangles, "emissiveTriangles")
 
         still = scene.isStill
+        editableStill = still && scene.terrain != nil
         let count = scene.instances.count, sets = still ? 1 : options.slots
         // The groups: each in the block the scene being drawn has it in, or a new one, made from the group's instances.
         guard !scene.hasGroups || (!scene.groups.isEmpty && still) else {
@@ -417,7 +440,8 @@ struct SceneBuffers {
         // The instances' structures, sized from the descriptor a build uses (the structure and its scratch buffer
         // don't exist yet: the descriptor is made with placeholders for them).
         var usage = options.instanceUsage
-        if still { usage.remove([.refit, .preferFastBuild]) }
+        // (A still scene's is built once, for tracing; with a terrain the brushes reshape, it is refitted after them.)
+        if still { usage.remove(editableStill ? [.preferFastBuild] : [.refit, .preferFastBuild]) }
         func update(_ structure: MTLAccelerationStructure, _ scratch: MTLBuffer, slot: Int) -> TLASUpdate {
             TLASUpdate(structure: structure, scratch: scratch, refit: false, instanceCount: structureInstances, usage: usage,
                        instances: descriptors[slot], instanceStride: stride, primitives: primitives, indirect: indirect)
@@ -488,7 +512,54 @@ struct SceneBuffers {
                                     usage: usage, current: instanceStructures[0], scratch: instanceScratch[0])
         }
         instanceStructures = [MTLAccelerationStructure](repeating: instanceStructures[0], count: options.slots)
-        instanceScratch = []
+        instanceScratch = editableStill ? [MTLBuffer](repeating: instanceScratch[0], count: options.slots) : []
+        if editableStill {
+            // (Indirect descriptors name their structures by ID: a refit reads their bounds, so the plants' are declared too.)
+            stillRefit = TLASUpdate(structure: build.structure, scratch: build.scratch, refit: true, instanceCount: build.instanceCount,
+                                    usage: build.usage, instances: build.instances, instanceStride: build.instanceStride,
+                                    primitives: build.primitives + (indirect ? plants?.structures(slot: 0) ?? [] : []), indirect: indirect)
+        }
+    }
+
+    /// Compacted copies of `structures`, built and done: their compacted sizes (UInt32s) are in `sizes` at the indices
+    /// `at` (nil: written here first, one after the other). A compacted copy holds what its structure keeps, about half
+    /// what a build reserves: less memory to walk, fewer cache misses per ray.
+    static func copyAndCompact(_ structures: [MTLAccelerationStructure], sizes: MTLBuffer? = nil, at: [Int]? = nil,
+                               device: MTLDevice, queue: MTLCommandQueue) throws -> [MTLAccelerationStructure] {
+        guard !structures.isEmpty else { return [] }
+        let stride = MemoryLayout<UInt32>.stride
+        var sizeBuffer = sizes
+        if sizeBuffer == nil {
+            guard let b = device.makeBuffer(length: structures.count * stride, options: .storageModeShared),
+                  let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
+                throw RendererError.resourceCreation("compacted sizes")
+            }
+            for (k, structure) in structures.enumerated() {
+                encoder.writeCompactedSize(accelerationStructure: structure, buffer: b, offset: k * stride, sizeDataType: .uint)
+            }
+            encoder.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            sizeBuffer = b
+        }
+        guard let sizeBuffer, let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else {
+            throw RendererError.resourceCreation("acceleration structure command encoder")
+        }
+        let index = at ?? Array(structures.indices)
+        let read = sizeBuffer.contents().bindMemory(to: UInt32.self, capacity: (index.max() ?? 0) + 1)
+        var small: [MTLAccelerationStructure] = []
+        for (k, structure) in structures.enumerated() {
+            guard let copy = device.makeAccelerationStructure(size: Int(read[index[k]])) else {
+                throw RendererError.resourceCreation("compacted acceleration structure")
+            }
+            copy.label = structure.label
+            encoder.copyAndCompact(sourceAccelerationStructure: structure, destinationAccelerationStructure: copy)
+            small.append(copy)
+        }
+        encoder.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return small
     }
 
     /// `body` for the parts of `0..<count`, side by side: a still scene's hundreds of thousands of records, each
@@ -508,6 +579,7 @@ struct SceneBuffers {
         let stride = indirect ? SceneBuffers.indirectStride : 64
         let meshCount = scene.meshes.count
         let plants = plants, set = plants?.set(slot: slot) ?? 0
+        let holes = scene.hasOpacity   // an alpha-tested instance (a procedural material's opacity) isn't opaque either
         func write(_ i: Int) {
             let instance = scene.instances[i]
             guard instance.virtualMesh < 0 else { return }   // its cut's structure: VirtualTracing writes it
@@ -520,7 +592,7 @@ struct SceneBuffers {
             let index = instance.sdf >= 0 ? meshCount + instance.sdf : instance.mesh
             // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
             SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform,
-                                         options: instance.sdf >= 0 ? boxOptions : options, mask: instance.mask,
+                                         options: instance.sdf >= 0 || (holes && scene.cutsHoles(i)) ? boxOptions : options, mask: instance.mask,
                                          userID: UInt32(i), structure: indirect ? primitives[index] : nil, index: index)
         }
         if all {
@@ -564,10 +636,20 @@ struct SceneBuffers {
         }
         // The crowd's pose slots deform: their structures are built to be refitted every frame, and stay as built.
         var refitted: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
+        // A liquid's surface changes its triangles: its structure is built again every frame (fast to build).
+        var rebuilt: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
         var jobs: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, sizes: MTLAccelerationStructureSizes, deforms: Bool)] = []
         // The poses that take another's tree: (its place in `refitted`, the mesh whose tree it takes).
         var copies: [(refit: Int, of: Int)] = []
         var firstPose: [SIMD2<UInt32>: Int] = [:]   // by the triangles a pose has: its character's
+        // A displaced mesh's vertices move when its material's bake comes: its structure is built again then (not
+        // compacted: built into the same place).
+        let displacedMeshes = scene.displacedMeshSet
+        var displaced: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
+        // A terrain's sectors are built again as the brushes reshape them (Renderer+Terrain): built for a fast build,
+        // never compacted (built again into the same place), each with the descriptor that builds it.
+        let terrainMeshes = scene.terrainMeshSet
+        var terrain: [Int: MTLPrimitiveAccelerationStructureDescriptor] = [:], terrainScratch = 16
         if scene.hasCurves {
             curveRadii = device.makeBuffer(bytes: scene.curveRadii, length: max(scene.curveRadii.count, 1) * MemoryLayout<Float>.stride,
                                            options: .storageModeShared)
@@ -625,7 +707,30 @@ struct SceneBuffers {
             descriptor.geometryDescriptors = [geometry]
             // The meshes never change, so their structures are built once, for the fastest traversal Metal offers.
             let deforms = mesh.prevOffset != 0
+            if scene.rebuiltMeshes.contains(i) {
+                descriptor.usage = .preferFastBuild
+                let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+                rebuilt.append((i, descriptor, max(sizes.buildScratchBufferSize, 16)))
+                jobs.append((i, descriptor, sizes, true))
+                continue
+            }
+            if terrainMeshes.contains(i) {
+                descriptor.usage = .preferFastBuild
+                let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+                terrain[i] = descriptor
+                terrainScratch = max(terrainScratch, sizes.buildScratchBufferSize)
+                jobs.append((i, descriptor, sizes, true))   // (as one that deforms: kept as built)
+                continue
+            }
+            if displacedMeshes.contains(i) {
+                if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
+                let sizes = device.accelerationStructureSizes(descriptor: descriptor)
+                displaced.append((i, descriptor, max(sizes.buildScratchBufferSize, 16)))
+                jobs.append((i, descriptor, sizes, true))
+                continue
+            }
             if deforms { descriptor.usage = .refit }
+            else if scene.remadeOften { descriptor.usage = .preferFastBuild }
             else if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
             if deforms { refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16))) }
@@ -655,7 +760,7 @@ struct SceneBuffers {
                     throw RendererError.resourceCreation("primitive acceleration structure")
                 }
                 encoder.build(accelerationStructure: accel, descriptor: job.descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
-                if options.compact && !job.deforms {
+                if options.compact && !scene.remadeOften && !job.deforms {
                     // Its size once compacted (a UInt32), written by the GPU after the build.
                     encoder.writeCompactedSize(accelerationStructure: accel, buffer: compactedSizes,
                                                offset: k * MemoryLayout<UInt32>.stride, sizeDataType: .uint)
@@ -667,38 +772,42 @@ struct SceneBuffers {
             encoder.endEncoding()
             cmd.commit()
             cmd.waitUntilCompleted()
-            guard options.compact, let cmd = queue.makeCommandBuffer(), let encoder = cmd.makeAccelerationStructureCommandEncoder() else { return }
-            let sizes = compactedSizes.contents().bindMemory(to: UInt32.self, capacity: batch.count)
-            for (k, j) in batch.enumerated() where !jobs[j].deforms {
-                guard let small = device.makeAccelerationStructure(size: Int(sizes[k])) else {
-                    throw RendererError.resourceCreation("compacted acceleration structure")
-                }
-                encoder.copyAndCompact(sourceAccelerationStructure: built[k], destinationAccelerationStructure: small)
-                structures[jobs[j].index] = small
+            guard options.compact && !scene.remadeOften else { return }
+            let kept = (0..<batch.count).filter { !jobs[batch.lowerBound + $0].deforms }
+            let small = try SceneBuffers.copyAndCompact(kept.map { built[$0] }, sizes: compactedSizes, at: kept, device: device, queue: queue)
+            for (n, k) in kept.enumerated() {
+                structures[jobs[batch.lowerBound + k].index] = small[n]
                 before += built[k].size
-                after += small.size
+                after += small[n].size
             }
-            encoder.endEncoding()
-            cmd.commit()
-            cmd.waitUntilCompleted()
         }
-        var first = 0, bytes = 0
+        let step = options.load?.step("Metal BLAS", total: jobs.count, detail: new.count < structures.count
+                                      ? "\(structures.count - new.count) kept from the last scene" : "")
+        var first = 0, bytes = 0, total = 0
+        func buildBatch(_ batch: Range<Int>) throws {
+            if step?.isCancelled == true { throw CancellationError() }   // another scene was asked for
+            try autoreleasepool { try build(batch) }
+            total += batch.reduce(0) { $0 + jobs[$1].sizes.accelerationStructureSize }
+            step?.advance(by: batch.count, detail: String(format: "%.0f MB built", Double(total) / 1_048_576))
+        }
         for j in jobs.indices {
             bytes += jobs[j].sizes.accelerationStructureSize
             if bytes >= SceneBuffers.buildBatchBytes {
-                try autoreleasepool { try build(first..<(j + 1)) }
+                try buildBatch(first..<(j + 1))
                 (first, bytes) = (j + 1, 0)
             }
         }
-        try autoreleasepool { try build(first..<jobs.count) }
-        if options.compact, !jobs.isEmpty {
+        try buildBatch(first..<jobs.count)
+        if options.compact && !scene.remadeOften, !jobs.isEmpty {
             print(String(format: "Metal BLAS: %d meshes (%d the last scene's), %.1f MB compacted to %.1f MB", structures.count,
                          structures.count - new.count, Double(before) / 1_048_576, Double(after) / 1_048_576))
         }
-        if !refitted.isEmpty {
-            // One scratch buffer, a range per structure: the refits of a frame may run side by side.
+        if !refitted.isEmpty || !rebuilt.isEmpty {
+            // One scratch buffer, a range per structure: the refits (and builds) of a frame may run side by side.
             var offsets: [Int] = [], length = 0
             for r in refitted { offsets.append(length); length += (r.scratch + 255) & ~255 }
+            var rebuiltOffsets: [Int] = []
+            for r in rebuilt { rebuiltOffsets.append(length); length += (r.scratch + 255) & ~255 }
             guard let scratch = device.makeBuffer(length: length, options: .storageModePrivate) else {
                 throw RendererError.resourceCreation("refit scratch buffer")
             }
@@ -728,9 +837,83 @@ struct SceneBuffers {
                 cmd.waitUntilCompleted()
             }
             primitiveRefit = PrimitiveRefit(structures: refitted.map { structures[$0.index]! }, descriptors: refitted.map(\.descriptor),
-                                            scratch: scratch, scratchOffsets: offsets)
+                                            scratch: scratch, scratchOffsets: offsets,
+                                            rebuilt: rebuilt.indices.map { (structures[rebuilt[$0].index]!, rebuilt[$0].descriptor, rebuiltOffsets[$0]) },
+                                            rebuiltMeshes: rebuilt.map(\.index))
+        }
+        if !displaced.isEmpty {
+            guard let scratch = device.makeBuffer(length: displaced.map(\.scratch).max()!, options: .storageModePrivate) else {
+                throw RendererError.resourceCreation("displaced meshes' scratch buffer")
+            }
+            scratch.label = "displacedScratch"
+            displacedBuild = DisplacedBuild(structures: Dictionary(uniqueKeysWithValues: displaced.map { ($0.index, (structures[$0.index]!, $0.descriptor)) }),
+                                            scratch: scratch)
+        }
+        if !terrainMeshes.isEmpty {
+            // The sectors kept from the last scene: their descriptors here (their structures are as that scene built them).
+            for i in terrainMeshes where terrain[i] == nil {
+                guard let block = blocks.isEmpty ? nil : blocks[i] else { continue }
+                let descriptor = SceneBuffers.blockDescriptor(block, triangles: Int(scene.meshes[i].indexCount) / 3)
+                descriptor.usage = .preferFastBuild
+                terrain[i] = descriptor
+                terrainScratch = max(terrainScratch, device.accelerationStructureSizes(descriptor: descriptor).buildScratchBufferSize)
+            }
+            let stride = (terrainScratch + 255) & ~255
+            guard let scratch = device.makeBuffer(length: stride * TerrainBuild.perFrame, options: .storageModePrivate) else {
+                throw RendererError.resourceCreation("terrain's scratch buffer")
+            }
+            scratch.label = "terrainScratch"
+            terrainBuild = TerrainBuild(structures: Dictionary(uniqueKeysWithValues: terrain.map { ($0.key, (structures[$0.key]!, $0.value)) }),
+                                        scratch: scratch, scratchStride: stride)
         }
         primitives = structures.map { $0! }
         for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }
+    }
+
+    /// A borrowed mesh's structure's descriptor: its triangles in its block (MeshBlock).
+    static func blockDescriptor(_ block: MeshBlock, triangles: Int) -> MTLPrimitiveAccelerationStructureDescriptor {
+        let geometry = MTLAccelerationStructureTriangleGeometryDescriptor()
+        geometry.vertexBuffer = block.geometry
+        geometry.indexBuffer = block.geometry
+        geometry.indexBufferOffset = block.indexOffset
+        geometry.vertexStride = MemoryLayout<SIMD3<Float>>.stride
+        geometry.indexType = .uint32
+        geometry.triangleCount = triangles
+        geometry.opaque = true
+        let descriptor = MTLPrimitiveAccelerationStructureDescriptor()
+        descriptor.geometryDescriptors = [geometry]
+        return descriptor
+    }
+}
+
+/// A terrain's sectors' structures (Scene+Terrain.swift), built again over their new vertices: those of `meshes`,
+/// side by side in one encoder, each with its own range of the scratch buffer (`perFrame` at most a frame).
+struct TerrainBuild: PrimitiveWork {
+    static let perFrame = 16
+    let structures: [Int: (structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor)]
+    let scratch: MTLBuffer
+    let scratchStride: Int
+    var meshes: [Int] = []
+
+    func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
+        for (k, m) in meshes.prefix(TerrainBuild.perFrame).enumerated() {
+            guard let s = structures[m] else { continue }
+            enc.build(accelerationStructure: s.structure, descriptor: s.descriptor, scratchBuffer: scratch, scratchBufferOffset: k * scratchStride)
+        }
+    }
+}
+
+/// The displaced meshes' structures (Scene+Displacement.swift), built again over their moved vertices: those of
+/// `meshes`, an encoder each (they share one scratch buffer, so one after the other).
+struct DisplacedBuild: PrimitiveWork {
+    let structures: [Int: (structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor)]
+    let scratch: MTLBuffer
+    var meshes: [Int] = []
+
+    var encoderCount: Int { meshes.count }
+
+    func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
+        guard let s = structures[meshes[part]] else { return }
+        enc.build(accelerationStructure: s.structure, descriptor: s.descriptor, scratchBuffer: scratch, scratchBufferOffset: 0)
     }
 }

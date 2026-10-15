@@ -46,6 +46,9 @@ final class Upscaler {
         d.outputTextureFormat = Upscaler.hdrFormat
         (d.inputWidth, d.inputHeight, d.outputWidth, d.outputHeight) = (inputWidth, inputHeight, outputWidth, outputHeight)
         d.requiresSynchronousInitialization = synchronous
+        // (Not its transparency overlay for the particles' layer: it filters the overlay over time with the scene's
+        // motion, which isn't the particles', and sparks come out as faint streaks. particleOverlayKernel puts the
+        // layer over its output instead.)
         // The light arrives before the camera's exposure (tonemapKernel applies it), so MetalFX finds its own. A fixed
         // exposure texture, and a denoise-strength mask over the sky and the emitters, scored the same (hwrtq).
         d.isAutoExposureEnabled = true
@@ -59,7 +62,7 @@ final class Upscaler {
 
         let t = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Upscaler.hdrFormat, width: outputWidth, height: outputHeight,
                                                          mipmapped: false)
-        t.usage = scaler.outputTextureUsage.union(.shaderRead)   // tonemapKernel reads it
+        t.usage = scaler.outputTextureUsage.union([.shaderRead, .shaderWrite])   // tonemapKernel reads it; the particles go over it
         t.storageMode = .private
         guard let output = device.makeTexture(descriptor: t) else { throw RendererError.resourceCreation("texture upscaled") }
         output.label = "upscaled"

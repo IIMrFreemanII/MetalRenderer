@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import simd
 
 /// The benchmark modes: `METALRENDERER_BENCH=<name>` runs that mode's list of settings (`Benchmark.Config`).
 /// Setting names become PNG names and the scorers in Tools/eval look them up, so they are part of the interface.
@@ -9,7 +10,7 @@ extension Benchmark {
         "shot": shot, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
-        "noise": noise, "denoise": denoise, "quality": quality,
+        "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
@@ -17,8 +18,13 @@ extension Benchmark {
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
         "pathref": pathref,
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
-        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo,
-    ]
+        "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
+        "fluids": fluids, "fluidsdemo": fluidsDemo,
+        "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
+        "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
+        "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
+        "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
+    ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
 
     static func configs(for mode: String) -> [Config] {
         if let build = modes[mode] { return build() }
@@ -26,6 +32,15 @@ extension Benchmark {
             print("METALRENDERER_BENCH=\(mode) isn't a mode (\(modes.keys.sorted().joined(separator: ", "))): running the default list")
         }
         return standard()
+    }
+
+    /// Every scene made once, a frame each: their outlines for the Project Graph (OutlineStore writes them).
+    private static func outlines() -> [Config] {
+        SceneKind.allCases.map { kind in
+            var c = Config("outline \(kind.envName)", scale: 0.25, gi: nil, scene: SceneSettings(kind: kind)).still(at: 0)
+            c.frames = 1
+            return c
+        }
     }
 
     // MARK: - Shared pieces
@@ -311,6 +326,206 @@ extension Benchmark {
         ]
     }
 
+    /// The building workshop (Scene+Buildings.swift) as the building editor shows it (cascades, MetalFX 3x from 0.5x),
+    /// paused: each style's building from outside, a street of them, the cutaway and the dollhouse, and inside: a
+    /// living room by day and by night, the stair, an office floor.
+    private static func buildings() -> [Config] {
+        func shown(_ name: String, _ change: (inout BuildingSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .buildings)
+            change(&scene.buildings)
+            return Config("buildings \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+        }
+        /// Standing in a corner of the first room of `type` on `storey` (a lit one, if `lit`), looking across it to the
+        /// far corner; `transform`: the lot's into the world.
+        func inside(_ spec: BuildingSpec, _ type: RoomType, storey: Int, lit: Bool = false, transform: float4x4 = matrix_identity_float4x4) -> Camera {
+            let plan = BuildingGenerator.generate(spec).plan
+            let f = plan.storeys[min(storey, plan.storeys.count - 1)]
+            let rooms = f.rooms.filter { $0.type == type }
+            let r = ((lit ? rooms.first { $0.lit } : nil) ?? rooms.max { $0.area < $1.area } ?? f.rooms.max { $0.area < $1.area }!).rect
+            let a = transform * SIMD4(r.lo.x + 0.5, f.floor + 1.6, r.lo.y + 0.5, 1), b = transform * SIMD4(r.hi.x - 0.3, f.floor + 1.0, r.hi.y - 0.3, 1)
+            let v = SIMD3(b.x - a.x, b.y - a.y, b.z - a.z), d = v / (v * v).sum().squareRoot()
+            var c = Camera()
+            c.position = SIMD3(a.x, a.y, a.z)
+            c.yaw = atan2(d.x, -d.z)
+            c.pitch = asin(d.y)
+            return c
+        }
+        func inside(_ p: BuildingSceneSettings, _ type: RoomType, storey: Int, lit: Bool = false) -> Camera {
+            inside(Scene.workshopSpec(p, catalog: .builtIn).spec, type, storey: storey, lit: lit)
+        }
+        // A city, and the building of its first residential lot on a street with its interior: from inside it.
+        var city = CitySettings()
+        (city.blocks, city.style) = (2, .residential)
+        let cityPlan = CityPlan(city, seed: 1)
+        let lotIndex = cityPlan.lots.firstIndex { $0.edges[0] == .street } ?? 0
+        let lot = cityPlan.lots[lotIndex]
+        var inCity = SceneSettings(kind: .city, city: city, seed: 1)
+        inCity.interior = LotRef.city(city, seed: 1, lot: lotIndex, lot).key
+        var citySpec = BuildingSpec(lot: lot, city: city, night: false, catalog: .builtIn)
+        citySpec.interior = true
+        var home = BuildingSceneSettings()
+        (home.style, home.lot, home.floors) = ("residential", SIMD2(22, 14), 5)
+        var office = BuildingSceneSettings()
+        (office.style, office.lot, office.sides, office.floors) = ("office", SIMD2(34, 30), .free, 12)
+        var night = home
+        night.night = true
+        return [
+            shown("residential") { $0 = home },
+            shown("oldtown") { $0.style = "oldtown"; $0.lot = SIMD2(9, 12); $0.floors = 3 },
+            shown("modern street") { $0.style = "modern"; $0.lot = SIMD2(24, 15); $0.floors = 6; $0.layout = .street },
+            shown("office") { $0 = office },
+            shown("warehouse") { $0.style = "warehouse"; $0.lot = SIMD2(34, 28); $0.sides = .free; $0.floors = 2 },
+            shown("cutaway") { $0 = home; $0.view = .cutaway; $0.cut = 1 },
+            shown("dollhouse") { $0 = home; $0.view = .dollhouse; $0.cut = 1 },
+            shown("living room") { $0 = home }.from(inside(home, .living, storey: 1)),
+            shown("living room night") { $0 = night }.from(inside(night, .living, storey: 1, lit: true)),
+            shown("bedroom night") { $0 = night }.from(inside(night, .bedroom, storey: 2, lit: true)),
+            shown("stair") { $0 = home }.from(inside(home, .corridor, storey: 1)),
+            shown("office floor") { $0 = office }.from(inside(office, .openOffice, storey: 3)),
+            Config("buildings city interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: inCity).still().frames(30)
+                .from(inside(citySpec, .living, storey: 1, transform: lot.transform)),
+        ] + worldInterior { inside($0, $1, storey: $2, lit: $3, transform: $4) }
+    }
+
+    /// The open world with the building nearest where it starts walkable: from inside it (its tile without its shell).
+    private static func worldInterior(_ inside: (BuildingSpec, RoomType, Int, Bool, float4x4) -> Camera) -> [Config] {
+        guard let (scene, spec, transform) = worldInteriorLot() else { return [] }
+        return [Config("buildings world interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            .from(inside(spec, .living, 1, false, transform))]
+    }
+
+    /// The open world's scene with the building (3 floors or more) nearest where the world starts walkable, that
+    /// building's spec (with its interior), and its lot's place in the scene.
+    static func worldInteriorLot() -> (scene: SceneSettings, spec: BuildingSpec, transform: float4x4)? {
+        var scene = SceneSettings(kind: .world)
+        let world = World(seed: UInt64(max(scene.seed, 0)))
+        let side = Double(World.tileSize), begin = world.start.place
+        let home = SIMD2(Int((begin.x / side).rounded(.down)), Int((begin.z / side).rounded(.down)))
+        let anchor = WorldTile.origin(world.anchorTile.x, world.anchorTile.y)
+        var best: (distance: Double, ref: LotRef, lot: CityPlan.Lot, city: World.City)?
+        for j in -1...1 {
+            for i in -1...1 {
+                let o = WorldTile.origin(home.x + i, home.y + j)
+                guard let (city, blocks) = world.blocks(x0: o.x, z0: o.y, side: side) else { continue }
+                for block in blocks {
+                    for (k, lot) in block.plan.lots.enumerated() where lot.floors >= 3 && lot.style != .warehouse {
+                        let c = city.center + SIMD2(Double(lot.rect.center.x), Double(lot.rect.center.y))
+                        let d = ((c.x - begin.x) * (c.x - begin.x) + (c.y - begin.z) * (c.y - begin.z)).squareRoot()
+                        if d < best?.distance ?? .infinity { best = (d, world.lotRef(city, block, k), lot, city) }
+                    }
+                }
+            }
+        }
+        guard let (_, ref, lot, city) = best else { return nil }
+        scene.interior = ref.key
+        var spec = BuildingSpec(lot: lot, city: scene.city, night: true, catalog: .builtIn)
+        spec.interior = true
+        let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
+        return (scene, spec, translate([c.x, city.level, c.y]) * lot.transform)
+    }
+
+    /// The plant workshop (Scene+Plants.swift) as the plant editor shows it (cascades, MetalFX 3x from 0.5x), paused:
+    /// an oak, a birch's ages and variants, a conifer's skeleton, a bush, ferns, grass, and a species of a catalog of
+    /// its own (a willow: a birch whose twigs hang). `METALRENDERER_PLANTS=builtin` leaves out what Assets/Plants holds.
+    /// The character workshop: each built-in character in the A pose, the first's face close, everyone side by side,
+    /// and the first walking and in a clip of the library.
+    private static func characters() -> [Config] {
+        func shown(_ name: String, _ change: (inout CharacterSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .characters)
+            scene.characterCatalog = "builtin"
+            change(&scene.characterWorkshop)
+            // Close-ups at full resolution (pores and wrinkles are a texel or two of an upscaled frame).
+            let close = scene.characterWorkshop.view == .face
+            return Config("characters \(name)", scale: close ? 1.5 : 0.5, upscale: close ? 0 : 3, gi: .radianceCascades, scene: scene)
+                .still().frames(30)
+        }
+        // A built-in changed (hair styles, beards, marks the built-ins don't have), its face close.
+        func styled(_ name: String, from id: String, _ change: (inout CharacterDNA) -> Void) -> Config {
+            var d = BuiltInCharacters.all.first { $0.id == id }!
+            change(&d)
+            var c = shown("hair \(name)") { $0.character = id; $0.view = .face }
+            c.settings.scene.characterCatalog = CharacterCatalog.register(CharacterCatalog(characters: [d]))
+            return c
+        }
+        return BuiltInCharacters.all.map { def in shown(def.id) { $0.character = def.id } } + [
+            shown("man face") { $0.view = .face },
+            shown("woman face") { $0.character = "woman"; $0.view = .face },
+            shown("elder face") { $0.character = "elder"; $0.view = .face },
+            shown("heavy face") { $0.character = "heavy"; $0.view = .face },
+            shown("man smiling") { $0.view = .face; $0.expression = .smile },
+            shown("man frowning") { $0.view = .face; $0.expression = .frown },
+            shown("man surprised") { $0.view = .face; $0.expression = .surprise },
+            shown("man talking") { $0.view = .face; $0.expression = .talk },
+            viewed(shown("man face three quarters") { $0.view = .face }, look(from: [0.3, 1.7, 0.42], at: [0, 1.66, 0.04])),
+            viewed(shown("man face side") { $0.view = .face }, look(from: [0.5, 1.68, 0.05], at: [0, 1.665, 0.03])),
+            viewed(shown("man ear") { $0.view = .face }, look(from: [0.3, 1.7, -0.25], at: [0.07, 1.67, -0.01])),
+            viewed(shown("woman face three quarters") { $0.character = "woman"; $0.view = .face }, look(from: [-0.3, 1.62, 0.4], at: [0, 1.58, 0.04])),
+            shown("everyone") { $0.layout = .lineup },
+            shown("everyone caps") { $0.layout = .lineup; $0.hair = .caps },
+            styled("long", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+            styled("slicked stubble", from: "man") { $0.hair.style = "slicked"; $0.hair.beard = "stubble" },
+            styled("goatee", from: "athlete") { $0.hair.beard = "goatee" },
+            styled("moustache grey", from: "man") { $0.hair.style = "sidePart"; $0.hair.beard = "moustache"; $0.macro.age = 62 },
+            styled("curly red freckles", from: "woman") { $0.hair.style = "curly"; $0.look.hairRed = 0.9; $0.look.hairMelanin = 0.35; $0.look.freckles = 1 },
+            viewed(styled("long behind", from: "woman") { $0.hair.style = "long"; $0.look.hairMelanin = 0.3 },
+                   look(from: [0.35, 1.55, -0.6], at: [0, 1.45, 0])),
+            shown("woman face caps") { $0.character = "woman"; $0.view = .face; $0.hair = .caps },
+            shown("man t pose") { $0.pose = .tPose },
+            shown("man walking") { $0.pose = .walk },
+            shown("woman dancing") { $0.character = "woman"; $0.pose = .clip; $0.clip = "Hip Hop Dancing" },
+            viewed(shown("man side") { $0.pose = .tPose }, look(from: [3.2, 1.1, 0], at: [0, 1.0, 0])),
+            viewed(shown("man back") { $0.pose = .tPose }, look(from: [0.3, 1.3, -3.4], at: [0, 1.0, 0])),
+            viewed(shown("man hand") { $0.pose = .tPose }, look(from: [0.75, 1.75, 0.35], at: [0.75, 1.42, 0])),
+            viewed(shown("man hand below") { $0.pose = .tPose }, look(from: [0.72, 1.1, 0.25], at: [0.75, 1.42, 0])),
+            viewed(shown("woman waist") { $0.character = "woman"; $0.pose = .tPose }, look(from: [0.55, 1.15, 0.75], at: [0.1, 1.08, 0])),
+            viewed(shown("woman shoulder") { $0.character = "woman"; $0.pose = .tPose }, look(from: [0.35, 1.75, 0.6], at: [0.1, 1.42, 0])),
+        ]
+    }
+
+    /// `config` seen from `camera`.
+    static func viewed(_ config: Config, _ camera: Camera) -> Config {
+        var c = config
+        c.camera = camera
+        return c
+    }
+
+    /// A camera at `from` looking at `at`.
+    static func look(from: SIMD3<Float>, at: SIMD3<Float>) -> Camera {
+        let d = simd_normalize(at - from)
+        var c = Camera()
+        c.position = from
+        c.yaw = atan2(d.x, -d.z)
+        c.pitch = asin(d.y)
+        return c
+    }
+
+    private static func plants() -> [Config] {
+        func shown(_ name: String, _ change: (inout PlantSceneSettings) -> Void = { _ in }) -> Config {
+            var scene = SceneSettings(kind: .plants)
+            change(&scene.plants)
+            return Config("plants \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+        }
+        var willow = PlantCatalog.launch
+        var def = PlantCatalog.builtIn[.birch]
+        def.id = "willow"
+        def.name = "Willow"
+        def.seedIndex = 100
+        def.recipe.levels[2].tropism = -1.4
+        def.recipe.levels[2].curve = -1.6
+        def.bough?.levels[0].tropism = -1.2
+        willow = willow.merging([def])
+        let catalog = PlantCatalog.register(willow)
+        return [
+            shown("oak"),
+            shown("birch lineup") { $0.species = "birch"; $0.layout = .lineup },
+            shown("conifer skeleton") { $0.species = "conifer"; $0.view = .skeleton },
+            shown("bush") { $0.species = "bush" },
+            shown("fern") { $0.species = "fern" },
+            shown("grass") { $0.species = "grass" },
+            shown("willow") { $0.species = "willow" }.with { $0.scene.plantCatalog = catalog },
+        ]
+    }
+
     /// The open world (World.swift), paused in the morning: from where it starts (the country outside the first city),
     /// from a street in that city, in the woods, and from above; then a flight of 600 m along the city's edge at
     /// 60 m/s, which crosses two tiles: the scene is made again around each (the log says how long that took); then
@@ -343,7 +558,7 @@ extension Benchmark {
     }
 
     /// A camera `up` metres above the ground at world position (x, z) of `w`, in the coordinates of its start's scene.
-    private static func worldCamera(_ w: World, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
+    static func worldCamera(_ w: World, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
         let anchor = WorldTile.origin(w.anchorTile.x, w.anchorTile.y)
         var c = Camera()
         c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
@@ -353,7 +568,7 @@ extension Benchmark {
     }
 
     /// The world the run's scenes are of (`METALRENDERER_SCENE=seed=...`), for placing the cameras in it.
-    private static func worldOfRun() -> World {
+    static func worldOfRun() -> World {
         var s = RenderSettings()
         SettingsEnv.apply(.scene, to: &s, from: env)
         return World(seed: UInt64(max(s.scene.seed, 0)))
@@ -437,7 +652,8 @@ extension Benchmark {
         }
         // The block with a courtyard nearest the city's middle.
         let around = w.blocks(x0: cx - 400, z0: cz - 400, side: 800)?.blocks ?? []
-        let court = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }.min { ($0 * $0).sum() < ($1 * $1).sum() } ?? .zero
+        let centers: [SIMD2<Float>] = around.filter { !$0.plan.courts.isEmpty }.map { $0.plan.blocks[0].rect.center }
+        let court: SIMD2<Float> = centers.min { (a: SIMD2<Float>, b: SIMD2<Float>) -> Bool in (a * a).sum() < (b * b).sum() } ?? .zero
         return [
             view("ground crossing", cx, cz + 22, up: 30, pitch: -0.95),
             view("ground corner", cx + 4.5, cz + 14, up: 1.7, yaw: -0.5, pitch: -0.12),
@@ -851,10 +1067,26 @@ extension Benchmark {
             [
                 Config("\(tag) native 1.5x", scale: 1.5),
                 Config("\(tag) native 0.75x"),
+                Config("\(tag) native 0.75x TAA") { $0.taa = true },
                 Config("\(tag) MetalFX 0.75x x2", upscale: 2),
                 Config("\(tag) MetalFX 0.5x x3", scale: 0.5, upscale: 3),
             ].map { tag == "albedo" ? $0.view(4) : $0 }
         }
+    }
+
+    /// Temporal AA without upscaling, in the scene METALRENDERER_SCENE picks (cascades, the traced resolution the
+    /// window's size in points): without it and with it, each paused with the frame before saved too (what changes from
+    /// one frame to the next is the shimmer), against a supersampled reference; then both with the camera moving (the
+    /// ghosts and the blur).
+    private static func taa() -> [Config] {
+        let off = Config("native", scale: 1, gi: .radianceCascades), on = off.named("native taa").with { $0.taa = true }
+        return [
+            off.still(previous: true).frames(60),
+            on.still(previous: true).frames(60),
+            off.named("supersampled").reference(frames: 512, supersample: true),
+            off.named("native moving").cameraMove(),
+            on.named("native taa moving").cameraMove(),
+        ]
     }
 
     // MARK: - Correctness checks
@@ -1077,6 +1309,451 @@ extension Benchmark {
         return out
     }
 
+    /// The fluids scene (Scene+Fluids.swift) at the physics look: paused at 2, 4 and 6 s (the boxes dropped at 4 and
+    /// 5 s), at 6 s on each API, each liquid alone, all by one solver, in its normals and albedo, and path traced (the
+    /// reference: refraction and absorption as they are); then 5 s moving for timing: the first on the GPU, from 12 s
+    /// (the pours longer) at a few particle counts a liquid, and the first small on the CPU.
+    private static func fluids() -> [Config] {
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) { $0.usePhysicsLook() }
+        var out: [Config] = []
+        for time: Float in [2, 4, 6] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 6)) }
+        for liquids in [PhysicsSettings.Liquids.water, .blood, .honey] {
+            out.append(base.named(liquids.envName).with { $0.scene.physics.liquids = liquids }.still(at: 6))
+        }
+        out.append(base.named("all pbf").with { $0.scene.physics.solver = .pbf }.still(at: 6))
+        out.append(base.named("all mpm").with { $0.scene.physics.solver = .mpm }.still(at: 6))
+        out.append(base.named("normals").view(3).still(at: 6))
+        out.append(base.named("albedo").view(4).still(at: 6))
+        out.append(base.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 6).frames(256))
+        out.append(base.named("gpu moving").with { $0.scene.physics.backend = .gpu })
+        for particles in [16384, 32768, 65536] {
+            var c = base.named("gpu \(particles / 1024)k moving").with { $0.scene.physics.fluidParticles = particles; $0.scene.physics.backend = .gpu }
+            c.startTime = 12   // by then the pours have filled 16k a liquid (the warm-up catches up 19 steps a frame)
+            out.append(c)
+        }
+        out.append(base.named("cpu 2k moving").with { $0.scene.physics.fluidParticles = 2048; $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The particles scene (Scene+Particles.swift) as the app shows it (cascades, MetalFX 3x from 0.5x): paused at 2, 5
+    /// and 8 s, at 5 s on each API, natively at 0.75x without MetalFX (the composite puts the particles' layer over the
+    /// scene, SVGF denoises), and path traced at 0.75x (the reference: its particles stop paths by their opacity, scatter
+    /// or glow); without particle shadows, without particles in reflections; then 5 s moving for timing at a quarter,
+    /// once and four times the particles (ParticleSettings.budget).
+    private static func particles() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+        var out: [Config] = []
+        for time: Float in [2, 5, 8] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 5)) }
+        let native = Config("", scale: 0.75, upscale: 0, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+        out.append(native.named("native").still(at: 5))
+        out.append(native.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 5).frames(256))
+        out.append(base.named("no shadows").with { $0.scene.particles.shadows = false }.still(at: 5))
+        out.append(base.named("no reflections").with { $0.scene.particles.reflections = false }.still(at: 5))
+        out.append(base.named("half layer").with { $0.particleScale = 0.5 }.still(at: 5))
+        out.append(native.named("native half layer").with { $0.particleScale = 0.5 }.still(at: 5))
+        for budget: Float in [0.25, 1, 4] {
+            out.append(base.named(String(format: "moving %gx", budget)).with { $0.scene.particles.budget = budget })
+        }
+        return out
+    }
+
+    /// The particles scene's demo video: 24 s along a camera track from 3 s in (the effects under way) at the
+    /// `particles` mode's settings with the showcase's lens but no depth of field (`recording`;
+    /// `.claude/skills/offscreen/scripts/video.sh -m particlesdemo` makes the mp4). Wide, then to the brazier's fire and
+    /// smoke, down to the rubble's bursts and dust, round to the plinth's motes and wisps, across the grinder's sparks
+    /// on the crate, over to the rain under its lamp, and back out.
+    private static func particlesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0.3, 1.9, 6.2], [0, 1.0, 0]),
+            key(4, [-1.2, 1.5, 1.9], [-2.6, 1.3, -0.5]),
+            key(8, [-0.6, 1.0, 4.0], [-1.9, 0.4, 2.2]),
+            key(12, [0.9, 1.6, -0.6], [0, 1.2, -2.6]),
+            key(16, [1.0, 1.3, 3.4], [0.5, 0.7, 0.8]),
+            key(20, [0.2, 2.0, 5.6], [3.4, 0.9, 0.6]),
+            key(24, [0.3, 1.9, 6.2], [0, 1.0, 0]),
+        ])
+        var demo = Config("particles demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles)) {
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = 2   // 3 s in at the first recorded frame, after Benchmark.warmupFrames
+        return [demo]
+    }
+
+    /// The VFX stage (Scene+Stage.swift) at the particles mode's settings: the fireworks alone (generated code:
+    /// VFXProgram) paused at 1, 2.5 and 4 s, then beside the campfire and the magic (the fixed emitters' code), paused and
+    /// moving for timing. Benchmarks wait for the VFX library's compile.
+    private static func vfx() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .vfxStage))
+        var out: [Config] = []
+        for time: Float in [1, 2.5, 4] { out.append(base.named(String(format: "fireworks %gs", time)).still(at: time)) }
+        let lineUp = base.with { $0.scene.stage.effects = ["campfire", "fireworks", "magic"] }
+        out.append(lineUp.named("line-up").still(at: 4))
+        out.append(lineUp.named("line-up moving"))
+        return out
+    }
+
+    /// The VFX editor's edits reaching the running stage (Renderer.editEffects), the fireworks paused at 3 s: as built in;
+    /// the stars brighter and heavier (values: in place, the same particles); their size wired to a node (code: compiled,
+    /// then replayed from the start); the magic (the scene made again); the wired fireworks made from scratch, which
+    /// "code" should match within the run-to-run noise.
+    private static func vfxEdit() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .vfxStage)).still(at: 3)
+        var fireworks = VFXLibrary.named("fireworks")!
+        fireworks.setParam("starColor", "emission", .float(20))
+        fireworks.setParam("stars.gravity", "share", .float(1))
+        let values = VFXCatalog.register(VFXCatalog(effects: ["fireworks": fireworks]))
+        fireworks.nodes.append(VFXNode(.float, ["value": .float(0.12)], id: "big", at: [40, 520]))
+        fireworks.links.append(VFXLink("big", to: "stars.size", "size"))
+        let code = VFXCatalog.register(VFXCatalog(effects: ["fireworks": fireworks]))
+        return [base.named("before"), base.named("values").with { $0.scene.effects = values },
+                base.named("code").with { $0.scene.effects = code },
+                base.named("other").with { $0.scene.stage.effects = ["magic"] },
+                base.named("code fresh").with { $0.scene.effects = code }]
+    }
+
+    /// The material workshop (Scene+Materials.swift): every built-in graph on the line-up in the studio, path traced at
+    /// three quarters of the window (each graph baked when its scene is made: its bake's time printed), then the first
+    /// on each shape alone and against each backdrop.
+    private static func materials() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
+        var out = MaterialLibrary.names.map { name in base.named(VFXEffect.slug(name)).with { $0.scene.materialWorkshop.graph = name } }
+        let first = MaterialLibrary.names[0]
+        for layout in MaterialWorkshopSettings.Layout.allCases where layout != .lineup {
+            out.append(base.named("\(VFXEffect.slug(first)) \(layout.rawValue)").with {
+                $0.scene.materialWorkshop.graph = first
+                $0.scene.materialWorkshop.layout = layout
+            })
+        }
+        // The cut-outs (an opacity output: a plant, a decal) as a card and a tile on the ground.
+        for g in MaterialLibrary.all where g.channels[.opacity] != nil && g.name.hasPrefix("Swamp") {
+            out.append(base.named("\(VFXEffect.slug(g.name)) card").with {
+                $0.scene.materialWorkshop.graph = g.name
+                $0.scene.materialWorkshop.layout = .card
+            })
+        }
+        for backdrop in MaterialWorkshopSettings.Backdrop.allCases where backdrop != .studio {
+            out.append(base.named("\(VFXEffect.slug(first)) \(backdrop.rawValue)").with {
+                $0.scene.materialWorkshop.graph = first
+                $0.scene.materialWorkshop.backdrop = backdrop
+            })
+        }
+        return out
+    }
+
+    /// The painter workshop: each object it paints, its texture set a brick graph laid on its layout (UV projection: the
+    /// unwrap's charts, Painter/UVUnwrap.swift, as seams; their texels per metre as the bricks' size).
+    private static func painterModes() -> [Config] {
+        var d = PaintDocument(name: "Bench layout")
+        var bricks = PaintLayer.fill("Bricks", PaintValues(), channels: [.color, .roughness, .metallic, .height])
+        bricks.graph = "Red Bricks"
+        bricks.projection = .uv
+        bricks.tiling = 2
+        d.layers = [PaintDocument.baseLayer, bricks]
+        PaintDocuments.shared.update(d)
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        return PainterWorkshopSettings.Subject.allCases.map { subject in
+            base.named(subject.rawValue).with {
+                $0.scene.painterWorkshop.subject = subject
+                $0.scene.painterWorkshop.model = "demon"
+                $0.scene.painterWorkshop.document = d.name
+            }
+        }
+    }
+
+    /// The smart materials (SmartMaterial.builtIn), each on another object: their masks generated from its bakes
+    /// (curvature, occlusion: PaintBake).
+    private static func painterSmart() -> [Config] {
+        let subjects: [PainterWorkshopSettings.Subject] = [.cube, .model, .sphere, .character, .cylinder]
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        return SmartMaterial.builtIn.enumerated().map { k, m in
+            var d = PaintDocument(name: "Bench \(m.name)")
+            d.layers = [PaintDocument.baseLayer] + m.instantiate()
+            PaintDocuments.shared.update(d)
+            return base.named(VFXEffect.slug(m.name)).with {
+                $0.scene.painterWorkshop.subject = subjects[k % subjects.count]
+                $0.scene.painterWorkshop.model = "demon"
+                $0.scene.painterWorkshop.document = d.name
+            }
+        }
+    }
+
+    /// Strokes in paint mode (Renderer.runPainterScript): red across the sphere (over its seams), blue mirrored
+    /// (symmetry X), leaves stamped and scattered, the eraser through the red, gold revealed through a black mask,
+    /// a UV island filled green; then the same on the demon model.
+    private static func painterStrokes() -> [Config] {
+        var d = PaintDocument(name: "Bench strokes")
+        var paint = PaintLayer(name: "Paint")
+        paint.channels = [.color, .roughness, .metallic, .height]
+        var gold = PaintLayer.fill("Gold", PaintValues(color: [1, 0.72, 0.3], roughness: 0.25, metallic: 1), channels: [.color, .roughness, .metallic])
+        gold.mask = PaintMask(base: 0, generator: nil, painted: true)
+        var fills = PaintLayer(name: "Fills")
+        fills.channels = [.color, .roughness]
+        d.layers = [PaintDocument.baseLayer, paint, gold, fills]
+        PaintDocuments.shared.update(d)
+        func brush(_ c: SIMD3<Float>, size: Float = 22, _ change: (inout PaintBrush) -> Void = { _ in }) -> PaintBrush {
+            var b = PaintBrush()
+            b.size = size
+            b.values.color = c
+            b.values.roughness = 0.35
+            b.values.height = 0.8
+            b.channels = [.color, .roughness, .height]
+            b.flow = 1
+            change(&b)
+            return b
+        }
+        func line(_ a: SIMD2<Float>, _ b: SIMD2<Float>, _ n: Int = 24) -> [SIMD2<Float>] { (0...n).map { a + (b - a) * Float($0) / Float(n) } }
+        let steps: [PainterStep] = [
+            .mode(0),
+            .brush(brush([0.8, 0.05, 0.03]), layer: 1, mask: false, tool: .brush), .stroke(line([0.3, 0.42], [0.7, 0.46])),
+            .brush(brush([0.05, 0.15, 0.8]) { $0.symmetry = .x }, layer: 1, mask: false, tool: .brush), .stroke(line([0.4, 0.3], [0.44, 0.36])),
+            .brush(brush([0.2, 0.45, 0.08], size: 30) { $0.stamp = 3; $0.scatter = 0.6; $0.angleJitter = 180; $0.spacing = 0.6 },
+                   layer: 1, mask: false, tool: .brush), .stroke(line([0.35, 0.3], [0.65, 0.32])),
+            .brush(brush(.zero, size: 12) { $0.eraser = true }, layer: 1, mask: false, tool: .brush), .stroke(line([0.5, 0.36], [0.52, 0.52])),
+            .brush(brush([1, 1, 1], size: 26), layer: 2, mask: true, tool: .brush), .stroke(line([0.38, 0.53], [0.62, 0.52])),
+            .brush(brush([0.1, 0.7, 0.2]) { $0.channels = [.color, .roughness] }, layer: 3, mask: false, tool: .fillIsland), .fill([0.5, 0.58]),
+            .wait, .wait,
+        ]
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .painter)).still(at: 1)
+        let sphere = base.named("sphere").with { $0.scene.painterWorkshop.subject = .sphere; $0.scene.painterWorkshop.document = d.name }
+        let model = base.named("model").with {
+            $0.scene.painterWorkshop.subject = .model
+            $0.scene.painterWorkshop.model = "demon"
+            $0.scene.painterWorkshop.document = d.name
+        }
+        return [sphere, model].map { c in var c = c; c.events = [(0, .paint(steps))]; return c }
+    }
+
+    /// The Mireland swamp (every material procedural): from the bank, closer to the water's edge, and wide.
+    private static func mireland() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .mireland)).still(at: 1)
+        var edge = base.named("edge"), wide = base.named("wide")
+        edge.camera = Scene.camera([3, 0.9, 9], yaw: 0.5, pitch: -0.12)
+        wide.camera = Scene.camera([-12, 4, 22], yaw: -0.45, pitch: -0.14)
+        return [base.named("bank"), edge, wide]
+    }
+
+    /// The Material Designer's edits reaching the renderer: the workshop's bricks as built in, then with more rows and
+    /// rounder bricks (an edit of values: baked again in place, Renderer.editMaterials); the sun courtyard as made, then
+    /// with its ground's material given the bricks and a wall's the perforated metal (assignments: the scene made again,
+    /// the materials procedural); the cobblestone displaced, deeper and flat; the marble on a sphere as code
+    /// (MatShaderCode, compiled into the shading) and baked.
+    private static func matEdit() -> [Config] {
+        let base = Config("", scale: 0.75, gi: .pathTraced, scene: SceneSettings(kind: .materials)).still(at: 1)
+        var bricks = MaterialLibrary.named("Red Bricks")!
+        if let k = bricks.nodes.firstIndex(where: { $0.kind == .bricks }) {
+            bricks.nodes[k].params["rows"] = .int(16)
+            bricks.nodes[k].params["roundness"] = .float(0.8)
+        }
+        let edited = MaterialCatalog.register(MaterialCatalog(graphs: ["Red Bricks": bricks]))
+        // The sun scene's two most used materials (its ground, a wall), by their fingerprints as it makes them.
+        let sun = SceneSettings(kind: .sun)
+        let made = Scene(sun)
+        var uses: [Int: Int] = [:]
+        for i in made.instances where i.mesh >= 0 { uses[i.material, default: 0] += 1 }
+        let top = uses.sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }.prefix(2).map(\.key)
+        var a = MaterialAssignments()
+        a.scenes[MaterialAssignments.scope(sun)] = zip(top, ["Red Bricks", "Perforated Metal"]).map {
+            .init(material: $0.0, fingerprint: MaterialAssignments.fingerprint(made.materials[$0.0]), graph: $0.1)
+        }
+        let assigned = MaterialAssignments.register(a)
+        let court = Config("", scale: 0.75, gi: .pathTraced, scene: sun).still(at: 20)
+        // The marble as code (its graph's own setting), then baked: the same material, the code sharper up close.
+        var baked = MaterialLibrary.marble()
+        baked.surface.shaderMode = false
+        let bakedMarble = MaterialCatalog.register(MaterialCatalog(graphs: ["Marble": baked]))
+        let marble = base.with { $0.scene.materialWorkshop.graph = "Marble"; $0.scene.materialWorkshop.layout = .sphere }
+        // The cobblestone's displacement: as built in, deeper (within the room its meshes were made with: moved in
+        // place), and off (parallax only: the scene made again).
+        func cobbles(_ change: (inout MaterialGraph) -> Void) -> String {
+            var g = MaterialLibrary.cobblestone()
+            change(&g)
+            return MaterialCatalog.register(MaterialCatalog(graphs: ["Cobblestone": g]))
+        }
+        let deeper = cobbles { $0.surface.displacement = 0.06 }, flat = cobbles { $0.surface.displacement = 0 }
+        let stones = base.with { $0.scene.materialWorkshop.graph = "Cobblestone" }
+        return [base.named("bricks"), base.named("bricks edited").with { $0.scene.materials = edited },
+                stones.named("cobbles displaced"), stones.named("cobbles deeper").with { $0.scene.materials = deeper },
+                stones.named("cobbles flat").with { $0.scene.materials = flat },
+                marble.named("marble code"), marble.named("marble baked").with { $0.scene.materials = bakedMarble },
+                court.named("sun"), court.named("sun assigned").with { $0.scene.materialAssignments = assigned }]
+    }
+
+    /// The VFX stage's backdrops: the campfire, the fireworks and the magic at 3.5 s in front of each, from the stage's
+    /// default camera (`METALRENDERER_GIZMOS=fireworks/rockets` draws the editor's gizmos).
+    private static func vfxStage() -> [Config] {
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage).still(at: 3.5)
+        return VFXBackdrop.allCases.map { b in base.named(b.rawValue).with { $0.scene.stage.backdrop = b } }
+    }
+
+    /// The VFX stage's backdrops as a video (`recording`; `video.sh -m vfxstagedemo`, run with
+    /// `METALRENDERER_GIZMOS=fireworks/rockets` for the editor's gizmos): 4 s on each, the camera arcing round the
+    /// line-up, the clock from 1.5 s.
+    private static func vfxStageDemo() -> [Config] {
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        return VFXBackdrop.allCases.enumerated().map { k, b in
+            let side: Float = k % 2 == 0 ? 1 : -1
+            let track = CameraTrack([
+                CameraTrack.Key(time: 0, position: [-3.5 * side, 2.2, 9.8], target: [0, 2.4, 0]),
+                CameraTrack.Key(time: 4, position: [3.5 * side, 2.6, 9.8], target: [0, 2.4, 0]),
+            ])
+            var c = Config(b.rawValue, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage) {
+                $0.scene.stage.backdrop = b
+                $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+            }.track(track).recording()
+            c.startTime = 1.5
+            return c
+        }
+    }
+
+    /// The VFX stage's demo video: 16 s of the line-up (the campfire, the fireworks, the magic) along a camera track
+    /// from 1 s in (`recording`; `video.sh -m vfxdemo`): wide, in to the fireworks' bursts from below, across to the
+    /// fire, round to the motes, and back out.
+    private static func vfxDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 2.4, 10.5], [0, 2.6, 0]),
+            key(4, [1.2, 1.2, 5.5], [0, 3.8, 0]),
+            key(8, [-2.2, 1.6, 4.2], [-4, 1.4, 0]),
+            key(12, [2.6, 1.7, 3.6], [4, 1.2, 0]),
+            key(16, [0, 2.4, 10.5], [0, 2.6, 0]),
+        ])
+        var stage = SceneSettings(kind: .vfxStage)
+        stage.stage.effects = ["campfire", "fireworks", "magic"]
+        var demo = Config("vfx demo", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: stage) {
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+        }.track(track).recording()
+        demo.startTime = 0
+        return [demo]
+    }
+
+    /// The fluids scene's demo video: its first 20 s along a camera track at the physics look with the showcase's lens
+    /// but no depth of field (`recording`; `.claude/skills/offscreen/scripts/video.sh -m fluidsdemo` makes the mp4). Wide
+    /// as the three start pouring, down to the water as it runs off the steps, along to the blood and the honey as the
+    /// boxes drop in, across the basins from the right as they float and sink, and back out. The clock starts at -1 s.
+    private static func fluidsDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 1.25, 1.05], [0, 0.15, -0.45]),
+            key(4, [-0.9, 0.75, 0.55], [-0.64, 0.15, -0.5]),
+            key(8, [0.1, 0.65, 0.6], [0.1, 0.1, -0.35]),
+            key(12, [0.95, 0.55, 0.45], [0.55, 0.1, -0.3]),
+            key(16, [1.45, 0.62, 0.25], [0.05, 0.05, -0.45]),
+            key(20, [0, 1.25, 1.05], [0, 0.15, -0.45]),
+        ])
+        var demo = Config("fluids demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// A camera at `from` looking at `to`.
+    private static func look(_ from: SIMD3<Float>, _ to: SIMD3<Float>) -> Camera {
+        let d = to - from
+        return Scene.camera(from, yaw: atan2(d.x, -d.z), pitch: atan2(d.y, (d.x * d.x + d.z * d.z).squareRoot()))
+    }
+
+    /// The muscles scene (Scene+Muscles.swift) at the physics look: wide at 2 and 5 s, at 5 s on each API, with the
+    /// CPU's steps, in its normals and direct light; close to the character as it idles (1 s) and as it dances
+    /// (15 s), and to the ragdolls on the steps; each skin; then the first 5 s moving for timing at a few lattice
+    /// spacings and ragdoll counts, and the sliding skin.
+    private static func muscles() -> [Config] {
+        let scene = SceneSettings(kind: .muscles)
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
+        var out: [Config] = [base.named("2s").still(at: 2)]
+        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still()) }
+        out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
+        out.append(base.named("normals").view(3).still())
+        out.append(base.named("direct").view(1).still())
+        for skin in PhysicsSettings.Skin.allCases {
+            var start = base.named("character \(skin.envName)").with { $0.scene.physics.skin = skin }.still(at: 1)
+            start.camera = look([3.0, 1.5, 4.9], [1.2, 1.0, 3.1])
+            var close = base.named("character normals \(skin.envName)").with { $0.scene.physics.skin = skin }.view(3).still(at: 1)
+            close.camera = start.camera
+            out += [start, close]
+        }
+        // The character as its muscles and bones (MuscleAtlas.swift, SkeletonAtlas.swift): from its front, its back and
+        // its side as it idles, close up, in its normals, and as it dances.
+        let ecorche = base.with { $0.scene.physics.body = .muscles }
+        for (name, from, to) in [("front", SIMD3<Float>(3.4, 1.3, 3.1), SIMD3<Float>(1.2, 1.0, 3.1)), ("back", [-1.0, 1.3, 3.1], [1.2, 1.0, 3.1]),
+                                 ("side", [3.0, 1.5, 4.9], [1.2, 1.0, 3.1]), ("chest", [2.3, 1.3, 3.1], [1.2, 1.2, 3.1]),
+                                 ("hips", [0.2, 1.05, 3.1], [1.2, 0.95, 3.1]), ("shoulder", [0.5, 1.55, 2.4], [1.2, 1.4, 2.95]),
+                                 ("skull", [1.75, 1.7, 3.3], [1.2, 1.66, 3.1]), ("knee", [2.0, 0.55, 3.0], [1.2, 0.4, 3.1]),
+                                 ("hand", [1.6, 0.95, 2.3], [1.2, 0.85, 2.9]), ("spine", [0.2, 1.35, 3.1], [1.2, 1.25, 3.1])] {
+            var still = ecorche.named("ecorche \(name)").still(at: 1)
+            still.camera = look(from, to)
+            out.append(still)
+        }
+        var ecorcheNormals = ecorche.named("ecorche normals").view(3).still(at: 1)
+        ecorcheNormals.camera = look([3.4, 1.3, 3.1], [1.2, 1.0, 3.1])
+        out.append(ecorcheNormals)
+        var dancing = ecorche.named("ecorche dancing").still(at: 15)
+        dancing.camera = look([4.6, 1.6, 4.2], [2.2, 1.0, 2.9])
+        out.append(dancing)
+        var ragdolls = base.named("ragdolls").still()
+        ragdolls.camera = look([-1.6, 2.4, -0.8], [-4.6, 0.7, -4.0])
+        out.append(ragdolls)
+        for cell: Float in [5, 4, 3.5, 3] {
+            out.append(base.named(String(format: "gpu flesh %.1f cm moving", cell)).with { $0.scene.physics.fleshCell = cell; $0.scene.physics.backend = .gpu })
+        }
+        for count in [0, 6] {
+            out.append(base.named("gpu \(count) ragdolls moving").with { $0.scene.physics.muscleRagdolls = count; $0.scene.physics.backend = .gpu })
+        }
+        out.append(base.named("gpu sliding moving").with { $0.scene.physics.skin = .sliding; $0.scene.physics.backend = .gpu })
+        out.append(base.named("gpu ecorche moving").with { $0.scene.physics.body = .muscles; $0.scene.physics.backend = .gpu })
+        out.append(base.named("cpu moving").with { $0.scene.physics.backend = .cpu })
+        return out
+    }
+
+    /// The muscles scene's demo video: its first 48.3 s (the character's whole routine, PhysicsRig.swift) along a camera
+    /// track at the physics look with the showcase's lens but no depth of field (`recording`;
+    /// `.claude/skills/offscreen/scripts/video.sh -m musclesdemo`): close as the character idles and starts its hip hop,
+    /// back over it and the ragdolls tumbling down the steps, low for the first breakdance freeze, round it through
+    /// the long hip hop, low again for the second freeze, wide round the last hip hop, and back out as it idles. The
+    /// clock starts at -1 s, as the physics demo's does.
+    private static func musclesDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [3.4, 1.4, 4.6], [1.2, 1.0, 3.1]),
+            key(2.5, [3.8, 1.6, 4.2], [1.3, 1.0, 3.0]),
+            key(5, [5.2, 2.4, 6.4], [-0.6, 0.8, 0.0]),
+            key(8, [2.6, 1.1, 5.6], [2.2, 0.5, 2.3]),
+            key(10.5, [3.8, 1.0, 4.6], [2.0, 0.6, 2.0]),
+            key(14, [4.6, 1.6, 4.2], [2.2, 1.0, 2.9]),
+            key(18, [2.2, 1.7, 6.0], [2.0, 1.0, 2.6]),
+            key(22, [-0.6, 1.8, 3.6], [2.0, 1.0, 2.3]),
+            key(25, [0.4, 1.0, 1.0], [1.9, 0.5, 2.6]),
+            key(28.5, [2.0, 0.9, 5.8], [1.6, 0.5, 3.4]),
+            key(32, [5.0, 2.0, 5.6], [1.4, 1.0, 3.4]),
+            key(38, [4.0, 1.8, 1.4], [1.6, 1.0, 3.3]),
+            key(43, [-1.8, 2.2, 1.8], [1.0, 1.0, 3.5]),
+            key(48.3, [3.4, 1.8, 6.4], [1.2, 1.0, 3.2]),
+        ])
+        var demo = Config("muscles demo", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .muscles)) {
+            $0.usePhysicsLook()
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }   // sharp throughout: no depth of field
+        }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        // The same with the character drawn as its muscles (MuscleAtlas.swift).
+        var ecorche = demo.named("ecorche demo").with { $0.scene.physics.body = .muscles }
+        return [demo, ecorche]
+    }
+
     /// The soft body scene's demo video: its first 20 s along a camera track at the physics look with the showcase's
     /// lens but no depth of field (`recording`: 600 JPEGs at 30 fps; `.claude/skills/offscreen/scripts/video.sh -m
     /// softdemo` makes the mp4). Wide as the jellies drop onto the landing, down to the steps as they flop down them,
@@ -1255,6 +1932,17 @@ extension Benchmark {
     /// structures), against the number of characters on them ("tlas", "trace", and the CPU's share in "cpu") and
     /// against the poses' level of detail. Then the frames to look at: a still with the frame before it, and the
     /// camera moving through the crowd. `METALRENDERER_CROWD_CHECK=1` compares what the GPU skinned with the CPU's.
+    /// The crowd of generated people (SceneSettings.crowdBodies): the catalog's built-in characters on the square.
+    private static func characterCrowd() -> [Config] {
+        func square(_ name: String, characters: Int, poses: Int = 64, detail: Int = 3) -> Config {
+            var scene = SceneSettings(kind: .crowd, characters: characters, poses: poses, detail: detail, crowdBodies: .generated)
+            scene.characterCatalog = "builtin"
+            return Config("generated crowd \(name)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+        }
+        return [square("256", characters: 256), square("2048", characters: 2048), square("2048 detail 1", characters: 2048, detail: 1),
+                square("still", characters: 2048).still(previous: true)]
+    }
+
     private static func crowd() -> [Config] {
         func square(_ name: String, characters: Int = 2048, poses: Int = 64, detail: Int = 3) -> Config {
             Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades,

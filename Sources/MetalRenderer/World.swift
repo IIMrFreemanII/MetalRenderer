@@ -23,13 +23,25 @@ struct World {
     var treeDensity: Float = 244
     /// Bushes, ferns and grass: 1 = the Forest scene's.
     var undergrowth: Float = 1
+    /// Where the plants grow, if not as the built-in species do: the catalog's placement fingerprint (PlantCatalog),
+    /// part of the tiles' names.
+    var plants = ""
     /// The share of the 4 km cells with a city in them. (The cell around the origin always has one.)
     var cityShare: Float = 0.5
     /// The share of the cities' windows with a light behind them, which is on at night.
     var lit: Float = 0.35
+    /// The building styles and single buildings (BuildingCatalog), and their fingerprint if they aren't the built-in
+    /// ones (part of the tiles' names).
+    var buildingCatalog = BuildingCatalog.builtIn
+    var buildings = ""
+    /// The building whose interior the scene has (LotRef.key): its tile is made without it (Scene+World adds it).
+    var interior: String?
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
-    static let version = 5
+    /// 7: buildings with thick walls, made from their floor plans. 8: the ground is the world's terrain (a tile keeps
+    /// its cells' kinds, not a mesh of them). 9: water (World+Water.swift): the sea, rivers carved into the ground,
+    /// lakes; sand on the shore; no city under the sea, no tree in the water.
+    static let version = 9
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.
@@ -45,14 +57,32 @@ struct World {
     /// cells under them have to be level too), and how far beyond that it rises back into the hills.
     static let cityApron: Float = 40, cityBlend: Float = 300
 
-    private let broadSeed: UInt32, rollingSeed: UInt32, coverSeed: UInt32, standSeed: UInt32
+    let broadSeed: UInt32, rollingSeed: UInt32, coverSeed: UInt32, standSeed: UInt32
     /// The beds of the roads between cities that have been asked for (`bed`): each is worked out once.
     private let roadbeds = Roadbeds()
+    /// Its water: the sea's level, the rivers and lakes (World+Water.swift), traced as they are asked for, shared by
+    /// every copy of the world of this seed.
+    let water: WorldWater
 
     init(seed: UInt64) {
         self.seed = seed
         let s = UInt32(truncatingIfNeeded: seed &* 0x9E37_79B9 &+ 17)
         (broadSeed, rollingSeed, coverSeed, standSeed) = (s &+ 400, s, s &+ 500, s &+ 101)
+        // (The sea keeps under the origin's city: its middle's height, as `site` works it out.)
+        let origin = World.siteGeometry(seed: seed, cell: SIMD2(0, 0))
+        let originLevel = 70 * Terrain.fbm(origin.center.x / 1800, origin.center.y / 1800, octaves: 4, seed: s &+ 400)
+        water = WorldWater.shared(seed: seed, broad: s &+ 400, rolling: s, originLevel: originLevel)
+    }
+
+    /// Where a cell's city would be and how big, from the seed alone, and the roll that says whether it is there.
+    static func siteGeometry(seed: UInt64, cell: SIMD2<Int>) -> (own: UInt64, roll: Float, radius: Float, center: SIMD2<Double>) {
+        let own = World.hash(seed, cell.x, cell.y, 0xC17)
+        var rng = SplitMix64(seed: own)
+        let roll = rng.next(), radius = rng.range(300, 900), u = Double(rng.next()), v = Double(rng.next())
+        let margin = Double(radius + World.cityBlend) + 128, span = World.cityCell - 2 * margin
+        func snap(_ c: Double) -> Double { (c / 16).rounded() * 16 }
+        let center = SIMD2(snap(Double(cell.x) * World.cityCell + margin + u * span), snap(Double(cell.y) * World.cityCell + margin + v * span))
+        return (own, roll, radius, center)
     }
 
     /// Random numbers of a thing's own: from the world's seed, the thing's two whole coordinates and what it is.
@@ -61,7 +91,7 @@ struct World {
                        ^ what &* 0x1656_67B1_9E37_79F9)
     }
 
-    @inline(__always) private static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+    @inline(__always) static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
         let t = min(max((x - a) / (b - a), 0), 1)
         return t * t * (3 - 2 * t)
     }
@@ -89,19 +119,17 @@ struct World {
         return city
     }
 
-    /// A cell's city without its highways.
-    private func site(cell: SIMD2<Int>) -> City? {
-        let own = World.hash(seed, cell.x, cell.y, 0xC17)
-        var rng = SplitMix64(seed: own)
-        let roll = rng.next(), radius = rng.range(300, 900), u = Double(rng.next()), v = Double(rng.next())
-        guard cell == SIMD2(0, 0) || roll < cityShare else { return nil }
-        let margin = Double(radius + World.cityBlend) + 128, span = World.cityCell - 2 * margin
-        func snap(_ c: Double) -> Double { (c / 16).rounded() * 16 }
-        let center = SIMD2(snap(Double(cell.x) * World.cityCell + margin + u * span), snap(Double(cell.y) * World.cityCell + margin + v * span))
-        return City(cell: cell, center: center, radius: radius, level: broad(center.x, center.y), seed: own)
+    /// A cell's city without its highways. (None whose ground would be under the sea, or just over it: but the
+    /// origin's, which the sea's level keeps clear of.)
+    func site(cell: SIMD2<Int>) -> City? {
+        let g = World.siteGeometry(seed: seed, cell: cell)
+        guard cell == SIMD2(0, 0) || g.roll < cityShare else { return nil }
+        let level = broad(g.center.x, g.center.y)
+        guard cell == SIMD2(0, 0) || level > water.seaLevel + 6 else { return nil }
+        return City(cell: cell, center: g.center, radius: g.radius, level: level, seed: g.own)
     }
 
-    private static func cell(_ x: Double, _ z: Double) -> SIMD2<Int> {
+    static func cell(_ x: Double, _ z: Double) -> SIMD2<Int> {
         SIMD2(Int((x / World.cityCell).rounded(.down)), Int((z / World.cityCell).rounded(.down)))
     }
 
@@ -138,11 +166,12 @@ struct World {
 
     // MARK: - The ground
 
-    private func broad(_ x: Double, _ z: Double) -> Float { 70 * Terrain.fbm(x / 1800, z / 1800, octaves: 4, seed: broadSeed) }
+    func broad(_ x: Double, _ z: Double) -> Float { 70 * Terrain.fbm(x / 1800, z / 1800, octaves: 4, seed: broadSeed) }
 
     /// The ground's height. `city`: the one of the place's 4 km cell (`city(near:)`), found once for many places.
+    /// The hills, the rivers' beds carved into them (World+Water.swift), the city's level ground, the roads' beds.
     func height(_ x: Double, _ z: Double, city: City?) -> Float {
-        let natural = broad(x, z) + 15.3 * Terrain.fbm(x / 120, z / 120, octaves: 5, seed: rollingSeed)
+        let natural = water.carve(x, z, water.natural(x, z))
         guard let city else { return natural }
         let mask = cityMask(city, x, z)
         var h = mask <= 0 ? natural : mask >= 1 ? city.level : natural + (city.level - natural) * mask
@@ -170,12 +199,15 @@ struct World {
         if up < 0.8 { return Ground.rock }
         if let road = highway(city, x, z), road.distance < Highway.shoulder { return Ground.meadow }
         if let field = field(city, x, z) { return field }
+        // Sand along the sea, and under its shallows.
+        let natural = water.natural(x, z)
+        if natural < water.seaLevel + 1.4 + 0.6 * Terrain.noise(x / 31, z / 31, seed: standSeed &+ 77), natural > water.seaLevel - 4 { return Ground.sand }
         if woods(x, z) + 0.2 * Terrain.noise(x / 14, z / 14, seed: standSeed &+ 32) < 0.5 { return Ground.meadow }
         return Terrain.noise(x / 9, z / 9, seed: standSeed &+ 31) > 0.18 ? Ground.moss : Ground.litter
     }
 
     enum Ground {
-        static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6
+        static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6, sand = 7
     }
 
     /// The ground's materials (`ground`'s indices). They name the ground's detail texture, or a sown field's rows,
@@ -187,8 +219,16 @@ struct World {
             return m
         }
         return [natural([0.15, 0.13, 0.075]), natural([0.09, 0.135, 0.05]), natural([0.2, 0.3, 0.1]), natural([0.24, 0.23, 0.21]),
-                natural([0.42, 0.36, 0.15], fieldRows), natural([0.13, 0.24, 0.07], fieldRows), natural([0.19, 0.14, 0.095], fieldRows)]
+                natural([0.42, 0.36, 0.15], fieldRows), natural([0.13, 0.24, 0.07], fieldRows), natural([0.19, 0.14, 0.095], fieldRows),
+                natural([0.46, 0.41, 0.31])]
     }()
+    /// Each ground's scan in the realistic look (TextureSet), and its albedo's tint: litter, moss, meadow, rock, wheat,
+    /// crop, ploughed, sand.
+    static let groundScans: [(set: String, tint: SIMD3<Float>)] = [
+        ("forest-floor", [0.85, 0.8, 0.74]), ("moss", [1, 1, 1]), ("grass", [1, 1, 1]), ("rock", [1, 1, 1]),
+        ("dry-grass", [1.15, 1.0, 0.62]), ("grass", [0.8, 0.95, 0.7]), ("earth", [0.62, 0.52, 0.45]), ("sand", [1, 1, 1]),
+    ]
+
     /// `GPUMaterial.textures.x` of a material with the ground's detail texture, or with a field's rows
     /// (Scene+World.swift makes them), and the side of one repeat of either, metres.
     static let groundDetail: UInt32 = 0x4100_0000, fieldRows: UInt32 = 0x4100_0001, groundTile: Float = 5
@@ -216,9 +256,15 @@ struct World {
     /// The library's plants by species and age, as their indices: all the placing needs to know of it.
     struct Flora {
         private var byAge: [[[Int]]]    // species, age, plants
+        /// The species, where they grow.
+        let catalog: PlantCatalog
+        let trees: Foliage.TreePicker
 
-        init(_ sets: [Foliage.SpeciesSet]) {
-            byAge = Foliage.Species.allCases.map { _ in Foliage.Age.allCases.map { _ in [] } }
+        init(_ sets: [Foliage.SpeciesSet], catalog: PlantCatalog = .builtIn) {
+            self.catalog = catalog
+            trees = Foliage.TreePicker(catalog)
+            let species = (sets.map(\.species.rawValue).max() ?? -1) + 1
+            byAge = (0..<max(species, Foliage.Species.allCases.count)).map { _ in Foliage.Age.allCases.map { _ in [] } }
             for set in sets {
                 for age in Foliage.Age.allCases { byAge[set.species.rawValue][age.rawValue] = set.plants(of: age) }
             }
@@ -269,16 +315,10 @@ struct World {
             let density = cover * World.smoothstep(0.72, 0.86, 1 - slope) * (0.6 + 0.6 * Terrain.noise(x / 23, z / 23, seed: standSeed &+ 7))
             guard chance < density else { return }
             let y = height(x, z, city: city), high = (y - broad(x, z)) / 9, mix = Terrain.noise(x / 55, z / 55, seed: standSeed)
-            let conifer = max(0.05, 0.3 + 1.1 * World.smoothstep(-0.1, 0.7, high) + 3 * slope + 1.6 * mix)
-            let oak = max(0.05, 0.9 - 0.7 * World.smoothstep(0, 0.7, high) - 1.6 * mix)
-            let birch = 0.25 + 1.6 * (1 - World.smoothstep(0.15, 0.6, cover))
-            var p = pick * (conifer + oak + birch) * 1.035
-            let species: Foliage.Species
-            if p < conifer { species = .conifer } else {
-                p -= conifer
-                if p < oak { species = .oak } else { species = p - oak < birch ? .birch : .dead }
-            }
-            let age: Foliage.Age = u < 0.12 ? .sapling : u < 0.4 ? .young : .mature
+            guard !water.wet(x, z, ground: y) else { return }   // (none in the water, or on its very edge)
+            guard let species = flora.trees.pick(pick, high: high, slope: slope, stand: mix,
+                                                 light: [SIMD2<Float>(1.6, 1 - World.smoothstep(0.15, 0.6, cover))]) else { return }
+            let age = Foliage.TreePicker.age(u, flora.catalog[species].habitat)
             let plants = flora.plants(species, age)
             guard !plants.isEmpty else { return }
             out.append(Placement(x: Float(x - x0), y: y - 0.12, z: Float(z - z0), yaw: yaw, size: size, species: UInt16(species.rawValue),
@@ -302,21 +342,22 @@ struct World {
                       (field(city, x, z) ?? Ground.meadow) == Ground.meadow else { return }
                 if let road = highway(city, x, z), road.distance < road.half + 1 { return }
                 let plants = flora.plants(species, old ? .mature : .young)
-                guard !plants.isEmpty else { return }
-                out.append(Placement(x: Float(x - x0), y: height(x, z, city: city) - sink, z: Float(z - z0), yaw: yaw, size: size,
+                let y = height(x, z, city: city)
+                guard !plants.isEmpty, !water.wet(x, z, ground: y, margin: 0.5) else { return }
+                out.append(Placement(x: Float(x - x0), y: y - sink, z: Float(z - z0), yaw: yaw, size: size,
                                      species: UInt16(species.rawValue), plant: UInt16(plants[min(Int(which * Float(plants.count)), plants.count - 1)]),
                                      shade: UInt16(shade)))
             }
         }
         let thick = Double(max(undergrowth, 1).squareRoot())   // more than the Forest's: a finer grid
-        scatter(.bush, cell: 6.1 / thick, what: 0xB05, sizes: 0.8...1.3, sink: 0.05) { x, z in
-            woods(x, z) * World.smoothstep(-0.25, 0.35, Terrain.noise(x / 28, z / 28, seed: standSeed &+ 31))
-        }
-        scatter(.fern, cell: 4 / thick, what: 0xFE2, sizes: 0.9...1.7, sink: 0.02) { x, z in
-            woods(x, z) * World.smoothstep(-0.25, 0.35, Terrain.noise(x / 17, z / 17, seed: standSeed &+ 47))
-        }
-        scatter(.grass, cell: 2 / thick, what: 0x62A, sizes: 1.05...1.2, sink: 0) { x, z in
-            (1 - 0.9 * woods(x, z)) * World.smoothstep(0.8, 0.9, up(x, z, city: city))
+        for species in flora.catalog.covers {
+            let habitat = flora.catalog[species].habitat, cover = habitat.cover!
+            scatter(species, cell: cover.cell / thick, what: cover.what, sizes: cover.size, sink: cover.sink) { x, z in
+                // In the open (grass), or in patches under the trees (bushes, ferns).
+                (cover.open ? (1 - 0.9 * woods(x, z)) * World.smoothstep(0.8, 0.9, up(x, z, city: city))
+                            : woods(x, z) * World.smoothstep(-0.25, 0.35, Terrain.noise(x / Double(cover.patch), z / Double(cover.patch),
+                                                                                         seed: standSeed &+ cover.salt))) * habitat.frequency
+            }
         }
         return out
     }
@@ -512,6 +553,25 @@ struct World {
     }
 
     /// The blocks whose middle is in the square from (x0, z0), `side` across, in the order of their rows.
+    /// A block's lot's name (LotRef): the city's cell, the block's place in its grid, the lot's in the block.
+    func lotRef(_ city: City, _ block: Block, _ k: Int) -> LotRef {
+        let lot = block.plan.lots[k]
+        return LotRef(context: "world \(seed) city \(city.cell.x),\(city.cell.y) block \(block.index.x),\(block.index.y)", lot: k, seed: lot.seed,
+                      size: lot.size)
+    }
+
+    /// The middle (the world's x, z) of the block a lot's name is in, if it is a world's lot.
+    func blockMiddle(of key: String) -> SIMD2<Double>? {
+        let words = key.replacingOccurrences(of: "#", with: " ").split(separator: " ")
+        guard words.count >= 7, words[0] == "world", words[2] == "city", words[4] == "block" else { return nil }
+        let cell = words[3].split(separator: ","), block = words[5].split(separator: ",")
+        guard cell.count == 2, block.count == 2, let cx = Int(cell[0]), let cz = Int(cell[1]), let i = Int(block[0]), let j = Int(block[1]),
+              let city = city(cell: SIMD2(cx, cz)) else { return nil }
+        let corner = SIMD2(Float(i), Float(j)) * World.blockPitch + (World.blockPitch - World.blockSize) / 2
+        let middle = corner + World.blockSize / 2
+        return city.center + SIMD2(Double(middle.x), Double(middle.y))
+    }
+
     func blocks(x0: Double, z0: Double, side: Double) -> (city: City, blocks: [Block])? {
         guard let city = city(near: x0 + side / 2, z0 + side / 2) else { return nil }
         let pitch = World.blockPitch, size = World.blockSize

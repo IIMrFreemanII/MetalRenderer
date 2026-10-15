@@ -37,6 +37,9 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
                         texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
                         texture2d<uint, access::read>    visBuffer      [[texture(15)]],  // with FLAG_VIS_BUFFER: instance, triangle
+                        texture2d<float, access::read>   liquidRay      [[texture(16)]],  // LIQUID: the camera ray bent through
+                        texture2d<float, access::read>   liquidDir      [[texture(17)]],  // a liquid (liquidKernel)
+                        texture2d<uint, access::read>    waterGuess     [[texture(18)]],  // WATER: the pixel whose raster triangle the bent ray meets
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -54,10 +57,37 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
     // A rotating eighth of the pixels tells the texture streamer which mip levels they need.
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
-    // Window glass isn't met here: glassKernel adds it over the surface behind it.
-    uint primaryMask = GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL;
+    // Window glass isn't met here: glassKernel adds it over the surface behind it. Nor a liquid: where one is in view,
+    // the ray goes on from where liquidKernel bent it, and liquidApplyKernel adds the liquid over what it finds.
+    // Water isn't in the scene's structure: waterKernel bends the ray into it the same way (Water.metal), and
+    // waterApplyKernel adds its surface.
+    uint primaryMask = (GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL) & (LIQUID ? ~MASK_LIQUID : MASK_ALL);
+    float liquidEntry = -1.0f;
+    float3 eye = dir;   // the camera's ray (dir: the ray that reaches what this pixel shows)
+    bool bentRay = false;
+    if (LIQUID || WATER) {
+        // w: 1 = bent by a liquid, 2 + WATER_RAY_* by water (bent where WATER_RAY_BENT is set).
+        float4 bent = liquidRay.read(tid);
+        if (bent.w == 1.0f || (bent.w >= 2.0f && ((uint(bent.w) - 2u) & 1u) != 0u)) {
+            float4 along = liquidDir.read(tid);
+            liquidEntry = along.w;
+            dir = along.xyz;
+            primary = makeRay(bent.xyz, dir, 0.0f, INFINITY);
+            bentRay = true;
+        }
+    }
     Hit hit;
-    if (!flagOn(u.flags, FLAG_VIS_BUFFER) || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
+    // (A bent ray isn't the raster's: its triangle there is what the straight one met. Water's says which pixel's
+    // triangle it likely meets, under the surface (waterKernel): met there when it does, else traced.)
+    bool guessed = false;
+    if (WATER && bentRay && flagOn(u.flags, FLAG_VIS_BUFFER)) {
+        uint g = waterGuess.read(tid).r;
+        if (g != 0xFFFFFFFFu && visibilityHit(visBuffer.read(uint2(g & 0xFFFFu, g >> 16)).xy, primary, accel, s, hit)) {
+            guessed = hit.hit && primary.direction.y * hit.distance < 0.0f && hit.distance < 400.0f;
+        }
+    }
+    if (guessed) {
+    } else if (!flagOn(u.flags, FLAG_VIS_BUFFER) || bentRay || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
         hit = intersectClosest(primary, primaryMask, accel);
     } else if (atomic_load_explicit(rasterTraced(rasterCounters), memory_order_relaxed) != 0u) {
         Ray nearer = primary;
@@ -101,8 +131,9 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     if (specular) outMaterial.write(float4(sf.f0, max(sf.roughness, MIN_ROUGHNESS)), tid);
     float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
     outNormalDepth.write(float4(n, viewDepth), tid);
-    // A strand's (Hair.metal): its tangent in the alphas.
-    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent) : float2(1.0f, -2.0f);
+    // A strand's (Hair.metal): its tangent in the alphas. Skin: minus its strength (Hair.metal hairFromGBuffer).
+    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent)
+                      : float2(1.0f, -2.0f - (LEAF_TRANSMIT && sf.leaf > 0.0f ? leafCode(sf.leaf, sf.backlit) : SKIN ? sf.skin : 0.0f));
     outGeoNormal.write(float4(ng, tangentOct.y + 2.0f), tid);
     outAlbedo.write(float4(sf.albedo, tangentOct.x), tid);
     outEmission.write(float4(sf.emission, 1.0f), tid);
@@ -111,11 +142,19 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     // The denoiser wants the index of the previous frame's pixel, whose sample was taken at its center + that frame's jitter.
     float prevDepth;
     float2 prevPixel = projectToPixel(sf.prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, prevDepth);
+    // Seen through a liquid, the surface isn't where this pixel looks: the pixel moves as the liquid's surface it looks
+    // through does (taken as still), its depth as the surface's.
+    float3 seen = sf.position;
+    if ((LIQUID || WATER) && liquidEntry > 0.0f) {
+        seen = u.camPos.xyz + eye * liquidEntry;
+        float ignored;
+        prevPixel = projectToPixel(seen - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, ignored);
+    }
     outMotion.write(float4(prevPixel - 0.5f - u.jitter.zw, prevDepth, prevDepth > 0.0f ? 1.0f : 0.0f), tid);
     if (upscale) {
         // MetalFX wants unjittered motion in pixels, from this pixel to where it was last frame.
         float curDepth;
-        float2 curPixel = projectToPixel(sf.position - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
+        float2 curPixel = projectToPixel(seen - u.camPos.xyz, u.camRight, u.camUp, u.camForward, size, curDepth);
         outDeviceDepth.write(float4(NEAR_PLANE / max(viewDepth, NEAR_PLANE)), tid);
         outPixelMotion.write(float4(prevDepth > 0.0f ? prevPixel - curPixel : float2(0.0f), 0.0f, 0.0f), tid);
     }
@@ -147,6 +186,10 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         hp.view = -dir;
         hp.h = sf.hairH;
         hp.albedo = sf.albedo;
+    } else if (SKIN && sf.skin > 0.0f) {
+        hp = skinPoint(sf.skin);
+    } else if (LEAF_TRANSMIT && sf.leaf > 0.0f) {
+        hp = leafPoint(sf.leaf, sf.backlit);
     }
 
     // Direct light. The shadow denoiser filters visibility per light group (one rgba channel each; up to 4 lights,
@@ -195,7 +238,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         for (uint b = 0; b < u.bounces; ++b) {
             float3 d = sampleBounce(normal, geomNormal, rng.next2());
             Ray r = makeRay(origin, d, 0.0f, INFINITY);
-            Surface h = traceSurface(r, MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+            Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
                 indirect += throughput * skyRadiance(u, s, d, 2.0f);
                 break;

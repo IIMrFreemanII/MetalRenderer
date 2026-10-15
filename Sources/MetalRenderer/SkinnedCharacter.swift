@@ -26,6 +26,11 @@ struct SkinnedCharacter: Equatable {
         var uvs: [SIMD2<Float>]
         var indices: [UInt32]
         var skin: [GPUSkinVertex]
+        /// Each vertex's at full detail (`coarser`'s levels keep some of its vertices): a generated character's levels
+        /// are gathered from its full mesh through it (CharacterBuilder).
+        var source: [UInt32] = []
+        /// Each triangle's material, as an offset from its instance's (Scene.addMesh); empty: one material.
+        var materials: [UInt8] = []
         var triangleCount: Int { indices.count / 3 }
     }
 
@@ -35,6 +40,8 @@ struct SkinnedCharacter: Equatable {
     var uvs: [SIMD2<Float>]
     var indices: [UInt32]
     var skin: [GPUSkinVertex]
+    /// Each triangle's material at full detail (Level.materials); empty: one material.
+    var materials: [UInt8] = []
     /// Levels 1, 2, ...: each about half the triangles of the one before (CharacterImporter.coarser). A crowd is
     /// skinned and traced at the level its scene asks for: a pose's cost follows its triangles.
     var coarser: [Level] = []
@@ -50,7 +57,7 @@ struct SkinnedCharacter: Equatable {
     func clip(named name: String) -> Int? { clips.firstIndex { $0.name == name } }
     /// Level `i` of detail (0 = full), or the coarsest there is.
     func level(_ i: Int) -> Level {
-        i <= 0 || coarser.isEmpty ? Level(positions: positions, normals: normals, uvs: uvs, indices: indices, skin: skin)
+        i <= 0 || coarser.isEmpty ? Level(positions: positions, normals: normals, uvs: uvs, indices: indices, skin: skin, materials: materials)
                                   : coarser[min(i, coarser.count) - 1]
     }
 }
@@ -75,8 +82,9 @@ extension SkinnedCharacter {
         simd_normalize(a + ((dot(a, b) < 0 ? -b : b) - a) * t)
     }
 
-    /// The skinning matrices of a pose: clip `clipA` at `timeA` (in keys), blended with `clipB` at `timeB` by `blend`.
-    func palette(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [GPUJointMatrix] {
+    /// Every joint's pose in the character's space (a rotation and where it is): clip `clipA` at `timeA` (in keys),
+    /// blended with `clipB` at `timeB` by `blend`.
+    func jointPoses(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [(q: simd_quatf, t: SIMD3<Float>)] {
         var (rotations, root) = sample(clips[clipA], timeA)
         if blend > 0 {
             let b = sample(clips[clipB], timeB)
@@ -85,18 +93,32 @@ extension SkinnedCharacter {
         }
         var world = [(q: simd_quatf, t: SIMD3<Float>)]()
         world.reserveCapacity(joints.count)
-        var out = [GPUJointMatrix]()
-        out.reserveCapacity(joints.count)
         for (j, joint) in joints.enumerated() {
             let local = joint.parent < 0 ? root : SIMD3(joint.local.x, joint.local.y, joint.local.z)
-            let pose: (q: simd_quatf, t: SIMD3<Float>)
             if joint.parent < 0 {
-                pose = (rotations[j], local)
+                world.append((rotations[j], local))
             } else {
                 let p = world[joint.parent]
-                pose = (p.q * rotations[j], p.q.act(local) + p.t)
+                world.append((p.q * rotations[j], p.q.act(local) + p.t))
             }
-            world.append(pose)
+        }
+        return world
+    }
+
+    /// Every joint's pose in the bind pose (where the mesh is): its inverse bind's inverse.
+    var bindPoses: [(q: simd_quatf, t: SIMD3<Float>)] {
+        joints.map { joint in
+            let q = simd_quatf(vector: joint.inverseBindRotation).inverse
+            return (q, -q.act(SIMD3(joint.inverseBindTranslation.x, joint.inverseBindTranslation.y, joint.inverseBindTranslation.z)))
+        }
+    }
+
+    /// The skinning matrices of a pose: clip `clipA` at `timeA` (in keys), blended with `clipB` at `timeB` by `blend`.
+    func palette(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [GPUJointMatrix] {
+        let world = jointPoses(clipA: clipA, timeA: timeA, clipB: clipB, timeB: timeB, blend: blend)
+        var out = [GPUJointMatrix]()
+        out.reserveCapacity(joints.count)
+        for (joint, pose) in zip(joints, world) {
             let ib = simd_quatf(vector: joint.inverseBindRotation)
             let q = pose.q * ib
             let t = pose.q.act(SIMD3(joint.inverseBindTranslation.x, joint.inverseBindTranslation.y, joint.inverseBindTranslation.z)) + pose.t
@@ -734,6 +756,7 @@ enum CharacterImporter {
                     level.normals.append(character.normals[v])
                     level.uvs.append(character.uvs[v])
                     level.skin.append(character.skin[v])
+                    level.source.append(UInt32(v))
                 }
                 next[i] = UInt32(remap[v])
             }
@@ -880,13 +903,13 @@ struct CharacterLibrary {
     // MARK: Cache file
 
     private static let magic: UInt32 = 0x3143_474D   // "MGC1"
-    static let version: UInt32 = 2
+    static let version: UInt32 = 3
     /// Levels of detail below the full mesh: 1/2, 1/4, 1/8 and 1/16 of its triangles.
     static let coarserLevels = 4
 
     /// The cache file for these FBX files (by their names, sizes and modification times): in `.metalrenderer-cache`
     /// of the assets folder, or in ~/Library/Caches/MetalRenderer if that isn't writable.
-    static func cacheURL(for files: [URL], in directory: URL) -> URL {
+    static func cacheURL(for files: [URL], in directory: URL, prefix: String = "characters", version: UInt32 = version) -> URL {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         func mix(_ text: String) { for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 } }
         for file in files {
@@ -894,7 +917,7 @@ struct CharacterLibrary {
             mix(file.lastPathComponent)
             mix("\((attrs[.size] as? NSNumber)?.intValue ?? 0)-\(Int((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0))")
         }
-        let name = String(format: "characters-%016llx-v%d.mgc", hash, version)
+        let name = String(format: "%@-%016llx-v%d.mgc", prefix, hash, version)
         let local = directory.deletingLastPathComponent().appendingPathComponent(".metalrenderer-cache")
         if (try? FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)) != nil,
            FileManager.default.isWritableFile(atPath: local.path) {
@@ -912,7 +935,7 @@ struct CharacterLibrary {
             w.put(c.name)
             w.put(c.positions); w.put(c.normals); w.put(c.uvs); w.put(c.indices); w.put(c.skin); w.put(c.joints)
             w.put(UInt32(c.coarser.count))
-            for l in c.coarser { w.put(l.positions); w.put(l.normals); w.put(l.uvs); w.put(l.indices); w.put(l.skin) }
+            for l in c.coarser { w.put(l.positions); w.put(l.normals); w.put(l.uvs); w.put(l.indices); w.put(l.skin); w.put(l.source) }
             w.put(UInt32(c.jointNames.count))
             for name in c.jointNames { w.put(name) }
             w.put(c.color); w.put(c.boundsMin); w.put(c.boundsMax)
@@ -936,7 +959,7 @@ struct CharacterLibrary {
                                      color: .zero, boundsMin: .zero, boundsMax: .zero, clips: [])
             for _ in 0..<Int(try r.get(UInt32.self)) {
                 let level = SkinnedCharacter.Level(positions: try r.array(), normals: try r.array(), uvs: try r.array(),
-                                                   indices: try r.array(), skin: try r.array())
+                                                   indices: try r.array(), skin: try r.array(), source: try r.array())
                 guard level.normals.count == level.positions.count, level.skin.count == level.positions.count,
                       level.indices.allSatisfy({ Int($0) < level.positions.count }) else {
                     throw FBXError.invalid("a character cache that doesn't add up")

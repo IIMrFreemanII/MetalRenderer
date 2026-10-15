@@ -16,8 +16,18 @@ struct MeshBuilder {
     var uvScale: Float = 1
     /// Where the next shapes go: a rotation and a translation (no scale: normals are transformed as directions).
     var frame = matrix_identity_float4x4
+    /// Where the texture coordinates count from, before `frame` (a building's module: its own corner, so that its
+    /// copies are the same mesh wherever they are; Building.beginModule).
+    var uvOrigin = SIMD3<Float>.zero
 
     init(uvScale: Float = 1) { self.uvScale = uvScale }
+
+    /// Its positions and texture coordinates on a grid of `step`: what the same shapes made at two places come to
+    /// once moved back by different offsets (float rounding), the same numbers.
+    mutating func snap(_ step: Float) {
+        for i in positions.indices { positions[i] = (positions[i] / step).rounded(.toNearestOrEven) * step }
+        for i in uvs.indices { uvs[i] = (uvs[i] / step).rounded(.toNearestOrEven) * step }
+    }
 
     var triangleCount: Int { indices.count / 3 }
     var isEmpty: Bool { indices.isEmpty }
@@ -59,7 +69,7 @@ struct MeshBuilder {
         for p in corners {
             positions.append(point(p))
             normals.append(worldNormal)
-            uvs.append(SIMD2(dot(p, t), -dot(p, b)) * uvScale)
+            uvs.append(SIMD2(dot(p - uvOrigin, t), -dot(p - uvOrigin, b)) * uvScale)
         }
         for i in 1..<UInt32(corners.count - 1) { indices += [base, base + i, base + i + 1] }
     }
@@ -146,6 +156,20 @@ struct MeshBuilder {
                 return center + SIMD3(cos(phi) * r1, height, sin(phi) * r1)
             }
             polygon(top, normal: [0, 1, 0])
+        }
+    }
+
+    /// A round rim: a ring from `inner` to `outer` radius round the vertical through `center` (its bottom), `height`
+    /// tall, `segments` sides: its top, and its walls outside and in (a pool's, a planter's).
+    mutating func ring(_ center: SIMD3<Float>, inner: Float, outer: Float, height: Float, segments: Int = 32) {
+        let up = SIMD3<Float>(0, height, 0)
+        for s in 0..<segments {
+            let a = 2 * Float.pi * Float(s) / Float(segments), b = 2 * Float.pi * Float(s + 1) / Float(segments)
+            let da = SIMD3<Float>(cos(a), 0, sin(a)), db = SIMD3<Float>(cos(b), 0, sin(b))
+            let oa = center + da * outer, ob = center + db * outer, ia = center + da * inner, ib = center + db * inner
+            quad(oa + up, ia + up, ib + up, ob + up)
+            quad(ob, oa, oa + up, ob + up)
+            quad(ia, ib, ib + up, ia + up)
         }
     }
 

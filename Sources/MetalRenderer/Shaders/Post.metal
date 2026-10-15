@@ -165,6 +165,7 @@ kernel void bloomUpKernel(constant Uniforms&               u      [[buffer(0)]],
 
 kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
                          constant PostParams&             p      [[buffer(1)]],
+                         device atomic_uint*              histogram [[buffer(2)]],   // with auto exposure's meter on
                          texture2d<float, access::sample> input  [[texture(0)]],
                          texture2d<float, access::sample> bloom  [[texture(1)]],
                          texture2d<float, access::write>  output [[texture(2)]],
@@ -182,8 +183,9 @@ kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
         c = input.sample(postSampler, uv).rgb;
     }
     c = max(c, 0.0f);
+    if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
     if (p.bloom.x > 0.0f) c = mix(c, bloom.sample(postSampler, uv).rgb / p.bloom.w, p.bloom.x);
-    c = toneMap(c, u.post);
+    c = toneMap(c, u.post, u.grade);
     if (p.finish.x > 0.0f) {
         float r2 = dot(fromCentre * float2(size.x / size.y, 1.0f), fromCentre * float2(size.x / size.y, 1.0f)) * 2.0f;
         c *= 1.0f - p.finish.x * smoothstep(0.15f, 1.6f, r2);
@@ -198,4 +200,100 @@ kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
         c = max(s, 0.0f) * max(s, 0.0f);
     }
     output.write(float4(saturate(c), 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Temporal AA at the traced resolution (RenderSettings.taa, while MetalFX doesn't upscale): every frame's rays go
+// through a different sub-pixel place (Upscaler.jitter, 8 Halton phases), and this blends the composite's light into
+// the last frame's result, found where the pixel's surface was then (the trace's motion), after clipping that to
+// what the pixel's neighbourhood holds now (so what moved or changed doesn't smear). Its output, linear and unbounded,
+// is the next frame's history and the light the lens or the tone curve take.
+// ---------------------------------------------------------------------------------------------
+
+constant float TAA_ALPHA = 0.1f;          // the current frame's share, still
+constant float TAA_MOVING_ALPHA = 0.35f;  // ...and moving 4 pixels a frame or more (less blur from resampling)
+constant float TAA_CLIP_SIGMA = 1.25f;    // the neighbourhood's box: mean ± this many standard deviations
+
+inline float3 taaYCoCg(float3 c) {
+    return float3(0.25f * c.r + 0.5f * c.g + 0.25f * c.b, 0.5f * c.r - 0.5f * c.b, -0.25f * c.r + 0.5f * c.g - 0.25f * c.b);
+}
+inline float3 taaRGB(float3 c) { return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+
+// The history at continuous pixel `pos`: Catmull-Rom over 4x4 texels in 5 bilinear taps (the corners dropped), so the
+// resampling every frame doesn't blur the image.
+inline float3 taaHistory(texture2d<float, access::sample> h, float2 pos, float2 size) {
+    float2 centre = floor(pos - 0.5f) + 0.5f, f = pos - centre;
+    float2 w0 = f * (-0.5f + f * (1.0f - 0.5f * f));
+    float2 w1 = 1.0f + f * f * (-2.5f + 1.5f * f);
+    float2 w2 = f * (0.5f + f * (2.0f - 1.5f * f));
+    float2 w3 = f * f * (-0.5f + 0.5f * f);
+    float2 w12 = w1 + w2;
+    float2 t0 = (centre - 1.0f) / size, t3 = (centre + 2.0f) / size, t12 = (centre + w2 / w12) / size;
+    float3 c = h.sample(postSampler, float2(t12.x, t0.y)).rgb * (w12.x * w0.y)
+             + h.sample(postSampler, float2(t0.x, t12.y)).rgb * (w0.x * w12.y)
+             + h.sample(postSampler, t12).rgb * (w12.x * w12.y)
+             + h.sample(postSampler, float2(t3.x, t12.y)).rgb * (w3.x * w12.y)
+             + h.sample(postSampler, float2(t12.x, t3.y)).rgb * (w12.x * w3.y);
+    float w = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return max(c / w, 0.0f);
+}
+
+kernel void taaResolveKernel(constant Uniforms&               u       [[buffer(0)]],
+                             constant uint&                   reset   [[buffer(1)]],   // 1 = no history: the frame as it is
+                             texture2d<float, access::read>   input   [[texture(0)]],  // the composite's light (FLAG_POST)
+                             texture2d<float, access::sample> history [[texture(1)]],  // the last frame's output
+                             texture2d<float, access::read>   motion  [[texture(2)]],  // the trace's (Trace.metal outMotion)
+                             texture2d<float, access::write>  output  [[texture(3)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    uint2 dims = uint2(output.get_width(), output.get_height());
+    if (tid.x >= dims.x || tid.y >= dims.y) return;
+    float3 current = max(input.read(tid).rgb, 0.0f);
+    if (reset != 0u) { output.write(float4(current, 1.0f), tid); return; }
+    float2 size = float2(dims);
+
+    // Where this pixel's centre was last frame. A surface: its point as last frame's camera saw it, less this frame's
+    // jitter (the motion is the jittered sample's). The sky: its direction through last frame's camera.
+    float4 mv = motion.read(tid);
+    float2 pos;
+    bool surface = mv.w > 0.0f;
+    if (surface) {
+        pos = mv.xy + 0.5f + u.jitter.zw - u.jitter.xy;
+    } else {
+        float depth;
+        float3 dir = viewDirection(u, (float2(tid) + 0.5f) / size);
+        pos = projectToPixel(dir, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, depth);
+        if (!(depth > 0.0f)) pos = float2(-1.0f);
+    }
+    // (No test of the depth there: a blade of grass or a leaf thinner than a pixel is in some of the jittered frames
+    // and not in others, so it would throw its history away most frames and flicker. What came into view is caught
+    // by the clip below instead, as UE's TAA does.)
+    if (!(all(pos >= 0.0f) && all(pos < size))) { output.write(float4(current, 1.0f), tid); return; }
+
+    // The neighbourhood now (3x3, in YCoCg): its mean and spread.
+    float3 m1 = 0.0f, m2 = 0.0f;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            uint2 q = uint2(clamp(int2(tid) + int2(x, y), int2(0), int2(dims) - 1));
+            float3 c = taaYCoCg(max(input.read(q).rgb, 0.0f));
+            m1 += c;
+            m2 += c * c;
+        }
+    }
+    float3 mean = m1 / 9.0f, sigma = sqrt(max(m2 / 9.0f - mean * mean, 0.0f)) * TAA_CLIP_SIGMA;
+
+    // The history, clipped toward the mean into the box.
+    float3 h = taaYCoCg(taaHistory(history, pos, size));
+    float3 offset = h - mean, units = abs(offset) / max(sigma, 1e-5f);
+    float most = max(units.x, max(units.y, units.z));
+    if (most > 1.0f) h = mean + offset / most;
+    float3 past = max(taaRGB(h), 0.0f);
+
+    // Blend, each weighted by 1 / (1 + its exposed luma) so a lone bright sample doesn't streak.
+    float moved = surface ? length(pos - (float2(tid) + 0.5f)) : 0.0f;
+    float alpha = mix(TAA_ALPHA, TAA_MOVING_ALPHA, saturate(moved / 8.0f));
+    float exposure = max(u.post.x, 1e-4f);
+    float wc = alpha / (1.0f + dot(current, float3(0.2126f, 0.7152f, 0.0722f)) * exposure);
+    float wp = (1.0f - alpha) / (1.0f + dot(past, float3(0.2126f, 0.7152f, 0.0722f)) * exposure);
+    output.write(float4((current * wc + past * wp) / (wc + wp), 1.0f), tid);
 }

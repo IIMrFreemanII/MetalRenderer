@@ -23,6 +23,7 @@ extension Scene {
             addStaticCollider(sdf: s, transform, friction: 0.8, restitution: 0.1)
         }
 
+        section("Stairs")
         // The stairs: a landing at the back, 2.4 m up, and 8 steps down towards the camera, each a block to the floor.
         let stone = addPBRMaterial(baseColor: [0.55, 0.52, 0.48], metallic: 0, roughness: 0.6)
         let width: Float = 4.4, rise: Float = 0.3, run: Float = 0.45, steps = 8, back: Float = -6.9
@@ -35,6 +36,7 @@ extension Scene {
             let z = landing + run * (Float(k) + 0.5)
             fixed(SDFShape(.box(halfExtents: [width / 2, top / 2, run / 2], rounding: 0.01)), stone, translate([0, top / 2, z]))
         }
+        section("Walls, posts and bench")
         // Low walls along both sides, down the stairs' slope, and posts and a bench at the foot.
         let rail = addPBRMaterial(baseColor: [0.3, 0.42, 0.6], metallic: 0, roughness: 0.3)
         let slope = atan(rise / run), foot = landing + run * Float(steps)   // the steps' edges run from the landing to here
@@ -48,6 +50,7 @@ extension Scene {
         for x: Float in [-1.4, 0.2, 1.6] { fixed(post, wood, translate([x, 0.5, 1.6 + 0.3 * abs(x)])) }
         fixed(SDFShape(.box(halfExtents: [1.3, 0.22, 0.3], rounding: 0.03)), wood, translate([-0.3, 0.22, 3.2]) * rotate(0.2, [0, 1, 0]))
 
+        section("Ragdolls")
         // The ragdolls, in layers of 2 x 3 over the landing's edge and the top steps, lying across the stairs on their
         // backs or fronts (heads left or right), turned a little, thrown forward down them.
         let parts = RagdollShapes(self)
@@ -74,6 +77,7 @@ extension Scene {
                        velocity: [0.3 * (random.float() - 0.5), 0, 1.5 + random.float()])
         }
 
+        section("Lights")
         addLight(.rect(width: 5, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -1.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }
@@ -96,21 +100,25 @@ extension Scene {
             forearm = scene.addSDFShape(SDFShape(.capsule(halfLength: 0.11, radius: 0.045)))
             thigh = scene.addSDFShape(SDFShape(.capsule(halfLength: 0.15, radius: 0.07)))
             shin = scene.addSDFShape(SDFShape(.capsule(halfLength: 0.155, radius: 0.055)))
+            for (s, name) in [(pelvis, "pelvis"), (chest, "chest"), (head, "head"), (upperArm, "upper arm"), (forearm, "forearm"),
+                              (thigh, "thigh"), (shin, "shin")] { scene.label(sdf: s, name) }
         }
     }
 
     /// A ragdoll of 11 bodies (pelvis, chest, head, upper arms, forearms, thighs, shins) standing 1.7 m tall with its
     /// feet at the origin of `transform` (a rotation and a translation), facing +z, its arms by its sides. Ball joints
     /// at the spine, neck, shoulders and hips (each with a swing cone and a twist range), hinges at the elbows and
-    /// knees (bending one way). Returns its bodies.
+    /// knees (bending one way). Returns its bodies. `drawn` false: only its head is (flesh covers the rest).
     @discardableResult
     func addRagdoll(_ parts: RagdollShapes, _ transform: float4x4, skin: Int, top: Int, bottom: Int, density: Float = 1000,
-                    velocity: SIMD3<Float> = .zero) -> Range<Int> {
+                    velocity: SIMD3<Float> = .zero, drawn: Bool = true) -> Range<Int> {
+        beginObject("Ragdoll")   // (the outline's: "Ragdoll", "Ragdoll (2)", ...)
+        defer { endObject() }
         let first = physics?.bodies.count ?? 0
         let across = rotate(.pi / 2, [0, 0, 1])   // a capsule along x
         func part(_ shape: Int, _ material: Int, _ at: SIMD3<Float>, _ turn: float4x4 = matrix_identity_float4x4) -> Int {
             addBody(sdf: shape, material, transform * translate(at) * turn, density: density, friction: 0.8, restitution: 0.1,
-                    velocity: velocity)
+                    velocity: velocity, mask: drawn || shape == parts.head ? Scene.maskGeometry : 0)
             return physics!.bodies.count - 1
         }
         let pelvis = part(parts.pelvis, bottom, [0, 0.98, 0], across)

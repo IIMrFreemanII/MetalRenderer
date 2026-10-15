@@ -66,6 +66,7 @@ extension GIMode: EnvNamed {
     var envName: String { ["pt", "cascades", "restir", "lumen"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
+extension Realism: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
@@ -75,10 +76,33 @@ extension ShadowMethod: EnvNamed {
     var envName: String { ["rays", "vsm"][rawValue] }
 }
 extension SceneKind: EnvNamed {
-    var envName: String { "\(self)".lowercased() }   // cityNight is read back without regard to case
+    // cityNight is read back without regard to case; the character workshop is `people` (`characters=` is the crowd's count).
+    var envName: String { self == .characters ? "people" : "\(self)".lowercased() }
 }
 extension CityStyle: EnvNamed {}
 extension PhysicsSettings.Backend: EnvNamed {}
+extension PhysicsSettings.Skin: EnvNamed {}
+extension PhysicsSettings.Body: EnvNamed {}
+extension PhysicsSettings.Liquids: EnvNamed {}
+extension PhysicsSettings.Solver: EnvNamed {}
+extension PhysicsSettings.Solvers: EnvNamed {}
+extension Foliage.Age: EnvNamed {}
+extension PlantSceneSettings.Layout: EnvNamed {}
+extension PlantSceneSettings.View: EnvNamed {}
+extension BuildingSceneSettings.Sides: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension BuildingSceneSettings.Layout: EnvNamed {}
+extension BuildingSceneSettings.View: EnvNamed {}
+extension CharacterSceneSettings.Layout: EnvNamed {}
+extension CrowdBodies: EnvNamed {}
+extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension CharacterSceneSettings.View: EnvNamed {}
+extension MaterialWorkshopSettings.Layout: EnvNamed {}
+extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
+extension PainterWorkshopSettings.Subject: EnvNamed {}
+extension TerrainWorkshopSettings.Base: EnvNamed {}
+extension TerrainWorkshopSettings.Size: EnvNamed { var envName: String { "\(metres)" } }
+extension FaceExpression: EnvNamed {}
+extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
     var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
@@ -123,7 +147,7 @@ struct SettingSpec {
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
     enum Custom {
-        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption
+        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
     }
     /// The setting as text in an environment variable.
     struct Env {
@@ -164,6 +188,13 @@ struct SettingSpec {
     func advanced(_ on: Bool = true) -> SettingSpec { var s = self; s.advanced = on; return s }
     func when(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.visible = condition; return s }
     func enabled(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.enabled = condition; return s }
+    /// A slider's value shown as `text` says, from all the settings.
+    func text(_ text: @escaping (RenderSettings) -> String) -> SettingSpec {
+        guard case .slider(let m)? = control else { preconditionFailure("\(title): not a slider") }
+        var s = self
+        s.control = .slider(Slider(range: m.range, ticks: m.ticks, live: m.live, position: m.position, move: m.move, text: text))
+        return s
+    }
     /// A popup's items by index: the panel greys out the ones `item` rejects.
     func available(_ item: @escaping (Int) -> Bool) -> SettingSpec { var s = self; s.available = item; return s }
 
@@ -303,6 +334,8 @@ enum SettingsTable {
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
                 .env(.foliage, "dir").when(plants).enabled(assemblies),
             S.slider("Gusts", \.foliage.gusts, FoliageSettings.gustRange, step: 0.05, fmt("%.2f")).env(.foliage, "gusts").when(plants).enabled(assemblies),
+            S.slider("Sway reach", \.foliage.swayReach, FoliageSettings.swayRange, step: 5, fmt("%.0f m"))
+                .env(.foliage, "sway").when(plants).enabled(assemblies),
             S.slider("Season", \.foliage.season, FoliageSettings.seasonRange, step: 0.02, fmt("%.2f")).env(.foliage, "season").when(plants),
             S.slider("Leaf translucency", \.foliage.translucency, FoliageSettings.translucencyRange, step: 0.05, fmt("%.2f"))
                 .env(.foliage, "translucency").when(plants),
@@ -315,6 +348,9 @@ enum SettingsTable {
         let assemblies: When = { !$0.scene.bakedPlants }
         let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
+        let workshop: When = { $0.scene.kind == .plants }
+        let buildings: When = { $0.scene.kind == .buildings }
+        let characters: When = { $0.scene.kind == .characters }
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
@@ -331,6 +367,7 @@ enum SettingsTable {
                 .env(.scene, "poses").when { $0.scene.kind == .crowd },
             S.slider("Detail level", \.scene.detail, SceneSettings.detailRange, live: false)
                 .env(.scene, "detail").when { $0.scene.kind == .crowd },
+            S.popup("Characters", \.scene.crowdBodies, titled(\.title)).env(.scene, "cast").when { $0.scene.kind == .crowd },
             S.slider("City seed", \.scene.seed, SceneSettings.seedRange, live: false).when(city),   // `seed`, as the plants'
             S.slider("City blocks", \.scene.city.blocks, CitySettings.blockRange, live: false) { "\($0) x \($0)" }
                 .env(.scene, "blocks").when(city),
@@ -340,6 +377,47 @@ enum SettingsTable {
             S.slider("Rooms behind windows", \.scene.city.rooms, CitySettings.roomRange, step: 0.05, live: false, percent)
                 .env(.scene, "rooms").when(city),
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
+            S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
+            S.check("Interiors near the camera", \.scene.city.interiors).env(.scene, "interiors").when(city),
+            S.check("Canal", \.scene.city.canal).env(.scene, "canal").when(city),
+            S.slider("Interior reach", \.scene.city.interiorReach, 10...80, step: 5, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "reach").when(city),
+            S.value(\.scene.buildings.style).env(.scene, "bstyle"),
+            S.slider("Lot width", \.scene.buildings.lot.x, BuildingSceneSettings.widthRange, step: 0.5, live: false) { String(format: "%.1f m", $0) }
+                .env(.scene, "width").when(buildings),
+            S.slider("Lot depth", \.scene.buildings.lot.y, BuildingSceneSettings.depthRange, step: 0.5, live: false) { String(format: "%.1f m", $0) }
+                .env(.scene, "depth").when(buildings),
+            S.popup("Its sides", \.scene.buildings.sides, titled(\.title)).env(.scene, "sides").when(buildings),
+            S.slider("Floors", \.scene.buildings.floors, BuildingSceneSettings.floorRange, live: false).env(.scene, "floors").when(buildings),
+            S.slider("Building seed", \.scene.buildings.seed, SceneSettings.seedRange, live: false).env(.scene, "bseed").when(buildings),
+            S.popup("Layout", \.scene.buildings.layout, titled(\.title)).env(.scene, "blayout").when(buildings),
+            S.popup("View", \.scene.buildings.view, titled(\.title)).env(.scene, "bview").when(buildings),
+            S.slider("Cut above floor", \.scene.buildings.cut, 0...40, live: false).env(.scene, "cut").when(buildings),
+            S.check("Night", \.scene.buildings.night).env(.scene, "night").when(buildings),
+            S.value(\.scene.materialWorkshop.graph).env(.scene, "mgraph"),
+            S.popup("Shapes", \.scene.materialWorkshop.layout, titled(\.title)).env(.scene, "mlayout").when { $0.scene.kind == .materials },
+            S.popup("Backdrop", \.scene.materialWorkshop.backdrop, titled(\.title)).env(.scene, "mbackdrop").when { $0.scene.kind == .materials },
+            S.popup("Object", \.scene.painterWorkshop.subject, titled(\.title)).env(.scene, "psubject").when { $0.scene.kind == .painter },
+            S.value(\.scene.painterWorkshop.model).env(.scene, "pmodel"),
+            S.value(\.scene.painterWorkshop.document).env(.scene, "pdocument"),
+            S.popup("Backdrop", \.scene.painterWorkshop.backdrop, titled(\.title)).env(.scene, "pbackdrop").when { $0.scene.kind == .painter },
+            S.popup("Terrain size", \.scene.terrainWorkshop.size, titled(\.title)).env(.scene, "tsize").when { $0.scene.kind == .terrain },
+            S.popup("Starts from", \.scene.terrainWorkshop.base, titled(\.title)).env(.scene, "tbase").when { $0.scene.kind == .terrain },
+            S.slider("Terrain seed", \.scene.terrainWorkshop.seed, SceneSettings.seedRange, live: false).env(.scene, "tseed")
+                .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
+            S.slider("Bodies dropped", \.scene.terrainWorkshop.bodies, 0...400, live: false).env(.scene, "tbodies")
+                .when { $0.scene.kind == .terrain },
+            S.check("Sea", \.scene.terrainWorkshop.sea).env(.scene, "tsea")
+                .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
+            S.value(\.scene.terrainWorkshop.document).env(.scene, "tdocument"),
+            S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
+            S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
+            S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),
+            S.value(\.scene.characterWorkshop.clip).env(.scene, "clip"),
+            S.popup("View", \.scene.characterWorkshop.view, titled(\.title)).env(.scene, "cview").when(characters),
+            S.popup("Face", \.scene.characterWorkshop.expression, titled(\.title)).env(.scene, "expr").when(characters),
+            S.check("Eyes on the camera", \.scene.characterWorkshop.lookAt).env(.scene, "gaze").when(characters),
+            S.popup("Hair", \.scene.characterWorkshop.hair, titled(\.title)).env(.scene, "hairs").when(characters),
             S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
                 .env(.scene, "bodies").when { $0.scene.kind == .physics },
             S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
@@ -356,15 +434,50 @@ enum SettingsTable {
                 .env(.scene, "soft").when { $0.scene.kind == .softBodies },
             S.slider("Lattice cells", \.scene.physics.softCells, PhysicsSettings.softCellRange, live: false)
                 .env(.scene, "cells").when { $0.scene.kind == .softBodies },
+            S.check("Character", \.scene.physics.muscleCharacter).env(.scene, "character").when { $0.scene.kind == .muscles },
+            S.slider("Ragdolls with flesh", \.scene.physics.muscleRagdolls, PhysicsSettings.muscleRagdollRange, live: false)
+                .env(.scene, "fleshragdolls").when { $0.scene.kind == .muscles },
+            S.slider("Flesh lattice", \.scene.physics.fleshCell, PhysicsSettings.fleshCellRange, step: 0.5, live: false) { String(format: "%.1f cm", $0) }
+                .env(.scene, "flesh").when { $0.scene.kind == .muscles },
+            S.popup("Body", \.scene.physics.body, titled(\.title)).env(.scene, "body").when { $0.scene.kind == .muscles },
+            S.popup("Skin", \.scene.physics.skin, titled(\.title)).env(.scene, "skin")
+                .when { $0.scene.kind == .muscles && $0.scene.physics.body == .skin },
+            S.slider("Muscle strength", \.scene.physics.muscleGain, PhysicsSettings.muscleGainRange, step: 0.05, live: false) { String(format: "%.2f", $0) }
+                .env(.scene, "muscle").when { $0.scene.kind == .muscles },
+            S.popup("Liquids", \.scene.physics.liquids, titled(\.title)).env(.scene, "liquid").when { $0.scene.kind == .fluids },
+            S.popup("Solver", \.scene.physics.solver, titled(\.title)).env(.scene, "solver").when { $0.scene.kind == .fluids },
+            S.popup("Water", \.scene.physics.waterSolver, titled(\.title)).env(.scene, "water")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.popup("Blood", \.scene.physics.bloodSolver, titled(\.title)).env(.scene, "blood")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.popup("Honey", \.scene.physics.honeySolver, titled(\.title)).env(.scene, "honey")
+                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
+            S.slider("Particles per liquid", \.scene.physics.fluidParticles, PhysicsSettings.fluidRange, log: true, live: false)
+                .env(.scene, "fluid").when { $0.scene.kind == .fluids },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
+            S.slider("Particle budget", \.scene.particles.budget, ParticleSettings.budgetRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "budget").when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
+            S.check("Particle shadows", \.scene.particles.shadows).env(.scene, "particleshadows")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .vfxStage },
+            S.check("Particles in reflections", \.scene.particles.reflections).env(.scene, "particlereflections")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .vfxStage },
+            S.popup("Particle layer", \.particleScale, [("Full size", Float(1)), ("Half size", Float(0.5))]).env(.view, "particlescale")
+                .when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
-                .env(.scene, "seed").when { $0.scene.kind.hasPlants },
+                .env(.scene, "seed").when { $0.scene.kind.hasPlants || $0.scene.kind == .mireland },
+            S.value(\.scene.plants.species).env(.scene, "species"),
+            S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
+            S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),
+            S.slider("Workshop seed", \.scene.plants.seed, SceneSettings.seedRange, live: false).env(.scene, "plantseed").when(workshop),
+            S.popup("Layout", \.scene.plants.layout, titled(\.title)).env(.scene, "layout").when(workshop),
+            S.popup("View", \.scene.plants.view, titled(\.title)).env(.scene, "view").when(workshop),
+            S.popup("Realistic look", \.scene.realism, titled(\.title)).env(.scene, "realism"),
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
             S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),
@@ -393,6 +506,10 @@ enum SettingsTable {
             S.slider("Depth of field", \.post.aperture, PostSettings.apertureRange, step: 0.5, fmt("%.1f px")).env(.post, "aperture"),
             S.slider("Focus distance", \.post.focus, PostSettings.focusRange, step: 0.1) { $0 == 0 ? "Auto" : String(format: "%.1f m", $0) }
                 .env(.post, "focus").enabled(focus),
+            S.check("Auto exposure", \.post.autoExposure).env(.post, "autoexposure"),
+            S.slider("Warmth", \.post.warmth, PostSettings.warmthRange, step: 0.02, fmt("%.2f")).env(.post, "warmth"),
+            S.slider("Saturation", \.post.saturation, PostSettings.saturationRange, step: 0.02, fmt("%.2f")).env(.post, "saturation"),
+            S.slider("Contrast", \.post.contrast, PostSettings.contrastRange, step: 0.02, fmt("%.2f")).env(.post, "contrast"),
             S.slider("Vignette", \.post.vignette, PostSettings.vignetteRange, step: 0.05, fmt("%.2f")).env(.post, "vignette"),
             S.slider("Film grain", \.post.grain, PostSettings.grainRange, step: 0.005, fmt("%.3f")).env(.post, "grain"),
             S.slider("Chromatic aberration", \.post.aberration, PostSettings.aberrationRange, step: 0.0005) { String(format: "%.2f%%", $0 * 100) }
@@ -407,8 +524,12 @@ enum SettingsTable {
         S.slider("Move speed", \.moveSpeed, RenderSettings.moveSpeedRange, step: 0.5, log: true, fmt("%g m/s")).env(.view, "speed"),
         S.check("Pause animation", \.paused).env(.view, "paused", interactiveOnly: true),
         S.slider("Time scale", \.timeScale, RenderSettings.timeScaleRange, step: 0.05, fmt("%.2f×")).env(.view, "timescale"),
+        // The day: its times (DayClock), held there; or an offset into the running day.
+        S.custom(.dayPresets, "Time").when { DayClock.of($0.scene.kind) != nil },
         S.slider("Time of day", \.timeOfDay, 0...1, step: 0.01) { String(format: "%.0f%%", $0 * 100) }
+            .text { s in s.heldHour.map(DayClock.label) ?? String(format: "+%.0f%%", s.timeOfDay * 100) }
             .env(.view, "tod").when { $0.scene.kind.dayCycle != nil },
+        S.check("Hold time of day", \.dayHeld).env(.view, "dayhold").when { $0.scene.kind.dayCycle != nil },
     ])
 
     private static let directLight: Section = {
@@ -488,6 +609,7 @@ enum SettingsTable {
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
+            S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),

@@ -124,7 +124,9 @@ final class SettingsTableTests: XCTestCase {
     /// to RenderSettings without a line in the table fails here.
     func testEverySettingRoundTrips() {
         // Session state, like the camera; and what the renderer sets by the time of day.
-        let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit"]
+        let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
+                                         "scene.plants.compare", "scene.buildingCatalog", "scene.buildings.mutants", "scene.buildings.compare",
+                                         "scene.interior", "scene.buildings.pinned"]
         let changes = singleChanges()
         XCTAssertGreaterThan(changes.count, 120)
         for (path, s) in changes where !unexported.contains(path) {
@@ -229,6 +231,22 @@ final class SettingsTableTests: XCTestCase {
             "METALRENDERER_DIRECT": "sometimes",
         ])
         XCTAssertEqual(s, defaults)
+    }
+
+    /// Settings saved before the custom tracer went still carry `"rayTracer"`: the removed key is ignored and the
+    /// rest loads (SettingsStore lays the saved JSON over the defaults).
+    func testRemovedKeysDoNotResetSavedSettings() throws {
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
+        saved["rayTracer"] = 1
+        saved["api"] = RenderAPI.metal4.rawValue
+        saved["bounces"] = defaults.bounces + 1
+        let store = UserDefaults.standard, key = "renderSettings"
+        let before = store.data(forKey: key)
+        defer { store.set(before, forKey: key) }
+        store.set(try JSONSerialization.data(withJSONObject: saved), forKey: key)
+        let s = try XCTUnwrap(SettingsStore.load(over: defaults))
+        XCTAssertEqual(s.api, .metal4)
+        XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
     func testLumenIsRead() {

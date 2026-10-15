@@ -120,9 +120,9 @@ inline float giTarget(GIReservoir r, thread const GIReceiver& rc, float dMin2) {
 }
 // Shadow ray from receiver point p to sample r.
 inline bool giSampleVisible(float3 p, GIReservoir r, SCENE_ACCEL accel) {
-    if ((r.flags & GI_SAMPLE_SKY) == 0) return isVisible(p, r.pos + r.n * RAY_EPSILON, accel);
+    if ((r.flags & GI_SAMPLE_SKY) == 0) return isVisible(p, r.pos + r.n * RAY_EPSILON, accel, RAY_GI);
     float t;
-    return !intersectAny(makeRay(p, r.pos, 0.0f, INFINITY), MASK_GEOMETRY, accel, t);
+    return !intersectAny(makeRay(p, r.pos, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_GI), accel, t);
 }
 
 kernel void restirGIInitialKernel(constant Uniforms&               u          [[buffer(0)]],
@@ -181,7 +181,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
     r.M = 1.0f;
     r.flags = GI_SAMPLE_VISIBLE;
     float3 d = sampleBounce(rc.n, rc.ng, rng.next2());
-    Surface h = traceSurface(makeRay(rc.p, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+    Surface h = traceSurface(makeRay(rc.p, d, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
     float3 Lo = float3(0.0f);
     if (!h.hit) {
         r.flags |= GI_SAMPLE_SKY;
@@ -227,7 +227,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                 break;
             }
             d = sampleBounce(hn, hng, rng.next2());
-            h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+            h = traceSurface(makeRay(hp, d, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
             if (!h.hit) {
                 Lo += throughput * skyRadiance(u, s, d, 2.0f);
                 break;

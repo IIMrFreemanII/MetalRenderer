@@ -15,7 +15,7 @@
 // emission, one light sample and a stand-in for its indirect light (as a reflection's hit off screen gets).
 float3 glassReflection(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, float3 p, float3 dir,
                        thread Sampler& rng) {
-    Surface h = traceSurface(makeRay(p, dir, 0.0f, INFINITY), MASK_GEOMETRY, accel, s, GI_RAY_SPREAD);
+    Surface h = traceSurface(makeRay(p, dir, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, GI_RAY_SPREAD);
     if (!h.hit) return skyRadiance(u, s, dir, 0.0f);
     float3 hng, hn;
     orientNormals(h, dir, hng, hn);
@@ -67,7 +67,7 @@ kernel void glassKernel(constant Uniforms&               u          [[buffer(0)]
     float3 through = float3(1.0f), light = float3(0.0f);
     bool glazed = false;
     for (uint pane = 0; pane < 4 && reach > 0.0f; ++pane) {
-        Surface g = traceSurface(makeRay(origin, dir, 0.0f, reach), MASK_GLASS, accel, s, GI_RAY_SPREAD);
+        Surface g = traceSurface(makeRay(origin, dir, 0.0f, reach), rayMask(MASK_GLASS, RAY_SPECULAR), accel, s, GI_RAY_SPREAD);
         if (!g.hit) break;
         float3 gng, gn;
         orientNormals(g, dir, gng, gn);

@@ -8,6 +8,12 @@ import simd
 ///
 /// Nothing is laid flat on anything else (coplanar faces show as noise when ray traced): a wall is cut around its
 /// openings, what projects is a box without its back, and the members of a frame meet edge to edge.
+///
+/// The facades follow the building's plan (BuildingPlanner): its doors are where the plan's are, a window lights
+/// up with its room, a bathroom's is small and high, only a living room or a bedroom has a balcony. An opening goes
+/// through the whole wall (`BuildingAssembler.outerThickness`), and is recorded (`Building.openings`) for the inside
+/// face the interior cuts around it. What stands behind the glass when the building has no interior (a blind, the
+/// dark, a room box, a closed door) is its fill (`Building.Slot.isFill`): dropped when the interior is there.
 extension BuildingAssembler {
     /// A bay's rectangle on the wall: one storey high.
     struct Cell {
@@ -25,18 +31,28 @@ extension BuildingAssembler {
     /// `depth`: how deep the building is behind it; `crowdedStart` / `crowdedEnd`: the wall around that corner has
     /// rooms behind it too, so this one keeps its own away from the corner.
     mutating func facade(from a: SIMD2<Float>, to c: SIMD2<Float>, tier: BuildingTier, kind: CityPlan.Edge, front: Bool, depth: Float,
-                         crowdedStart: Bool, crowdedEnd: Bool) {
+                         crowdedStart: Bool, crowdedEnd: Bool, cutTop: Float? = nil) {
         let span = length(c - a), e = (c - a) / span
+        let normal = SIMD2(-e.y, e.x)
         b.setFrame(float4x4(columns: (SIMD4(e.x, 0, e.y, 0), SIMD4(0, 1, 0, 0), SIMD4(-e.y, 0, e.x, 0), SIMD4(a.x, 0, a.y, 1))))
-        let top = tier.top
-        let pier = min(style.pier, span * 0.15)
-        let usable = span - 2 * pier
+        let top = min(tier.top, cutTop ?? .infinity)
+        let (pier, count, bay, usable) = BuildingAssembler.bays(span: span, pier: style.pier, bay: style.bay)
         guard kind != .party, usable >= 1.6 else {
             b[.wall].wall(x0: 0, x1: span, y0: tier.y0, y1: top)
             return
         }
-        let count = max(1, Int((usable / style.bay).rounded()))
-        let bay = usable / Float(count)
+        /// The room behind a point `x` along this wall on `storey` (of the building).
+        func room(_ x: Float, _ storey: Int) -> PlanRoom? {
+            plan.room(behind: a + e * x, inward: -normal, storey: storey)
+        }
+        /// The plan's door through this wall in `cell` on `storey`, if it has one there.
+        func planDoor(_ cell: Cell, _ storey: Int) -> PlanDoor? {
+            plan.outsideDoors(storey).first { d in
+                let along = dot(d.at - a, e), across = dot(d.at - a, normal)
+                return abs(across) < 0.05 && along > cell.x0 && along < cell.x1
+            }
+        }
+        currentWall = (a, e, normal)
 
         // The piers at the ends: the base's material on the ground floor, the wall's above.
         let baseTop = tier.ground ? tier.y0 + tier.heights[0] : tier.y0
@@ -54,45 +70,55 @@ extension BuildingAssembler {
 
         // What the ground floor is, and which columns of bays have balconies.
         let street = kind == .street
-        let shops = tier.ground && street && rng.next() < style.shops
-        let door = front ? count / 2 : -1
+        let shops = tier.ground && street && plan.shops
         let every = style.balconies >= 1 ? 1 : style.balconies >= 0.5 ? 2 : style.balconies > 0 ? 3 : 0
         let phase = every > 0 ? rng.int(every) : 0
-        let awnings = shops && style.kind != .office && rng.next() < 0.5
-        // An office's storeys are lit, or dark, more or less together.
-        let together = style.kind == .office
+        let awnings = shops && !style.isOffice && rng.next() < style.awnings
+        _ = front
 
         var y = tier.y0
         for (storey, height) in tier.heights.enumerated() {
+            if y >= top - 1e-3 { break }
             let ground = tier.ground && storey == 0
             let wallSlot: Building.Slot = ground ? .base : .wall
-            let plain = storeysBelow + storey >= plainFrom
-            let storeyLit = together ? rng.range(0.2, 1.8) : 1
+            let s = storeysBelow + storey
+            let plain = s >= plainFrom
             let floor = ground ? y + BuildingAssembler.step : y
-            if !ground && storeysBelow + storey >= ribbonFrom {
+            if !ground && s >= ribbonFrom {
                 // Too many windows to make each: one ribbon of glass along the wall, and a blind or a light behind it.
                 var ribbon = style.window
                 (ribbon.share, ribbon.maxWidth, ribbon.mullions, ribbon.transom) = (1, .infinity, 0, false)
                 window(Cell(x0: pier, x1: span - pier, y0: y, y1: y + height), floor: floor, ribbon, wall: wallSlot, plain: true,
-                       balcony: false, room: 0, lit: spec.lit * storeyLit)
+                       balcony: false, room: 0, lit: room(span / 2, s)?.lit ?? false, storey: s)
                 y += height
                 continue
             }
             for k in 0..<count {
                 let cell = Cell(x0: pier + Float(k) * bay, x1: pier + Float(k + 1) * bay, y0: y, y1: y + height)
-                if ground && k == door {
-                    doorTile(cell, floor: floor, glazed: style.kind == .office)
-                } else if ground && style.loadingDoors && street && (k + phase) % 2 == 0 {
-                    loadingDoor(cell, floor: floor)
-                } else if ground && shops {
-                    shopWindow(cell, floor: floor, room: roomFits(cell) ? min(roomDepth + 1.5, depth / 2 - 0.4) : 0, awning: awnings)
+                let behind = room(cell.center, s)
+                if let door = planDoor(cell, s) {
+                    doorTile(cell, floor: floor, door: door, storey: s)
+                } else if behind?.type == .lift {
+                    b[wallSlot].wall(x0: cell.x0, x1: cell.x1, y0: cell.y0, y1: cell.y1)
+                } else if ground && style.loadingDoors && street && (k + phase) % 2 == 0 && behind?.type == .hall {
+                    loadingDoor(cell, floor: floor, storey: s)
+                } else if ground && shops && (behind?.type == .shop || behind?.type == .lobby && style.isOffice) {
+                    shopWindow(cell, floor: floor, room: roomFits(cell) ? min(roomDepth + 1.5, depth / 2 - 0.4) : 0, awning: awnings,
+                               lit: behind?.lit ?? false, storey: s)
                 } else {
-                    let balcony = !ground && every > 0 && (k + phase) % every == 0 && kind != .party
-                    window(cell, floor: floor, ground ? style.groundWindow : style.window, wall: wallSlot, plain: plain, balcony: balcony,
-                           room: roomFits(cell) ? roomDepth : 0, lit: spec.lit * storeyLit)
+                    var w = ground ? style.groundWindow : style.window
+                    var balcony = !ground && every > 0 && (k + phase) % every == 0 && kind != .party && (behind?.type.hasBalcony ?? true)
+                    if let type = behind?.type, [.bath, .wc, .toilets].contains(type) {
+                        // A bathroom's: small, high, frosted by its blind.
+                        (w.share, w.minWidth, w.maxWidth, w.mullions, w.shutters) = (0.3, 0.6, min(w.maxWidth, 0.8), 0, false)
+                        (w.sill, w.height) = (max(w.sill, 1.35), min(w.height, 0.85))
+                        balcony = false
+                    }
+                    window(cell, floor: floor, w, wall: wallSlot, plain: plain, balcony: balcony,
+                           room: roomFits(cell) ? roomDepth : 0, lit: behind?.lit ?? false, storey: s)
                 }
             }
-            if ground && shops && style.kind != .office {
+            if ground && shops && !style.isOffice {
                 // The shops' sign: a board over their windows, the facade's bays long.
                 b[.accent].box([pier, y + height - 0.78, 0], [span - pier, y + height - 0.34, 0.09],
                                faces: [.front, .top, .bottom, .left, .right])
@@ -103,13 +129,46 @@ extension BuildingAssembler {
 
     // MARK: - Pieces
 
+    /// Of a detail's faces, those a building at its level has: all of them in full, the front alone when flat.
+    private func shown(_ faces: MeshBuilder.Faces) -> MeshBuilder.Faces {
+        spec.detail == .full ? faces : faces.intersection(.front)
+    }
+
     /// The wall of `cell` around `o`, and the hole's sides, `thickness` deep.
     private mutating func cutWall(_ cell: Cell, _ o: Opening, slot: Building.Slot, thickness: Float) {
+        wallAround(cell, o, slot: slot)
+        reveal(o, slot: slot, thickness: thickness)
+    }
+
+    /// Notes opening `o` of the current wall on `storey` (for the interior's side of the wall, and its walker's
+    /// glass). `glass`: it is glazed (a window: the walker doesn't pass); otherwise a door.
+    private mutating func record(_ o: Opening, storey: Int, glass: Bool) {
+        guard let (a, e, normal) = currentWall else { return }
+        b.openings.append(Building.WallOpening(storey: storey, a: a + e * o.x0, c: a + e * o.x1, normal: normal, y0: o.y0, y1: o.y1, glass: glass))
+    }
+
+    /// The wall of `cell` around `o`.
+    private mutating func wallAround(_ cell: Cell, _ o: Opening, slot: Building.Slot) {
         b[slot].wall(x0: cell.x0, x1: o.x0, y0: cell.y0, y1: cell.y1)
         b[slot].wall(x0: o.x1, x1: cell.x1, y0: cell.y0, y1: cell.y1)
         b[slot].wall(x0: o.x0, x1: o.x1, y0: cell.y0, y1: o.y0)
         b[slot].wall(x0: o.x0, x1: o.x1, y0: o.y1, y1: cell.y1)
+    }
+
+    /// The sides of hole `o`, `thickness` deep.
+    private mutating func reveal(_ o: Opening, slot: Building.Slot, thickness: Float) {
         b[slot].box([o.x0, o.y0, -thickness], [o.x1, o.y1, 0], faces: [.left, .right, .top, .bottom])
+    }
+
+    /// What `body` adds, as a module of the building (Building.Module) at `anchor` in the facade if its windows are
+    /// modules, or in place. (A storey's row of shells as one module traced no faster and shared a quarter as much.)
+    private mutating func module(at anchor: SIMD3<Float>, _ body: (inout BuildingAssembler) -> Void) {
+        guard spec.modules else { body(&self); return }
+        let facade = b[.wall].frame
+        let kept = b.beginModule(at: anchor)
+        body(&self)
+        b.addModule(b.endModule(kept),
+                    placement: facade * float4x4(columns: (SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(anchor, 1))))
     }
 
     /// A frame in opening `o`, with its glass: members `width` wide around it, `mullions` upright bars and maybe a
@@ -118,14 +177,19 @@ extension BuildingAssembler {
     private mutating func glaze(_ o: Opening, recess: Float, width f: Float, mullions: Int, transom: Bool, frame: Bool) {
         b[.glass].wall(x0: o.x0, x1: o.x1, y0: o.y0, y1: o.y1, z: -recess)
         guard frame else { return }
+        frameMembers(o, recess: recess, width: f, mullions: mullions, transom: transom)
+    }
+
+    /// `glaze`'s frame alone.
+    private mutating func frameMembers(_ o: Opening, recess: Float, width f: Float, mullions: Int, transom: Bool) {
         let back = -recess, face = -recess + 0.04
-        b[.frame].box([o.x0, o.y0, back], [o.x0 + f, o.y1, face], faces: [.front, .right])
-        b[.frame].box([o.x1 - f, o.y0, back], [o.x1, o.y1, face], faces: [.front, .left])
+        b[.frame].box([o.x0, o.y0, back], [o.x0 + f, o.y1, face], faces: shown([.front, .right]))
+        b[.frame].box([o.x1 - f, o.y0, back], [o.x1, o.y1, face], faces: shown([.front, .left]))
         // The uprights between the two sides, then the top, the bottom and the transom in each gap.
         var edges: [Float] = [o.x0 + f]
         for m in 0..<mullions {
             let x = o.x0 + (o.x1 - o.x0) * Float(m + 1) / Float(mullions + 1)
-            b[.frame].box([x - f / 2, o.y0 + f, back], [x + f / 2, o.y1 - f, face], faces: [.front, .left, .right])
+            b[.frame].box([x - f / 2, o.y0 + f, back], [x + f / 2, o.y1 - f, face], faces: shown([.front, .left, .right]))
             edges += [x - f / 2, x + f / 2]
         }
         edges.append(o.x1 - f)
@@ -133,22 +197,28 @@ extension BuildingAssembler {
         for g in stride(from: 0, to: edges.count, by: 2) {
             // Between two uprights the top and bottom members reach to the mullions' middles (their ends are hidden).
             let x0 = g == 0 ? edges[g] : edges[g] - f / 2, x1 = g == edges.count - 2 ? edges[g + 1] : edges[g + 1] + f / 2
-            b[.frame].box([x0, o.y1 - f, back], [x1, o.y1, face], faces: [.front, .bottom])
-            b[.frame].box([x0, o.y0, back], [x1, o.y0 + f, face], faces: [.front, .top])
+            b[.frame].box([x0, o.y1 - f, back], [x1, o.y1, face], faces: shown([.front, .bottom]))
+            b[.frame].box([x0, o.y0, back], [x1, o.y0 + f, face], faces: shown([.front, .top]))
             if transom { b[.frame].box([edges[g], bar - f / 2, back], [edges[g + 1], bar + f / 2, face], faces: [.front, .top, .bottom]) }
         }
     }
 
     /// What is behind the glass of opening `o`, at the wall's back (`thickness` behind its face): with probability
     /// `share` a room `room` deep (a shop's has a counter and shelves), otherwise a blind and the dark under it; at
-    /// night, with probability `lit`, a light: the blind glows, or the room's lamps are on.
-    private mutating func behind(_ o: Opening, _ cell: Cell, floor: Float, thickness: Float, room: Float, lit: Float,
+    /// night, if its room's light is on (`lit`), a light: the blind glows, or the room's lamps are on. All of it the
+    /// building's fill.
+    private mutating func behind(_ o: Opening, _ cell: Cell, floor: Float, thickness: Float, room: Float, lit: Bool,
                                  share: Float? = nil, shop: Bool = false) {
         let z = -thickness
         b.windows += 1
         // Every window draws the same numbers, whatever it turns out to be.
-        let isRoom = rng.next() < (share ?? spec.rooms) && room >= 2, isLit = spec.night && rng.next() < lit
+        let isRoom = rng.next() < (share ?? spec.rooms) && room >= 2, isLit = spec.night && lit
         let blind = rng.next(), side = rng.next()
+        if isRoom && !isLit && spec.detail == .flat {   // seen from afar, a room is the dark behind the glass
+            b.rooms += 1
+            b[.dark].wall(x0: o.x0, x1: o.x1, y0: o.y0, y1: o.y1, z: z)
+            return
+        }
         guard isRoom else {
             if isLit {
                 b.lights += 1
@@ -176,13 +246,13 @@ extension BuildingAssembler {
         b[.floor].floor(x0: x0, x1: x1, z0: back, z1: z, y: y0)
         // Something in it, so there is depth to look into: a counter and shelves, or a cupboard against a side wall.
         if shop {
-            b[.accent].box([x0 + 0.4, y0, back + 0.8], [x1 - 0.4, y0 + 0.95, back + 1.4], faces: [.left, .right, .top, .front, .back])
+            b[.roomProp].box([x0 + 0.4, y0, back + 0.8], [x1 - 0.4, y0 + 0.95, back + 1.4], faces: shown([.left, .right, .top, .front, .back]))
             let sx = side < 0.5 ? x0 + 0.04 : x1 - 0.44
-            b[.accent].box([sx, y0, back + 1.8], [sx + 0.4, y0 + 1.9, z - 0.8], faces: [.left, .right, .top, .front, .back])
+            b[.roomProp].box([sx, y0, back + 1.8], [sx + 0.4, y0 + 1.9, z - 0.8], faces: shown([.left, .right, .top, .front, .back]))
         } else {
             let w = min(1.4, (x1 - x0) * 0.4), d = min(0.6, room * 0.3), h = 0.7 + 0.8 * side
             let fx = side < 0.5 ? x0 + 0.05 : x1 - 0.05 - w
-            b[.accent].box([fx, y0, back + 0.05], [fx + w, y0 + h, back + 0.05 + d], faces: [.left, .right, .top, .front])
+            b[.roomProp].box([fx, y0, back + 0.05], [fx + w, y0 + h, back + 0.05 + d], faces: shown([.left, .right, .top, .front]))
         }
         if isLit {
             b.lights += 1
@@ -197,7 +267,7 @@ extension BuildingAssembler {
 
     /// A window in `cell`, or with `balcony` a glazed door onto a balcony.
     private mutating func window(_ cell: Cell, floor: Float, _ w: WindowStyle, wall: Building.Slot, plain: Bool, balcony: Bool,
-                                 room: Float, lit: Float) {
+                                 room: Float, lit: Bool, storey: Int) {
         let width = min(min(max(cell.width * w.share, w.minWidth), w.maxWidth), cell.width - 0.16)
         let y0 = floor + (balcony ? 0.06 : w.sill)
         let y1 = min(y0 + (balcony ? max(w.height, 2.15) : w.height), cell.y1 - 0.3)
@@ -206,23 +276,44 @@ extension BuildingAssembler {
             return
         }
         let o = Opening(x0: cell.center - width / 2, x1: cell.center + width / 2, y0: y0, y1: y1)
-        let thickness = w.recess + 0.08
+        let thickness = outerThickness
+        record(o, storey: storey, glass: true)
+        let mullions = width > 1.0 ? w.mullions : 0, transom = w.transom && !balcony
+        if spec.modules && !plain {
+            // Its shell a module: the same window elsewhere is the same mesh, placed there. The wall around it, its
+            // glass and what is behind it are the building's own.
+            wallAround(cell, o, slot: wall)
+            b[.glass].wall(x0: o.x0, x1: o.x1, y0: o.y0, y1: o.y1, z: -w.recess)
+            module(at: [o.x0, o.y0, 0]) {
+                $0.reveal(o, slot: wall, thickness: thickness)
+                $0.frameMembers(o, recess: w.recess, width: w.frame, mullions: mullions, transom: transom)
+                $0.windowTrim(o, cell, w, width: width, balcony: balcony)
+            }
+            behind(o, cell, floor: floor, thickness: thickness, room: room, lit: lit)
+            if balcony { self.balcony(cell, floor: floor) }
+            return
+        }
         cutWall(cell, o, slot: wall, thickness: thickness)
-        glaze(o, recess: w.recess, width: w.frame, mullions: width > 1.0 ? w.mullions : 0, transom: w.transom && !balcony, frame: !plain)
+        glaze(o, recess: w.recess, width: w.frame, mullions: mullions, transom: transom, frame: !plain)
         behind(o, cell, floor: floor, thickness: thickness, room: room, lit: lit)
         if balcony { self.balcony(cell, floor: floor) }
         guard !plain else { return }
+        windowTrim(o, cell, w, width: width, balcony: balcony)
+    }
+
+    /// A window's sill, lintel and shutters, as its style has them.
+    private mutating func windowTrim(_ o: Opening, _ cell: Cell, _ w: WindowStyle, width: Float, balcony: Bool) {
         if w.sillTrim && !balcony {
-            b[.trim].box([o.x0 - 0.08, o.y0 - 0.09, 0], [o.x1 + 0.08, o.y0, 0.1], faces: [.front, .top, .bottom, .left, .right])
+            b[.trim].box([o.x0 - 0.08, o.y0 - 0.09, 0], [o.x1 + 0.08, o.y0, 0.1], faces: shown([.front, .top, .bottom, .left, .right]))
         }
         if w.lintel {
-            b[.trim].box([o.x0 - 0.1, o.y1, 0], [o.x1 + 0.1, o.y1 + 0.16, 0.06], faces: [.front, .top, .bottom, .left, .right])
+            b[.trim].box([o.x0 - 0.1, o.y1, 0], [o.x1 + 0.1, o.y1 + 0.16, 0.06], faces: shown([.front, .top, .bottom, .left, .right]))
         }
         if w.shutters && !balcony {
             let leaf = min((o.x1 - o.x0) / 2, (cell.width - width) / 2 - 0.06)
             if leaf > 0.2 {
-                b[.accent].box([o.x0 - leaf, o.y0, 0], [o.x0 - 0.02, o.y1, 0.04], faces: [.front, .top, .bottom, .left, .right])
-                b[.accent].box([o.x1 + 0.02, o.y0, 0], [o.x1 + leaf, o.y1, 0.04], faces: [.front, .top, .bottom, .left, .right])
+                b[.accent].box([o.x0 - leaf, o.y0, 0], [o.x0 - 0.02, o.y1, 0.04], faces: shown([.front, .top, .bottom, .left, .right]))
+                b[.accent].box([o.x1 + 0.02, o.y0, 0], [o.x1 + leaf, o.y1, 0.04], faces: shown([.front, .top, .bottom, .left, .right]))
             }
         }
     }
@@ -234,24 +325,24 @@ extension BuildingAssembler {
         switch style.balustrade {
         case .solid:
             b[.trim].box([x0, floor, out - 0.1], [x1, floor + rail, out], faces: [.front, .back, .top, .left, .right])
-            b[.trim].box([x0, floor, 0], [x0 + 0.1, floor + rail, out - 0.1], faces: [.left, .right, .top])
-            b[.trim].box([x1 - 0.1, floor, 0], [x1, floor + rail, out - 0.1], faces: [.left, .right, .top])
+            b[.trim].box([x0, floor, 0], [x0 + 0.1, floor + rail, out - 0.1], faces: shown([.left, .right, .top]))
+            b[.trim].box([x1 - 0.1, floor, 0], [x1, floor + rail, out - 0.1], faces: shown([.left, .right, .top]))
         case .glass:
             b[.glass].wall(x0: x0 + 0.03, x1: x1 - 0.03, y0: floor + 0.05, y1: floor + rail, z: out - 0.04)
             for x in [x0 + 0.03, x1 - 0.03] {
                 b[.glass].quad([x, floor + 0.05, 0.03], [x, floor + 0.05, out - 0.04], [x, floor + rail, out - 0.04], [x, floor + rail, 0.03])
             }
-            b[.frame].box([x0, floor + rail, out - 0.07], [x1, floor + rail + 0.04, out - 0.01])
+            b[.frame].box([x0, floor + rail, out - 0.07], [x1, floor + rail + 0.04, out - 0.01], faces: shown(.all))
         case .bars:
             // A rail and flat bars under it: single faces (every surface is two-sided).
-            b[.frame].box([x0, floor + rail, out - 0.07], [x1, floor + rail + 0.06, out])
+            b[.frame].box([x0, floor + rail, out - 0.07], [x1, floor + rail + 0.06, out], faces: shown(.all))
             for x in [x0, x1 - 0.06] { b[.frame].box([x, floor + rail, 0], [x + 0.06, floor + rail + 0.06, out - 0.07], faces: [.left, .right, .top, .bottom]) }
             let bars = max(2, Int((x1 - x0) / 0.22))
             for k in 0...bars {
                 let x = x0 + 0.01 + (x1 - x0 - 0.06) * Float(k) / Float(bars)
                 b[.frame].wall(x0: x, x1: x + 0.04, y0: floor, y1: floor + rail, z: out - 0.035)
             }
-            for x in [x0 + 0.03, x1 - 0.03] {
+            for x in [x0 + 0.03, x1 - 0.03] where spec.detail == .full {
                 for k in 1...4 {
                     let z = (out - 0.07) * Float(k) / 5
                     b[.frame].quad([x, floor, z], [x, floor, z + 0.04], [x, floor + rail, z + 0.04], [x, floor + rail, z])
@@ -260,45 +351,51 @@ extension BuildingAssembler {
         }
     }
 
-    /// The building's door: a leaf in the style's accent colour with a step up to it, or glass doors (a lobby's).
-    private mutating func doorTile(_ cell: Cell, floor: Float, glazed: Bool) {
-        let width = min(glazed ? 2.4 : 1.3, cell.width - 0.3), height = min(glazed ? 2.8 : 2.3, cell.y1 - floor - 0.5)
+    /// A door through the wall where the plan has one: the building's (a leaf in the style's accent colour with a step
+    /// up to it), a shop's or a lobby's (glazed). The leaf is fill: with the interior there, the door is the
+    /// interior's own, which opens.
+    private mutating func doorTile(_ cell: Cell, floor: Float, door: PlanDoor, storey: Int) {
+        let glazed = door.kind == .glazed
+        let width = min(door.width, cell.width - 0.3), height = min(door.height, cell.y1 - floor - 0.5)
         guard width >= 0.8, height >= 1.9 else {
             b[.base].wall(x0: cell.x0, x1: cell.x1, y0: cell.y0, y1: cell.y1)
             return
         }
         let o = Opening(x0: cell.center - width / 2, x1: cell.center + width / 2, y0: floor, y1: floor + height)
-        let recess: Float = 0.25, thickness = recess + 0.08
+        let recess: Float = glazed ? 0.12 : 0.25, thickness = outerThickness
         cutWall(cell, o, slot: .base, thickness: thickness)
+        record(o, storey: storey, glass: false)
+        // The frame round the opening (the shell's), the leaf in it (the fill's).
+        b[.frame].box([o.x0, o.y0, -recess], [o.x0 + 0.07, o.y1, -recess + 0.05], faces: shown([.front, .right]))
+        b[.frame].box([o.x1 - 0.07, o.y0, -recess], [o.x1, o.y1, -recess + 0.05], faces: shown([.front, .left]))
+        b[.frame].box([o.x0 + 0.07, o.y1 - 0.07, -recess], [o.x1 - 0.07, o.y1, -recess + 0.05], faces: shown([.front, .bottom]))
         if glazed {
-            glaze(o, recess: recess, width: 0.08, mullions: 1, transom: false, frame: true)
-            behind(o, cell, floor: floor, thickness: thickness, room: 0, lit: max(spec.lit, 0.7))
+            b[.leafGlass].wall(x0: o.x0 + 0.07, x1: o.x1 - 0.07, y0: o.y0, y1: o.y1 - 0.07, z: -recess)
+            b[.leaf].box([o.x0 + 0.07, o.y0, -recess - 0.02], [o.x1 - 0.07, o.y0 + 0.12, -recess + 0.02], faces: shown([.front, .top]))
+            b[.leafDark].wall(x0: o.x0 + 0.07, x1: o.x1 - 0.07, y0: o.y0, y1: o.y1 - 0.07, z: -thickness)
         } else {
-            // The leaf closes the wall: nothing is behind it.
-            b[.accent].wall(x0: o.x0, x1: o.x1, y0: o.y0, y1: o.y1, z: -recess)
-            b[.frame].box([o.x0, o.y0, -recess], [o.x0 + 0.07, o.y1, -recess + 0.05], faces: [.front, .right])
-            b[.frame].box([o.x1 - 0.07, o.y0, -recess], [o.x1, o.y1, -recess + 0.05], faces: [.front, .left])
-            b[.frame].box([o.x0 + 0.07, o.y1 - 0.07, -recess], [o.x1 - 0.07, o.y1, -recess + 0.05], faces: [.front, .bottom])
-            b[.metal].box([o.x1 - 0.22, o.y0 + 1.0, -recess], [o.x1 - 0.16, o.y0 + 1.12, -recess + 0.07],
-                          faces: [.front, .top, .bottom, .left, .right])   // the handle
+            b[.leaf].wall(x0: o.x0 + 0.07, x1: o.x1 - 0.07, y0: o.y0, y1: o.y1 - 0.07, z: -recess)
+            b[.leaf].box([o.x1 - 0.22, o.y0 + 1.0, -recess], [o.x1 - 0.16, o.y0 + 1.12, -recess + 0.07],
+                         faces: [.front, .top, .bottom, .left, .right])   // the handle
         }
-        b[.trim].box([o.x0 - 0.25, cell.y0, 0], [o.x1 + 0.25, floor, 0.5], faces: [.front, .top, .left, .right])
+        b[.trim].box([o.x0 - 0.25, cell.y0, 0], [o.x1 + 0.25, floor, 0.5], faces: shown([.front, .top, .left, .right]))
     }
 
     /// A shop's window: wide, from a low riser nearly to the sign, with the shop behind it and maybe an awning.
-    private mutating func shopWindow(_ cell: Cell, floor: Float, room: Float, awning: Bool) {
-        let office = style.kind == .office
+    private mutating func shopWindow(_ cell: Cell, floor: Float, room: Float, awning: Bool, lit: Bool, storey: Int) {
+        let office = style.isOffice
         let o = Opening(x0: cell.x0 + (office ? 0.06 : 0.14), x1: cell.x1 - (office ? 0.06 : 0.14),
                         y0: floor + (office ? 0.1 : 0.45), y1: cell.y1 - (office ? 0.5 : 0.9))
         guard o.x1 - o.x0 >= 0.8, o.y1 - o.y0 >= 1 else {
             b[.base].wall(x0: cell.x0, x1: cell.x1, y0: cell.y0, y1: cell.y1)
             return
         }
-        let recess: Float = office ? 0.1 : 0.16, thickness = recess + 0.08
+        let recess: Float = office ? 0.1 : 0.16, thickness = outerThickness
         cutWall(cell, o, slot: .base, thickness: thickness)
+        record(o, storey: storey, glass: true)
         glaze(o, recess: recess, width: 0.08, mullions: o.x1 - o.x0 > 2.4 ? 1 : 0, transom: false, frame: true)
-        // A shop is a room more often than not (if the city has rooms at all), and its light stays on late.
-        behind(o, cell, floor: floor, thickness: thickness, room: room, lit: max(spec.lit, 0.6),
+        // A shop is a room more often than not (if the city has rooms at all).
+        behind(o, cell, floor: floor, thickness: thickness, room: room, lit: lit,
                share: spec.rooms > 0 ? max(spec.rooms, 0.75) : 0, shop: true)
         if awning {
             // A sloping sheet over the window, with its two cheeks.
@@ -311,7 +408,7 @@ extension BuildingAssembler {
     }
 
     /// A warehouse's loading door: a tall opening closed by a ribbed shutter.
-    private mutating func loadingDoor(_ cell: Cell, floor: Float) {
+    private mutating func loadingDoor(_ cell: Cell, floor: Float, storey: Int) {
         let o = Opening(x0: cell.x0 + 0.5, x1: cell.x1 - 0.5, y0: floor, y1: min(floor + 3.8, cell.y1 - 0.9))
         guard o.x1 - o.x0 >= 1.5, o.y1 - o.y0 >= 2 else {
             b[.base].wall(x0: cell.x0, x1: cell.x1, y0: cell.y0, y1: cell.y1)
@@ -319,13 +416,15 @@ extension BuildingAssembler {
         }
         let recess: Float = 0.22
         cutWall(cell, o, slot: .base, thickness: recess)
+        // (Closed: the wall's inside is whole behind it.)
+        _ = storey
         b[.metal].wall(x0: o.x0, x1: o.x1, y0: o.y0, y1: o.y1, z: -recess)
         // The shutter's ribs.
         let ribs = Int((o.y1 - o.y0) / 0.45)
         for k in 1..<max(ribs, 2) {
             let y = o.y0 + (o.y1 - o.y0) * Float(k) / Float(ribs)
-            b[.metal].box([o.x0, y - 0.03, -recess], [o.x1, y + 0.03, -recess + 0.03], faces: [.front, .top, .bottom])
+            b[.metal].box([o.x0, y - 0.03, -recess], [o.x1, y + 0.03, -recess + 0.03], faces: shown([.front, .top, .bottom]))
         }
-        b[.accent].box([o.x0 - 0.12, o.y1, 0], [o.x1 + 0.12, o.y1 + 0.22, 0.08], faces: [.front, .top, .bottom, .left, .right])
+        b[.accent].box([o.x0 - 0.12, o.y1, 0], [o.x1 + 0.12, o.y1 + 0.22, 0.08], faces: shown([.front, .top, .bottom, .left, .right]))
     }
 }

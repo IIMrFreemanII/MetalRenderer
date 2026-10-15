@@ -106,7 +106,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
     const float3 grey = float3(0.45f);  // geometry without levels; in the cluster and group views, what isn't virtual
     float3 lodColor = grey;
     if (isVirtual) lodColor = debugHeat(0.05f + float(level) / 10.0f);
-    else if (FOLIAGE && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
+    else if (ASSEMBLIES && res.part != HIT_NO_PART) lodColor = debugHeat(0.05f);
     else if (s.meshes[inst.meshIndex].lod != 0) lodColor = debugHeat(0.05f + 0.3f * float(s.meshes[inst.meshIndex].lod - 1));
 
     uint instanceSeed = pcgHash(res.instance + 0x51ED27u);
@@ -162,15 +162,37 @@ inline bool viewIsHDR(uint mode) {
     return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || mode == 15 || mode == 16);
 }
 
-/// Exposure, then the selected curve (RenderSettings.toneMap).
-inline float3 toneMap(float3 c, float4 post) {
+/// The colour grade (PostSettings): white balance as red and blue gains, saturation, then contrast about middle grey
+/// on a log scale (a film's: the darks deepen as the lights brighten).
+inline float3 colorGrade(float3 c, float4 g) {
+    c *= float3(g.x, 1.0f, g.y);
+    float l = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+    c = max(mix(float3(l), c, g.z), 0.0f);
+    return 0.18f * pow(max(c, 1e-7f) / 0.18f, float3(g.w));
+}
+
+/// Exposure, the grade if it is on, then the selected curve (RenderSettings.toneMap).
+inline float3 toneMap(float3 c, float4 post, float4 grade) {
     c *= post.x;
+    if ((uint(post.z) & 1u) != 0u) c = colorGrade(c, grade);
     switch (uint(post.y)) {
         case 1: return agxFilm(c);
         case 2: return c / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f)));   // Reinhard on luminance: keeps hue
         case 3: return c;
         default: return acesFilm(c);
     }
+}
+
+// Auto exposure's meter (PostSettings.autoExposure): one pixel in 8 x 8 adds its light's log2 luminance (before the
+// exposure) to a histogram of EXPOSURE_BINS bins from EXPOSURE_LOG_MIN to EXPOSURE_LOG_MAX, which the renderer reads a
+// few frames on (Renderer.meterExposure).
+constant float EXPOSURE_LOG_MIN = -14.0f, EXPOSURE_LOG_MAX = 10.0f;
+constant uint EXPOSURE_BINS = 64;
+inline void meterExposure(float3 c, uint2 tid, device atomic_uint* histogram) {
+    if ((tid.x & 7u) != 3u || (tid.y & 7u) != 3u) return;
+    float l = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+    float t = saturate((log2(max(l, 1e-7f)) - EXPOSURE_LOG_MIN) / (EXPOSURE_LOG_MAX - EXPOSURE_LOG_MIN));
+    atomic_fetch_add_explicit(&histogram[min(uint(t * float(EXPOSURE_BINS)), EXPOSURE_BINS - 1u)], 1u, memory_order_relaxed);
 }
 
 kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
@@ -195,8 +217,11 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
                             texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
+                            texture2d<float, access::read>  particles  [[texture(21)]],  // with FLAG_PARTICLES: their layer
+                            texture2d<float, access::read>  particleDepth [[texture(22)]], // ...and its surfaces' depths
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
+                            constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
                             uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
@@ -212,6 +237,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
     float3 illumination = d + i;
     float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
     float3 directSpecular = float3(0.0f);
+    bool sunCaustics = false;   // WATER: the sun's light here took the water's caustics already
     if (flagOn(u.flags, FLAG_SHADOW_DENOISER)) {
         // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
         float4 vis = denoised.read(tid);
@@ -225,7 +251,15 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         } else {
         float4 g = geoNormal.read(tid);
         HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
-        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
+        sunCaustics = true;
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
+            float3 e = litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
+            // Under water the sun's light comes through its waves: their caustics (after the shadows' filter, which
+            // would smear their moving lines).
+            if (WATER && lightType(lights[l]) == LIGHT_SUN && sp.w > 0.0f)
+                e *= waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height));
+            illumination += e;
+        }
         if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         }
         if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {
@@ -247,6 +281,29 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             finalIndirect = denoisedIndirect.read(tid).rgb;
             illumination += finalIndirect;
         }
+    }
+
+    // Where the sun's light isn't a term of its own here (ReSTIR, MegaLights, no shadow filter), the caustics go on
+    // most of the light under the water (the sun's is most of it there).
+    if (WATER && !sunCaustics) {
+        float4 sp = surfacePos.read(tid);
+        if (sp.w > 0.0f) {
+            for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
+                if (lightType(lights[l]) != LIGHT_SUN) continue;
+                illumination *= mix(1.0f, waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height)), 0.6f);
+                break;
+            }
+        }
+    }
+
+    // METALRENDERER_WATER_DEBUG=4: the sun's caustics (grey: 1 is middle grey).
+    if (WATER && shading.water != nullptr && (shading.water->counts.w & 15u) == 4u) {
+        float4 sp = surfacePos.read(tid);
+        float c = 1.0f;
+        for (uint l = 0; l < u.lightGroupEnd.w && sp.w > 0.0f; ++l)
+            if (lightType(lights[l]) == LIGHT_SUN) { c = waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height)); break; }
+        output.write(float4(float3(c * 0.25f), 1.0f), tid);
+        return;
     }
 
     // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.
@@ -306,6 +363,12 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 16: c = geometryDebug.read(tid).rgb; break;          // the virtual shadow maps' pages (vsmDebugKernel)
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
+    if (flagOn(u.flags, FLAG_PARTICLES) && u.viewMode == 0) {   // in front of it all (fogged already, particleLayerKernel)
+        // (The frame's size, as it is without upscaling unless it is smaller: read as it is.)
+        float4 layer = particles.get_width() == u.width && particles.get_height() == u.height ? particles.read(tid)
+            : particleUpsample(particles, particleDepth, (float2(tid) + 0.5f) / float2(u.width, u.height), nd.read(tid).w);
+        c = layer.rgb + (1.0f - layer.a) * c;
+    }
     if (flagOn(u.flags, FLAG_HDR_OUTPUT)) {
         // MetalFX's denoising scaler takes the light as it is: noisy, linear and unbounded (tonemapKernel follows it),
         // with what the surface reflects to guide it (next to the albedo, the normals, the depth and the motion).
@@ -318,7 +381,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         return;
     }
-    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post, u.grade);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
     output.write(float4(saturate(c), 1.0f), tid);
 }
@@ -326,14 +389,16 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
 // 4c. Tone map, after MetalFX's denoising scaler (FLAG_HDR_OUTPUT): its output is the denoised light at the output
 //     resolution, still linear and unbounded. This applies the exposure and the tone curve the composite left out
 //     and writes the drawable.
-kernel void tonemapKernel(constant Uniforms&              u        [[buffer(0)]],
-                          texture2d<float, access::read>  upscaled [[texture(0)]],
-                          texture2d<float, access::write> output   [[texture(1)]],
+kernel void tonemapKernel(constant Uniforms&              u         [[buffer(0)]],
+                          device atomic_uint*             histogram [[buffer(1)]],   // with the meter on
+                          texture2d<float, access::read>  upscaled  [[texture(0)]],
+                          texture2d<float, access::write> output    [[texture(1)]],
                           uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
     float3 c = max(upscaled.read(tid).rgb, 0.0f);
-    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
+    if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post, u.grade);
     output.write(float4(saturate(c), 1.0f), tid);
 }
 

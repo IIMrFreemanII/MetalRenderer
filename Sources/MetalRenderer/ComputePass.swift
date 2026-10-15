@@ -164,10 +164,10 @@ struct TLASUpdate {
 }
 
 /// Per-mesh structures a frame builds or refits, in an acceleration-structure encoder of their own (Metal 4: on the
-/// Metal 3 queue, between the frame's command buffers).
+/// Metal 3 queue, between the frame's command buffers; the plants' variants in the frame's encoder, PlantTracing.Refit).
 protocol PrimitiveWork {
-    /// How many encoders it takes: Metal's driver doesn't refit several instance structures in one encoder (M1 Max:
-    /// the encoding crashes), so the plants' variants take one each.
+    /// How many encoders it takes: the M1 Max's driver doesn't refit many instance structures in one encoder (three
+    /// crash), so the plants' variants take two each (PlantTracing.Refit.perEncoder).
     var encoderCount: Int { get }
     /// Encodes part `part` (0..<encoderCount) of the work.
     func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int)
@@ -176,18 +176,41 @@ extension PrimitiveWork {
     var encoderCount: Int { 1 }
 }
 
+/// Per-mesh work Metal 4 encodes in the frame's own encoder (Metal4Frame.updatePrimitives), side by side, rather
+/// than through the Metal 3 queue between the frame's command buffers: the plants' refits, the particles' build.
+protocol PrimitiveWork4: PrimitiveWork {
+    /// Encodes all of it into `enc`; `keep` makes what it touches resident.
+    @available(macOS 26.0, *)
+    func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void)
+}
+
 /// This frame's refit of the per-mesh structures that deform (the crowd's pose slots): each keeps its tree and takes
-/// its boxes from the vertices its descriptor points at, which the skinning has just rewritten.
+/// its boxes from the vertices its descriptor points at, which the skinning has just rewritten. And the build of those
+/// whose triangles change (a liquid's surface: FluidSurface.swift), from scratch, into the same structure.
 struct PrimitiveRefit: PrimitiveWork {
     let structures: [MTLAccelerationStructure]
     let descriptors: [MTLPrimitiveAccelerationStructureDescriptor]
     let scratch: MTLBuffer
     let scratchOffsets: [Int]
+    var rebuilt: [(structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratchOffset: Int)] = []
+    /// The mesh each rebuilt structure is of.
+    var rebuiltMeshes: [Int] = []
+
+    /// How many of rebuilt structure `i`'s triangles the next builds take (the rest are left out: a liquid's surface
+    /// holds room for far more than it needs): at most what it was made for.
+    func setTriangles(_ i: Int, _ count: Int) {
+        guard let geometry = rebuilt[i].descriptor.geometryDescriptors?.first as? MTLAccelerationStructureTriangleGeometryDescriptor
+        else { return }
+        geometry.triangleCount = count
+    }
 
     func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
         for (i, structure) in structures.enumerated() {
             enc.refit(sourceAccelerationStructure: structure, descriptor: descriptors[i], destinationAccelerationStructure: structure,
                       scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
+        }
+        for r in rebuilt {
+            enc.build(accelerationStructure: r.structure, descriptor: r.descriptor, scratchBuffer: scratch, scratchBufferOffset: r.scratchOffset)
         }
     }
 }
@@ -213,8 +236,9 @@ struct FrameTimes {
 /// pass timings in its own encoder. `Metal3Frame` encodes for an `MTLCommandQueue`, `Metal4Frame` for Metal 4's.
 protocol FrameEncoder: AnyObject {
     /// The compute pass for `name`: the open one, unless passes are timed apart. `serial`: its dispatches run in order
-    /// even in a frame whose stages overlap (the TLAS and the sky, ahead of them).
-    func compute(_ name: String, serial: Bool) -> ComputePass?
+    /// even in a frame whose stages overlap (the TLAS and the sky, ahead of them). `concurrent`: they overlap even in a
+    /// frame whose stages don't, and the pass sets its own barriers (the physics: the liquids side by side).
+    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass?
     /// Closes the open pass: at the end of the frame, or ahead of work that isn't a compute dispatch.
     func endCompute()
     func generateMipmaps(_ textures: [MTLTexture], pass: String)
@@ -224,6 +248,8 @@ protocol FrameEncoder: AnyObject {
     /// Builds or refits per-mesh structures (the deforming ones after the skinning, the cut's clusters after the cut),
     /// ahead of the TLAS update.
     func updatePrimitives(_ work: PrimitiveWork, pass: String)
+    /// Copies buffers' ranges into others (a terrain's sectors' new vertices into their buffers), ahead of what reads them.
+    func copyBuffers(_ copies: [BufferCopy], pass: String)
     /// Maps and uploads the texture levels last frame's hits asked for, ahead of this frame's work.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
     /// MetalFX's denoising scaler, into its own texture (`Upscaler.hdrOutput`), which tonemapKernel then reads.
@@ -235,7 +261,8 @@ protocol FrameEncoder: AnyObject {
 }
 
 extension FrameEncoder {
-    func compute(_ name: String) -> ComputePass? { compute(name, serial: false) }
+    func compute(_ name: String) -> ComputePass? { compute(name, serial: false, concurrent: false) }
+    func compute(_ name: String, serial: Bool) -> ComputePass? { compute(name, serial: serial, concurrent: false) }
 
     /// Runs stages in order, each in its named pass (consecutive stages of one pass share it).
     func run(_ stages: [ComputeStage]) {
@@ -257,6 +284,7 @@ final class Metal3Frame: FrameEncoder {
     private var buffers: [(name: String, cmd: MTLCommandBuffer)] = []   // split only, in the order they run
     private var open: MTLComputeCommandEncoder?
     private var openPass = ""
+    private var openConcurrent = false
 
     init?(queue: MTLCommandQueue, profile: GPUProfiler.Frame?, split: Bool, overlap: Bool) {
         guard let cmd = queue.makeCommandBuffer() else { return nil }
@@ -271,12 +299,15 @@ final class Metal3Frame: FrameEncoder {
         return cb
     }
 
-    func compute(_ name: String, serial: Bool) -> ComputePass? {
-        if let open, !split, profile == nil || name == openPass { return Metal3Pass(enc: open) }
+    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
+        if let open, !split, profile == nil || name == openPass, !concurrent || openConcurrent { return Metal3Pass(enc: open) }
         endCompute()
         openPass = name
+        openConcurrent = concurrent || overlap && !serial
         if let profile {
-            open = profile.compute(cmd, name)
+            open = profile.compute(cmd, name, concurrent: concurrent)
+        } else if concurrent {
+            open = buffer(name).makeComputeCommandEncoder(dispatchType: .concurrent)
         } else {
             open = overlap && !serial ? cmd.makeComputeCommandEncoder(dispatchType: .concurrent) : buffer(name).makeComputeCommandEncoder()
         }
@@ -329,6 +360,17 @@ final class Metal3Frame: FrameEncoder {
             work.encode(into: enc, part: part)
             if part == 0 { profile.end(enc) } else { enc.endEncoding() }
         }
+    }
+
+    func copyBuffers(_ copies: [BufferCopy], pass: String) {
+        guard !copies.isEmpty else { return }
+        endCompute()
+        guard let blit = buffer(pass).makeBlitCommandEncoder() else { return }
+        blit.label = pass
+        for c in copies {
+            blit.copy(from: c.source, sourceOffset: c.sourceOffset, to: c.destination, destinationOffset: c.destinationOffset, size: c.size)
+        }
+        blit.endEncoding()
     }
 
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {

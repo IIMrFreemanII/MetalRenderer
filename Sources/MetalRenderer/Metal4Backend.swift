@@ -194,10 +194,10 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     // MARK: - FrameEncoder
 
-    func compute(_ name: String, serial: Bool) -> ComputePass? {
+    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
         let wasSerial = self.serial
         guard encoder(name, newBuffer: true) != nil else { return nil }
-        self.serial = serial || !overlap
+        self.serial = !concurrent && (serial || !overlap)
         if wasSerial != self.serial { barrier() }
         return self
     }
@@ -278,14 +278,35 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     }
 
     /// Through the Metal 3 queue: the per-mesh structures are built there (once per scene), and the ones a frame
-    /// builds or refits are too.
+    /// builds or refits are too, except PrimitiveWork4's (the plants' variants, the particles' boxes). Those are
+    /// encoded in the frame's own encoder, side by side: through the Metal 3 queue the forest's 231 refits ran one
+    /// after another (11 ms on an M4 Max, 0.13 here).
     func updatePrimitives(_ work: PrimitiveWork, pass: String) {
+        if let work = work as? PrimitiveWork4 {
+            guard let enc = encoder(pass, newBuffer: true) else { return }
+            serial = true
+            order(.accelerationStructure)
+            work.encode4(into: enc, keep: keep)
+            return
+        }
         interlude(pass) { cb in
             for part in 0..<work.encoderCount {
                 guard let enc = cb.makeAccelerationStructureCommandEncoder() else { return }
                 work.encode(into: enc, part: part)
                 enc.endEncoding()
             }
+        }
+    }
+
+    func copyBuffers(_ copies: [BufferCopy], pass: String) {
+        guard !copies.isEmpty, let enc = encoder(pass, newBuffer: true) else { return }
+        serial = true
+        order(.blit)
+        for c in copies {
+            keep(c.source)
+            keep(c.destination)
+            enc.copy(sourceBuffer: c.source, sourceOffset: c.sourceOffset, destinationBuffer: c.destination, destinationOffset: c.destinationOffset,
+                     size: c.size)
         }
     }
 

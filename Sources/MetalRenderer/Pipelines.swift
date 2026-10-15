@@ -4,7 +4,11 @@ import QuartzCore
 
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
-    case trace, glass, geometryDebug, lightMap
+    case trace, glass, liquid, liquidApply, geometryDebug, lightMap
+    case water, waterApply   // water's surface over the trace (Shaders/Water.metal)
+    case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
+    case waterNear              // the near patch's vertices, moved by the waves
+    case waterCaustics          // the sun's caustics under the waves
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
@@ -17,14 +21,26 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
+    case taaResolve             // temporal AA without upscaling (Post.metal)
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
-    case crowdPose, crowdSkin   // the crowd's pose slots: skinning matrices, then vertices (CrowdSkinner)
+    case crowdPose, crowdSkin, crowdHair   // the crowd's pose slots: skinning matrices, vertices, hair (CrowdSkinner)
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
+    // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
+    case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
+    case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder
+    case fluidPbfNeighbours, fluidPbfLambda, fluidPbfDelta, fluidPbfVelocity, fluidPbfVorticity, fluidPbfViscosity
+    case fluidMpmClear, fluidMpmKeys, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
+    case fluidSurfaceClear, fluidSurfaceSplat, fluidSurfaceBlur, fluidSurfaceCount, fluidSurfaceVertex, fluidSurfaceQuad, fluidSurfaceTail
     case plantWind              // the plants' variants in the wind (PlantTracing)
+    // Particle effects (ParticlesGPU, Shaders/ParticleSim.metal): a step's begin, emit and simulate, then the frame's
+    // records and boxes for the rays.
+    case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
+    case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
+    case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
     // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.
@@ -33,6 +49,8 @@ enum Kernel: Int, CaseIterable {
     case vgReset, vgCut, vgBoxes
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
     case vsmVGCut               // ...in the shadow maps
+    case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
+    case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
 
     var function: String { "\(self)Kernel" }
 
@@ -93,6 +111,7 @@ final class KernelVariants {
     private let lock = NSLock()
     private var states: [Key: MTLComputePipelineState] = [:]
     private var started: Set<Key> = []   // being built, or failed: not asked for again
+    private var building = 0             // asked for and not ready yet (in the background)
     // Below the frame loop's priority: several variants compile at once after a settings change, and the frame has a
     // pipeline to run in the meantime.
     private static let queue = DispatchQueue(label: "MetalRenderer.variants", qos: .utility, attributes: .concurrent)
@@ -106,6 +125,8 @@ final class KernelVariants {
 
     /// How many variants are ready.
     var count: Int { lock.lock(); defer { lock.unlock() }; return states.count }
+    /// How many are being made in the background.
+    var pending: Int { lock.lock(); defer { lock.unlock() }; return building }
 
     /// The variant of `kernel` for these flags, or nil while it is being made (`wait`: make it now). Called every frame
     /// for every dispatch of a kernel that has variants: a dictionary lookup under a lock that is never held for long.
@@ -117,7 +138,11 @@ final class KernelVariants {
         lock.unlock()
         guard start else { return nil }
         if wait { return make(key) }
-        KernelVariants.queue.async { _ = self.make(key) }
+        lock.lock(); building += 1; lock.unlock()
+        KernelVariants.queue.async {
+            _ = self.make(key)
+            self.lock.lock(); self.building -= 1; self.lock.unlock()
+        }
         return nil
     }
 
@@ -145,11 +170,50 @@ final class KernelVariants {
 /// specialised for one set of light types (function constant 0, see Scene.lightTypeMask). A value, so a scene load or a
 /// hot reload builds the next set in the background while frames keep using this one, and the renderer swaps the whole
 /// set between two frames.
+/// The pipeline sets made lately, by what they were made for: a scene switch back to light types seen before takes
+/// their set instead of specialising all the kernels again (1.5–3 s on an M1 Max). Any thread. (Generic for the tests.)
+final class PipelineCache<Value> {
+    struct Key: Hashable {
+        var api: RenderAPI
+        var stats: Bool
+        var lightTypes: UInt32
+        var generation: Int        // the shaders' (Renderer.shaderGeneration): a reload makes every older set stale
+        var procedural = ""        // the procedural materials' code spliced in (MatShaderCode.splice)
+    }
+    /// How many sets are kept (each is the kernels' pipelines and the variants made for them since).
+    let capacity: Int
+    private let lock = NSLock()
+    private var sets: [(key: Key, pipelines: Value)] = []   // the most recently used last
+
+    init(capacity: Int = 6) { self.capacity = capacity }
+
+    var count: Int { lock.lock(); defer { lock.unlock() }; return sets.count }
+
+    func get(_ key: Key) -> Value? {
+        lock.lock(); defer { lock.unlock() }
+        guard let i = sets.firstIndex(where: { $0.key == key }) else { return nil }
+        let set = sets.remove(at: i)
+        sets.append(set)
+        return set.pipelines
+    }
+
+    /// Keeps `pipelines` for `key`; sets of older shaders go, then the least recently used beyond `capacity`. A set of
+    /// older shaders than those kept (a scene load that started before a reload) isn't kept.
+    func put(_ key: Key, _ pipelines: Value) {
+        lock.lock(); defer { lock.unlock() }
+        if let newest = sets.map(\.key.generation).max(), key.generation < newest { return }
+        sets.removeAll { $0.key == key || $0.key.generation < key.generation }
+        sets.append((key, pipelines))
+        if sets.count > capacity { sets.removeFirst(sets.count - capacity) }
+    }
+}
+
 struct Pipelines {
     let stats: Bool                // compiled with the ray queries' counters (RT_STATS)
     let api: RenderAPI             // Metal 4: compiled and specialised by its compiler (MTL4Compiler)
     let lightTypes: UInt32
     let library: MTLLibrary        // kept: another set of light types specialises it again without recompiling
+    let procedural: String         // the procedural materials' code spliced into it (MatShaderCode.splice; "" none)
     private let states: [MTLComputePipelineState?]
     let variants: KernelVariants
 
@@ -190,13 +254,15 @@ struct Pipelines {
 
     /// Compiles `source` unless `library` already is that, then makes every pipeline, in parallel. Safe to call from
     /// any thread; `stats` (the ray queries' counters, RT_STATS) is read by the caller for that reason.
-    /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`.
+    /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`. `load`: the load to report the pipelines to.
     init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
-         lightTypes: UInt32, stats: Bool, reusing library: MTLLibrary? = nil) throws {
+         lightTypes: UInt32, stats: Bool, procedural: String = "", reusing library: MTLLibrary? = nil, load: LoadJob? = nil) throws {
         let start = CACurrentMediaTime()
-        let library = try library ?? Pipelines.compile(device: device, source: source, stats: stats, compiler: compiler)
-        let compiled = CACurrentMediaTime()
         let kernels = Kernel.allCases
+        let step = load?.step("Shaders", total: kernels.count + 4, detail: library == nil ? "compiling the source" : "")
+        let library = try library ?? Pipelines.compile(device: device, source: source, stats: stats, compiler: compiler, procedural: procedural)
+        let compiled = CACurrentMediaTime()
+        step?.set(detail: "pipelines")
         var states = [MTLComputePipelineState?](repeating: nil, count: Kernel.allCases.count)
         var failure: Error?
         let lock = NSLock()
@@ -208,6 +274,7 @@ struct Pipelines {
                     constants.setConstantValue(&types, type: .uint, index: 0)
                     slots[kernels[i].rawValue] = try Pipelines.makeState(device: device, library: library, compiler: compiler,
                                                                          kernel: kernels[i], constants: constants)   // its own slot: no lock
+                    step?.advance()
                 } catch {
                     lock.lock(); failure = failure ?? error; lock.unlock()
                 }
@@ -222,10 +289,12 @@ struct Pipelines {
                                             vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
         vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                  vertex: "vsmClearVertex", fragment: "vsmFragment", color: nil)
+        step?.finish()
         self.stats = stats
         self.api = api
         self.lightTypes = lightTypes
         self.library = library
+        self.procedural = procedural
         self.states = states
         self.variants = KernelVariants(device: device, library: library, compiler: compiler, lightTypes: lightTypes)
         // Worth a line when something was really compiled (Metal keeps what it compiled before in its on-disk cache).
@@ -318,8 +387,14 @@ struct Pipelines {
         return try device.makeRenderPipelineState(descriptor: d, options: []).0
     }
 
-    static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
-        let source = try ShaderSource.load(url)   // Shaders.metal with the pieces in Shaders/ spliced in
+    static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?, procedural: String = "") throws -> MTLLibrary {
+        var text = try ShaderSource.load(url)
+        if !procedural.isEmpty { text = text.replacingOccurrences(of: ShaderSource.proceduralMarker, with: procedural) }
+        return try compile(device: device, text: text, stats: stats, compiler: compiler)   // Shaders.metal with the pieces in Shaders/ spliced in
+    }
+
+    /// `source` compiled as Shaders.metal is (the VFX library's: VFXCompiler).
+    static func compile(device: MTLDevice, text source: String, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
         let options = MTLCompileOptions()
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
         options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0)]
