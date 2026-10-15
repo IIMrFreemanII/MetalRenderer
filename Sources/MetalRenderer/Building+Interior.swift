@@ -120,7 +120,9 @@ enum InteriorBuilder {
             case .hall, .storage, .lift: return SurfaceMaterial(color: [0.62, 0.61, 0.58], surface: .concrete)
             case .stairs: return SurfaceMaterial(color: paints[0] * 0.95, surface: .plaster)
             default:
-                var g = SplitMix64(seed: seed ^ UInt64(room.unit + 7) &* 0x9E37_79B9 ^ UInt64(room.type.hashValue & 0xFFFF))
+                var type = Hasher64()
+                type.add(room.type.rawValue)
+                var g = SplitMix64(seed: seed ^ UInt64(room.unit + 7) &* 0x9E37_79B9 ^ (type.value & 0xFFFF))
                 let c = paints[Int(g.nextUInt64() % UInt64(paints.count))]
                 return SurfaceMaterial(color: c, surface: .plaster)
             }
@@ -254,9 +256,9 @@ enum InteriorBuilder {
             }
             let i = a.style.def.interior
             for l in furnisher.lights {
-                let room = f.rooms[l.room]
+                let room = f.rooms[l.room], day = room.type.litByDay(office: a.style.isOffice)
                 interior.lights.append(Interior.Light(position: l.position + SIMD3(0, f.floor, 0), size: l.size, color: i.lightColor * i.lightPower,
-                                                      storey: s, room: l.room, on: room.lit, switchID: -1))
+                                                      storey: s, room: l.room, on: room.lit || day, switchID: -1, day: day))
             }
             for w in furnisher.switches {
                 interior.switches.append(Interior.Switch(position: w.position + SIMD3(0, f.floor, 0), normal: w.normal, storey: s, room: w.room))
@@ -267,23 +269,24 @@ enum InteriorBuilder {
             }
         }
 
-        /// What storey `s` is made of, relative to its floor: two storeys of the same key are the same mesh.
+        /// What storey `s` is made of, relative to its floor: two storeys of the same key are the same mesh. It seeds
+        /// the storey's furniture, so it is the same on every launch (FNV, not Swift's per-process `Hasher`).
         private func storeyKey(_ s: Int) -> Int {
             let f = plan.storeys[s]
-            var h = Hasher()
-            h.combine(s == 0)
-            h.combine(f.climbs)
-            h.combine(PropLibrary.shared.fingerprint)
-            h.combine(a.spec.cut == s)
-            h.combine(f.ceiling - f.floor)
-            h.combine(f.top - f.floor)
-            for r in f.rooms { h.combine(r.type); h.combine(r.unit); for v in [r.rect.lo.x, r.rect.lo.y, r.rect.hi.x, r.rect.hi.y] { h.combine(v) } }
-            for d in f.doors { h.combine(d.kind); h.combine(d.a); h.combine(d.b); h.combine(d.at.x); h.combine(d.at.y); h.combine(d.width) }
+            var h = Hasher64()
+            h.add(s == 0)
+            h.add(f.climbs)
+            h.add(PropLibrary.shared.fingerprint)
+            h.add(a.spec.cut == s)
+            h.add(f.ceiling - f.floor)
+            h.add(f.top - f.floor)
+            for r in f.rooms { h.add(r.type.rawValue); h.add(r.unit); for v in [r.rect.lo.x, r.rect.lo.y, r.rect.hi.x, r.rect.hi.y] { h.add(v) } }
+            for d in f.doors { h.add(d.kind.rawValue); h.add(d.a); h.add(d.b); h.add(d.at.x); h.add(d.at.y); h.add(d.width) }
             for o in a.b.openings where o.storey == s {
-                for v in [o.a.x, o.a.y, o.c.x, o.c.y, o.y0 - f.floor, o.y1 - f.floor] { h.combine(v) }
+                for v in [o.a.x, o.a.y, o.c.x, o.c.y, o.y0 - f.floor, o.y1 - f.floor] { h.add(v) }
             }
-            if s > 0 { h.combine(plan.storeys[s - 1].climbs) }
-            return h.finalize()
+            if s > 0 { h.add(plan.storeys[s - 1].climbs) }
+            return Int(bitPattern: UInt(h.value))
         }
 
         // MARK: - A storey

@@ -283,9 +283,25 @@ float lightMapVisibility(Light light, uint l, texture2d_array<float, access::rea
     return lightMapPCF(lightMap, l, tc, dq, 0.02f + 0.01f * dq * texelScale);
 }
 
-// Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), albedo divided out.
+// The sun's visibility at a secondary hit: its light map; or with `sunRay` (the hit is in the walkable interiors' box:
+// a map whose texels are metres wide sees no wall or ceiling, and lit every room inside) a shadow ray toward the sun's
+// centre over the reach the map can't resolve (at least GI_SUN_RAY_REACH, 4 of its texels), then the map for what is
+// farther. The ray is the same every frame: radiance cascades keep no history, so a jittered one would show as blotches.
+// Only in the box: through a forest's leaves the rays cost a third of the frame on the M1 Max.
+constant float GI_SUN_RAY_REACH = 32.0f;
+inline float giSunVisibility(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 ng,
+                             bool sunRay, SCENE_ACCEL accel) {
+    float map = lightMapVisibility(light, l, lightMap, p, ng);
+    if (!sunRay || map <= 0.0f) return map;
+    float reach = max(GI_SUN_RAY_REACH, 8.0f * light.params.w / float(lightMap.get_width()));
+    float3 from = p + ng * RAY_EPSILON;
+    return isVisible(from, from + light.axis.xyz * reach, accel, RAY_GI) ? map : 0.0f;
+}
+
+// Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), or the sun by a ray (see
+// giSunVisibility), albedo divided out.
 float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng,
-                           thread const SceneData& s) {
+                           bool sunRay, SCENE_ACCEL accel, thread const SceneData& s) {
     if (lightType(light) == LIGHT_SPHERE) {
         float3 center = light.positionRadius.xyz;
         float radius = light.positionRadius.w;
@@ -298,18 +314,21 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
     }
     float3 unshadowed = lightUnshadowed(light, p, n, ng);
     if (all(unshadowed <= 0.0f)) return float3(0.0f);
-    return unshadowed * (lightMapVisibility(light, l, lightMap, p, ng) * sunVisibilityScale(light, p, s));
+    float visibility = lightType(light) == LIGHT_SUN ? giSunVisibility(light, l, lightMap, p, ng, sunRay, accel)
+                                                     : lightMapVisibility(light, l, lightMap, p, ng);
+    return visibility > 0.0f ? unshadowed * (visibility * sunVisibilityScale(light, p, s)) : float3(0.0f);
 }
 
 // Direct light at a secondary hit from all lights, shadowed by the light maps, albedo divided out.
 // n = shading normal, ng = geometric normal, both oriented toward the side being lit. Up to 8 lights are summed
 // exactly; with more, CACHED_LIGHT_SAMPLES lights are picked by unshadowed luminance (one weighted reservoir each,
 // seeded by `seed`) and only their maps are read, so the cost no longer grows with the light count's map reads.
+// `sunRay`: the sun's visibility by a ray (giSunVisibility).
 float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_array<float, access::read> lightMap,
-                        float3 p, float3 n, float3 ng, uint seed, uint flags, thread const SceneData& s) {
+                        float3 p, float3 n, float3 ng, uint seed, uint flags, bool sunRay, SCENE_ACCEL accel, thread const SceneData& s) {
     float3 sum = float3(0.0f);
     if (lightCount <= 8 || flagOn(flags, FLAG_ALL_LIGHTS)) {
-        for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng, s);
+        for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng, sunRay, accel, s);
         return sum;
     }
     float4 u;
@@ -331,7 +350,7 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
     }
     if (total <= 0.0f) return sum;
     for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k)
-        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng, s) * (total / pickedWeight[k]);
+        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng, sunRay, accel, s) * (total / pickedWeight[k]);
     return sum * (ls.scale / float(CACHED_LIGHT_SAMPLES));
 }
 
@@ -348,7 +367,7 @@ inline float3 giLightIllum(device const Light* lights, constant Uniforms& u, tex
         float l = luminance(e);
         return l > 2.0f ? e * (2.0f / l) : e;
     }
-    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, s);
+    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, inInteriorBox(u.interiorLo, u.interiorHi, p), accel, s);
 }
 
 // View direction through screen position uv (0...1, y down), scaled so that its view depth is 1.

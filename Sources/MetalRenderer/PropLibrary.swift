@@ -48,11 +48,18 @@ final class PropLibrary {
         }
     }()
 
-    /// What the list holds, said in a few characters (the interiors' storeys are made of it).
+    /// What the list holds, said in a few characters (the interiors' storeys are made of it, and seeded by it): the
+    /// same on every launch.
     lazy var fingerprint: Int = {
-        var h = Hasher()
-        for e in entries { h.combine(e.file); h.combine(e.replaces); h.combine(e.rooms); h.combine(e.chance) }
-        return h.finalize()
+        var h = Hasher64()
+        for e in entries {
+            h.add(e.file)
+            h.add(e.replaces.rawValue)
+            h.add(e.rooms?.count ?? -1)
+            for r in e.rooms ?? [] { h.add(r.rawValue) }
+            h.add(e.chance ?? -1)
+        }
+        return Int(bitPattern: UInt(h.value))
     }()
 
     /// The entry for a piece of `kind` in a room of `room`, if one takes its place (by `u`, 0...1).

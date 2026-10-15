@@ -122,7 +122,12 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
     bool last = p.layout.w != 0;
-    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
+    // In the walkable interiors' box an interval starts halfway into the one below: a coarse probe a little off this
+    // one's place would otherwise start its rays past a wall this probe's own rays missed, and bring the sunlit
+    // outside in (light leaking through walls and ceilings). Elsewhere the intervals only meet (it costs the forest
+    // ~3 ms of rays and changes little outdoors).
+    float start = inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz) ? p.interval.x * 0.5f : p.interval.x;
+    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, start, last ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
 
     float3 radiance = float3(0.0f);

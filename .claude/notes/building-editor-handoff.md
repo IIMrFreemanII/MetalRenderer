@@ -46,6 +46,29 @@ editor" section has the design and how to use it.
 5. **Interiors on demand in the city:** time the swap (background prepare + install) in a 10×10 city on the M4 Max
    (it regenerates every building; a cache of built buildings would make it cheaper).
 
+## Interior lighting (Oct 15)
+Interiors looked flat by day: radiance cascades lit their hits by the sun's light map, one orthographic map over the
+scene (the workshop's 20 km ground made its texels ~220 m), which saw no wall or ceiling, so every room glowed
+evenly with sunlight. Now:
+- **`Scene.interiorBox`** (set by `BuildingKit.addInterior`, passed as `Uniforms` / `GPUFogParams` `interiorLo/Hi`):
+  inside it GI's hits trace a ray toward the sun's centre (`giSunVisibility`, 32 m or 4 map texels, then the map),
+  the cascades' intervals overlap by half (fewer leaks through walls), and the fog's sky light is occluded by one
+  ray up (`fogSkyAmbient`; it lit closed rooms with a haze). Outside the box everything renders and costs as before:
+  through the forest's leaves the rays cost +35 ms (fog +18, cascades +14) on the M1 Max.
+- **Lights by day** in rooms with no window of their own and an office's work rooms (`RoomType.litByDay`,
+  `Interior.Light.day`; the open world's stay on by day).
+- **The city has auto exposure** (`PostSettings.preset`): a room lit by its windows was black at the street's.
+- **Interiors were different every launch**: storey keys and wall paints were seeded by Swift's per-process
+  `Hasher`. Now FNV (`Hasher64`); `BuildingPlanTests.testInteriorsAreTheSameOnEveryLaunch` pins a fingerprint.
+- **Against path-traced GI** (bench `buildings`, `METALRENDERER_GI=mode=pt`, before the day lights): RMS by day
+  living room 52 → 21, stair 87 → 3, office floor 48 → 26, city interior 67 → 4, world interior 64 → 33.
+- **Cost (release, whole frames):** day frames 9–10 → 17–18 ms for a house (66 lights by day), office floor 10 → 26 ms
+  (423 lights: ReSTIR DI), city interior 10 → 22, world interior 25 → 35. Night +1 ms. Nearly all of it is the day
+  lights (many-light sampling, GI hits with more than 8 lights, reflections, fog's light picks).
+- **Still to do:** cheaper day lights (only the storeys near the camera, or fewer per room); radiance cascades'
+  blotches where a small bright patch (the sun on a sofa) lights a room (its 16 cascade-0 directions alias); the
+  corridor plaster's grain under grazing panels. Check in the window and on the M4 Max.
+
 ## Checked in the window (M1 Max, Oct 8)
 Every tab; Whole / Cutaway / Dollhouse; Night (40-420 rect lights); the Floor Plan's tools (Split, Type, Merge, Door,
 Wall), undo, the edits list; style switching, Seed, Mutate + Use, Compare (hold), Save, Revert, Revert All; walking

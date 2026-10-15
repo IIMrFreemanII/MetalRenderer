@@ -121,6 +121,18 @@ final class BuildingKit {
     /// An interior at `transform`: each storey's mesh where its storeys are (its glass and its glowing parts
     /// instances of their own), its loose pieces, its lights, and its colliders.
     func addInterior(_ interior: Interior, at transform: float4x4) {
+        // Its box, world space, a little over its walls (Scene.interiorBox).
+        var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
+        for c in interior.colliders {
+            for k in 0..<8 {
+                let q = transform * SIMD4(k & 1 == 0 ? c.lo.x : c.hi.x, k & 2 == 0 ? c.lo.y : c.hi.y, k & 4 == 0 ? c.lo.z : c.hi.z, 1)
+                lo = simd_min(lo, SIMD3(q.x, q.y, q.z)); hi = simd_max(hi, SIMD3(q.x, q.y, q.z))
+            }
+        }
+        if lo.x <= hi.x {
+            (lo, hi) = (lo - 0.5, hi + 0.5)
+            scene.interiorBox = scene.interiorBox.map { (simd_min($0.lo, lo), simd_max($0.hi, hi)) } ?? (lo, hi)
+        }
         var meshes: [Int: (mesh: Int, first: Int)] = [:]
         var apart: [Int: [(mesh: Int, material: Int, glass: Bool)]] = [:]
         for (index, storey) in interior.storeys.enumerated() {
@@ -218,11 +230,12 @@ final class BuildingKit {
             let t4 = transform * SIMD4(1, 0, 0, 0)
             let position = world(l.position), tangent = SIMD3(t4.x, t4.y, t4.z)
             if still {
-                // (The open world's: on once the sun is down, as its windows are.)
+                // (The open world's: on once the sun is down, as its windows are; a dark room's all day.)
                 guard l.on else { continue }
+                let day = l.day
                 scene.addLight(.rect(width: l.size.x, height: l.size.y), color: l.color, motion: .scaleOnly) { [weak scene] _ in
-                    let night = scene?.heavens.map { $0.sunElevation < -0.035 } ?? true
-                    return Scene.LightPose(position: position, direction: [0, -1, 0], tangent: tangent, scale: SIMD3(repeating: night ? 1 : 0))
+                    let on = day || (scene?.heavens.map { $0.sunElevation < -0.035 } ?? true)
+                    return Scene.LightPose(position: position, direction: [0, -1, 0], tangent: tangent, scale: SIMD3(repeating: on ? 1 : 0))
                 }
                 continue
             }
