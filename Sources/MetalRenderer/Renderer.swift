@@ -334,7 +334,7 @@ final class Renderer: NSObject {
 
     /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
-    private var pipelines: Pipelines!
+    private(set) var pipelines: Pipelines!
     private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
     private let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
@@ -379,7 +379,7 @@ final class Renderer: NSObject {
     private var textureTables: [MTLBuffer] = []       // per slot, their MTLResourceIDs (MSL MaterialTexture array):
                                                       // a slot's own, as a procedural material's bake replaces its texture
                                                       // in the slots one by one (applyProcedural)
-    private var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
+    private(set) var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
     private var shadingResources: [MTLResource] = []
     /// Procedural materials (Scene+Procedural): per slot their extras (MSL MaterialExtra) and the instances' alpha tests
     /// (TraceScene.opacity), written when the scene's `extrasVersion` has moved on; the bakes' textures by their slot in
@@ -404,6 +404,8 @@ final class Renderer: NSObject {
     var painterScript: [PainterStep] = []
     /// The Terrain Editor's side (Renderer+Terrain.swift): sculpt mode, the brush, the sectors' buffers' revisions.
     var terrain = TerrainGPU()
+    /// The scene's water on the GPU (Renderer+Water.swift): its map, waves and per-frame record; nil without water.
+    var water: WaterSystem?
     /// Its status, when it changes (on the render thread).
     var onTerrain: ((TerrainStatus) -> Void)?
     /// A benchmark's terrain edits still to do (Benchmark.Config.Event.terrain), frames to wait, the changes undone.
@@ -497,6 +499,7 @@ final class Renderer: NSObject {
     private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
     private var dummy2D: MTLTexture!
+    private var dummyUInt2D: MTLTexture!        // in place of the visibility buffer (rg32Uint) where there is none
     private var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
     // Sky and clouds (Shaders/Sky.metal), allocated when first used.
     private var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
@@ -520,12 +523,13 @@ final class Renderer: NSObject {
     private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
     private static let shadingExtrasOffset = shadingVSMOffset + 8    // MaterialExtra's address (MATERIAL_EXTRAS)
     private static let shadingProcParamsOffset = shadingVSMOffset + 16   // the programs' parameters (PROCEDURAL_CODE)
+    static let shadingWaterOffset = shadingVSMOffset + 24   // WaterScene's address (WATER), or 0
     private static let shadingArgsLength = shadingVSMOffset + 32      // 304: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
     private var instanceDataBuffers: [MTLBuffer] { sceneBuffers.instanceData }
-    private var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
+    private(set) var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
     private var restirGrid: RestirTargets?
     private var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
     private var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
@@ -572,9 +576,9 @@ final class Renderer: NSObject {
     // State
     var camera = Camera()
     private var prevCamera = Camera()
-    private var frameIndex: UInt32 = 0
-    private var animTime: Float = 0
-    private var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
+    private(set) var frameIndex: UInt32 = 0
+    private(set) var animTime: Float = 0
+    private(set) var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
     private var lastTime = CACurrentMediaTime()
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
     var settings = RenderSettings() {
@@ -651,11 +655,18 @@ final class Renderer: NSObject {
     private var pathTraceAccum: MTLTexture?
     /// What liquidKernel leaves the trace and liquidApplyKernel (Shaders/Liquid.metal): per pixel the bent ray (its
     /// origin, w = 1 where it is bent; its direction, w = how far the liquid is), what comes through and the reflection.
+    /// Water's (waterKernel, Shaders/Water.metal) the same, w = 2 and up, and its own light in `scatter`.
     struct LiquidTargets {
         let ray: MTLTexture
         let direction: MTLTexture
         let through: MTLTexture
         let reflection: MTLTexture
+        let scatter: MTLTexture
+        /// Water's: the pixel whose raster triangle the bent ray likely meets (y << 16 | x), ~0 for none (traced).
+        let guess: MTLTexture
+        /// Water's reflections, this frame's and the last's by turns (rgb: what the surface's mirror ray found, a: the
+        /// surface's distance): half of them are traced a frame, the others taken from the last frame's.
+        let reflections: [MTLTexture]
     }
     private var liquidTextures: LiquidTargets?
     private var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
@@ -1781,13 +1792,17 @@ final class Renderer: NSObject {
         da.arrayLength = 2
         da.usage = .shaderRead
         da.storageMode = .private
+        let du = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg32Uint, width: 1, height: 1, mipmapped: false)
+        du.usage = .shaderRead
+        du.storageMode = .private
         guard let t3 = device.makeTexture(descriptor: d3), let t2 = device.makeTexture(descriptor: d2),
-              let ta = device.makeTexture(descriptor: da) else {
+              let ta = device.makeTexture(descriptor: da), let tu = device.makeTexture(descriptor: du) else {
             throw RendererError.resourceCreation("dummy textures")
         }
         dummy3D = t3
         dummy2D = t2
         dummyArray = ta
+        dummyUInt2D = tu
     }
 
     /// The fog's 3D noise (~50 ms to generate). Any thread.
@@ -2988,6 +3003,7 @@ final class Renderer: NSObject {
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
+        var water = false                       // ...and into water (waterKernel; in the liquids' targets)
         var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
@@ -3045,7 +3061,8 @@ final class Renderer: NSObject {
         p.megaLights = directMode == .megalights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
-        if scene.hasLiquid { p.liquid = liquidTargets(width: width, height: height) }
+        if scene.hasLiquid || scene.hasWater { p.liquid = liquidTargets(width: width, height: height) }
+        p.water = scene.hasWater && p.liquid != nil && prepareWater(slot: slot)
         if particlesGPU != nil {
             let scale = settings.particleScale < 1 ? 0.5 : 1.0
             p.particles = particleLayerTarget(width: max(Int((Double(width) * scale).rounded()), 1), height: max(Int((Double(height) * scale).rounded()), 1))
@@ -3119,8 +3136,9 @@ final class Renderer: NSObject {
 
         // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
         // (the frames swap them in instance by instance, which the raster doesn't follow).
-        // Nor with liquids (a pixel seen through one isn't the triangle the raster drew there).
-        if settings.primary == .raster, !scene.hasVoxelBoxes, !scene.hasLiquid, let rs = currentRasterScene(),
+        // (A pixel seen through a liquid or water isn't the triangle the raster drew there: the trace meets its bent
+        // ray itself.)
+        if settings.primary == .raster, !scene.hasVoxelBoxes, let rs = currentRasterScene(),
            let rt = rasterTargets(width: width, height: height, scene: rs) {
             p.raster = (rs, rt)
             p.uniforms.flags |= UniformFlags.visBuffer
@@ -3362,6 +3380,7 @@ final class Renderer: NSObject {
         }
         encodeDisplacement(passes: passes)
         encodeTerrain(slot: slot, passes: passes)
+        encodeWaterWaves(slot: slot, passes: passes)
         encodePainting(passes: passes)
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
@@ -3557,6 +3576,8 @@ final class Renderer: NSObject {
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
+            enc.setBuffer(shadingArgs[plan.slot], offset: 0, index: 7)
+            if plan.water, let water { enc.useResources(water.resources(slot: plan.slot), usage: .read) }
             dispatch(enc, .composite, width: output.width, height: output.height)
         }
 
@@ -3804,11 +3825,20 @@ final class Renderer: NSObject {
             })
         }
         // Liquids: the camera rays bent through them, which the trace goes on with.
-        if let liquid = plan.liquid {
+        if let liquid = plan.liquid, scene.hasLiquid {
             stages.append(ComputeStage(pass: "liquid") { [self] enc in
                 bind(enc, .liquid, uniforms, sceneSlot: slot)
                 setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture])
                 dispatch(enc, .liquid, width: size.width, height: size.height)
+            })
+        }
+        // Water: the camera rays bent into it, after the liquids' (a liquid in front keeps its pixels).
+        if let liquid = plan.liquid, plan.water {
+            stages.append(ComputeStage(pass: "water") { [self] enc in
+                bind(enc, .water, uniforms, sceneSlot: slot)
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture, liquid.scatter,
+                                  raster?.targets.visibility ?? dummyUInt2D, liquid.guess, liquid.reflections[1 - cur], liquid.reflections[cur]])
+                dispatch(enc, .water, width: size.width, height: size.height)
             })
         }
         stages.append(ComputeStage(pass: "trace") { [self] enc in
@@ -3823,9 +3853,19 @@ final class Renderer: NSObject {
             if let liquid = plan.liquid {
                 enc.setTexture(liquid.ray, index: 16)
                 enc.setTexture(liquid.direction, index: 17)
+                enc.setTexture(liquid.guess, index: 18)
             }
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
+        // Water's surface and what it does to what is seen under it, before window panes (they are in front of it).
+        if let liquid = plan.liquid, plan.water {
+            stages.append(ComputeStage(pass: "water apply") { [self] enc in
+                bind(enc, .waterApply, uniforms, sceneSlot: slot)
+                setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection, liquid.scatter,
+                                  t.normalDepth[cur], t.surfacePos])
+                dispatch(enc, .waterApply, width: size.width, height: size.height)
+            })
+        }
         if plan.glass {
             stages.append(ComputeStage(pass: "glass") { [self] enc in
                 bind(enc, .glass, uniforms, sceneSlot: slot)
@@ -3833,7 +3873,7 @@ final class Renderer: NSObject {
                 dispatch(enc, .glass, width: size.width, height: size.height)
             })
         }
-        if let liquid = plan.liquid {
+        if let liquid = plan.liquid, scene.hasLiquid {
             stages.append(ComputeStage(pass: "liquid") { [self] enc in
                 bind(enc, .liquidApply, uniforms)
                 setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection])
@@ -4277,6 +4317,7 @@ final class Renderer: NSObject {
         enc.useResources(shadingResources, usage: .read)
         if !slotTextures[slot].isEmpty { enc.useResources(proceduralResources(slot: slot), usage: .read) }
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
+        if scene.hasWater, let water { enc.useResources(water.resources(slot: slot), usage: .read) }
         if let vsm = vsmFrame {
             enc.useResources([vsm.pool, vsm.table, vsm.tags, vsm.lightTable, vsm.views[slot], vsm.sceneArgs[slot]], usage: .read)
             enc.useResource(vsm.requests, usage: [.read, .write])
@@ -4773,8 +4814,11 @@ final class Renderer: NSObject {
             return t
         }
         guard let ray = make(.rgba32Float, "liquidRay"), let direction = make(.rgba32Float, "liquidDirection"),
-              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection") else { return nil }
-        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection)
+              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection"),
+              let scatter = make(.rgba16Float, "waterScatter"), let guess = make(.r32Uint, "waterGuess"),
+              let r0 = make(.rgba16Float, "waterReflections0"), let r1 = make(.rgba16Float, "waterReflections1") else { return nil }
+        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection, scatter: scatter, guess: guess,
+                                       reflections: [r0, r1])
         return liquidTextures
     }
 

@@ -426,9 +426,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsTable.swift": {
-    "mtime": 1792013485.6837506,
-    "seen": 1792013775.782449,
-    "ast_hash": "480a70a8f6933b9b424c94f6c1cb5346",
+    "mtime": 1792014009.2796798,
+    "seen": 1792014595.1666932,
+    "ast_hash": "1ee6ae9eea91dc68ff1080d5cd500b09",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SettingsTableTests.swift": {
@@ -1500,15 +1500,15 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantCatalogTests.swift": {
-    "mtime": 1792005616.904127,
-    "seen": 1792013775.7825642,
-    "ast_hash": "c9a2f60ea3ab62b507c954de50837d3a",
+    "mtime": 1792014009.2805984,
+    "seen": 1792014595.166826,
+    "ast_hash": "4bee9651892b2ad7be1c015df7e24d67",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/PlantGoldenTests.swift": {
-    "mtime": 1792005616.9052672,
-    "seen": 1792013775.782565,
-    "ast_hash": "8fda0fe5aaaac2443ccee12f33e342d3",
+    "mtime": 1792014009.280328,
+    "seen": 1792014595.166828,
+    "ast_hash": "fbcc500683a71c92ca83892343c3ab30",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantEditor/PlantControls.swift": {
@@ -2862,9 +2862,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Terrain.swift": {
-    "mtime": 1792013552.5144234,
-    "seen": 1792013775.78227,
-    "ast_hash": "259259411aee363de2dc34e962b8ddd0",
+    "mtime": 1792014009.2799952,
+    "seen": 1792014595.1664782,
+    "ast_hash": "31a567ddae125d81f3de729cb309536a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer+Terrain.swift": {
@@ -2886,9 +2886,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+TerrainWorkshop.swift": {
-    "mtime": 1792013467.3897018,
-    "seen": 1792013775.782441,
-    "ast_hash": "f6747d388cc5a69f395e1adcec8dfb94",
+    "mtime": 1792014009.2794495,
+    "seen": 1792014595.166683,
+    "ast_hash": "6dbac478217846709a0cb7991537c5ce",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainBase.swift": {

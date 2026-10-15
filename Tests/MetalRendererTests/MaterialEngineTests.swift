@@ -279,7 +279,7 @@ final class MaterialEngineTests: XCTestCase {
                 XCTAssertLessThan(cover, 256 * 256 * 98 / 100, "\(g.name): nothing cut out")
             }
         }
-        XCTAssertEqual(MaterialLibrary.mireland.filter { $0.channels[.opacity] != nil }.count, 5)
+        XCTAssertEqual(MaterialLibrary.mireland.filter { $0.channels[.opacity] != nil }.count, 6)
     }
 
     /// A scene asks for all its bakes at once (Renderer.updateProcedural), and the editor asks for its own in the

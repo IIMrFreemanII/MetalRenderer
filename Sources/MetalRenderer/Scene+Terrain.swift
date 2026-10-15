@@ -176,32 +176,46 @@ extension Scene {
     }
 
     /// The terrain's water (TerrainWater): a sea's sheet over the terrain (an endless one's: over these sectors' tiles),
-    /// a lake's over its basin, a river's ribbon; each clear water (a dark glossy surface) or its Material Designer
-    /// graph.
+    /// a lake's over its basin, a river's ribbon; each a water surface (Scene+Water.swift) of its look, with its
+    /// Material Designer graph floating on it if it has one (a sheet a few millimetres up, cut out by its opacity).
+    /// Where it all is goes to the water map (TerrainWaterField).
     func addTerrainWater(_ bodies: [WaterBody], snapshot s: TerrainSnapshot, offset: SIMD2<Double>, sectors: [TerrainSector]) {
+        guard !WaterSystem.off else { return }
         section("Water")
         let catalog = MaterialCatalog.resolve(settings.materials), grid = s.grid
+        var looks: [Int?] = []
         for body in bodies {
-            let material = body.material.isEmpty ? addPBRMaterial(baseColor: body.color, metallic: 0, roughness: 0.03)
-                : addProceduralMaterial(graph: body.material, catalog: catalog)
             let made: (MeshGeometry, [SIMD2<Float>])?
             switch body.kind {
             case .sea:
                 // Over the terrain (an endless one: the sectors this scene has), a grid of 64 x 64 cells.
                 let lo = grid.lo ?? sectors.map(\.first).reduce(SIMD2(Int.max, Int.max), simd_min)
                 let hi = grid.hi ?? sectors.map(\.last).reduce(SIMD2(Int.min, Int.min), simd_max)
-                guard lo.x < hi.x, lo.y < hi.y else { continue }
-                made = TerrainWater.plane(from: grid.place(lo.x, lo.y), to: grid.place(hi.x, hi.y), level: body.level, offset: offset)
+                made = lo.x < hi.x && lo.y < hi.y
+                    ? TerrainWater.plane(from: grid.place(lo.x, lo.y), to: grid.place(hi.x, hi.y), level: body.level, offset: offset) : nil
             case .lake:
-                guard let basin = TerrainWater.basin(s, seed: body.seed, level: body.level) else { continue }
-                made = TerrainWater.sheet(grid: grid, lo: basin.lo, size: basin.size, cells: basin.cells, level: body.level, offset: offset)
+                made = TerrainWater.basin(s, seed: body.seed, level: body.level).flatMap {
+                    TerrainWater.sheet(grid: grid, lo: $0.lo, size: $0.size, cells: $0.cells, level: body.level, offset: offset)
+                }
             case .river:
                 made = TerrainWater.ribbon(s, river: body, offset: offset)
             }
-            guard let (geometry, uvs) = made else { continue }
-            let mesh = addMesh(geometry, uvs: uvs, label: body.name)
-            addInstance(mesh, material, matrix_identity_float4x4)
+            guard let (geometry, uvs) = made else { looks.append(nil); continue }
+            let look = addWaterLook(body.appearance)
+            looks.append(look)
+            addWaterSurface(geometry, look: look)
+            if !body.material.isEmpty {
+                let floating = addProceduralMaterial(graph: body.material, catalog: catalog)
+                let lifted = (geometry.positions.map { $0 + SIMD3(0, 0.003, 0) }, geometry.normals, geometry.indices)
+                addInstance(addMesh(lifted, uvs: uvs, label: "\(body.name) cover"), floating, matrix_identity_float4x4)
+            }
         }
+        guard let w = water else { return }
+        w.bodyLooks = looks
+        w.field = TerrainWaterField(snapshot: s, bodies: bodies, looks: looks)
+        w.offset = offset
+        let described = (try? JSONEncoder().encode(bodies)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        w.key = "\(terrain?.name ?? "")|\(described.hashValue)|\(s.editsFingerprint)"
     }
 
     /// The terrain's layer table, after the procedural programs' parameters (which `buildProceduralPrograms` sets),

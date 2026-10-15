@@ -39,8 +39,9 @@ struct World {
 
     /// Of everything below: a change of what a place looks like makes other tile files (WorldTile).
     /// 7: buildings with thick walls, made from their floor plans. 8: the ground is the world's terrain (a tile keeps
-    /// its cells' kinds, not a mesh of them).
-    static let version = 8
+    /// its cells' kinds, not a mesh of them). 9: water (World+Water.swift): the sea, rivers carved into the ground,
+    /// lakes; sand on the shore; no city under the sea, no tree in the water.
+    static let version = 9
     static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.
@@ -56,14 +57,32 @@ struct World {
     /// cells under them have to be level too), and how far beyond that it rises back into the hills.
     static let cityApron: Float = 40, cityBlend: Float = 300
 
-    private let broadSeed: UInt32, rollingSeed: UInt32, coverSeed: UInt32, standSeed: UInt32
+    let broadSeed: UInt32, rollingSeed: UInt32, coverSeed: UInt32, standSeed: UInt32
     /// The beds of the roads between cities that have been asked for (`bed`): each is worked out once.
     private let roadbeds = Roadbeds()
+    /// Its water: the sea's level, the rivers and lakes (World+Water.swift), traced as they are asked for, shared by
+    /// every copy of the world of this seed.
+    let water: WorldWater
 
     init(seed: UInt64) {
         self.seed = seed
         let s = UInt32(truncatingIfNeeded: seed &* 0x9E37_79B9 &+ 17)
         (broadSeed, rollingSeed, coverSeed, standSeed) = (s &+ 400, s, s &+ 500, s &+ 101)
+        // (The sea keeps under the origin's city: its middle's height, as `site` works it out.)
+        let origin = World.siteGeometry(seed: seed, cell: SIMD2(0, 0))
+        let originLevel = 70 * Terrain.fbm(origin.center.x / 1800, origin.center.y / 1800, octaves: 4, seed: s &+ 400)
+        water = WorldWater.shared(seed: seed, broad: s &+ 400, rolling: s, originLevel: originLevel)
+    }
+
+    /// Where a cell's city would be and how big, from the seed alone, and the roll that says whether it is there.
+    static func siteGeometry(seed: UInt64, cell: SIMD2<Int>) -> (own: UInt64, roll: Float, radius: Float, center: SIMD2<Double>) {
+        let own = World.hash(seed, cell.x, cell.y, 0xC17)
+        var rng = SplitMix64(seed: own)
+        let roll = rng.next(), radius = rng.range(300, 900), u = Double(rng.next()), v = Double(rng.next())
+        let margin = Double(radius + World.cityBlend) + 128, span = World.cityCell - 2 * margin
+        func snap(_ c: Double) -> Double { (c / 16).rounded() * 16 }
+        let center = SIMD2(snap(Double(cell.x) * World.cityCell + margin + u * span), snap(Double(cell.y) * World.cityCell + margin + v * span))
+        return (own, roll, radius, center)
     }
 
     /// Random numbers of a thing's own: from the world's seed, the thing's two whole coordinates and what it is.
@@ -72,7 +91,7 @@ struct World {
                        ^ what &* 0x1656_67B1_9E37_79F9)
     }
 
-    @inline(__always) private static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+    @inline(__always) static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
         let t = min(max((x - a) / (b - a), 0), 1)
         return t * t * (3 - 2 * t)
     }
@@ -100,19 +119,17 @@ struct World {
         return city
     }
 
-    /// A cell's city without its highways.
-    private func site(cell: SIMD2<Int>) -> City? {
-        let own = World.hash(seed, cell.x, cell.y, 0xC17)
-        var rng = SplitMix64(seed: own)
-        let roll = rng.next(), radius = rng.range(300, 900), u = Double(rng.next()), v = Double(rng.next())
-        guard cell == SIMD2(0, 0) || roll < cityShare else { return nil }
-        let margin = Double(radius + World.cityBlend) + 128, span = World.cityCell - 2 * margin
-        func snap(_ c: Double) -> Double { (c / 16).rounded() * 16 }
-        let center = SIMD2(snap(Double(cell.x) * World.cityCell + margin + u * span), snap(Double(cell.y) * World.cityCell + margin + v * span))
-        return City(cell: cell, center: center, radius: radius, level: broad(center.x, center.y), seed: own)
+    /// A cell's city without its highways. (None whose ground would be under the sea, or just over it: but the
+    /// origin's, which the sea's level keeps clear of.)
+    func site(cell: SIMD2<Int>) -> City? {
+        let g = World.siteGeometry(seed: seed, cell: cell)
+        guard cell == SIMD2(0, 0) || g.roll < cityShare else { return nil }
+        let level = broad(g.center.x, g.center.y)
+        guard cell == SIMD2(0, 0) || level > water.seaLevel + 6 else { return nil }
+        return City(cell: cell, center: g.center, radius: g.radius, level: level, seed: g.own)
     }
 
-    private static func cell(_ x: Double, _ z: Double) -> SIMD2<Int> {
+    static func cell(_ x: Double, _ z: Double) -> SIMD2<Int> {
         SIMD2(Int((x / World.cityCell).rounded(.down)), Int((z / World.cityCell).rounded(.down)))
     }
 
@@ -149,11 +166,12 @@ struct World {
 
     // MARK: - The ground
 
-    private func broad(_ x: Double, _ z: Double) -> Float { 70 * Terrain.fbm(x / 1800, z / 1800, octaves: 4, seed: broadSeed) }
+    func broad(_ x: Double, _ z: Double) -> Float { 70 * Terrain.fbm(x / 1800, z / 1800, octaves: 4, seed: broadSeed) }
 
     /// The ground's height. `city`: the one of the place's 4 km cell (`city(near:)`), found once for many places.
+    /// The hills, the rivers' beds carved into them (World+Water.swift), the city's level ground, the roads' beds.
     func height(_ x: Double, _ z: Double, city: City?) -> Float {
-        let natural = broad(x, z) + 15.3 * Terrain.fbm(x / 120, z / 120, octaves: 5, seed: rollingSeed)
+        let natural = water.carve(x, z, water.natural(x, z))
         guard let city else { return natural }
         let mask = cityMask(city, x, z)
         var h = mask <= 0 ? natural : mask >= 1 ? city.level : natural + (city.level - natural) * mask
@@ -181,12 +199,15 @@ struct World {
         if up < 0.8 { return Ground.rock }
         if let road = highway(city, x, z), road.distance < Highway.shoulder { return Ground.meadow }
         if let field = field(city, x, z) { return field }
+        // Sand along the sea, and under its shallows.
+        let natural = water.natural(x, z)
+        if natural < water.seaLevel + 1.4 + 0.6 * Terrain.noise(x / 31, z / 31, seed: standSeed &+ 77), natural > water.seaLevel - 4 { return Ground.sand }
         if woods(x, z) + 0.2 * Terrain.noise(x / 14, z / 14, seed: standSeed &+ 32) < 0.5 { return Ground.meadow }
         return Terrain.noise(x / 9, z / 9, seed: standSeed &+ 31) > 0.18 ? Ground.moss : Ground.litter
     }
 
     enum Ground {
-        static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6
+        static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6, sand = 7
     }
 
     /// The ground's materials (`ground`'s indices). They name the ground's detail texture, or a sown field's rows,
@@ -198,7 +219,8 @@ struct World {
             return m
         }
         return [natural([0.15, 0.13, 0.075]), natural([0.09, 0.135, 0.05]), natural([0.2, 0.3, 0.1]), natural([0.24, 0.23, 0.21]),
-                natural([0.42, 0.36, 0.15], fieldRows), natural([0.13, 0.24, 0.07], fieldRows), natural([0.19, 0.14, 0.095], fieldRows)]
+                natural([0.42, 0.36, 0.15], fieldRows), natural([0.13, 0.24, 0.07], fieldRows), natural([0.19, 0.14, 0.095], fieldRows),
+                natural([0.46, 0.41, 0.31])]
     }()
     /// `GPUMaterial.textures.x` of a material with the ground's detail texture, or with a field's rows
     /// (Scene+World.swift makes them), and the side of one repeat of either, metres.
@@ -286,6 +308,7 @@ struct World {
             let density = cover * World.smoothstep(0.72, 0.86, 1 - slope) * (0.6 + 0.6 * Terrain.noise(x / 23, z / 23, seed: standSeed &+ 7))
             guard chance < density else { return }
             let y = height(x, z, city: city), high = (y - broad(x, z)) / 9, mix = Terrain.noise(x / 55, z / 55, seed: standSeed)
+            guard !water.wet(x, z, ground: y) else { return }   // (none in the water, or on its very edge)
             guard let species = flora.trees.pick(pick, high: high, slope: slope, stand: mix,
                                                  light: [SIMD2<Float>(1.6, 1 - World.smoothstep(0.15, 0.6, cover))]) else { return }
             let age = Foliage.TreePicker.age(u, flora.catalog[species].habitat)
@@ -312,8 +335,9 @@ struct World {
                       (field(city, x, z) ?? Ground.meadow) == Ground.meadow else { return }
                 if let road = highway(city, x, z), road.distance < road.half + 1 { return }
                 let plants = flora.plants(species, old ? .mature : .young)
-                guard !plants.isEmpty else { return }
-                out.append(Placement(x: Float(x - x0), y: height(x, z, city: city) - sink, z: Float(z - z0), yaw: yaw, size: size,
+                let y = height(x, z, city: city)
+                guard !plants.isEmpty, !water.wet(x, z, ground: y, margin: 0.5) else { return }
+                out.append(Placement(x: Float(x - x0), y: y - sink, z: Float(z - z0), yaw: yaw, size: size,
                                      species: UInt16(species.rawValue), plant: UInt16(plants[min(Int(which * Float(plants.count)), plants.count - 1)]),
                                      shade: UInt16(shade)))
             }

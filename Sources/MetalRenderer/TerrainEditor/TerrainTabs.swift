@@ -384,9 +384,90 @@ private struct WaterEditor: View {
                 TerrainSlider(title: "Depth", value: b(\.depth), range: 0.2...20, log: true, format: "%.1f m", onDrag: drag)
                 Button("Carve its bed") { model.carveRiver(index) }
             }
-            Picker("Looks", selection: b(\.material)) {
-                Text("Clear water").tag("")
+            Divider()
+            WaterLookEditor(index: index, water: water)
+            Picker("Floating on it", selection: b(\.material)) {
+                Text("Nothing").tag("")
                 ForEach(MaterialCatalog.resolve(model.host.settings.scene.materials).names, id: \.self) { Text($0).tag($0) }
+            }
+            .help("A Material Designer graph lying on the water (duckweed, scum), cut out by its opacity")
+        }
+    }
+}
+
+/// A water's look (WaterLook): a preset to start from, then what it absorbs and scatters, its waves, its foam and its
+/// flow. Edited live: the scene keeps its water's surfaces.
+private struct WaterLookEditor: View {
+    @EnvironmentObject var model: TerrainModel
+    let index: Int
+    let water: WaterBody
+
+    private var look: WaterLook { water.appearance }
+    private func b(_ path: WritableKeyPath<WaterLook, Float>) -> Binding<Float> {
+        Binding(get: { look[keyPath: path] }, set: { v in
+            model.edit("Water's look") { var l = $0.water[index].appearance; l[keyPath: path] = v; $0.water[index].look = l }
+        })
+    }
+    /// A colour per metre, as a colour (its strongest channel 1) and how much of it (that channel's value).
+    private func colour(_ path: WritableKeyPath<WaterLook, SIMD3<Float>>) -> Binding<Color> {
+        Binding(get: {
+            let c = look[keyPath: path], m = max(c.max(), 1e-6)
+            return Color(red: Double(c.x / m), green: Double(c.y / m), blue: Double(c.z / m))
+        }, set: { v in
+            guard let rgb = NSColor(v).usingColorSpace(.deviceRGB) else { return }
+            model.edit("Water's look") {
+                var l = $0.water[index].appearance
+                let strength = l[keyPath: path].max()
+                l[keyPath: path] = SIMD3(Float(rgb.redComponent), Float(rgb.greenComponent), Float(rgb.blueComponent)) * max(strength, 0.001)
+                $0.water[index].look = l
+            }
+        })
+    }
+    private func amount(_ path: WritableKeyPath<WaterLook, SIMD3<Float>>) -> Binding<Float> {
+        Binding(get: { look[keyPath: path].max() }, set: { v in
+            model.edit("Water's look") {
+                var l = $0.water[index].appearance
+                let c = l[keyPath: path], m = max(c.max(), 1e-6)
+                l[keyPath: path] = (m > 1e-5 ? c / m : SIMD3(repeating: 1)) * v
+                $0.water[index].look = l
+            }
+        })
+    }
+    private func drag(_ on: Bool) { on ? model.beginDrag() : model.endDrag() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Look").font(.headline)
+                Spacer()
+                Menu("Preset") {
+                    ForEach(WaterLook.Preset.allCases) { p in
+                        Button(p.title) { model.edit("Water's look") { $0.water[index].look = .preset(p) } }
+                    }
+                    Divider()
+                    Button("Its kind's") { model.edit("Water's look") { $0.water[index].look = nil } }
+                }
+                .fixedSize()
+            }
+            HStack {
+                ColorPicker("Takes", selection: colour(\.absorption), supportsOpacity: false)
+                    .help("The colour the water takes out of the light going through it: red, for clear sea water")
+                TerrainSlider(title: "per metre", value: amount(\.absorption), range: 0.01...4, log: true, format: "%.2f", onDrag: drag)
+            }
+            HStack {
+                ColorPicker("Glows", selection: colour(\.scattering), supportsOpacity: false)
+                    .help("The colour the water scatters back: its own colour in deep water, the haze under it")
+                TerrainSlider(title: "per metre", value: amount(\.scattering), range: 0.001...1, log: true, format: "%.3f", onDrag: drag)
+            }
+            TerrainSlider(title: "Roughness", value: b(\.roughness), range: 0.002...0.3, log: true, format: "%.3f", onDrag: drag)
+            TerrainSlider(title: "Waves (share of the wind's sea)", value: b(\.waves), range: 0...1, format: "%.2f", onDrag: drag)
+            TerrainSlider(title: "Chop", value: b(\.chop), range: 0...1.5, format: "%.2f", onDrag: drag)
+            TerrainSlider(title: "Ripples", value: b(\.ripples), range: 0...2, format: "%.2f", onDrag: drag)
+            TerrainSlider(title: "Crest foam", value: b(\.foam), range: 0...1, format: "%.2f", onDrag: drag)
+            TerrainSlider(title: "Shore foam (depth)", value: b(\.shoreFoam), range: 0...3, format: "%.2f m", onDrag: drag)
+            if water.kind == .river {
+                TerrainSlider(title: "Flow", value: b(\.flowSpeed), range: 0...5, format: "%.1f m/s", onDrag: drag)
+                TerrainSlider(title: "White water", value: b(\.whiteWater), range: 0...1, format: "%.2f", onDrag: drag)
             }
         }
     }

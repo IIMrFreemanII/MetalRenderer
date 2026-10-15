@@ -126,7 +126,7 @@ kernel void liquidApplyKernel(constant Uniforms&                   u        [[bu
                               texture2d<float, access::read>       reflect  [[texture(5)]],
                               uint2 tid [[thread_position_in_grid]])
 {
-    if (tid.x >= u.width || tid.y >= u.height || ray.read(tid).w == 0.0f) return;
+    if (tid.x >= u.width || tid.y >= u.height || ray.read(tid).w != 1.0f) return;   // (2 and up: water's, Water.metal)
     float3 t = through.read(tid).rgb;
     float4 a = albedo.read(tid);
     albedo.write(float4(a.rgb * t, a.a), tid);

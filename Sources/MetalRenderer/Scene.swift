@@ -489,6 +489,9 @@ final class Scene {
     var walkGround: ((Float, Float) -> Float)?
     /// The scene's terrain, if its ground is one (Scene+Terrain.swift): its sectors' meshes and instances.
     var terrain: SceneTerrain?
+    /// The scene's water, if it has some (Scene+Water.swift): its looks, which materials are its surfaces', and where
+    /// it is (the water map's field).
+    var water: SceneWater?
     /// The city's buildings: which (LotRef.key), where (the world's x, z) and how tall: the renderer makes the interior
     /// of the one the camera comes near (SceneSettings.interior).
     var lotAreas: [(key: String, rect: CityPlan.Rect, height: Float)] = []
@@ -1023,7 +1026,7 @@ final class Scene {
         // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
         // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes. Bit 13:
         // PROCEDURAL_CODE, some of them are code the shading runs. Bit 12: TERRAIN, its ground is a terrain whose
-        // vertices carry layer weights.
+        // vertices carry layer weights. Bit 11: WATER, it has water (Scene+Water.swift, Shaders/Water.metal).
         // (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
@@ -1034,6 +1037,7 @@ final class Scene {
             | (hasOpacity ? 0x2000_4000 : 0)   // OPACITY, with ALPHA_TEST's query loop
             | (proceduralCode.isEmpty ? 0 : 0x2000)   // PROCEDURAL_CODE
             | (terrain == nil ? 0 : 0x1000)           // TERRAIN
+            | (hasWater ? 0x0800 : 0)                 // WATER
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1798,6 +1802,8 @@ final class Scene {
     }
     /// Some instance is a liquid's surface (maskLiquid). Set by `addLiquidMaterial`.
     private(set) var hasLiquid = false
+    /// It has water (Scene+Water.swift). Set by `addWaterLook`.
+    var hasWater = false
 
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
     func addGlassMaterial(tint: SIMD3<Float>) -> Int {

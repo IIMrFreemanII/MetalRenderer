@@ -109,6 +109,7 @@ constant uint SKY_CLOUDS = 1, SKY_SHADOWS = 2, SKY_UPDATE_ALL = 4, SKY_CLOUDS_OV
 
 // Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table; the sky.
 struct VSMScene;   // Shaders/VSM.metal
+struct WaterScene; // Shaders/WaterCommon.metal
 
 struct SceneShading {
     device const Material*        materials;
@@ -125,9 +126,11 @@ struct SceneShading {
     device const VSMScene*        vsm;         // with FLAG_VSM: the virtual shadow maps (VSMTargets.writeScene)
     device const MaterialExtra*   extras;      // with MATERIAL_EXTRAS: per material (procedural materials' extras)
     device const float4*          procParams;  // with PROCEDURAL_CODE: the programs' parameters (MatShaderCode)
+    device const WaterScene*      water;       // with WATER: this frame's water (Renderer+Water.swift)
 };
-static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 280 && __builtin_offsetof(SceneShading, procParams) == 288,
-              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset, shadingExtrasOffset)");
+static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 280 && __builtin_offsetof(SceneShading, procParams) == 288
+              && __builtin_offsetof(SceneShading, water) == 296,
+              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset, shadingExtrasOffset, shadingWaterOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -193,6 +196,9 @@ constant bool PROCEDURAL_CODE = (LIGHT_SPEC & 0x00002000u) != 0;
 // Bit 12 = TERRAIN: the scene's ground is a terrain (Scene+Terrain.swift): its sectors' vertices carry 16 layer
 // weights, and the shading blends the layers over their own material (terrainLayers, Surface.metal).
 constant bool TERRAIN = (LIGHT_SPEC & 0x00001000u) != 0;
+// Bit 11 = WATER: the scene has water (Scene+Water.swift): waterKernel bends the camera's rays into it through its
+// own structures (Shaders/Water.metal), the composite puts its caustics on the sun's light under it.
+constant bool WATER = (LIGHT_SPEC & 0x00000800u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).

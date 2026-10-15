@@ -1,3 +1,4 @@
+import Metal
 import simd
 
 // Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).
@@ -793,7 +794,48 @@ struct GPUParticleStep {
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
+/// One body of water's look (MSL WaterLook, WaterLook.gpu): a table of them, which the water map and the water's
+/// surfaces' triangles name.
+struct GPUWaterLook {
+    var absorption: SIMD4<Float>   // rgb = per metre, w = index of refraction
+    var scattering: SIMD4<Float>   // rgb = per metre, w = phase g
+    var waves: SIMD4<Float>        // x = share of the wind's sea, y = chop, z = ripples, w = roughness
+    var foam: SIMD4<Float>         // x = crest foam, y = shore foam width (m), z = white water, w = flow speed (m/s)
+}
+
+/// The water this frame (MSL WaterScene, Shaders/WaterCommon.metal), its address in the shading arguments
+/// (SceneShading.water): the time and wind of its waves, its map's two levels around the camera, the near patch, the
+/// looks, and its textures (the map, the FFT cascades, the caustics) by their resource IDs.
+struct GPUWaterScene {
+    var time = SIMD4<Float>.zero       // x = now (s), y = the last frame's, z = dt, w = the highest any water's surface reaches (its waves too)
+    var wind = SIMD4<Float>.zero       // xy = toward where it blows (unit; x, z), z = speed (m/s), w = 0
+    var cascades = SIMD4<Float>.zero   // xyz = the FFT cascades' tile sides (m), w = how many (0: no waves)
+    var phase0 = SIMD4<Float>.zero     // where the scene's origin is in each cascade's tile (m): xy = 0th, zw = 1st
+    var phase1 = SIMD4<Float>.zero     // xy = the 2nd's
+    var map0 = SIMD4<Float>.zero       // the map's near level: xy = scene x, z of texel (0, 0)'s corner, z = metres a texel, w = texels a side
+    var map1 = SIMD4<Float>.zero       // ...its far level
+    var near = SIMD4<Float>.zero       // xyz = the near patch's centre (scene), w = its radius (0: none)
+    var counts = SIMD4<UInt32>.zero    // x = looks, y = WATER_* flags, w = METALRENDERER_WATER_DEBUG
+    var looks: UInt64 = 0              // GPUWaterLook per look
+    var level = MTLResourceID()        // map: 2D array [near, far], r = surface (< -1e8: dry), g = ground
+    var info = MTLResourceID()         // map: rg = flow (m/s, 0.5 = still, 1/8 m/s a step: (v / 8) + 0.5), b = look / 255, a = turbulence
+    var waves = MTLResourceID()        // FFT: 2D array per cascade, xyz = displacement (m), w = foam
+    var slopes = MTLResourceID()       // FFT: 2D array per cascade, xy = height's slope (x, z), zw = sideways push's
+    var caustics = MTLResourceID()     // the sun's caustics on a bed a few metres down, tiled as cascade 1
+    var surfaces = MTLResourceID()     // the still surfaces' own structure (a primitive one, the scene's coordinates)
+    var surfaceVertices: UInt64 = 0    // ...their vertices (float4), indices, and a look per triangle (a byte)
+    var surfaceIndices: UInt64 = 0
+    var surfaceLooks: UInt64 = 0
+    var nearPatch = MTLResourceID()    // the near patch's structure (WATER_NEAR), refitted every frame
+    var nearVertices: UInt64 = 0       // ...its vertices as the waves moved them (float4: w = the look)
+    var nearIndices: UInt64 = 0
+    var nearRest: UInt64 = 0           // ...and where each is at rest (float2: x, z)
+    static let fft: UInt32 = 1, nearPatch: UInt32 = 2, causticsOn: UInt32 = 4, mapped: UInt32 = 8
+}
+
 func validateGPULayouts() {
+    precondition(MemoryLayout<GPUWaterLook>.stride == 64, "GPUWaterLook layout mismatch")
+    precondition(MemoryLayout<GPUWaterScene>.stride == 256, "GPUWaterScene layout mismatch")
     precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")

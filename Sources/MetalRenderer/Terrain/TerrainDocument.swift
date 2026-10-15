@@ -179,9 +179,17 @@ struct WaterBody: Codable, Equatable {
     var points: [SIMD2<Double>] = []
     var width: Float = 8
     var depth: Float = 1.5
-    /// What it looks like: the Material Designer graph's name, or empty for clear water.
+    /// A Material Designer graph's name floating on it (duckweed, a scum), cut out by its opacity; empty for none.
     var material = ""
+    /// The colour rays that meet it from elsewhere see (GI, reflections off other things).
     var color = SIMD3<Float>(0.05, 0.12, 0.1)
+    /// How the water looks (WaterLook); nil: its kind's (an ocean, a lake, a river).
+    var look: WaterLook? = nil
+    /// A river's bed at its points as it was carved (TerrainWater.bed of the ground before), and the points it was
+    /// carved along: its surface keeps to it after the carving lowered the ground (nil, or other points: worked out
+    /// from the ground as it is).
+    var bed: [Float]? = nil
+    var bedPoints: [SIMD2<Double>]? = nil
 }
 
 /// A terrain's document: everything about it but the heights and paint (TerrainField's tiles, saved beside it):
@@ -241,7 +249,7 @@ struct TerrainDocument: Codable, Equatable {
     /// The open world's: its own ground (each place's, by the world: layer 0), then its seven grounds to paint
     /// (World.groundMaterials), then the brushes' layers.
     static func worldLayers() -> [TerrainLayer] {
-        let names = ["Litter", "Moss", "Meadow", "Rock", "Wheat", "Crop", "Ploughed"]
+        let names = ["Litter", "Moss", "Meadow", "Rock", "Wheat", "Crop", "Ploughed", "Sand"]
         var out = [TerrainLayer(name: "World's ground", tileMetres: World.groundTile)]
         out += names.enumerated().map { k, name in
             let a = World.groundMaterials[k].albedo

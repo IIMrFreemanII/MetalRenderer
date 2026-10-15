@@ -130,12 +130,14 @@ final class TerrainModel: ObservableObject {
         apply(d, before: now)
     }
 
-    /// The document as it is now, to the renderer (in place); a layer's material changed (another graph) makes the
-    /// scene again.
+    /// The document as it is now, to the renderer (in place); a layer's material changed (another graph), or water
+    /// that is somewhere else or shaped otherwise, makes the scene again (a water's look alone the renderer takes as
+    /// it is).
     private func apply(_ d: TerrainDocument, before: TerrainDocument) {
         document = d
         TerrainDocuments.shared.update(d)
-        if d.layers.map(\.material) != before.layers.map(\.material) || d.water != before.water {
+        func shapes(_ w: [WaterBody]) -> [WaterBody] { w.map { var b = $0; b.look = nil; b.color = .zero; return b } }
+        if d.layers.map(\.material) != before.layers.map(\.material) || shapes(d.water) != shapes(before.water) {
             host.update { $0.scene.terrainKey = UUID().uuidString }
         }
         if d.layers != before.layers && mapView == .layers { scheduleMap() }

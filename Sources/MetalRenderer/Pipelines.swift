@@ -5,6 +5,10 @@ import QuartzCore
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
     case trace, glass, liquid, liquidApply, geometryDebug, lightMap
+    case water, waterApply   // water's surface over the trace (Shaders/Water.metal)
+    case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
+    case waterNear              // the near patch's vertices, moved by the waves
+    case waterCaustics          // the sun's caustics under the waves
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve

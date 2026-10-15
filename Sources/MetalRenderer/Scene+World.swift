@@ -280,6 +280,7 @@ extension Scene {
             return m
         }
         triangles += terrain.parts.reduce(0) { $0 + $1.sector.triangleCount }
+        addWorldWater(world, tiles: jobs.map { SIMD2($0.x, $0.z) }, anchor: anchor)
 
         var plants = 0
         for (c, placements) in cover.enumerated() {

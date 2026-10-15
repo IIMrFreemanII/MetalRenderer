@@ -3,7 +3,8 @@ import simd
 
 /// Mireland: a misty swamp at a low morning sun, made of the Mireland materials (MaterialLibrary+Mireland.swift), every
 /// one of them procedural (baked by the renderer, edited live in the Material Designer):
-/// - mud ground (Swamp Mud) sinking under black water with duckweed (Swamp Ground);
+/// - mud ground (Swamp Mud) sinking under the swamp's black water (Water.metal's, its swamp look) with duckweed
+///   floating on it (Swamp Duckweed, cut out);
 /// - on it, ragged patches: a path of loose dirt, dead grass on the rises, cracked crusts and puddles on the flats,
 ///   fallen leaves under the trees (Swamp Loose Dirt, Dead Grass, Mud Cracks, Mud Puddle, Leaves);
 /// - bare trees: slim birches (Swamp Birch Bark) and thick, leaning, rooted old trunks (Swamp Gnarly Bark);
@@ -16,7 +17,7 @@ extension Scene {
         func material(_ name: String) -> Int { addProceduralMaterial(graph: name, catalog: catalog) }
         func add(_ m: (MeshGeometry, [SIMD2<Float>]), _ label: String) -> Int { addMesh(m.0, uvs: m.1, label: label) }
         // (The order is the displacement's: the ground first, then what stands on it.)
-        let mud = material("Swamp Mud"), water = material("Swamp Ground"), dirt = material("Swamp Loose Dirt")
+        let mud = material("Swamp Mud"), duckweed = material("Swamp Duckweed"), dirt = material("Swamp Loose Dirt")
         let deadGrass = material("Swamp Dead Grass"), gnarly = material("Swamp Gnarly Bark"), birch = material("Swamp Birch Bark")
         let cracks = material("Swamp Mud Cracks"), puddle = material("Swamp Mud Puddle"), leaves = material("Swamp Leaves")
         let grass = material("Swamp Grass Blades"), plant = material("Swamp Plant")
@@ -39,7 +40,15 @@ extension Scene {
         let waterY = min(level, -0.15)
         addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, tiles: base.grid.tiles!.map { ($0, 0) },
                    style: TerrainMeshStyle(uvOrigin: base.grid.origin, uvScale: 1), material: mud)   // a tile a metre
-        addInstance(add(Scene.flatGrid(size: terrain.size, cells: 8, uvPerMetre: 1), "water"), water, translate([0, waterY, 0]))
+        // The water: one sheet out to the far trees, the swamp's look (tannin-brown, still); the duckweed and twigs
+        // floating on it where the ground is; where the water is, for the water map.
+        let look = addWaterLook(WaterLook.preset(.swamp))
+        let sheet = Scene.flatGrid(size: 140, cells: 28, uvPerMetre: 1).0
+        addWaterSurface((sheet.positions.map { $0 + SIMD3(0, waterY, 0) }, sheet.normals, sheet.indices), look: look)
+        addInstance(add(Scene.flatGrid(size: terrain.size, cells: 8, uvPerMetre: 1), "duckweed"), duckweed, translate([0, waterY + 0.003, 0]))
+        let heights = terrain
+        water?.field = LevelWaterField(level: waterY, look: look, lo: [-70, -70], hi: [70, 70]) { x, z in heights.height(Float(x), Float(z)) }
+        water?.key = "mireland-\(settings.seed)-\(snapshot.editsFingerprint)"
         func dry(_ x: Float, _ z: Float, above: Float = 0.12) -> Bool { terrain.height(x, z) > waterY + above }
         func random(in r: ClosedRange<Float>) -> SIMD2<Float> {
             let a = rng.range(0, 2 * .pi), d = sqrt(rng.range(r.lowerBound * r.lowerBound, r.upperBound * r.upperBound))
@@ -106,8 +115,6 @@ extension Scene {
             addInstance(addMesh(tree.geometry, uvs: tree.uvs, label: old ? "far gnarly tree" : "far birch"), old ? farGnarly : farBirch,
                         translate([p.x, waterY - 0.3, p.y]) * rotate(rng.range(0, 2 * .pi), [0, 1, 0]) * scale(rng.range(1.1, 1.6)))
         }
-        let far = Scene.flatGrid(size: 140, cells: 4, uvPerMetre: 1)
-        addInstance(add(far, "water"), water, translate([0, waterY - 0.02, 0]))
 
         section("Reeds")
         // Grass clumps and leafy stems along the water's edge (crossed cards, cut out).

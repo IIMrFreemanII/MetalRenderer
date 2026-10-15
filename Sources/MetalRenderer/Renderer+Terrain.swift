@@ -399,6 +399,16 @@ extension Renderer {
         guard version != terrain.documentVersion else { return }
         let first = terrain.documentVersion < 0
         terrain.documentVersion = version
+        // Its water's looks, as they are now (a look's edit doesn't make the scene again).
+        if let doc = TerrainDocuments.shared.document(t.name), let w = scene.water, w.bodyLooks.count == doc.water.count {
+            var changed = false
+            for (k, body) in doc.water.enumerated() {
+                guard let l = w.bodyLooks[k], l < w.looks.count, w.looks[l] != body.appearance else { continue }
+                w.looks[l] = body.appearance
+                changed = true
+            }
+            if changed { water?.setLooks(w.looks) }
+        }
         guard !first, let doc = TerrainDocuments.shared.document(t.name), doc.layers != t.meshStyle.layers else { return }
         t.meshStyle.layers = doc.layers
         for (name, b) in terrain.built { terrain.built[name] = (b.block, -1) }   // every sector meshed again
@@ -554,8 +564,19 @@ extension Renderer {
     /// its mouth, its banks sloping out to its width and fading into the ground beyond. Kept for undo.
     func carveTerrainRiver(_ river: WaterBody) {
         guard let t = scene.terrain, river.points.count > 1 else { return }
+        // Its bed from the ground as it is before the carving, kept with it in the document: its surface (the
+        // ribbon, the water map) keeps to it afterwards, and carving it again digs no deeper.
+        var carved = river
+        carved.bed = TerrainWater.bed(t.field.snapshot(), river: river)
+        carved.bedPoints = river.points
+        if var d = TerrainDocuments.shared.document(t.name),
+           let k = d.water.firstIndex(where: { $0.kind == .river && $0.points == river.points && $0.name == river.name }), d.water[k].bed != carved.bed {
+            d.water[k].bed = carved.bed
+            d.water[k].bedPoints = carved.bedPoints
+            TerrainDocuments.shared.update(d)
+        }
         var record = TerrainUndoRecord(title: "Carve river")
-        t.field.edit { s in TerrainWater.carve(&s, river: river, record: &record) }
+        t.field.edit { s in TerrainWater.carve(&s, river: carved, record: &record) }
         finishTerrainRecord(record, t)
     }
 

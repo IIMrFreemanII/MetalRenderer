@@ -8,6 +8,7 @@ enum TerrainWater {
     /// The heights of a river's bed at its points: `depth` under the ground there, never higher than at the point
     /// before (it runs from its source, the first point, down to its mouth).
     static func bed(_ s: TerrainSnapshot, river: WaterBody) -> [Float] {
+        if let kept = river.bed, river.bedPoints == river.points, kept.count == river.points.count { return kept }
         var out: [Float] = []
         var lowest = Float.infinity
         for p in river.points {

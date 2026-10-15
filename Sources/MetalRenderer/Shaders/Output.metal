@@ -199,6 +199,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  particleDepth [[texture(22)]], // ...and its surfaces' depths
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
+                            constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
                             uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
@@ -214,6 +215,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
     float3 illumination = d + i;
     float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
     float3 directSpecular = float3(0.0f);
+    bool sunCaustics = false;   // WATER: the sun's light here took the water's caustics already
     if (flagOn(u.flags, FLAG_SHADOW_DENOISER)) {
         // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
         float4 vis = denoised.read(tid);
@@ -227,7 +229,15 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         } else {
         float4 g = geoNormal.read(tid);
         HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
-        for (uint l = 0; l < u.lightGroupEnd.w; ++l) illumination += litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
+        sunCaustics = true;
+        for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
+            float3 e = litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
+            // Under water the sun's light comes through its waves: their caustics (after the shadows' filter, which
+            // would smear their moving lines).
+            if (WATER && lightType(lights[l]) == LIGHT_SUN && sp.w > 0.0f)
+                e *= waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height));
+            illumination += e;
+        }
         if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
         }
         if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {
@@ -249,6 +259,29 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             finalIndirect = denoisedIndirect.read(tid).rgb;
             illumination += finalIndirect;
         }
+    }
+
+    // Where the sun's light isn't a term of its own here (ReSTIR, MegaLights, no shadow filter), the caustics go on
+    // most of the light under the water (the sun's is most of it there).
+    if (WATER && !sunCaustics) {
+        float4 sp = surfacePos.read(tid);
+        if (sp.w > 0.0f) {
+            for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
+                if (lightType(lights[l]) != LIGHT_SUN) continue;
+                illumination *= mix(1.0f, waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height)), 0.6f);
+                break;
+            }
+        }
+    }
+
+    // METALRENDERER_WATER_DEBUG=4: the sun's caustics (grey: 1 is middle grey).
+    if (WATER && shading.water != nullptr && (shading.water->counts.w & 15u) == 4u) {
+        float4 sp = surfacePos.read(tid);
+        float c = 1.0f;
+        for (uint l = 0; l < u.lightGroupEnd.w && sp.w > 0.0f; ++l)
+            if (lightType(lights[l]) == LIGHT_SUN) { c = waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height)); break; }
+        output.write(float4(float3(c * 0.25f), 1.0f), tid);
+        return;
     }
 
     // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.

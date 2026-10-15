@@ -22,6 +22,7 @@ struct SceneData {
     device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
     device const MaterialExtra* extras;         // SceneShading.extras (with MATERIAL_EXTRAS)
     device const float4*       procParams;      // SceneShading.procParams (with PROCEDURAL_CODE)
+    device const WaterScene*   water;           // SceneShading.water (with WATER)
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -38,6 +39,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.vsm = shading.vsm;
     s.extras = shading.extras;
     s.procParams = shading.procParams;
+    s.water = shading.water;
 }
 
 // A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that
