@@ -49,6 +49,7 @@ final class VirtualBLAS {
     private var tables: [MTLBuffer] = []                 // per slot: Entry per VG instance
     private var current: [Built]
     private var retired: [(Built, UInt32)] = []          // recycled once the GPU is past that frame
+    private var released: [MTLResource] = []             // retired ones the GPU is past, for `takeReleased`
     private var freeBuffers: [MTLBuffer] = []            // recycled triangle buffers, oldest first (under `lock`)
     private var scratch: MTLBuffer?                      // the worker's, for the builds
     private let worker = DispatchQueue(label: "metalrenderer.vg.blas", qos: .userInitiated)
@@ -103,14 +104,24 @@ final class VirtualBLAS {
                stats.skippedInstances, instances.count)
     }
 
+    /// The structures and triangle buffers retired since the last call that no frame in flight uses any more (a recycled
+    /// buffer comes back when a frame binds it again): a Metal 4 frame lets them out of its residency set
+    /// (`FrameEncoder.release`), which a camera move would otherwise fill with thousands of them.
+    func takeReleased() -> [MTLResource] {
+        defer { released.removeAll() }
+        return released
+    }
+
     /// Render thread, before encoding `frame`: swap in finished BLASes, then start the next cut if the worker is free.
     /// `sceneInstances`: every scene instance, for this frame's object -> world matrices.
     func update(frame: UInt32, slot: Int, framesInFlight: Int, camPos: SIMD3<Float>, pixelScale: Float,
                 tau: Float, sceneInstances: [Scene.Instance]) {
         // Buffers the GPU is done with go back to the pool (frames finish in order), which keeps about as many bytes as
         // the current BLASes, dropping the oldest beyond that.
-        let done = retired.filter { $0.1 &+ UInt32(framesInFlight) < frame }.compactMap(\.0.buffer)
+        let past = retired.filter { $0.1 &+ UInt32(framesInFlight) < frame }.map(\.0)
+        let done = past.compactMap(\.buffer)
         retired.removeAll { $0.1 &+ UInt32(framesInFlight) < frame }
+        released += done as [MTLResource] + past.compactMap(\.structure)
         if !done.isEmpty {
             let keep = current.reduce(0) { $0 + ($1.buffer?.length ?? 0) }
             lock.lock()

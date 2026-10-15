@@ -128,6 +128,19 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private var sceneChanged: UInt32?
     private static let sceneLife: UInt32 = 8
 
+    /// Lets go of `resources` now: no frame uses them any more. What the residency set holds is costly beyond keeping
+    /// them alive: on macOS 26.5 (M4 Max) each switch from the Metal 3 queue's work back to this queue (MetalFX's
+    /// interlude) takes longer the more it holds (nothing below about 2,400 allocations, 60-90 ms past 3,000, the GPU
+    /// idle), so a camera move whose virtual geometry left thousands of retired BLASes in it until the next sweep
+    /// stalled (the Storeroom's: a p95 of 70-90 ms, 4 ms with this).
+    func release(_ resources: [MTLResource]) {
+        for resource in resources {
+            guard let entry = resident.removeValue(forKey: ObjectIdentifier(resource)) else { continue }
+            residency.removeAllocation(entry.allocation)
+            residencyChanged = true
+        }
+    }
+
     /// Lets go of what no frame has bound for `residencyLife` frames (render targets of another size), or since
     /// frame `since`.
     private func releaseUnused(since: UInt32? = nil) {

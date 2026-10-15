@@ -79,6 +79,9 @@ final class VirtualTracing {
     func selected(slot: Int) -> MTLBuffer? { clusters?.selectedBuffers[slot] }
     var pool: MTLBuffer? { clusters?.pool }
 
+    /// What the per-instance BLASes retired since the last call (VirtualBLAS.takeReleased).
+    func takeReleased() -> [MTLResource] { blas?.takeReleased() ?? [] }
+
     /// Render thread, before encoding `frame`: the next cut (VirtualBLAS swaps in the BLASes it has finished).
     func update(frame: UInt32, slot: Int, framesInFlight: Int, view: VGView, scene: Scene) {
         clusters?.update(frame: frame, framesInFlight: framesInFlight)

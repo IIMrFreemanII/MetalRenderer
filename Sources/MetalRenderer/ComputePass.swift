@@ -258,9 +258,12 @@ protocol FrameEncoder: AnyObject {
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer)
     /// Presents `drawable` and commits. `completed` runs on another thread once the GPU is done; `wait` blocks until then.
     func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void)
+    /// `resources` are no longer used by any frame (Metal 3 tracks what each one uses: nothing to do).
+    func release(_ resources: [MTLResource])
 }
 
 extension FrameEncoder {
+    func release(_ resources: [MTLResource]) {}
     func compute(_ name: String) -> ComputePass? { compute(name, serial: false, concurrent: false) }
     func compute(_ name: String, serial: Bool) -> ComputePass? { compute(name, serial: serial, concurrent: false) }
 
