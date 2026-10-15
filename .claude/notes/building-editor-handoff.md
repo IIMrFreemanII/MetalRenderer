@@ -80,8 +80,12 @@ evenly with sunlight. Now:
   - city interior 9.9 → 21.8 → 16.4 ms;
   - world interior 25.4 → 35.2 → 29.9 ms;
   - nights back to before (21.0, 25.0 ms).
-- **Still to do:** radiance cascades' blotches where a small bright patch (the sun on a sofa) lights a room (its 16
-  cascade-0 directions alias); the fog's lamp light (`FogSettings.lights` off saves 0.3–0.8 ms but drops the lamps'
+- **No blotches:** a room lit by a small bright patch (the sun on a sofa) showed blotches on its walls: the cascades'
+  fixed rays caught the patch or missed it, probe by probe. In the interiors' box each probe's rays now take a new
+  place inside their bins every frame and the resolve averages the frames (reprojected, 10% a frame:
+  `RC_INTERIOR_BLEND`); elsewhere the rays stay fixed and history-free. About 0.3 ms. The indirect light now settles
+  over ~20 frames after a light switch or a door; not looked at in motion in the window.
+- **Still to do:** the fog's lamp light (`FogSettings.lights` off saves 0.3–0.8 ms but drops the lamps'
   glow in the haze). Check in the window and on the M4 Max.
 
 ## Checked in the window (M1 Max, Oct 8)

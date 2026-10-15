@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792083934.0571752,
-    "seen": 1792083950.486733,
-    "ast_hash": "feb422da73ed15a7ba5e332b3ef3cdef",
+    "mtime": 1792085159.7476544,
+    "seen": 1792085175.986828,
+    "ast_hash": "d2c09678479853231d28dc9688309adb",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -216,9 +216,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RadianceCascades.swift": {
-    "mtime": 1792005616.91009,
-    "seen": 1792013775.782409,
-    "ast_hash": "1a2d5fb75118081dae17cca3106baf7d",
+    "mtime": 1792084980.1302516,
+    "seen": 1792085175.9865441,
+    "ast_hash": "ae37d71bcdc1796dba7a55b76255dbe2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/RenderView.swift": {
@@ -522,9 +522,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RadianceCascades.metal": {
-    "mtime": 1792077562.7435088,
-    "seen": 1792078321.899057,
-    "ast_hash": "3fd5811b02c82b7459c06c62fcb1fb84",
+    "mtime": 1792084980.1295469,
+    "seen": 1792085175.986621,
+    "ast_hash": "f10c52951f63fb4f063004133ee35e40",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Reflections.metal": {
@@ -1728,9 +1728,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/building-editor-handoff.md": {
-    "mtime": 1792083934.0559745,
-    "seen": 1792083950.486698,
-    "ast_hash": "f460b248e400d54557677f59618a0179",
+    "mtime": 1792085159.7469788,
+    "seen": 1792085175.98679,
+    "ast_hash": "93c53a1fa04c32029f9c698efcd94d6c",
     "semantic_hash": ""
   },
   ".claude/notes/plant-editor-handoff.md": {

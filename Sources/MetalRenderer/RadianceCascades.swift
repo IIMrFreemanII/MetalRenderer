@@ -4,7 +4,7 @@ import Metal
 struct RCParams {
     var grids: SIMD4<UInt32>      // xy = this cascade's probe grid, zw = the next cascade's
     var layout: SIMD4<UInt32>     // x = probe spacing (px), y = direction tile side, z = cascade, w = 1 if last
-    var interval: SIMD4<Float>    // x = start, y = end (m), z = 1 for multi-bounce feedback
+    var interval: SIMD4<Float>    // x = start, y = end (m), z = 1 for multi-bounce feedback, w = 1 with a last frame
 }
 
 /// Pipelines the radiance-cascade passes use (built with the rest of the shaders, so they hot-reload).
@@ -86,7 +86,8 @@ final class RadianceCascades {
         let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1].grid : k.grid
         return RCParams(grids: SIMD4(UInt32(k.grid.x), UInt32(k.grid.y), UInt32(next.x), UInt32(next.y)),
                         layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), c == cascades.count - 1 ? 1 : 0),
-                        interval: SIMD4(k.interval.lowerBound, k.interval.upperBound, settings.feedback && historyReady ? 1 : 0, 0))
+                        interval: SIMD4(k.interval.lowerBound, k.interval.upperBound, settings.feedback && historyReady ? 1 : 0,
+                                        historyReady ? 1 : 0))
     }
 
     /// Probes -> trace/merge (top down) -> SH -> resolve into `targets.indirect` and `targets.giDebug`, as stages that
@@ -157,7 +158,7 @@ final class RadianceCascades {
             enc.setBytes(&p, length: MemoryLayout<RCParams>.stride, index: 9)
             enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
             enc.setTextures([cascades[0].probePos, cascades[0].probeNs, sh[0], sh[1], sh[2], normalDepth, t.surfacePos,
-                             t.indirect, history[cur], t.giDebug], range: 0..<10)
+                             t.indirect, history[cur], t.giDebug, prevNormalDepth, history[prev]], range: 0..<12)
             enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
         })
