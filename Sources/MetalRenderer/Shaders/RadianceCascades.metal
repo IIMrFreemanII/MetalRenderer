@@ -22,7 +22,8 @@ struct RCParams {
 };
 
 constant uint RC_MAX_CASCADES = 5;
-constant float RC_INTERIOR_BLEND = 0.1f;   // this frame's share of the indirect light in the interiors' box
+constant float RC_INTERIOR_START = 0.1f;   // the farthest an interval starts in the interiors' box: under a partition (0.12 m)
+constant float RC_INTERIOR_BLEND = 0.1f;   // this frame's least share of the indirect light in the interiors' box
 
 // Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
 struct RCProbeBatch {
@@ -133,11 +134,13 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
     bool last = p.layout.w != 0;
-    // In the walkable interiors' box an interval starts halfway into the one below: a coarse probe a little off this
-    // one's place would otherwise start its rays past a wall this probe's own rays missed, and bring the sunlit
-    // outside in (light leaking through walls and ceilings). Elsewhere the intervals only meet (it costs the forest
-    // ~3 ms of rays and changes little outdoors).
-    float start = inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz) ? p.interval.x * 0.5f : p.interval.x;
+    // In the walkable interiors' box an interval starts halfway into the one below, and no further out than
+    // RC_INTERIOR_START: a coarse probe a little off this one's place would otherwise start its rays past a wall this
+    // probe's own rays missed, and bring the sunlit outside in (light leaking through walls and ceilings); halfway
+    // alone still started cascade 1's 0.2 m out, past a 0.12 m partition, and a dark room's ceiling edges glowed with
+    // the next room's light. Indoors the longer rays cost nothing: they meet the room's own walls first. Elsewhere
+    // the intervals only meet (it costs the forest ~3 ms of rays and changes little outdoors).
+    float start = inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz) ? min(p.interval.x * 0.5f, RC_INTERIOR_START) : p.interval.x;
     Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, start, last ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
 
@@ -187,6 +190,43 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     merged.write(float4(radiance, 0.0f), texel);
 }
 
+// Per atlas texel of an upper cascade (1 and up), in the walkable interiors' box: its direction's radiance averaged
+// with the 3x3 neighbouring probes' in the same direction (rcProbeWeight: the same surface), `step` probes apart (two
+// passes: 1, then 2, a-trous), before the cascade below merges it. There each probe's rays take one jittered offset a frame (rcTraceMergeKernel), so each probe's light had
+// an error of its own, and the cascade below passed it on as blotches the size of these probes (32-64 px at cascades
+// 1 and 2, where a room's light comes from) wherever the resolve's history was short: a turning camera's new view.
+// The probes' offsets average out (two passes: about 25 probes); their far light barely differs. Elsewhere: a copy.
+kernel void rcFilterKernel(constant Uniforms&              u        [[buffer(0)]],
+                           constant RCParams&              p        [[buffer(9)]],
+                           texture2d<float, access::read>  probePos [[texture(0)]],
+                           texture2d<float, access::read>  probeNs  [[texture(1)]],
+                           texture2d<float, access::read>  merged   [[texture(2)]],
+                           texture2d<float, access::write> filtered [[texture(3)]],
+                           constant int&                   step     [[buffer(10)]],   // probes apart: 1, then 2
+                           uint2 tid [[thread_position_in_grid]])
+{
+    uint side = p.layout.y;
+    uint2 pc = tid / side, bc = tid % side;
+    if (pc.x >= p.grids.x || pc.y >= p.grids.y) return;
+    float4 c = merged.read(tid);
+    float4 pos = probePos.read(pc);
+    if (pos.w <= 0.0f || !inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz)) { filtered.write(c, tid); return; }
+    float3 n = probeNs.read(pc).xyz;
+    float3 sum = c.rgb;
+    float wsum = 1.0f;
+    for (int k = 0; k < 9; ++k) {
+        if (k == 4) continue;
+        int2 q = int2(pc) + int2(k % 3 - 1, k / 3 - 1) * step;
+        if (any(q < 0) || q.x >= int(p.grids.x) || q.y >= int(p.grids.y)) continue;
+        float4 qp = probePos.read(uint2(q));
+        if (qp.w <= 0.0f) continue;
+        float w = rcProbeWeight(qp, probeNs.read(uint2(q)).xyz, pos.xyz, n, pos.w) * ((k & 1) ? 1.0f : 0.5f);   // corners half
+        sum += merged.read(uint2(q) * side + bc).rgb * w;
+        wsum += w;
+    }
+    filtered.write(float4(sum / wsum, c.w), tid);
+}
+
 // Projects each cascade-0 probe's merged radiance onto L1 spherical harmonics (per colour channel: L00, L1-1,
 // L10, L11), so the per-pixel resolve evaluates irradiance for any normal with a few reads instead of re-reading
 // every direction bin. Also sums each probe's mean irradiance into `ambient` (fixed point), which next frame
@@ -230,6 +270,30 @@ inline float rcEvalSH(float4 sh, float3 n) {
     return max(0.282095f * sh.x + (2.0f / 3.0f) * 0.488603f * (sh.y * n.y + sh.z * n.z + sh.w * n.x), 0.0f);
 }
 
+// Weighted sum (rgb) and weight (w) of the 4x4 cascade-0 probes round probe-grid point g, `stride` probes apart: a
+// smooth distance falloff (bilinear-wide at stride 1) x plane/normal similarity, each probe evaluated for normal n.
+inline float4 rcGather(constant RCParams& p, texture2d<float, access::read> probePos, texture2d<float, access::read> probeNs,
+                       texture2d<float, access::read> shR, texture2d<float, access::read> shG,
+                       texture2d<float, access::read> shB, float2 g, int stride, float3 x, float3 n, float depth) {
+    int2 base = (int2(floor(g / float(stride))) - 1) * stride;   // on the stride's own lattice: no flip cell to cell
+    float3 sum = float3(0.0f);
+    float wsum = 0.0f;
+    float scale = 0.8f / float(stride * stride);
+    for (int k = 0; k < 16; ++k) {
+        int2 qi = base + int2(k & 3, k >> 2) * stride;
+        if (any(qi < 0) || qi.x >= int(p.grids.x) || qi.y >= int(p.grids.y)) continue;
+        uint2 q = uint2(qi);
+        float4 qp = probePos.read(q);
+        if (qp.w <= 0.0f) continue;
+        float2 d = float2(qi) - g;
+        float falloff = exp(-dot(d, d) * scale);
+        float w = falloff * rcProbeWeight(qp, probeNs.read(q).xyz, x, n, depth) + 1e-6f * falloff;
+        sum += float3(rcEvalSH(shR.read(q), n), rcEvalSH(shG.read(q), n), rcEvalSH(shB.read(q), n)) * w;
+        wsum += w;
+    }
+    return float4(sum, wsum);
+}
+
 // Per pixel: weighted average over the 4x4 nearest cascade-0 probes (smooth distance falloff x plane/normal
 // similarity), each evaluated for the pixel's normal from its SH. Output is "illumination" (mean incoming
 // radiance under cosine weighting), the same units as the path tracer's indirect light.
@@ -260,30 +324,29 @@ kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(
     float4 nd = normalDepth.read(tid);
     float3 n = nd.xyz;
     float2 g = (float2(tid) + 0.5f + u.jitter.xy) / float(p.layout.x) - 0.5f;
-    int2 base = int2(floor(g)) - 1;
-    float3 sum = float3(0.0f);
-    float wsum = 0.0f;
-    for (int k = 0; k < 16; ++k) {
-        int2 qi = base + int2(k & 3, k >> 2);
-        if (any(qi < 0) || qi.x >= int(p.grids.x) || qi.y >= int(p.grids.y)) continue;
-        uint2 q = uint2(qi);
-        float4 qp = probePos.read(q);
-        if (qp.w <= 0.0f) continue;
-        float2 d = float2(qi) - g;
-        float falloff = exp(-dot(d, d) * 0.8f);   // ~bilinear-width Gaussian over the 4x4 neighbourhood
-        float w = falloff * rcProbeWeight(qp, probeNs.read(q).xyz, sp.xyz, n, nd.w) + 1e-6f * falloff;
-        float3 e = float3(rcEvalSH(shR.read(q), n), rcEvalSH(shG.read(q), n), rcEvalSH(shB.read(q), n));
-        sum += e * w;
-        wsum += w;
-    }
-    float3 indirect = wsum > 0.0f ? sum / wsum : float3(0.0f);
+    float4 near = rcGather(p, probePos, probeNs, shR, shG, shB, g, 1, sp.xyz, n, nd.w);
+    float wsum = near.w;
+    float3 indirect = near.w > 0.0f ? near.rgb / near.w : float3(0.0f);
     // In the interiors' box the probes' rays move every frame (rcTraceMergeKernel): average them where this point was
-    // on screen last frame (interval.w: there is a last frame).
-    uint2 q;
-    if (p.interval.w > 0.0f && inInteriorBox(u.interiorLo, u.interiorHi, sp.xyz) && lastFramePixel(u, sp.xyz, n, prevND, q))
-        indirect = mix(prevHistory.read(q).rgb, indirect, RC_INTERIOR_BLEND);
+    // on screen last frame (interval.w: there is a last frame), filtered (lastFrameHistory), over as many frames as
+    // the point has been seen (alpha: up to 1 / RC_INTERIOR_BLEND), so a point just come into view settles in a few
+    // frames instead of showing this frame's rays alone for ten. Until then it also takes in the probes twice as far
+    // round it (fading out as its frames add up): a turning camera brings walls in at the screen's edge every frame,
+    // and their few frames of jittered rays were cloudy blotches over most of the view. Elsewhere: no history.
+    float frames = 1.0f;
+    float4 h = float4(0.0f);
+    if (p.interval.w > 0.0f && inInteriorBox(u.interiorLo, u.interiorHi, sp.xyz)) {
+        bool seen = lastFrameHistory(u, sp.xyz, n, prevND, prevHistory, h);
+        if (seen) frames = min(max(h.a, 1.0f) + 1.0f, 1.0f / RC_INTERIOR_BLEND);
+        float young = 1.0f - (frames - 1.0f) / (1.0f / RC_INTERIOR_BLEND - 1.0f);
+        if (young > 0.0f) {
+            float4 wide = rcGather(p, probePos, probeNs, shR, shG, shB, g, 2, sp.xyz, n, nd.w);
+            if (wide.w > 0.0f) indirect = mix(indirect, wide.rgb / wide.w, young);
+        }
+        if (seen) indirect = mix(h.rgb, indirect, 1.0f / frames);
+    }
     outIndirect.write(float4(indirect, 1.0f), tid);
-    outHistory.write(float4(indirect, 1.0f), tid);
+    outHistory.write(float4(indirect, frames), tid);
     // Debug: probe grid lines over the strongest weight's confidence (dark = no good probe nearby).
     bool grid = any(fmod(float2(tid), float(p.layout.x)) < 1.0f);
     giDebug.write(float4(grid ? float3(0.25f) : float3(saturate(wsum)), 1.0f), tid);

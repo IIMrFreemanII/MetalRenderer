@@ -109,6 +109,51 @@ final class RealismTests: XCTestCase {
         XCTAssertEqual(log2(e), log2(AutoExposure.key / measured), accuracy: 0.6)
     }
 
+    /// Fills the histogram the meter reads next with 1000 pixels at log2 luminance `l`, and returns its exposure.
+    private func meter(_ meter: AutoExposure, at l: Float, dt: Float = 1.0 / 60) -> Float {
+        let bin = Int((l - AutoExposure.logMin) / (AutoExposure.logMax - AutoExposure.logMin) * Float(AutoExposure.bins))
+        let h = meter.peekNext().contents().bindMemory(to: UInt32.self, capacity: AutoExposure.bins)
+        h[bin] = 1000
+        return meter.next(dt: dt)
+    }
+
+    /// A very dark view (a storeroom lit only through its door) opens the exposure past 2^6 only half as fast, and no
+    /// further than 2^limit.
+    func testAutoExposureOpensDarkRoomsPartly() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
+        let m = AutoExposure(device: device, framesInFlight: 2)
+        for _ in 0..<4 { _ = m.next() }
+        var e: Float = 1
+        for _ in 0..<3 { e = meter(m, at: -10) }   // the first measure is taken at once
+        let full = log2(AutoExposure.key) + 10
+        XCTAssertGreaterThan(log2(e), AutoExposure.fullLimit)
+        XCTAssertEqual(log2(e), AutoExposure.fullLimit + (full - AutoExposure.fullLimit) / 2, accuracy: 0.4)
+        for _ in 0..<3 { e = meter(m, at: -14) }
+        XCTAssertLessThanOrEqual(log2(e), AutoExposure.limit + 1e-3)
+    }
+
+    /// The exposure eases by the clock: four frames of 1/60 s go as far as one of 4/60 s; it closes down (a brighter
+    /// view) faster than it opens up.
+    func testAutoExposureEasesByTheClock() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
+        func settled(at l: Float) -> AutoExposure {
+            let m = AutoExposure(device: device, framesInFlight: 2)
+            for _ in 0..<4 { _ = m.next() }
+            for _ in 0..<3 { _ = meter(m, at: l) }
+            return m
+        }
+        // From a settled -2 to a view 3 stops darker: four short frames vs one long one.
+        let a = settled(at: -2), b = settled(at: -2)
+        var ea: Float = 0
+        for _ in 0..<4 { ea = meter(a, at: -5) }
+        let eb = meter(b, at: -5, dt: 4.0 / 60)
+        XCTAssertEqual(log2(ea), log2(eb), accuracy: 0.05)
+        // The same 3 stops brighter instead: a larger step toward its target.
+        let c = settled(at: -2), start = log2(meter(c, at: -2))
+        let up = log2(eb) - start, down = start - log2(meter(c, at: 1, dt: 4.0 / 60))
+        XCTAssertGreaterThan(down, up * 1.5)
+    }
+
     /// Realism high's fine sectors: as many vertices as counted, and their seam sides on the coarse sector's
     /// triangles (no crack) where the relief and the smoothing fade out.
     func testFineSectorsMeetTheCoarseOnes() {

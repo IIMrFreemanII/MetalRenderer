@@ -11,6 +11,7 @@ struct RCParams {
 struct RCPipelines {
     let probe: MTLComputePipelineState
     let traceMerge: MTLComputePipelineState
+    let filter: MTLComputePipelineState
     let sh: MTLComputePipelineState
     let clearAmbient: MTLComputePipelineState
     let resolve: MTLComputePipelineState
@@ -28,6 +29,7 @@ final class RadianceCascades {
         let probeNs: MTLTexture
         let probeNg: MTLTexture
         let merged: MTLTexture        // probe-major atlas: probe (x, y) owns texels [x, y] * dirSide ..< +dirSide
+        let filtered: MTLTexture?     // cascades 1 and up: rcFilterKernel's first pass (its second writes `merged` again)
     }
 
     static let maxCascades = 5          // RC_MAX_CASCADES in the shader (CascadeSettings.cascadeRange)
@@ -40,6 +42,9 @@ final class RadianceCascades {
     private let sh: [MTLTexture]        // cascade-0 probes' L1 SH, one texture per colour channel
     private let ambient: [MTLBuffer]    // [2] mean probe irradiance (rgb sums x1024 + count), ping-ponged
     private var frame = 0
+    /// Last frame's mean probe irradiance (rgb sums x1024 + count), as this frame's trace reads it: the reflection
+    /// pass's light at its hits off screen in the interiors' box (a room's, where the sky's was).
+    private(set) var lastAmbient: MTLBuffer?
     private var historyReady = false    // textures start undefined: no feedback until one frame has been resolved
 
     /// Forget last frame's indirect light (after a reset or teleport).
@@ -68,7 +73,8 @@ final class RadianceCascades {
                            probePos: try make(.rgba32Float, grid.x, grid.y, "rc\(c) probePos"),
                            probeNs: try make(.rgba16Float, grid.x, grid.y, "rc\(c) probeNs"),
                            probeNg: try make(.rgba16Float, grid.x, grid.y, "rc\(c) probeNg"),
-                           merged: try make(.rgba16Float, grid.x * dirSide, grid.y * dirSide, "rc\(c) merged"))
+                           merged: try make(.rgba16Float, grid.x * dirSide, grid.y * dirSide, "rc\(c) merged"),
+                           filtered: c == 0 ? nil : try make(.rgba16Float, grid.x * dirSide, grid.y * dirSide, "rc\(c) filtered"))
         }
         history = [try make(.rgba16Float, width, height, "rc history0"), try make(.rgba16Float, width, height, "rc history1")]
         let g0 = cascades[0].grid
@@ -99,6 +105,7 @@ final class RadianceCascades {
                 targets t: RenderTargets) -> [ComputeStage] {
         let cur = frame & 1, prev = cur ^ 1
         frame += 1
+        lastAmbient = historyReady ? ambient[prev] : nil
         defer { historyReady = true }
         let cascades = cascades, history = history, sh = sh, ambient = ambient, width = width, height = height
 
@@ -126,6 +133,9 @@ final class RadianceCascades {
             enc.setBuffer(ambient[cur], offset: 0, index: 10)
             enc.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
         }]
+        // With walkable interiors (an interiors' box: lo <= hi), the upper cascades' probes are filtered in place
+        // (rcFilterKernel, through `filtered`) before the cascade below merges them.
+        let interiors = uniforms.interiorLo.x <= uniforms.interiorHi.x
         for c in cascades.indices.reversed() {
             let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1] : k
             let p = params(c)
@@ -141,6 +151,23 @@ final class RadianceCascades {
                 enc.dispatchThreads(MTLSize(width: k.grid.x * k.grid.y * k.dirSide * k.dirSide, height: 1, depth: 1),
                                     threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
             })
+            if interiors, let filtered = k.filtered {
+                stages.append(ComputeStage(pass: "rc filter") { enc in
+                    var u = uniforms, p = p
+                    enc.setComputePipelineState(pipelines.filter)
+                    enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
+                    enc.setBytes(&p, length: MemoryLayout<RCParams>.stride, index: 9)
+                    // merged -> filtered (step 1) -> merged (step 2): the cascade below merges it as ever.
+                    for (step, from, to) in [(Int32(1), k.merged, filtered), (Int32(2), filtered, k.merged)] {
+                        var step = step
+                        enc.setBytes(&step, length: MemoryLayout<Int32>.stride, index: 10)
+                        enc.setTextures([k.probePos, k.probeNs, from, to], range: 0..<4)
+                        enc.dispatchThreads(MTLSize(width: k.grid.x * k.dirSide, height: k.grid.y * k.dirSide, depth: 1),
+                                            threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+                        if step == 1 { enc.memoryBarrier(scope: .textures) }
+                    }
+                })
+            }
         }
         let p0 = params(0)
         stages.append(ComputeStage(pass: "rc sh") { enc in

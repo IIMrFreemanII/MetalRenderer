@@ -2,7 +2,7 @@
 // 2d. Reflections (specular materials only): one GGX visible-normal ray per pixel for the indirect specular light,
 //     divided by the specular albedo so the denoiser filters a smooth signal (the composite multiplies it back).
 //     Hits are lit by one light sample (one shadow ray) plus this frame's diffuse GI where the hit is on screen
-//     (a dim sky ambient elsewhere); references (FLAG_REFERENCE) follow full paths instead. Without the shadow
+//     (elsewhere a dim sky ambient, or indoors the radiance cascades' mean probe light); references (FLAG_REFERENCE) follow full paths instead. Without the shadow
 //     denoiser, which otherwise adds direct specular analytically, one sampled light's direct specular is added.
 //     Rougher than REFLECTION_MAX_ROUGHNESS: no ray, the composite uses the diffuse GI.
 // ---------------------------------------------------------------------------------------------
@@ -10,7 +10,7 @@
 // Light arriving along a reflection ray that hit `h`: emission, one light sample and the diffuse GI (see above).
 float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, Surface h, float3 dir,
                              thread Sampler& rng, texture2d<float, access::read> normalDepth,
-                             texture2d<float, access::read> indirect) {
+                             texture2d<float, access::read> indirect, constant uint* roomAmbient) {
     if (!h.hit) return skyRadiance(u, s, dir, 0.0f);
     float3 L = float3(0.0f), throughput = float3(1.0f);
     bool reference = flagOn(u.flags, FLAG_REFERENCE);
@@ -34,8 +34,13 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
             if (li < u.lightCount) L += throughput * albedo * sampleLight(s.lights[li], hp, hn, hng, r, accel, s) / pdf;
         }
         if (!reference) {
-            // Diffuse GI at the hit: this frame's indirect light where the hit point is visible on screen.
+            // Diffuse GI at the hit: this frame's indirect light where the hit point is visible on screen; elsewhere a dim
+            // sky ambient, or in the walkable interiors' box the radiance cascades' mean probe light (last frame's, the
+            // light of the rooms in view): a closed room's shiny shelves and door handles reflected the daylight sky and
+            // glowed in the dark.
             float3 gi = skyAmbient(u, s) * 0.3f;
+            if (roomAmbient[3] > 0 && inInteriorBox(u.interiorLo, u.interiorHi, hp))
+                gi = float3(roomAmbient[0], roomAmbient[1], roomAmbient[2]) / (1024.0f * float(roomAmbient[3]));
             uint2 q;
             if (surfacePixel(h.position - u.camPos.xyz, hn, u.camRight, u.camUp, u.camForward, u, normalDepth,
                              REFLECTION_DEPTH, REFLECTION_NORMAL, q)) gi = indirect.read(q).rgb;
@@ -73,6 +78,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                              texture3d<float>                 fogNoiseTex [[texture(7)]],   // with FOG_REFLECTIONS
                              texture2d<float, access::read>   restirSpecular [[texture(8)]],  // with FLAG_RESTIR
                              constant FogParams&              fog        [[buffer(9)]],
+                             constant uint*                   roomAmbient [[buffer(10)]],   // the cascades' mean probe light (rgb x1024, count)
                              uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -157,7 +163,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // No texture feedback from reflections: their footprint ignores curvature, so self-reflections at close
             // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, spread);
-            float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect);
+            float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect, roomAmbient);
             if (PARTICLES && (accel.particleFlags & PARTICLES_REFLECTED) != 0u) {   // the particles in front of what it reflects
                 float meanT;
                 float4 seen = particleGather<2>(p, l, hit.hit ? length(hit.position - p) : 1.0e5f, hit.hit, accel, meanT);

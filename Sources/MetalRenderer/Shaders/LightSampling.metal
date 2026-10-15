@@ -156,6 +156,32 @@ inline bool lastFramePixel(constant Uniforms& u, float3 prevPosition, float3 n, 
                         FEEDBACK_DEPTH, FEEDBACK_NORMAL, q);
 }
 
+// Last frame's `history` where a surface point (n = its normal) was: bilinear over the 4 texels round it that showed the
+// same surface, renormalised; false when none did. For a history read back and written again every frame: one texel
+// (lastFramePixel's, rounded down) moves it up to a pixel a frame while the camera moves, and it smears into streaks.
+inline bool lastFrameHistory(constant Uniforms& u, float3 prevPosition, float3 n, texture2d<float, access::read> prevND,
+                             texture2d<float, access::read> history, thread float4& value) {
+    float depth;
+    float2 px = projectToPixel(prevPosition - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward,
+                               float2(u.width, u.height), depth);
+    if (!(depth > 0.0f)) return false;
+    float2 g = px - 0.5f, f = g - floor(g);
+    int2 base = int2(floor(g));
+    float4 sum = float4(0.0f);
+    float wsum = 0.0f;
+    for (int k = 0; k < 4; ++k) {
+        int2 c = base + int2(k & 1, k >> 1);
+        float w = ((k & 1) ? f.x : 1.0f - f.x) * ((k >> 1) ? f.y : 1.0f - f.y);
+        if (w <= 0.0f || any(c < 0) || c.x >= int(u.width) || c.y >= int(u.height)) continue;
+        if (!sameSurface(prevND.read(uint2(c)), depth, n, FEEDBACK_DEPTH, FEEDBACK_NORMAL)) continue;
+        sum += history.read(uint2(c)) * w;
+        wsum += w;
+    }
+    if (wsum < 0.05f) return false;
+    value = sum / wsum;
+    return true;
+}
+
 // Spatial reuse (ReSTIR DI and GI). A random pixel in the disk of `radius` around tid: false for tid itself and for a
 // pixel off screen.
 inline bool diskNeighbour(uint2 tid, float radius, constant Uniforms& u, thread Rng& rng, thread int2& q) {
@@ -286,7 +312,8 @@ float lightMapVisibility(Light light, uint l, texture2d_array<float, access::rea
 // The sun's visibility at a secondary hit: its light map; or with `sunRay` (the hit is in the walkable interiors' box:
 // a map whose texels are metres wide sees no wall or ceiling, and lit every room inside) a shadow ray toward the sun's
 // centre over the reach the map can't resolve (at least GI_SUN_RAY_REACH, 4 of its texels), then the map for what is
-// farther. The ray is the same every frame: radiance cascades keep no history, so a jittered one would show as blotches.
+// farther. The ray is the same every frame: radiance cascades average only a few frames (in the interiors' box), so
+// a jittered one would show as blotches.
 // Only in the box: through a forest's leaves the rays cost a third of the frame on the M1 Max.
 constant float GI_SUN_RAY_REACH = 32.0f;
 inline float giSunVisibility(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 ng,
@@ -300,6 +327,18 @@ inline float giSunVisibility(Light light, uint l, texture2d_array<float, access:
 
 // Direct light at a secondary hit from one light, shadowed by its light map (2x2 PCF), or the sun by a ray (see
 // giSunVisibility), albedo divided out.
+// A light's (not the sun's) visibility at a secondary hit: its light map; with `ray` (the hit is in the walkable
+// interiors' box), where the map sees the light, a shadow ray to its middle too. Its map's texels and normal offset are
+// a few tens of centimetres there (72^2 maps with a house's 46 lights), more than a rack's shelves are apart: GI's hits
+// under the shelves were lit, and bled the boxes' colours onto them while the direct light left the boxes black. The ray
+// is the same every frame, as the sun's (giSunVisibility).
+inline float giLightVisibility(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 ng,
+                               bool ray, SCENE_ACCEL accel) {
+    float map = lightMapVisibility(light, l, lightMap, p, ng);
+    if (!ray || map <= 0.0f) return map;
+    return isVisible(p + ng * RAY_EPSILON, lightMapCenter(light), accel, RAY_GI) ? map : 0.0f;
+}
+
 float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 n, float3 ng,
                            bool sunRay, SCENE_ACCEL accel, thread const SceneData& s) {
     if (lightType(light) == LIGHT_SPHERE) {
@@ -310,12 +349,12 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
         float3 L = toLight * rsqrt(dist2);
         float cosTheta = dot(n, L);
         if (cosTheta <= 0.0f || dot(ng, L) <= 0.0f) return float3(0.0f);
-        return light.color.rgb * (cosTheta * lightMapVisibility(light, l, lightMap, p, ng) / (M_PI_F * max(dist2, radius * radius)));
+        return light.color.rgb * (cosTheta * giLightVisibility(light, l, lightMap, p, ng, sunRay, accel) / (M_PI_F * max(dist2, radius * radius)));
     }
     float3 unshadowed = lightUnshadowed(light, p, n, ng);
     if (all(unshadowed <= 0.0f)) return float3(0.0f);
     float visibility = lightType(light) == LIGHT_SUN ? giSunVisibility(light, l, lightMap, p, ng, sunRay, accel)
-                                                     : lightMapVisibility(light, l, lightMap, p, ng);
+                                                     : giLightVisibility(light, l, lightMap, p, ng, sunRay, accel);
     return visibility > 0.0f ? unshadowed * (visibility * sunVisibilityScale(light, p, s)) : float3(0.0f);
 }
 
@@ -323,7 +362,7 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
 // n = shading normal, ng = geometric normal, both oriented toward the side being lit. Up to 8 lights are summed
 // exactly; with more, CACHED_LIGHT_SAMPLES lights are picked by unshadowed luminance (one weighted reservoir each,
 // seeded by `seed`) and only their maps are read, so the cost no longer grows with the light count's map reads.
-// `sunRay`: the sun's visibility by a ray (giSunVisibility).
+// `sunRay` (in the interiors' box): every light's visibility by a ray too (giSunVisibility, giLightVisibility).
 float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_array<float, access::read> lightMap,
                         float3 p, float3 n, float3 ng, uint seed, uint flags, bool sunRay, SCENE_ACCEL accel, thread const SceneData& s) {
     float3 sum = float3(0.0f);

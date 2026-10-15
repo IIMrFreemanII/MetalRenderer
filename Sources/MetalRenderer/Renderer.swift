@@ -615,6 +615,7 @@ final class Renderer: NSObject {
     private(set) var animTime: Float = 0
     private(set) var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
     private var lastTime = CACurrentMediaTime()
+    private var frameDt: Float = 1.0 / 60   // this frame's step of the clock (simulate): auto exposure eases by it
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
     var settings = RenderSettings() {
         didSet {
@@ -2609,7 +2610,7 @@ final class Renderer: NSObject {
     }
 
     /// Auto exposure's scale for this frame (AutoExposure).
-    private func meterExposure() -> Float { exposureMeter.next() }
+    private func meterExposure() -> Float { exposureMeter.next(dt: frameDt) }
 
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
@@ -2901,6 +2902,7 @@ final class Renderer: NSObject {
                 camera.position += velocity * (back ? -dt : dt)
             }
         }
+        frameDt = dt
         updateCamera(dt: dt)
         let angles = SIMD2(camera.yaw, camera.pitch)
         if angles != sentAngles {
@@ -3076,7 +3078,8 @@ final class Renderer: NSObject {
         var history = false                     // the last frame left denoiser history
         var svgf = false                        // the denoiser is on (never for references)
         var neuralDenoise = false               // MetalFX's denoising scaler denoises instead, as it upscales
-        var shadowDenoiser = false              // direct light's visibility goes through its own filter
+        var megaLightsFilter = false            // ...but MegaLights' direct light goes through SVGF first (svgfStages)
+        var shadowDenoiser = false             // direct light's visibility goes through its own filter
         var restirSplit = false                 // ReSTIR's visibility too, and its unshadowed light through SVGF
         var separate = false                    // direct and indirect light are separate signals
         var denoiseIndirect = false
@@ -3296,6 +3299,10 @@ final class Renderer: NSObject {
             p.lightTree = lightTreeBuffer(slot: slot)
         }
         p.megaLightsHistory = megaLightsWritten   // read after megaLightsTargets: new hashes hold nothing
+        // Under MetalFX's denoising scaler MegaLights' direct light still goes through SVGF's temporal pass and its
+        // a-trous passes: it reuses nothing, so a dark room's rare samples of a light (through a door, past a rack)
+        // are bright sparkles that MetalFX keeps as speckles and blotches, which ReSTIR's reuse never shows it.
+        p.megaLightsFilter = p.megaLights && neuralDenoise && settings.denoiser.enabled && !accumulating
 
         if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
         p.accumCount = p.provisional ? 0 : accumCount   // read after accumulationTextures: new textures start a new average
@@ -4038,10 +4045,16 @@ final class Renderer: NSObject {
         guard plan.specular else { return ([], []) }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
         let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular ?? plan.megaLightsGrid?.specular
+        let roomAmbient = plan.cascades ? radianceCascades?.lastAmbient : nil
         let trace = [ComputeStage(pass: "reflections") { [self] enc in
             bind(enc, .reflection, uniforms, pass: fogParams.reflectionPassFlags, sceneSlot: slot)
             var fp = fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            // The cascades' mean probe light (none: zeros, and its hits off screen keep the sky's).
+            if let ambient = roomAmbient { enc.setBuffer(ambient, offset: 0, index: 10) } else {
+                var none = SIMD4<UInt32>(repeating: 0)
+                enc.setBytes(&none, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 10)
+            }
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
                               fogNoise ?? dummy3D, restirSpecular ?? dummy2D])
             dispatch(enc, .reflection, width: size.width, height: size.height)
@@ -4296,6 +4309,8 @@ final class Renderer: NSObject {
                 : plan.megaLights && d === t.denoise[0] ? megaLightsUniforms : plan.uniforms
             return DenoiseSignal(noisy: noisy, targets: d, passes: passes, uniforms: uniforms)
         }
+        // Under MetalFX's denoising scaler: MegaLights' direct light alone, lightly (MetalFX does the rest).
+        if plan.megaLightsFilter { return [signal([t.direct], t.denoise[0], min(plan.directPasses, 2))] }
         var signals: [DenoiseSignal] = []
         // First, so the indirect light stays last: ReSTIR's unshadowed light (no edges to keep), or the mesh lights'.
         if plan.restirSplit { signals.append(signal([t.direct], t.denoise[3], plan.directPasses)) }
@@ -4307,9 +4322,10 @@ final class Renderer: NSObject {
         return signals
     }
 
-    /// 3. SVGF: one temporal pass and up to five a-trous passes over every signal.
+    /// 3. SVGF: one temporal pass and up to five a-trous passes over every signal (`megaLightsFilter`: over MegaLights'
+    /// direct light alone, the indirect light left to MetalFX).
     private func svgfStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
-        guard plan.svgf else { return [] }
+        guard plan.svgf || plan.megaLightsFilter else { return [] }
         let signals = denoiseSignals(plan, targets: t)
         guard !signals.isEmpty else { return [] }
         let cur = plan.cur, prev = plan.prev, size = plan.size
@@ -4344,6 +4360,8 @@ final class Renderer: NSObject {
         }
         if plan.restirSplit { composite.meshDirect = composite.illumination[1] }
         if plan.separate { composite.uniforms.flags |= UniformFlags.separateSignals }
+        // The filtered direct light plus the raw indirect (encodeOutput's compositeIndirect, without SVGF).
+        if plan.megaLightsFilter { composite.uniforms.flags |= UniformFlags.denoise | UniformFlags.separateSignals }
         return stages
     }
 

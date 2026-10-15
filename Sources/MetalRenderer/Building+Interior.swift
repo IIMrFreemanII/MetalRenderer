@@ -276,7 +276,9 @@ enum InteriorBuilder {
                     area += q.size.x * q.size.y
                 }
                 let size = hi - lo, mid = (lo + hi) / 2
-                let room = f.rooms[r], day = room.type.litByDay(office: a.style.isOffice)
+                // On by day too in a room that is dark without its light: its type's (halls, wet rooms, an office's work
+                // rooms) or one with no window of its own (a storeroom inside the plan: with its door shut, black).
+                let room = f.rooms[r], day = room.type.litByDay(office: a.style.isOffice) || !hasWindow(room, storey: s)
                 interior.lights.append(Interior.Light(position: SIMD3(mid.x, ps[0].position.y + f.floor, mid.y), size: size,
                                                       color: glow * (area / (size.x * size.y)), storey: s, room: r,
                                                       on: room.lit || day, switchID: -1, day: day,
@@ -378,6 +380,20 @@ enum InteriorBuilder {
         }
 
         /// The inside of the outer walls: each room's sides that are on an outer wall, cut round that wall's openings.
+        /// It has a window: a glazed opening in its outer walls (a window, a balcony's glazed door, a shopfront).
+        private func hasWindow(_ room: PlanRoom, storey s: Int) -> Bool {
+            let r = room.rect, t = plan.outer
+            return a.b.openings.contains { o in
+                guard o.storey == s, o.glass else { return false }
+                if abs(o.normal.y) > 0.5 {
+                    let line = o.normal.y > 0 ? r.hi.y : r.lo.y
+                    return abs(o.a.y - (line + o.normal.y * t)) < 0.05 && max(o.a.x, o.c.x) > r.lo.x && min(o.a.x, o.c.x) < r.hi.x
+                }
+                let line = o.normal.x > 0 ? r.hi.x : r.lo.x
+                return abs(o.a.x - (line + o.normal.x * t)) < 0.05 && max(o.a.y, o.c.y) > r.lo.y && min(o.a.y, o.c.y) < r.hi.y
+            }
+        }
+
         private mutating func outerWalls(_ s: Int, height: Float) {
             let f = plan.storeys[s]
             let walls = a.grids(a.b.tiers[f.tier])
