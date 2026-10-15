@@ -754,8 +754,7 @@ inline void surfaceSpecular(thread Surface& sf) {
     }
 }
 
-// The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures. The
-// hit comes from the tracer (traceSurface) or from the raster visibility buffer (visibilityHit, Raster.metal).
+// The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures.
 Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record) {
     Surface sf;
     sf.hit = false;

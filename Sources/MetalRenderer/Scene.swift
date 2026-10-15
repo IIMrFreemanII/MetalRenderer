@@ -965,8 +965,8 @@ final class Scene {
 
     // MARK: - GPU data
 
-    /// Virtual instances: meshIndex points past the ordinary meshes (the raster's mesh table lists the virtual meshes'
-    /// bounds there) and pad1 = 1 + the instance's rank among the virtual ones (its BLAS / cluster records).
+    /// Virtual instances: meshIndex points past the ordinary meshes and pad1 = 1 + the instance's rank among the virtual
+    /// ones (its BLAS / cluster records).
     /// Assembly instances: meshIndex points past those too (the table then lists the assemblies), and SDF shapes'
     /// instances past those (the shapes), with `Scene.instanceSDF` in pad0.
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise

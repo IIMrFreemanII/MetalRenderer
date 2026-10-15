@@ -120,11 +120,6 @@ extension Scene {
         return e.textures.y != .max
     }
 
-    /// The meshes the raster leaves to the rays: an alpha-tested instance's.
-    var holeMeshes: Set<Int> {
-        guard hasOpacity else { return [] }
-        return Set(instances.indices.filter { cutsHoles($0) }.map { instances[$0].mesh })
-    }
 
     /// Every material's extras as the GPU reads them (MSL MaterialExtra: the defaults for a material without).
     func extrasArray() -> [GPUMaterialExtra] {

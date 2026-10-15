@@ -52,7 +52,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Water.metal|Sources/MetalRenderer/Shaders/WaterCommon.metal) add WaterTests ShaderSourceTests KernelVariantsTests ;;   # and images (waterKernel: the offscreen skill)
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
       Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
@@ -75,7 +75,7 @@ if [[ $suites == " " ]]; then
         add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
       Sources/MetalRenderer/MaterialEditor/*.swift) add MaterialEditorTests ;;
       Sources/MetalRenderer/Scene+Procedural.swift|Sources/MetalRenderer/Scene+Materials.swift|Sources/MetalRenderer/Scene+Displacement.swift)
-        add MaterialEditorTests MaterialDisplacementTests SceneBuffersTests RasterSceneTests MirelandTests ;;
+        add MaterialEditorTests MaterialDisplacementTests SceneBuffersTests MirelandTests ;;
       Sources/MetalRenderer/Scene+Mireland.swift) add MirelandTests MaterialEngineTests ;;
       Sources/MetalRenderer/*.swift)
         case $name in
@@ -118,7 +118,6 @@ if [[ $suites == " " ]]; then
           Scene.swift) add SceneBuffersTests ProjectGraphTests ;;   # (its outline's tags, the overrides' way in)
           SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
-          RasterScene.swift) add RasterSceneTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           LoadActivity.swift) add LoadActivityTests ;;
           World+Water.swift) add WorldTests WaterTests ;;
@@ -127,7 +126,7 @@ if [[ $suites == " " ]]; then
           Scene+Terrain*.swift|Renderer+Terrain.swift) add TerrainDocumentTests TerrainEditorTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
-          VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests VGCutTests ;;
+          VGStreamer.swift|VirtualGeometry.swift) add VGStreamerTests VGCutTests ;;
           VirtualBLAS.swift) add VGCutTests ;;
           VirtualTracing.swift) add VGCutTests VGStreamerTests ;;   # and images: no suite traces it
           TraceScene.swift|Renderer.swift) uncovered+=("$f") ;;    # images (the offscreen skill)

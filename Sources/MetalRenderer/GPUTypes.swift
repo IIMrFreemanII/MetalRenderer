@@ -9,7 +9,7 @@ struct Uniforms {
     var camPos = SIMD4<Float>()          // xyz = camera position
     var camRight = SIMD4<Float>()        // xyz = right vector,   w = tan(fovX / 2)
     var camUp = SIMD4<Float>()           // xyz = up vector,      w = tan(fovY / 2)
-    var camForward = SIMD4<Float>()      // xyz = forward vector, w = RasterClusters.bias where the raster draws clusters
+    var camForward = SIMD4<Float>()      // xyz = forward vector, w unused
     var prevCamPos = SIMD4<Float>()      // previous frame's camera (for motion vectors)
     var prevCamRight = SIMD4<Float>()
     var prevCamUp = SIMD4<Float>()
@@ -61,7 +61,6 @@ enum UniformFlags {
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
     static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
     static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
-    static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
     static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
@@ -95,31 +94,6 @@ struct GPURestirParams {
     static let visibilityReuse: UInt32 = 2  // test the initial pick's visibility
     static let shade: UInt32 = 4            // this spatial pass is the last: shade and write the outputs
     static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
-}
-
-/// The raster visibility buffer's culling and drawing parameters (MSL RasterParams, Shaders/Raster.metal).
-struct GPURasterParams {
-    var instanceCount: UInt32 = 0     // the instances' records, counted through
-    var meshCount: UInt32 = 0         // GPURasterMesh records
-    var chunkCount: UInt32 = 0        // chunks with bounds
-    var flags: UInt32 = 0
-    var maxDraws: UInt32 = 0          // per pass
-    var maxGroups: UInt32 = 0         // per pass
-    var hzbLevels: UInt32 = 0
-    var pass: UInt32 = 0              // 0 = visible last frame, 1 = tested against this frame's pyramid
-    var hzbSize = SIMD2<UInt32>()     // level 0
-    var firstAssembly: UInt32 = 0     // RasterScene.firstAssembly
-    var virtualCount: UInt32 = 0      // virtual instances drawn as clusters (RasterClusters), else 0
-
-    static let ids: UInt32 = 1        // an instance's id comes from RasterScene.ids (a scene with blocks)
-    static let hzb: UInt32 = 2        // pass 2 tests against the pyramid
-}
-
-/// A mesh index's record for the raster visibility buffer (MSL RasterMesh): its object-space bounds, with its first
-/// chunk's place among the chunks' bounds in lo.w and its RasterScene kind and flags in hi.w (both bit patterns).
-struct GPURasterMesh {
-    var lo = SIMD4<Float>()
-    var hi = SIMD4<Float>()
 }
 
 /// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
@@ -255,7 +229,7 @@ struct GPUInstanceData {
     var normalMatrix: simd_float4x4    // inverse-transpose of transform
     var meshIndex: UInt32
     var materialIndex: UInt32
-    var pad0: UInt32 = 0               // instance mask (Scene.maskGeometry / maskLights), read by the raster and the cut
+    var pad0: UInt32 = 0               // instance mask (Scene.maskGeometry / maskLights), read by the cut
     var pad1: UInt32 = 0
 }
 
@@ -800,8 +774,6 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")
     precondition(MemoryLayout<GPURestirParams>.stride == 32, "GPURestirParams layout mismatch")
     precondition(MemoryLayout<GPULightTreeNode>.stride == 64, "GPULightTreeNode layout mismatch")
-    precondition(MemoryLayout<GPURasterParams>.stride == 48, "GPURasterParams layout mismatch")
-    precondition(MemoryLayout<GPURasterMesh>.stride == 32, "GPURasterMesh layout mismatch")
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")

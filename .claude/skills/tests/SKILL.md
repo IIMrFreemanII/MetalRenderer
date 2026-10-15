@@ -90,7 +90,6 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
 | `LightTree.swift`, `Shaders/LightTree.metal` | LightTreeTests (the shader: plus the shader pair) |
-| `RasterScene.swift` | RasterSceneTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `LoadActivity` (the loading overlay's model) | LoadActivityTests (the overlay itself, `LoadingOverlay`: none, it is AppKit) |
 | `World+Water` | WorldTests, WaterTests |
@@ -100,10 +99,10 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `TerrainEditor/*` | TerrainEditorTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
-| `VGStreamer`, `VirtualGeometry`, `RasterClusters` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |
+| `VGStreamer`, `VirtualGeometry` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |
 | `VirtualTracing` (virtual geometry in Metal's structures) | VGCutTests, VGStreamerTests (+ prove with images: no suite traces it) |
 | `TraceScene`, `Renderer` | none: prove with images (the offscreen skill) |
-| `VirtualBLAS` (its cut, the reference), `Shaders/RasterClusters.metal`, `Shaders/Raster.metal`, `Shaders/VirtualGeometry.metal` | VGCutTests (the shaders: plus the shader pair) |
+| `VirtualBLAS` (its cut), `Shaders/VirtualGeometry.metal` | VGCutTests (the shaders: plus the shader pair) |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |
 | `Package.swift`, a shared test helper | all suites: the one case where the full run is right |
 

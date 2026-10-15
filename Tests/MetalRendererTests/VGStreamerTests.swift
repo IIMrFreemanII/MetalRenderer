@@ -3,7 +3,7 @@ import Metal
 import simd
 @testable import MetalRenderer
 
-/// Virtual geometry's streaming (VGStreamer) and what the raster clusters' cut assumes of the DAG.
+/// Virtual geometry's streaming (VGStreamer) and what the cuts assume of the DAG.
 final class VGStreamerTests: XCTestCase {
     /// A bumpy grid of `n` x `n` quads, made into a cluster DAG of a few levels (also VGCutTests').
     static let mesh: VirtualMesh = {
@@ -22,7 +22,7 @@ final class VGStreamerTests: XCTestCase {
                                             uvs: Array(repeating: .zero, count: positions.count), indices: indices, name: "grid") { _ in }
     }()
 
-    /// The raster clusters' cut tests a group once for all its clusters (VGGroupRecord): every cluster of a group must
+    /// VirtualBLAS's cut tests a group once for all its clusters (VirtualBLAS.selection): every cluster of a group must
     /// have the group's parent sphere and error.
     func testClustersShareTheirGroupsParentTest() {
         let m = VGStreamerTests.mesh

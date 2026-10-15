@@ -2,7 +2,7 @@
 // 1c. Water (WATER scenes: Scene+Water.swift; the shared pieces in WaterCommon.metal).
 //
 //     waterKernel runs before traceKernel, after liquidKernel (a pixel a liquid bent stays the liquid's). It meets the
-//     camera's ray with the water's surfaces (nothing solid in front: the raster's triangle, or a ray), takes the
+//     camera's ray with the water's surfaces (nothing solid in front: a ray tells), takes the
 //     surface there from the waves, the ripples and the flow (waterSurfaceAt), and leaves the trace the ray bent
 //     into the water (Snell): what the trace then finds, lights and filters as any surface (the bed, a stone, a
 //     drowned trunk) is what is seen through it. What the surface reflects (the scene in its mirror direction: one
@@ -11,7 +11,7 @@
 //     under the water dimmed by how far through it it is (Beer-Lambert, per colour) and by how deep it lies (the
 //     light that came down to it), the water's own glow over it, the reflection and the foam on top.
 //     The soft shore: where the water is a few centimetres deep its surface fades out (no bend, no reflection).
-//     To the raster, the shadow maps and shadow rays the water isn't there (its bed is lit, then dimmed by its depth).
+//     To shadow rays the water isn't there (its bed is lit, then dimmed by its depth).
 // ---------------------------------------------------------------------------------------------
 
 // The water's own light toward the eye along a ray in it, from `startDepth` under its surface (`dir` the ray's way
@@ -85,10 +85,8 @@ kernel void waterKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outReflect  [[texture(3)]],   // rgb = reflection, glint and foam
                         texture2d<float, access::read>   blueNoise   [[texture(4)]],
                         texture2d<float, access::write>  outScatter  [[texture(5)]],   // the water's own light (waterInscatter)
-                        texture2d<uint, access::read>    visBuffer   [[texture(6)]],   // with FLAG_VIS_BUFFER
-                        texture2d<uint, access::write>   outGuess    [[texture(7)]],   // the pixel whose triangle the bent ray likely meets
-                        texture2d<float, access::read>   lastReflections [[texture(8)]],   // the last frame's (rgb, a = the surface's distance)
-                        texture2d<float, access::write>  outReflections  [[texture(9)]],   // this frame's
+                        texture2d<float, access::read>   lastReflections [[texture(6)]],   // the last frame's (rgb, a = the surface's distance)
+                        texture2d<float, access::write>  outReflections  [[texture(7)]],   // this frame's
                         uint2 tid [[thread_position_in_grid]])
 {
     if (!WATER || tid.x >= u.width || tid.y >= u.height) return;
@@ -98,9 +96,7 @@ kernel void waterKernel(constant Uniforms&               u          [[buffer(0)]
     bindLightSampling(s, u.lightTable, regirGrid, regir);
     device const WaterScene* w = shading.water;
     float3 dir = primaryDirection(u, tid), origin = u.camPos.xyz;
-    Ray primary = makeRay(origin, dir, 0.0f, INFINITY);
     const uint solid = MASK_ALL & ~(MASK_GLASS | MASK_LIQUID);
-    outGuess.write(uint4(0xFFFFFFFFu), tid);
     if (w == nullptr) { outRay.write(float4(0.0f), tid); return; }
     // Whether this ray starts under the water: its first centimetres under the waves' surface there (the waterline
     // can cross the picture when the camera is at it).
@@ -115,9 +111,7 @@ kernel void waterKernel(constant Uniforms&               u          [[buffer(0)]
         }
         under = start.y < surfaceY;
     }
-    // The water's surface (its own structures: a cheap ray), unless something solid is in front of it: the raster's
-    // triangle there, or a ray's up to it.
-    bool drawnBelow = false;   // the raster's triangle here is under the water (the bent ray's guess)
+    // The water's surface (its own structures: a cheap ray), unless something solid is in front of it: a ray's up to it.
     // (A ray that never comes down to the highest water there is meets none; one that does meets it between where
     // it crosses the highest water's height and the lowest's: where the map has no water along that stretch, none
     // either. No ray needed to tell: a ray, even into the water's own small structure, costs far more.)
@@ -139,15 +133,9 @@ kernel void waterKernel(constant Uniforms&               u          [[buffer(0)]
         WaterPlace there = waterAt(w, first.rest);
         if (!there.wet && there.ground > (origin + dir * first.distance).y + 0.05f) first.hit = false;
     }
-    if (first.hit) {
-        Hit drawn;
-        if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, primary, accel, s, drawn)) {
-            if (drawn.hit && drawn.distance < first.distance) first.hit = false;
-            drawnBelow = drawn.hit;
-        } else if ((w->counts.w & 32u) == 0u) {
-            float t;
-            if (intersectAny(makeRay(origin, dir, 0.0f, first.distance), rayMask(solid, RAY_CAMERA), accel, t)) first.hit = false;
-        }
+    if (first.hit && (w->counts.w & 32u) == 0u) {
+        float t;
+        if (intersectAny(makeRay(origin, dir, 0.0f, first.distance), rayMask(solid, RAY_CAMERA), accel, t)) first.hit = false;
     }
     outReflections.write(float4(0.0f), tid);
     if (!first.hit && !under) {
@@ -180,7 +168,7 @@ kernel void waterKernel(constant Uniforms&               u          [[buffer(0)]
         float cameraDepth = max(atCamera.level - origin.y, 0.0f);
         float4 scatter = waterInscatter(look, dir, sunDir, sunInto, sky, cameraDepth);
         if (!first.hit) {
-            // Straight on in the water to what is there (the raster's triangle still holds).
+            // Straight on in the water to what is there.
             outRay.write(float4(origin, 2.0f + float(WATER_RAY_UNDER)), tid);
             outDir.write(float4(dir, 0.0f), tid);
             outThrough.write(float4(1.0f, 1.0f, 1.0f, float(atCamera.look)), tid);
@@ -305,21 +293,6 @@ kernel void waterKernel(constant Uniforms&               u          [[buffer(0)]
     // Into the water.
     float3 bent = refract(dir, n, 1.0f / ior);
     float3 into = length_squared(bent) > 0.0f ? normalize(mix(dir, normalize(bent), shore)) : dir;
-    // Where the bent ray likely ends: on the plane of the triangle the raster drew here (the bed under the straight
-    // ray), seen at another pixel; the trace meets that pixel's triangle (or traces, if it doesn't lie under the water).
-    if (drawnBelow) {
-        Hit guess;
-        Ray bentRay = makeRay(p + into * 2e-3f, into, 0.0f, INFINITY);
-        if (visibilityHit(visBuffer.read(tid).xy, bentRay, accel, s, guess) && guess.hit) {
-            float depthAt;
-            float2 px = projectToPixel(bentRay.origin + into * guess.distance - origin, u.camRight, u.camUp, u.camForward,
-                                       float2(u.width, u.height), depthAt);
-            if (depthAt > 0.0f && all(px >= 0.0f) && px.x < float(u.width) && px.y < float(u.height)) {
-                uint2 q = uint2(px);
-                outGuess.write(uint4((q.y << 16) | q.x), tid);
-            }
-        }
-    }
     float3 through = float3((1.0f - fresnel) * (1.0f - foam));
     // METALRENDERER_WATER_DEBUG: 1 = the map (red: wet, green: depth / 4 m, blue: flow / 3 m/s), 2 = the normal,
     // 3 = which surface (orange: the near patch, blue: the still ones).

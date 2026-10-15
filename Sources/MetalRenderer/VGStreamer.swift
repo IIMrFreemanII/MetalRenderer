@@ -45,8 +45,8 @@ struct BuddyAllocator {
 }
 
 /// Virtual geometry's streaming: the cluster groups' pages, copied from the memory-mapped cache files into a
-/// fixed-size pool as a GPU cut asks for them, and evicted least recently used. A cut (VirtualGeometry's for the
-/// cluster tree, the raster's for the visibility buffer) reads the residency table `bindPages(slot:)`, marks the
+/// fixed-size pool as a GPU cut asks for them, and evicted least recently used. The cut (VirtualGeometry's for the
+/// cluster tree) reads the residency table `bindPages(slot:)`, marks the
 /// groups it draws in `lastUsed`, and writes requests that `addRequests` hands over.
 ///
 /// Residency rules that keep the cut whole: a group is loaded only after every group its clusters simplify into
@@ -66,9 +66,8 @@ final class VGStreamer {
     let clusterBuffer: MTLBuffer
     let requestStamp, lastUsed: MTLBuffer
     private var groupPageBuffers: [MTLBuffer] = []    // per slot: the CPU's residency table for that frame
-    /// Per mesh: its first global cluster and group.
+    /// Per mesh: its first global cluster.
     let meshClusterBase: [Int]
-    let meshGroupBase: [Int]
     let clusterCount: Int
     let meshes: [VirtualMesh]
 
@@ -107,7 +106,6 @@ final class VGStreamer {
     private var deferredFrees: [(offset: Int, order: Int, frame: UInt32)] = []
     private let copyQueue = DispatchQueue(label: "metalrenderer.vg.copy", qos: .userInitiated)
     private var completedFrame: UInt32 = 0
-    private var published = Set<Int>()                 // meshes that got groups since `takePublished`
     private(set) var stats = (residentGroups: 0, pending: 0, loadedThisFrame: 0)
     private(set) var rootBytes = 0
     var bytesPerFrame = 32 << 20
@@ -124,10 +122,9 @@ final class VGStreamer {
 
         // Global group and cluster numbering: meshes back to back.
         var clusterRecords: [VGCluster] = []
-        var clusterBase: [Int] = [], groupBase: [Int] = []
+        var clusterBase: [Int] = []
         for (m, mesh) in meshes.enumerated() {
             let base = groups.count
-            groupBase.append(base)
             clusterBase.append(clusterRecords.count)
             for (g, rec) in mesh.groups.enumerated() {
                 let parents = (0..<Int(rec.parentCount)).map { base + Int(mesh.parents[Int(rec.parentStart) + $0]) }
@@ -141,7 +138,6 @@ final class VGStreamer {
             }
         }
         meshClusterBase = clusterBase
-        meshGroupBase = groupBase
         clusterCount = clusterRecords.count
         groupPage = [UInt32](repeating: .max, count: groups.count)
 
@@ -213,15 +209,6 @@ final class VGStreamer {
         return groupPageBuffers[slot]
     }
 
-    /// The meshes that got groups since the last call (what a cut drawn before them would now draw finer).
-    func takePublished() -> Set<Int> {
-        defer { published.removeAll() }
-        return published
-    }
-
-    /// The residency table `bindPages(slot:)` last wrote for `slot`.
-    func pageTable(slot: Int) -> MTLBuffer { groupPageBuffers[slot] }
-
     /// The frame `frame` has finished on the GPU: its cut's requests, (global group, priority bits) pairs (any thread).
     func addRequests(_ r: UnsafePointer<SIMD2<UInt32>>, count n: Int, frame: UInt32) {
         lock.lock()
@@ -248,7 +235,6 @@ final class VGStreamer {
         for g in done {
             groups[g].inFlight = false
             setPage(g, UInt32(groups[g].poolOffset / 16))
-            published.insert(groups[g].mesh)
         }
         deferredFrees.removeAll { f in
             guard f.frame &+ UInt32(framesInFlight) <= completed else { return false }

@@ -412,19 +412,6 @@ struct CitySettings: Equatable, Codable {
     static let roomRange: ClosedRange<Float> = 0...0.5
 }
 
-/// Where the camera's surfaces come from: one traced ray per pixel, or a raster visibility buffer (Shaders/Raster.metal,
-/// in the manner of Unreal's Nanite: GPU-driven, culled by chunks of 128 triangles against the view and a depth pyramid),
-/// whose triangles the primary rays then only meet. The rest of the frame is the same.
-enum PrimaryVisibility: Int, CaseIterable, Codable {
-    case traced
-    case raster
-
-    var title: String { self == .traced ? "Traced" : "Raster (visibility buffer)" }
-
-    /// `METALRENDERER_PRIMARY=raster|traced` picks the starting one (benchmarks: for every setting).
-    static let initial: PrimaryVisibility = ProcessInfo.processInfo.environment["METALRENDERER_PRIMARY"] == "raster" ? .raster : .traced
-}
-
 /// A glTF model the user opened or dropped into the scene.
 struct ExtraModel: Equatable, Codable {
     var path: String
@@ -893,30 +880,12 @@ struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
-    /// How the raster visibility buffer draws it (with the per-instance BLAS; the cluster tree's mode traces it).
-    var raster = RasterVirtual(envText: ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG"] ?? "") ?? .blas
-    /// The raster clusters' own streaming pool (the rays keep the BLAS): 512 MB holds what the gallery's shadow maps and
-    /// camera ask for (about 390 MB settled).
-    var rasterPoolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG_POOL"] ?? "") ?? 512
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
     static let poolOptions = [256, 512, 768, 1024, 2048]
-    static let rasterPoolOptions = [128, 256, 512, 768]
-}
-
-/// How the raster visibility buffer draws virtual geometry: the triangles of its instance's BLAS over the CPU's cut,
-/// 128 at a time and culled by instance only; or Nanite's way, clusters of the DAG picked, culled and streamed on the GPU
-/// every frame (RasterClusters), drawn by vertex pulling or by mesh shaders.
-enum RasterVirtual: Int, CaseIterable, Codable {
-    case blas
-    case clusters
-    case mesh
-
-    var title: String { ["BLAS triangles", "Clusters", "Clusters (mesh shaders)"][rawValue] }
-    var drawsClusters: Bool { self != .blas }
 }
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
@@ -1262,7 +1231,6 @@ struct RenderSettings: Equatable, Codable {
     var cascades = CascadeSettings()
     var scene = SceneSettings()
     var api = RenderAPI.initial
-    var primary = PrimaryVisibility.initial
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
@@ -1329,14 +1297,12 @@ struct RenderSettings: Equatable, Codable {
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering", "Visibility buffer"]
-    /// The raster visibility buffer's chunks (rasterDebugKernel), with the primary visibility on raster.
-    static let visibilityBufferView = 15
+                            "Fog scattering"]
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
-    /// is (normals, albedo, the geometry views, the visibility buffer's colours...): viewIsHDR in
+    /// is (normals, albedo, the geometry views...): viewIsHDR in
     /// Shaders/Output.metal.
     static func showsLight(_ mode: Int) -> Bool {
-        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && mode != visibilityBufferView
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode)
     }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.

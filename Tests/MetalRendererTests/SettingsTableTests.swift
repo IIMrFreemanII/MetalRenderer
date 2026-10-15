@@ -240,6 +240,7 @@ final class SettingsTableTests: XCTestCase {
         saved["rayTracer"] = 1
         saved["shadowMethod"] = 1   // (virtual shadow maps, since removed)
         saved["vsm"] = ["pool": 512]
+        saved["primary"] = 1   // (the raster visibility buffer, since removed)
         saved["api"] = RenderAPI.metal4.rawValue
         saved["bounces"] = defaults.bounces + 1
         let store = UserDefaults.standard, key = "renderSettings"

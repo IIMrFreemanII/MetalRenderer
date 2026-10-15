@@ -36,7 +36,6 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 device const InstanceData*       instances  [[buffer(6)]],
                                 constant SceneShading&           shading    [[buffer(7)]],
                                 texture2d<float, access::write>  output     [[texture(0)]],
-                                texture2d<uint, access::read>    visBuffer  [[texture(1)]],   // with FLAG_VIS_BUFFER
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -53,9 +52,6 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
         return;
     }
     res = intersectClosest(r, MASK_ALL, accel);
-    // With the raster visibility buffer, what it drew (virtual geometry: its own cut of clusters), as the frame sees it.
-    Hit drawn;
-    if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, r, accel, s, drawn)) res = drawn;
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
     if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level
@@ -159,7 +155,7 @@ inline float3 agxFilm(float3 c) {
 
 /// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
 inline bool viewIsHDR(uint mode) {
-    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || mode == 15);
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13));
 }
 
 /// The colour grade (PostSettings): white balance as red and blue gains, saturation, then contrast about middle grey
@@ -353,7 +349,6 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
-        case 15: c = geometryDebug.read(tid).rgb; break;          // the visibility buffer (rasterDebugKernel)
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
     if (flagOn(u.flags, FLAG_PARTICLES) && u.viewMode == 0) {   // in front of it all (fogged already, particleLayerKernel)

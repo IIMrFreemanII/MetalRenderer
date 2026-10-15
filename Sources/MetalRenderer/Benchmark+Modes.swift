@@ -14,7 +14,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "rastervg": rasterVG,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
         "pathref": pathref,
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
@@ -895,72 +895,6 @@ extension Benchmark {
                 Config("\(sceneTag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) { $0.api = api }
             }
         }
-        return out
-    }
-
-    /// The raster visibility buffer against traced primary rays (PrimaryVisibility), scene by scene at the default
-    /// settings (cascades, MetalFX denoiser 3x from 0.5x): a still of each (pngdiff.py compares the pairs), its
-    /// "Visibility buffer" view (chunks in colours, magenta where the primary rays traced what it didn't draw), and the camera moving through
-    /// the stress hall and the city (the two culling passes as things come into view).
-    private static func raster() -> [Config] {
-        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()), ("gallery", SceneSettings(kind: .gallery)),
-                                                 ("crowd", SceneSettings(kind: .crowd)), ("city", SceneSettings(kind: .city)),
-                                                 ("forest", SceneSettings(kind: .forest)), ("world", SceneSettings(kind: .world))]
-        var out: [Config] = []
-        for (tag, scene) in scenes {
-            for primary in PrimaryVisibility.allCases {
-                out.append(Config("\(tag) \(primary)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = primary }
-                    .still().frames(30))
-            }
-            out.append(Config("\(tag) visibility buffer", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = .raster }
-                .view(RenderSettings.visibilityBufferView).still().frames(8))
-        }
-        for (tag, scene) in [("stress", stressHall()), ("city", SceneSettings(kind: .city))] {
-            for primary in PrimaryVisibility.allCases {
-                out.append(Config("\(tag) camera \(primary)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = primary }
-                    .cameraMove())
-            }
-        }
-        return out
-    }
-
-    /// Virtual geometry in the raster visibility buffer: traced, drawn from the BLAS, and as clusters (RasterClusters,
-    /// by vertex pulling and by mesh shaders),
-    /// in the gallery (overview and close-up) and a showcase model. Stills with GI and with direct light alone (where a
-    /// ray from a drawn cluster that meets its own BLAS shows: compare METALRENDERER_RASTER_VG_BIAS=0), the visibility
-    /// buffer, cluster and LOD views, camera moves, and a small pool that has to evict.
-    private static func rasterVG() -> [Config] {
-        let paths: [(String, PrimaryVisibility, RasterVirtual)] = [("traced", .traced, .blas), ("blas", .raster, .blas),
-                                                                   ("clusters", .raster, .clusters), ("mesh", .raster, .mesh)]
-        let model = Scene.galleryFiles().map(Scene.showcaseName).first
-        var scenes: [(String, SceneSettings, Camera?)] = [("gallery", SceneSettings(kind: .gallery), nil),
-                                                          ("closeup", SceneSettings(kind: .gallery), galleryCloseup)]
-        if let model { scenes.append(("showcase", SceneSettings(kind: .showcase, showcase: model), nil)) }
-        func config(_ name: String, _ scene: SceneSettings, _ camera: Camera?, _ path: (String, PrimaryVisibility, RasterVirtual),
-                    gi: GIMode? = .radianceCascades) -> Config {
-            let c = Config(name, scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                $0.primary = path.1
-                $0.virtualGeometry.raster = path.2
-            }
-            return camera.map { c.from($0) } ?? c
-        }
-        var out: [Config] = []
-        for (tag, scene, camera) in scenes {
-            for path in paths {
-                out.append(config("\(tag) \(path.0)", scene, camera, path).still().frames(30))
-                out.append(config("\(tag) direct \(path.0)", scene, camera, path, gi: nil).still().frames(30))
-            }
-            let clusters = paths[2]
-            out.append(config("\(tag) visibility buffer", scene, camera, clusters).view(RenderSettings.visibilityBufferView).still().frames(8))
-            out.append(config("\(tag) clusters view", scene, camera, clusters).view(9).still().frames(8))
-            out.append(config("\(tag) lod view", scene, camera, clusters).view(11).still().frames(8))
-        }
-        for path in paths { out.append(config("gallery camera \(path.0)", SceneSettings(kind: .gallery), nil, path).cameraMove()) }
-        for path in paths.dropFirst() {
-            out.append(config("showcase camera \(path.0)", scenes.last!.1, nil, path).cameraMove())
-        }
-        out.append(config("gallery clusters pool 128", SceneSettings(kind: .gallery), nil, paths[2])
-            .with { $0.virtualGeometry.rasterPoolMB = 128 }.cameraMove())
         return out
     }
 

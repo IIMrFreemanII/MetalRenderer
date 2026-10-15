@@ -18,7 +18,6 @@ using namespace metal::raytracing;
 #include "Shaders/Procedural.metal"        // procedural materials as code (the Material Designer's shader-code mode)
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
 #include "Shaders/WaterCommon.metal"       // water: its looks, its map, waves, ripples and foam, the sun under it
-#include "Shaders/Raster.metal"            // the raster visibility buffer: culling, the pyramid, the draw, visibilityHit
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
 #include "Shaders/Hair.metal"              // strands: the hair BSDF (Chiang et al. 2016) and its lights
 #include "Shaders/Regir.metal"             // the light grid (ReGIR) and regirBuildKernel
@@ -39,7 +38,6 @@ using namespace metal::raytracing;
 #include "Shaders/Post.metal"              // the lens and the finish: depth of field, bloom, vignette, grain
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its clusters' boxes (vg* kernels)
-#include "Shaders/RasterClusters.metal"    // the raster clusters: virtual geometry's cut, culled and drawn as Nanite does
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices and vertices (crowd* kernels)
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
 #include "Shaders/Fluid.metal"             // liquids: PBF and MLS-MPM, their pour and their pushes on bodies (fluid* kernels)

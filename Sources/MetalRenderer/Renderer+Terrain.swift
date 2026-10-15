@@ -95,13 +95,11 @@ final class TerrainGPU {
     }
 }
 
-/// A frame's terrain work for the GPU (Renderer.encodeTerrain): bytes to copy into sectors' buffers, the meshes whose
-/// structures are built again over them, and their instances (the raster's bounds).
+/// A frame's terrain work for the GPU (Renderer.encodeTerrain): bytes to copy into sectors' buffers, and the meshes
+/// whose structures are built again over them.
 struct TerrainFrameWork {
     var copies: [BufferCopy] = []
     var meshes: [Int] = []
-    var instances: [Int] = []
-    var bounds: [(mesh: Int, box: AABB)] = []
 }
 
 /// A copy from one buffer into another, in a frame (FrameEncoder.copyBuffers).
@@ -355,8 +353,6 @@ extension Renderer {
             m.write(into: staging.contents() + offset)
             work.copies.append(BufferCopy(source: staging, sourceOffset: offset, destination: block.geometry, destinationOffset: 0, size: m.byteCount))
             work.meshes.append(part.mesh)
-            work.instances.append(part.instance)
-            work.bounds.append((part.mesh, m.bounds))
             terrain.built[part.name] = (ObjectIdentifier(block), c.revision)
             offset += sizes[k]
         }

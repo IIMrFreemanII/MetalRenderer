@@ -6,7 +6,7 @@ struct Uniforms {
     float4 camPos;          // xyz
     float4 camRight;        // xyz, w = tan(fovX/2)
     float4 camUp;           // xyz, w = tan(fovY/2)
-    float4 camForward;      // xyz, w = rays leave a raster cluster this many times its error in front (RasterClusters.bias)
+    float4 camForward;      // xyz, w unused
     float4 prevCamPos;
     float4 prevCamRight;
     float4 prevCamUp;
@@ -328,7 +328,6 @@ constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows:
 constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (TraceScene.wind.z > 0), the plants' parts turn
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
-constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
 constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
