@@ -35,7 +35,7 @@ extension Scene {
         guard let t = terrain, let doc = TerrainDocuments.shared.document(t.name) else { return }
         let sc = SceneScatter()
         sc.rules = doc.scatter
-        sc.water = doc.water
+        sc.water = doc.water + t.generatedWater
         sc.layers = doc.layers
         t.scatter = sc
         let s = t.field.snapshot()

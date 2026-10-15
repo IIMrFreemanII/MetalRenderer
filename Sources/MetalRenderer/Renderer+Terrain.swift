@@ -400,7 +400,8 @@ extension Renderer {
         let first = terrain.documentVersion < 0
         terrain.documentVersion = version
         // Its water's looks, as they are now (a look's edit doesn't make the scene again).
-        if let doc = TerrainDocuments.shared.document(t.name), let w = scene.water, w.bodyLooks.count == doc.water.count {
+        // (The document's bodies come first; the scene's own water after them keeps its looks.)
+        if let doc = TerrainDocuments.shared.document(t.name), let w = scene.water, w.bodyLooks.count == doc.water.count + t.generatedWater.count {
             var changed = false
             for (k, body) in doc.water.enumerated() {
                 guard let l = w.bodyLooks[k], l < w.looks.count, w.looks[l] != body.appearance else { continue }

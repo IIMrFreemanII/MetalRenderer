@@ -20,7 +20,7 @@ extension Benchmark {
     private static func workshop(_ name: String, size: TerrainWorkshopSettings.Size = .km1, base: TerrainWorkshopSettings.Base = .hills,
                                  seed: Int = 1) -> Config {
         var s = SceneSettings(kind: .terrain)
-        s.terrainWorkshop = TerrainWorkshopSettings(size: size, base: base, seed: seed, document: "bench-\(name)")
+        s.terrainWorkshop = TerrainWorkshopSettings(size: size, base: base, seed: seed, document: "bench-\(name)", sea: false)
         return Config(name, scale: 0.75, gi: .pathTraced, scene: s).still(at: 2)
     }
 

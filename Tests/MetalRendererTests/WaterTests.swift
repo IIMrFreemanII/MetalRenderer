@@ -78,6 +78,26 @@ final class WaterTests: XCTestCase {
         XCTAssertNil(s.water(0, 60, ground: s.ground(0, 60)))
     }
 
+    func testScenesShapeTheirWaterIntoTheirBase() {
+        let hills = NoiseTerrainBase(size: 320, cells: 160, seed: 3, relief: 9)
+        let river = SceneWaterMaker.river(name: "Stream", base: hills, from: [-100, -100], to: [60, 40], width: 5, depth: 1.1, meander: 10, seed: 7)
+        // The same river from the same base, its bed never running uphill.
+        XCTAssertEqual(SceneWaterMaker.river(name: "Stream", base: hills, from: [-100, -100], to: [60, 40], width: 5, depth: 1.1,
+                                             meander: 10, seed: 7).body.bed, river.body.bed)
+        let beds = river.body.bed!
+        XCTAssertTrue(zip(beds, beds.dropFirst()).allSatisfy { $0.1 <= $0.0 })
+        let pond = Scene.pond(on: hills, center: [40, 30], radii: [10, 7], depth: 1.5)
+        let shaped = ShapedTerrainBase(hills, shapes: TerrainShapes(bowls: [pond.bowl], channels: [river.channel]))
+        XCTAssertNotEqual(shaped.fingerprint, hills.fingerprint)
+        // Shaped, not added up: asked again, the same height.
+        for (i, j) in [(10, 20), (80, 80), (120, 140)] { XCTAssertEqual(shaped.height(i, j), shaped.height(i, j)) }
+        // The ground under the river's water along its line, and under the pond's in its middle.
+        for (p, bed) in zip(river.channel.points, beds) {
+            XCTAssertLessThan(SceneWaterMaker.height(shaped, p.x, p.y), bed + river.body.depth * 0.8)
+        }
+        XCTAssertLessThan(SceneWaterMaker.height(shaped, 40, 30), pond.body.level - 1)
+    }
+
     func testWorldWaterIsTheSameFromAnyTile() {
         let world = World(seed: 7)
         let w = world.water

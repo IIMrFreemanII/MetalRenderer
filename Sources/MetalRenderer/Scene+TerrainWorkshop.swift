@@ -2,7 +2,8 @@ import Foundation
 import simd
 
 /// The terrain workshop (`SceneSettings.terrainWorkshop`): a terrain of its own to make with the Terrain Editor, from
-/// half a kilometre to four across, on level ground or rolling hills, under the valley's sky and day. Its document is
+/// half a kilometre to four across, on level ground or rolling hills (with a sea round their lowest third, unless
+/// `sea` is off), under the valley's sky and day. Its document is
 /// `TerrainWorkshopSettings.document` (TerrainDocuments), kept apart from every other scene's terrain.
 extension Scene {
     func buildTerrainWorkshop() {
@@ -20,8 +21,20 @@ extension Scene {
         section("Terrain")
         let ground = addMaterial(albedo: [0.2, 0.24, 0.13])
         let grid = entry.field.grid
+        // The hills' sea: at the height a third of the ground is under (on a grid of 64 x 64 of the base's samples).
+        var water: [WaterBody] = []
+        if w.sea && w.base == .hills, let hi = grid.hi {
+            var heights: [Float] = []
+            for j in stride(from: 0, through: hi.y, by: max(hi.y / 64, 1)) {
+                for i in stride(from: 0, through: hi.x, by: max(hi.x / 64, 1)) { heights.append(base.height(i, j)) }
+            }
+            heights.sort()
+            var sea = WaterBody(name: "Sea", kind: .sea, level: heights[heights.count * 3 / 10])
+            sea.look = .preset(.ocean)
+            water.append(sea)
+        }
         addTerrain(name: entry.document.name, field: entry.field, tiles: grid.tiles!.map { ($0, 0) },
-                   style: TerrainMeshStyle(uvOrigin: grid.origin, uvScale: 1), material: ground)
+                   style: TerrainMeshStyle(uvOrigin: grid.origin, uvScale: 1), material: ground, generatedWater: water)
         if w.bodies > 0 { dropBodies(w.bodies, on: entry.field.snapshot(), seed: UInt64(max(w.seed, 0))) }
         section("Sun")
         addDaySun()
@@ -63,6 +76,8 @@ struct TerrainWorkshopSettings: Equatable, Codable {
     var document = "Workshop"
     /// Rigid bodies dropped onto it (0: none).
     var bodies = 0
+    /// The hills with a sea round their lowest third (the flat ground never).
+    var sea = true
 
     /// How far across (`metres`); each at most 1024 cells a side.
     enum Size: Int, Codable, CaseIterable {

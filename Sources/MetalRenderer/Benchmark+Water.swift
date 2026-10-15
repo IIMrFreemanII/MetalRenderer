@@ -5,8 +5,54 @@ import simd
 /// close from their shores and from above; the camera under the water; the open world's; and what water costs a frame.
 extension Benchmark {
     static let waterModes: [String: () -> [Config]] = [
-        "water": waterShots, "waterunder": waterUnder, "waterperf": waterPerf,
+        "water": waterShots, "waterunder": waterUnder, "waterperf": waterPerf, "waterscenes": waterScenes,
     ]
+
+    /// Each scene's own water, seen from near it: the Forest's pond and stream, the valley's lake, the city's canal,
+    /// the workshops' and squares' pools (cameras from the same generators, so they follow the seed).
+    private static func waterScenes() -> [Config] {
+        var out: [Config] = []
+        // The Forest's pond, from its far side toward the clearing.
+        let seed: UInt64 = 1
+        let hills = NoiseTerrainBase(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        let (shapes, _) = Scene.forestWater(hills, seed: seed)
+        if let pond = shapes.bowls.first {
+            let c = SIMD3(pond.center.x, pond.level, pond.center.y), away = simd_normalize(SIMD3(c.x, 0, c.z))
+            var forest = Config("forest pond", gi: .radianceCascades, scene: SceneSettings(kind: .forest)).still().frames(60)
+            var eye = c + away * (pond.radii.x + 10)
+            eye.y = SceneWaterMaker.height(hills, Double(eye.x), Double(eye.z)) + 2.5
+            forest.camera = lookAt(eye, c - away * 4)
+            out.append(forest)
+        }
+        // The valley's lake by the village, and its stream coming down the western hill.
+        let valley = Config("valley lake", gi: .radianceCascades, scene: SceneSettings(kind: .valley)).still().frames(60)
+        out.append(valley.from(lookAt([-8, 3.5, 44], [-34, 0, 22])))
+        out.append(valley.named("valley stream").from(lookAt([-95, 6, 60], [-150, 8, 40])))
+        // The city's canal, along it from above a quay, by day and by night.
+        if let canal = CityPlan(CitySettings(), seed: 1).canal {
+            let w = canal.water, eye = SIMD3<Float>(w.lo.x + 30, 4, w.lo.y - 2), at = SIMD3<Float>(w.lo.x + 110, -1, w.center.y)
+            out.append(Config("city canal", gi: .radianceCascades, scene: SceneSettings(kind: .city)).still().frames(60).from(lookAt(eye, at)))
+            out.append(Config("city canal night", gi: .radianceCascades, scene: SceneSettings(kind: .cityNight)).still().frames(60).from(lookAt(eye, at)))
+        }
+        // The terrain workshop as it starts: hills with a sea round them, from its own camera.
+        out.append(Config("workshop sea", gi: .pathTraced, scene: SceneSettings(kind: .terrain)).still(at: 2))
+        // The plant and building workshops on their ground (the plants' pond behind them), from their own cameras.
+        out.append(Config("plant workshop", gi: .radianceCascades, scene: SceneSettings(kind: .plants)).still().frames(60))
+        out.append(Config("plant workshop pond", gi: .radianceCascades, scene: SceneSettings(kind: .plants)).still().frames(60)
+            .from(lookAt([-10, 6, -4], [5, -0.5, -30])))
+        out.append(Config("building workshop", gi: .radianceCascades, scene: SceneSettings(kind: .buildings)).still().frames(60))
+        out.append(Config("building workshop ground", gi: .radianceCascades, scene: SceneSettings(kind: .buildings)).still().frames(60)
+            .from(lookAt([-90, 30, 120], [0, 0, 0])))
+        // The crowd's fountain and the courtyard's pool, from their scenes' cameras, and the courtyard's from near it.
+        out.append(Config("crowd fountain", gi: .radianceCascades, scene: SceneSettings(kind: .crowd)).still().frames(60))
+        var few = SceneSettings(kind: .crowd)
+        few.characters = 40
+        out.append(Config("crowd fountain near", gi: .radianceCascades, scene: few).still().frames(60).from(lookAt([6, 2.4, 0], [0, 0.3, -6])))
+        out.append(Config("sun pool", gi: .radianceCascades, scene: SceneSettings(kind: .sun)).still().frames(60))
+        out.append(Config("sun pool near", gi: .radianceCascades, scene: SceneSettings(kind: .sun)).still().frames(60)
+            .from(lookAt([1.5, 1.8, 5.5], [-3, 0.4, 0.5])))
+        return out
+    }
 
     /// What water costs a frame with everything moving: the waves, the camera flying low along the coast (the near
     /// patch following it, half the reflections taken from the frame before), and the camera under the waves.
@@ -33,7 +79,7 @@ extension Benchmark {
     static func waterWorkshop(_ name: String, size: TerrainWorkshopSettings.Size = .km1, base: TerrainWorkshopSettings.Base = .hills,
                               seed: Int = 1, steps: [TerrainStep] = [], bodies: [WaterBody], carve: [Int] = []) -> Config {
         var s = SceneSettings(kind: .terrain)
-        s.terrainWorkshop = TerrainWorkshopSettings(size: size, base: base, seed: seed, document: "bench-\(name)")
+        s.terrainWorkshop = TerrainWorkshopSettings(size: size, base: base, seed: seed, document: "bench-\(name)", sea: false)
         var c = Config(name, scale: 0.75, gi: .pathTraced, scene: s).still(at: 2)
         c.events = [(0, .terrain([.mode(true)] + steps + [.document { $0.water = bodies }] + carve.map { .carveRiver($0) }
                                   + [.wait(2), .mode(false), .rebuild, .wait(40)]))]

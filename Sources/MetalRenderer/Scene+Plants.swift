@@ -130,9 +130,20 @@ extension Scene {
         self.focus = focus
 
         section("Lawn and sun")
-        // A lawn to the horizon, a still sun from the camera's left, a little above the plants.
-        let kit = Kit(self)
-        addInstance(kit.quad, addMaterial(albedo: [0.2, 0.22, 0.16]), scale([20_000, 1, 20_000]))
+        // The lawn: gentle ground (its own terrain, half a kilometre), level round the plants (out to their reach in
+        // steps of 8 m, which the terrain's name says: an edit that keeps the plants within it keeps the ground), a pond
+        // behind them; beyond it a plain to the horizon. A still sun from the camera's left, a little above the plants.
+        let kit = Kit(self), lawn = addMaterial(albedo: [0.2, 0.22, 0.16])
+        let reach = max((max(abs(focus.lo.x), abs(focus.hi.x), abs(focus.lo.z), abs(focus.hi.z)) / 8).rounded(.up) * 8, 8)
+        let hills = NoiseTerrainBase(size: 512, cells: 256, seed: 0x9A7D, relief: 4, featureSize: 90)
+        let pond = (-3...3).map { k in SIMD2<Float>(Float(k) * 12, -(reach + 24)) }
+            .map { Scene.pond(on: hills, center: $0, radii: [12, 8], depth: 1.6) }
+            .min { $0.body.level < $1.body.level }!
+        let ground = ShapedTerrainBase(hills, shapes: TerrainShapes(flats: [TerrainShapes.Flat(lo: [-reach, -reach], hi: [reach, reach], corner: reach,
+                                                                                               level: 0, blend: 16)],
+                                                                    bowls: [pond.bowl]))
+        addGroundTerrain("plant-workshop-\(Int(reach))", base: ground, material: lawn, water: [pond.body])
+        addInstance(kit.quad, lawn, translate([0, -9, 0]) * scale([20_000, 1, 20_000]))
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { _ in
             let e = Scene.degrees(38), a = Scene.degrees(235)
             return LightPose(position: .zero, direction: [cos(e) * cos(a), sin(e), -cos(e) * sin(a)])

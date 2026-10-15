@@ -354,16 +354,44 @@ extension Scene {
 
     // MARK: - Forest
 
+    /// The Forest's water: a stream from the hills on the north side down to a pond in a hollow beyond the clearing,
+    /// on the side of the trail the seed picks (it never crosses it), shaped into `hills`. The pond fills to a little
+    /// under the lowest ground round its rim, so it stays in its bowl.
+    static func forestWater(_ hills: TerrainBase, seed: UInt64) -> (TerrainShapes, [WaterBody]) {
+        var rng = SplitMix64(seed: seed &* 0x9E37_79B9_7F4A_7C15 ^ 0x57EA)
+        let side: Float = rng.next() < 0.5 ? -1 : 1
+        let pondCenter = SIMD2<Float>(side * rng.range(70, 95), rng.range(-10, 25)), radii = SIMD2(rng.range(13, 18), rng.range(9, 13))
+        let source = SIMD2<Double>(Double(side * rng.range(45, 110)), -148)
+        // The stream ends at the pond's near rim.
+        let towards = simd_normalize(SIMD2<Double>(pondCenter) - source)
+        let mouth = SIMD2<Double>(pondCenter) - towards * Double(min(radii.x, radii.y) * 0.8)
+        let stream = SceneWaterMaker.river(name: "Stream", base: hills, from: source, to: mouth, width: 5, depth: 1.1, meander: 14, seed: seed)
+        var rim = Float.infinity
+        for k in 0..<24 {
+            let a = Float(k) / 24 * 2 * .pi, p = pondCenter + SIMD2(cos(a), sin(a)) * radii * 1.25
+            rim = min(rim, SceneWaterMaker.height(hills, Double(p.x), Double(p.y)))
+        }
+        let level = min(SceneWaterMaker.endLevel(stream.body), rim - 0.25)
+        let pond = SceneWaterMaker.pond(name: "Pond", center: pondCenter, radii: radii, level: level, depth: 2.2)
+        print(String(format: "Forest water: a stream from (%.0f, %.0f), a pond at (%.0f, %.0f), %.0f x %.0f m, its water at %.2f m",
+                     source.x, source.y, pondCenter.x, pondCenter.y, radii.x * 2, radii.y * 2, level))
+        return (TerrainShapes(bowls: [pond.bowl], channels: [stream.channel]), [stream.body, pond.body])
+    }
+
     /// The trail from the clearing into the forest (north, -z): its x at depth z.
     private static func trail(_ z: Float) -> Float { 9 * sin(z / 31) + 4 * sin(z / 13 + 1) }
 
     /// A forest of `settings.trees` trees on 320 m of rolling ground (`settings.seed` picks the ground, the plants
-    /// and where they stand), with a grassy clearing around the camera and a trail leading out of it; the valley's
-    /// day cycle. `settings.undergrowth` scales the bushes, ferns and grass.
+    /// and where they stand), with a grassy clearing around the camera and a trail leading out of it, a stream coming
+    /// down from the north to a pond on one side of it; the valley's day cycle. `settings.undergrowth` scales the
+    /// bushes, ferns and grass.
     func buildForest() {
         let seed = UInt64(max(settings.seed, 0))
-        // The ground: the terrain "forest-<seed>" (its edits, Terrain Editor), over the seed's rolling hills.
-        let base = NoiseTerrainBase(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        // The ground: the terrain "forest-<seed>" (its edits, Terrain Editor), over the seed's rolling hills with its
+        // stream's bed and its pond's bowl shaped into them.
+        let hills = NoiseTerrainBase(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        let (shapes, water) = Scene.forestWater(hills, seed: seed)
+        let base = ShapedTerrainBase(hills, shapes: shapes)
         let entry = Scene.openTerrain("forest-\(seed)", base: base, layers: TerrainDocument.sceneLayers())
         let snapshot = entry.field.snapshot()
         let terrain = Terrain(snapshot, relief: 9)
@@ -380,7 +408,7 @@ extension Scene {
         // The ground's colours, a texel every 31 cm: leaf litter and soil under the trees, moss in patches, greener in
         // the clearing, the trail's bare earth, rock where it is steep.
         let colors = addGeneratedTexture(name: "ground", width: 1024, height: 1024,
-                                         key: "seed \(seed) v\(FoliageTextures.version)\(snapshot.editsFingerprint)") {
+                                         key: "seed \(seed) v\(FoliageTextures.version)\(snapshot.editsFingerprint) \(shapes.fingerprint)") {
             FoliageTextures.image(1024, 1024) { u, v in
                 let x = (u - 0.5) * terrain.size, z = (v - 0.5) * terrain.size, p = SIMD2(x, z)
                 var color = SIMD3<Float>(0.15, 0.13, 0.075)
@@ -396,7 +424,11 @@ extension Scene {
         // instance's number, which then stays what it was.
         let sectors = base.grid.tiles!.flatMap { TerrainSector.sectors(of: $0, level: 0, grid: base.grid) }
         let style = TerrainMeshStyle(uvOrigin: base.grid.origin, uvScale: 1 / terrain.size)
-        addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.prefix(1)), style: style, material: ground)
+        addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.prefix(1)), style: style, material: ground,
+                   generatedWater: water)
+        // (Nothing grows in the water or on the stream's banks.)
+        let waterField = self.water?.field
+        func dry(_ x: Float, _ z: Float, margin: Double = 1.5) -> Bool { !(waterField?.wet(Double(x), Double(z), margin: margin) ?? false) }
         defer {
             addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.dropFirst()), style: style,
                        material: ground)
@@ -419,7 +451,7 @@ extension Scene {
                 let chance = rng.next(), rank = rng.next()
                 let density = smoothstep(11, 19, (x * x + z * z).squareRoot()) * offTrail(x, z)
                     * smoothstep(0.72, 0.86, terrain.normal(x, z).y)
-                    * (0.6 + 0.6 * Terrain.noise(SIMD2(x, z) / 23, seed: noiseSeed &+ 7))
+                    * (0.6 + 0.6 * Terrain.noise(SIMD2(x, z) / 23, seed: noiseSeed &+ 7)) * (dry(x, z, margin: 2.5) ? 1 : 0)
                 if chance < density { sites.append(Site(x: x, z: z, rank: rank)) }
             }
         }
@@ -466,7 +498,7 @@ extension Scene {
                 let r = (x * x + z * z).squareRoot()
                 let likely = (cover.open ? (1 - smoothstep(34, 70, r)) * (0.25 + 0.75 * offTrail(x, z)) * patches
                                          : smoothstep(7, 12, r) * offTrail(x, z) * patches) * frequency
-                guard chance < likely, !trunks[lotIndex(x, z)] else { continue }
+                guard chance < likely, !trunks[lotIndex(x, z)], dry(x, z, margin: 0.5) else { continue }
                 counts[species.rawValue] += 1
                 flora.place(species, plant, at: [x, terrain.height(x, z) - cover.sink, z], yaw: yaw, size: s, shade: shade)
             }
@@ -481,7 +513,7 @@ extension Scene {
                     let chance = rng.next(), turn = Float(rng.int(4)) * .pi / 2, patch = patches[rng.int(patches.count)], shade = rng.int(16)
                     let likely = (1 - smoothstep(34, 70, (x * x + z * z).squareRoot())) * (0.25 + 0.75 * offTrail(x, z)) * min(undergrowth, 1)
                         * frequency
-                    guard chance < likely else { continue }
+                    guard chance < likely, dry(x, z, margin: 0.3) else { continue }
                     counts[species.rawValue] += 1
                     flora.place(species, patch, translate([x, terrain.height(x, z), z]) * Scene.alignY(terrain.normal(x, z))
                                 * rotate(turn, [0, 1, 0]) * scale(cover.gridScale), shade: shade)

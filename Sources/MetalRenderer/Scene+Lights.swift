@@ -205,6 +205,13 @@ extension Scene {
 
         section("Ground")
         addInstance(kit.quad, ground, scale([60, 1, 60]))
+        // Beyond it meadows over hills (a terrain of its own, a little under the courtyard's ground), a plain beyond them.
+        let meadow = addMaterial(albedo: [0.26, 0.31, 0.15])
+        addGroundTerrain("sun-courtyard", base: ShapedTerrainBase(NoiseTerrainBase(size: 768, cells: 192, seed: 0x5A11, relief: 12, featureSize: 160),
+                                                                  shapes: TerrainShapes(flats: [TerrainShapes.Flat(lo: [-30, -30], hi: [30, 30], level: -0.03,
+                                                                                                                   blend: 50)])),
+                         material: meadow)
+        addInstance(kit.quad, meadow, translate([0, -20, 0]) * scale([20_000, 1, 20_000]))
         // Courtyard walls (open toward the camera).
         section("Courtyard walls")
         kit.slab([-10, 0, -10.4], [10, 4.5, -10], plaster)
@@ -234,7 +241,16 @@ extension Scene {
         kit.ball([8.6, 0.5, -8.6], 0.5, plaster)
         // Courtyard: a fountain, planters, a few objects.
         section("Fountain and planters")
-        kit.box([-3, 0.3, 0.5], [3, 0.6, 3], stone)
+        // The fountain: a raised reflecting pool (a stone rim, a dark floor, still water a little under the rim's top)
+        // round its column.
+        let (p0, p1): (SIMD2<Float>, SIMD2<Float>) = ([-4.5, -1], [-1.5, 2]), rim: Float = 0.25
+        kit.slab([p0.x, 0, p0.y], [p1.x, 0.6, p0.y + rim], stone)
+        kit.slab([p0.x, 0, p1.y - rim], [p1.x, 0.6, p1.y], stone)
+        kit.slab([p0.x, 0, p0.y + rim], [p0.x + rim, 0.6, p1.y - rim], stone)
+        kit.slab([p1.x - rim, 0, p0.y + rim], [p1.x, 0.6, p1.y - rim], stone)
+        kit.slab([p0.x + rim, 0, p0.y + rim], [p1.x - rim, 0.12, p1.y - rim], addMaterial(albedo: [0.1, 0.11, 0.11]))
+        addPoolWater([[p0.x + rim, p0.y + rim], [p1.x - rim, p0.y + rim], [p1.x - rim, p1.y - rim], [p0.x + rim, p1.y - rim]],
+                     level: 0.5, floor: 0.12, key: "sun-pool")
         kit.box([-3, 0.9, 0.5], [0.4, 1.2, 0.4], stone)
         kit.ball([-3, 1.7, 0.5], 0.4, stone)
         for x: Float in [-8, 7.5] {
@@ -519,7 +535,8 @@ extension Scene {
     // MARK: - Open valley
 
     /// An open valley under the sky (the atmosphere and clouds preset): fields, a road and a small village with a
-    /// church tower, trees and fences, hills around, and a day cycle from morning to evening and back (90 s each
+    /// church tower, trees and fences, hills around, a stream running down the western hill into a lake by the
+    /// village, and a day cycle from morning to evening and back (90 s each
     /// way; the sun stays 10 degrees or more above the horizon, as the exposure is fixed). Low, small clouds drift
     /// over it, so their shadows cross the fields.
     func buildValley() {
@@ -531,7 +548,6 @@ extension Scene {
         let roof = addMaterial(albedo: [0.55, 0.2, 0.12])
         let slate = addMaterial(albedo: [0.25, 0.26, 0.3])
         let wood = addMaterial(albedo: [0.45, 0.33, 0.2])
-        let pond = addPBRMaterial(baseColor: [0.03, 0.05, 0.06], metallic: 0, roughness: 0.04)
 
         section("Ground")
         // The terrain "valley" (Terrain Editor): 800 m of level ground at 2 m a cell, with the hills on three sides (the
@@ -543,10 +559,20 @@ extension Scene {
             .init(center: [190, -15, -40], radii: [60, 55, 140]), .init(center: [-190, -18, 20], radii: [50, 50, 120]),
         ]
         let valleyGrid = TerrainGrid.square(size: 800, cells: 400)
-        let valley = Scene.openTerrain("valley", base: FlatTerrainBase(grid: valleyGrid, level: 0, hills: hills, kinds: true),
+        let ground = FlatTerrainBase(grid: valleyGrid, level: 0, hills: hills, kinds: true)
+        // Its water, shaped into it: a stream from high on the western hill, down and across the level ground north of
+        // the fields, into a lake beside the village (where its pond was).
+        let stream = SceneWaterMaker.river(name: "Stream", base: ground, from: [-178, 46], to: [-43, 27], width: 5, depth: 1.1, meander: 9,
+                                           seed: 7)
+        let lake = SceneWaterMaker.pond(name: "Lake", center: [-31, 23], radii: [12, 8],
+                                        level: min(SceneWaterMaker.endLevel(stream.body), -0.25), depth: 2)
+        let valley = Scene.openTerrain("valley", base: ShapedTerrainBase(ground, shapes: TerrainShapes(bowls: [lake.bowl], channels: [stream.channel])),
                                        layers: TerrainDocument.sceneLayers())
         addTerrain(name: "valley", field: valley.field, tiles: valleyGrid.tiles!.map { ($0, 0) },
-                   style: TerrainMeshStyle(uvOrigin: valleyGrid.origin, uvScale: 1, rock: 1), material: lawn)
+                   style: TerrainMeshStyle(uvOrigin: valleyGrid.origin, uvScale: 1, rock: 1), material: lawn,
+                   generatedWater: [stream.body, lake.body])
+        let waterField = water?.field
+        func dry(_ x: Float, _ z: Float) -> Bool { !(waterField?.wet(Double(x), Double(z), margin: 2.5) ?? false) }
         // Fields and the road.
         section("Fields and roads")
         for (lo, hi, m) in [(SIMD3<Float>(-90, 0, -60), SIMD3<Float>(-20, 0.02, 10), wheat),
@@ -556,7 +582,6 @@ extension Scene {
         }
         kit.slab([-200, 0, -3], [200, 0.04, 3], road)
         kit.slab([-3, 0, -200], [3, 0.04, -3], road)
-        kit.slab([-40, 0, 18], [-22, 0.05, 30], pond)
         // The village around the crossroads: houses with pitched roofs, and a church with a tower.
         func house(_ x: Float, _ z: Float, _ yaw: Float, _ w: Float = 6, _ d: Float = 8, _ h: Float = 4) {
             let t = translate([x, 0, z]) * rotate(yaw, [0, 1, 0])
@@ -583,8 +608,9 @@ extension Scene {
         var pick = SplitMix64(seed: 0x7EE5 &+ UInt64(max(settings.seed, 0)))
         func tree(_ x: Float, _ z: Float, _ species: Foliage.Species, _ age: Foliage.Age, _ size: Float) {
             let plants = flora.plants(species, age)
-            flora.place(species, plants[pick.int(plants.count)], at: [x, -0.1, z], yaw: pick.range(0, 2 * .pi), size: size,
-                        shade: pick.int(16))
+            let plant = plants[pick.int(plants.count)], yaw = pick.range(0, 2 * .pi), shade = pick.int(16)
+            guard dry(x, z) else { return }   // (its numbers drawn all the same: the next tree's stay its own)
+            flora.place(species, plant, at: [x, -0.1, z], yaw: yaw, size: size, shade: shade)
         }
         for i in 0..<8 { tree(-60 + Float(i) * 14, 6, i % 2 == 0 ? .oak : .birch, .young, 0.75 + 0.08 * Float(i % 3)) }
         for (i, (x, z)) in [(Float(55), Float(-30)), (60, -24), (66, -32), (58, -38), (70, -26), (-60, 40), (80, 30), (-110, -20)].enumerated() {

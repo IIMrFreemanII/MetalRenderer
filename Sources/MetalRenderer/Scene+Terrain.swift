@@ -32,6 +32,8 @@ final class SceneTerrain {
     var scatter: SceneScatter?
     /// With physics: each full-detail sector's heightfield collider (its part's index: the static's).
     var colliders: [Int: Int] = [:]
+    /// The scene's own water on it (made from its seed, shaped into its base: SceneWaterMaker), after its document's.
+    var generatedWater: [WaterBody] = []
 
     /// A sector's heights as its collider has them: its samples' (rows along z) and where its first is in the scene.
     func colliderHeights(_ p: Part, _ s: TerrainSnapshot) -> (lo: SIMD2<Float>, heights: [Float], side: SIMD2<Int>) {
@@ -81,16 +83,40 @@ extension Scene {
         TerrainDocuments.shared.open(name, base: base(), document: TerrainDocument(name: name, layers: layers))
     }
 
+    /// A scene's ground as a terrain of its own (a workshop's, a square's): `base` (its shapes over it) under `name`
+    /// (which says the base: another base, another name), all its tiles at full detail, in `material`, with its own
+    /// water. The Terrain Editor edits it like any other.
+    @discardableResult
+    func addGroundTerrain(_ name: String, base: TerrainBase, material: Int, water: [WaterBody] = []) -> SceneTerrain {
+        let entry = Scene.openTerrain(name, base: base, layers: TerrainDocument.sceneLayers())
+        let grid = entry.field.grid
+        return addTerrain(name: entry.document.name, field: entry.field, tiles: grid.tiles!.map { ($0, 0) },
+                          style: TerrainMeshStyle(uvOrigin: grid.origin, uvScale: 1), material: material, generatedWater: water)
+    }
+
+    /// A pond for a scene's own ground at `center`: its water a little under the lowest of `base` round its rim, so it
+    /// stays in its bowl.
+    static func pond(on base: TerrainBase, center: SIMD2<Float>, radii: SIMD2<Float>, depth: Float, look: WaterLook = .preset(.lake))
+        -> (body: WaterBody, bowl: TerrainShapes.Bowl) {
+        var rim = Float.infinity
+        for k in 0..<24 {
+            let a = Float(k) / 24 * 2 * .pi, p = center + SIMD2(cos(a), sin(a)) * radii * 1.25
+            rim = min(rim, SceneWaterMaker.height(base, Double(p.x), Double(p.y)))
+        }
+        return SceneWaterMaker.pond(name: "Pond", center: center, radii: radii, level: rim - 0.25, depth: depth, look: look)
+    }
+
     /// Adds the ground of `field` over the tiles `tiles` (each at its level of detail): a mesh and an instance per
     /// sector, made from `snapshot` (the field as it is now if nil), on every core. `offset`: the world's place that
     /// is the scene's origin. Returns the scene's terrain (also `self.terrain`).
+    /// `generatedWater`: the scene's own (its document's water comes first).
     @discardableResult
     func addTerrain(name: String, field: TerrainField, snapshot: TerrainSnapshot? = nil, tiles: [(tile: SIMD2<Int>, level: Int)],
                     style: TerrainMeshStyle, material: Int, offset: SIMD2<Double> = .zero, mask: UInt32 = Scene.maskGeometry,
-                    builtIn: (Int) -> GPUMaterial? = { _ in nil }) -> SceneTerrain {
+                    generatedWater: [WaterBody] = [], builtIn: (Int) -> GPUMaterial? = { _ in nil }) -> SceneTerrain {
         let sectors = tiles.flatMap { TerrainSector.sectors(of: $0.tile, level: $0.level, grid: field.grid) }
         return addTerrain(name: name, field: field, snapshot: snapshot, sectors: sectors, style: style, material: material, offset: offset,
-                          mask: mask, builtIn: builtIn)
+                          mask: mask, generatedWater: generatedWater, builtIn: builtIn)
     }
 
     /// The same for some sectors: added to the scene's terrain if it has this one already (a builder that adds its
@@ -98,7 +124,7 @@ extension Scene {
     @discardableResult
     func addTerrain(name: String, field: TerrainField, snapshot: TerrainSnapshot? = nil, sectors: [TerrainSector],
                     style: TerrainMeshStyle, material: Int, offset: SIMD2<Double> = .zero, mask: UInt32 = Scene.maskGeometry,
-                    builtIn: (Int) -> GPUMaterial? = { _ in nil }) -> SceneTerrain {
+                    generatedWater: [WaterBody] = [], builtIn: (Int) -> GPUMaterial? = { _ in nil }) -> SceneTerrain {
         let s = snapshot ?? field.snapshot(), grid = field.grid
         let layers = TerrainDocuments.shared.document(name)?.layers ?? TerrainDocument.defaultLayers
         var style = style
@@ -124,9 +150,9 @@ extension Scene {
         let t = terrain.flatMap { $0.name == name ? $0 : nil } ?? SceneTerrain(name: name, field: field, style: style, offset: offset, material: material)
         if t.firstLayer < 0 {
             t.firstLayer = addTerrainLayerMaterials(layers, builtIn: builtIn)
-            if let doc = TerrainDocuments.shared.document(name), !doc.water.isEmpty {
-                addTerrainWater(doc.water, snapshot: s, offset: offset, sectors: sectors)
-            }
+            t.generatedWater = generatedWater
+            let bodies = (TerrainDocuments.shared.document(name)?.water ?? []) + generatedWater
+            if !bodies.isEmpty { addTerrainWater(bodies, snapshot: s, offset: offset, sectors: sectors) }
         }
         for (k, sector) in sectors.enumerated() {
             guard let m = meshes[k] else { continue }
@@ -181,7 +207,9 @@ extension Scene {
     /// Where it all is goes to the water map (TerrainWaterField).
     func addTerrainWater(_ bodies: [WaterBody], snapshot s: TerrainSnapshot, offset: SIMD2<Double>, sectors: [TerrainSector]) {
         guard !WaterSystem.off else { return }
-        section("Water")
+        // (Inside whatever section the builder has open, which goes on after it: the Forest adds its water before its plants.)
+        beginObject("Water")
+        defer { endObject() }
         let catalog = MaterialCatalog.resolve(settings.materials), grid = s.grid
         var looks: [Int?] = []
         for body in bodies {

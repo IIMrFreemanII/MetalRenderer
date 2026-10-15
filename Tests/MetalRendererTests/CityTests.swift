@@ -95,7 +95,8 @@ final class CityTests: XCTestCase {
             XCTAssertTrue(s.indices.allSatisfy { Int($0) < s.positions.count })
             XCTAssertTrue(s.positions.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite })
             XCTAssertTrue(s.normals.allSatisfy { abs(length($0) - 1) < 1e-3 })
-            XCTAssertTrue(s.textures.isEmpty, "flat colours: no textures")
+            XCTAssertTrue(s.textures.allSatisfy { $0.name == "generated/terrain-detail" },
+                          "flat colours: no textures but the ground's detail (\(s.textures.map(\.name)))")
         }
     }
 

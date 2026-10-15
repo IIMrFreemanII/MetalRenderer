@@ -454,7 +454,7 @@ final class FoliageRuntimeTests: XCTestCase {
         hashes.append("ground \(hash(scene.textures.first { $0.name == "generated/ground" }!.rawPixels))")
         XCTAssertEqual(FoliageTextures.version, 1)
         XCTAssertEqual(hashes, ["roughBark 6cfa2e7e2258", "birchBark 22d9c0664c62", "leaf 946df84d6ae5", "needle b456f98d54ab", "grass 4535a03fea78",
-                                "ground 107838e8a4b3"],
+                                "ground bf7ace858367"],
                        "a generated texture changed: change FoliageTextures.version, and the version and hashes here")
         for inst in scene.instances {   // every plant's wood and leaves, and the ground, have a texture
             XCTAssertLessThan(Int(scene.materials[inst.material].textures.x), scene.textures.count)

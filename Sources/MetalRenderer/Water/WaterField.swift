@@ -24,6 +24,9 @@ protocol WaterField: AnyObject {
 }
 
 extension WaterField {
+    /// Whether (x, z) is in the water or within `margin` metres of a river's (no plant there): by default, water there.
+    func wet(_ x: Double, _ z: Double, margin: Double) -> Bool { water(x, z, ground: ground(x, z)) != nil }
+
     func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
               info: UnsafeMutablePointer<UInt32>) {
         for j in rows {
@@ -100,7 +103,7 @@ final class TerrainWaterField: WaterField {
                     let narrow = pow(8 / max(body.width, 1), 0.3)
                     speed.append(min(appearance.flowSpeed * (0.6 + 25 * slope) * narrow, 5))
                     white.append(appearance.whiteWater * TerrainWaterField.smoothstep(0.015, 0.07, slope))
-                    let lo = simd_min(a, b) - half - 1, hi = simd_max(a, b) + half + 1
+                    let lo = simd_min(a, b) - half * 1.7 - 4, hi = simd_max(a, b) + half * 1.7 + 4
                     for cz in Int((lo.y / Self.bucketSize).rounded(.down))...Int((hi.y / Self.bucketSize).rounded(.down)) {
                         for cx in Int((lo.x / Self.bucketSize).rounded(.down))...Int((hi.x / Self.bucketSize).rounded(.down)) {
                             buckets[Self.key(cx, cz), default: []].append(i)
@@ -167,6 +170,36 @@ final class TerrainWaterField: WaterField {
 
     func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
         TerrainWaterField.water(x, z, ground: ground, rivers: rivers, lakes: lakes, seas: seas, grid: snapshot.grid)
+    }
+
+    func wet(_ x: Double, _ z: Double, margin: Double) -> Bool {
+        let g = ground(x, z)
+        if let w = water(x, z, ground: g), g < w.level + Float(margin) * 0.3 { return true }
+        // (A lake's shore: within the margin of one of its cells.)
+        let grid = snapshot.grid, reach = Int((margin / Double(grid.cell)).rounded(.up))
+        if reach > 0 {
+            let at = grid.coordinates(x, z), c = SIMD2(Int(at.x.rounded(.down)), Int(at.y.rounded(.down)))
+            for l in lakes {
+                let q0 = c &- l.lo
+                guard q0.x >= -reach, q0.y >= -reach, q0.x < l.size.x + reach, q0.y < l.size.y + reach else { continue }
+                for dz in -reach...reach {
+                    for dx in -reach...reach where dx * dx + dz * dz <= reach * reach {
+                        let q = q0 &+ SIMD2(dx, dz)
+                        if q.x >= 0, q.y >= 0, q.x < l.size.x, q.y < l.size.y, l.cells[q.y * l.size.x + q.x] { return true }
+                    }
+                }
+            }
+        }
+        let p = SIMD2(x, z)
+        for r in rivers {
+            guard let list = r.buckets[Self.key(Int((x / Self.bucketSize).rounded(.down)), Int((z / Self.bucketSize).rounded(.down)))] else { continue }
+            for i in list {
+                let a = r.points[i], ab = r.points[i + 1] - a
+                let t = min(max(simd_dot(p - a, ab) / max(simd_length_squared(ab), 1e-9), 0), 1)
+                if simd_distance(p, a + ab * t) < r.half / 0.9 + margin { return true }
+            }
+        }
+        return false
     }
 
     private static func water(_ x: Double, _ z: Double, ground: Float, rivers: [River], lakes: [Lake], seas: [Sea], grid: TerrainGrid) -> WaterSample? {

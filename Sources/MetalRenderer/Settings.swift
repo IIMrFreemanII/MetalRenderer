@@ -465,6 +465,9 @@ struct CitySettings: Equatable, Codable {
     /// rooms, stairs, furniture, lights you can walk among (Scene+Interiors.swift). Off: every building a shell.
     var interiors = true
     var interiorReach: Float = 30
+    /// A canal through the city in place of its middle avenue (with 4 blocks a side or more): quays, bridges where
+    /// the streets cross it, water (CityPlan.canal).
+    var canal = true
 
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1

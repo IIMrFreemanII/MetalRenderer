@@ -67,22 +67,23 @@ final class PlantGoldenTests: XCTestCase {
     }
 
     /// (Oct 2026: the ground became the terrain's sectors, its layer materials added: the plants as they were, the
-    /// pictures the same as main's.)
+    /// pictures the same as main's. Then its stream and pond: no plant in the water.)
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "54ec3614a19f")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "be3537d7d8cf")
+        XCTAssertEqual(scene(Scene(settings)), "d1743c9d79a7")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "812007b38465")
         settings.leafCards = true
-        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "1c752e70e93c")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "19469a8d6319")
     }
 
+    /// (Oct 2026: a lake and its stream in place of the pond's slab, no tree in them.)
     func testTheValleyIsAsItWas() {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
-        XCTAssertEqual(scene(Scene(settings)), "a29289b49176")
+        XCTAssertEqual(scene(Scene(settings)), "39fb20810e13")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {
@@ -93,9 +94,10 @@ final class PlantGoldenTests: XCTestCase {
             let side = Double(World.tileSize), x0 = Double(x) * side, z0 = Double(z) * side
             h.add(world.trees(x0: x0, z0: z0, side: side, flora: flora))
             for j in 0..<4 { h.add(world.groundCover(x0: x0, z0: z0 + Double(j) * 32, side: 32, flora: flora)) }
-            // (The tiles' name as of World.version 6: 7 changed the buildings, not where the plants stand.)
+            // (The tiles' name as of World.version 6: 7 changed the buildings, not where the plants stand; 9 its water,
+            // which they keep out of.)
             h.add(WorldTile.place(world, x: x, z: z).replacingOccurrences(of: "tile v\(World.version) ", with: "tile v6 "))
         }
-        XCTAssertEqual(h.value, "fd2a42daf43a")
+        XCTAssertEqual(h.value, "8a78dc9ef2bf")
     }
 }

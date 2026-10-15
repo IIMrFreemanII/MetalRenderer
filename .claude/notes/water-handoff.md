@@ -42,6 +42,31 @@ Beer-Lambert colour, foam, caustics, the camera under water; flowing rivers; at 
   `METALRENDERER_WATER_OFF=1`, `METALRENDERER_WATER_WIND` (m/s, 7), `METALRENDERER_WATER_NEAR` (cells, 0 = none),
   `METALRENDERER_WATER_PROBE="x,z0,z1"` (prints the field along a line).
 
+## Water and terrain in the existing scenes
+
+- Generated water is shaped into a scene's base, never into its edits: `Terrain/TerrainShapes.swift`
+  (`ShapedTerrainBase`: flats, bowls, channels; pure, its fingerprint in the base's, so old saved edits of `forest-N`,
+  `valley`, `city-N` drop once with a log line) and `SceneWaterMaker` (river: a point every 6 m, beds the running
+  minimum of the base; pond). The bodies go through `addTerrain(generatedWater:)` after the document's
+  (`SceneTerrain.generatedWater`; scatter and `adoptTerrainDocument` count them).
+- Forest: a stream from the north to a pond in a hollow (the seed's side); trees, cover and grass keep out of it
+  (`dry`, after their random draws). Valley: the glossy pond slab became a lake fed by a stream off the western hill.
+- City: `CitySettings.canal` (on, 4+ blocks) turns the middle x street into a canal 16 m wider (the lots and keys as
+  before): quays, walls, bridge decks with parapets, water 1.5 m under the street.
+- Terrain workshop: `TerrainWorkshopSettings.sea` (on with hills; the 30th-percentile height; `tsea`); the
+  benchmarks' workshops turn it off.
+- Plant and building workshops, crowd square, sun courtyard: their own ground terrains (`addGroundTerrain`, named by
+  the bucketed flat they keep, so editing a plant or building keeps the mesh), a plain beyond. The plants' pond (the
+  lowest of seven places behind them, `Scene.pond(on:)`); the crowd's round fountain (`MeshBuilder.ring`) and the
+  courtyard's raised pool use `addPoolWater` (a `LevelWaterField` over a convex outline, `.pool` look).
+- Mode `waterscenes` renders each from near its water.
+- Whole frames, `shot`, dev build, M1 Max, vs f529a13 (`METALRENDERER_ASSETS` for the copy): plants 6.9 → 8.3 ms,
+  buildings 6.7 → 8.3 (ground only, no water), crowd 15.4 → 16.7, sun 4.95 → 6.05. Forest pond's water pass
+  1.3–3.8 ms, valley 0.9–1.0, city canal 1.9 by day, 2.7 by night. `shot`, `fluids`, Mireland: bit-identical.
+- Tests: `PlantGoldenTests` (Forest, valley, and the world's, stale since World v9), `FoliageTests` ground hash,
+  `PlantWorkshopTests` counts, `CityTests` (the terrain's detail texture, since the terrain editor), canal row in the
+  settings table. `BuildingWorkshopTests.testLooseFurnitureRestsAndMoves` is flaky before and after (2 of 6 at f529a13).
+
 ## Verified
 
 - Modes `water` (lagoon, coast, above, swell, shallow, lake, river, top), `waterunder`, `waterperf`, `terrainwater`,

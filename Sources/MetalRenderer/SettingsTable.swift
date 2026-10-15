@@ -378,6 +378,7 @@ enum SettingsTable {
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
             S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
             S.check("Interiors near the camera", \.scene.city.interiors).env(.scene, "interiors").when(city),
+            S.check("Canal", \.scene.city.canal).env(.scene, "canal").when(city),
             S.slider("Interior reach", \.scene.city.interiorReach, 10...80, step: 5, live: false) { String(format: "%.0f m", $0) }
                 .env(.scene, "reach").when(city),
             S.value(\.scene.buildings.style).env(.scene, "bstyle"),
@@ -405,6 +406,8 @@ enum SettingsTable {
                 .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
             S.slider("Bodies dropped", \.scene.terrainWorkshop.bodies, 0...400, live: false).env(.scene, "tbodies")
                 .when { $0.scene.kind == .terrain },
+            S.check("Sea", \.scene.terrainWorkshop.sea).env(.scene, "tsea")
+                .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
             S.value(\.scene.terrainWorkshop.document).env(.scene, "tdocument"),
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),

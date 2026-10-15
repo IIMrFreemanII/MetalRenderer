@@ -44,6 +44,38 @@ extension Scene {
 }
 
 extension Scene {
+    /// A pool's still water at `level` over `outline` (a convex polygon of x, z, either way round), its floor at
+    /// `floor` (its rim is the scene's to build): its surface, and where it is for the water map (`key` tells the map
+    /// apart from other scenes').
+    func addPoolWater(_ outline: [SIMD2<Float>], level: Float, floor: Float, look: WaterLook = .preset(.pool), key: String) {
+        guard !WaterSystem.off, outline.count >= 3 else { return }
+        let index = addWaterLook(look)
+        let centre = outline.reduce(.zero, +) / Float(outline.count)
+        var positions = [SIMD3(centre.x, level, centre.y)], indices: [UInt32] = []
+        // (A fan facing up whichever way the outline goes round.)
+        let turn = outline.indices.reduce(Float(0)) { s, i in
+            let a = outline[i], b = outline[(i + 1) % outline.count]
+            return s + (a.x * b.y - b.x * a.y)
+        }
+        for (i, p) in outline.enumerated() {
+            positions.append(SIMD3(p.x, level, p.y))
+            let a = UInt32(i + 1), b = UInt32((i + 1) % outline.count + 1)
+            indices += turn > 0 ? [0, b, a] : [0, a, b]
+        }
+        addWaterSurface((positions, [SIMD3<Float>](repeating: [0, 1, 0], count: positions.count), indices), look: index)
+        let lo = outline.reduce(SIMD2(repeating: Float.infinity), simd_min), hi = outline.reduce(SIMD2(repeating: -Float.infinity), simd_max)
+        let sign: Float = turn > 0 ? 1 : -1
+        water?.field = LevelWaterField(level: level, look: index, lo: SIMD2<Double>(lo), hi: SIMD2<Double>(hi)) { x, z in
+            let q = SIMD2(Float(x), Float(z))
+            let inside = outline.indices.allSatisfy { i in
+                let a = outline[i], b = outline[(i + 1) % outline.count]
+                return sign * ((b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x)) >= 0
+            }
+            return inside ? floor : level + 1
+        }
+        water?.key = key
+    }
+
     /// The open world's water around this scene (World+Water.swift): the sea's sheet over the scene's tiles where any
     /// of their ground is under it, the rivers' ribbons and the lakes' sheets that are in them (the scene's
     /// coordinates: `anchor` is the world's place of its origin); and where it all is, for the water map.
