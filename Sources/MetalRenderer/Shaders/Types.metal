@@ -112,7 +112,6 @@ constant uint SKY_ATMOSPHERE = 1, SKY_IMAGE = 2;
 constant uint SKY_CLOUDS = 1, SKY_SHADOWS = 2, SKY_UPDATE_ALL = 4, SKY_CLOUDS_OVER_IMAGE = 8;
 
 // Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table; the sky.
-struct VSMScene;   // Shaders/VSM.metal
 struct WaterScene; // Shaders/WaterCommon.metal
 
 struct SceneShading {
@@ -127,14 +126,13 @@ struct SceneShading {
     texture2d_array<float>        sky;         // with FLAG_SKY_MAP: [0] upper, [1] lower hemisphere (skyKernel)
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
-    device const VSMScene*        vsm;         // with FLAG_VSM: the virtual shadow maps (VSMTargets.writeScene)
     device const MaterialExtra*   extras;      // with MATERIAL_EXTRAS: per material (procedural materials' extras)
     device const float4*          procParams;  // with PROCEDURAL_CODE: the programs' parameters (MatShaderCode)
     device const WaterScene*      water;       // with WATER: this frame's water (Renderer+Water.swift)
 };
-static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 280 && __builtin_offsetof(SceneShading, procParams) == 288
-              && __builtin_offsetof(SceneShading, water) == 296,
-              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset, shadingExtrasOffset, shadingWaterOffset)");
+static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 272 && __builtin_offsetof(SceneShading, procParams) == 280
+              && __builtin_offsetof(SceneShading, water) == 288,
+              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingExtrasOffset, shadingWaterOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -331,7 +329,6 @@ constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowin
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
 constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
-constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
 constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
@@ -360,7 +357,6 @@ constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry
 constant uint MASK_LIGHTS   = 2;     // the lights' visible shapes and the camera-only motes (Scene.maskLights)
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
-constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
 constant uint MASK_LIQUID   = 32;    // a liquid's surface (Scene.maskLiquid): only liquidKernel's rays meet it
 constant uint MASK_ALL      = 0xFF;
 // What a ray is for, in bits 8-11 of the mask it is traced with (rayMask): the traversal counters are kept per class

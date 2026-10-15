@@ -28,8 +28,8 @@ final class RasterScene {
     let chunkBounds: MTLBuffer     // per chunk: lo, hi (float4 each), from rasterBoundsKernel
     let ids: MTLBuffer?            // per instance: its id (a scene with blocks), else nil (the id is the place)
     let visible: MTLBuffer         // per instance: 1 = drawn last frame (MSL RASTER_VISIBLE; RASTER_IN_VIEW between the passes)
-    /// The scene's own instances that move or deform, or whose virtual geometry's cut may change (places): what
-    /// invalidates the virtual shadow maps' pages it covers (vsmInvalidateKernel). The blocks' never move.
+    /// The scene's own instances that move or deform, or whose virtual geometry's cut may change (places). The blocks'
+    /// never move.
     let moving: MTLBuffer
     let movingCount: Int
     let instanceCount: Int

@@ -21,7 +21,6 @@ using namespace metal::raytracing;
 #include "Shaders/Raster.metal"            // the raster visibility buffer: culling, the pyramid, the draw, visibilityHit
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
 #include "Shaders/Hair.metal"              // strands: the hair BSDF (Chiang et al. 2016) and its lights
-#include "Shaders/VSM.metal"               // virtual shadow maps: the pages' upkeep and draw, shadowVisible
 #include "Shaders/Regir.metal"             // the light grid (ReGIR) and regirBuildKernel
 #include "Shaders/LightSampling.metal"     // light samples and RIS, octahedral mapping, light-visibility maps, view directions
 #include "Shaders/LightTree.metal"         // the path tracer's many lights: a bounding hierarchy, drawn by importance

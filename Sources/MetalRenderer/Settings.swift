@@ -425,43 +425,6 @@ enum PrimaryVisibility: Int, CaseIterable, Codable {
     static let initial: PrimaryVisibility = ProcessInfo.processInfo.environment["METALRENDERER_PRIMARY"] == "raster" ? .raster : .traced
 }
 
-/// What shadows the direct light of the camera's surfaces: a ray toward a point on the light per sample, or for suns,
-/// spot and sphere lights Virtual Shadow Maps (VSM.swift, Shaders/VSM.metal, in the manner of Unreal's: pages of a
-/// huge virtual depth map rendered where pixels look, cached while nothing moves), through which the same jittered
-/// segment is marched. What the raster can't draw (leaf cards, plants in the wind) is still traced; so is every sample
-/// whose pages aren't ready. Bounces, reflections and the fog keep their rays.
-enum ShadowMethod: Int, CaseIterable, Codable {
-    case rays
-    case virtualMaps
-
-    var title: String { self == .rays ? "Rays" : "Virtual shadow maps" }
-
-    /// `METALRENDERER_SHADOW_METHOD=vsm|rays` picks the starting one (benchmarks: for every setting).
-    static let initial: ShadowMethod = ProcessInfo.processInfo.environment["METALRENDERER_SHADOW_METHOD"] == "vsm" ? .virtualMaps : .rays
-}
-
-/// Virtual Shadow Maps' budgets and tuning (ShadowMethod.virtualMaps).
-struct VSMSettings: Equatable, Codable {
-    var pool = 1024                 // physical pages of 128 x 128 texels (depth32Float: 64 KB each)
-    var budget = 256                // pages rendered a frame at most (the rest: rays until their turn)
-    var levels = 12                 // the sun's clipmap levels, 16 m wide and doubling (32 km)
-    var maxLights = 64              // spot and sphere lights with maps (the others: rays)
-    var steps = 8                   // the march's steps toward the light
-    var bias: Float = 0.5           // depth bias, in texels of the page's level (x (1 + the slope)): 0.5 is nearest the
-                                    // rays (pixels > 8 levels off in the city: 1.6% against 3.0% at 1.5), no acne
-    /// Virtual geometry (with the per-instance BLAS) drawn as clusters with a cut of each view's own (RasterClusters),
-    /// whatever the camera draws it from: its pages then stay drawn while the camera moves. Off: the BLAS's triangles,
-    /// all of them into every page the instance covers, every frame.
-    var clusters = true
-
-    static let poolOptions = [256, 512, 1024, 2048]
-    static let budgetRange = 16...1024
-    static let levelRange = 1...12
-    static let maxLightRange = 0...256
-    static let stepRange = 1...16
-    static let biasRange: ClosedRange<Float> = 0...8
-}
-
 /// A glTF model the user opened or dropped into the scene.
 struct ExtraModel: Equatable, Codable {
     var path: String
@@ -1300,8 +1263,6 @@ struct RenderSettings: Equatable, Codable {
     var scene = SceneSettings()
     var api = RenderAPI.initial
     var primary = PrimaryVisibility.initial
-    var shadowMethod = ShadowMethod.initial
-    var vsm = VSMSettings()
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
@@ -1368,16 +1329,14 @@ struct RenderSettings: Equatable, Codable {
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering", "Visibility buffer", "Virtual shadow pages"]
+                            "Fog scattering", "Visibility buffer"]
     /// The raster visibility buffer's chunks (rasterDebugKernel), with the primary visibility on raster.
     static let visibilityBufferView = 15
-    /// The virtual shadow maps' pages (vsmDebugKernel), with the shadows through virtual shadow maps.
-    static let shadowPagesView = 16
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
-    /// is (normals, albedo, the geometry views, the visibility buffer's and the shadow pages' colours...): viewIsHDR in
+    /// is (normals, albedo, the geometry views, the visibility buffer's colours...): viewIsHDR in
     /// Shaders/Output.metal.
     static func showsLight(_ mode: Int) -> Bool {
-        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && ![visibilityBufferView, shadowPagesView].contains(mode)
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && mode != visibilityBufferView
     }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.

@@ -211,7 +211,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float b;
             float3 target = lightShadowTarget(lights[i], p, r);
             float3 origin = hairOrSurface(hp, sf.position, n, p, target);
-            float v = shadowVisible(u.flags, s.vsm, i, lights[i], origin, ng, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
+            float v = isVisibleBlocker(origin, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
             direct += unshadowed * v;
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
@@ -350,7 +350,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
             Light light = lights[pick];
             float b;
             float3 target = lightShadowTarget(light, p, r);
-            bool visible = shadowVisible(u.flags, shading.vsm, pick, light, hairOrSurface(hp, sp.xyz, n, p, target), ng, target, accel, b);
+            bool visible = isVisibleBlocker(hairOrSurface(hp, sp.xyz, n, p, target), target, accel, b);
             float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
             visibility += channel * (cloud / float(rays));
             if (b > 0.0f) { blocker += channel * penumbraWidth(light, p, b); blockerCount += channel; }
@@ -468,7 +468,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         Light light = lights[y];
         float b;
         float3 target = lightShadowTarget(light, p, r);
-        bool visible = shadowVisible(u.flags, shading.vsm, y, light, hairOrSurface(hp, sp.xyz, n, p, target), ng, target, accel, b);
+        bool visible = isVisibleBlocker(hairOrSurface(hp, sp.xyz, n, p, target), target, accel, b);
         float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
         visibility = select(visibility, float4(visible && pick.total > 0.0f ? saturate(cloud * targetY * W / pick.total) : 0.0f), here);

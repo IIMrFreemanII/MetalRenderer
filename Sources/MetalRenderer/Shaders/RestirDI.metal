@@ -285,11 +285,8 @@ kernel void restirSpatialKernel(constant Uniforms&               u          [[bu
             if (r.element != ELEMENT_NONE && r.W > 0.0f) {
                 LightSampleEval e = evalLightSample(r.element, r.uv, sp, s, lights, tris, false, true);
                 float b = 0.0f;
-                uint li = r.element & ELEMENT_INDEX;
                 float3 o = shadowOrigin(sp, e.target);
-                bool visible = r.visible || ((r.element & ELEMENT_TYPE) != ELEMENT_TRIANGLE
-                                             ? shadowVisible(u.flags, s.vsm, li, lights[li], o, sp.ng, e.target, accel, b)
-                                             : isVisibleBlocker(o, e.target, accel, b));
+                bool visible = r.visible || isVisibleBlocker(o, e.target, accel, b);
                 float v = visible ? 1.0f : 0.0f;
                 if (b > 0.0f) {
                     penumbra += (r.element & ELEMENT_TYPE) != ELEMENT_TRIANGLE ? penumbraWidth(lights[r.element & ELEMENT_INDEX], sp.p, b)

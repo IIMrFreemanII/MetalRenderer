@@ -238,6 +238,8 @@ final class SettingsTableTests: XCTestCase {
     func testRemovedKeysDoNotResetSavedSettings() throws {
         var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
         saved["rayTracer"] = 1
+        saved["shadowMethod"] = 1   // (virtual shadow maps, since removed)
+        saved["vsm"] = ["pool": 512]
         saved["api"] = RenderAPI.metal4.rawValue
         saved["bounces"] = defaults.bounces + 1
         let store = UserDefaults.standard, key = "renderSettings"

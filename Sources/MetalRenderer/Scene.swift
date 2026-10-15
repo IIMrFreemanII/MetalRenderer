@@ -37,8 +37,8 @@ final class Scene {
         var isStatic: Bool { animation == nil && !poseAnimated && !deforms && !simulated }
         /// Its transform changes from frame to frame.
         var moves: Bool { animation != nil || poseAnimated || travels || simulated }
-        /// Solid geometry, which shadow and GI rays meet (with `maskShadowTraced` or not).
-        var isGeometry: Bool { mask & ~Scene.maskShadowTraced == Scene.maskGeometry }
+        /// Solid geometry, which shadow and GI rays meet.
+        var isGeometry: Bool { mask == Scene.maskGeometry }
     }
 
     /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
@@ -251,18 +251,6 @@ final class Scene {
     static let maskVoxels: UInt32 = 8
     /// A liquid's surface (FluidSurface.swift): only liquidKernel's rays meet it, which bend the camera's through it.
     static let maskLiquid: UInt32 = 32
-    /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
-    /// sways, SDF shapes), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
-    /// trace a ray that meets only this (MASK_SHADOW_TRACED). Always with `geometry`.
-    static let maskShadowTraced: UInt32 = 16
-
-    /// An instance's mask: `mask`, with `shadowTraced` on geometry the raster can't draw.
-    func instanceMask(_ mask: UInt32, mesh: Int, assembly: Bool) -> UInt32 {
-        guard mask == Scene.maskGeometry else { return mask }
-        let skipped = assembly || (mesh >= 0 && (meshes[mesh].cutout != 0 || meshes[mesh].sways != 0))
-        return skipped ? mask | Scene.maskShadowTraced : mask
-    }
-
     /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0). No ray's
     /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
@@ -304,9 +292,6 @@ final class Scene {
     var hasFoliage: Bool { assemblies.contains { !$0.rigid } || hasSwayingMeshes }
     /// Assemblies that are not plants (Scene.Assembly.rigid): the shaders walk their parts without FOLIAGE's code.
     var hasRigidAssemblies: Bool { assemblies.contains(where: \.rigid) }
-    /// Some instances may have `maskShadowTraced` (the plants, leaf cards, SDF shapes: what the raster can't draw; the
-    /// crowd, cloths, soft bodies and hair, which deform every frame).
-    var hasShadowTraced: Bool { hasFoliage || usesCards || hasSkinned || hasSDFShapes || !deforming.isEmpty }
     private var leafMaterials: [LeafMaterial] = []
     private var leafState = SIMD2<Float>(-1, -1)   // the season and translucency they are set to
     /// Some material has a specular lobe (glTF materials; the generated scenes are diffuse only). Set once, by init.
@@ -634,7 +619,6 @@ final class Scene {
         finishTerrainScatter()
         addTerrainColliders()
         displaceProcedural()
-        traceHoleShadows()
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
         for extra in settings.extraModels {
@@ -1320,8 +1304,6 @@ final class Scene {
     func setSkinned(_ i: Int, travels: Bool) {
         instances[i].deforms = true
         instances[i].travels = travels
-        // Virtual shadow maps would draw it again every frame wherever it casts a shadow: its shadows are traced.
-        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
         hasSkinned = true
     }
     private(set) var hasSkinned = false
@@ -1337,26 +1319,14 @@ final class Scene {
         return m
     }
 
-    /// Instance `i` on `mesh`, its mesh's displaced copy (Scene+Displacement.swift): its shadows traced (the virtual
-    /// shadow maps would keep their pages of it as it was before a bake moved it).
+    /// Instance `i` on `mesh`, its mesh's displaced copy (Scene+Displacement.swift).
     func setDisplacedMesh(_ i: Int, _ mesh: Int) {
         instances[i].mesh = mesh
-        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
     }
 
-    /// Instance `i` given its painted materials (Scene+Painted.swift), its shadows traced if they cut holes.
-    func setPaintedMaterial(_ i: Int, _ material: Int, cutsHoles: Bool) {
+    /// Instance `i` given its painted materials (Scene+Painted.swift).
+    func setPaintedMaterial(_ i: Int, _ material: Int) {
         instances[i].material = material
-        if cutsHoles && instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
-    }
-
-    /// The instances a procedural material cuts holes in (the raster leaves them to the rays): their shadows traced too
-    /// (the virtual shadow maps are drawn by the raster, which would leave them out).
-    func traceHoleShadows() {
-        guard groups.isEmpty, procedural.contains(where: { $0.channels.contains(.opacity) }) || painted.contains(where: \.opacity) else { return }
-        for i in instances.indices where instances[i].isGeometry {
-            if let e = materialExtras[instances[i].material], e.textures.y != .max { instances[i].mask |= Scene.maskShadowTraced }
-        }
     }
 
     /// Mesh `m`'s bounds grown by `d` every way (where its displaced vertices may go).
@@ -1369,8 +1339,6 @@ final class Scene {
     func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4) -> Int {
         let i = addInstance(mesh, material, transform)
         instances[i].deforms = true
-        // Like the crowd's: virtual shadow maps would draw it again every frame (and can't draw curves): traced.
-        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
         return i
     }
 
@@ -1522,7 +1490,7 @@ final class Scene {
     /// An instance of an assembly: `material` is its wood's, and the next material its leaves'.
     @discardableResult
     func addInstance(assembly: Int, _ material: Int, _ transform: float4x4) -> Int {
-        instances.append(Instance(mesh: -1, material: material, mask: instanceMask(Scene.maskGeometry, mesh: -1, assembly: true),
+        instances.append(Instance(mesh: -1, material: material, mask: Scene.maskGeometry,
                                   transform: transform, prevTransform: transform,
                                   animation: nil, assembly: assembly, normalMatrix: transform.inverse.transpose))
         return instances.count - 1
@@ -1546,8 +1514,7 @@ final class Scene {
     @discardableResult
     func addInstance(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry,
                      animation: ((Float) -> float4x4)? = nil) -> Int {
-        // (The raster can't draw a shape: virtual shadow maps trace it.)
-        instances.append(Instance(mesh: -1, material: material, mask: instanceMask(mask, mesh: -1, assembly: true),
+        instances.append(Instance(mesh: -1, material: material, mask: mask,
                                   transform: transform, prevTransform: transform, animation: animation,
                                   normalMatrix: transform.inverse.transpose, sdf: sdf))
         return instances.count - 1
@@ -1993,7 +1960,7 @@ final class Scene {
     func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
                              mask: UInt32 = Scene.maskGeometry,
                              animation: ((Float) -> float4x4)? = nil) -> Int {
-        instances.append(Instance(mesh: mesh, material: material, mask: instanceMask(mask, mesh: mesh, assembly: false),
+        instances.append(Instance(mesh: mesh, material: material, mask: mask,
                                   transform: transform, prevTransform: transform, animation: animation,
                                   normalMatrix: transform.inverse.transpose))
         return instances.count - 1

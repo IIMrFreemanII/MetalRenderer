@@ -19,7 +19,6 @@ struct SceneData {
     texture2d_array<float>     sky;
     texture2d<float>           cloudShadow;
     constant SkyParams*        skyParams;
-    device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
     device const MaterialExtra* extras;         // SceneShading.extras (with MATERIAL_EXTRAS)
     device const float4*       procParams;      // SceneShading.procParams (with PROCEDURAL_CODE)
     device const WaterScene*   water;           // SceneShading.water (with WATER)
@@ -36,7 +35,6 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.sky = shading.sky;
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
-    s.vsm = shading.vsm;
     s.extras = shading.extras;
     s.procParams = shading.procParams;
     s.water = shading.water;

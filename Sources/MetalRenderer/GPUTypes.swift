@@ -62,7 +62,6 @@ enum UniformFlags {
     static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
     static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
     static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
-    static let vsm: UInt32 = 2097152         // the camera's surfaces' shadows through virtual shadow maps (VSM.swift)
     static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
@@ -121,50 +120,6 @@ struct GPURasterParams {
 struct GPURasterMesh {
     var lo = SIMD4<Float>()
     var hi = SIMD4<Float>()
-}
-
-/// A view of a light's virtual shadow map (MSL VSMView, Shaders/VSM.metal): its rows to clip space, its place in the
-/// page table, what it is a view of.
-struct GPUVSMView {
-    var x = SIMD4<Float>(), y = SIMD4<Float>(), z = SIMD4<Float>(), w = SIMD4<Float>()
-    var origin = SIMD4<Float>()
-    var params = SIMD4<Float>()       // x = texel size (sun; else at 1 m), y = sun: metres a unit of depth, z = near
-    var window = SIMD2<Int32>()       // the sun: the absolute page of the window's first
-    var table: UInt32 = 0
-    var pages: UInt32 = 0
-    var light: UInt32 = 0
-    var kind: UInt32 = 0
-    var level: UInt32 = 0
-    var flags: UInt32 = 0
-
-    static let stale: UInt32 = 1      // its drawn pages are out of date (the light moved)
-}
-
-/// A light's maps (MSL VSMLight), by light index: its first view + 1 (0: none), levels or mips, kind.
-struct GPUVSMLight {
-    var firstView: UInt32 = 0
-    var levels: UInt32 = 0
-    var kind: UInt32 = 0
-    var pad: UInt32 = 0
-}
-
-/// The virtual shadow maps' upkeep (MSL VSMParams).
-struct GPUVSMParams {
-    var entries: UInt32 = 0
-    var pool: UInt32 = 0
-    var budget: UInt32 = 0
-    var frame: UInt32 = 0
-    var keep: UInt32 = 0
-    var instanceCount: UInt32 = 0
-    var meshCount: UInt32 = 0
-    var maxDraws: UInt32 = 0
-    var maxGroups: UInt32 = 0
-    var flags: UInt32 = 0
-    var views: UInt32 = 0
-    var moving: UInt32 = 0            // RasterScene.moving's instances
-
-    static let ids: UInt32 = 1        // RasterScene.ids maps places to ids
-    static let cache: UInt32 = 2      // drawn pages stay drawn until invalidated
 }
 
 /// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
@@ -847,9 +802,6 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPULightTreeNode>.stride == 64, "GPULightTreeNode layout mismatch")
     precondition(MemoryLayout<GPURasterParams>.stride == 48, "GPURasterParams layout mismatch")
     precondition(MemoryLayout<GPURasterMesh>.stride == 32, "GPURasterMesh layout mismatch")
-    precondition(MemoryLayout<GPUVSMView>.stride == VSMTargets.viewSize, "GPUVSMView layout mismatch")
-    precondition(MemoryLayout<GPUVSMLight>.stride == 16, "GPUVSMLight layout mismatch")
-    precondition(MemoryLayout<GPUVSMParams>.stride == 48, "GPUVSMParams layout mismatch")
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")

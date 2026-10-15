@@ -40,12 +40,9 @@ enum Kernel: Int, CaseIterable {
     case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
     // The raster visibility buffer (Shaders/Raster.metal): culling, the chunks' bounds, the depth pyramid, its view.
     case rasterReset, rasterCull, rasterChunks, rasterBounds, hzbInit, hzbReduce, rasterDebug
-    // Virtual shadow maps (Shaders/VSM.metal): the pages' upkeep, then the culling of what draws them.
-    case vsmReset, vsmViewReset, vsmFree, vsmInvalidate, vsmAlloc, vsmSettle, vsmCull, vsmChunks, vsmDebug
     // Virtual geometry: the per-frame cut, and its clusters' boxes (METALRENDERER_VG_MODE=clusters).
     case vgReset, vgCut, vgBoxes
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
-    case vsmVGCut               // ...in the shadow maps
     case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
     case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
 
@@ -59,9 +56,9 @@ enum Kernel: Int, CaseIterable {
         switch self {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
         case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
-            | F.visBuffer | F.vsm
-        case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind | F.vsm
-        case .restirSpatial: return F.specular | F.vsm
+            | F.visBuffer
+        case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
+        case .restirSpatial: return F.specular
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
         case .rcProbe, .rcTraceMerge, .lightMap: return F.wind
@@ -220,10 +217,6 @@ struct Pipelines {
     let clusterMesh: MTLRenderPipelineState
     static let visibilityFormat = MTLPixelFormat.rg32Uint
     static let depthFormat = MTLPixelFormat.depth32Float
-    /// The virtual shadow maps' draws (vsmVertex; vsmClearVertex, the pages' clear): depth only, each triangle into its
-    /// page's slice of the pool (VSMTargets.pool).
-    let vsm: MTLRenderPipelineState
-    let vsmClear: MTLRenderPipelineState
 
     subscript(_ kernel: Kernel) -> MTLComputePipelineState { states[kernel.rawValue]! }
 
@@ -273,10 +266,6 @@ struct Pipelines {
                                                    vertex: "rasterVertex", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
         clusterMesh = try Pipelines.makeMeshState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                   mesh: "rasterClusterMesh", fragment: "rasterFragment", color: Pipelines.visibilityFormat)
-        vsm = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
-                                            vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
-        vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
-                                                 vertex: "vsmClearVertex", fragment: "vsmFragment", color: nil)
         step?.finish()
         self.stats = stats
         self.api = api

@@ -119,7 +119,6 @@ if [[ $suites == " " ]]; then
           SceneBuffers.swift) add SceneBuffersTests ;;
           LightTree.swift) add LightTreeTests ;;
           RasterScene.swift) add RasterSceneTests ;;
-          VSM.swift) add VSMTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           LoadActivity.swift) add LoadActivityTests ;;
           World+Water.swift) add WorldTests WaterTests ;;

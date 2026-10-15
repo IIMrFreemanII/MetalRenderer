@@ -96,7 +96,7 @@ final class TerrainGPU {
 }
 
 /// A frame's terrain work for the GPU (Renderer.encodeTerrain): bytes to copy into sectors' buffers, the meshes whose
-/// structures are built again over them, and their instances (the raster's bounds, the virtual shadow maps' pages).
+/// structures are built again over them, and their instances (the raster's bounds).
 struct TerrainFrameWork {
     var copies: [BufferCopy] = []
     var meshes: [Int] = []

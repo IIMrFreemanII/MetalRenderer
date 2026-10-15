@@ -14,7 +14,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "rastervg": rasterVG, "vsm": vsm,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "rastervg": rasterVG,
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
         "pathref": pathref,
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
@@ -962,32 +962,6 @@ extension Benchmark {
         out.append(config("gallery clusters pool 128", SceneSettings(kind: .gallery), nil, paths[2])
             .with { $0.virtualGeometry.rasterPoolMB = 128 }.cameraMove())
         return out
-    }
-
-    /// Virtual shadow maps against shadow rays (ShadowMethod), stills of the scenes with suns, spots and sphere lights,
-    /// the view of their pages, and three in motion.
-    private static func vsm() -> [Config] {
-        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("spots", SceneSettings(kind: .spots)),
-                                                 ("sun", SceneSettings(kind: .sun)), ("valley", SceneSettings(kind: .valley)),
-                                                 ("mixed", SceneSettings(kind: .mixed)), ("city", SceneSettings(kind: .city)),
-                                                 ("crowd", SceneSettings(kind: .crowd)), ("forest", SceneSettings(kind: .forest)),
-                                                 ("world", SceneSettings(kind: .world))]
-        return scenes.flatMap { tag, scene in
-            ShadowMethod.allCases.map { method in
-                Config("\(tag) \(method == .rays ? "rays" : "vsm")", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
-                    $0.shadowMethod = method
-                }.still().frames(30)
-            } + [Config("\(tag) vsm pages", scale: 0.5, gi: .radianceCascades, scene: scene) { $0.shadowMethod = .virtualMaps }
-                    .view(RenderSettings.shadowPagesView).still().frames(8)]
-        } + [("cornell", SceneSettings(), false), ("sun", SceneSettings(kind: .sun), false), ("city", SceneSettings(kind: .city), true)]
-            .flatMap { tag, scene, camera in
-                // In motion (300 frames to t = 5 s): the cache's invalidation, by moving objects, a turning sun, the camera.
-                ShadowMethod.allCases.map { method -> Config in
-                    let c = Config("\(tag) \(camera ? "camera" : "moving") \(method == .rays ? "rays" : "vsm")", scale: 0.5, upscale: 3,
-                                   gi: .radianceCascades, scene: scene) { $0.shadowMethod = method }
-                    return camera ? c.cameraMove() : c
-                }
-            }
     }
 
     /// White- and blue-noise sampling next to converged references, all at t = 5 s (Tools/eval/noise.py). "moving" runs
