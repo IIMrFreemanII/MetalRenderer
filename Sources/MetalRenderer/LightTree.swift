@@ -8,7 +8,7 @@ struct GPULightTreeNode {
     var link = SIMD4<UInt32>()     // x = left child (or LightTree.leaf | light index), y = right child, z = parent
 }
 
-/// A bounding hierarchy over the lights (every one but the suns; a mesh light is one leaf), for MegaLights' far-field
+/// A bounding hierarchy over the lights (every one but the suns; a mesh light is one leaf), for the path tracer's
 /// samples: a light is drawn by walking down from the root, at each node in proportion to the two children's
 /// importance at the pixel (Conty Estevez & Kulla 2018, as in PBRT-v4's BVHLightSampler; a leaf weighs its light's
 /// exact unshadowed light), and the probability of any light can be computed back along its path. Built once per
@@ -108,7 +108,7 @@ struct LightTree {
 
     private static func type(_ l: GPULight) -> Float { Float(Int(l.color.w) / 4) }
 
-    /// A light's leaf: the box around it, its intensity luminance (as MegaLights' reach counts it) and its cone.
+    /// A light's leaf: the box around it, its intensity luminance and its cone.
     private static func leafNode(_ l: GPULight) -> (node: GPULightTreeNode, center: SIMD3<Float>) {
         let lum = dot(SIMD3(l.color.x, l.color.y, l.color.z), SIMD3<Float>(0.2126, 0.7152, 0.0722))
         let c = SIMD3(l.positionRadius.x, l.positionRadius.y, l.positionRadius.z), r = l.positionRadius.w

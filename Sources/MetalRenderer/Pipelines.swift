@@ -9,7 +9,7 @@ enum Kernel: Int, CaseIterable {
     case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
     case waterNear              // the near patch's vertices, moved by the waves
     case waterCaustics          // the sun's caustics under the waves
-    case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
+    case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
     case lumenProbe, lumenTrace, lumenFilter, lumenSH, lumenResolve, lumenHZB, lumenCardCapture, lumenCardLight,
@@ -64,7 +64,7 @@ enum Kernel: Int, CaseIterable {
         case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
             | F.visBuffer | F.vsm
         case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind | F.vsm
-        case .restirSpatial, .megaLightsSample: return F.specular | F.vsm
+        case .restirSpatial: return F.specular | F.vsm
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
         case .rcProbe, .rcTraceMerge, .lightMap: return F.wind
@@ -79,7 +79,6 @@ enum Kernel: Int, CaseIterable {
         switch self {
         case .trace: return Uniforms.traceBounces | Uniforms.traceManyLights
         case .restirTemporal: return GPURestirParams.visibilityReuse
-        case .megaLightsSample: return GPUMegaLightsParams.partition
         case .restirSpatial: return GPURestirParams.shade | GPURestirParams.split
         case .restirGIInitial:
             return GPURestirGIParams.lightMaps | GPURestirGIParams.feedbackSet | GPURestirGIParams.fallback

@@ -283,7 +283,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         }
     }
 
-    // Where the sun's light isn't a term of its own here (ReSTIR, MegaLights, no shadow filter), the caustics go on
+    // Where the sun's light isn't a term of its own here (ReSTIR, no shadow filter), the caustics go on
     // most of the light under the water (the sun's is most of it there).
     if (WATER && !sunCaustics) {
         float4 sp = surfacePos.read(tid);

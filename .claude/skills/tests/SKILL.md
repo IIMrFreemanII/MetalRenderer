@@ -89,7 +89,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `GLTFLoader` | GLTFLoaderTests |
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
 | `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
-| `LightTree.swift` | LightTreeTests |
+| `LightTree.swift`, `Shaders/LightTree.metal` | LightTreeTests (the shader: plus the shader pair) |
 | `RasterScene.swift` | RasterSceneTests |
 | `VSM.swift` | VSMTests |
 | `MeshSDFBuilder.swift`, `LumenScene.swift` | MeshSDFBuilderTests |

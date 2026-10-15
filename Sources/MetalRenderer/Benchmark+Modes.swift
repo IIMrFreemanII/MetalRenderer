@@ -160,12 +160,12 @@ extension Benchmark {
         }
         var out: [Config] = []
         for lights in [1, 4, 32, 256, 1024, 4096, 16384] {
-            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.restir, .megalights]
+            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.restir]
             out += modes.map { shown("\($0.title.lowercased()), \(lights) lights", stressHall(lights: lights), $0) }
         }
         // The night market (its defaults: cascades, fog), paused so the PNGs compare.
         for lights in [1024, 4096, 16384] {
-            for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir, .megalights] : [.restir, .megalights] {
+            for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir] : [.restir] {
                 out.append(shown("market \(mode.title.lowercased()), \(lights) bulbs", SceneSettings(kind: .market, lights: lights), mode).still())
             }
         }
@@ -809,7 +809,7 @@ extension Benchmark {
             let base = Config("", scale: 0.5, gi: nil, scene: stressHall(lights: lights))
             let ref = base.named("ref direct \(lights)").reference(frames: lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048)
                 .with { $0.restir.grid.enabled = false }   // the table alone
-            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .restir, .megalights]
+            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .restir]
             return references([ref]) + modes.flatMap { mode -> [Config] in
                 let method = base.direct(mode), tag = mode.title.lowercased()
                 return [method.named("\(tag) static \(lights)").still(previous: true), method.named("\(tag) moving \(lights)")]
@@ -832,9 +832,6 @@ extension Benchmark {
             let accum = st.named("restir \(tag) accum market").reference(frames: 64).with { $0.restir.grid.share = 32 }
             out += [st, st.named("restir \(tag) moving market").moving(), accum]
         }
-        // MegaLights the same way (its own sampling, no grid).
-        let ml = base.direct(.megalights).named("megalights static market").still(previous: true)
-        out += [ml, ml.named("megalights moving market").moving(), ml.named("megalights accum market").reference(frames: 64)]
         // The grid at the secondary hits and in the fog: indirect light alone (view 6, path traced and cascades)
         // against an accumulated path-traced reference, and the fog's scattering alone (view 14) against the
         // per-pixel reference march, with GI's and the fog's candidates from the table and from the grid.
@@ -1091,7 +1088,7 @@ extension Benchmark {
     /// ReSTIR's sampling is unbiased for every light type: accumulated direct light (GI off), every light traced
     /// against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), from the table alone and from the
     /// light grid, in the light-check scenes (one rect / tube / sphere light, or its emissive-mesh twin) and in scenes
-    /// with spots, tubes, rects, emissive meshes, a sun and every type together; MegaLights' sampling the same way. Mean
+    /// with spots, tubes, rects, emissive meshes, a sun and every type together. Mean
     /// luminance and PSNR should agree (Tools/eval/restir.py).
     private static func restircheck() -> [Config] {
         var scenes: [(String, SceneSettings)] = ["rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh"].map {
@@ -1100,7 +1097,7 @@ extension Benchmark {
         scenes += [SceneKind.spots, .tubes, .area, .emissive, .mixed].map { ("\($0)", SceneSettings(kind: $0)) }
         scenes.append(("stress32", stressHall()))
         return scenes.flatMap { tag, scene -> [Config] in
-            [(DirectLightMode.exact, false), (.restir, false), (.restir, true), (.megalights, false)].map { mode, grid in
+            [(DirectLightMode.exact, false), (.restir, false), (.restir, true)].map { mode, grid in
                 Config("\(tag) \(mode.title.lowercased())" + (grid ? " grid" : ""), gi: nil, scene: scene) {
                     $0.restir.grid.enabled = grid
                     $0.restir.grid.share = 32      // every candidate
@@ -1141,9 +1138,7 @@ extension Benchmark {
             out.append(base.named("\(tag) cascades").still())
             guard api == .metal3 else { continue }
             out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
-            for mode in [DirectLightMode.restir, .megalights] {
-                out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
-            }
+            out.append(base.named("\(tag) restir").direct(.restir).still())
             for view in ["Normals", "Triangles", "Traversal cost"] {
                 out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
             }
@@ -1885,7 +1880,6 @@ extension Benchmark {
                 still.named("\(kind) shadow denoiser"),
                 still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },
                 still.named("\(kind) restir").direct(.restir),
-                still.named("\(kind) megalights").direct(.megalights),
             ]
         }
     }

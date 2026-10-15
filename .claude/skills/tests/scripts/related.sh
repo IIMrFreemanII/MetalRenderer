@@ -48,6 +48,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Fluid.metal|Sources/MetalRenderer/Shaders/FluidSurface.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Liquid.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/LightTree.metal) add LightTreeTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Water.metal|Sources/MetalRenderer/Shaders/WaterCommon.metal) add WaterTests ShaderSourceTests KernelVariantsTests ;;   # and images (waterKernel: the offscreen skill)
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;

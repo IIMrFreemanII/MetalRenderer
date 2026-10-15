@@ -24,6 +24,7 @@ using namespace metal::raytracing;
 #include "Shaders/VSM.metal"               // virtual shadow maps: the pages' upkeep and draw, shadowVisible
 #include "Shaders/Regir.metal"             // the light grid (ReGIR) and regirBuildKernel
 #include "Shaders/LightSampling.metal"     // light samples and RIS, octahedral mapping, light-visibility maps, view directions
+#include "Shaders/LightTree.metal"         // the path tracer's many lights: a bounding hierarchy, drawn by importance
 #include "Shaders/Fog.metal"               // volumetric fog: fogInject / fogIntegrate / fogReference
 #include "Shaders/Sky.metal"               // atmosphere, clouds, the sky map and its noise
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
@@ -31,7 +32,6 @@ using namespace metal::raytracing;
 #include "Shaders/Liquid.metal"            // liquidKernel: camera rays bent through liquids, liquidApplyKernel
 #include "Shaders/Water.metal"             // waterKernel: camera rays bent into water, its surface, waterApplyKernel
 #include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
-#include "Shaders/MegaLights.metal"        // MegaLights-style direct light: tile light lists, MIS-combined samples
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
 #include "Shaders/PathTrace.metal"         // pathTraceKernel: the reference path tracer (Reference "Path traced")
