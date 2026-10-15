@@ -2,8 +2,11 @@ import Foundation
 import simd
 
 extension Interior {
-    /// A ceiling light (a rect light facing down), in the lot's frame: on at night if its room's light is, on by day
-    /// too in a room that is dark without it (`day`, RoomType.litByDay), and switched with its room (`switchID`).
+    /// A room's ceiling lights as one rect light facing down, over all its panels, in the lot's frame: on at night if
+    /// its room's light is, on by day too in a room that is dark without it (`day`, RoomType.litByDay), and switched
+    /// with its room (`switchID`). `panels` (x, z offsets from its middle, width, depth; none for a single panel) are
+    /// what is drawn, glowing `glow`; `color` spreads their power over the whole rect. One light a room, not one a
+    /// panel: the many-light loops cost per light and pixel (a house by day had 66 panels, an office tower 423).
     struct Light {
         var position: SIMD3<Float>
         var size: SIMD2<Float>
@@ -13,6 +16,10 @@ extension Interior {
         var on: Bool
         var switchID: Int
         var day = false
+        var panels: [SIMD4<Float>] = []
+        var glow: SIMD3<Float>? = nil
+        /// How far it lights below it and beyond its edges (Scene.Light.reach): its storey.
+        var reach: Float = 0
     }
     /// A light switch by a room's door: where its plate is (the lot's frame) and which way it faces.
     struct Switch {

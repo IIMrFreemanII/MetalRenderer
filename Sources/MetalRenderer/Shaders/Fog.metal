@@ -128,7 +128,7 @@ float3 lightVolumeWeight(Light light, float3 p, thread float3& l) {
     float r = light.positionRadius.w;
     if (type == LIGHT_RECT) {
         float cosL = -dot(light.axis.xyz, l);
-        if (cosL <= 0.0f) return float3(0.0f);
+        if (cosL <= 0.0f || !rectReaches(light, p)) return float3(0.0f);
         float area = 4.0f * length(light.params.xyz) * light.params.w;
         return light.color.rgb * (area * cosL / max(d2, area / M_PI_F));
     }
@@ -163,7 +163,7 @@ float3 lightVolumeSample(Light light, float3 p, float2 u, thread const SceneData
         float d2 = dot(w, w);
         l = w * rsqrt(max(d2, 1e-12f));
         float cosL = -dot(light.axis.xyz, l);
-        if (cosL <= 0.0f) return float3(0.0f);
+        if (cosL <= 0.0f || !rectReaches(light, p)) return float3(0.0f);
         float area = 4.0f * length(light.params.xyz) * light.params.w;
         return light.color.rgb * (area * cosL / max(d2, 1e-4f));
     }

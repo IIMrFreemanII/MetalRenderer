@@ -879,9 +879,12 @@ buildings are made in, and single buildings' own floor plans; the **Building wor
   rooms keep their ceiling lights on by day too (`RoomType.litByDay`); other rooms only at night. Inside, GI's hits
   see the sun through rays (see "Light-visibility maps"), so a room is lit by its sun patch and its windows, with
   dark corners, not evenly. The city has auto exposure, so a room lit by its windows isn't black at the street's.
+* **Ceiling lights:** a room's panels are one rect light per 8 m piece, drawn as its panels; each lights only its
+  storey under it (`Scene.Light.reach`), so the street and the other storeys spend no shadow rays on it. Scenes with
+  interiors trace two shadow rays per light group (an open office under many lights speckles with one).
 * **Costs** (M1 Max, release, whole frames, 640×400 upscaled 3×, cascades GI, `METALRENDERER_BENCH=buildings`): a
-  building from outside 12–21 ms a frame by day, a room 18 ms (an open office 26 ms: 423 lights, ReSTIR DI); at
-  night, with every room's lights there to switch (190–420 rect lights), 22–26 ms, ReSTIR DI most of it. An off
+  building from outside 10–17 ms a frame by day, a room 14 ms (an open office 19 ms, 189 lights); at night, with
+  every room's lights there to switch, 21–25 ms, ReSTIR DI most of it. An off
   light still costs its sampling; a scene's doors and lifts cost a refit of the top level only on the frames they
   move.
 * `METALRENDERER_SCENE=buildings,bstyle=office,width=34,depth=30,sides=free,floors=12,bview=cutaway,cut=3,night=1`;
