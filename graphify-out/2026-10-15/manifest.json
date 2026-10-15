@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792005648.7026074,
-    "seen": 1792013775.782615,
-    "ast_hash": "51ce5bb39db445e0187d9f592afefb21",
+    "mtime": 1792070463.0249565,
+    "seen": 1792070479.5966878,
+    "ast_hash": "dba49a64c71099b9111c9a22b52d260f",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark.swift": {
-    "mtime": 1792047620.2258635,
-    "seen": 1792050860.807889,
-    "ast_hash": "fe2510fc13c2406e2c337573b88eeeb4",
+    "mtime": 1792067563.4190474,
+    "seen": 1792070479.596233,
+    "ast_hash": "800cb61d55296df18805f72d1f5d7ff1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/BlueNoise.swift": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792047644.500151,
-    "seen": 1792050860.8080661,
-    "ast_hash": "ed4c6b13e9e04436c32edc9b9ea3e3bf",
+    "mtime": 1792069051.809584,
+    "seen": 1792070479.596403,
+    "ast_hash": "1108c367a707fa0fd75ab57a8239e90b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -246,9 +246,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1792048562.637664,
-    "seen": 1792050860.808107,
-    "ast_hash": "9b34572a123612106030c7e2461c317d",
+    "mtime": 1792067563.418052,
+    "seen": 1792070479.5964422,
+    "ast_hash": "24517e77e51a3861183995c8928d99f0",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
@@ -414,9 +414,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1792022890.5838404,
-    "seen": 1792028552.435412,
-    "ast_hash": "83c4deb940fbc546eb63bed7df235e80",
+    "mtime": 1792067623.171663,
+    "seen": 1792070479.5963678,
+    "ast_hash": "9703f2e30bff756efd19cb96983e7cb6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
@@ -426,9 +426,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsTable.swift": {
-    "mtime": 1792048437.4743173,
-    "seen": 1792050860.80811,
-    "ast_hash": "c68de88f9628c355a9531181fe4fa27d",
+    "mtime": 1792067563.4186754,
+    "seen": 1792070479.5964448,
+    "ast_hash": "c0ec60e4d7b9af810d4a2211cf426d5e",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SettingsTableTests.swift": {
@@ -438,9 +438,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1792046137.9892178,
-    "seen": 1792050860.8078852,
-    "ast_hash": "bcd07a039558eee9435717e778671221",
+    "mtime": 1792067862.9195082,
+    "seen": 1792070479.596229,
+    "ast_hash": "6279c38c83c9a0752d94e18bd30fd59d",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -564,9 +564,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Surface.metal": {
-    "mtime": 1792049859.668825,
-    "seen": 1792050860.808146,
-    "ast_hash": "0cb5200a1fa2aaad2df858353149e888",
+    "mtime": 1792069657.905329,
+    "seen": 1792070479.59648,
+    "ast_hash": "ec39f5ba82fce2dc122debb708377873",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Trace.metal": {
@@ -1176,9 +1176,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Post.metal": {
-    "mtime": 1792047569.6489387,
-    "seen": 1792050860.8081348,
-    "ast_hash": "0be433e66564f1cc15f41f330ff27ad3",
+    "mtime": 1792069051.8085604,
+    "seen": 1792070479.596469,
+    "ast_hash": "3ac1c016bf09871d54f316d78afe71f8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Raster.metal": {
@@ -2604,9 +2604,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/forest.json": {
-    "mtime": 1792061702.6499538,
-    "seen": 1792066426.1033568,
-    "ast_hash": "b36217e8820928a8107cb26a3d75d71c",
+    "mtime": 1792066662.8793716,
+    "seen": 1792070479.596181,
+    "ast_hash": "d0356bb7cb8cb4c1c26a6be1c0faa939",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/gallery.json": {
@@ -2676,9 +2676,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/plants.json": {
-    "mtime": 1792064475.417915,
-    "seen": 1792066426.103369,
-    "ast_hash": "8d78964880785d97f615e3f2e525388a",
+    "mtime": 1792066774.8561523,
+    "seen": 1792070479.596194,
+    "ast_hash": "e4c49a0a8bbe9af86c16377987cc6edc",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/ragdolls.json": {
@@ -3222,9 +3222,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/GroundLook.swift": {
-    "mtime": 1792065404.5541394,
-    "seen": 1792066426.1036701,
-    "ast_hash": "7bb9f37e64cf2de526e4e85a9a3ef6e1",
+    "mtime": 1792066822.4132102,
+    "seen": 1792070479.596493,
+    "ast_hash": "751b788a872181788391d7bff7f5bbfe",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/TextureSets.swift": {
@@ -3234,9 +3234,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/RealismTests.swift": {
-    "mtime": 1792065844.668059,
-    "seen": 1792066426.103771,
-    "ast_hash": "1b928ca8a3da0acfb81b3f727af6b971",
+    "mtime": 1792066891.129433,
+    "seen": 1792070479.596611,
+    "ast_hash": "22765825c4114b9ad4a0153b9fa41747",
     "semantic_hash": ""
   },
   "Tools/textures/fetch.py": {
@@ -3252,9 +3252,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/realism-handoff.md": {
-    "mtime": 1792066409.8083913,
-    "seen": 1792066426.103817,
-    "ast_hash": "50c71a63b2c97212075f5ab60245b9c8",
+    "mtime": 1792070463.0254154,
+    "seen": 1792070479.5966568,
+    "ast_hash": "2c818ab3625b5830bab0a09717b96aed",
     "semantic_hash": ""
   },
   "Assets/Textures/bark-oak/LICENSE.txt": {
@@ -3801,6 +3801,12 @@
     "mtime": 1792065530.466034,
     "seen": 1792066426.103671,
     "ast_hash": "cc3155f818dd777b1ed859a67918ab67",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/TAATests.swift": {
+    "mtime": 1792069051.8097572,
+    "seen": 1792070479.59662,
+    "ast_hash": "5fc5fc82457a19fc89a4fa5d7cdb26d3",
     "semantic_hash": ""
   }
 }
