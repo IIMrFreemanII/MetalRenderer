@@ -48,7 +48,7 @@ final class Benchmark {
         private var ownFog = false, ownSky = false
 
         /// Benchmark settings differ from the app's defaults (radiance cascades, 3x from 0.5x): they path trace at 0.75x
-        /// without upscaling unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
+        /// without upscaling or temporal AA unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
         /// `upscale`: the upscaling factor, 0 = off; `gi`: the GI method, nil = GI off. The scene brings its fog and sky
         /// presets (`fog` and `sky` edit them); `change` edits anything else.
         init(_ name: String, scale: CGFloat = 0.75, upscale: CGFloat = 0, gi: GIMode? = .pathTraced,
@@ -56,6 +56,7 @@ final class Benchmark {
             var s = RenderSettings()
             s.renderScale = scale
             s.upscaleFactor = upscale
+            s.taa = false   // (the native settings' references and scores are from before it)
             s.giEnabled = gi != nil
             s.giMode = gi ?? .pathTraced
             s.scene = scene

@@ -919,6 +919,14 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     sf.hit = true;
     sf.position = (inst.transform * float4(objPos, 1.0f)).xyz;
     sf.prevPosition = (inst.prevTransform * float4(prevObjPos, 1.0f)).xyz;
+    if (FOLIAGE && res.part != HIT_NO_PART) {
+        // A part's point from its rest pose and the wind above is not quite where the ray met it (its variant is posed
+        // apart, PlantTracing): the point is the hit, and a frame ago it was as far from there as the wind moved it.
+        // (Otherwise a still plant's leaves have motion vectors, and the history the denoisers and the AA keep smears.)
+        float3 hit = r.origin + r.direction * res.distance;
+        sf.prevPosition = hit + (sf.prevPosition - sf.position);
+        sf.position = hit;
+    }
     sf.normal = normalize((inst.normalMatrix * float4(objN, 0.0f)).xyz);
     sf.geomNormal = normalize((inst.normalMatrix * float4(objNg, 0.0f)).xyz);
     surfaceMaterial(sf, mat);

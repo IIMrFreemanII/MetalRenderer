@@ -609,6 +609,7 @@ enum SettingsTable {
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
+            S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),

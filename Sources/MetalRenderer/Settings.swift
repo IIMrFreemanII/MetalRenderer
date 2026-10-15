@@ -1355,6 +1355,7 @@ struct RenderSettings: Equatable, Codable {
     var giEnabled = true
     var bounces = 2
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
+    var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
     var paused = false
     var viewMode = 0
     var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)

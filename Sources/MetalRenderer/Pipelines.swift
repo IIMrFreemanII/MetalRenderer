@@ -21,6 +21,7 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
+    case taaResolve             // temporal AA without upscaling (Post.metal)
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin, crowdHair   // the crowd's pose slots: skinning matrices, vertices, hair (CrowdSkinner)
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.

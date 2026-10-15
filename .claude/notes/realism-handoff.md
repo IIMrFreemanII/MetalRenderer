@@ -144,6 +144,22 @@ The old `terrainLayers` path is untouched with realism off.
   - Scans with specular below REFLECTION_MAX_ROUGHNESS put a 41 ms reflection pass in the Forest, so scans keep a roughness floor of 0.7 (leaves 0.62).
   - GI hits on scans take the colour alone: the terrain's two strongest layers on one axis, and the mesh path skips a scan's normal and ORMH (`MaterialExtra.textures.z == 2`).
 
+## Anti-aliasing at native resolution
+
+With upscaling on, MetalFX's denoising scaler anti-aliases. With it off there was none, so grass and leaves aliased and
+shimmered. Now there is a temporal AA (`RenderSettings.taa`, on by default, only without upscaling):
+- jittered rays (Upscaler.jitter, scale 1);
+- `taaResolveKernel` in `Shaders/Post.metal`: motion reprojection, Catmull-Rom history, YCoCg variance clip, no depth
+  test (thin blades flickered with one);
+- the tone curve or the lens after it (`Renderer.encodeOutput`).
+
+It is about 0.2 ms at 1280×800. Mode `taa` scores it.
+
+The same work fixed plant motion vectors (`Surface.metal`, the assembly branch). A part's point from its rest pose plus
+the shader's wind model missed the variant pose the ray hit by a few pixels, so still leaves had motion and every
+history (SVGF, MetalFX, TAA) smeared the crowns. The point is now the hit, and its previous place is the hit plus the
+wind's move. Without wind nothing changes.
+
 ## Not done / next
 
 - **Displacement limits:** the fine sectors are fixed when the scene is made, round its camera. A camera flown far away sees the coarse ground with parallax only. A runtime ring of fine sectors that follows the camera would need a pool of swappable blocks.

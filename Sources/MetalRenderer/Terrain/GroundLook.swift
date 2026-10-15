@@ -37,6 +37,21 @@ struct GroundLook {
 
     static let maxLayers = 8
 
+    private static var drawnMaps: [(key: String, maps: (FoliageTextures.Image, FoliageTextures.Image))] = []
+    private static let drawnLock = NSLock()
+    static func recent(_ key: String) -> (FoliageTextures.Image, FoliageTextures.Image)? {
+        drawnLock.lock()
+        defer { drawnLock.unlock() }
+        return drawnMaps.first { $0.key == key }?.maps
+    }
+    static func remember(_ key: String, _ maps: (FoliageTextures.Image, FoliageTextures.Image)) {
+        drawnLock.lock()
+        defer { drawnLock.unlock() }
+        drawnMaps.removeAll { $0.key == key }
+        drawnMaps.insert((key, maps), at: 0)
+        if drawnMaps.count > 4 { drawnMaps.removeLast() }
+    }
+
     /// Rolling grassland: grass with patches of dry grass and bare earth, mud round water (`water`'s, within 3 m) and
     /// pebbles under it, rock where it is steep. `bare` adds earth (0...1) where a scene wants it (a path, a yard).
     static func meadow(lo: SIMD2<Float>, size: SIMD2<Float>, texels: Int, key: String, seed: UInt32, water: WaterField? = nil,
@@ -155,8 +170,12 @@ extension Scene {
         let drawn = Drawn(), n = look.texels, key = look.key
         func maps() -> (FoliageTextures.Image, FoliageTextures.Image) {
             if let m = drawn.maps { return m }
+            // (The last few scenes' maps, by their keys: realism high reads them on the CPU at every make, and a
+            // workshop is made again at every edit.)
+            if let m = GroundLook.recent(key) { drawn.maps = m; return m }
             let m = look.draw()
             drawn.maps = m
+            GroundLook.remember(key, m)
             return m
         }
         rows.mapA = addGeneratedTexture(name: "ground-map-a", width: n, height: n, key: key, srgb: false) { maps().0 }

@@ -178,6 +178,29 @@ final class FogTargets {
     }
 }
 
+/// Temporal AA without upscaling (Post.metal taaResolveKernel), at the traced resolution: the composite's light, and
+/// the resolved light of this frame and the last, by FramePlan.cur.
+final class TAATargets {
+    let width: Int, height: Int
+    let input: MTLTexture
+    let history: [MTLTexture]
+
+    init(device: MTLDevice, width: Int, height: Int) throws {
+        self.width = width
+        self.height = height
+        func make(_ label: String) throws -> MTLTexture {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+            t.label = label
+            return t
+        }
+        input = try make("taa input")
+        history = [try make("taa history0"), try make("taa history1")]
+    }
+}
+
 /// The lens and the finish (Shaders/Post.metal), at the output resolution.
 final class PostTargets {
     let width: Int, height: Int
@@ -495,6 +518,8 @@ final class Renderer: NSObject {
     private var fogGrid: FogTargets?            // froxel grid at the current render resolution
     private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
     private var postTargetsCache: PostTargets?   // the lens and the finish, at the current output resolution
+    private var taaTargetsCache: TAATargets?     // temporal AA without upscaling, at the traced resolution...
+    private var taaHistory = false               // ...and the last frame left its resolved light in them
     private var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
     private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
@@ -1854,6 +1879,14 @@ final class Renderer: NSObject {
         return fogGrid
     }
 
+    private func taaTargets(width: Int, height: Int) -> TAATargets? {
+        if let t = taaTargetsCache, t.width == width, t.height == height { return t }
+        taaTargetsCache = nil   // (the old ones go first)
+        taaTargetsCache = try? TAATargets(device: device, width: width, height: height)
+        taaHistory = false
+        return taaTargetsCache
+    }
+
     private func postTargets(width: Int, height: Int) -> PostTargets? {
         if let t = postTargetsCache, t.width == width, t.height == height { return t }
         postTargetsCache = try? PostTargets(device: device, width: width, height: height)
@@ -2806,6 +2839,7 @@ final class Renderer: NSObject {
         do {
             targets = try RenderTargets(device: device, width: size.width, height: size.height)
             historyValid = false
+            taaHistory = false
         } catch {
             print(error)
             return nil
@@ -3054,6 +3088,9 @@ final class Renderer: NSObject {
         // The lens and the finish (not in references, nor in the views that aren't light)
         var post: PostTargets?
         var postParams = GPUPostParams()
+        // Temporal AA without upscaling (not in references or the views that aren't light)
+        var taa: TAATargets?
+        var taaHistory = false                  // the last frame resolved into taa.history[prev]
     }
 
     /// Reference "Path traced": pathTraceKernel adds `params.samples.y` paths per pixel to the mean of `samples.x` in
@@ -3087,13 +3124,21 @@ final class Renderer: NSObject {
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
-        // The denoising scaler gathers jittered samples; supersampled references average 1024 jittered frames.
+        // The denoising scaler gathers jittered samples, and so does the temporal AA without it; supersampled references
+        // average 1024 jittered frames.
         if neuralDenoise {
             p.view = Upscaler.View(worldToView: camera.worldToView, viewToClip: camera.viewToClip(aspect: Float(width) / Float(height)))
         }
+        if Renderer.usesTAA(settings, upscaling: size.upscaling, accumulating: accumulating || supersampling || referenceMode != .off) {
+            p.taa = taaTargets(width: width, height: height)
+            p.taaHistory = taaHistory
+        } else {
+            taaTargetsCache = nil
+        }
         p.jitter = size.upscaling
             ? Upscaler.jitter(frame: frameIndex, scale: Float(size.outWidth) / Float(width))
-            : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
+            : p.taa != nil ? Upscaler.jitter(frame: frameIndex, scale: 1)
+            : supersampling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
         if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
@@ -3298,6 +3343,7 @@ final class Renderer: NSObject {
         }
         prevCamera = camera
         prevJitter = plan.jitter
+        taaHistory = plan.taa != nil
         historyValid = plan.svgf || plan.neuralDenoise || (plan.accumulating && settings.denoiser.enabled)
         frameIndex &+= 1
     }
@@ -3581,9 +3627,9 @@ final class Renderer: NSObject {
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
         if let drawable, let enc = passes.compute("composite") {
-            let output = size.upscaling || supersampling ? t.upscaleColor : plan.post?.color ?? drawable.texture
+            let output = size.upscaling || supersampling ? t.upscaleColor : plan.taa?.input ?? plan.post?.color ?? drawable.texture
             var uniforms = c.uniforms
-            if plan.post != nil && !size.upscaling { uniforms.flags |= UniformFlags.post }
+            if (plan.post != nil || plan.taa != nil) && !size.upscaling { uniforms.flags |= UniformFlags.post }
             bind(enc, .composite, uniforms)
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
@@ -3615,7 +3661,27 @@ final class Renderer: NSObject {
 
         // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
-        if let drawable, let post = plan.post, !size.upscaling {
+        // ...or, at the traced resolution, the temporal AA resolves the jittered frames (the lens or the tone curve follow).
+        if let drawable, let taa = plan.taa, let enc = passes.compute("taa") {
+            let resolved = taa.history[cur]
+            bind(enc, .taaResolve, c.uniforms)
+            var reset: UInt32 = plan.taaHistory ? 0 : 1
+            enc.setBytes(&reset, length: MemoryLayout<UInt32>.stride, index: 1)
+            setTextures(enc, [taa.input, taa.history[plan.prev], t.motion, resolved])
+            dispatch(enc, .taaResolve, width: size.width, height: size.height)
+            passes.endCompute()
+            let light = encodeHaze(plan, input: resolved, normalDepth: t.normalDepth[cur], passes: passes)
+            if let post = plan.post {
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                           output: drawable.texture, passes: passes)
+            } else if let enc = passes.compute("taa") {
+                bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
+                setTextures(enc, [light, drawable.texture])
+                dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+        } else if let drawable, let post = plan.post, !size.upscaling {
             let light = encodeHaze(plan, input: post.color, normalDepth: t.normalDepth[cur], passes: passes)
             encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
@@ -4594,6 +4660,7 @@ final class Renderer: NSObject {
     /// Drops all temporal GI state (cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
+        taaHistory = false
         restirWritten = false
         megaLightsWritten = false
         restirGIWritten = false
@@ -5317,6 +5384,13 @@ final class Renderer: NSObject {
         }
         return sizes
     }()
+
+    /// Whether a frame resolves jittered frames with the temporal AA: set, without upscaling (MetalFX's scaler does it
+    /// then), not in a reference picture (`accumulating`: those average their own jittered frames), and only in the
+    /// views that show the light.
+    static func usesTAA(_ settings: RenderSettings, upscaling: Bool, accumulating: Bool) -> Bool {
+        settings.taa && !upscaling && !accumulating && RenderSettings.showsLight(settings.viewMode)
+    }
 
     /// The light grid's per-frame origin jitter, in cells ([0, 1)^3), from a hash of the frame index.
     private static func regirJitter(frame: UInt32) -> SIMD3<Float> {

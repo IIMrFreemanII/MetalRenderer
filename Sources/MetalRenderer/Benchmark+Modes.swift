@@ -10,7 +10,7 @@ extension Benchmark {
         "shot": shot, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
-        "noise": noise, "denoise": denoise, "quality": quality,
+        "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
@@ -1064,10 +1064,26 @@ extension Benchmark {
             [
                 Config("\(tag) native 1.5x", scale: 1.5),
                 Config("\(tag) native 0.75x"),
+                Config("\(tag) native 0.75x TAA") { $0.taa = true },
                 Config("\(tag) MetalFX 0.75x x2", upscale: 2),
                 Config("\(tag) MetalFX 0.5x x3", scale: 0.5, upscale: 3),
             ].map { tag == "albedo" ? $0.view(4) : $0 }
         }
+    }
+
+    /// Temporal AA without upscaling, in the scene METALRENDERER_SCENE picks (cascades, the traced resolution the
+    /// window's size in points): without it and with it, each paused with the frame before saved too (what changes from
+    /// one frame to the next is the shimmer), against a supersampled reference; then both with the camera moving (the
+    /// ghosts and the blur).
+    private static func taa() -> [Config] {
+        let off = Config("native", scale: 1, gi: .radianceCascades), on = off.named("native taa").with { $0.taa = true }
+        return [
+            off.still(previous: true).frames(60),
+            on.still(previous: true).frames(60),
+            off.named("supersampled").reference(frames: 512, supersample: true),
+            off.named("native moving").cameraMove(),
+            on.named("native taa moving").cameraMove(),
+        ]
     }
 
     // MARK: - Correctness checks
