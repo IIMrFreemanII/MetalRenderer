@@ -3,7 +3,8 @@ import Foundation
 /// Keeps the app's `RenderSettings` between launches (UserDefaults, as JSON). Benchmarks never load or save them.
 ///
 /// Loading lays the saved JSON over the current defaults, so fields added since the save keep their defaults and
-/// removed ones are ignored. If the saved copy no longer decodes (a field changed type), the defaults are used.
+/// removed ones are ignored. A field that no longer decodes (an enum case since removed, a changed type) takes its
+/// default, and the others are kept.
 /// `METALRENDERER_SETTINGS=default` starts from the defaults without reading the saved copy (later changes still save).
 enum SettingsStore {
     private static let key = "renderSettings"
@@ -14,8 +15,7 @@ enum SettingsStore {
               let data = UserDefaults.standard.data(forKey: key),
               let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let base = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any],
-              let merged = try? JSONSerialization.data(withJSONObject: merge(base, saved)),
-              var s = try? JSONDecoder().decode(RenderSettings.self, from: merged) else { return nil }
+              var s = decode(merge(base, saved), defaults: base) else { return nil }
         // Session state rather than preferences.
         s.paused = defaults.paused
         s.viewMode = defaults.viewMode
@@ -74,6 +74,42 @@ enum SettingsStore {
 
     private static func write(_ s: RenderSettings) {
         if let data = try? JSONEncoder().encode(s) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    /// The settings in `json`, each field that doesn't decode set to its value in `defaults` (the defaults' JSON) in
+    /// turn: nil only if one at an array's index, or more than a few, don't.
+    static func decode(_ json: [String: Any], defaults: [String: Any]) -> RenderSettings? {
+        var json = json
+        for _ in 0..<32 {
+            guard let data = try? JSONSerialization.data(withJSONObject: json) else { return nil }
+            let context: DecodingError.Context
+            do {
+                return try JSONDecoder().decode(RenderSettings.self, from: data)
+            } catch DecodingError.dataCorrupted(let c), DecodingError.typeMismatch(_, let c), DecodingError.valueNotFound(_, let c) {
+                context = c
+            } catch {
+                return nil
+            }
+            let path = context.codingPath
+            guard !path.isEmpty, path.allSatisfy({ $0.intValue == nil }),
+                  let repaired = replacing(path.map(\.stringValue), in: json, from: defaults) else { return nil }
+            json = repaired
+        }
+        return nil
+    }
+
+    /// `json` with the value at `keys` taken from `defaults` (nil if `defaults` has none there).
+    private static func replacing(_ keys: [String], in json: [String: Any], from defaults: [String: Any]) -> [String: Any]? {
+        guard let key = keys.first, let value = defaults[key] else { return nil }
+        var out = json
+        if keys.count == 1 {
+            out[key] = value
+        } else {
+            guard let inner = json[key] as? [String: Any], let innerDefaults = value as? [String: Any],
+                  let repaired = replacing(Array(keys.dropFirst()), in: inner, from: innerDefaults) else { return nil }
+            out[key] = repaired
+        }
+        return out
     }
 
     static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {

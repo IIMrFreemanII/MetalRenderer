@@ -249,6 +249,30 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
+    /// A saved value that no longer decodes (an enum case since removed) takes its default; the other settings stay.
+    func testInvalidEnumValuesFallBackToTheirDefaults() throws {
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
+        saved["directLight"] = 99
+        saved["giMode"] = 99
+        saved["toneMap"] = 99
+        var scene = try XCTUnwrap(saved["scene"] as? [String: Any])
+        scene["kind"] = 9999
+        saved["scene"] = scene
+        saved["api"] = RenderAPI.metal4.rawValue
+        saved["bounces"] = defaults.bounces + 1
+        let store = UserDefaults.standard, key = "renderSettings"
+        let before = store.data(forKey: key)
+        defer { store.set(before, forKey: key) }
+        store.set(try JSONSerialization.data(withJSONObject: saved), forKey: key)
+        let s = try XCTUnwrap(SettingsStore.load(over: defaults))
+        XCTAssertEqual(s.directLight, defaults.directLight)
+        XCTAssertEqual(s.giMode, defaults.giMode)
+        XCTAssertEqual(s.toneMap, defaults.toneMap)
+        XCTAssertEqual(s.scene.kind, defaults.scene.kind)
+        XCTAssertEqual(s.api, .metal4)
+        XCTAssertEqual(s.bounces, defaults.bounces + 1)
+    }
+
     func testLumenIsRead() {
         var s = defaults
         SettingsEnv.applyAll(to: &s, defaults: defaults, from: [

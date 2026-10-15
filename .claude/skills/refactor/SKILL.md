@@ -116,6 +116,8 @@ These are interfaces to things outside the code, so a refactor that changes one 
 * Benchmark mode and setting names: they become PNG names that the `Tools/eval` scorers look up.
 * `Tools/eval/refs`: re-rendered only when the ground truth changes, never for a refactor.
 * The saved-settings format (`SettingsStore`): a renamed `RenderSettings` field drops the value the user had saved.
+  A removed field is ignored, and a removed enum case's saved value falls back to that field's default (the others
+  stay): keep the remaining cases' raw values.
 * Disk cache formats without a version bump (the `.metalrenderer-cache` folders next to the models).
 * Swift↔MSL struct layouts (`validateGPULayouts` in GPUTypes.swift, `static_assert` in Shaders/*.metal).
 
