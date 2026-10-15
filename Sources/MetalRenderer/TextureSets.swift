@@ -75,6 +75,40 @@ struct TextureSet {
         return drawn ? (pixels, w, h) : nil
     }
 
+    /// A height map on the CPU (0...1), wrapping: what the meshes displaced by a scan read (the ground's relief, the
+    /// bark's ridges). Sampled as the GPU samples the texture (row 0 at v = 0, texel centres at half texels).
+    struct HeightField {
+        let side: Int
+        let values: [Float]
+        func sample(_ u: Float, _ v: Float) -> Float {
+            let n = Float(side)
+            let x = u * n - 0.5, y = v * n - 0.5
+            let x0 = x.rounded(.down), y0 = y.rounded(.down), fx = x - x0, fy = y - y0
+            func at(_ i: Float, _ j: Float) -> Float {
+                let a = ((Int(i) % side) + side) % side, b = ((Int(j) % side) + side) % side
+                return values[b * side + a]
+            }
+            let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * fx
+            let bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * fx
+            return top + (bottom - top) * fy
+        }
+    }
+    private static var heights: [String: HeightField] = [:]
+
+    /// Its height map at `size` a side (nil without one), decoded once.
+    func heightField(size: Int = 256) -> HeightField? {
+        let key = "\(name) \(size)"
+        TextureSet.lock.lock()
+        if let known = TextureSet.heights[key] { TextureSet.lock.unlock(); return known }
+        TextureSet.lock.unlock()
+        guard let g = gray(.height, size: size) else { return nil }
+        let field = HeightField(side: size, values: g.pixels.map { Float($0) / 255 })
+        TextureSet.lock.lock()
+        TextureSet.heights[key] = field
+        TextureSet.lock.unlock()
+        return field
+    }
+
     /// Its albedo's mean colour, linear (where it is opaque, for an atlas: its leaves'), worked out once.
     func meanColor() -> SIMD3<Float> {
         TextureSet.lock.lock()

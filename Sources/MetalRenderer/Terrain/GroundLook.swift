@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import simd
 
 /// A scene's realistic ground (SceneSettings.realism): its terrain's layer 0, the ground wherever nothing is painted,
@@ -17,6 +18,9 @@ struct GroundLook {
         /// How strongly its height wins over its neighbours' where they mix (0: a plain blend).
         var contrast: Float = 1
         var roughness: Float = 1
+        /// How far its height raises and sinks the near ground with realism high, metres (nil: its scan's own:
+        /// GroundRelief.relief(of:)).
+        var relief: Float? = nil
     }
     var layers: [Layer]
     /// The layer steep ground is (nil: none), and the normals' y between which it comes in (all of it under `slope.x`).
@@ -164,6 +168,80 @@ extension Scene {
         rows.lo = look.lo
         rows.size = look.size
         t.ground = rows
+        // (Realism high: the near ground refined once every sector is in: finishTerrainLayers.)
+        if settings.realism == .high { t.pendingRefine = (look, rows, maps()) }
+    }
+
+    /// Realism high: the terrain's level-0 sectors within REFINE_REACH of the detail centre (a rectangle of them, so
+    /// that their seams with the coarse ones are only on its outside) made again fine, 0.25 m (at most 4 x 4 a cell)
+    /// apart, their ground raised by `look`'s relief (GroundRelief: the shader's height lerp on the CPU). Before the
+    /// renderer has the meshes: each takes its coarse mesh's place.
+    func refineTerrain(_ look: GroundLook, rows: GroundRows, maps: (FoliageTextures.Image, FoliageTextures.Image)) {
+        guard let t = terrain else { return }
+        let started = CACurrentMediaTime()
+        let reach: Float = 32
+        let grid = t.field.grid, offset = t.offset
+        let center = terrainDetailCenter ?? Scene.demoCamera(settings.kind).map { SIMD2($0.position.x, $0.position.z) } ?? .zero
+        func rect(_ s: TerrainSector) -> (lo: SIMD2<Float>, hi: SIMD2<Float>) {
+            let a = grid.place(s.first.x, s.first.y) - offset, b = grid.place(s.last.x, s.last.y) - offset
+            return (SIMD2(Float(a.x), Float(a.y)), SIMD2(Float(b.x), Float(b.y)))
+        }
+        let chosen = t.parts.indices.filter { k in
+            let p = t.parts[k]
+            guard p.sector.level == 0, p.sector.subdiv == 1 else { return false }
+            let r = rect(p.sector)
+            return r.hi.x > center.x - reach && r.lo.x < center.x + reach && r.hi.y > center.y - reach && r.lo.y < center.y + reach
+        }
+        guard !chosen.isEmpty else {
+            print("Terrain: no level-0 sector within \(Int(reach)) m of \(center) to refine (\(t.parts.count) parts)")
+            return
+        }
+        // The block's outline: a side on it has a coarse neighbour (a seam) unless it is the terrain's own edge.
+        let block = chosen.map { rect(t.parts[$0].sector) }
+        let lo = block.map(\.lo).reduce(SIMD2(repeating: .infinity), simd_min), hi = block.map(\.hi).reduce(SIMD2(repeating: -.infinity), simd_max)
+        let edgeLo = grid.lo.map { grid.place($0.x, $0.y) - offset }, edgeHi = grid.hi.map { grid.place($0.x, $0.y) - offset }
+        let subdiv = min(4, max(2, Int((grid.cell / 0.25).rounded())))
+        // The relief: the look's layers' scans, and the painted layers' (their scans by name, as their materials).
+        let ground = look.layers.prefix(GroundLook.maxLayers).enumerated().map { k, l in
+            GroundRelief.Layer(height: TextureSet.find(l.set)?.heightField(), scale: 1 / max(rows.metres[k], 0.05), contrast: l.contrast,
+                               relief: l.relief ?? GroundRelief.relief(of: l.set))
+        }
+        let painted: [GroundRelief.Layer?] = (1..<TerrainTile.layers).map { l in
+            guard let metres = t.scanMetres[l], l < t.meshStyle.layers.count, let set = t.meshStyle.layers[l].scanSet else { return nil }
+            return GroundRelief.Layer(height: TextureSet.find(set)?.heightField(), scale: 1 / max(metres, 0.05), contrast: 1,
+                                      relief: GroundRelief.relief(of: set))
+        }
+        let relief = GroundRelief(ground: ground, painted: painted, maps: maps, lo: look.lo, size: look.size, rock: look.rock ?? -1,
+                                  slope: look.slope, offset: offset)
+        var style = t.meshStyle
+        style.relief = relief
+        t.meshStyle = style
+        let snapshot = t.field.snapshot()
+        var sectors: [TerrainSector] = chosen.map { k in
+            var s = t.parts[k].sector
+            let r = rect(s)
+            s.subdiv = subdiv
+            func seam(_ side: Float, _ outline: Float, _ edge: Float?) -> Bool { side == outline && side != edge }
+            s.seams = (seam(r.lo.y, lo.y, edgeLo.map { Float($0.y) }) ? 1 : 0) | (seam(r.hi.y, hi.y, edgeHi.map { Float($0.y) }) ? 2 : 0)
+                | (seam(r.lo.x, lo.x, edgeLo.map { Float($0.x) }) ? 4 : 0) | (seam(r.hi.x, hi.x, edgeHi.map { Float($0.x) }) ? 8 : 0)
+            return s
+        }
+        var meshes = [TerrainSectorMesh?](repeating: nil, count: sectors.count)
+        meshes.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: sectors.count) { i in out[i] = TerrainSectorMesh(snapshot, sector: sectors[i], style: style) }
+        }
+        var triangles = 0
+        for (i, k) in chosen.enumerated() {
+            guard let m = meshes[i] else { continue }
+            let name = sectors[i].meshName(terrain: t.name)
+            replaceBorrowed(t.parts[k].mesh, with: m.borrowed, bounds: m.bounds, name: name)
+            t.replace(k, sector: sectors[i], name: name)
+            t.fineParts.insert(k)
+            triangles += sectors[i].triangleCount
+        }
+        sectors.removeAll()
+        print(String(format: "Terrain: %d sectors near the camera refined %dx (%.0fk triangles) in %.0f ms", chosen.count, subdiv,
+                     Double(triangles) / 1000, (CACurrentMediaTime() - started) * 1000))
     }
 
     /// The realistic look's grass on the scene's terrain round `center` (Flora.meadow), where `density` says, with its own

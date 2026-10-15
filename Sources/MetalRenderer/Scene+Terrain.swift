@@ -85,6 +85,16 @@ final class SceneTerrain {
     }
 
     func append(_ p: Part) { parts.append(p) }
+    /// Part `k` as another sector of the same ground (refined: Scene.refineTerrain).
+    func replace(_ k: Int, sector: TerrainSector, name: String) {
+        parts[k].sector = sector
+        parts[k].name = name
+    }
+    /// The realistic look's fine parts (realism high: their mesh has the scans' relief, the parallax the finer detail
+    /// between its vertices).
+    var fineParts: Set<Int> = []
+    /// The ground look to refine the near sectors by, once they are all in (Scene.addGroundLook, realism high).
+    var pendingRefine: (look: GroundLook, rows: GroundRows, maps: (FoliageTextures.Image, FoliageTextures.Image))?
 
     /// A scene's place as the world's, and back.
     func world(_ p: SIMD3<Float>) -> SIMD3<Double> { SIMD3(Double(p.x) + offset.x, Double(p.y), Double(p.z) + offset.y) }
@@ -282,6 +292,10 @@ extension Scene {
     /// and its sectors told where it is.
     func finishTerrainLayers() {
         guard let t = terrain, t.firstLayer >= 0 else { return }
+        if let r = t.pendingRefine {
+            t.pendingRefine = nil
+            refineTerrain(r.look, rows: r.rows, maps: r.maps)
+        }
         t.table = proceduralParams.count
         proceduralParams += SceneTerrain.table(t.meshStyle.layers, firstLayer: t.firstLayer, offset: t.offset, realistic: t.realistic,
                                                high: t.high, ground: t.ground, macro: t.macro, metres: { t.scanMetres[$0] })

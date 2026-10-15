@@ -95,13 +95,64 @@ extension Foliage {
 
     /// A stem of n nodes: a ring at each node but the last, which is one vertex (the tip closes with a fan, so no
     /// triangle is ever degenerate). Fewer than 3 sides: a ribbon, two vertices per node.
-    static func stemSize(_ s: Stem) -> MeshSize {
+    /// The realistic look's bark (realism high): trunks and thick limbs with more rings and sides, pushed out by the
+    /// bark scan's height (0...1 at the tube's own UVs, which the bark texture is sampled at), `relief` metres from its
+    /// lowest to its highest.
+    struct Bark {
+        var height: TextureSet.HeightField
+        var relief: Float
+        /// Rings between two nodes and sides per side, for a stem of `level` (nil: as it is).
+        func detail(level: UInt8, footRadius: Float, radial: UInt8) -> (rings: Int, sides: Int)? {
+            guard level <= 1, footRadius > 0.03, radial >= 3 else { return nil }
+            return level == 0 ? (3, 3) : (2, 2)
+        }
+    }
+
+    /// The nodes a stem is meshed through: its own, or with `bark`'s detail more between them (Catmull-Rom through
+    /// the nodes, the radius between them straight), and its sides.
+    static func stemNodes(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, bark: Bark?) -> (nodes: [SIMD4<Float>], sides: Int)? {
+        let node = nodes + Int(s.first), n = Int(s.count)
+        guard let bark, let d = bark.detail(level: s.level, footRadius: node[0].w, radial: s.radial) else { return nil }
+        var out: [SIMD4<Float>] = []
+        out.reserveCapacity((n - 1) * d.rings + 1)
+        func p(_ i: Int) -> SIMD3<Float> { xyz(node[min(max(i, 0), n - 1)]) }
+        for i in 0..<(n - 1) {
+            for j in 0..<d.rings {
+                let t = Float(j) / Float(d.rings), t2 = t * t, t3 = t2 * t
+                let a = p(i - 1), b = p(i), c = p(i + 1), e = p(i + 2)
+                let q = 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - e) * t2 + (3 * b - a - 3 * c + e) * t3)
+                out.append(SIMD4(q, node[i].w + (node[i + 1].w - node[i].w) * t))
+            }
+        }
+        out.append(node[n - 1])
+        return (out, min(Int(s.radial) * d.sides, 32))
+    }
+
+    static func stemSize(_ s: Stem, bark: Bark? = nil, nodes: UnsafePointer<SIMD4<Float>>? = nil) -> MeshSize {
+        if let nodes, let fine = stemNodes(s, nodes: nodes, bark: bark) {
+            let rings = fine.nodes.count - 1, per = fine.sides
+            return MeshSize(vertices: rings * per + 1, indices: ((rings - 1) * per * 2 + per) * 3)
+        }
         let rings = Int(s.count) - 1, per = s.radial < 3 ? 2 : Int(s.radial)
         let strips = per == 2 ? 1 : per
         return MeshSize(vertices: rings * per + 1, indices: ((rings - 1) * strips * 2 + strips) * 3)
     }
 
-    static func write(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, up: SIMD3<Float>, into w: inout MeshWriter) {
+    static func write(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, up: SIMD3<Float>, bark: Bark? = nil, into w: inout MeshWriter) {
+        if let fine = stemNodes(s, nodes: nodes, bark: bark), let bark {
+            var t = s
+            t.first = 0
+            t.count = Int32(fine.nodes.count)
+            t.radial = UInt8(fine.sides)
+            fine.nodes.withUnsafeBufferPointer { write(t, nodes: $0.baseAddress!, up: up, relief: bark, into: &w) }
+            return
+        }
+        write(s, nodes: nodes, up: up, relief: nil, into: &w)
+    }
+
+    /// A stem's tube; with `relief`, each vertex pushed out along its direction by the bark's height at its UV
+    /// (at most 15% of the radius either way).
+    private static func write(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, up: SIMD3<Float>, relief: Bark?, into w: inout MeshWriter) {
         let n = Int(s.count), rings = n - 1, sides = Int(s.radial)
         let ribbon = sides < 3
         let node = nodes + Int(s.first)
@@ -126,7 +177,10 @@ extension Foliage {
                 var c: Float = 1, sn: Float = 0
                 for k in 0..<sides {
                     let d = across * c + other * sn
-                    w.vertex(p + d * r, d, SIMD2(1 - abs(2 * Float(k) / Float(sides) - 1), v))
+                    let uv = SIMD2(1 - abs(2 * Float(k) / Float(sides) - 1), v)
+                    var out = r
+                    if let relief { out += min(max(relief.relief * (relief.height.sample(uv.x, uv.y) - 0.5), -0.15 * r), 0.15 * r) }
+                    w.vertex(p + d * out, d, uv)
                     (c, sn) = (c * stepCos - sn * stepSin, sn * stepCos + c * stepSin)
                 }
             }
@@ -206,19 +260,21 @@ extension Foliage {
     /// The stems `stems` of a skeleton (nil: all) as tubes, then the leaves. `allLeaves`: the stems count as leaves
     /// too (a fern's stalks are as green as its fronds).
     static func mesh(_ skeleton: Skeleton, stems: [Int]?, leaves: [LeafAnchor], shape: LeafShape, fold: Float,
-                     up: SIMD3<Float>, allLeaves: Bool) -> Mesh {
+                     up: SIMD3<Float>, allLeaves: Bool, bark: Bark? = nil) -> Mesh {
         var wood = MeshSize()
-        if let stems {
-            for i in stems { wood = wood + stemSize(skeleton.stems[i]) }
-        } else {
-            for s in skeleton.stems { wood = wood + stemSize(s) }
+        skeleton.nodes.withUnsafeBufferPointer { nodes in
+            if let stems {
+                for i in stems { wood = wood + stemSize(skeleton.stems[i], bark: bark, nodes: nodes.baseAddress!) }
+            } else {
+                for s in skeleton.stems { wood = wood + stemSize(s, bark: bark, nodes: nodes.baseAddress!) }
+            }
         }
         return build(wood + leafSize(shape) * leaves.count) { w in
             skeleton.nodes.withUnsafeBufferPointer { nodes in
                 if let stems {
-                    for i in stems { write(skeleton.stems[i], nodes: nodes.baseAddress!, up: up, into: &w) }
+                    for i in stems { write(skeleton.stems[i], nodes: nodes.baseAddress!, up: up, bark: bark, into: &w) }
                 } else {
-                    for s in skeleton.stems { write(s, nodes: nodes.baseAddress!, up: up, into: &w) }
+                    for s in skeleton.stems { write(s, nodes: nodes.baseAddress!, up: up, bark: bark, into: &w) }
                 }
             }
             for a in leaves { write(a, shape: shape, fold: fold, into: &w) }

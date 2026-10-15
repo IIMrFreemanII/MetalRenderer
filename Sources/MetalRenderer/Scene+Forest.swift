@@ -53,9 +53,20 @@ extension Scene {
             self.catalog = catalog
             borrows = borrowing
             let species = species ?? catalog.all
+            // The realistic look's bark relief (realism high): the species whose bark is a scan, theirs.
+            var bark: [Foliage.Species: Foliage.Bark] = [:]
+            if scene.settings.realism == .high {
+                for s in species where catalog[s].look.barkTexture == .roughBark {
+                    let needles = catalog[s].look.leafTexture == .needle
+                    if let height = TextureSet.find(needles ? "bark-pine" : "bark-oak")?.heightField(size: 512) {
+                        bark[s] = Foliage.Bark(height: height, relief: needles ? 0.025 : 0.03)
+                    }
+                }
+            }
             // (Edited species name what they are: no cache then holds plants of other recipes under their names.)
             library = "plants v\(Foliage.version) seed \(seed) of \(species.map(\.rawValue)) cards \(scene.usesCards)"
                 + (catalog == .builtIn ? "" : " recipes \(catalog.fingerprint)")
+                + (bark.isEmpty ? "" : " bark v2 \(bark.keys.map(\.rawValue).sorted())")
             palettes = [[Int]](repeating: [], count: catalog.count)
             shades = [[Int]](repeating: [], count: catalog.count)
             sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: catalog.count)
@@ -70,7 +81,9 @@ extension Scene {
                 return
             }
             var bySpecies = [Foliage.SpeciesSet?](repeating: nil, count: catalog.count)
-            for set in Foliage.library(seed: seed, catalog: catalog, species: species, cards: scene.usesCards) { bySpecies[set.species.rawValue] = set }
+            for set in Foliage.library(seed: seed, catalog: catalog, species: species, cards: scene.usesCards, bark: bark) {
+                bySpecies[set.species.rawValue] = set
+            }
             sets = bySpecies
             placed = bySpecies.map { [Placed?](repeating: nil, count: $0?.plants.count ?? 0) }
             let jobs = bySpecies.enumerated().flatMap { s, set in (set?.plants.indices ?? 0..<0).map { (species: s, plant: $0) } }

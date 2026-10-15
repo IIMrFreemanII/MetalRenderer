@@ -35,7 +35,9 @@ extension Scene {
         }
         addTerrain(name: entry.document.name, field: entry.field, tiles: grid.tiles!.map { ($0, 0) },
                    style: TerrainMeshStyle(uvOrigin: grid.origin, uvScale: 1), material: ground, generatedWater: water)
-        // The realistic look: earth and dry grass under the rules' layers, sand along the sea.
+        // The realistic look: earth and dry grass under the rules' layers, sand along the sea; with realism high the
+        // ground near the camera's corner refined.
+        terrainDetailCenter = SIMD2<Float>(-0.32, 0.32) * size + SIMD2(0.12, -0.12) * size
         let seaLevel = water.first?.level, shore = entry.field.snapshot()
         let sandSeed = UInt32(truncatingIfNeeded: max(w.seed, 0))
         addGroundLook(GroundLook(

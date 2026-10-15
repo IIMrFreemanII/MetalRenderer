@@ -1285,6 +1285,19 @@ final class Scene {
     /// Mesh `m` was made at level of detail `level` (0 = the finest) of a system that has levels: the LOD debug view
     /// shows it (GPUMesh.lod).
     /// Mesh `m` is a terrain's sector, its terrain's layer table at `table` in the procedural parameters (TERRAIN).
+    /// A borrowed mesh made again before the renderer has it (a terrain sector refined: Scene.refineTerrain), with
+    /// its new name and bounds; its size may change.
+    func replaceBorrowed(_ m: Int, with mesh: BorrowedMesh, bounds: AABB, name: String) {
+        guard let k = borrowed.firstIndex(where: { $0.mesh == m }) else { return }
+        var mesh = mesh
+        mesh.mesh = m
+        borrowed[k] = mesh
+        meshNames[m] = name
+        meshes[m].indexCount = UInt32(mesh.indices.count)
+        meshes[m].vertexCount = UInt32(mesh.positions.count)
+        meshBounds[m] = (bounds.lo, bounds.hi)
+    }
+
     func setTerrainTable(_ m: Int, _ table: Int) {
         guard m >= 0 else { return }
         meshes[m].terrain = UInt32(table + 1)
@@ -1825,6 +1838,9 @@ final class Scene {
     /// The scans' textures this scene has (albedo, normal, occlusion-roughness-height), by set and roughness floor:
     /// each once, whatever number of materials wear it (TextureSets.swift).
     var scanTextures: [String: SIMD3<UInt32>] = [:]
+    /// Where the realistic look's near ground is (realism high: Scene.refineTerrain): scene x, z; nil: the scene's
+    /// demo camera's place, else the origin.
+    var terrainDetailCenter: SIMD2<Float>?
 
     /// An image for materials to sample: its index for `GPUMaterial.textures`.
     func addTexture(_ source: TextureSource) -> UInt32 {

@@ -83,17 +83,26 @@ struct TerrainSector: Hashable {
     var first: SIMD2<Int>           // its first sample
     var cells: SIMD2<Int>           // along x, along z
     var step: Int
+    /// The realistic look's near ground (realism high: Scene.refineTerrain): each cell cut into subdiv x subdiv, the
+    /// ground smooth between the samples and raised by its scans' relief (GroundRelief); 1: a cell a sample apart.
+    var subdiv = 1
+    /// ...and the sides (bits: -z, +z, -x, +x) whose neighbour is coarse: the relief and the smoothing fade out toward
+    /// them, so the side lies on the neighbour's triangles.
+    var seams: UInt8 = 0
 
-    /// Vertices: the grid, then a skirt of (cells + 1) under each side (-z, +z, -x, +x).
-    var gridVertices: Int { (cells.x + 1) * (cells.y + 1) }
-    var vertexCount: Int { gridVertices + 2 * (cells.x + 1) + 2 * (cells.y + 1) }
-    var triangleCount: Int { 2 * cells.x * cells.y + 4 * cells.x + 4 * cells.y }
+    /// Its quads along x and z (cells times subdiv).
+    var quads: SIMD2<Int> { cells &* subdiv }
+    /// Vertices: the grid, then a skirt of (quads + 1) under each side (-z, +z, -x, +x).
+    var gridVertices: Int { (quads.x + 1) * (quads.y + 1) }
+    var vertexCount: Int { gridVertices + 2 * (quads.x + 1) + 2 * (quads.y + 1) }
+    var triangleCount: Int { 2 * quads.x * quads.y + 4 * quads.x + 4 * quads.y }
     var indexCount: Int { 3 * triangleCount }
 
     /// What scenes call its mesh: the same sector of the same terrain is the same mesh in every scene that has it, so
     /// the renderer keeps its buffer and its structure from one scene to the next (the open world's).
     func meshName(terrain: String) -> String {
         "terrain \(terrain) L\(level) tile \(tile.x) \(tile.y) sector \(index.x) \(index.y) \(cells.x)x\(cells.y)"
+            + (subdiv > 1 ? " S\(subdiv) \(seams)" : "")
     }
 
     /// The last sample along each axis (its far corner).

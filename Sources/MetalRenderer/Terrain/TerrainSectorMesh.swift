@@ -18,6 +18,8 @@ struct TerrainMeshStyle {
     /// the scene's own ground, wherever nothing is painted).
     var layers: [TerrainLayer] = []
     var rules: Bool { layers.contains { $0.rule.enabled } }
+    /// The realistic look's relief (realism high): what raises a fine sector's ground (TerrainSector.subdiv).
+    var relief: GroundRelief? = nil
 }
 
 /// A terrain sector's mesh (TerrainSector), from a snapshot of the terrain: its vertices in metres from its tile's
@@ -35,7 +37,17 @@ struct TerrainSectorMesh {
     var weights: [SIMD16<UInt8>]
     var bounds: AABB
 
+    private init(sector: TerrainSector, positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32],
+                 materials: [UInt8]?, weights: [SIMD16<UInt8>], bounds: AABB) {
+        (self.sector, self.positions, self.normals, self.uvs, self.indices, self.materials, self.weights, self.bounds) =
+            (sector, positions, normals, uvs, indices, materials, weights, bounds)
+    }
+
     init(_ s: TerrainSnapshot, sector: TerrainSector, style: TerrainMeshStyle) {
+        if sector.subdiv > 1 {
+            self = TerrainSectorMesh.fine(s, sector: sector, style: style)
+            return
+        }
         self.sector = sector
         let grid = s.grid, step = sector.step, cx = sector.cells.x, cz = sector.cells.y
         let cell = grid.cell * Float(step)
@@ -148,6 +160,192 @@ struct TerrainSectorMesh {
         (self.positions, self.normals, self.uvs, self.indices, self.weights) = (positions, normals, uvs, indices, weights)
         self.materials = kinds == nil ? nil : materials
         bounds = box
+    }
+
+    /// A fine sector (TerrainSector.subdiv > 1, the realistic look's near ground): each cell cut into subdiv x subdiv
+    /// quads, the ground between the samples smooth (Catmull-Rom across them) and raised by `style.relief`; toward a
+    /// side whose neighbour is coarse (`seams`) both fade out over SEAM_FADE metres, so that side lies on the coarse
+    /// triangles (the same diagonal) and nothing cracks. Its normals from the displaced grid (the coarse ones'
+    /// toward a seam), its weights, UVs and kinds as the coarse cell's around it.
+    private static func fine(_ s: TerrainSnapshot, sector: TerrainSector, style: TerrainMeshStyle) -> TerrainSectorMesh {
+        let seamFade: Float = 3
+        let grid = s.grid, step = sector.step, cx = sector.cells.x, cz = sector.cells.y, k = sector.subdiv
+        let cell = grid.cell * Float(step)
+        let tileFirst = grid.firstSample(sector.tile)
+        // Heights with a ring of two around the sector (a Catmull-Rom spline needs two samples a side).
+        let w = cx + 5
+        let h = s.heights(from: sector.first &- step &* 2, count: SIMD2(w, cz + 5), step: step)
+        @inline(__always) func at(_ i: Int, _ j: Int) -> Float { h[(min(max(j, -2), cz + 2) + 2) * w + min(max(i, -2), cx + 2) + 2] }
+        func spline(_ a: Float, _ b: Float, _ c: Float, _ d: Float, _ t: Float) -> Float {
+            let t2 = t * t, t3 = t2 * t
+            return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (3 * b - a - 3 * c + d) * t3)
+        }
+        // The samples' normals and weights, as the coarse mesh has them.
+        let samples = (cx + 1) * (cz + 1)
+        var sampleNormals = [SIMD3<Float>](repeating: [0, 1, 0], count: samples)
+        var sampleWeights = [SIMD16<Float>](repeating: SIMD16<Float>(), count: samples)
+        let rules = style.rules
+        for j in 0...cz {
+            for i in 0...cx {
+                let dx = at(i + 1, j) - at(i - 1, j), dz = at(i, j + 1) - at(i, j - 1)
+                let n = grid.isFinite ? normalize(SIMD3(-dx / (2 * cell), 1, -dz / (2 * cell))) : normalize(SIMD3(-dx, 2 * cell, -dz))
+                sampleNormals[j * (cx + 1) + i] = n
+                let gi = sector.first.x + i * step, gj = sector.first.y + j * step
+                var wt = SIMD16<Float>()
+                if rules {
+                    let q = grid.place(gi, gj)
+                    wt = TerrainPaint.ruleWeights(style.layers, height: at(i, j), slope: acos(min(max(n.y, -1), 1)) * 180 / .pi, x: q.x, z: q.y)
+                } else {
+                    wt[0] = 1
+                }
+                if let (painted, mask) = s.paint(gi, gj) { wt += (SIMD16<Float>(painted) / 255 - wt) * mask }
+                sampleWeights[j * (cx + 1) + i] = wt
+            }
+        }
+        // Where a fine vertex is between the samples: its cell and the place in it.
+        func cellAt(_ fx: Float, _ fz: Float) -> (i: Int, j: Int, u: Float, v: Float) {
+            let i = min(max(Int(fx.rounded(.down)), -1), cx), j = min(max(Int(fz.rounded(.down)), -1), cz)
+            return (i, j, fx - Float(i), fz - Float(j))
+        }
+        func fade(_ fx: Float, _ fz: Float) -> Float {
+            var d = Float.infinity
+            if sector.seams & 1 != 0 { d = min(d, fz * cell) }
+            if sector.seams & 2 != 0 { d = min(d, (Float(cz) - fz) * cell) }
+            if sector.seams & 4 != 0 { d = min(d, fx * cell) }
+            if sector.seams & 8 != 0 { d = min(d, (Float(cx) - fx) * cell) }
+            let t = min(max(d / seamFade, 0), 1)
+            return t * t * (3 - 2 * t)
+        }
+        // The ground (without relief) at a place in sample units from the sector's first: the coarse triangle's plane
+        // (diagonal from (i, j) to (i + 1, j + 1), as the coarse indices), smoothing toward the spline away from seams.
+        func base(_ fx: Float, _ fz: Float) -> Float {
+            let (i, j, u, v) = cellAt(fx, fz)
+            let flat = u >= v ? at(i, j) + (at(i + 1, j) - at(i, j)) * u + (at(i + 1, j + 1) - at(i + 1, j)) * v
+                              : at(i, j) + (at(i + 1, j + 1) - at(i, j + 1)) * u + (at(i, j + 1) - at(i, j)) * v
+            let f = fade(fx, fz)
+            guard f > 0 else { return flat }
+            var rows = [Float](repeating: 0, count: 4)
+            for r in 0..<4 { rows[r] = spline(at(i - 1, j - 1 + r), at(i, j - 1 + r), at(i + 1, j - 1 + r), at(i + 2, j - 1 + r), u) }
+            let smooth = spline(rows[0], rows[1], rows[2], rows[3], v)
+            return flat + (smooth - flat) * f
+        }
+        func bilinear<T: SIMD>(_ a: [T], _ i: Int, _ j: Int, _ u: Float, _ v: Float) -> T where T.Scalar == Float {
+            let i0 = min(max(i, 0), cx), j0 = min(max(j, 0), cz), i1 = min(i0 + 1, cx), j1 = min(j0 + 1, cz)
+            let uu = T(repeating: min(max(u, 0), 1)), vv = T(repeating: min(max(v, 0), 1))
+            let top = a[j0 * (cx + 1) + i0] + (a[j0 * (cx + 1) + i1] - a[j0 * (cx + 1) + i0]) * uu
+            let bottom = a[j1 * (cx + 1) + i0] + (a[j1 * (cx + 1) + i1] - a[j1 * (cx + 1) + i0]) * uu
+            return top + (bottom - top) * vv
+        }
+        let origin = grid.place(sector.first.x, sector.first.y), metresPerSample = Double(grid.cell) * Double(step)
+        // The ground with its relief on the fine grid and a ring of one vertex (for the normals).
+        let nx = cx * k + 1, nz = cz * k + 1, rx = nx + 2
+        var heights = [Float](repeating: 0, count: rx * (nz + 2))
+        var weightsAt = [SIMD16<Float>](repeating: SIMD16<Float>(), count: nx * nz)
+        let inv = 1 / Float(k)
+        for b in -1...nz {
+            for a in -1...nx {
+                let fx = Float(a) * inv, fz = Float(b) * inv
+                var y = base(fx, fz)
+                let (i, j, u, v) = cellAt(min(max(fx, 0), Float(cx)), min(max(fz, 0), Float(cz)))
+                let wt = bilinear(sampleWeights, i, j, u, v)
+                if a >= 0, a < nx, b >= 0, b < nz { weightsAt[b * nx + a] = wt }
+                if let relief = style.relief {
+                    let f = fade(fx, fz)
+                    if f > 0 {
+                        let e = 0.5 * inv
+                        let dx = base(fx + e, fz) - base(fx - e, fz), dz = base(fx, fz + e) - base(fx, fz - e)
+                        let up = 1 / (1 + (dx * dx + dz * dz) / (cell * inv * cell * inv)).squareRoot()
+                        y += f * relief(x: origin.x + Double(fx) * metresPerSample, z: origin.y + Double(fz) * metresPerSample, up: up, weights: wt)
+                    }
+                }
+                heights[(b + 1) * rx + a + 1] = y
+            }
+        }
+        @inline(__always) func hv(_ a: Int, _ b: Int) -> Float { heights[(b + 1) * rx + a + 1] }
+
+        var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], weights: [SIMD16<UInt8>] = []
+        positions.reserveCapacity(sector.vertexCount); normals.reserveCapacity(sector.vertexCount)
+        uvs.reserveCapacity(sector.vertexCount); weights.reserveCapacity(sector.vertexCount)
+        var box = AABB()
+        let fineCell = cell * inv
+        let firstOffset = SIMD2(Float(sector.first.x - tileFirst.x), Float(sector.first.y - tileFirst.y)) * grid.cell
+        for b in 0..<nz {
+            for a in 0..<nx {
+                let fx = Float(a) * inv, fz = Float(b) * inv
+                let p = SIMD3(firstOffset.x + fx * cell, hv(a, b), firstOffset.y + fz * cell)
+                positions.append(p)
+                box.grow(p)
+                let displaced = normalize(SIMD3(-(hv(a + 1, b) - hv(a - 1, b)) / (2 * fineCell), 1, -(hv(a, b + 1) - hv(a, b - 1)) / (2 * fineCell)))
+                let (i, j, u, v) = cellAt(fx, fz)
+                let coarse = normalize(bilinear(sampleNormals, i, j, u, v))
+                normals.append(normalize(coarse + (displaced - coarse) * fade(fx, fz)))
+                let wt = weightsAt[b * nx + a]
+                var bytes = SIMD16<UInt8>()
+                for l in 0..<16 { bytes[l] = UInt8(min(max(wt[l] * 255, 0), 255).rounded()) }
+                weights.append(bytes)
+                if style.tileLocal {
+                    uvs.append(SIMD2(p.x, p.z) * style.uvScale)
+                } else {
+                    let q = origin + SIMD2(Double(fx), Double(fz)) * metresPerSample - style.uvOrigin
+                    uvs.append(SIMD2(Float(q.x), Float(q.y)) * style.uvScale)
+                }
+            }
+        }
+        // Kinds: the coarse cell's (the base's, rock where the coarse cell is steep).
+        var kinds: [UInt8]? = nil
+        if s.base.kind(sector.first.x, sector.first.y, step: step) != nil {
+            let table = s.base.kinds(sector.tile, step: step), tn = grid.tileCells / step
+            let c0 = (sector.first &- tileFirst) / step
+            var kk = [UInt8](repeating: 0, count: cx * cz)
+            for j in 0..<cz {
+                for i in 0..<cx {
+                    let dx = (at(i + 1, j) + at(i + 1, j + 1) - at(i, j) - at(i, j + 1)) / (2 * cell)
+                    let dz = (at(i, j + 1) + at(i + 1, j + 1) - at(i, j) - at(i + 1, j)) / (2 * cell)
+                    let up = 1 / (1 + dx * dx + dz * dz).squareRoot()
+                    kk[j * cx + i] = up < 0.8 ? style.rock
+                        : table.map { $0[(c0.y + j) * tn + c0.x + i] } ?? s.base.kind(sector.first.x + i * step, sector.first.y + j * step, step: step) ?? 0
+                }
+            }
+            kinds = kk
+        }
+        var indices: [UInt32] = []; indices.reserveCapacity(sector.indexCount)
+        var materials: [UInt8] = []
+        if kinds != nil { materials.reserveCapacity(sector.triangleCount) }
+        let n1 = UInt32(nx)
+        for b in 0..<(nz - 1) {
+            for a in 0..<(nx - 1) {
+                let q = UInt32(b) * n1 + UInt32(a), r = q + 1, c = q + n1, d = c + 1
+                indices += [q, d, r, q, c, d]
+                if let kinds { let kind = kinds[(b / k) * cx + a / k]; materials += [kind, kind] }
+            }
+        }
+        // The skirts, as a coarse sector's, under the fine sides.
+        let tileLast = tileFirst &+ grid.tileCells
+        let qx = nx - 1, qz = nz - 1
+        func skirt(_ count: Int, onTileSide: Bool, vertex: (Int) -> Int, kind: (Int) -> UInt8) {
+            let drop: Float = style.skirts && onTileSide ? 2 * cell + 2 : 0
+            let first = UInt32(positions.count)
+            for q in 0...count {
+                let vtx = vertex(q)
+                positions.append(positions[vtx] - SIMD3(0, drop, 0))
+                normals.append(normals[vtx])
+                uvs.append(uvs[vtx])
+                weights.append(weights[vtx])
+            }
+            if drop > 0 { for q in 0...count { box.grow(positions[Int(first) + q]) } }
+            for q in 0..<count {
+                let a = UInt32(vertex(q)), b = UInt32(vertex(q + 1)), c = first + UInt32(q), d = c + 1
+                indices += [a, b, d, a, d, c]
+                if kinds != nil { materials += [kind(q), kind(q)] }
+            }
+        }
+        let kk = kinds ?? []
+        skirt(qx, onTileSide: sector.first.y == tileFirst.y, vertex: { $0 }, kind: { kk.isEmpty ? 0 : kk[$0 / k] })
+        skirt(qx, onTileSide: sector.last.y == tileLast.y, vertex: { qz * nx + $0 }, kind: { kk.isEmpty ? 0 : kk[(cz - 1) * cx + $0 / k] })
+        skirt(qz, onTileSide: sector.first.x == tileFirst.x, vertex: { $0 * nx }, kind: { kk.isEmpty ? 0 : kk[($0 / k) * cx] })
+        skirt(qz, onTileSide: sector.last.x == tileLast.x, vertex: { $0 * nx + qx }, kind: { kk.isEmpty ? 0 : kk[($0 / k) * cx + cx - 1] })
+        return TerrainSectorMesh(sector: sector, positions: positions, normals: normals, uvs: uvs, indices: indices,
+                                 materials: kinds == nil ? nil : materials, weights: weights, bounds: box)
     }
 
     /// As a scene borrows it (Scene.addMesh(borrowing:)).

@@ -59,7 +59,25 @@ The settings export compares against the realistic presets (`SettingsEnv.export`
 - two scales, ×1 near and ×0.25 far;
 - macro noise for tint, brightness and roughness (`terrain-macro`);
 - layer AO;
-- High: parallax 6 cm deep for footprints under 4 mm (`TERRAIN_PARALLAX_DEPTH`).
+- High: parallax 6 cm deep for footprints under 4 mm (`TERRAIN_PARALLAX_DEPTH`), on top of the displaced mesh below:
+  it carries the detail finer than the mesh's vertices.
+
+### Displacement (High)
+
+- **Terrain:** `Scene.refineTerrain` (`Terrain/GroundLook.swift`).
+  - **When:** run from `finishTerrainLayers`, once every sector is in; the Forest adds most of its ground after the plants.
+  - **Which sectors:** the level-0 sectors within 32 m of `Scene.terrainDetailCenter` (the demo camera's place, the open world's middle tile, the terrain workshop's camera corner). They are taken as a rectangle, so seams only lie on its outside.
+  - **How:** they are made again with `TerrainSector.subdiv` (0.25 m vertices, at most 4×4 a cell: 0.5 m in the valley and the workshops) in `TerrainSectorMesh.fine`:
+    - a Catmull-Rom surface between the samples, plus the relief from `GroundRelief` (the shader's height lerp on the CPU: the ground map's layers, rock by slope, painted layers, each scan's `TextureSet.heightField`);
+    - toward a side with a coarse neighbour (`seams`), both fade out over 3 m onto the coarse triangle's plane, so there are no cracks.
+  - **Swap-in:** `Scene.replaceBorrowed` swaps each fine mesh in before upload. The edits re-mesh it in place (`meshStyle.relief`).
+  - **Relief by scan:** rock 0.3 m; pebbles, gravel, earth, ground and forest floor 0.1; mud, sand, snow and moss 0.06; the rest 0.04.
+  - **Not displaced:** physics, the walker, grass and rocks keep the smooth field.
+- **Bark:** `Foliage.Bark` (`FoliageMesh.swift`).
+  - **Which stems:** trunks and limbs with feet over 3 cm, in species whose bark is a scan.
+  - **Density:** trunks get 3× the rings (Catmull-Rom between the nodes) and 3× the sides; limbs 2× and 2×.
+  - **Push:** each vertex goes out by the bark scan's height at its own UV (the texture's), oak 3 cm and pine 2.5 cm, at most 15% of the radius.
+  - **Names:** the library name gets `bark v2 [species]` on High only, so the names on On and Off stay main's.
 
 The old `terrainLayers` path is untouched with realism off.
 
@@ -111,13 +129,24 @@ The old `terrainLayers` path is untouched with realism off.
 | Plant workshop | 8.5 ms | about the same (its grass is High only) |
 
 - High adds parallax at about +1 ms near the ground.
+- High's displacement adds almost nothing to the frame (release, whole frames, On → High):
+
+  | View | On | High |
+  |---|---|---|
+  | Forest clearing | 89.1 ms | 88.9 ms |
+  | Forest trail | 100.5 ms | 101.7 ms |
+  | Valley | 17.3 ms | 17.6 ms |
+  | World woods | 30.7 ms | 30.0 ms |
+  | Plant workshop | 11.4 ms | 24.9 ms (its meadow grass) |
+
+- Refining costs 95–230 ms when the scene is made, for 266k–532k triangles.
 - The traps found:
   - Scans with specular below REFLECTION_MAX_ROUGHNESS put a 41 ms reflection pass in the Forest, so scans keep a roughness floor of 0.7 (leaves 0.62).
   - GI hits on scans take the colour alone: the terrain's two strongest layers on one axis, and the mesh path skips a scan's normal and ORMH (`MaterialExtra.textures.z == 2`).
 
 ## Not done / next
 
-- **Real displacement** of near terrain (a finer sector level) was not built. High has parallax instead.
+- **Displacement limits:** the fine sectors are fixed when the scene is made, round its camera. A camera flown far away sees the coarse ground with parallax only. A runtime ring of fine sectors that follows the camera would need a pool of swappable blocks.
 - **Splat maps finer than the cell** exist only as the scenes' own ground maps (0.3–1 m texels). Editor paint is still per vertex.
 - **Not built:** hex/stochastic tiling (the two scales and the macro noise hide most repeats), contact AO (GTAO), a LUT, and the Material Designer's Bitmap node changes with natural graph fallbacks. Without scans the fallback is the plain colour times the detail texture.
 - **To check:** the window (the panel row, auto exposure with a moving camera), the M4 Max and Metal 4.

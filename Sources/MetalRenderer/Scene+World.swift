@@ -293,6 +293,7 @@ extension Scene {
         if realistic {
             let middleCenter = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
             let lo = SIMD2<Float>(Float(middleCenter.x - anchor.x) - 1024, Float(middleCenter.y - anchor.y) - 1024)
+            terrainDetailCenter = lo + 1024   // (realism high: the middle tile's near ground refined)
             let shown = world
             addGroundLook(GroundLook(
                 layers: World.groundScans.enumerated().map { k, g in

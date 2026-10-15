@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene.swift": {
-    "mtime": 1792047025.1969872,
-    "seen": 1792050860.808099,
-    "ast_hash": "854a755ff4ae32925584a8bc8802685d",
+    "mtime": 1792065229.4473732,
+    "seen": 1792066426.103612,
+    "ast_hash": "f6311cfca342f494c87acf5d9773fc08",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
@@ -822,15 +822,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Foliage.swift": {
-    "mtime": 1792005616.951573,
-    "seen": 1792013775.7823098,
-    "ast_hash": "77cf25cb2fd102f6069a366791ac643d",
+    "mtime": 1792065667.2456222,
+    "seen": 1792066426.103455,
+    "ast_hash": "87702bf9b9bce76e04dfa028aabdb104",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FoliageMesh.swift": {
-    "mtime": 1792005616.9520667,
-    "seen": 1792013775.782311,
-    "ast_hash": "001bb19fb73fa99c31afe98968537fd6",
+    "mtime": 1792065667.2453659,
+    "seen": 1792066426.103456,
+    "ast_hash": "61e29e6de9f5107cfd528e6536b329f4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FoliageSpecies.swift": {
@@ -852,9 +852,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Forest.swift": {
-    "mtime": 1792048157.8288872,
-    "seen": 1792050860.808077,
-    "ast_hash": "3d396c12caf09a312a229a25356b42a4",
+    "mtime": 1792065814.3134053,
+    "seen": 1792066426.103589,
+    "ast_hash": "fa8dd2f32bddc328d44abf64e7f3f69b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Foliage.metal": {
@@ -888,9 +888,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+World.swift": {
-    "mtime": 1792060823.6627183,
-    "seen": 1792060952.102813,
-    "ast_hash": "cd02ee3a22aa7b9c8346399c2a70cc8a",
+    "mtime": 1792065315.881172,
+    "seen": 1792066426.103611,
+    "ast_hash": "849acada1f62e6beeb7fd0cbe2390248",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SceneBuffers.swift": {
@@ -2604,9 +2604,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/forest.json": {
-    "mtime": 1792005616.8841953,
-    "seen": 1792013775.782243,
-    "ast_hash": "630f6296dd9cb4a7bcf9753978555a78",
+    "mtime": 1792061702.6499538,
+    "seen": 1792066426.1033568,
+    "ast_hash": "b36217e8820928a8107cb26a3d75d71c",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/gallery.json": {
@@ -2676,9 +2676,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/plants.json": {
-    "mtime": 1792005616.8984811,
-    "seen": 1792013775.782254,
-    "ast_hash": "24975146cd12a04784fd8c2b1799b078",
+    "mtime": 1792064475.417915,
+    "seen": 1792066426.103369,
+    "ast_hash": "8d78964880785d97f615e3f2e525388a",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/ragdolls.json": {
@@ -2868,15 +2868,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer+Terrain.swift": {
-    "mtime": 1792048817.2131593,
-    "seen": 1792050860.808065,
+    "mtime": 1792065530.465888,
+    "seen": 1792066426.1035771,
     "ast_hash": "30308893ebbfe18cb7485ef8bfe4c94d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Terrain.swift": {
-    "mtime": 1792048817.212989,
-    "seen": 1792050860.808095,
-    "ast_hash": "fd6caae676f75771c8ff51a9e6ba5c3c",
+    "mtime": 1792065530.4657063,
+    "seen": 1792066426.1036081,
+    "ast_hash": "bc1224d4938c10368637c65cb1328bde",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+TerrainScatter.swift": {
@@ -2886,9 +2886,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+TerrainWorkshop.swift": {
-    "mtime": 1792046317.8055334,
-    "seen": 1792050860.8080971,
-    "ast_hash": "8d6d1ec175dbf032ae01c97bea66f0dc",
+    "mtime": 1792065315.8814065,
+    "seen": 1792066426.10361,
+    "ast_hash": "32b0a4fefd1dfea8bc13f7f3397fd332",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainBase.swift": {
@@ -2928,9 +2928,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainGrid.swift": {
-    "mtime": 1792008037.3734226,
-    "seen": 1792013775.782497,
-    "ast_hash": "7cc1c88d36464154671d62bd4bf0788b",
+    "mtime": 1792065089.3348217,
+    "seen": 1792066426.103678,
+    "ast_hash": "23bcebc90b4bcd6e9f154affc2f823a4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainIO.swift": {
@@ -2952,9 +2952,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainSectorMesh.swift": {
-    "mtime": 1792011161.9867198,
-    "seen": 1792013775.7825,
-    "ast_hash": "f2666bcb17d32b7d46b477e1411d4492",
+    "mtime": 1792065163.377262,
+    "seen": 1792066426.103681,
+    "ast_hash": "8a1197d7f978216e131d1fc3cffb2c6e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainStore.swift": {
@@ -3222,21 +3222,21 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/GroundLook.swift": {
-    "mtime": 1792047926.3964489,
-    "seen": 1792050860.808158,
-    "ast_hash": "44f44d7e64b4e93662f6619a8580e94c",
+    "mtime": 1792065404.5541394,
+    "seen": 1792066426.1036701,
+    "ast_hash": "7bb9f37e64cf2de526e4e85a9a3ef6e1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/TextureSets.swift": {
-    "mtime": 1792050262.7114978,
-    "seen": 1792050860.808185,
-    "ast_hash": "e622c6547fe6edb80e964d4761264189",
+    "mtime": 1792065044.54553,
+    "seen": 1792066426.10369,
+    "ast_hash": "133f666dc889f03406c91588d1e8b5c6",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/RealismTests.swift": {
-    "mtime": 1792048738.9984941,
-    "seen": 1792050860.8082612,
-    "ast_hash": "08150b8633be5388804798b94221f81a",
+    "mtime": 1792065844.668059,
+    "seen": 1792066426.103771,
+    "ast_hash": "1b928ca8a3da0acfb81b3f727af6b971",
     "semantic_hash": ""
   },
   "Tools/textures/fetch.py": {
@@ -3252,9 +3252,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/realism-handoff.md": {
-    "mtime": 1792060936.0233943,
-    "seen": 1792060952.103009,
-    "ast_hash": "897ae82adc3a217076355f00b7a67455",
+    "mtime": 1792066409.8083913,
+    "seen": 1792066426.103817,
+    "ast_hash": "50c71a63b2c97212075f5ab60245b9c8",
     "semantic_hash": ""
   },
   "Assets/Textures/bark-oak/LICENSE.txt": {
@@ -3795,6 +3795,12 @@
     "mtime": 1792045465.1404817,
     "seen": 1792050860.8083851,
     "ast_hash": "8b9787b4c7b1d7390a4b4a1ae67728b1",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/Terrain/GroundRelief.swift": {
+    "mtime": 1792065530.466034,
+    "seen": 1792066426.103671,
+    "ast_hash": "cc3155f818dd777b1ed859a67918ab67",
     "semantic_hash": ""
   }
 }
