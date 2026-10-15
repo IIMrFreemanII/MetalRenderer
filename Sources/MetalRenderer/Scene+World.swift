@@ -348,6 +348,42 @@ extension Scene {
         walkColliders = kit.colliders   // (and the terrain's walkGround)
         kit.addFlashlight()
 
+        // The realistic look's meadow grass and rocks round the middle tile (out to its corners and a little beyond):
+        // grass on the meadows (not on the roads, in the cities or the water), rocks where it is steep and in the woods.
+        if realistic {
+            let mc = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
+            let c = SIMD2<Float>(Float(mc.x - anchor.x), Float(mc.y - anchor.y))
+            let shown = world, waterField = water?.field, ground = self.terrain?.field.snapshot()
+            let tileSeed = world.seed ^ (UInt64(bitPattern: Int64(middle.x)) &* 0x9E37_79B9) ^ (UInt64(bitPattern: Int64(middle.y)) &* 0x85EB_CA6B)
+            func place(_ x: Float, _ z: Float) -> (x: Double, z: Double, city: World.City?) {
+                let wx = Double(x) + anchor.x, wz = Double(z) + anchor.y
+                return (wx, wz, shown.city(near: wx, wz))
+            }
+            func open(_ x: Float, _ z: Float) -> Bool {
+                let p = place(x, z)
+                // (Not on a city's blocks and streets; its apron's meadows are meadows.)
+                if let city = p.city, simd_distance(SIMD2(p.x, p.z), city.center) < Double(city.radius) + 6 { return false }
+                if let road = shown.highway(p.city, p.x, p.z), road.distance < road.half + 1.5 { return false }
+                return waterField?.wet(p.x, p.z, margin: 1) != true   // (the world's field: the world's places)
+            }
+            let grass = addMeadowGrass(center: c, reach: 190, seed: tileSeed, flora: flora) { x, z in
+                let p = place(x, z)
+                guard shown.ground(p.x, p.z, up: 1, city: p.city) == World.Ground.meadow, open(x, z) else { return 0 }
+                return 0.8 + 0.2 * GroundLook.smooth(-0.3, 0.4, Terrain.noise(SIMD2(x, z) / 19, seed: UInt32(truncatingIfNeeded: tileSeed)))
+            }
+            let rocks = addRocks(count: 9000, lo: c - 170, hi: c + 170, seed: tileSeed &+ 0x80C) { x, z in
+                guard open(x, z) else { return (0, 0.2...0.3) }
+                let p = place(x, z), kind = shown.ground(p.x, p.z, up: 1, city: p.city)
+                // (Not on the fields or the sand.)
+                if [World.Ground.wheat, World.Ground.crop, World.Ground.ploughed, World.Ground.sand].contains(kind) { return (0, 0.2...0.3) }
+                let up = ground?.normal(x: p.x, z: p.z).y ?? 1
+                let steep = 1 - GroundLook.smooth(0.72, 0.9, up)
+                let woods = shown.woods(p.x, p.z)
+                return (min(0.04 + 0.7 * steep + 0.12 * woods, 1) * 0.5, 0.2...(0.7 + 1.8 * steep + 0.3 * woods))
+            }
+            print("World: the realistic look's \(grass) grass patches and \(rocks) rocks round tile \(middle.x), \(middle.y)")
+        }
+
         // The light from the sky: the sun, and once it has set the moon (its colour is the atmosphere's to say).
         addLight(.sun(angularRadius: Heavens.discRadius), color: [1, 1, 1]) { t in
             LightPose(position: .zero, direction: Heavens(at: t).light)

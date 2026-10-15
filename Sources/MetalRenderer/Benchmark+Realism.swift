@@ -45,7 +45,13 @@ extension Benchmark {
         let w = worldOfRun(), begin = w.start
         var woods = begin.place.x
         while w.woods(woods, begin.place.z) < 0.95 && woods < begin.place.x + 3000 { woods += 16 }
-        out.append(on("world woods", .world).from(worldCamera(w, woods + 40, begin.place.z, up: 1.7, yaw: .pi / 2, pitch: -0.1)))
+        // (The scene made round the woods' own tile, as the renderer makes it once the camera is there.)
+        let side = Double(World.tileSize), tile = SIMD2(Int(((woods + 40) / side).rounded(.down)), Int((begin.place.z / side).rounded(.down)))
+        out.append(on("world woods", .world).with { $0.scene.worldTile = tile }
+            .from(worldCamera(w, woods + 40, begin.place.z, up: 1.7, yaw: .pi / 2, pitch: -0.1)))
+        let meadow = w.start.place.x + 300
+        out.append(on("world meadow", .world).with { $0.scene.worldTile = SIMD2(Int((meadow / side).rounded(.down)), tile.y) }
+            .from(worldCamera(w, meadow, begin.place.z + 20, up: 1.7, yaw: .pi / 2, pitch: -0.08)))
         out.append(on("world start", .world))
         return out
     }

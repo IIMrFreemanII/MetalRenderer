@@ -888,9 +888,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+World.swift": {
-    "mtime": 1792046688.2995398,
-    "seen": 1792050860.808098,
-    "ast_hash": "22aee38cf172899c18ae58a1f57fb5b3",
+    "mtime": 1792060823.6627183,
+    "seen": 1792060952.102813,
+    "ast_hash": "cd02ee3a22aa7b9c8346399c2a70cc8a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SceneBuffers.swift": {
@@ -3210,9 +3210,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Realism.swift": {
-    "mtime": 1792047182.0556445,
-    "seen": 1792050860.8078861,
-    "ast_hash": "861d5c0aec6b9d86eb19885c314f6e43",
+    "mtime": 1792060721.7293878,
+    "seen": 1792060952.102609,
+    "ast_hash": "0fa344db89ba2b8bd6726464643f7957",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Rocks.swift": {
@@ -3252,9 +3252,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/realism-handoff.md": {
-    "mtime": 1792049191.8683708,
-    "seen": 1792050860.808307,
-    "ast_hash": "b944eda0a69d126caa7e3b47915464a2",
+    "mtime": 1792060936.0233943,
+    "seen": 1792060952.103009,
+    "ast_hash": "897ae82adc3a217076355f00b7a67455",
     "semantic_hash": ""
   },
   "Assets/Textures/bark-oak/LICENSE.txt": {

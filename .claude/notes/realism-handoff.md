@@ -83,6 +83,7 @@ The old `terrainLayers` path is untouched with realism off.
 - `Scene+Rocks.swift`:
   - `boulder`: an icosphere with ridged noise and chipped plane cuts;
   - `addRocks`: rocks sunk a third and set to the slope, in the rock scan. Placed in the Forest (steep ground, banks, clusters) and the valley (water, the hills).
+- **Open world** (`Scene+World.swift`), round the middle tile (out to 190 m): meadow grass on the meadows, rocks on steep ground and in the woods. Neither goes on a city's blocks, the highways or the water (the world's water field takes world places); rocks also stay off the fields and the sand. Mode `realism` builds "world woods" and "world meadow" round their own tiles. Dev build, whole frames: deep woods 110 → 124 ms, the meadow by the start 27 → 30.
 
 ### Lighting and post
 
@@ -119,5 +120,4 @@ The old `terrainLayers` path is untouched with realism off.
 - **Real displacement** of near terrain (a finer sector level) was not built. High has parallax instead.
 - **Splat maps finer than the cell** exist only as the scenes' own ground maps (0.3–1 m texels). Editor paint is still per vertex.
 - **Not built:** hex/stochastic tiling (the two scales and the macro noise hide most repeats), contact AO (GTAO), a LUT, and the Material Designer's Bitmap node changes with natural graph fallbacks. Without scans the fallback is the plain colour times the detail texture.
-- **The open world** has no meadow grass and no rocks of the realistic look. The tiles' ground cover is as it was.
 - **To check:** the window (the panel row, auto exposure with a moving camera), the M4 Max and Metal 4.
