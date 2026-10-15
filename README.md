@@ -2012,6 +2012,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `VoxelGrids.swift`, `VoxelLOD.swift` | The grids as one-box structures per level, and a still scene's far baked plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
+| `LightTree.swift` | The path tracer's many lights (more than 32): a bounding hierarchy over every light but the suns, drawn by importance at each point (`Shaders/LightTree.metal`), refitted as lights move |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
 | `FBXReader.swift` | Binary FBX: a memory-mapped reader that skips what isn't asked for and inflates arrays in place |
@@ -2042,7 +2043,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `VirtualGeometry`, `Foliage` (the wind, and posing the plants' variants), `Crowd` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `LightTree` (the path tracer's many lights), `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `VirtualGeometry`, `Foliage` (the wind, and posing the plants' variants), `Crowd` |
 
 ## Notes for M1 / M2 Macs
 

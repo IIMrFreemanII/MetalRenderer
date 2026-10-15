@@ -34,16 +34,14 @@ editor" section has the design and how to use it.
 
 ## To do on the M4 Max
 1. **Re-time** the workshop rebuilds and the bench (`-m buildings`). Hardware RT should shorten the BLAS builds of an
-   edit; if the night frames are still over ~15 ms, try MegaLights for interiors at night and fewer lights per room.
+   edit; if the night frames are still over ~15 ms, try ReSTIR for interiors at night and fewer lights per room.
 2. **Metal 4:** never run with interiors. Moving doors and lifts (animated instances, top level refit only on frames
    that move), the city's interior swaps (named meshes kept, `isSameCity`), the workshop's fast rebuilds, the
    physics props (CPU-stepped bodies drawn as meshes). `METALRENDERER_API=metal4 -m buildings`, compare with Metal 3.
-3. **Light leaks:** Lumen's mesh SDFs are coarser than 0.12 m partitions. Look at the bench's rooms with Lumen; if
-   they leak, split interior storey meshes into ~12 m pieces when Lumen is on, or say it is not for interiors.
-4. **The open world's interiors are still** (doors open, no switches, lifts parked, no physics): its instance groups
+3. **The open world's interiors are still** (doors open, no switches, lifts parked, no physics): its instance groups
    need a still scene (`SceneBuffers` guard). Lifting that (per-slot instance tables with groups) would give the
    world what the city has.
-5. **Interiors on demand in the city:** time the swap (background prepare + install) in a 10×10 city on the M4 Max
+4. **Interiors on demand in the city:** time the swap (background prepare + install) in a 10×10 city on the M4 Max
    (it regenerates every building; a cache of built buildings would make it cheaper).
 
 ## Interior lighting (Oct 15)

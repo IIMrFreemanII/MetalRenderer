@@ -23,7 +23,7 @@ delta over the procedural ground, live ray-traced sculpting, physics/walk/water/
 - **Live update** (`Renderer+Terrain.swift`, `Renderer.encodeTerrain`): dirty sectors by chunk revision, nearest
   first, `METALRENDERER_TERRAIN_BUDGET` (6) a frame: CPU meshing into a staging buffer, `FrameEncoder.copyBuffers`
   into the blocks, `TerrainBuild` (fast-build BLAS in place), then the TLAS (still scenes: `SceneBuffers.stillRefit`,
-  others rebuilt per slot), raster record bounds grown, reference reset. Terrain instances are shadow-traced (VSM).
+  others rebuilt per slot), reference reset.
 - **Shading** (`Surface.metal` `terrainLayers`, bit 12 TERRAIN): per-vertex weights in the block after the materials
   (`MeshBlock.weightsOffset`), top 3 of layers 1-15 over the sector's own material (layer 0), world-space UVs from
   the layer table (in `procParams`, `SceneTerrain.table`), biplanar on steep ground. `GPUMesh`/`MeshData` grew
@@ -37,7 +37,7 @@ delta over the procedural ground, live ray-traced sculpting, physics/walk/water/
   scene made again at stroke end).
 - **Water** (`TerrainWater.swift`): sea plane, lake flood fill, river bed carving + ribbon; surfaces made with the scene.
 - **Physics**: `PhysicsShapeKind.heightfield` (CPU `PhysicsCollide.swift`, GPU `Physics.metal`), one static per
-  sector (`addTerrainColliders`), refreshed when sectors are meshed again. Lumen re-bakes touched sectors at stroke end.
+  sector (`addTerrainColliders`), refreshed when sectors are meshed again.
 - **Editor** (`TerrainEditor/`): window (Shift-T, Shift-Cmd-T), tools + brush, 2D map (height/slope/layers/edits,
   tile selection, double-click flies there, brush on the map), tabs: layers, generate, erosion, scatter, water, files
   (16-bit PNG / EXR heightmaps, RGBA splat maps, JSON sidecar).
