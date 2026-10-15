@@ -624,7 +624,7 @@ enum CharacterImporter {
             if channel.rotation { rotationCurve[channel.joint * 3 + c.axis] = i }
             else if channel.joint == root { rootCurve[c.axis] = i }
         }
-        var clip = SourceClip(name: url.deletingPathExtension().lastPathComponent, skeleton: skeleton, keyCount: keyCount,
+        var clip = SourceClip(name: MixamoLibrary.clipName(url), skeleton: skeleton, keyCount: keyCount,
                               rate: FBXFile.ticksPerSecond / Double(step),
                               rotations: [simd_quatd](repeating: simd_quatd(ix: 0, iy: 0, iz: 0, r: 1), count: keyCount * jointCount),
                               root: [SIMD3<Double>](repeating: skeleton.translations[root], count: keyCount))
@@ -810,8 +810,9 @@ private extension SIMD4 where Scalar == Double {
 
 // MARK: - The library and its cache
 
-/// The characters in `Assets/Characters` (each `.fbx` there) with the clips in `Assets/Characters/Animations`.
-/// Read from the FBX files once, then from one cache file that holds everything the crowd needs.
+/// The characters in `Assets/Characters` (each `.fbx` there) with the clips in `Assets/Characters/Animations`, and
+/// the Mixamo clips a run asks for (MixamoLibrary). Read from the FBX files once, then from one cache file per set
+/// of files that holds everything the crowd needs.
 struct CharacterLibrary {
     var characters: [SkinnedCharacter] = []
 
@@ -826,7 +827,9 @@ struct CharacterLibrary {
     /// The library of `directory`; empty (with a message) if it has no characters or they can't be read.
     /// `cache: false` reads the FBX files and leaves the cache file alone.
     static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true) -> CharacterLibrary {
-        let characterFiles = fbxFiles(directory), clipFiles = fbxFiles(directory.appendingPathComponent("Animations"))
+        let characterFiles = fbxFiles(directory)
+        var clipFiles = fbxFiles(directory.appendingPathComponent("Animations"))
+        clipFiles += MixamoLibrary.requested(have: Set(clipFiles.map(MixamoLibrary.clipName)))
         guard !characterFiles.isEmpty else {
             print("Characters: no .fbx files in \(directory.path)")
             return CharacterLibrary()

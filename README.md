@@ -861,7 +861,7 @@ Before, on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METAL
 
 ### Animated characters
 
-The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk and a run. Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
+The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk, a run and the muscles figure's dances, plus any clips a run asks for from the Mixamo library (below). Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
 
 * **Poses are animated, not characters.** Everything here is ray traced, so a deformed mesh is not something a vertex shader does to an instance: it needs vertices of its own and an acceleration structure around them. The crowd keeps a pool of *pose slots* (`Crowd.swift`). A slot is one character playing one clip, or a cross-fade of two, from some point of its loop. Each frame the GPU animates every slot once, and every character in the square is an ordinary instance of one slot's mesh. A frame's cost follows the number of slots, not of characters: 131072 characters on 64 slots cost what 64 poses cost, plus a larger top-level tree. Characters on the same slot move in step, which a few dozen slots per clip hide well; a character that must move on its own takes a slot to itself.
 * **A frame's work, all in compute** (`Shaders/Crowd.metal`, `CrowdSkinner.swift`):
@@ -901,6 +901,19 @@ The **Crowd** scene fills a square with the characters in `Assets/Characters`: e
   * A character has one material, so the bots' two colours (body and joints) are one tint each.
   * A walking row shares one motion and one size, so its members keep their distances; nothing steers around anything.
   * Cross-fades keep two clips at the same point of their loops, which is right for clips that start on the same foot.
+
+#### The Mixamo library
+
+`Tools/mixamo/download.py` fetches every Mixamo motion (about 2,450) baked on a character, as skinless 60 fps FBX files, into `~/MixamoAnimations/<character>/` with an `index.json`. The files stay out of Git.
+
+1. Sign in at mixamo.com, run `copy(localStorage.access_token)` in the browser's console, then `pbpaste > ~/.config/mixamo/token`. The token lasts about a day.
+2. `python3 Tools/mixamo/download.py --character "Y Bot" --character "X Bot"`. Each character takes one export at a time (about 7 s a clip, 4–5 h for the lot); the characters run in parallel. A rerun skips what is there, and after an expired token it resumes. `--limit`, `--query`, `--dry-run`, `--retry-failed` and `--list-characters` are for trials.
+
+`MixamoLibrary.swift` reads the indexes (`METALRENDERER_MIXAMO`, or `~/MixamoAnimations`). A run loads only the clips it names, with the ones in `Assets/Characters/Animations`, and the cache keeps each set:
+* `METALRENDERER_CLIPS="Zombie Walk, Samba Dancing, random:24"`: more clips for the crowd, which shares its pose slots over every clip. `random:N:seed` picks the same N each time.
+* `METALRENDERER_ROUTINE="2hand Idle:3, Thriller Part 2"`: the muscles figure's programme instead of its dance, each clip for its seconds or its length once.
+
+A name is a Mixamo name in any case, a part of only one name, or the start of the clip's id. Mixamo gives some different motions the same name (a man's and a woman's version); such a name means the first. `METALRENDERER_MIXAMO_ALL=1 swift test --filter MixamoLibraryTests` reads every downloaded file (all 4,892 of Y Bot's and X Bot's, 3.9 GB, in about 2 s on an M1 Max).
 
 ### Procedural city
 
