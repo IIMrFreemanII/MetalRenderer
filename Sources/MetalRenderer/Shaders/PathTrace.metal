@@ -7,7 +7,7 @@
 // its phase function, shadow rays dimmed through it (ratio tracking). Next-event estimation at every scattering point, each light
 // sampled by solid angle; bounce rays also meet the analytic lights (but the suns, met on a miss), and the two are
 // combined by multiple importance sampling (power heuristic). Up to PT_LIGHT_HITS lights each is weighed at every
-// point and the rays test each one; above, the light tree (MegaLights.metal) draws them and the rays meet them at
+// point and the rays test each one; above, the light tree (LightTree.metal) draws them and the rays meet them at
 // their visible shapes (the light-proxy map). Emissive-mesh lights split the work instead: next-event estimation
 // lights the diffuse lobe, the specular lobe meets them. Samples are Owen-scrambled Sobol points per pixel
 // (Sampling.metal) for the first bounces. Russian roulette after 3 bounces, no firefly clamp. Each frame's paths
@@ -309,8 +309,7 @@ inline ShadingPoint ptShadingPoint(thread const PTVertex& x) {
 // The tree's share against the suns' at x: the suns' weights and the probability of drawing a sun.
 inline float ptSunShare(thread const PTLights& L, thread const PTVertex& x, thread const ShadingPoint& sp, thread float2& ws) {
     ws = float2(L.suns > 0 ? ptLightWeight(L.lights[L.sun0], x) : 0.0f, L.suns > 1 ? ptLightWeight(L.lights[L.sun1], x) : 0.0f);
-    MegaLightsOwned none = { nullptr, 0, 0.0f, false };
-    float wTree = lightTreeWeight(L.tree, 0, sp, L.lights, none, x.volume);
+    float wTree = lightTreeWeight(L.tree, 0, sp, L.lights, x.volume);
     float wSun = ws.x + ws.y;
     return wSun + wTree > 0.0f ? wSun / (wSun + wTree) : 0.0f;
 }
@@ -330,9 +329,8 @@ uint ptPickLight(thread const PTLights& L, thread const PTVertex& x, float u, fl
             return first ? L.sun0 : L.sun1;
         }
         u = min((u - pSun) / (1.0f - pSun), 0.99999f);
-        MegaLightsOwned none = { nullptr, 0, 0.0f, false };
         float pTree;
-        uint l = sampleLightTree(L.tree, L.nodes, u, sp, L.lights, none, pTree, x.volume);
+        uint l = sampleLightTree(L.tree, L.nodes, u, sp, L.lights, pTree, x.volume);
         if (l == ELEMENT_NONE) return L.count;
         pdf = (1.0f - pSun) * pTree;
         return l;
@@ -365,8 +363,7 @@ float ptPickPdf(thread const PTLights& L, thread const PTVertex& x, uint j) {
         float pSun = ptSunShare(L, x, sp, ws);
         if (L.suns > 0 && j == L.sun0) return ws.x > 0.0f ? pSun * ws.x / (ws.x + ws.y) : 0.0f;
         if (L.suns > 1 && j == L.sun1) return ws.y > 0.0f ? pSun * ws.y / (ws.x + ws.y) : 0.0f;
-        MegaLightsOwned none = { nullptr, 0, 0.0f, false };
-        return (1.0f - pSun) * lightTreePdf(L.tree, L.nodes, j, sp, L.lights, none, x.volume);
+        return (1.0f - pSun) * lightTreePdf(L.tree, L.nodes, j, sp, L.lights, x.volume);
     }
     float total = 0.0f, wj = 0.0f;
     for (uint i = 0; i < L.count; ++i) {

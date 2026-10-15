@@ -19,7 +19,6 @@ struct SceneData {
     texture2d_array<float>     sky;
     texture2d<float>           cloudShadow;
     constant SkyParams*        skyParams;
-    device const VSMScene*     vsm;             // SceneShading.vsm (with FLAG_VSM)
     device const MaterialExtra* extras;         // SceneShading.extras (with MATERIAL_EXTRAS)
     device const float4*       procParams;      // SceneShading.procParams (with PROCEDURAL_CODE)
     device const WaterScene*   water;           // SceneShading.water (with WATER)
@@ -36,7 +35,6 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.sky = shading.sky;
     s.cloudShadow = shading.cloudShadow;
     s.skyParams = &shading.skyParams;
-    s.vsm = shading.vsm;
     s.extras = shading.extras;
     s.procParams = shading.procParams;
     s.water = shading.water;
@@ -756,8 +754,7 @@ inline void surfaceSpecular(thread Surface& sf) {
     }
 }
 
-// The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures. The
-// hit comes from the tracer (traceSurface) or from the raster visibility buffer (visibilityHit, Raster.metal).
+// The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures.
 Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record) {
     Surface sf;
     sf.hit = false;

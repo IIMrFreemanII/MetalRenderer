@@ -1,6 +1,6 @@
 """usage: restir.py <run-dir> ... — scores METALRENDERER_BENCH=restirq (stress scene direct light, 640x400, 32 to 4096 lights,
 each direct-light method) against refs/restir/, and METALRENDERER_BENCH=restircheck (accumulated ReSTIR sampling against
-every light traced, per light type) within a run; MegaLights alongside ReSTIR in both and in marketq."""
+every light traced, per light type) within a run."""
 import os, sys
 from evalcommon import *
 
@@ -12,7 +12,7 @@ pick_up_refs("restir", runs, [f"ref-direct-{n}" for n in LIGHTS])
 header = False
 for d in runs:
     for n in LIGHTS:
-        for mode in ("exact", "grouped", "restir", "megalights"):
+        for mode in ("exact", "grouped", "restir"):
             st = capture(d, f"{mode}-static-{n}")
             if st is None: continue
             if not header:
@@ -26,8 +26,8 @@ for d in runs:
 pick_up_refs("restir", runs, ["ref-direct-market", "ref-indirect-market", "ref-scattering-market"])
 header = False
 for d in runs:
-    # METALRENDERER_BENCH=marketq: ReSTIR's candidates from the table alone / the light grid; MegaLights
-    for source, prefix in (("table", "restir-table"), ("grid", "restir-grid"), ("mega", "megalights")):
+    # METALRENDERER_BENCH=marketq: ReSTIR's candidates from the table alone / the light grid
+    for source, prefix in (("table", "restir-table"), ("grid", "restir-grid")):
         st = capture(d, f"{prefix}-static-market")
         if st is None: continue
         if not header:
@@ -63,7 +63,7 @@ for d in runs:
                 "stress32"):
         exact = capture(d, f"{tag}-exact")
         if exact is None: continue
-        for source in ("restir", "restir-grid", "megalights"):   # the table alone; the light grid (ReGIR) + the table; MegaLights
+        for source in ("restir", "restir-grid"):   # the table alone; the light grid (ReGIR) + the table
             restir = capture(d, f"{tag}-{source}")
             if restir is None: continue
             if not header:

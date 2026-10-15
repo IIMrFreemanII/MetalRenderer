@@ -1,8 +1,8 @@
 import Foundation
 import simd
 
-/// Bounding volume hierarchies: a binned-SAH builder over boxes (`BVHBuilder.build`: Lumen's mesh distance fields,
-/// SDF volumes), and the small trees over virtual geometry's clusters, stored in their pages (`buildCluster`), which
+/// Bounding volume hierarchies: a binned-SAH builder over boxes (`BVHBuilder.build`: SDF
+/// volumes), and the small trees over virtual geometry's clusters, stored in their pages (`buildCluster`), which
 /// the ray queries walk in the clusters' boxes (Shaders/Intersect.metal, `clusterWalk`).
 ///
 /// A cluster's tree uses a 64-byte node, which holds the boxes of *both* children, so one fetch tests two:

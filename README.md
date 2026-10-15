@@ -76,7 +76,6 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * **Radiance cascades (default):** probes on a screen grid trace world-space rays over distance intervals that grow 4× per cascade. The cascades are merged top-down, giving each probe its incoming light without noise.
   * **Path traced:** a 1-sample-per-pixel diffuse path is traced for 1 to 8 bounces. Each bounce samples one light directly (next-event estimation), picked in proportion to its unshadowed light there, and picks up sky light. The result is denoised.
   * **ReSTIR GI:** the same paths, but each path's first bounce is kept as a reservoir sample and resampled from frame to frame (optionally also from neighbouring pixels, unbiased). Its paths' last hits add last frame's indirect light (multi-bounce). It is the most accurate method: 42.2 dB in the Cornell room and 36.4 dB in the stress hall, against 36.1 and 25.5 dB for radiance cascades, for 2–3× their cost (see "Indirect light (ReSTIR GI)" below).
-  * **Lumen (Unreal Engine 5-style, software):** screen probes trace the screen first, then each mesh's signed distance field, a global distance field around the camera and the sky; what they hit is lit from a surface cache of cards, lit ahead of time with their own multi-bounce radiosity. 41.2 dB in the Cornell room and 28.8 dB in the stress building, against 36.1 and 25.6 dB for radiance cascades, for 16–55% more per frame (see "Lumen GI" below).
   * Radiance cascades get **multi-bounce** light, and light their ray hits from per-light **light-visibility maps**, so they need no shadow rays.
 * **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). The sun's map is orthographic instead, over the scene's bounding sphere. Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps"). The sun's map has texels metres wide in a big scene, too coarse to see a wall or a ceiling, so inside the walkable interiors' box (`Scene.interiorBox`, the buildings with rooms) a hit traces one ray toward the sun instead, the map taking over beyond its reach (`giSunVisibility`); there the cascades' intervals also overlap by half (no sunlit outside leaking through walls), their rays move inside their bins every frame with the resolve averaging the frames (no blotches where a small sunlit patch lights a room), and the fog's sky light is occluded by one ray up (`fogSkyAmbient`). Outside the box nothing changes, and costs nothing (rays through a forest's leaves would cost a third of its frame on the M1 Max).
 * **Upscaling (optional, macOS 26):** the frame is traced at low resolution with sub-pixel jitter, and MetalFX's denoising scaler (`MTLFXTemporalDenoisedScaler`) takes the raw 1-sample light and returns it denoised, sharper and anti-aliased at up to 3× the resolution, in place of SVGF and the shadow denoiser. It's on by default at 3×. Press **U** to cycle through off, 1.5×, 2× and 3×. Off (and on a GPU or system without the MetalFX denoiser) the frame is traced at the output resolution and this project's denoisers below filter it. The custom TAAU upscaler and MetalFX's temporal and spatial scalers were removed in October 2026; the results below still name them where they were measured.
@@ -140,7 +139,6 @@ These variables apply to the gallery and to models in general:
   * `METALRENDERER_VG=0` turns it off; `METALRENDERER_VG_TAU=<px>` sets the allowed error.
   * `METALRENDERER_VG_MODE=clusters` uses the GPU-driven cluster variant (see below), with `METALRENDERER_VG_POOL=<MB>` for its page pool.
   * `METALRENDERER_VG_SYNC=0|1` forces background or synchronous cut updates; benchmarks run them synchronously.
-  * `METALRENDERER_RASTER_VG=blas|clusters|mesh` picks how the raster visibility buffer draws it (see "Raster clusters" below), with `METALRENDERER_RASTER_VG_POOL=<MB>` (default 512) for the clusters' page pool; `METALRENDERER_RASTER_VG_BIAS=<k>` moves the rays from a drawn cluster k times its simplification error away from it (off by default); `METALRENDERER_BENCH=rastervg` renders the gallery, a close-up and a showcase model traced and with each way, direct light alone, the visibility buffer, cluster and LOD views, camera moves, and a 128 MB pool.
   * `METALRENDERER_VG_TEST=<model.glb>` builds a model's DAG, checks its invariants, round-trips the cache file and exits.
   * `METALRENDERER_BENCH=vgdebug` renders every geometry debug view at the gallery overview and close-up, with virtual geometry and (for triangles, triangle size and cost) full-detail meshes; set `METALRENDERER_BENCH_DIR` for the PNGs.
 * Textures:
@@ -209,7 +207,7 @@ For the plants:
 * `METALRENDERER_SCENE=softbodies` starts in the soft body scene (`,soft=…` soft bodies, `,cells=…` lattice cubes along each one's longest side, `,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=soft` renders it paused at 1.5, 3 and 5 s, under each API, with the CPU's steps and in its normals and direct light, then times the first 5 s moving at 16, 48 and 128 soft bodies on the GPU, at 16 with 10 cells, and at 16 and 48 on the CPU. `METALRENDERER_BENCH=softdemo` records its demo, 20 s from the throw along a camera track (`video.sh -m softdemo`).
 * `METALRENDERER_SCENE=muscles` starts in the muscles scene (`,character=0|1`, `,fleshragdolls=…` ragdolls with flesh, `,flesh=…` the lattice's spacing in cm, `,skin=embedded|sliding`, `,body=skin|muscles` the character drawn as its skin or as an écorché, `,muscle=…` the muscles' strength, `,substeps=…,physics=gpu|cpu`). `METALRENDERER_BENCH=muscles` renders it paused at 2 and 5 s, under each API, with the CPU's steps, in its normals and direct light, close to the character in each skin, the écorché from its front, back and side, close to its chest, hips, shoulder, skull, knee, hand and spine, in its normals and as it dances, and to the ragdolls, then times the first 5 s moving at lattices of 5, 4, 3.5 and 3 cm, with 0 and 6 ragdolls, with the sliding skin, as the écorché and on the CPU. `METALRENDERER_BENCH=musclesdemo` records its demo, the character's whole 48 s routine along a camera track, and again as the écorché (`video.sh -m musclesdemo`).
 * `METALRENDERER_SCENE=fluids` starts in the fluids scene (`,liquid=all|water|blood|honey`, `,solver=auto|pbf|mpm`, `,water=…,blood=…,honey=…` each liquid's solver, `,fluid=…` the most particles a liquid pours, `,physics=gpu|cpu`). `METALRENDERER_BENCH=fluids` renders it paused at 2, 4 and 6 s, at 6 s under each API, each liquid alone, all by PBF and all by MPM, in its normals and albedo, and path traced, then times the first 5 s moving on the GPU, 5 s from 12 s at 16k, 32k and 64k particles a liquid, and the first 5 s on the CPU at 2k. `METALRENDERER_BENCH=fluidsdemo` records its demo, its first 20 s along a camera track (`video.sh -m fluidsdemo`).
-* `METALRENDERER_SCENE=shapes` starts in the SDF shapes scene. `METALRENDERER_BENCH=shapes` renders it paused under each API, then under Metal 3 with path tracing, ReSTIR and MegaLights on its glowing shapes, and in the normals, triangles (here: the shapes' materials) and traversal cost views; then it times moving frames and a camera move (settings named `<api> <what>`: `metal3 pt`, `metal4 cascades`). `METALRENDERER_BENCH=shapesdemo` records its demo: 30 s along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o demo.mp4` makes the mp4 (with ffmpeg; it does `showcasevideo` too).
+* `METALRENDERER_SCENE=shapes` starts in the SDF shapes scene. `METALRENDERER_BENCH=shapes` renders it paused under each API, then under Metal 3 with path tracing and ReSTIR on its glowing shapes, and in the normals, triangles (here: the shapes' materials) and traversal cost views; then it times moving frames and a camera move (settings named `<api> <what>`: `metal3 pt`, `metal4 cascades`). `METALRENDERER_BENCH=shapesdemo` records its demo: 30 s along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m shapesdemo -o demo.mp4` makes the mp4 (with ffmpeg; it does `showcasevideo` too).
 * `METALRENDERER_FLIGHT="x,y,z,frames"` flies the camera in every benchmark setting: metres a second, and with `frames` there and back again, turning every so many frames.
 * `METALRENDERER_CACHE=0` makes everything a generated scene derives again (its textures, the plants' voxels, the world's tiles) instead of taking it from `~/Library/Caches/MetalRenderer/generated`. `METALRENDERER_CACHE_MB=4096` caps that folder.
 
@@ -217,7 +215,6 @@ The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com):
 
 Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALRENDERER_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALRENDERER_GI_MODES` picks the methods, for example `pt,pt-lightmaps,cascades,cascades-hq,restirgi,restirgi-q`. `METALRENDERER_GI` overrides GI settings everywhere, for example `mode=pt,bounces=4`, `mode=cascades,spacing=4,b1=0.25` or `mode=restir`. `METALRENDERER_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
 
-Use `METALRENDERER_BENCH=lumen` for Lumen GI: stills of eight scenes (the final image and indirect light alone) with distance fields, with triangles, without screen traces and without the cards, against the cascades, each "GI debug" view, then each method in a camera move for the timings (`METALRENDERER_BENCH_ONLY=camera`). `Tools/eval/lumen.py` scores it: how much of the G-buffer the fields cover, their depth error, and the indirect light with fields against the other variants. `METALRENDERER_LUMEN` overrides Lumen's settings (see "Lumen GI"), and `METALRENDERER_LUMEN_LOG=1` prints the bakes.
 
 `Tools/eval/` scores the saved PNGs against reference images committed in `Tools/eval/refs/` (PSNR and flicker; see its README).
 
@@ -238,7 +235,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | W A S D, Q E | Move, down/up (hold Shift to move 3.2× faster; the speed is in the panel) |
 | Space | Pause animation |
 | G | Toggle global illumination |
-| M | GI method: path traced, radiance cascades, ReSTIR GI, Lumen |
+| M | GI method: path traced, radiance cascades, ReSTIR GI |
 | N | Toggle denoiser (shows the raw 1-spp signal) |
 | [ ] | Fewer / more GI bounces (path traced, ReSTIR GI) |
 | - = | Lower / raise render resolution |
@@ -303,7 +300,7 @@ the choice is kept.
 * **Compiling shaders**, at launch and after R.
 * **Streaming in:** what keeps coming once the scene is in. Texture levels and virtual geometry pages (and the cut's
   BLAS) while the new scene settles, for 20 s at most (later, as the camera moves, they stream without showing);
-  Lumen's distance-field bakes, an HDR sky image, the noise tiles and shader variants whenever they are being made.
+  an HDR sky image, the noise tiles and shader variants whenever they are being made.
 
 ### The debug window
 
@@ -363,7 +360,7 @@ A 40 × 8 × 40 m building in four zones round a cross-shaped aisle: a **warehou
 
   Quality at 640×400 against the converged references (`METALRENDERER_BENCH=stressq`, `Tools/eval/stress.py`): direct light 29.4–29.5 dB still and moving at 32 lights, 27.4 dB at 128; the final image against an 8-bounce path-traced reference 25.7 dB with radiance cascades, 27.7 dB path traced, 31.0 dB with ReSTIR GI; MetalFX's denoiser at 3× against supersampled frames 29.3 dB (albedo) and 26.9 dB (direct light).
 
-  ReSTIR DI, its light grid and MegaLights, accumulated without reuse, match tracing every light here (mean brightness ratio 1.00, 47–48 dB, `METALRENDERER_BENCH=restircheck`).
+  ReSTIR DI and its light grid, accumulated without reuse, match tracing every light here (mean brightness ratio 1.00, 47–48 dB, `METALRENDERER_BENCH=restircheck`).
 * `METALRENDERER_BENCH=stressdemo` records its demo: a 58 s tour (the overview, down a warehouse aisle, the factory's walkway, the office, the garage's upper deck) along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m stressdemo -o demo.mp4` makes the mp4.
 * Every run builds the same building (seeded). It replaced a 20 × 6 × 20 m hall of floating and bouncing cubes and spheres lit by drifting sphere lights in October 2026: the figures in this README quoted for "the stress hall" or "the stress scene" were measured in that hall, unless a table says otherwise.
 
@@ -532,101 +529,6 @@ What didn't help:
 * **Spatial reuse.** Unbiased, it adds no PSNR after the denoiser, whatever the neighbour count (1 to 5), and costs 3–12 ms for its rays. Before visibility was part of the targets, it even added noise: picks a pixel couldn't see contributed nothing. So it's off by default.
 * **The denoiser's settings** (σ 2–5, 1–3 passes, history 4–16, variance boost 1–4) moved scores by at most 0.5 dB. Anti-lag never triggers: the raw signal is too noisy for its test.
 * **One bounce** with feedback costs about 5 ms in the Cornell room and scores 35.5 dB, below the cascades' 36.1 dB at 2.9 ms.
-
-### Lumen GI
-
-The third step of the Unreal Engine 5-style pipeline (`METALRENDERER_GI=mode=lumen`, **M** or the panel's GI method; `Lumen.swift`, `LumenCards.swift`, `LumenScene.swift`, `LumenGlobalSDF.swift`, `MeshSDFBuilder.swift`, `Shaders/Lumen*.metal`): Lumen's software mode, a GI method next to the cascades. Rays trace distance fields instead of triangles, and what they hit is lit from a surface cache lit ahead of time.
-
-* **Screen probes.** One probe per 8×8 pixels, on a jittered G-buffer pixel of its tile, with 64 equal-area octahedral directions (rotated every frame by an R2 offset). Each probe's radiance is filtered with its 3×3 neighbours (plane distance and angle-error weights), projected to L1 spherical harmonics, resolved per pixel and accumulated over 16 frames, as the radiance cascades' last steps do.
-* **A ray goes, in order:**
-  * **Screen:** a closest-depth pyramid (from the G-buffer's depth) marched for 24 steps, out to 50 m, with a thickness test. A hit reads last frame's lit diffuse light, which the composite writes for it (`FLAG_GI_RADIANCE`). A ray that leaves the screen or passes behind something goes on in the world from where it was last safe.
-  * **Mesh distance fields:** out to 2 m, against the instances listed for its tile (a cull pass gives each tile of 4×4 probes up to 63 instances), in each instance's object space.
-  * **The global distance field:** beyond that, to the end of its clipmap.
-  * **The sky** on a miss.
-* **Mesh distance fields** (`MeshSDFBuilder`): a signed field per mesh, baked on the CPU in the background and cached (`msdf`, `hfld` in the generated cache). Voxels are the mesh's largest side over 116 (at least 2 cm). Sparse 8³ bricks (7³ cells, faces shared) hold the band of ±4 voxels as `r8Snorm`, and a 16³ coarse grid of unclamped distances covers what lies beyond it. The sign comes from a flood fill from the border; a mesh with no inside, and an open surface that closed geometry surrounds (the world's ground around its buildings), is two-sided. Flat, gently sloped meshes (terrain, the ground, the rooms' quads) are **heightfields** instead: up to 256² heights, solid below. Every geometry kind has a field: shared and streamed meshes, virtual geometry (from a coarse cut of its cluster DAG) and plants (one field per assembly, from all its parts; a hit on one takes its wood's and its leaves' colours mixed by the share of its area that is leaves, as its far voxels do). The crowd (screen traces only) and swaying ground cover have none. Benchmarks wait for the bakes.
-* **The global distance field** (`LumenGlobalSDF`): 2–6 clipmap levels of 128³ cells around the camera (0.1 m at the finest, 0.2 m outdoors, doubling), toroidal, each cell the nearest distance to the instances' fields and which instance that is. Bricks of 8³ cells are composed again where they enter a level, where a moving instance was or is, and when a bake lands: up to 4096 a frame, the finest first. A hit is moved onto its owner's mesh field (two Newton steps) and lit through that instance's cards.
-* **The surface cache** (`LumenCards`): each instance but plants gets up to 6 cards, the faces of its box, sized by how big it looks (8–128 texels, with hysteresis), in a 2048² atlas of 128² pages. A card is captured once, by rays from its face into the box (albedo, normal, depth, emission), and then lit: direct light by the cascades' hit lighting (`giLightIllum`), up to 1M texels a frame, and **radiosity**, the cards' own indirect light, from a probe per 4×4 texels with 8 rays into the scene that read the other cards: up to 256K texels a frame, new cards first, averaged over 8 updates. Hits read albedo × (direct + indirect) + emission from the card facing them. Plants have no cards (a card sees a canopy's outer, sunlit leaves, and the hits inside it read them): their hits are lit where they are, without last frame's light on screen near them (in a canopy that is often another leaf's).
-
-Settings panel (Global illumination, with Lumen selected; `METALRENDERER_LUMEN="spacing=8,history=16,screen=1,cards=1,radiosity=1,rrays=8,rbudget=256,trace=sdf,reach2=2,steps=24,thickness=0.03,reach=50"`, the defaults):
-
-| Setting | Default | Effect |
-|---|---|---|
-| Probe spacing | 8 px | 4 or 16. |
-| Screen traces | On | Off: every ray starts in the world. |
-| Surface cache (cards) | On | Off: hits are lit where they are, by the hit lighting (at a field's hit, the material's colour times its texture's average). |
-| Trace | Distance fields | Triangles: ray queries against the scene's triangles in place of the fields, as an A/B. |
-| Radiosity | On | Off: the cards get no indirect light (one bounce, plus the screen's). |
-| Radiosity budget | 256K texels | Up to 1024K: every card a frame. |
-| Radiosity through distance fields | Off | Radiosity's rays trace the global field instead of triangles, as Lumen does: cheaper outdoors, 1–1.4 dB worse. |
-| GI debug view | Probes | Trace kinds (screen, world, cards, mesh field, global field, sky), card albedo and light, the fields' normals and depth check, the global field. |
-
-Quality (640×400, against the 8-bounce path-traced references; `METALRENDERER_BENCH=gi` and `stressq`, `Tools/eval/gi.py` and `stress.py`; mean is the indirect light's brightness against the reference's; the other rows are from "Indirect light (ReSTIR GI)"):
-
-| Cornell room | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
-|---|---|---|---|---|---|---|---|
-| Radiance cascades | 36.1 dB | 34.7 dB | 31.1 dB | 0.95 | 36.1 dB | 36.1 dB | **0.05** |
-| ReSTIR GI | **42.2 dB** | **43.3 dB** | **38.8 dB** | 1.01 | **41.9 dB** | **41.7 dB** | 0.45 |
-| **Lumen** | 41.2 dB | 41.4 dB | 36.4 dB | 0.98 | 38.6 dB | 38.8 dB | 0.40 |
-
-| Stress hall, 32 lights | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
-|---|---|---|---|---|---|---|---|
-| Radiance cascades | 25.5 dB | 28.0 dB | 22.2 dB | 0.92 | 25.3 dB | 25.3 dB | 0.76 |
-| ReSTIR GI | **36.4 dB** | **38.2 dB** | **34.5 dB** | 1.02 | **35.8 dB** | **35.6 dB** | 0.71 |
-| **Lumen** | 35.1 dB | 36.1 dB | 31.9 dB | 0.92 | 33.9 dB | 33.5 dB | **0.54** |
-
-| Stress building (since October 2026) | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
-|---|---|---|---|---|---|---|---|
-| Radiance cascades | 25.6 dB | 26.4 dB | 25.0 dB | 1.13 | 25.6 dB | 25.5 dB | **0.96** |
-| ReSTIR GI | **31.0 dB** | **27.7 dB** | **35.3 dB** | 0.98 | **30.9 dB** | **30.4 dB** | 1.08 |
-| **Lumen** | 28.8 dB | 27.5 dB | 30.3 dB | 0.92 | 28.9 dB | 28.5 dB | 1.01 |
-
-* Moving objects cost Lumen more than the other methods (−2.6 dB in the Cornell room): most likely because its probes' 16-frame history and the cards' radiosity, averaged over 8 updates, lag behind them.
-* **Leaves against the sun** (`METALRENDERER_BENCH=forestcheck`, against a 512-frame path-traced reference): 32.7 dB (32.6 dB with triangles) and 0.8% too bright, against 32.2 dB for the cascades, 33.4 dB for ReSTIR GI and 33.5 dB path traced.
-
-Cost: whole frames on an M1 Max at the default setting (640×400 → MetalFX 3×), in each scene's camera move (`METALRENDERER_BENCH=lumen METALRENDERER_BENCH_ONLY="lumen camera" METALRENDERER_BENCH_SPLIT=0`, the cascades by `METALRENDERER_GI=mode=cascades`; medians of three alternating rounds with `ab.sh`), and the memory Lumen holds:
-
-| Scene | Cascades | Lumen | | Mesh fields | Global field | Cards |
-|---|---|---|---|---|---|---|
-| Cornell room | 5.8 ms | 8.2 ms | +43% | 3 fields, 2 MB | 2 levels, 24 MB | 96 MB |
-| Stress hall (before October 2026) | 10.9 ms | 16.9 ms | +55% | 3, 2 MB | 3, 36 MB | 96 MB |
-| Stress building | 14.2 ms | 21.5 ms | +51% | 32, 8 MB | 4, 48 MB | 96 MB |
-| Gallery | 13.7 ms | 18.8 ms | +38% | 24, 2 MB | 3, 36 MB | 96 MB |
-| Sun | 5.4 ms | 7.7 ms | +44% | 3, 2 MB | 4, 48 MB | 96 MB |
-| City | 7.8 ms | 11.8 ms | +51% | 100, 129 MB | 6, 72 MB | 96 MB |
-| Forest | 46.7 ms | 59.6 ms | +28% | 30, 16 MB | 6, 72 MB | 96 MB |
-| Crowd | 11.0 ms | 12.8 ms | +16% | 2, 2 MB | 6, 72 MB | 96 MB |
-| Open world | 13.9 ms | 18.8 ms | +36% | 309, 129 MB | 6, 72 MB | 96 MB |
-
-* **Where it goes** (per pass, split mode): the probes' trace takes 1.2–3.4 ms (the cascades' 0.5–2.6 ms), 4.7 ms in the forest (the cascades' 10.4 ms), and the cards' radiosity 1.0 ms in the Cornell room, 2.1 in the stress hall, 3.3 in the gallery, 4.0 in the world and 18.6 in the forest, whose plants are expensive to trace and whose camera move keeps resizing cards (new cards get radiosity whatever the budget). The rest (capture, direct light, probes, cull, filter, SH, resolve, the global field's bricks) is 0.6–1.7 ms.
-* **The radiosity budget:** every card every frame (1024K texels) cost 3 ms more in the stress hall, 4.6 in the gallery, 7.3 in the world and 24 in the forest, for 0.05 dB on still frames and 0.1–0.3 dB in motion. 64K texels lost 1.2 dB in the Cornell room.
-* **The first bake** takes 60 s for the city and 58 s for the open world, 7 s for the forest, on all cores in the background; from the cache it takes under half a second. Until a field is baked its instance is missing from the field traces.
-
-How close the fields are to the triangles (`METALRENDERER_BENCH=lumen`, `Tools/eval/lumen.py`): coverage is the share of G-buffer pixels whose surface the fields find (a ray from the camera), the error is the depth's mean where both do (it saturates at 10 cm), and the rest compare indirect light with fields (the default) against triangles, against no screen traces and against no cards:
-
-| Scene | Coverage | Depth error | Fields vs triangles | vs no screen traces | vs no cards |
-|---|---|---|---|---|---|
-| Cornell room | 1.000 | 2.7 cm | 49.5 dB | 48.3 dB | 36.4 dB |
-| Stress hall (before October 2026) | 1.000 | 3.5 cm | 38.9 dB | 41.7 dB | 35.6 dB |
-| Stress building | 0.991 | 2.7 cm | 32.5 dB | 31.7 dB | 37.5 dB |
-| Gallery | 0.999 | 2.9 cm | 41.2 dB | 46.8 dB | 43.9 dB |
-| Sun | 0.996 | 4.1 cm | 37.9 dB | 38.3 dB | 40.4 dB |
-| City | 0.995 | 7.8 cm | 40.9 dB | 22.8 dB | 39.3 dB |
-| Forest | 0.986 | 9.0 cm | 41.4 dB | 46.1 dB | 41.6 dB |
-| Crowd | 0.970 | 5.2 cm | 35.9 dB | 33.0 dB | 41.0 dB |
-| Open world | 1.000 | ≥ 10 cm | 40.3 dB | 28.1 dB | 32.7 dB |
-
-The crowd's characters have no fields (screen traces only), the open world's 256 m tiles get 2.2 m voxels, and the city and the world lean most on screen traces (their windows and streets).
-
-What mattered:
-* **The surface cache with radiosity.** The first gather (probes traced on triangles, multi-bounce from last frame's screen) scored 37.2 dB in the Cornell room and 33.0 dB in the stress hall; with screen traces, the cards and their radiosity in place of the screen feedback, 41.2 and 36.1 dB (on triangles).
-* **Fields for everything:** the world's ground was invisible to the fields until open surfaces inside closed meshes counted as two-sided; the forest's ground was lit as if white until hits took the texture's average colour.
-* **The global field's hit threshold** is half a voxel: a quarter leaked light through thin walls (the stress hall 53% too bright).
-* **Foliage.** Leaves against the sun were 2.8% too bright (31.4 dB), and the error sat in the shade: the trunks' undersides and the dark canopy, the darkest pixels 49% too bright. Taking plants out of the cards, lighting a field's hit on a plant with its leaves' and wood's mixed colour (not its wood's), and no multi-bounce feedback at leaf hits made it 32.7 dB; the Cornell room and the stress building render as before.
-
-What didn't help:
-* **Radiosity through the global field** (Lumen's way): −1 dB in the Cornell room and −1.4 dB in the stress hall, where its voxels lose the near contact. It is an option.
-* **Finer global voxels, more instances per brick or per tile:** none closed the stress hall's gap between fields and triangles.
-* **More probes for foliage.** Probes every 4 px instead of 8 scored 31.3 dB against 31.4 dB in the backlit forest, so adaptive probes (at most a quarter more, where interpolation fails) weren't built. No multi-bounce feedback anywhere cost 0.9 dB in the Cornell room and 2 dB in the stress building; the probe's own pixel in place of the frame's mean, for hits off screen, changed nothing.
 
 ### Volumetric fog
 
@@ -899,8 +801,7 @@ buildings are made in, and single buildings' own floor plans; the **Building wor
   `CityTests` (a city with one interior keeps the other buildings' meshes), `WorldTests` (a tile without the building
   that has its interior).
 * **Limits:** the open world's interiors are still (no switches, lifts or loose furniture there: the world's
-  instance groups need a still scene); interiors on demand are one building at a time; Lumen's mesh distance fields
-  are coarser than a partition (radiance cascades, ReSTIR GI or path tracing are the methods for interiors);
+  instance groups need a still scene); interiors on demand are one building at a time;
   hand-edited plans keep rooms rectangular.
 
 ### The character editor
@@ -1135,7 +1036,6 @@ Before, on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METAL
 * The open world's plants stand still: they are in instance blocks, whose scene is still (its structure built once), so there is no wind there, and a change of season makes the scene again.
 * Plants of the same phase bucket swing their boughs together (each still leans on its own); a plant's share of leaves is one of five steps.
 * The wind refits every variant a plant within the sway reach names: on the M1 Max (Metal 3, two to an encoder) that is 2% of the moving forest's frame at 20 m (8% at 40 m).
-* Swaying ground cover is left to the rays by the raster visibility buffer: it leans where the rays meet it.
 * A plant traced as voxels only leans with the wind; its boughs don't move. Far trunks are as grainy as far crowns.
 * Dead trees only lean. A patch of grass leans as one.
 * The ground's colour map has a texel every 31 cm.
@@ -1215,7 +1115,6 @@ The **City** and **City at night** scenes are generated: a seeded street grid of
 * **Windows as modules** (`modules`, off by default). A window's shell (the sides of its hole, its frame, sill, lintel and shutters) is made once and placed at every window like it (`Building.Module`): its vertices and texture coordinates are its own corner's, snapped to 0.1 mm, so the same window anywhere is the same triangles, and the city keeps one mesh for each. A building is then an assembly of them and of its own mesh (its walls, roofs, blinds and rooms), as a plant is of its boughs, but rigid (`Scene.Assembly.rigid`): one variant, no wind, no leaves, no voxels, and the shaders walk its parts without the plants' code (`RIGID_ASSEMBLIES`, bit 19 of the features: three-level queries, `ASSEMBLIES`). A triangle's material is its slot's, so a module is the same mesh in every building whatever its colours. Its glass and its lights are instances of their own, as before.
   * 4 × 4 blocks: 364,000 triangles of the buildings' own and 353 modules of 23,000 placed 5,380 times, against 677,000; the BLASes 17.6 MB and the buildings' variants 1.6 MB, against 30.2 MB. The pictures are the same but for noise (RMS under 0.9 levels), and Metal 4 draws what Metal 3 does.
   * But on Metal's tracer the frames are slower (M4 Max, hardware ray tracing, medians of 3 alternating rounds, `modules=0` against `modules=1`): 2.85 → 3.09 ms from above, 3.21 → 3.55 from the street, 3.43 → 3.90 at the facade, 6.91 → 8.43 at night, 3.03 → 5.83 at 10 × 10 blocks. The glass and the cascades' rays take 21–140% longer: every building's ray goes down a third level, into a structure of its parts, whose boxes all lie inside the building's. (The custom tracer, since removed, measured the same on an M1 Max: 12–16% slower.) So it is a way to halve a city's memory, not to speed it up.
-  * With raster primary visibility or virtual shadow maps, a building of modules is traced, as a plant is (the raster draws its box): those paths can't draw assemblies.
 * **What it cost** (`METALRENDERER_BENCH=city`: M1 Max, 640×400 upscaled 3×, cascades GI, the custom tracer, since removed; ms):
 
   | | buildings | triangles | built in | trace | glass | reflections | ReSTIR | frame |
@@ -1415,7 +1314,7 @@ A shape is a list of up to 32 nodes, joined one after the other: `((n0 op1 n1) o
   * Outside the grid the distance is a bound: the distance to the grid plus the least of its face samples.
   * Grids are cached by a hash of the mesh (`GeneratedCache`).
 * **Glowing shapes are lights.**
-  * A shape whose material emits is turned into triangles: surface nets, each vertex moved onto the surface and then 0.15 of a cell outward. These triangles become an ordinary mesh light, so ReSTIR, MegaLights, the light tree, the light table and the fog sample it unchanged.
+  * A shape whose material emits is turned into triangles: surface nets, each vertex moved onto the surface and then 0.15 of a cell outward. These triangles become an ordinary mesh light, so ReSTIR, the light tree, the light table and the fog sample it unchanged.
   * Because the triangles lie just outside the surface, a shadow ray to a point on them never meets the shape first.
   * A shape of several materials gets a light per material that emits.
 * **Textures.** An SDF hit has no UVs. Base colour, metallic-roughness and emissive textures are projected along the instance's three axes, once per unit, and blended by the normal (triplanar). There are no normal maps.
@@ -1545,7 +1444,7 @@ Strands of hair simulated on the GPU (`PhysicsHair.swift`, `Shaders/Physics.meta
   * Stiffness is how fast a shape springs back (rad/s): a substep pulls (ωh)² of the way back, so gravity bends a strand by about g/ω² whatever the substeps. Fur is 80 rad/s at the root and 30 at the tip (a strand out sideways sags 9 mm); long hair 10 at the root and 0 at the tip, 4 locally. (TressFX's share of the way a substep: 1% held long hair against gravity to a millimetre at 16 substeps.)
   * A strand on a sleeping body stops once no vertex has gone 2 cm/s over a step, and wakes with the body.
 * **Curves** (MSL 3.1 or later: `HAIR_CURVES`): a drawn strand is round Catmull-Rom segments of 4 control points, its first and last points phantoms past its ends, its radius tapering to the tip. A group of strands is one mesh with no triangles (`Scene.addCurves`): everything that reads triangles skips it, its control points sit in the scene's vertex buffer (last frame's after everything, for motion vectors), and Metal's structure over them (`MTLAccelerationStructureCurveGeometryDescriptor`) is refitted every frame with the deforming meshes'. The ray queries meet curves where the scene has them (`HAIR_CURVES`, feature bit 20: `curve_data` queries, `CurveLevels`), and a hit on one (`HIT_CURVE`) is a surface from the segment's point and tangent at the curve's parameter, its normal out from the axis.
-* **The hair BSDF** (Chiang et al. 2016, as pbrt-v3's `HairBSDF`): R, TT and TRT lobes and the rest, each a longitudinal spread shifted by the cuticle's 2° tilt, Fresnel and the pigment's absorption (from the strand's colour, Chiang's fit), and an azimuthal logistic; β_m = β_n = 0.3. Light between strands, most of a pelt's colour, which a path tracer gathers and the lobes leave out, is a stand-in: Kajiya-Kay's diffuse at 0.7 of a Lambert surface's. A hair material is `addHairMaterial` (params.z = -1); its pixels keep their tangent in the G-buffer's alphas (albedo.a and geoNormal.w + 2) and the offset across the strand comes back from the normal, so every kernel that lights the visible surface lights strands by the BSDF: the trace's light loop, many lights and their reuse, mesh lights, ReSTIR DI, MegaLights and the shadow denoiser's composite. A shadow ray toward a light behind a strand starts 2 mm along it, out of its own curve.
+* **The hair BSDF** (Chiang et al. 2016, as pbrt-v3's `HairBSDF`): R, TT and TRT lobes and the rest, each a longitudinal spread shifted by the cuticle's 2° tilt, Fresnel and the pigment's absorption (from the strand's colour, Chiang's fit), and an azimuthal logistic; β_m = β_n = 0.3. Light between strands, most of a pelt's colour, which a path tracer gathers and the lobes leave out, is a stand-in: Kajiya-Kay's diffuse at 0.7 of a Lambert surface's. A hair material is `addHairMaterial` (params.z = -1); its pixels keep their tangent in the G-buffer's alphas (albedo.a and geoNormal.w + 2) and the offset across the strand comes back from the normal, so every kernel that lights the visible surface lights strands by the BSDF: the trace's light loop, many lights and their reuse, mesh lights, ReSTIR DI and the shadow denoiser's composite. A shadow ray toward a light behind a strand starts 2 mm along it, out of its own curve.
 * What hair costs (M1 Max, Metal's tracer in software, the hair scene's first 5 s moving at the physics look; `METALRENDERER_BENCH=hair`). The scene has 4,781 guides (32,172 vertices: 700 on each furry body, 581 on the mannequin's head); the head draws 1.5 times as many strands a guide as the fur:
 
   | Strands a guide | Drawn strands (control points) | Curves' refit ("blas") | "physics" pass (bodies and hair) | Trace | Whole frame (GPU) |
@@ -1654,7 +1553,7 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
   * MPM water and blood are lively: a light box floating on them rocks harder and harder (the liquid's push lags the box's motion), and water splashes higher than its surface has room for; so water and blood default to PBF.
   * No surface tension beyond PBF's pull under rest density: thin streams break into drops, and the surface is blobby at 1.2 cm.
   * Shadow and GI rays pass the liquid by (no caustics, and no shadow under it), refraction is sharp (no rough refraction), and wet surfaces don't darken.
-  * With liquids the raster's visibility buffer is off (its first hit would be the liquid's), and a frame takes at most 20 steps: a still at 6 s catches up over its first frames, so the GPU's watchdog never sees seconds of steps in one command buffer.
+  * A frame takes at most 20 steps: a still at 6 s catches up over its first frames, so the GPU's watchdog never sees seconds of steps in one command buffer.
   * Stepped on the CPU (`physics=cpu`), the liquids aren't drawn: their particles stay on the CPU (it is the GPU's reference, and slow).
   * Metal 4 is untested (the M1 Max has no Metal 4 ray tracing).
 
@@ -1740,7 +1639,7 @@ The showcase's motes (embers, bubbles, dust, runes) are particle effects too. Th
   The steps themselves are under 0.2 ms; the mesh particles' pose 0.01 ms. Without particles the trace is 0.86 ms and the reflections 0.83: particle shadows cost most, then the reflections' gather. The overlay grows with the screen thin particles cover: at 4x, sparks and rain over most of it are traced again at 1920×1200. The build is the boxes' (about 1 ms for the bounded counts) and the trails' curves (0.7 ms for 1,260 segments). Paused, a slot's structures stay as they were built, unless the camera moves (the boxes hold the billboards as its rays widen them). Crowded particles cost the most: a dust of 2,000 big puffs where the rubble lands made the 4x frame 70 ms, each ray through it meeting hundreds of boxes; it holds 160 now.
 * **Limits:**
   * Particles don't light the scene or each other (no particle lights): fire is lit by a light placed in it, and smoke over it is darker than the path tracer's.
-  * GI rays and the virtual shadow maps' traced shadows don't see billboards or trails; glass and liquids don't bend the rays that see them. Trails cast no shadows.
+  * GI rays don't see billboards or trails; glass and liquids don't bend the rays that see them. Trails cast no shadows.
   * Past 4 fragments a pixel the k-buffer merges the farthest; the path tracer is exact.
   * The CPU reference has no scene, so `collidesWithScene` and SDF shape colliders are the GPU's alone; children spawn exactly only while their pool has room (past that, which parents' events win is the GPU's order).
   * Mesh particles are a frame behind; every trail emitter keeps the same number of places.
@@ -1872,7 +1771,7 @@ opacity, emissive).
   key; `Renderer.editMaterials`). What the material record has no room for is an extras buffer, compiled in only for
   scenes that have such materials (`MATERIAL_EXTRAS`): a UV scale, parallax occlusion mapping from the height (camera
   rays), occlusion from the ORM texture's red. Opacity cuts holes (`OPACITY`): those instances aren't opaque, the ray
-  queries alpha-test them, the raster leaves them to the rays.
+  queries alpha-test them.
 * **Displacement** (Displacement, Midlevel and Detail in the inspector; `Scene+Displacement.swift`,
   `MeshSubdivider.swift`, `MaterialShaders/MatDisplace.metal`): the height moves the geometry, so silhouettes,
   shadows and contacts are bumped, not only the shading. Every mesh the material is on is copied, subdivided until no
@@ -1913,8 +1812,7 @@ opacity, emissive).
   flood fill, pixel processors, export against the CPU or brute force), `MaterialEditorTests` (the editor's model,
   assignments; `MATERIAL_EDITOR_PNG=<folder>` draws the window); `METALRENDERER_BENCH=materials` renders every starter
   in the workshop, `matedit` an edit in place, assignments in the sun courtyard, and the marble as code and baked.
-* **Not done:** opacity on meshes without UVs, in Lumen and in the virtual shadow maps; displacement in Lumen's
-  mesh SDFs and cards (they have the undisplaced mesh); SDF shapes (triplanar, no
+* **Not done:** opacity on meshes without UVs; SDF shapes (triplanar, no
   normal maps); Metal 4 (written, not tried: the M1 Max has no Metal 4 ray tracing).
 
 ### The Material Painter
@@ -1963,8 +1861,7 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
 * **Not done:** the window and paint mode were never used by hand (offscreen and tests only); the unwrap's charts fill
   three fifths of the square for a character, two fifths for a hard-edged model of many small charts, two thirds for a
   box; paint is on a character's
-  bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced, and Lumen sees their
-  original material; Metal 4 untried.
+  bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced; Metal 4 untried.
 
 ### Geometry debug views
 
@@ -1988,7 +1885,7 @@ Rendering > Reference (key T) replaces the realtime picture with a converged one
 | Mode | What it averages |
 |---|---|
 | Accumulated passes | The frame's own passes, raw: path-traced GI (Ref. bounces), exact direct light (ReSTIR's unbiased candidates above 1024 lights), the reflection pass's specular, the fog's reference march. This is what the benchmarks' references are (`METALRENDERER_BENCH=gi`). Its limits are those of the passes: bounces past the first hit are diffuse, window glass gets a fixed ambient light and no refraction, area lights are their analytic irradiance times the visibility of one point, and the averaged light is multiplied by the current frame's albedo, so edges stay aliased. |
-| Path traced | One kernel (`Shaders/PathTrace.metal`) traces whole paths from jittered camera rays (anti-aliased), Ref. samples/frame paths per pixel per frame. The same materials as the frame (Lambert + GGX); every bounce can be glossy. Window glass is a thin dielectric (Fresnel-weighted mirror, or straight on with its tint, which shadows take too). The volumetric fog is a participating medium: the same density field (height fog, noise, local volumes, albedo, phase function), met by every ray of the path, which scatters in it as often as it happens to (free-flight sampling), with shadow rays dimmed through it. Next-event estimation samples each light by solid angle, and the bounce rays also meet the lights; multiple importance sampling (power heuristic) combines the two. Up to 32 lights each is weighed at every point; with more, the light tree draws them (MegaLights' tree, the suns apart) and bounce rays meet them at their visible shapes. Emissive meshes are lit by next-event estimation through the diffuse lobe and met by the specular one. The first 6 bounces draw Owen-scrambled Sobol points per pixel (white noise past them; `METALRENDERER_PT_SOBOL=0` for white noise throughout). Russian roulette after 3 bounces; no firefly clamp. |
+| Path traced | One kernel (`Shaders/PathTrace.metal`) traces whole paths from jittered camera rays (anti-aliased), Ref. samples/frame paths per pixel per frame. The same materials as the frame (Lambert + GGX); every bounce can be glossy. Window glass is a thin dielectric (Fresnel-weighted mirror, or straight on with its tint, which shadows take too). The volumetric fog is a participating medium: the same density field (height fog, noise, local volumes, albedo, phase function), met by every ray of the path, which scatters in it as often as it happens to (free-flight sampling), with shadow rays dimmed through it. Next-event estimation samples each light by solid angle, and the bounce rays also meet the lights; multiple importance sampling (power heuristic) combines the two. Up to 32 lights each is weighed at every point; with more, the light tree draws them (`LightTree.swift`, the suns apart) and bounce rays meet them at their visible shapes. Emissive meshes are lit by next-event estimation through the diffuse lobe and met by the specular one. The first 6 bounces draw Owen-scrambled Sobol points per pixel (white noise past them; `METALRENDERER_PT_SOBOL=0` for white noise throughout). Russian roulette after 3 bounces; no firefly clamp. |
 
 Path traced's fog fills the scene's bounding sphere, the same bounds the realtime fog dims sunlight in: the sun's and the sky's light is what reaches the scene. It has no far cutoff, no haze and no ambient term (all three stand in for what the realtime fog leaves out); its light comes from the lights and the sky through the fog, scattered as often as it happens to, so it differs from the realtime picture: darker where the ambient term lit it, softer and brighter around lit shafts, and surfaces are lit through it (the realtime fog never dims a lit surface). A preset with no height falloff (the mixed room, the tubes garage, the emissive room) fills the whole sphere evenly, outdoors too: in the mixed room the dusk sun crosses some 40 m of it, and its patch on the floor is a quarter as bright as without fog. Light that gets in only through windows or gaps (the sky seen through the misty hall's windows) is found by bounce and scattered rays alone, so those scenes stay grainy longer. Camera rays see the lights' shapes as the frame does; with more than 32 lights a bounce ray that grazes a sphere light outside its shape's facets misses it. In fog, the first frames after a launch don't count until the fog's noise is made (in both modes). Ref. max samples stops adding samples once that many are in (the fog too). Costs at 640×400 on an M1 Max, one path per pixel and 8 bounces, as upper bounds (measured while another session kept the GPU busy): Cornell 13.6 ms, gallery 13.4, area lights 15.3, the stress hall 50, the emissive room 25, the mixed room 42, the misty hall 44 and the night market 55 (the last four with their fog).
 
@@ -2026,10 +1923,7 @@ GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what
                        luminance toward the cell, from this frame's lights (ReSTIR DI's, GI's, the reflections' and
                        the fog's light samples draw from it)
     1b lightMapKernel  per-light distance maps (radiance cascades, path tracer with light maps)
-    1c raster          METALRENDERER_PRIMARY=raster: the visibility buffer (Nanite-style, see below): cull instances
-                       (last frame's visible) -> cull 128-triangle chunks -> 1 indirect draw of instance + triangle
-                       ids and depth -> depth pyramid -> cull the rest against it -> 2nd draw
-    2  traceKernel     primary ray (with the visibility buffer: met with the triangle it drew) -> G-buffer (normal, depth, albedo, emission, motion, world position)
+    2  traceKernel     primary ray -> G-buffer (normal, depth, albedo, emission, motion, world position)
                        direct (up to 4 lights): 1 shadow ray per light (+ per-light visibility and penumbra width)
                        indirect (path traced): cosine-sampled path, NEE at every bounce
                        (lighting is stored without albedo so the denoiser can blur it freely)
@@ -2048,9 +1942,6 @@ GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what
                        frame's reservoir; restirSpatialKernel: neighbours' reservoirs, 1 shadow ray per chain ->
                        diffuse direct light (denoised by SVGF) and direct specular (added by the reflections)
     2b cascades        probes -> trace + merge per cascade (top down) -> SH projection -> resolve
-    2h lumen           Lumen GI: the global distance field's dirty bricks -> cards (capture the new, light, radiosity
-                       on a budget, combine) -> probes on the G-buffer -> trace (screen pyramid, mesh fields, global
-                       field, sky; hits lit from the cards) -> filter -> SH projection -> resolve + temporal
     2d reflectionKernel glTF specular materials: 1 GGX ray per pixel, hit lit by 1 light sample + this frame's
                        diffuse GI on screen; / specular albedo; temporal + 2 a-trous passes
                        (fog: dimmed along the ray, + in-scatter from 1 point with 1 light sample)
@@ -2069,11 +1960,8 @@ GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what
     6  upscale         MetalFX's denoising scaler (in place of 3-4), then tonemapKernel into the drawable
 ```
 
-**Raster visibility buffer** (`METALRENDERER_PRIMARY=raster`, the panel's "Primary visibility"; `RasterScene.swift`, `Shaders/Raster.metal`). The first step of an Unreal Engine 5-style pipeline: the camera's triangles come from the hardware rasterizer, GPU driven, instead of one traced ray per pixel. Meshes are drawn in chunks of 128 consecutive triangles (a cluster in all but the mesh's own order). Each frame, a compute pass keeps the instances in view that were visible last frame, another culls their chunks against the view (bounds worked out on the GPU once per scene), and one indirect draw writes each pixel's instance id and triangle into an `rg32Uint` target over reversed-Z depth (the cull leaves each drawn instance a 64-byte record, its object-to-clip rows and where its indices and positions are, so a vertex reads that, an index and a position). A hierarchical-Z pyramid of that depth then tests every other instance and chunk, as Nanite's two-pass occlusion does; what passes is drawn on top, and every instance's verdict is what the next frame starts from. `traceKernel` meets its unchanged primary ray with the drawn triangle (a ray–triangle test, not the depth), so the distance, barycentrics, motion vectors and everything after them are the ones a traced ray gives, bar a few pixels on triangle edges. What isn't drawn has its bounding box drawn instead, and the pixels where the box is in front trace their primary ray: an assembly's parts, leaf cards (alpha tested), swaying ground cover (it leans where the rays meet it), virtual geometry in the clusters mode, and an instance of more than 4096 triangles with more than 4 per pixel its bounds cover (there is no level of detail to draw it at: a far crowd, baked plants; past that the traced pixels cost less than the triangles). A box that reaches the camera is drawn in front of everything. Only when the draw lists are full does every primary ray trace as well. Far plants as voxel boxes keep traced primary rays. The view "Visibility buffer" shows the chunks in colours, magenta where the primary rays traced what wasn't drawn; `METALRENDERER_BENCH=raster` renders each scene both ways, and that view. On an M1 Max (the custom tracer, since removed; whole frame, `METALRENDERER_BENCH=shot METALRENDERER_BENCH_SPLIT=0`, three alternating rounds) a frame took, traced → raster: stress 10.93 → 10.57 ms, gallery 13.54 → 13.35, crowd 10.96 → 10.19, city 7.71 → 7.35, world 13.74 → 13.36; the Cornell box's runs swing between 5.0 and 7.0 ms either way.
 
-**Raster clusters** (`METALRENDERER_RASTER_VG=clusters`, the panel's "Raster virtual geometry", an advanced setting; `RasterClusters.swift`, `VGStreamer.swift`, `Shaders/RasterClusters.metal`). How Nanite draws virtual geometry, on top of the raster visibility buffer: instead of 128-triangle slices of each instance's BLAS over the CPU's cut (the default, culled by instance only), the GPU picks the cut every frame, cluster by cluster, culls every picked cluster and draws it from a page pool of its own that streams in what the cut asks for. The rays keep the per-instance BLAS, at the cut the same rule picks. In the raster's first pass, every virtual instance in view goes through `rasterVGCutKernel`, a thread per cluster group: a group whose coarser version is fine enough is skipped at once, and each of its clusters is kept when it is fine enough itself (its simplification error projects to at most the geometry error, 1 traced pixel) or its finer group isn't resident, which it then asks for. A kept cluster's box is tested against the view and against the last frame's final depth pyramid, seen from where the last frame's camera and the instance were; what passes is drawn at once (a 128-triangle slot of the draw list that says where the cluster's positions and packed triangles are in the pool, so a vertex reads its 8-bit index and its position as directly as a slice's triangle reads its corner), and what the old pyramid hides is held back until the second pass tests it against this frame's (`rasterVGRetestKernel`): Nanite's two-pass occlusion at cluster level, where a wrong guess costs time, never pixels. A pixel's triangle names its cluster's entry in the frame's cluster list (`y` = `0x80000000` \| entry << 7 \| triangle), and the hits read that list (`TraceScene`'s clusters) as they read the clusters mode's selected ones, so `fetchHitVertices` and `surfaceFromHit` work as for a ray that met one. The streaming is the clusters mode's (`VGStreamer`, shared by both): a 512 MB pool (`METALRENDERER_RASTER_VG_POOL`), groups loaded after the groups above them and evicted least recently drawn, roots always there; benchmarks hold their last warm-up frame until nothing is waiting. `METALRENDERER_RASTER_VG=mesh` draws the clusters with mesh shaders instead (a threadgroup a cluster, each vertex transformed once). The cut draws what the BLAS traces, bar the frustum: in the gallery overview, 404k triangles in 3,903 clusters against the BLAS's 409k, settled in 93 MB, of which about 30 clusters wait for the second pass (a showcase model up close: 240); with direct light alone against traced primary rays, 43.3 dB in the overview, 44.7 in a close-up, 38.4 for a showcase model, as the BLAS's slices do within a run's noise; camera moves show no holes. Moving the rays out from a drawn cluster by its error (`METALRENDERER_RASTER_VG_BIAS=1`), against the two cuts' differences, made it worse: 0.7–1.3 dB, as the rays then start past what is close by. On an M1 Max (the custom tracer, since removed; per-pass medians of three alternating rounds, `METALRENDERER_BENCH=rastervg`) the clusters cost more than the slices, as these scenes hide little: the raster pass 0.34 → 0.38 ms in the gallery overview (mesh shaders 0.48), 0.42 → 0.43 in the close-up (0.53), 0.11 → 0.18 for a showcase model (0.29), plus 0.04 ms for the cut and 0.04 for the second pyramid; a frame 14.5 → 14.6 ms (14.8), 19.9 → 20.2 (20.3), 14.1 → 14.2 (14.3). Reading a cluster's vertex through its list entry and its header (three dependent reads more than a slice's) cost only 0.01 ms of that, so the rest is elsewhere; Apple7's mesh shaders don't make up for it either, so the slices stay the camera's default. `VGCutTests` checks the GPU's cut against the CPU's, frame by frame from the roots to a settled pool. Where they pay is the virtual shadow maps, which take them by default whatever the camera draws (the shadow maps' "Virtual geometry as clusters", `METALRENDERER_VSM=clusters=0` for the BLAS; the pool is then the shadow maps' alone with the camera on the BLAS): drawn from the BLAS, a virtual instance's pages are drawn again every frame (its cut may have changed), the whole instance into every page it covers; with the clusters, `vsmVGCutKernel` picks each shadow view's own cut, a thread per (instance, group, active view), by the error in the view's texels rather than the camera's pixels, so a page stays right while the camera moves and is drawn again only when the instance moves or its mesh gets finer groups. In the gallery with its sphere lights mapped (`METALRENDERER_SHADOW_METHOD=vsm`), a still frame takes 29.0 ms from the BLAS (the pages' draw 9.6 ms) and 13.5 ms from the clusters (0.04 ms), less than shadow rays' 14.4; in a camera move 24.2 → 19.5 ms (a showcase model 15.8 → 14.7). With the camera on the BLAS the shadow maps' clusters save the same (pages' draw 18.1 → 0.05 ms, the raster pass that drew next to it 3.9 → 0.4, in three alternating rounds on a GPU another renderer was also using). Against shadow rays the image is within 49 dB (0.2% of the pixels more than 8 levels off; the BLAS's maps 50 dB). The shadow views' cut wants more of the pool: about 390 MB in the gallery, which the 512 MB default holds (256 MB filled and churned: the camera move's pages' draw 3.8 ms against 3.6 at 512 and 3.2 at 1 GB).
 
-**Virtual shadow maps** (`METALRENDERER_SHADOW_METHOD=vsm`, the panel's "Shadows" under Direct light; `VSM.swift`, `Shaders/VSM.metal`). The second step: the camera-visible surfaces' shadows of suns, spot lights and sphere lights come from Unreal-style virtual shadow maps instead of shadow rays. Each mapped light has a huge virtual depth map seen from it, of which only the 128 × 128-texel pages that shadow samples looked at are held, in a pool of physical pages (a `depth32Float` array, a slice a page; 1024 pages, 64 MB by default). A sun has a clipmap of 12 orthographic levels around the camera, 16 m wide at level 0 and doubling, each 16k texels a side; its pages are named by their place in the light's space, so the camera's moves keep them. A spot light has one perspective view over its cone with mips; a sphere light has a cube of six 4k faces with mips. Every frame, ahead of the trace, the pages last frame's samples asked for get physical pages (a GPU free list; pages nobody asked for in 30 frames go back), the instances and chunks in front of the pages to draw are culled with the raster visibility buffer's chunks and records, and one layered render pass clears and draws them, each triangle into its page's slice, at most 256 pages a frame. Drawn pages stay until their light moves or a moving instance's box (where it was, where it is) covers them. A shadow sample marches the same jittered segment toward its point on the light through the map, eight steps, as Unreal's shadow-map ray tracing does, so the shadow denoiser and the composite see what a ray would give them. What the raster can't draw, and the crowd, which would be drawn again every frame, carry an instance-mask bit (`Scene.maskShadowTraced`) and are traced by a ray that meets only them; a sample whose pages aren't ready yet traces the whole ray, so a small pool or budget costs time, not correctness. Bounces, reflections and the fog keep their rays. The view "Virtual shadow pages" shows each pixel's level or mip in a colour, magenta where its page isn't ready; `METALRENDERER_BENCH=vsm` renders the scenes with suns, spots and spheres both ways, that view, and three in motion; against rays, at most 0.9% of the pixels differ by more than 8 levels in all but the city (1.6%, shadows in window recesses) and the forest (8%, as from run to run in its grass). Where a shadow ray of the custom tracer was cheap, it was about even: on an M1 Max (the custom tracer, since removed; `METALRENDERER_BENCH=shot`, per-pass medians of three alternating rounds) the pages' upkeep and draw take 0.07 ms in a still frame, and the shadows' passes go, rays → maps: city trace 1.23 → 0.93 ms, spots' many lights 0.50 → 0.31, Cornell trace 1.26 → 1.15, world 3.40 → 3.30, sun 0.54 → 0.51; slower are the crowd (3.59 → 3.74, its characters traced as well) and the mixed room (1.39 → 1.48: its rect and tube lights keep their rays). A sun that turns or a light that moves has its pages drawn again every frame (the sun scene in motion: 0.23 ms), as do pages a camera move brings in (the city: 0.9 ms).
 
 With radiance cascades, 2b and 3–4 don't depend on each other. The frame then uses one concurrent compute encoder and runs them in lock step, with a barrier after each step: light map + trace + probes, then temporal + the top cascade, each à-trous pass + the next cascade down, and so on. Small dispatches on M1 leave the GPU partly idle, so this overlap saves about 0.2 ms. The path tracer runs in order.
 
@@ -2082,7 +1970,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `Renderer.swift` | Metal setup, scene loading, the frame (its plan, its stages, their encoding), input; the scene's structures' updates each frame (refits, the top-level structure) |
 | `Pipelines.swift` | The shader compile and every compute pipeline as one set, built in parallel off the main thread; the big kernels' variants with a configuration's flags compiled in |
 | `TraceScene.swift` | The scene as every ray-tracing kernel gets it at buffer 1 (`TraceSceneArgs`, one per frame slot): the top-level structure by resource ID, virtual geometry's tables, the plants' parts, the wind, the leaf cards' alpha layers and the mesh arrays their test reads, the `RT_STATS` counters |
-| `BVH.swift` | A binned-SAH builder over boxes (Lumen's mesh distance fields, SDF volumes), and the small trees over virtual geometry's clusters, stored in their pages, which the ray queries walk in the clusters mode |
+| `BVH.swift` | A binned-SAH builder over boxes (SDF volumes), and the small trees over virtual geometry's clusters, stored in their pages, which the ray queries walk in the clusters mode |
 | `Settings.swift` | Every user-adjustable setting, with defaults and ranges |
 | `SettingsTable.swift` | Every setting once: its place in the settings, its `METALRENDERER_*` name and its panel row |
 | `SettingsPanel.swift` | The Render Settings panel, built from the table |
@@ -2093,13 +1981,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `LoadActivity.swift` | What loads in the background: loads made of steps, the streams after a scene is in (thread-safe; the loaders report to it) |
 | `LoadingOverlay.swift` | The loading overlay over the view (AppKit), refreshed ten times a second while something loads |
 | `Upscaler.swift` | MetalFX's denoising scaler and the sub-pixel jitter sequence (also the temporal AA's) |
-| `RasterScene.swift` | The raster visibility buffer's view of a scene (per-mesh records, chunks, instance ids, visibility) and its targets (depth pyramid, draw lists) |
-| `VSM.swift` | Virtual shadow maps: which lights get maps, their views (the sun's clipmap, spot and cube views) written each frame, the page table, the physical pool and the lists that draw it |
 | `RadianceCascades.swift` | Radiance cascades: probe textures, radiance atlases, per-frame passes |
-| `Lumen.swift` | Lumen GI: the screen probes' textures and history, and the frame's passes (cards, probes, trace, filter, SH, resolve) |
-| `LumenCards.swift` | Lumen's surface cache: card sizes, the atlas's allocator, which cards are captured, lit and given radiosity each frame |
-| `LumenScene.swift` | Lumen's mesh distance fields for a scene: what each field is baked from, the background bakes and their cache, the brick atlas and the instances' records |
-| `LumenGlobalSDF.swift` | Lumen's global distance field: the clipmap's windows around the camera and the bricks to compose each frame |
 | `MeshSDFBuilder.swift` | The distance-field bake: sparse bricks with a coarse grid beyond them, signs by flood fill, two-sided surfaces, heightfields |
 | `BlueNoise.swift` | Void-and-cluster blue-noise generator, and the tile's cache file |
 | `CacheFile.swift` | Where the app keeps what it derives (`~/Library/Caches/MetalRenderer`) and how it writes it; the launch timer |
@@ -2130,6 +2012,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `VoxelGrids.swift`, `VoxelLOD.swift` | The grids as one-box structures per level, and a still scene's far baked plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
 | `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
+| `LightTree.swift` | The path tracer's many lights (more than 32): a bounding hierarchy over every light but the suns, drawn by importance at each point (`Shaders/LightTree.metal`), refitted as lights move |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
 | `FBXReader.swift` | Binary FBX: a memory-mapped reader that skips what isn't asked for and inflates arrays in place |
@@ -2157,11 +2040,10 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `VirtualBLAS.swift` | Virtual geometry at run time (default): the cut per instance on the CPU, its triangles gathered, and Metal's BLAS built over them on a queue of its own |
 | `VirtualGeometry.swift` | The GPU-driven variant (`METALRENDERER_VG_MODE=clusters`): the GPU cut, and the cut's clusters as world-space boxes for a structure built every frame |
 | `VGStreamer.swift` | Virtual geometry's streaming: the page pool, the residency table, requests, loads and evictions (both GPU cuts') |
-| `RasterClusters.swift` | The raster visibility buffer's virtual geometry as clusters (`METALRENDERER_RASTER_VG=clusters`): its pool, cut tables, cluster list |
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `LumenSDF` (the fields: sampling, tracing, the global field's composition), `LumenCards` (the surface cache), `Lumen` (probes, traces, filter, resolve), `VirtualGeometry`, `Foliage` (the wind, and posing the plants' variants), `Crowd` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `LightTree` (the path tracer's many lights), `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `VirtualGeometry`, `Foliage` (the wind, and posing the plants' variants), `Crowd` |
 
 ## Notes for M1 / M2 Macs
 
@@ -2540,10 +2422,3 @@ What didn't help:
 6. **Specular, better:** reflections reproject with surface motion, so glossy reflections smear a little in camera moves (virtual-point reprojection would fix that), and secondary hits treat specular as diffuse.
 7. **Virtual geometry:** the cut on the GPU, feeding Metal's BLAS builds, would let the cut update every frame; LOD cross-fades would hide the rare pop; the clusters mode needs hardware ray tracing to be worth it, if then.
 8. **Texture compression:** ASTC or BC7 would cut the texture cache (2.5 GB) and streaming bandwidth by 4×.
-9. **Unreal Engine 5-style rendering**, after the raster visibility buffer (`METALRENDERER_PRIMARY=raster`), virtual shadow maps (`METALRENDERER_SHADOW_METHOD=vsm`) and Lumen GI (`METALRENDERER_GI=mode=lumen`), in this order:
-   * **The visibility buffer, further.** Plants are still traced alongside it (that ray traverses the whole scene, up to the drawn triangle): the instance-mask bit the shadow maps brought (`Scene.maskShadowTraced`) would let it skip the rest, and drawing assemblies and leaf cards (alpha tested in the fragment) would drop it. The crowd draws every triangle of every character in view (no chunk bounds, as they deform): chunk bounds refitted after the skinning would cull them.
-   * **Virtual shadow maps, further:** pages marked from the raster's depth ahead of the trace (now a page first seen is traced for a frame); the crowd is traced rather than drawn again every frame (chunk bounds refitted after the skinning, and pages for what moves kept apart from the static ones, as Unreal does, would let it be drawn); rect and tube lights keep their rays.
-   * **Lumen, further:** voxel lighting for the global field's hits, so radiosity through the field (Lumen's own way, cheaper outdoors) stops losing the near contact; finer fields for the open world's 256 m tiles (2.2 m voxels now) and fields for its plants (they are in instance blocks the fields don't see); a world that rebuilds keeps its global field, shifted, instead of composing it again; a world-space radiance cache for the long rays.
-   * **Nanite's clusters, further** (`METALRENDERER_RASTER_VG=clusters`): a scene that hides much (the clusters' occlusion has little to cull in the gallery) to show where they pay; what else makes a showcase model's clusters cost 0.07 ms more than its slices (not the vertex's reads); shadow pages made stale by the groups that came in (their bounds) rather than by their whole instance; finer level-of-detail tests for the shadow views (a group's error per page, not per view).
-   * **A software rasterizer** for pixel-sized triangles, through 64-bit atomics (Apple8 and later, M2 on: not this M1 Max).
-   * Upscaling stays MetalFX's denoising scaler: it is the role Unreal's TSR plays.

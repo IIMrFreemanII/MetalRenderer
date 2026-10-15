@@ -153,8 +153,7 @@ final class VirtualBLAS {
 
     /// Nanite's rule without residency (every page is readable), over `groups` of `mesh`: a cluster is in the cut when
     /// its group's simplification is too coarse on screen and its own error is fine enough (or it is at the finest
-    /// level). A group's clusters share the first test, so it is made once per group. (VGCutTests: the reference the
-    /// raster clusters' GPU cut is checked against.)
+    /// level). A group's clusters share the first test, so it is made once per group.
     ///
     /// `slack`: how far the camera can move before any test made here could turn out differently. Each test
     /// "projected error <= tau" is "distance to the sphere >= error x scale x pixelScale / tau", and that distance

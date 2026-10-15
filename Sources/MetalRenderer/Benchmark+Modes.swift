@@ -14,7 +14,7 @@ extension Benchmark {
         "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
-        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads, "raster": raster, "rastervg": rasterVG, "vsm": vsm, "lumen": lumen,
+        "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
         "showcase": showcase, "shapes": shapes, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,
         "pathref": pathref,
         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
@@ -161,12 +161,12 @@ extension Benchmark {
         }
         var out: [Config] = []
         for lights in [1, 4, 32, 256, 1024, 4096, 16384] {
-            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.restir, .megalights]
+            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.restir]
             out += modes.map { shown("\($0.title.lowercased()), \(lights) lights", stressHall(lights: lights), $0) }
         }
         // The night market (its defaults: cascades, fog), paused so the PNGs compare.
         for lights in [1024, 4096, 16384] {
-            for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir, .megalights] : [.restir, .megalights] {
+            for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir] : [.restir] {
                 out.append(shown("market \(mode.title.lowercased()), \(lights) bulbs", SceneSettings(kind: .market, lights: lights), mode).still())
             }
         }
@@ -213,7 +213,6 @@ extension Benchmark {
             Config("cascades-hq", scale: 0.5, gi: .radianceCascades) { $0.cascades.probeSpacing = 4; $0.cascades.firstInterval = 0.25 },
             Config("restirgi", scale: 0.5, gi: .restirGI),
             Config("restirgi-q", scale: 0.5, gi: .restirGI) { $0.restirGI.quarterBudget = true },
-            Config("lumen", scale: 0.5, gi: .lumen),
         ]
         guard let pick = env["METALRENDERER_GI_MODES"] else { return all }
         let tags = Set(pick.split(separator: ",").map(String.init))
@@ -398,9 +397,9 @@ extension Benchmark {
     /// Inside the workshop's home while the camera turns fast, as the window shows it moved by hand at 11-14 fps (5 and 12
     /// degrees a frame on the 60 Hz clock): round living rooms, through their doors, and round storerooms' racks (one
     /// with a window, one lit only through its door). Recorded.
-    /// "user": the look the window ran with (MegaLights, traced at the window's 1280x800, MetalFX 2x); "default": the
-    /// app's (Auto, 0.5x, MetalFX 3x). The cascades' interior history, MegaLights under MetalFX and the room lights at
-    /// GI's hits under the shelves show here.
+    /// "user": the look the window ran with (traced at the window's 1280x800, MetalFX 2x); "default": the app's (0.5x,
+    /// MetalFX 3x), both with Auto direct light. The cascades' interior history and the room lights at GI's hits under
+    /// the shelves show here.
     private static func interiorMotion() -> [Config] {
         var home = BuildingSceneSettings()
         (home.style, home.lot, home.floors) = ("residential", SIMD2(20, 14), 5)
@@ -442,9 +441,9 @@ extension Benchmark {
             guard let (r, floor) = found else { continue }
             let track = pan(r, floor: floor, sweep: 0.3)
             out.append(Config("interior motion \(name) user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene)
-                .direct(.megalights).track(track).recording())
+                .track(track).recording())
             out.append(Config("interior motion \(name) user fast", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene)
-                .direct(.megalights).track(pan(r, floor: floor, sweep: 0.13)).recording())
+                .track(pan(r, floor: floor, sweep: 0.13)).recording())
             out.append(Config("interior motion \(name) default", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
                 .track(track).recording())
         }
@@ -453,7 +452,7 @@ extension Benchmark {
 
     /// A walk in the workshop's home from a living room (sunlit) through the doors into a storeroom with no window (lit
     /// only through its door), 3 s there, and back: auto exposure going from a bright room to a dark one and back.
-    /// "user": the window's look (MegaLights, traced at 1280x800, MetalFX 2x); "default": the app's. Recorded.
+    /// "user": the window's look (traced at 1280x800, MetalFX 2x); "default": the app's. Recorded.
     private static func exposureWalk() -> [Config] {
         var home = BuildingSceneSettings()
         (home.style, home.lot, home.floors) = ("residential", SIMD2(20, 14), 5)
@@ -481,7 +480,7 @@ extension Benchmark {
             let track = walk.track(.identity).track
             return [
                 Config("exposure walk user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene)
-                    .direct(.megalights).track(track).walking().recording(),
+                    .track(track).walking().recording(),
                 Config("exposure walk default", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
                     .track(track).walking().recording(),
             ]
@@ -490,7 +489,7 @@ extension Benchmark {
     }
 
     /// The workshop's home's storeroom with no window (lit only through its door), paused, with the window's look
-    /// (MegaLights, traced at 1280x800, MetalFX 2x) and the app's: across to its racks (shiny shelves in the dark) and up
+    /// (traced at 1280x800, MetalFX 2x) and the app's: across to its racks (shiny shelves in the dark) and up
     /// at a ceiling corner (the light of the rooms round it must not come through its walls); "indirect": that corner's
     /// raw indirect light (view 2).
     private static func darkRoom() -> [Config] {
@@ -515,7 +514,7 @@ extension Benchmark {
             let racks = look(from: SIMD3(r.lo.x + 0.4, f.floor + 1.6, r.lo.y + 0.4), at: SIMD3(r.hi.x - 0.3, f.floor + 1.0, r.hi.y - 0.3))
             let corner = look(from: SIMD3(r.center.x, f.floor + 1.5, r.center.y), at: SIMD3(r.hi.x, f.ceiling, r.hi.y))
             func shown(_ name: String, user: Bool) -> Config {
-                user ? Config("dark room \(name) user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene).direct(.megalights).still().frames(30)
+                user ? Config("dark room \(name) user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene).still().frames(30)
                      : Config("dark room \(name) default", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
             }
             return [shown("racks", user: true).from(racks), shown("ceiling", user: true).from(corner),
@@ -881,8 +880,6 @@ extension Benchmark {
             lit.named("backlit pt").with { $0.giMode = .pathTraced },
             lit.named("backlit cascades"),
             lit.named("backlit restirgi").with { $0.giMode = .restirGI },
-            lit.named("backlit lumen").with { $0.giMode = .lumen },
-            lit.named("backlit lumen triangles").with { $0.giMode = .lumen; $0.lumen.trace = .triangles },
             lit.named("backlit opaque").with { $0.foliage.translucency = 0 },
             // Leaves as cards: the same views as "assemblies" and "backlit cascades", to compare with them.
             still.named("cards").with { $0.scene.leafCards = true },
@@ -919,7 +916,6 @@ extension Benchmark {
             Config("pt", scale: 0.5, scene: hall),
             Config("restirgi", scale: 0.5, gi: .restirGI, scene: hall),
             Config("restirgi-q", scale: 0.5, gi: .restirGI, scene: hall) { $0.restirGI.quarterBudget = true },
-            Config("lumen", scale: 0.5, gi: .lumen, scene: hall),
         ]
         for method in methods {
             let tag = method.name
@@ -947,7 +943,7 @@ extension Benchmark {
             let base = Config("", scale: 0.5, gi: nil, scene: stressHall(lights: lights))
             let ref = base.named("ref direct \(lights)").reference(frames: lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048)
                 .with { $0.restir.grid.enabled = false }   // the table alone
-            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .restir, .megalights]
+            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .restir]
             return references([ref]) + modes.flatMap { mode -> [Config] in
                 let method = base.direct(mode), tag = mode.title.lowercased()
                 return [method.named("\(tag) static \(lights)").still(previous: true), method.named("\(tag) moving \(lights)")]
@@ -970,9 +966,6 @@ extension Benchmark {
             let accum = st.named("restir \(tag) accum market").reference(frames: 64).with { $0.restir.grid.share = 32 }
             out += [st, st.named("restir \(tag) moving market").moving(), accum]
         }
-        // MegaLights the same way (its own sampling, no grid).
-        let ml = base.direct(.megalights).named("megalights static market").still(previous: true)
-        out += [ml, ml.named("megalights moving market").moving(), ml.named("megalights accum market").reference(frames: 64)]
         // The grid at the secondary hits and in the fog: indirect light alone (view 6, path traced and cascades)
         // against an accumulated path-traced reference, and the fog's scattering alone (view 14) against the
         // per-pixel reference march, with GI's and the fog's candidates from the table and from the grid.
@@ -1041,122 +1034,6 @@ extension Benchmark {
             }
         }
         return out
-    }
-
-    /// The raster visibility buffer against traced primary rays (PrimaryVisibility), scene by scene at the default
-    /// settings (cascades, MetalFX denoiser 3x from 0.5x): a still of each (pngdiff.py compares the pairs), its
-    /// "Visibility buffer" view (chunks in colours, magenta where the primary rays traced what it didn't draw), and the camera moving through
-    /// the stress hall and the city (the two culling passes as things come into view).
-    private static func raster() -> [Config] {
-        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()), ("gallery", SceneSettings(kind: .gallery)),
-                                                 ("crowd", SceneSettings(kind: .crowd)), ("city", SceneSettings(kind: .city)),
-                                                 ("forest", SceneSettings(kind: .forest)), ("world", SceneSettings(kind: .world))]
-        var out: [Config] = []
-        for (tag, scene) in scenes {
-            for primary in PrimaryVisibility.allCases {
-                out.append(Config("\(tag) \(primary)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = primary }
-                    .still().frames(30))
-            }
-            out.append(Config("\(tag) visibility buffer", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = .raster }
-                .view(RenderSettings.visibilityBufferView).still().frames(8))
-        }
-        for (tag, scene) in [("stress", stressHall()), ("city", SceneSettings(kind: .city))] {
-            for primary in PrimaryVisibility.allCases {
-                out.append(Config("\(tag) camera \(primary)", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.primary = primary }
-                    .cameraMove())
-            }
-        }
-        return out
-    }
-
-    /// Virtual geometry in the raster visibility buffer: traced, drawn from the BLAS, and as clusters (RasterClusters,
-    /// by vertex pulling and by mesh shaders),
-    /// in the gallery (overview and close-up) and a showcase model. Stills with GI and with direct light alone (where a
-    /// ray from a drawn cluster that meets its own BLAS shows: compare METALRENDERER_RASTER_VG_BIAS=0), the visibility
-    /// buffer, cluster and LOD views, camera moves, and a small pool that has to evict.
-    private static func rasterVG() -> [Config] {
-        let paths: [(String, PrimaryVisibility, RasterVirtual)] = [("traced", .traced, .blas), ("blas", .raster, .blas),
-                                                                   ("clusters", .raster, .clusters), ("mesh", .raster, .mesh)]
-        let model = Scene.galleryFiles().map(Scene.showcaseName).first
-        var scenes: [(String, SceneSettings, Camera?)] = [("gallery", SceneSettings(kind: .gallery), nil),
-                                                          ("closeup", SceneSettings(kind: .gallery), galleryCloseup)]
-        if let model { scenes.append(("showcase", SceneSettings(kind: .showcase, showcase: model), nil)) }
-        func config(_ name: String, _ scene: SceneSettings, _ camera: Camera?, _ path: (String, PrimaryVisibility, RasterVirtual),
-                    gi: GIMode? = .radianceCascades) -> Config {
-            let c = Config(name, scale: 0.5, upscale: 3, gi: gi, scene: scene) {
-                $0.primary = path.1
-                $0.virtualGeometry.raster = path.2
-            }
-            return camera.map { c.from($0) } ?? c
-        }
-        var out: [Config] = []
-        for (tag, scene, camera) in scenes {
-            for path in paths {
-                out.append(config("\(tag) \(path.0)", scene, camera, path).still().frames(30))
-                out.append(config("\(tag) direct \(path.0)", scene, camera, path, gi: nil).still().frames(30))
-            }
-            let clusters = paths[2]
-            out.append(config("\(tag) visibility buffer", scene, camera, clusters).view(RenderSettings.visibilityBufferView).still().frames(8))
-            out.append(config("\(tag) clusters view", scene, camera, clusters).view(9).still().frames(8))
-            out.append(config("\(tag) lod view", scene, camera, clusters).view(11).still().frames(8))
-        }
-        for path in paths { out.append(config("gallery camera \(path.0)", SceneSettings(kind: .gallery), nil, path).cameraMove()) }
-        for path in paths.dropFirst() {
-            out.append(config("showcase camera \(path.0)", scenes.last!.1, nil, path).cameraMove())
-        }
-        out.append(config("gallery clusters pool 128", SceneSettings(kind: .gallery), nil, paths[2])
-            .with { $0.virtualGeometry.rasterPoolMB = 128 }.cameraMove())
-        return out
-    }
-
-    /// Lumen GI against the radiance cascades: stills of a few scenes (the final image, indirect light alone), with
-    /// distance fields (the default) and triangles, without screen traces and without the surface cache, and the
-    /// "GI debug" views (Tools/eval/lumen.py scores them); then each method in a camera move at the app's defaults
-    /// (0.5x, upscaled 3x) for the timings (`METALRENDERER_BENCH_ONLY=camera`).
-    private static func lumen() -> [Config] {
-        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("stress", stressHall()),
-                                                 ("gallery", SceneSettings(kind: .gallery)), ("sun", SceneSettings(kind: .sun)),
-                                                 ("city", SceneSettings(kind: .city)), ("forest", SceneSettings(kind: .forest)),
-                                                 ("crowd", SceneSettings(kind: .crowd)), ("world", SceneSettings(kind: .world))]
-        return scenes.flatMap { tag, scene -> [Config] in
-            let cascades = Config("\(tag) cascades", scale: 0.5, gi: .radianceCascades, scene: scene).still().frames(60)
-            let lumen = Config("\(tag) lumen", scale: 0.5, gi: .lumen, scene: scene).still().frames(60)
-            let triangles = lumen.named("\(tag) lumen triangles").with { $0.lumen.trace = .triangles }
-            let views = ["probes", "trace kinds", "card albedo", "card light", "sdf normals", "sdf depth", "global sdf"]
-            return [cascades, cascades.named("\(tag) cascades indirect").view(6), lumen, lumen.named("\(tag) lumen indirect").view(6),
-                    triangles, triangles.named("\(tag) lumen triangles indirect").view(6),
-                    lumen.named("\(tag) lumen noscreen indirect").view(6).with { $0.lumen.screenTraces = false },
-                    lumen.named("\(tag) lumen nocards indirect").view(6).with { $0.lumen.cards = false }]
-                + views.enumerated().map { i, view in lumen.named("\(tag) lumen \(view)").view(7).with { $0.lumen.debug = i } }
-                + [lumen.named("\(tag) albedo").view(4)]
-                + [GIMode.radianceCascades, .lumen].map { Config("\(tag) \($0 == .lumen ? "lumen" : "cascades") camera", scale: 0.5, upscale: 3, gi: $0, scene: scene).cameraMove() }
-        }
-    }
-
-    /// Virtual shadow maps against shadow rays (ShadowMethod), stills of the scenes with suns, spots and sphere lights,
-    /// the view of their pages, and three in motion.
-    private static func vsm() -> [Config] {
-        let scenes: [(String, SceneSettings)] = [("cornell", SceneSettings()), ("spots", SceneSettings(kind: .spots)),
-                                                 ("sun", SceneSettings(kind: .sun)), ("valley", SceneSettings(kind: .valley)),
-                                                 ("mixed", SceneSettings(kind: .mixed)), ("city", SceneSettings(kind: .city)),
-                                                 ("crowd", SceneSettings(kind: .crowd)), ("forest", SceneSettings(kind: .forest)),
-                                                 ("world", SceneSettings(kind: .world))]
-        return scenes.flatMap { tag, scene in
-            ShadowMethod.allCases.map { method in
-                Config("\(tag) \(method == .rays ? "rays" : "vsm")", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) {
-                    $0.shadowMethod = method
-                }.still().frames(30)
-            } + [Config("\(tag) vsm pages", scale: 0.5, gi: .radianceCascades, scene: scene) { $0.shadowMethod = .virtualMaps }
-                    .view(RenderSettings.shadowPagesView).still().frames(8)]
-        } + [("cornell", SceneSettings(), false), ("sun", SceneSettings(kind: .sun), false), ("city", SceneSettings(kind: .city), true)]
-            .flatMap { tag, scene, camera in
-                // In motion (300 frames to t = 5 s): the cache's invalidation, by moving objects, a turning sun, the camera.
-                ShadowMethod.allCases.map { method -> Config in
-                    let c = Config("\(tag) \(camera ? "camera" : "moving") \(method == .rays ? "rays" : "vsm")", scale: 0.5, upscale: 3,
-                                   gi: .radianceCascades, scene: scene) { $0.shadowMethod = method }
-                    return camera ? c.cameraMove() : c
-                }
-            }
     }
 
     /// White- and blue-noise sampling next to converged references, all at t = 5 s (Tools/eval/noise.py). "moving" runs
@@ -1229,7 +1106,7 @@ extension Benchmark {
     /// ReSTIR's sampling is unbiased for every light type: accumulated direct light (GI off), every light traced
     /// against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), from the table alone and from the
     /// light grid, in the light-check scenes (one rect / tube / sphere light, or its emissive-mesh twin) and in scenes
-    /// with spots, tubes, rects, emissive meshes, a sun and every type together; MegaLights' sampling the same way. Mean
+    /// with spots, tubes, rects, emissive meshes, a sun and every type together. Mean
     /// luminance and PSNR should agree (Tools/eval/restir.py).
     private static func restircheck() -> [Config] {
         var scenes: [(String, SceneSettings)] = ["rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh"].map {
@@ -1238,7 +1115,7 @@ extension Benchmark {
         scenes += [SceneKind.spots, .tubes, .area, .emissive, .mixed].map { ("\($0)", SceneSettings(kind: $0)) }
         scenes.append(("stress32", stressHall()))
         return scenes.flatMap { tag, scene -> [Config] in
-            [(DirectLightMode.exact, false), (.restir, false), (.restir, true), (.megalights, false)].map { mode, grid in
+            [(DirectLightMode.exact, false), (.restir, false), (.restir, true)].map { mode, grid in
                 Config("\(tag) \(mode.title.lowercased())" + (grid ? " grid" : ""), gi: nil, scene: scene) {
                     $0.restir.grid.enabled = grid
                     $0.restir.grid.share = 32      // every candidate
@@ -1279,9 +1156,7 @@ extension Benchmark {
             out.append(base.named("\(tag) cascades").still())
             guard api == .metal3 else { continue }
             out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
-            for mode in [DirectLightMode.restir, .megalights] {
-                out.append(base.named("\(tag) \(mode.title.lowercased())").direct(mode).still())
-            }
+            out.append(base.named("\(tag) restir").direct(.restir).still())
             for view in ["Normals", "Triangles", "Traversal cost"] {
                 out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
             }
@@ -2023,7 +1898,6 @@ extension Benchmark {
                 still.named("\(kind) shadow denoiser"),
                 still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },
                 still.named("\(kind) restir").direct(.restir),
-                still.named("\(kind) megalights").direct(.megalights),
             ]
         }
     }

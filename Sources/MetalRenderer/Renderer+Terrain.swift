@@ -95,13 +95,11 @@ final class TerrainGPU {
     }
 }
 
-/// A frame's terrain work for the GPU (Renderer.encodeTerrain): bytes to copy into sectors' buffers, the meshes whose
-/// structures are built again over them, and their instances (the raster's bounds, the virtual shadow maps' pages).
+/// A frame's terrain work for the GPU (Renderer.encodeTerrain): bytes to copy into sectors' buffers, and the meshes
+/// whose structures are built again over them.
 struct TerrainFrameWork {
     var copies: [BufferCopy] = []
     var meshes: [Int] = []
-    var instances: [Int] = []
-    var bounds: [(mesh: Int, box: AABB)] = []
 }
 
 /// A copy from one buffer into another, in a frame (FrameEncoder.copyBuffers).
@@ -277,15 +275,6 @@ extension Renderer {
         let lo = corners.reduce(SIMD2(Double.infinity, .infinity), simd_min), hi = corners.reduce(SIMD2(-Double.infinity, -.infinity), simd_max)
         scene.rescatter(lo: lo, hi: hi)
         if scene.worldPlace != nil { settings.scene.terrainKey = UUID().uuidString }
-        // Lumen's distance fields of the sectors there (their triangles as they are now, in the background).
-        if lumenTracesFields {
-            let s = t.field.snapshot()
-            let parts = t.parts.filter { p in tiles.contains { max(abs($0.x - p.sector.tile.x), abs($0.y - p.sector.tile.y)) <= 1 } }
-            rebakeLumenFields(parts.map { p in
-                let m = TerrainSectorMesh(s, sector: p.sector, style: t.meshStyle)
-                return (p.mesh, m.positions, m.indices)
-            })
-        }
     }
 
     /// A change kept for undo (a stroke, a generator's run, an import): its id goes to the window's undo manager.
@@ -364,8 +353,6 @@ extension Renderer {
             m.write(into: staging.contents() + offset)
             work.copies.append(BufferCopy(source: staging, sourceOffset: offset, destination: block.geometry, destinationOffset: 0, size: m.byteCount))
             work.meshes.append(part.mesh)
-            work.instances.append(part.instance)
-            work.bounds.append((part.mesh, m.bounds))
             terrain.built[part.name] = (ObjectIdentifier(block), c.revision)
             offset += sizes[k]
         }

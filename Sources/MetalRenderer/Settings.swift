@@ -46,7 +46,6 @@ enum DirectLightMode: Int, CaseIterable, Codable {
     case exact      // one shadow ray per light (cost grows with the light count; references)
     case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
     case restir     // ReSTIR DI: candidates from the light table, temporal + spatial reuse, one shadow ray (O(1))
-    case megalights // MegaLights-style: lights culled into screen tiles, a few MIS-combined samples per pixel, no reuse
 
     var title: String {
         switch self {
@@ -54,11 +53,10 @@ enum DirectLightMode: Int, CaseIterable, Codable {
         case .exact: return "Exact"
         case .grouped: return "Grouped"
         case .restir: return "ReSTIR"
-        case .megalights: return "MegaLights"
         }
     }
 
-    /// `METALRENDERER_DIRECT=auto|exact|grouped|restir|megalights`; `METALRENDERER_LIGHTS=all` is exact.
+    /// `METALRENDERER_DIRECT=auto|exact|grouped|restir`; `METALRENDERER_LIGHTS=all` is exact.
     static let initial: DirectLightMode = {
         let env = ProcessInfo.processInfo.environment
         if let v = env["METALRENDERER_DIRECT"], let m = allCases.first(where: { "\($0)" == v.lowercased() }) { return m }
@@ -92,36 +90,6 @@ struct RestirSettings: Equatable, Codable {
     static let spatialPassRange = 0...2
     static let spatialSampleRange = 1...8
     static let radiusRange: ClosedRange<Float> = 4...64
-}
-
-/// MegaLights-style direct light (Shaders/MegaLights.metal, after Unreal Engine 5.5's MegaLights): the lights are culled
-/// into 16x16-pixel tiles by how far their light reaches, and each pixel shades `samples` light samples with one shadow
-/// ray each: some picked from its tile's list by unshadowed luminance (steered toward the lights the tile found visible
-/// last frame), `treeSamples` drawn from the light tree (LightTree: the far field), combined by multiple importance
-/// sampling, so the cutoff, a full list and the guiding change only the noise, never the brightness. SVGF then denoises
-/// the direct light as radiance.
-struct MegaLightsSettings: Equatable, Codable {
-    var samples = 4                 // light samples (shadow rays) per pixel, the suns' aside
-    var treeSamples = 2             // ...of which from the light tree (the rest from the tile's list)
-    var capacity = 256              // lights a tile's list holds (more: the tree samples still reach them)
-    var cutoff: Float = 0.002       // a light reaches as far as its unshadowed light, exposed, stays above this
-    var partition = true            // each light from one strategy (the list its lights in reach, the tree the rest):
-                                    // no tree walks for list samples; off = MIS (balance heuristic) between the two
-    var guiding = true              // pick the lights the tile saw lit last frame more often
-    var guideWeight: Float = 0.25   // ...the others' weight
-    var denoiseSigma: Float = 3     // SVGF for MegaLights' direct light, as RestirSettings'
-    var denoisePasses = 4
-    var denoiseHistory: Float = 8
-    var varianceBoost: Float = 1    // independent samples every frame: their temporal variance is what it is
-
-    static let sampleRange = 1...8
-    static let treeSampleRange = 1...8   // at most `samples`
-    static let capacityOptions = [64, 128, 256]   // powers of two (the tile's sort), at most ML_MAX_CAPACITY
-    static let cutoffRange: ClosedRange<Float> = 0.0001...0.1
-    static let guideWeightRange: ClosedRange<Float> = 0.05...1
-    /// Lights a scene may have (a tile's list holds 16-bit indices); with more, MegaLights falls back to ReSTIR, as it
-    /// does with more suns than it lights apart (LightTable.maxSuns: the tree leaves the suns out).
-    static let maxLights = 0xFFFF
 }
 
 /// The light grid (Shaders/Regir.metal): a camera-centred world-space grid of light reservoirs, rebuilt every
@@ -190,14 +158,12 @@ enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
     case restirGI           // ReSTIR GI: per-pixel paths whose first bounce is reused over time and space, + SVGF
-    case lumen              // Lumen-style: screen probes on the G-buffer, filtered, resolved through SH, accumulated
 
     var title: String {
         switch self {
         case .pathTraced: return "Path traced"
         case .radianceCascades: return "Radiance cascades"
         case .restirGI: return "ReSTIR GI"
-        case .lumen: return "Lumen"
         }
     }
 }
@@ -277,51 +243,6 @@ struct CascadeSettings: Equatable, Codable {
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
     static let firstIntervalRange: ClosedRange<Float> = 0.1...1.0
-}
-
-/// What Lumen's rays trace past the screen: triangles (the ray tracer's), or the meshes' distance fields near the
-/// probe and triangles beyond (software Lumen).
-enum LumenTrace: Int, CaseIterable, Codable {
-    case triangles
-    case sdf
-}
-
-/// Lumen-style GI (Lumen.swift, Shaders/Lumen.metal): a probe on the G-buffer in every tile of `probeSpacing` pixels,
-/// each tracing `probeSpacing`^2 octahedral directions (64 at 8 px), jittered every frame; the probes' radiance is
-/// filtered across their neighbours, projected onto SH, resolved per pixel and accumulated over frames.
-struct LumenSettings: Equatable, Codable {
-    var probeSpacing = 8            // screen-probe tile, traced pixels (its side is also the probe's direction tile)
-    var feedback = true             // multi-bounce: ray hits add last frame's indirect light where it was on screen
-    var filter = true               // spatial filter: each probe direction averaged with its neighbours' (plane-weighted)
-    var temporal = true             // per-pixel history, reprojected
-    var history: Float = 16         // the history's length at most (frames)
-    var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
-    var screenTraces = true         // rays march the screen first (last frame's lit surfaces), then the world
-    var screenSteps = 24            // the screen march's samples
-    var thickness: Float = 0.03     // a screen hit lies at most this fraction of the depth behind the surface
-    var screenReach: Float = 50     // the screen march's reach (m)
-    var debug = 0                   // "GI debug" view: 0 = probes, 1 = what answered the rays (screen, world, sky)
-    var cards = true                // the surface cache: world hits read cards lit ahead of time (else lit at the hit)
-    var radiosity = true            // the cards' own indirect light (rays from the cards), instead of screen feedback
-    var radiosityRays = 8           // a radiosity probe's rays a frame (a probe per 4x4 card texels)
-    var radiosityBudget = 256       // card texels (thousands) whose radiosity is updated a frame, new cards first: 1024
-                                    // (every card a frame) is 0.05 dB better still, 0.1-0.3 dB in motion, 3-24 ms slower
-    var radiosityThroughSDF = false // with `.sdf`: radiosity's rays trace the global field too (Lumen's way), not triangles:
-                                    // -1 dB in Cornell, -1.4 dB in the stress hall (it loses the near contact)
-    var trace = LumenTrace.sdf      // software Lumen; `.triangles` is ~0-2 dB closer to the references, as an A/B
-    var meshReach: Float = 2        // with `.sdf`: how far rays trace the mesh fields (m)
-    var globalVoxel: Float = 0      // the global field's finest voxel (m); 0: by the scene (0.1, or 0.2 outdoors)
-
-    static let spacingOptions = [4, 8, 16]
-    static let historyRange: ClosedRange<Float> = 1...64
-    static let screenStepRange = 4...64
-    static let radiosityRayRange = 1...32
-    static let radiosityBudgetRange = 16...1024
-    static let thicknessRange: ClosedRange<Float> = 0.005...0.2
-    static let screenReachRange: ClosedRange<Float> = 1...500
-    static let debugViews = ["Probes", "Trace kinds", "Card albedo", "Card light", "SDF normals", "SDF depth check", "Global SDF"]
-    static let meshReachRange: ClosedRange<Float> = 0.25...20
-    static let globalVoxelRange: ClosedRange<Float> = 0...1
 }
 
 /// Which scene is loaded.
@@ -489,56 +410,6 @@ struct CitySettings: Equatable, Codable {
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1
     static let roomRange: ClosedRange<Float> = 0...0.5
-}
-
-/// Where the camera's surfaces come from: one traced ray per pixel, or a raster visibility buffer (Shaders/Raster.metal,
-/// in the manner of Unreal's Nanite: GPU-driven, culled by chunks of 128 triangles against the view and a depth pyramid),
-/// whose triangles the primary rays then only meet. The rest of the frame is the same.
-enum PrimaryVisibility: Int, CaseIterable, Codable {
-    case traced
-    case raster
-
-    var title: String { self == .traced ? "Traced" : "Raster (visibility buffer)" }
-
-    /// `METALRENDERER_PRIMARY=raster|traced` picks the starting one (benchmarks: for every setting).
-    static let initial: PrimaryVisibility = ProcessInfo.processInfo.environment["METALRENDERER_PRIMARY"] == "raster" ? .raster : .traced
-}
-
-/// What shadows the direct light of the camera's surfaces: a ray toward a point on the light per sample, or for suns,
-/// spot and sphere lights Virtual Shadow Maps (VSM.swift, Shaders/VSM.metal, in the manner of Unreal's: pages of a
-/// huge virtual depth map rendered where pixels look, cached while nothing moves), through which the same jittered
-/// segment is marched. What the raster can't draw (leaf cards, plants in the wind) is still traced; so is every sample
-/// whose pages aren't ready. Bounces, reflections and the fog keep their rays.
-enum ShadowMethod: Int, CaseIterable, Codable {
-    case rays
-    case virtualMaps
-
-    var title: String { self == .rays ? "Rays" : "Virtual shadow maps" }
-
-    /// `METALRENDERER_SHADOW_METHOD=vsm|rays` picks the starting one (benchmarks: for every setting).
-    static let initial: ShadowMethod = ProcessInfo.processInfo.environment["METALRENDERER_SHADOW_METHOD"] == "vsm" ? .virtualMaps : .rays
-}
-
-/// Virtual Shadow Maps' budgets and tuning (ShadowMethod.virtualMaps).
-struct VSMSettings: Equatable, Codable {
-    var pool = 1024                 // physical pages of 128 x 128 texels (depth32Float: 64 KB each)
-    var budget = 256                // pages rendered a frame at most (the rest: rays until their turn)
-    var levels = 12                 // the sun's clipmap levels, 16 m wide and doubling (32 km)
-    var maxLights = 64              // spot and sphere lights with maps (the others: rays)
-    var steps = 8                   // the march's steps toward the light
-    var bias: Float = 0.5           // depth bias, in texels of the page's level (x (1 + the slope)): 0.5 is nearest the
-                                    // rays (pixels > 8 levels off in the city: 1.6% against 3.0% at 1.5), no acne
-    /// Virtual geometry (with the per-instance BLAS) drawn as clusters with a cut of each view's own (RasterClusters),
-    /// whatever the camera draws it from: its pages then stay drawn while the camera moves. Off: the BLAS's triangles,
-    /// all of them into every page the instance covers, every frame.
-    var clusters = true
-
-    static let poolOptions = [256, 512, 1024, 2048]
-    static let budgetRange = 16...1024
-    static let levelRange = 1...12
-    static let maxLightRange = 0...256
-    static let stepRange = 1...16
-    static let biasRange: ClosedRange<Float> = 0...8
 }
 
 /// A glTF model the user opened or dropped into the scene.
@@ -1009,30 +880,12 @@ struct VirtualGeometrySettings: Equatable, Codable {
     var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
-    /// How the raster visibility buffer draws it (with the per-instance BLAS; the cluster tree's mode traces it).
-    var raster = RasterVirtual(envText: ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG"] ?? "") ?? .blas
-    /// The raster clusters' own streaming pool (the rays keep the BLAS): 512 MB holds what the gallery's shadow maps and
-    /// camera ask for (about 390 MB settled).
-    var rasterPoolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_VG_POOL"] ?? "") ?? 512
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
     static let poolOptions = [256, 512, 768, 1024, 2048]
-    static let rasterPoolOptions = [128, 256, 512, 768]
-}
-
-/// How the raster visibility buffer draws virtual geometry: the triangles of its instance's BLAS over the CPU's cut,
-/// 128 at a time and culled by instance only; or Nanite's way, clusters of the DAG picked, culled and streamed on the GPU
-/// every frame (RasterClusters), drawn by vertex pulling or by mesh shaders.
-enum RasterVirtual: Int, CaseIterable, Codable {
-    case blas
-    case clusters
-    case mesh
-
-    var title: String { ["BLAS triangles", "Clusters", "Clusters (mesh shaders)"][rawValue] }
-    var drawsClusters: Bool { self != .blas }
 }
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
@@ -1371,18 +1224,13 @@ struct RenderSettings: Equatable, Codable {
     var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     var directLight = DirectLightMode.initial
     var restir = RestirSettings()
-    var megaLights = MegaLightsSettings()
     var restirGI = RestirGISettings()
     var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
     var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
     var cascades = CascadeSettings()
-    var lumen = LumenSettings()
     var scene = SceneSettings()
     var api = RenderAPI.initial
-    var primary = PrimaryVisibility.initial
-    var shadowMethod = ShadowMethod.initial
-    var vsm = VSMSettings()
     var virtualGeometry = VirtualGeometrySettings()
     var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
@@ -1449,16 +1297,12 @@ struct RenderSettings: Equatable, Codable {
     static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering", "Visibility buffer", "Virtual shadow pages"]
-    /// The raster visibility buffer's chunks (rasterDebugKernel), with the primary visibility on raster.
-    static let visibilityBufferView = 15
-    /// The virtual shadow maps' pages (vsmDebugKernel), with the shadows through virtual shadow maps.
-    static let shadowPagesView = 16
+                            "Fog scattering"]
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
-    /// is (normals, albedo, the geometry views, the visibility buffer's and the shadow pages' colours...): viewIsHDR in
+    /// is (normals, albedo, the geometry views...): viewIsHDR in
     /// Shaders/Output.metal.
     static func showsLight(_ mode: Int) -> Bool {
-        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && ![visibilityBufferView, shadowPagesView].contains(mode)
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode)
     }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.

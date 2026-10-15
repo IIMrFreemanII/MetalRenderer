@@ -113,7 +113,7 @@ extension Scene {
             e.surface = SIMD4(0, 1, doc.alphaCutoff, doc.aoStrength)
             materialExtras[made.materials[k]] = e
         }
-        setPaintedMaterial(i, made.materials[0], cutsHoles: doc.opacity)
+        setPaintedMaterial(i, made.materials[0])
         paintUVs += atlas.corners
         painted.append(made)
         return made

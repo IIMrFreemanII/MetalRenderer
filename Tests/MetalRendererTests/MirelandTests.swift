@@ -15,7 +15,6 @@ final class MirelandTests: XCTestCase {
         var cutOut = 0
         for (i, inst) in scene.instances.enumerated() where scene.cutsHoles(i) {
             cutOut += 1
-            XCTAssertNotEqual(inst.mask & Scene.maskShadowTraced, 0, "a cut-out's shadow is traced")
             let mesh = scene.meshes[inst.mesh]
             let range = Int(mesh.firstIndex)..<Int(mesh.firstIndex + mesh.indexCount)
             XCTAssertGreaterThan(Scene.uvArea(scene.uvs, Array(scene.indices[range])), 0, "a cut-out without UVs")

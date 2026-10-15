@@ -2,7 +2,7 @@ import XCTest
 import simd
 @testable import MetalRenderer
 
-/// The light tree (LightTree.swift), MegaLights' far field: every light but the suns at the end of its path, nodes
+/// The light tree (LightTree.swift), the path tracer's many lights: every light but the suns at the end of its path, nodes
 /// that bound their children, and refits that follow the lights.
 final class LightTreeTests: XCTestCase {
     private func light(_ type: Float, at p: SIMD3<Float>, radius: Float = 0.1, color: Float = 1,

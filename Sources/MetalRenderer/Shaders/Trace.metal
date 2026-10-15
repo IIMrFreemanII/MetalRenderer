@@ -20,7 +20,6 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         device const Light*              lights     [[buffer(8)]],
                         device const RegirReservoir* regirGrid [[buffer(11)]],  // the light grid (ReGIR)
                         constant RegirParams&       regir     [[buffer(12)]],
-                        device RasterCounters*      rasterCounters [[buffer(13)]],  // with FLAG_VIS_BUFFER: RasterTraced
                         texture2d<float, access::write>  outNormalDepth [[texture(0)]],
                         texture2d<float, access::write>  outAlbedo      [[texture(1)]],
                         texture2d<float, access::write>  outEmission    [[texture(2)]],
@@ -36,10 +35,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outVisibility  [[texture(12)]],  // per light group: visibility
                         texture2d<float, access::write>  outBlocker     [[texture(13)]],  // per light group: penumbra half width, 0 = none
                         texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
-                        texture2d<uint, access::read>    visBuffer      [[texture(15)]],  // with FLAG_VIS_BUFFER: instance, triangle
                         texture2d<float, access::read>   liquidRay      [[texture(16)]],  // LIQUID: the camera ray bent through
                         texture2d<float, access::read>   liquidDir      [[texture(17)]],  // a liquid (liquidKernel)
-                        texture2d<uint, access::read>    waterGuess     [[texture(18)]],  // WATER: the pixel whose raster triangle the bent ray meets
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -50,8 +47,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
 
     Sampler rng = makeSampler(blueNoise, u, tid, 0, pixelSeed(tid, u.frameIndex, SEED_TRACE));
 
-    // Primary ray: traced, or with FLAG_VIS_BUFFER met with the triangle the raster drew at this pixel (Raster.metal),
-    // and traced as well, up to that triangle, when something in view wasn't drawn (RasterTraced: the lists were full).
+    // Primary ray.
     float2 size = float2(u.width, u.height);
     float3 dir = primaryDirection(u, tid);
     Ray primary = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
@@ -64,7 +60,6 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     uint primaryMask = (GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL) & (LIQUID ? ~MASK_LIQUID : MASK_ALL);
     float liquidEntry = -1.0f;
     float3 eye = dir;   // the camera's ray (dir: the ray that reaches what this pixel shows)
-    bool bentRay = false;
     if (LIQUID || WATER) {
         // w: 1 = bent by a liquid, 2 + WATER_RAY_* by water (bent where WATER_RAY_BENT is set).
         float4 bent = liquidRay.read(tid);
@@ -73,28 +68,9 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             liquidEntry = along.w;
             dir = along.xyz;
             primary = makeRay(bent.xyz, dir, 0.0f, INFINITY);
-            bentRay = true;
         }
     }
-    Hit hit;
-    // (A bent ray isn't the raster's: its triangle there is what the straight one met. Water's says which pixel's
-    // triangle it likely meets, under the surface (waterKernel): met there when it does, else traced.)
-    bool guessed = false;
-    if (WATER && bentRay && flagOn(u.flags, FLAG_VIS_BUFFER)) {
-        uint g = waterGuess.read(tid).r;
-        if (g != 0xFFFFFFFFu && visibilityHit(visBuffer.read(uint2(g & 0xFFFFu, g >> 16)).xy, primary, accel, s, hit)) {
-            guessed = hit.hit && primary.direction.y * hit.distance < 0.0f && hit.distance < 400.0f;
-        }
-    }
-    if (guessed) {
-    } else if (!flagOn(u.flags, FLAG_VIS_BUFFER) || bentRay || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
-        hit = intersectClosest(primary, primaryMask, accel);
-    } else if (atomic_load_explicit(rasterTraced(rasterCounters), memory_order_relaxed) != 0u) {
-        Ray nearer = primary;
-        nearer.tmax = hit.distance;
-        Hit traced = intersectClosest(nearer, primaryMask, accel);
-        if (traced.hit) hit = traced;
-    }
+    Hit hit = intersectClosest(primary, primaryMask, accel);
     Surface sf = surfaceFromHit(hit, primary, accel, s, 2.0f * u.camUp.w / float(u.height), recordTextures);   // pixel angle
 
     bool upscale = flagOn(u.flags, FLAG_UPSCALE);
@@ -168,14 +144,6 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         outBlocker.write(float4(0.0f), tid);
         return;
     }
-    // A raster cluster's triangle (RasterClusters) is from the raster's cut, not the BLAS the rays meet. With
-    // METALRENDERER_RASTER_VG_BIAS (camForward.w; off by default) every ray from here, this kernel's and the later
-    // passes' (they start at surfacePos), leaves that many times the cluster's simplification error in front of it.
-    if (hit.cluster != HIT_NO_CLUSTER && u.camForward.w > 0.0f) {
-        float4x4 m = instanceRecord(s.instances, hit.instance).transform;
-        float scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
-        sf.position += ng * (u.camForward.w * scale * as_type<float>(accel.clusters[hit.cluster].x));
-    }
     outSurfacePos.write(float4(sf.position, float(sf.instanceId + 1)), tid);
 
     float3 p = sf.position + ng * RAY_EPSILON;   // offset along the true normal so the origin is never below the triangle
@@ -211,7 +179,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float b;
             float3 target = lightShadowTarget(lights[i], p, r);
             float3 origin = hairOrSurface(hp, sf.position, n, p, target);
-            float v = shadowVisible(u.flags, s.vsm, i, lights[i], origin, ng, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
+            float v = isVisibleBlocker(origin, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
             direct += unshadowed * v;
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
@@ -350,7 +318,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
             Light light = lights[pick];
             float b;
             float3 target = lightShadowTarget(light, p, r);
-            bool visible = shadowVisible(u.flags, shading.vsm, pick, light, hairOrSurface(hp, sp.xyz, n, p, target), ng, target, accel, b);
+            bool visible = isVisibleBlocker(hairOrSurface(hp, sp.xyz, n, p, target), target, accel, b);
             float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
             visibility += channel * (cloud / float(rays));
             if (b > 0.0f) { blocker += channel * penumbraWidth(light, p, b); blockerCount += channel; }
@@ -468,7 +436,7 @@ kernel void manyLightsReuseKernel(constant Uniforms&               u          [[
         Light light = lights[y];
         float b;
         float3 target = lightShadowTarget(light, p, r);
-        bool visible = shadowVisible(u.flags, shading.vsm, y, light, hairOrSurface(hp, sp.xyz, n, p, target), ng, target, accel, b);
+        bool visible = isVisibleBlocker(hairOrSurface(hp, sp.xyz, n, p, target), target, accel, b);
         float cloud = visible ? sunVisibilityScale(light, p, shading) : 0.0f;
         // Estimate of the group's luminance-weighted visibility: target * V * W / total (= V for a fresh pick).
         visibility = select(visibility, float4(visible && pick.total > 0.0f ? saturate(cloud * targetY * W / pick.total) : 0.0f), here);

@@ -43,7 +43,7 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
   in a Code node `p` is the parameters, `seed` a float); `SceneKind.mireland` (`Scene+Mireland.swift`: terrain with
   UVs in metres, water quad, ragged patches and decals following the terrain, tube trees, crossed cards, fog preset +
   mist volume; `undisplacedMaterials` keeps the 4M displacement budget for the near gnarly trunks);
-  `Scene.traceHoleShadows` (procedural cut-outs' shadows traced: the VSM raster skips them). Histogram Scan's
+  Histogram Scan's
   position is the share kept (threshold = 1 - position). `MATERIAL_STATS=1` with testMirelandStartersBake prints
   every node's mean and max.
 
@@ -61,7 +61,7 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
 
 - The window by hand (no clicks into native windows from here): canvas drags, pickers, pick popover, export panel.
 - Metal 4 (argument tables, residency of the procedural textures, OpacityLevels on MTL4): written, untried.
-- Opacity on meshes without UVs (the alpha test reads the mesh's UVs), in Lumen and the virtual shadow maps; SDF shapes.
+- Opacity on meshes without UVs (the alpha test reads the mesh's UVs); SDF shapes.
 - The open world's tiles can't take assignments. Multi-material meshes: opacity per instance's own material only.
 - The tests skill's map (.claude/skills/tests) lacks the new suites: MaterialGraph*/MatEngine/MatShaderCode ->
   MaterialGraphTests MaterialEngineTests; MaterialEditor/* -> MaterialEditorTests; Scene+Procedural, Scene+Materials,

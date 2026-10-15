@@ -110,8 +110,8 @@ final class TraceSceneArgs {
         (buffers, self.stats, self.dummy) = (made, stats, dummy)
     }
 
-    /// What `slot`'s frame reads besides the structures: virtual geometry's tables (the cut's clusters or the
-    /// raster's, their pool), the plants' parts, the wind, and what a leaf card's alpha test reads (the mesh table and
+    /// What `slot`'s frame reads besides the structures: virtual geometry's tables (the cut's clusters, their
+    /// pool), the plants' parts, the wind, and what a leaf card's alpha test reads (the mesh table and
     /// the arrays, the alpha layers).
     struct Content {
         var tlas: MTLAccelerationStructure

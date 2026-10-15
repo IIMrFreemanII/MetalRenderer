@@ -57,9 +57,7 @@ Branch `claude/graphify-update-746c89` (PR #60, with the Material Designer and M
   - Paint mode holds the scene's animation time (`Renderer` frame update), so a posed object stays where its tiles were measured.
 - **Own UVs** now have their texels per metre (their UV area over the surface's): UV-projected fills and the height's normal are to scale on imported models (they tiled ~millions of times before: the demon showed only mortar).
 - **Not built:**
-  - painted objects aren't displaced;
-  - Lumen sees their original material;
-  - VSM shadows of painted cut-outs are traced (as procedural cut-outs).
+  - painted objects aren't displaced.
 - **Metal 4 paths untried:**
   - the composite runs through `FrameEncoder`;
   - the texel map and bakes run on the Metal 3 queue.

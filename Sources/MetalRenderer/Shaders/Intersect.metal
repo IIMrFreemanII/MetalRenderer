@@ -133,7 +133,7 @@ struct TraceScene {
     instance_acceleration_structure tlas;
     device const VGBlas*          vgBlas;     // per virtual instance: its current cut's BLAS (VirtualBLAS.swift)
     device const uint2*           clusters;   // this frame's selected virtual-geometry clusters: (instance, pool
-                                              // offset), the cut's (VG_CLUSTERS) or the raster clusters'
+                                              // offset), the cut's (VG_CLUSTERS)
     device const float4*          pool;       // streamed virtual-geometry pages (VGStreamer.swift)
     device const struct RTPart*   parts;      // every assembly's parts (ASSEMBLIES): a part instance's user id names it
     device const MeshData*        meshes;     // the mesh table, and the arrays below: what a leaf card's alpha test

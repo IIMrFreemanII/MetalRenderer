@@ -397,18 +397,15 @@ final class SettingsPanel: NSObject {
     private func updateDenoiserCaption(_ s: RenderSettings) {
         let text: String
         if s.neuralDenoiser {
-            text = renderer.status?.directMode == .megalights && s.denoiser.enabled
-                ? "While upscaling (Rendering), the MetalFX denoiser denoises as it upscales: these are off, but MegaLights' direct light still takes its own temporal pass and up to 2 à-trous passes first."
-                : "While upscaling (Rendering), the MetalFX denoiser denoises as it upscales: these are off."
+            text = "While upscaling (Rendering), the MetalFX denoiser denoises as it upscales: these are off."
         } else if !s.denoiser.enabled {
             text = "Off: the composite shows the raw samples."
         } else {
-            let restir = renderer.status?.directMode == .restir, megaLights = renderer.status?.directMode == .megalights
-            let shadow = s.denoiser.shadowDenoiser && !megaLights && (!restir || s.restir.splitVisibility)
+            let restir = renderer.status?.directMode == .restir
+            let shadow = s.denoiser.shadowDenoiser && (!restir || s.restir.splitVisibility)
             var generic: [String] = [], own: [String] = []
             let combined = s.giEnabled && s.giMode == .pathTraced && !s.denoiser.separateSignals && !shadow
             if restir { own.append("ReSTIR direct light (Direct light, advanced)") }
-            else if megaLights { own.append("MegaLights direct light (Direct light, advanced)") }
             else if shadow { own.append("direct light: the shadow denoiser") }
             else { generic.append(combined ? "direct + indirect light, combined" : "direct light") }
             if s.giEnabled {
@@ -416,7 +413,6 @@ final class SettingsPanel: NSObject {
                 case .pathTraced: if !combined { generic.append("indirect light") }
                 case .radianceCascades: if s.cascades.denoiseIndirect { generic.append("cascade GI (1 pass)") }
                 case .restirGI: if s.restirGI.denoise { own.append("ReSTIR GI (Global illumination, advanced)") }
-                case .lumen: if s.lumen.denoiseIndirect { generic.append("Lumen GI (1 pass)") }
                 }
             }
             var lines = ["Passes, σ, history and anti-lag filter: " + (generic.isEmpty ? "nothing in this mode." : generic.joined(separator: ", ") + ".")]

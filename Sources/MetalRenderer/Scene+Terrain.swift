@@ -203,9 +203,7 @@ extension Scene {
             let mesh = addMesh(borrowing: m.borrowed, bounds: m.bounds, name: meshName)
             setDetailLevel(mesh, sector.level)
             label(mesh: mesh, "ground")
-            // (Its shadows traced: the virtual shadow maps would keep their pages of it as it was before a brush reshaped it.)
-            let instance = addInstance(mesh, material, SceneTerrain.transform(sector, grid: grid, offset: offset),
-                                       mask: mask == Scene.maskGeometry ? mask | Scene.maskShadowTraced : mask)
+            let instance = addInstance(mesh, material, SceneTerrain.transform(sector, grid: grid, offset: offset), mask: mask)
             t.append(SceneTerrain.Part(sector: sector, mesh: mesh, instance: instance, name: meshName, revision: s.revision(around: sector)))
         }
         terrain = t

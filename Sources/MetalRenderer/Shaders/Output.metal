@@ -36,7 +36,6 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 device const InstanceData*       instances  [[buffer(6)]],
                                 constant SceneShading&           shading    [[buffer(7)]],
                                 texture2d<float, access::write>  output     [[texture(0)]],
-                                texture2d<uint, access::read>    visBuffer  [[texture(1)]],   // with FLAG_VIS_BUFFER
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -53,9 +52,6 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
         return;
     }
     res = intersectClosest(r, MASK_ALL, accel);
-    // With the raster visibility buffer, what it drew (virtual geometry: its own cut of clusters), as the frame sees it.
-    Hit drawn;
-    if (flagOn(u.flags, FLAG_VIS_BUFFER) && visibilityHit(visBuffer.read(tid).xy, r, accel, s, drawn)) res = drawn;
     if (!res.hit) { output.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid); return; }
     if (VOXELS && res.part == HIT_VOXEL) {
         // A far plant's voxels have no triangles to show: flat, in the plant's colour. The LOD view shows the level
@@ -159,7 +155,7 @@ inline float3 agxFilm(float3 c) {
 
 /// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
 inline bool viewIsHDR(uint mode) {
-    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || mode == 15 || mode == 16);
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13));
 }
 
 /// The colour grade (PostSettings): white balance as red and blue gains, saturation, then contrast about middle grey
@@ -216,9 +212,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
-                            texture2d<float, access::write> giRadiance [[texture(20)]],  // with FLAG_GI_RADIANCE
-                            texture2d<float, access::read>  particles  [[texture(21)]],  // with FLAG_PARTICLES: their layer
-                            texture2d<float, access::read>  particleDepth [[texture(22)]], // ...and its surfaces' depths
+                            texture2d<float, access::read>  particles  [[texture(20)]],  // with FLAG_PARTICLES: their layer
+                            texture2d<float, access::read>  particleDepth [[texture(21)]], // ...and its surfaces' depths
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
@@ -283,7 +278,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         }
     }
 
-    // Where the sun's light isn't a term of its own here (ReSTIR, MegaLights, no shadow filter), the caustics go on
+    // Where the sun's light isn't a term of its own here (ReSTIR, no shadow filter), the caustics go on
     // most of the light under the water (the sun's is most of it there).
     if (WATER && !sunCaustics) {
         float4 sp = surfacePos.read(tid);
@@ -324,11 +319,6 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         }
     }
 
-    // Lumen's screen traces read this next frame: the diffuse light the surface sends, without specular or fog.
-    // Emitters (mesh lights) send none here: their light reaches GI as a light.
-    if (flagOn(u.flags, FLAG_GI_RADIANCE))
-        giRadiance.write(float4(surfacePos.read(tid).w > 0.0f ? albedo * illumination : float3(0.0f), 1.0f), tid);
-
     // Fog in front of the pixel: rgb = in-scattered light, a = transmittance.
     float4 fogged = float4(0.0f, 0.0f, 0.0f, 1.0f);
     if (flagOn(u.flags, FLAG_FOG)) {
@@ -359,8 +349,6 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
-        case 15: c = geometryDebug.read(tid).rgb; break;          // the visibility buffer (rasterDebugKernel)
-        case 16: c = geometryDebug.read(tid).rgb; break;          // the virtual shadow maps' pages (vsmDebugKernel)
         default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
     }
     if (flagOn(u.flags, FLAG_PARTICLES) && u.viewMode == 0) {   // in front of it all (fogged already, particleLayerKernel)

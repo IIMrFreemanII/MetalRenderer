@@ -238,6 +238,9 @@ final class SettingsTableTests: XCTestCase {
     func testRemovedKeysDoNotResetSavedSettings() throws {
         var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
         saved["rayTracer"] = 1
+        saved["shadowMethod"] = 1   // (virtual shadow maps, since removed)
+        saved["vsm"] = ["pool": 512]
+        saved["primary"] = 1   // (the raster visibility buffer, since removed)
         saved["api"] = RenderAPI.metal4.rawValue
         saved["bounces"] = defaults.bounces + 1
         let store = UserDefaults.standard, key = "renderSettings"
@@ -249,16 +252,28 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
-    func testLumenIsRead() {
-        var s = defaults
-        SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
-            "METALRENDERER_GI": "mode=lumen",
-            "METALRENDERER_LUMEN": "spacing=4,history=8,filter=0",
-        ])
-        XCTAssertEqual(s.giMode, .lumen)
-        XCTAssertEqual(s.lumen.probeSpacing, 4)
-        XCTAssertEqual(s.lumen.history, 8)
-        XCTAssertFalse(s.lumen.filter)
+    /// A saved value that no longer decodes (an enum case since removed) takes its default; the other settings stay.
+    func testInvalidEnumValuesFallBackToTheirDefaults() throws {
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
+        saved["directLight"] = 4   // (MegaLights, since removed)
+        saved["giMode"] = 3   // (Lumen, since removed)
+        saved["toneMap"] = 99
+        var scene = try XCTUnwrap(saved["scene"] as? [String: Any])
+        scene["kind"] = 9999
+        saved["scene"] = scene
+        saved["api"] = RenderAPI.metal4.rawValue
+        saved["bounces"] = defaults.bounces + 1
+        let store = UserDefaults.standard, key = "renderSettings"
+        let before = store.data(forKey: key)
+        defer { store.set(before, forKey: key) }
+        store.set(try JSONSerialization.data(withJSONObject: saved), forKey: key)
+        let s = try XCTUnwrap(SettingsStore.load(over: defaults))
+        XCTAssertEqual(s.directLight, defaults.directLight)
+        XCTAssertEqual(s.giMode, defaults.giMode)
+        XCTAssertEqual(s.toneMap, defaults.toneMap)
+        XCTAssertEqual(s.scene.kind, defaults.scene.kind)
+        XCTAssertEqual(s.api, .metal4)
+        XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
     func testListsAreRead() {
