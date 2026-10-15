@@ -1027,13 +1027,15 @@ struct VirtualGeometrySettings: Equatable, Codable {
 
 /// How the raster visibility buffer draws virtual geometry: the triangles of its instance's BLAS over the CPU's cut,
 /// 128 at a time and culled by instance only; or Nanite's way, clusters of the DAG picked, culled and streamed on the GPU
-/// every frame (RasterClusters), drawn by vertex pulling or by mesh shaders.
+/// every frame (RasterClusters), drawn by vertex pulling or by mesh shaders, or with the small ones rasterized in a compute
+/// shader through 64-bit atomics (`software`, Nanite's software rasterizer; Apple8 GPUs and later).
 enum RasterVirtual: Int, CaseIterable, Codable {
     case blas
     case clusters
     case mesh
+    case software
 
-    var title: String { ["BLAS triangles", "Clusters", "Clusters (mesh shaders)"][rawValue] }
+    var title: String { ["BLAS triangles", "Clusters", "Clusters (mesh shaders)", "Clusters + software raster"][rawValue] }
     var drawsClusters: Bool { self != .blas }
 }
 

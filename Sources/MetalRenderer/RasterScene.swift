@@ -153,10 +153,13 @@ final class RasterTargets {
     let groups: MTLBuffer          // per pass: maxGroups groups (uint4)
     let records: MTLBuffer         // per pass: maxGroups RasterInstance, at each drawn instance's first group
     let counters: MTLBuffer        // per pass: RasterCounters (32 bytes)
+    /// The software rasterizer's (RasterVirtual.software): per pixel the nearest reversed depth's bits << 32 | its
+    /// triangle's y (a raster cluster's), by 64-bit atomic max; resolved into `visibility` after the second pass.
+    let software: MTLBuffer?
     static let countersStride = 32
     static let recordSize = 64     // RasterInstance
 
-    init(device: MTLDevice, width: Int, height: Int, chunks: Int, instances: Int) throws {
+    init(device: MTLDevice, width: Int, height: Int, chunks: Int, instances: Int, software: Bool = false) throws {
         (self.width, self.height) = (width, height)
         func texture(_ format: MTLPixelFormat, _ w: Int, _ h: Int, mips: Bool, _ usage: MTLTextureUsage, _ label: String) throws -> MTLTexture {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: w, height: h, mipmapped: mips)
@@ -166,7 +169,8 @@ final class RasterTargets {
             t.label = label
             return t
         }
-        visibility = try texture(Pipelines.visibilityFormat, width, height, mips: false, [.renderTarget, .shaderRead], "visibility buffer")
+        visibility = try texture(Pipelines.visibilityFormat, width, height, mips: false,
+                                 software ? [.renderTarget, .shaderRead, .shaderWrite] : [.renderTarget, .shaderRead], "visibility buffer")
         depth = try texture(Pipelines.depthFormat, width, height, mips: false, [.renderTarget, .shaderRead], "raster depth")
         func half(_ n: Int) -> Int { max(1, (1 << Int(ceil(log2(Double(max(n, 2)))))) / 2) }
         hzb = try texture(.r32Float, half(width), half(height), mips: true, [.shaderRead, .shaderWrite], "hzb")
@@ -183,5 +187,6 @@ final class RasterTargets {
         groups = try buffer(2 * maxGroups * 16, "raster groups")
         records = try buffer(2 * maxGroups * RasterTargets.recordSize, "raster instances")
         counters = try buffer(2 * RasterTargets.countersStride + 16, "raster counters")   // + RasterTraced
+        self.software = software ? try buffer(width * height * 8, "raster software") : nil
     }
 }

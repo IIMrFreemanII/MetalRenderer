@@ -12,17 +12,20 @@ struct Capabilities: Equatable {
     /// Metal 4's acceleration structures, for Metal ray tracing on Metal 4. Metal has no query for it, only a validation
     /// error ("this device does not support Metal 4 ray tracing", M1 Max); the M4 Max, with ray-tracing hardware, has it.
     var metal4RayTracing = true
+    /// 64-bit atomic min and max on buffers (Apple8: M2, A15 and later): the raster clusters' software rasterizer.
+    var atomics64 = true
 
     /// The running device's. Everything until `main` sets it: tests have no device.
     static var current = Capabilities()
 
     init() {}
 
-    /// `METALRENDERER_CAPS="rt,denoiser"` keeps only the capabilities it names (rt, hwrt, denoiser, metal4;
+    /// `METALRENDERER_CAPS="rt,denoiser"` keeps only the capabilities it names (rt, hwrt, denoiser, metal4, atomics64;
     /// `none` keeps nothing), to try the fallbacks on a GPU that has them all.
     init(device: MTLDevice, env: [String: String] = ProcessInfo.processInfo.environment) {
         metalRayTracing = device.supportsRaytracing
         hardwareRayTracing = metalRayTracing && device.supportsFamily(.apple9)
+        atomics64 = device.supportsFamily(.apple8)
         if #available(macOS 26.0, *) {
             metalFXDenoiser = MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
             metal4 = device.supportsFamily(.metal4)
@@ -38,6 +41,7 @@ struct Capabilities: Equatable {
             metalFXDenoiser = metalFXDenoiser && keep.contains("denoiser")
             metal4 = metal4 && keep.contains("metal4")
             metal4RayTracing = metal4RayTracing && metal4 && hardwareRayTracing
+            atomics64 = atomics64 && keep.contains("atomics64")
         }
     }
 
@@ -45,7 +49,7 @@ struct Capabilities: Equatable {
     var summary: String {
         func mark(_ on: Bool) -> String { on ? "yes" : "no" }
         let rt = !metalRayTracing ? "no" : hardwareRayTracing ? "hardware" : "software"
-        return "Metal ray tracing: \(rt), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing)))"
+        return "Metal ray tracing: \(rt), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing))), 64-bit atomics: \(mark(atomics64))"
     }
 }
 
@@ -59,6 +63,7 @@ extension RenderSettings {
         if api == .metal4 && caps.metalRayTracing && caps.metal4 && !caps.metal4RayTracing {
             needs.append("Metal 4 ray tracing")
         }
+        if virtualGeometry.raster == .software && !caps.atomics64 { needs.append("64-bit atomics") }
         return needs.isEmpty ? nil : needs.joined(separator: " and ")
     }
 
@@ -77,6 +82,10 @@ extension RenderSettings {
         if s.api == .metal4 && !caps.metal4RayTracing {
             s.api = .metal3
             notes.append("Metal 4 ray tracing is not supported on this GPU: using Metal 3 with Metal ray tracing")
+        }
+        if s.virtualGeometry.raster == .software && !caps.atomics64 {
+            s.virtualGeometry.raster = .clusters
+            notes.append("64-bit atomics are not supported on this GPU: raster clusters without the software rasterizer")
         }
         return (s, notes)
     }

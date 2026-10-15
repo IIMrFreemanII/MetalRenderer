@@ -51,7 +51,9 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Water.metal|Sources/MetalRenderer/Shaders/WaterCommon.metal) add WaterTests ShaderSourceTests KernelVariantsTests ;;   # and images (waterKernel: the offscreen skill)
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal) add VGCutTests SoftwareRasterTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/RasterSoftware.metal) add SoftwareRasterTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
       Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
@@ -80,7 +82,8 @@ if [[ $suites == " " ]]; then
         case $name in
           Settings*.swift) add SettingsTableTests BenchmarkModesTests ;;
           Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
-          Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
+          Capabilities.swift) add CapabilitiesTests SoftwareRasterTests ;;
+          Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
           ShaderSource.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
           Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;
           BVH.swift) add BVHTests CacheTests ;;
@@ -130,7 +133,8 @@ if [[ $suites == " " ]]; then
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
           Scene+Storeroom.swift) add GLTFLoaderTests BenchmarkModesTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
-          VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests VGCutTests ;;
+          VGStreamer.swift|VirtualGeometry.swift) add VGStreamerTests VGCutTests ;;
+          RasterClusters.swift) add VGStreamerTests VGCutTests SoftwareRasterTests ;;
           VirtualBLAS.swift) add VGCutTests ;;
           VirtualTracing.swift) add VGCutTests VGStreamerTests ;;   # and images: no suite traces it
           TraceScene.swift|Renderer.swift) uncovered+=("$f") ;;    # images (the offscreen skill)

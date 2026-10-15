@@ -162,8 +162,9 @@ inline float3 rasterTriangleCorner(uint kind, device const float3* corners, devi
 // Whether a box (object space, `r` to clip) may show: false when it is outside the view, or (with `hzb`) behind
 // what the pyramid holds at every pixel it covers. `pixels`: how many its screen rectangle covers (infinite when it
 // crosses the near plane).
+// `side`: its screen rectangle's longer side, unclamped (infinite when it crosses the near plane).
 inline bool rasterBoxVisible(float3 lo, float3 hi, thread const RasterInstance& r, constant Uniforms& u, constant RasterParams& rp,
-                             texture2d<float, access::read> hzb, bool occlusion, thread float& pixels) {
+                             texture2d<float, access::read> hzb, bool occlusion, thread float& pixels, thread float& side) {
     uint all = 0x1Fu;                 // the planes every corner is outside of
     bool crossesNear = false;
     float2 pmin = float2(INFINITY), pmax = float2(-INFINITY);
@@ -182,8 +183,10 @@ inline bool rasterBoxVisible(float3 lo, float3 hi, thread const RasterInstance& 
         nearest = max(nearest, NEAR_PLANE / p.w);
     }
     pixels = INFINITY;
+    side = INFINITY;
     if (all != 0u) return false;
     if (crossesNear) return true;
+    side = max(pmax.x - pmin.x, pmax.y - pmin.y);
     float2 extent = min(pmax, float2(u.width, u.height)) - max(pmin, float2(0.0f));
     pixels = max(extent.x, 1.0f) * max(extent.y, 1.0f);
     if (!occlusion) return true;
@@ -197,6 +200,11 @@ inline bool rasterBoxVisible(float3 lo, float3 hi, thread const RasterInstance& 
     float farthest = min(min(hzb.read(t0, level).x, hzb.read(uint2(t1.x, t0.y), level).x),
                          min(hzb.read(uint2(t0.x, t1.y), level).x, hzb.read(t1, level).x));
     return nearest >= farthest;
+}
+inline bool rasterBoxVisible(float3 lo, float3 hi, thread const RasterInstance& r, constant Uniforms& u, constant RasterParams& rp,
+                             texture2d<float, access::read> hzb, bool occlusion, thread float& pixels) {
+    float side;
+    return rasterBoxVisible(lo, hi, r, u, rp, hzb, occlusion, pixels, side);
 }
 
 // One thread per instance record. Pass 1 keeps what was visible last frame; pass 2 tests what is in view against the
@@ -377,9 +385,12 @@ kernel void rasterBoundsKernel(device const float3*       positions   [[buffer(2
 }
 
 // The pyramid's level 0 from the depth: each texel the farthest (smallest reversed) depth of its 2 x 2 pixels; the
-// pixels past the frame's edge count as the sky.
-kernel void hzbInitKernel(depth2d<float, access::read>     depth [[texture(0)]],
-                          texture2d<float, access::write>  hzb   [[texture(1)]],
+// pixels past the frame's edge count as the sky. With `withSoftware`, a pixel's depth is the nearer of the draws' and the
+// software rasterizer's (RasterSoftware.metal: its depth's bits in each word's high half).
+kernel void hzbInitKernel(depth2d<float, access::read>     depth        [[texture(0)]],
+                          texture2d<float, access::write>  hzb          [[texture(1)]],
+                          device const ulong*              software     [[buffer(0)]],
+                          constant uint&                   withSoftware [[buffer(1)]],
                           uint2 t [[thread_position_in_grid]])
 {
     if (t.x >= hzb.get_width() || t.y >= hzb.get_height()) return;
@@ -387,7 +398,12 @@ kernel void hzbInitKernel(depth2d<float, access::read>     depth [[texture(0)]],
     float d = INFINITY;
     for (uint k = 0; k < 4; ++k) {
         uint2 p = 2u * t + uint2(k & 1u, k >> 1);
-        d = min(d, all(p < size) ? depth.read(p) : 0.0f);
+        float z = 0.0f;
+        if (all(p < size)) {
+            z = depth.read(p);
+            if (withSoftware != 0u) z = max(z, as_type<float>(uint(software[p.y * size.x + p.x] >> 32)));
+        }
+        d = min(d, z);
     }
     hzb.write(float4(d), t);
 }
@@ -501,8 +517,10 @@ inline bool visibilityHit(uint2 ids, Ray r, SCENE_ACCEL accel, thread const Scen
 
 // View "Visibility buffer": each chunk in a colour of its own, shaded by its normal; magenta where the primary ray
 // traced what the raster doesn't draw, black for the sky (and everywhere with the primary visibility traced); a magenta
-// frame around it when the primary rays were traced too.
+// frame around it when the primary rays were traced too. Pixels the software rasterizer drew lean to green.
 kernel void rasterDebugKernel(constant Uniforms&               u           [[buffer(0)]],
+                              constant uint&                   withSoftware [[buffer(7)]],
+                              device const ulong*              software    [[buffer(8)]],
                               texture2d<uint, access::read>    vis         [[texture(0)]],
                               texture2d<float, access::read>   normalDepth [[texture(1)]],
                               texture2d<float, access::write>  output      [[texture(2)]],
@@ -526,6 +544,9 @@ kernel void rasterDebugKernel(constant Uniforms&               u           [[buf
         uint h = pcgHash(ids.x * 0x9E3779B9u ^ (ids.y / RASTER_CHUNK));
         float3 hue = float3(float(h & 0xFFu), float((h >> 8) & 0xFFu), float((h >> 16) & 0xFFu)) * (1.0f / 255.0f);
         c = (0.35f + 0.65f * hue) * (0.45f + 0.55f * abs(dot(nd.xyz, normalize(float3(0.4f, 0.8f, 0.45f)))));
+        if (withSoftware != 0u && (ids.y & RASTER_CLUSTER_ID) != 0u && uint(software[tid.y * u.width + tid.x]) == ids.y) {
+            c = mix(c, float3(0.1f, 0.95f, 0.2f), 0.6f);
+        }
     }
     output.write(float4(c, 1.0f), tid);
 }

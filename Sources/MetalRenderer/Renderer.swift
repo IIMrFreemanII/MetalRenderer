@@ -3599,6 +3599,11 @@ final class Renderer: NSObject {
             bind(enc, .rasterDebug, c.uniforms)
             enc.setTexture(plan.raster?.targets.visibility, index: 0)
             enc.setBuffer(plan.raster?.targets.counters, offset: 0, index: 13)
+            // Which pixels the software rasterizer drew (tinted), when it ran.
+            let software = plan.raster?.scene.virtualClusters == true ? plan.raster?.targets.software : nil
+            var withSoftware: UInt32 = software != nil ? 1 : 0
+            enc.setBuffer(software ?? plan.raster?.targets.counters, offset: 0, index: 8)
+            enc.setBytes(&withSoftware, length: 4, index: 7)
             enc.setTexture(t.normalDepth[cur], index: 1)
             enc.setTexture(t.geometryDebug, index: 2)
             dispatch(enc, .rasterDebug, width: size.width, height: size.height)
@@ -5031,12 +5036,14 @@ final class Renderer: NSObject {
     }
 
     private func rasterTargets(width: Int, height: Int, scene rs: RasterScene) -> RasterTargets? {
+        let software = settings.virtualGeometry.raster == .software
         if let r = rasterTargets, r.width == width, r.height == height, r.maxGroups >= rs.instanceCount + r.maxDraws / 64 + 1,
-           r.maxDraws >= min(rs.chunkCount, 1 << 22) {
+           r.maxDraws >= min(rs.chunkCount, 1 << 22), (r.software != nil) == software {
             return r
         }
         rasterTargets = nil   // (the old ones go first: a size change can be large)
-        rasterTargets = try? RasterTargets(device: device, width: width, height: height, chunks: rs.chunkCount, instances: rs.instanceCount)
+        rasterTargets = try? RasterTargets(device: device, width: width, height: height, chunks: rs.chunkCount, instances: rs.instanceCount,
+                                           software: software)
         return rasterTargets
     }
 
@@ -5065,8 +5072,10 @@ final class Renderer: NSObject {
         let clusters = rs.virtualClusters ? rasterClusters : nil
         params.virtualCount = UInt32(clusters?.instanceCount ?? 0)
         let meshPipeline = settings.virtualGeometry.raster == .mesh ? pipelines.clusterMesh : nil
+        // The small clusters rasterized in software (RasterVirtual.software): into rt.software, resolved after pass 2.
+        let software = clusters != nil ? rt.software : nil
         let vgParams = clusters?.params(view: detailView(height: plan.size.height), previous: rt.prevFrame == frameIndex &- 1,
-                                        mesh: meshPipeline != nil)
+                                        mesh: meshPipeline != nil, software: software != nil)
         let pages = clusters?.streamer.bindPages(slot: slot)
         let resources = rasterResources(slot: slot)
         let group = MTLSize(width: 64, height: 1, depth: 1)
@@ -5105,6 +5114,10 @@ final class Renderer: NSObject {
                 enc.setBuffer(clusters.requests(slot: slot), offset: 0, index: 28)
                 enc.setBuffer(clusters.streamer.requestStamp, offset: 0, index: 29)
                 enc.setBuffer(clusters.streamer.lastUsed, offset: 0, index: 30)
+                // The software rasterizer's list and depths (the state stands in for the list without it: the cut's
+                // and the retest's argument, which they then don't touch).
+                enc.setBuffer(software != nil ? clusters.software(slot: slot) : clusters.state(slot: slot), offset: 0, index: 7)
+                if let software { enc.setBuffer(software, offset: 0, index: 8) }
             }
         }
 
@@ -5120,6 +5133,11 @@ final class Renderer: NSObject {
                 }
                 enc.setComputePipelineState(pipelines[.rasterReset])
                 enc.dispatchThreads(MTLSize(width: max(16, Int(params.virtualCount)), height: 1, depth: 1), threadsPerThreadgroup: group)
+                if software != nil {   // nothing drawn in software yet: its counters and depths
+                    enc.setComputePipelineState(pipelines[.rasterSWClear])
+                    enc.dispatchThreads(MTLSize(width: max(rt.width * rt.height, RasterClusters.softwareHeader), height: 1, depth: 1),
+                                        threadsPerThreadgroup: group)
+                }
             }
             enc.setComputePipelineState(pipelines[.rasterCull])
             enc.dispatchThreads(MTLSize(width: max(rs.instanceCount, 1), height: 1, depth: 1), threadsPerThreadgroup: group)
@@ -5132,6 +5150,16 @@ final class Renderer: NSObject {
                 if meshPipeline != nil {
                     enc.setComputePipelineState(pipelines[.rasterVGMeshArgs])
                     enc.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+                }
+                // The pass's small clusters, a threadgroup each, into the software depths (the draw below doesn't
+                // touch them, nor they its targets).
+                if software != nil {
+                    enc.setComputePipelineState(pipelines[.rasterSWArgs])
+                    enc.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+                    enc.setComputePipelineState(pipelines[.rasterSW])
+                    enc.dispatchThreadgroups(indirectBuffer: clusters.software(slot: slot),
+                                             indirectBufferOffset: RasterClusters.softwareArgsOffset(pass: pass),
+                                             threadsPerThreadgroup: MTLSize(width: RasterScene.chunk, height: 1, depth: 1))
                 }
             }
             enc.setComputePipelineState(pipelines[.rasterChunks])
@@ -5173,6 +5201,9 @@ final class Renderer: NSObject {
                 enc.setComputePipelineState(pipelines[.hzbInit])
                 enc.setTexture(rt.depth, index: 0)
                 enc.setTexture(pyramid, index: 1)
+                var withSoftware: UInt32 = software != nil ? 1 : 0   // (its depths count too)
+                enc.setBuffer(software ?? rt.counters, offset: 0, index: 0)
+                enc.setBytes(&withSoftware, length: 4, index: 1)
                 dispatch(enc, .hzbInit, width: pyramid.width, height: pyramid.height)
                 enc.setComputePipelineState(pipelines[.hzbReduce])
                 enc.setTexture(pyramid, index: 0)
@@ -5183,6 +5214,18 @@ final class Renderer: NSObject {
                 }
                 passes.endCompute()
             }
+        }
+        // The software rasterizer's triangles where they are in front of the draws': into the visibility buffer.
+        if let software, let clusters, var p = vgParams, let enc = passes.compute("raster resolve", serial: true) {
+            enc.useResources([clusters.listBuffers[slot]], usage: .read)
+            enc.setComputePipelineState(pipelines[.rasterSWResolve])
+            enc.setTexture(rt.depth, index: 0)
+            enc.setTexture(rt.visibility, index: 1)
+            enc.setBuffer(software, offset: 0, index: 8)
+            enc.setBytes(&p, length: MemoryLayout<RasterClusters.Params>.stride, index: 21)
+            enc.setBuffer(clusters.listBuffers[slot], offset: 0, index: 27)
+            dispatch(enc, .rasterSWResolve, width: rt.width, height: rt.height)
+            passes.endCompute()
         }
         rt.prevFrame = clusters != nil ? frameIndex : .max
     }

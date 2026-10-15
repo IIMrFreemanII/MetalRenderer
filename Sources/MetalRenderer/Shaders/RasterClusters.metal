@@ -19,7 +19,7 @@ struct RasterVGParams {
     uint   frame;
     uint   requestCapacity;
     uint   flags;          // RVG_P_*
-    uint   pad;
+    float  softwareSide;   // RVG_P_SOFTWARE: a cluster whose screen box is at most this many pixels a side
 };
 static_assert(sizeof(RasterVGParams) == 48, "RasterVGParams: RasterClusters.Params");
 
@@ -45,6 +45,11 @@ static_assert(sizeof(VGGroupRecord) == 32, "VGGroupRecord: RasterClusters.groupR
 constant uint RVG_DRAWN = 0, RVG_REQUESTS = 1, RVG_OVERFLOW = 2, RVG_TRIANGLES = 3, RVG_RETESTS = 4;
 constant uint RVG_P_PREV = 1;   // RasterVGParams.flags: the last frame's pyramid holds what it drew (this size, this scene)
 constant uint RVG_P_MESH = 2;   // drawn by rasterClusterMesh (a threadgroup an entry) rather than in the draw lists' slots
+constant uint RVG_P_SOFTWARE = 4;   // the small ones rasterized in software (RasterSoftware.metal), the rest drawn
+// The software rasterizer's list (RasterClusters.software, RasterClusters.softwareHeader words of header): its entries
+// so far (both passes), pass 1's count (pass 2's first), their triangles, each pass's threadgroups
+// (MTLDispatchThreadgroupsIndirectArguments) at RSW_ARGS + 4 x pass; then the entries (the cluster list's).
+constant uint RSW_COUNT = 0, RSW_BASE = 1, RSW_TRIANGLES = 2, RSW_ARGS = 4, RSW_ENTRIES = 16;
 // Mesh shaders: the first entry of pass 2's clusters (pass 1's are the ones before it), then each pass's threadgroups
 // (MTLDispatchThreadgroupsIndirectArguments) at RVG_MESH_ARGS + 3 x pass.
 constant uint RVG_MESH_BASE = 8, RVG_MESH_ARGS = 9;
@@ -58,10 +63,12 @@ inline device uint4* rvgRetests(device uint2* requests, constant RasterVGParams&
     return (device uint4*)(requests + p.requestCapacity);
 }
 
-// Appends a picked, visible cluster to the frame's list and the pass's draws, asking for its finer group if it wants it.
-inline void rvgDraw(VGCluster cl, uint page, uint vi, uint instance, float own, bool wantFiner, constant RasterVGParams& p,
+// Appends a picked, visible cluster to the frame's list and the pass's draws (or, `side` small enough, the software
+// rasterizer's list), asking for its finer group if it wants it.
+inline void rvgDraw(VGCluster cl, uint page, uint vi, uint instance, float own, bool wantFiner, float side, constant RasterVGParams& p,
                     constant RasterParams& rp, device RasterCounters* counters, device uint4* draws, device atomic_uint* state,
-                    device const float4* pool, device uint2* list, device uint2* requests, device atomic_uint* requestStamp) {
+                    device const float4* pool, device uint2* list, device uint2* requests, device atomic_uint* requestStamp,
+                    device atomic_uint* sw) {
     if (wantFiner && atomic_exchange_explicit(&requestStamp[cl.childGroup], p.frame, memory_order_relaxed) != p.frame) {
         uint q = atomic_fetch_add_explicit(&state[RVG_REQUESTS], 1u, memory_order_relaxed);
         if (q < p.requestCapacity) requests[q] = uint2(cl.childGroup, as_type<uint>(own));
@@ -76,6 +83,12 @@ inline void rvgDraw(VGCluster cl, uint page, uint vi, uint instance, float own, 
     uint at = page + cl.pageOffset / 16u;
     list[k] = uint2(as_type<uint>(cl.lo.w), at);   // (its error: traceKernel's offset)
     rvgOwners(list, p)[k] = uint2(vi, instance);
+    if ((p.flags & RVG_P_SOFTWARE) != 0u && side <= p.softwareSide) {   // (fewer than the list's: room)
+        uint s = atomic_fetch_add_explicit(&sw[RSW_COUNT], 1u, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sw[RSW_TRIANGLES], cl.triangles, memory_order_relaxed);
+        ((device uint*)sw)[RSW_ENTRIES + s] = k;
+        return;
+    }
     if ((p.flags & RVG_P_MESH) != 0u) return;
     // Its positions (float4s) and its packed triangles (uints) in the pool (vgClusterView's offsets, bytes).
     uint4 offsets = ((device const uint4*)(pool + at))[1];
@@ -102,6 +115,7 @@ kernel void rasterVGCutKernel(constant Uniforms&             u            [[buff
                               device uint2*                  requests     [[buffer(28)]],   // (group, priority bits), then retests
                               device atomic_uint*            requestStamp [[buffer(29)]],
                               device uint*                   lastUsed     [[buffer(30)]],
+                              device atomic_uint*            sw           [[buffer(7)]],    // (RVG_P_SOFTWARE)
                               texture2d<float, access::read> hzb          [[texture(0)]],   // (this frame's: unused here)
                               texture2d<float, access::read> hzbPrev      [[texture(1)]],
                               uint gid [[thread_position_in_grid]])
@@ -142,8 +156,8 @@ kernel void rasterVGCutKernel(constant Uniforms&             u            [[buff
                 wantFiner = true;
             }
         }
-        float pixels;
-        if (!rasterBoxVisible(cl.lo.xyz, cl.hi.xyz, r, u, rp, hzb, false, pixels)) continue;   // out of view
+        float pixels, side;
+        if (!rasterBoxVisible(cl.lo.xyz, cl.hi.xyz, r, u, rp, hzb, false, pixels, side)) continue;   // out of view
         used = true;
         // Hidden last frame (or out of its view): pass 2 tests it against this frame's pyramid.
         if (prev && !rasterBoxVisible(cl.lo.xyz, cl.hi.xyz, last, u, rp, hzbPrev, true, pixels)) {
@@ -153,7 +167,7 @@ kernel void rasterVGCutKernel(constant Uniforms&             u            [[buff
                 continue;
             }
         }
-        rvgDraw(cl, page, lo, vi.instance, own, wantFiner, p, rp, counters, draws, state, vgPool, list, requests, requestStamp);
+        rvgDraw(cl, page, lo, vi.instance, own, wantFiner, side, p, rp, counters, draws, state, vgPool, list, requests, requestStamp, sw);
     }
     if (used) lastUsed[g] = p.frame;
 }
@@ -172,6 +186,7 @@ kernel void rasterVGRetestKernel(constant Uniforms&             u            [[b
                                  device uint2*                  list         [[buffer(27)]],
                                  device uint2*                  requests     [[buffer(28)]],
                                  device atomic_uint*            requestStamp [[buffer(29)]],
+                                 device atomic_uint*            sw           [[buffer(7)]],    // (RVG_P_SOFTWARE)
                                  texture2d<float, access::read> hzb          [[texture(0)]],
                                  uint t [[thread_position_in_grid]])
 {
@@ -179,10 +194,10 @@ kernel void rasterVGRetestKernel(constant Uniforms&             u            [[b
     uint4 e = rvgRetests(requests, p)[t];
     VGCluster cl = clusters[e.y];
     RasterInstance r = rvgRecords(state)[e.x];
-    float pixels;
-    if (!rasterBoxVisible(cl.lo.xyz, cl.hi.xyz, r, u, rp, hzb, (rp.flags & RASTER_P_HZB) != 0u, pixels)) return;
-    rvgDraw(cl, e.z, e.x, vinstances[e.x].instance, as_type<float>(e.w & ~1u), (e.w & 1u) != 0u, p, rp, counters, draws, state,
-            vgPool, list, requests, requestStamp);
+    float pixels, side;
+    if (!rasterBoxVisible(cl.lo.xyz, cl.hi.xyz, r, u, rp, hzb, (rp.flags & RASTER_P_HZB) != 0u, pixels, side)) return;
+    rvgDraw(cl, e.z, e.x, vinstances[e.x].instance, as_type<float>(e.w & ~1u), (e.w & 1u) != 0u, side, p, rp, counters, draws, state,
+            vgPool, list, requests, requestStamp, sw);
 }
 
 // Mesh shaders: the pass's threadgroups, one an entry it appended to the list (pass 1's start where pass 2's begin).

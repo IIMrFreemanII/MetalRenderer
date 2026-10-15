@@ -36,6 +36,13 @@ final class RasterClusters {
     private var counterBuffers: [MTLBuffer] = []   // per slot: drawn, requests, overflow, triangles (MSL RasterVGCounters)
     private var requestBuffers: [MTLBuffer] = []
     private(set) var listBuffers: [MTLBuffer] = []
+    /// Per slot: the clusters the software rasterizer draws (RasterVirtual.software): counters and both passes' indirect
+    /// arguments (RSW_* words), then the entries.
+    private var softwareBuffers: [MTLBuffer] = []
+    static let softwareHeader = 16   // words
+    /// A cluster whose screen box is at most this many pixels on a side is rasterized in software (Nanite's choice by
+    /// size): `METALRENDERER_RASTER_SW_PX`. Its triangles are then a few pixels each at the cut's error.
+    static let softwareSide = Float(ProcessInfo.processInfo.environment["METALRENDERER_RASTER_SW_PX"] ?? "") ?? 32
     // The shadow maps' clusters (vsmVGCutKernel): per slot, which virtual instances' meshes got groups this frame, the
     // shadow maps' own requests (a count, then pairs), and their records per (active view, virtual instance).
     private var changedBuffers: [MTLBuffer] = []
@@ -44,7 +51,7 @@ final class RasterClusters {
     private let meshOfInstance: [Int]
     private let device: MTLDevice
     private let lock = NSLock()
-    private var counts = (drawn: 0, triangles: 0, overflow: false, retested: 0)
+    private var counts = (drawn: 0, triangles: 0, overflow: false, retested: 0, software: 0, softwareTriangles: 0)
     private var cameraDraws = false   // the last collected frame's raster drew them (else the shadow maps only)
     var drawnByCamera: Bool { lock.lock(); defer { lock.unlock() }; return cameraDraws }
 
@@ -102,6 +109,9 @@ final class RasterClusters {
             requestBuffers.append(try buffer(RasterClusters.requestCapacity * 8 + RasterClusters.capacity * 16, "rasterVGRequests\(slot)"))
             // The entries (selfError, pool offset), then each entry's virtual instance and scene instance.
             listBuffers.append(try buffer(RasterClusters.capacity * 16, "rasterVGList\(slot)"))
+            let software = try buffer(RasterClusters.softwareHeader * 4 + RasterClusters.capacity * 4, "rasterVGSoftware\(slot)")
+            memset(software.contents(), 0, RasterClusters.softwareHeader * 4)   // (collect reads it in every mode)
+            softwareBuffers.append(software)
             changedBuffers.append(try buffer(4 * instances.count, "rasterVGChanged\(slot)"))
             vsmRequestBuffers.append(try buffer(16 + RasterClusters.requestCapacity * 8, "rasterVGShadowRequests\(slot)"))
             vsmRecordBuffers.append(nil)
@@ -115,24 +125,30 @@ final class RasterClusters {
     struct Params {
         var lodCam: SIMD4<Float>        // xyz = where detail is chosen for, w = pixels per unit of error at distance 1
         var tau: Float
-        var workCount, instanceCount, capacity, frame, requestCapacity, flags, pad: UInt32
+        var workCount, instanceCount, capacity, frame, requestCapacity, flags: UInt32
+        var softwareSide: Float           // with `software`: the largest screen box side (pixels) rasterized in software
         static let previous: UInt32 = 1   // the last frame's depth pyramid is there to test against (RVG_P_PREV)
         static let mesh: UInt32 = 2       // drawn by mesh shaders (RVG_P_MESH)
+        static let software: UInt32 = 4   // small clusters rasterized in software (RVG_P_SOFTWARE)
     }
+    /// The software rasterizer's indirect arguments for `pass`, in its buffer (RSW_ARGS words in).
+    static func softwareArgsOffset(pass: Int) -> Int { (4 + 4 * pass) * 4 }
     /// Mesh shaders' indirect arguments in the state, per pass (RVG_MESH_ARGS words in).
     static func meshArgsOffset(pass: Int) -> Int { (9 + 3 * pass) * 4 }
 
-    func params(view: VGView, previous: Bool, mesh: Bool) -> Params {
+    func params(view: VGView, previous: Bool, mesh: Bool, software: Bool = false) -> Params {
         Params(lodCam: SIMD4(view.camPos, view.pixelScale), tau: view.tau, workCount: UInt32(workCount),
                instanceCount: UInt32(instanceCount), capacity: UInt32(RasterClusters.capacity), frame: view.frame,
                requestCapacity: UInt32(RasterClusters.requestCapacity),
-               flags: (previous ? Params.previous : 0) | (mesh ? Params.mesh : 0), pad: 0)
+               flags: (previous ? Params.previous : 0) | (mesh ? Params.mesh : 0) | (software ? Params.software : 0),
+               softwareSide: RasterClusters.softwareSide)
     }
 
     /// The frame's state: counters, then per virtual instance the RasterInstance the raster's culling left it and
     /// whether it is in view.
     func state(slot: Int) -> MTLBuffer { counterBuffers[slot] }
     func requests(slot: Int) -> MTLBuffer { requestBuffers[slot] }
+    func software(slot: Int) -> MTLBuffer { softwareBuffers[slot] }
 
     /// The frame that used `slot` has finished on the GPU: collect its requests (any thread).
     /// `camera`, `shadows`: the raster's cut, the shadow maps' cut ran in that frame (their counters are its).
@@ -149,9 +165,11 @@ final class RasterClusters {
             streamer.addRequests(v.advanced(by: 16).bindMemory(to: SIMD2<UInt32>.self, capacity: RasterClusters.requestCapacity),
                                  count: vn, frame: frame)
         }
+        let sw = softwareBuffers[slot].contents().bindMemory(to: UInt32.self, capacity: 3)   // (zero unless it ran)
         lock.lock()
-        counts = camera ? (min(Int(c[0]), RasterClusters.capacity), Int(c[3]), c[2] != 0, min(Int(c[4]), RasterClusters.capacity))
-                        : (0, 0, false, 0)
+        counts = camera ? (min(Int(c[0]), RasterClusters.capacity), Int(c[3]), c[2] != 0, min(Int(c[4]), RasterClusters.capacity),
+                           min(Int(sw[0]), RasterClusters.capacity), Int(sw[2]))
+                        : (0, 0, false, 0, 0, 0)
         cameraDraws = camera
         lock.unlock()
     }
@@ -185,7 +203,7 @@ final class RasterClusters {
     /// What the raster's kernels and vertices, and the trace, reach in this frame's slot.
     func resources(slot: Int) -> [MTLResource] {   // (the shadow maps' come with shadowArgs)
         [streamer.pool, streamer.clusterBuffer, streamer.requestStamp, streamer.lastUsed, streamer.pageTable(slot: slot),
-         vinstances, groupRecords, counterBuffers[slot], requestBuffers[slot], listBuffers[slot]]
+         vinstances, groupRecords, counterBuffers[slot], requestBuffers[slot], listBuffers[slot], softwareBuffers[slot]]
     }
 
     var summary: String {
@@ -194,8 +212,10 @@ final class RasterClusters {
             return String(format: "Raster clusters (the shadow maps'): %d groups resident (%.0f MB of %d), %d requests waiting",
                           s.residentGroups, streamer.residentMB, streamer.poolBytes >> 20, s.pending)
         }
-        return String(format: "Raster clusters: %d triangles in %d clusters drawn%@ (%d held back for the second pass), %d groups resident (%.0f MB of %d), %d requests waiting",
-                      s.triangles, s.drawn, s.overflow ? " (capacity reached)" : "", s.retested, s.residentGroups, streamer.residentMB,
+        lock.lock(); let sw = (clusters: counts.software, triangles: counts.softwareTriangles); lock.unlock()
+        let software = sw.clusters == 0 ? "" : String(format: " (%d triangles in %d in software)", sw.triangles, sw.clusters)
+        return String(format: "Raster clusters: %d triangles in %d clusters drawn%@%@ (%d held back for the second pass), %d groups resident (%.0f MB of %d), %d requests waiting",
+                      s.triangles, s.drawn, software, s.overflow ? " (capacity reached)" : "", s.retested, s.residentGroups, streamer.residentMB,
                       streamer.poolBytes >> 20, s.pending)
     }
 }

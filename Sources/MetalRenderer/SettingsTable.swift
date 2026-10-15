@@ -485,6 +485,7 @@ enum SettingsTable {
                 .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
             S.popup("Primary visibility", \.primary, titled(\.title)).env(.primary),
             S.popup("Raster virtual geometry", \.virtualGeometry.raster, titled(\.title)).env(.rasterVG)
+                .available { RasterVirtual.allCases[$0] != .software || Capabilities.current.atomics64 }
                 .enabled { virtual($0) && $0.primary == .raster }.advanced(),
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,

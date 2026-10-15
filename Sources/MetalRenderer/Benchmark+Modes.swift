@@ -932,13 +932,14 @@ extension Benchmark {
     }
 
     /// Virtual geometry in the raster visibility buffer: traced, drawn from the BLAS, and as clusters (RasterClusters,
-    /// by vertex pulling and by mesh shaders),
+    /// by vertex pulling, by mesh shaders, and with the small ones in software),
     /// in the gallery (overview and close-up) and a showcase model. Stills with GI and with direct light alone (where a
     /// ray from a drawn cluster that meets its own BLAS shows: compare METALRENDERER_RASTER_VG_BIAS=0), the visibility
     /// buffer, cluster and LOD views, camera moves, and a small pool that has to evict.
     private static func rasterVG() -> [Config] {
         let paths: [(String, PrimaryVisibility, RasterVirtual)] = [("traced", .traced, .blas), ("blas", .raster, .blas),
-                                                                   ("clusters", .raster, .clusters), ("mesh", .raster, .mesh)]
+                                                                   ("clusters", .raster, .clusters), ("mesh", .raster, .mesh),
+                                                                   ("software", .raster, .software)]
         let model = Scene.galleryFiles().map(Scene.showcaseName).first
         var scenes: [(String, SceneSettings, Camera?)] = [("gallery", SceneSettings(kind: .gallery), nil),
                                                           ("closeup", SceneSettings(kind: .gallery), galleryCloseup)]
@@ -963,6 +964,8 @@ extension Benchmark {
             out.append(config("\(tag) visibility buffer", scene, camera, clusters).view(RenderSettings.visibilityBufferView).still().frames(8))
             out.append(config("\(tag) clusters view", scene, camera, clusters).view(9).still().frames(8))
             out.append(config("\(tag) lod view", scene, camera, clusters).view(11).still().frames(8))
+            out.append(config("\(tag) software visibility buffer", scene, camera, paths[4])   // (software pixels tinted)
+                .view(RenderSettings.visibilityBufferView).still().frames(8))
         }
         for path in paths { out.append(config("gallery camera \(path.0)", SceneSettings(kind: .gallery), nil, path).cameraMove()) }
         for path in paths.dropFirst() {

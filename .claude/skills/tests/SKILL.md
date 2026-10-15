@@ -108,6 +108,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `VirtualTracing` (virtual geometry in Metal's structures) | VGCutTests, VGStreamerTests (+ prove with images: no suite traces it) |
 | `TraceScene`, `Renderer` | none: prove with images (the offscreen skill) |
 | `VirtualBLAS` (its cut, the reference), `Shaders/RasterClusters.metal`, `Shaders/Raster.metal`, `Shaders/VirtualGeometry.metal` | VGCutTests (the shaders: plus the shader pair) |
+| `Shaders/RasterSoftware.metal`, `Shaders/Raster.metal`, `Shaders/RasterClusters.metal`, `RasterClusters`, `Capabilities` (the software rasterizer, its fallback) | SoftwareRasterTests |
 | `Tests/MetalRendererTests/XTests.swift` | XTests |
 | `Package.swift`, a shared test helper | all suites: the one case where the full run is right |
 

@@ -48,6 +48,7 @@ enum Kernel: Int, CaseIterable {
     // Virtual geometry: the per-frame cut, and its clusters' boxes (METALRENDERER_VG_MODE=clusters).
     case vgReset, vgCut, vgBoxes
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
+    case rasterSWClear, rasterSWArgs, rasterSW, rasterSWResolve   // ...their software rasterizer (64-bit atomics)
     case vsmVGCut               // ...in the shadow maps
     case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
     case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
@@ -397,7 +398,9 @@ struct Pipelines {
     static func compile(device: MTLDevice, text source: String, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
         let options = MTLCompileOptions()
         if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
-        options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0)]
+        // RASTER_SOFTWARE: the software rasterizer's 64-bit atomics (RasterSoftware.metal), which only Apple8 GPUs have.
+        options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0),
+                                      "RASTER_SOFTWARE": NSNumber(value: device.supportsFamily(.apple8) ? 1 : 0)]
         // Fast math is the default (relaxed cost ~0.2 ms a frame in the old stress hall and rendered the same image);
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
         // `safe` also keeps the order of every operation: a kernel's variants then compute bit for bit what its

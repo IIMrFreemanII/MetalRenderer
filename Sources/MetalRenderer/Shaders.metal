@@ -44,6 +44,7 @@ using namespace metal::raytracing;
 #include "Shaders/Lumen.metal"             // the Lumen GI mode: screen probes (uses the cascades' probe weight and SH)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its clusters' boxes (vg* kernels)
 #include "Shaders/RasterClusters.metal"    // the raster clusters: virtual geometry's cut, culled and drawn as Nanite does
+#include "Shaders/RasterSoftware.metal"    // ...the small ones rasterized in a compute shader (64-bit atomics)
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices and vertices (crowd* kernels)
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
 #include "Shaders/Fluid.metal"             // liquids: PBF and MLS-MPM, their pour and their pushes on bodies (fluid* kernels)
