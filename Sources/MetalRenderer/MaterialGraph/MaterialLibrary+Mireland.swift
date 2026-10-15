@@ -3,12 +3,13 @@ import simd
 
 /// Mireland: the swamp materials of the collection "Welcome to Mireland" (Sherif Dawoud, Substance 3D Assets),
 /// made again as our own graphs by eye from its previews (no file of theirs is read). Six tile: the mud, the gnarly and
-/// the birch bark, the loose dirt, the dead grass, the swamp's water with its duckweed. Five are cut out (an opacity
-/// output: a card or a decal on the ground): the mud's cracked crust, a puddle, fallen leaves, a clump of grass blades
-/// and a leafy stem. The Mireland scene (Scene+Mireland.swift) puts them all in a swamp.
+/// the birch bark, the loose dirt, the dead grass, the swamp's water with its duckweed. Six are cut out (an opacity
+/// output: a card or a decal on the ground): the mud's cracked crust, a puddle, fallen leaves, a clump of grass blades,
+/// a leafy stem, and the duckweed alone (floating on the scene's water). The Mireland scene (Scene+Mireland.swift) puts them all in a swamp.
 extension MaterialLibrary {
     static let mireland: [MaterialGraph] = [swampMud(), swampMudCracks(), swampMudPuddle(), swampGnarlyBark(), swampBirchBark(),
-                                            swampLooseDirt(), swampDeadGrass(), swampGround(), swampLeaves(), swampGrassBlades(), swampPlant()]
+                                            swampLooseDirt(), swampDeadGrass(), swampGround(), swampLeaves(), swampGrassBlades(), swampPlant(),
+                                            swampDuckweed()]
 
     /// Grey-brown mud, lumpy, with pebbles pressed in, wet and dark in its hollows, flecked with algae.
     static func swampMud() -> MaterialGraph {
@@ -230,6 +231,34 @@ extension MaterialLibrary {
         b.output(.height, height)
         b.output(.normal, b.node(.normal, ["intensity": .float(0.8)], ["in": height]))
         b.set { $0.surface.heightDepth = 0.004 }
+        return b.graph
+    }
+
+    /// What floats on the swamp's water (the scene's water is Water.metal's: this lies on it), Swamp Ground's duckweed
+    /// rafts and twigs alone, cut out where the water is open.
+    static func swampDuckweed() -> MaterialGraph {
+        var b = MatBuilder("Swamp Duckweed")
+        let weed = b.node(.tileSampler, ["columns": .int(80), "rows": .int(80), "kind": .choice("disc"), "size": .float(0.75),
+                                         "sizeRandom": .float(0.5), "positionRandom": .float(1), "lumRandom": .float(0.35), "seed": .int(11)])
+        let drift = b.node(.fractalSum, ["scale": .int(4), "octaves": .int(6), "roughness": .float(0.55), "seed": .int(13)])
+        let rafts = b.node(.histogramScan, ["position": .float(0.42), "contrast": .float(0.6)], ["in": drift])
+        let floating = b.node(.blend, ["mode": .choice("multiply")], ["fg": rafts, "bg": weed])
+        let weedMask = b.node(.histogramScan, ["position": .float(0.9), "contrast": .float(0.95)], ["in": floating])
+        let twigs = b.node(.fibers, ["count": .int(2), "length": .float(0.3), "width": .float(0.005), "angle": .float(0), "angleRandom": .float(1),
+                                     "curvature": .float(0.1), "scale": .int(4), "seed": .int(17)])
+        let twigMask = b.node(.histogramScan, ["position": .float(0.9), "contrast": .float(0.9)], ["in": twigs])
+        let green = b.node(.gradientMap, ["gradient": gradient((0, [0.16, 0.25, 0.05]), (1, [0.42, 0.52, 0.12]))], ["in": weed])
+        let wood = b.node(.uniformColor, ["color": rgb(0.2, 0.15, 0.09)])
+        let color = b.node(.blend, ["mode": .choice("copy")], ["fg": wood, "bg": green, "mask": twigMask])
+        let leafy = b.node(.uniform, ["value": .float(0.55)]), bark = b.node(.uniform, ["value": .float(0.75)])
+        let rough = b.node(.blend, ["mode": .choice("copy")], ["fg": bark, "bg": leafy, "mask": twigMask])
+        let height = b.node(.blend, ["mode": .choice("lighten")], ["fg": twigs, "bg": floating])
+        b.output(.baseColor, color)
+        b.output(.roughness, rough)
+        b.output(.height, height)
+        b.output(.normal, b.node(.normal, ["intensity": .float(0.8)], ["in": height]))
+        b.output(.opacity, b.node(.blend, ["mode": .choice("lighten")], ["fg": twigMask, "bg": weedMask]))
+        b.set { $0.surface.heightDepth = 0.004; $0.surface.alphaCutoff = 0.5 }
         return b.graph
     }
 

@@ -5,6 +5,10 @@ import QuartzCore
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
     case trace, glass, liquid, liquidApply, geometryDebug, lightMap
+    case water, waterApply   // water's surface over the trace (Shaders/Water.metal)
+    case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
+    case waterNear              // the near patch's vertices, moved by the waves
+    case waterCaustics          // the sun's caustics under the waves
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
@@ -17,6 +21,7 @@ enum Kernel: Int, CaseIterable {
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case composite, accumulateColor, tonemap
+    case taaResolve             // temporal AA without upscaling (Post.metal)
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
     case crowdPose, crowdSkin, crowdHair   // the crowd's pose slots: skinning matrices, vertices, hair (CrowdSkinner)
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.

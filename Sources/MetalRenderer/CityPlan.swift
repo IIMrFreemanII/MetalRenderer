@@ -65,6 +65,16 @@ struct CityPlan {
         var along: Int
     }
 
+    /// The canal (CitySettings.canal): the avenue it took the place of (quay to quay) and its water between the quays.
+    struct Canal {
+        var rect: Rect
+        var water: Rect
+    }
+    /// The canal's avenue is this much wider than it was; its quays are `quay` wide.
+    static let canalExtra: Float = 16, quay: Float = 4
+    /// How far under the streets its water is, and its bed.
+    static let canalLevel: Float = 1.5, canalBed: Float = 4
+
     struct Lamp {
         var position: SIMD2<Float>
         var toRoad: SIMD2<Float>        // unit, from the pole to the road it lights
@@ -89,6 +99,8 @@ struct CityPlan {
     private(set) var courtTrees: [SIMD3<Float>] = []
     /// The streets and everything inside them.
     private(set) var extent = Rect(lo: .zero, hi: .zero)
+    /// The canal along x through the city's middle, if it has one.
+    private(set) var canal: Canal?
 
     init(_ settings: CitySettings, seed: Int = 1) {
         self.settings = settings
@@ -101,13 +113,18 @@ struct CityPlan {
             (0...count).map { i in count >= 4 && i == count / 2 ? 15 : count >= 8 && i % 4 == count / 2 % 4 ? 12 : 9 }
         }
         let widths = (0..<n).map { _ in rng.range(58, 84) }, depths = (0..<n).map { _ in rng.range(46, 64) }
-        let roadsX = roads(n), roadsZ = roads(n)
+        let roadsX = roads(n), plainZ = roads(n)
+        // The canal: the middle avenue along x made wider (quays and water). Where the blocks are out from the middle
+        // (`ring`, which picks their districts and lots) is as it would be without it, so the city's lots stay the same.
+        let canalRow = settings.canal && n >= 4 ? n / 2 : nil
+        var roadsZ = plainZ
+        if let row = canalRow { roadsZ[row] += CityPlan.canalExtra }
         func starts(_ sizes: [Float], _ roads: [Float]) -> (lo: [Float], total: Float) {
             var at = roads[0], lo: [Float] = []
             for i in sizes.indices { lo.append(at); at += sizes[i] + roads[i + 1] }
             return (lo.map { $0 - at / 2 }, at)
         }
-        let (x0, totalX) = starts(widths, roadsX), (z0, totalZ) = starts(depths, roadsZ)
+        let (x0, totalX) = starts(widths, roadsX), (z0, totalZ) = starts(depths, roadsZ), (plainZ0, plainTotalZ) = starts(depths, plainZ)
         extent = Rect(lo: SIMD2(-totalX / 2, -totalZ / 2), hi: SIMD2(totalX / 2, totalZ / 2))
         for i in 0...n {   // the roads running along z, then the ones along x
             let lo = i < n ? x0[i] - roadsX[i] : extent.hi.x - roadsX[n]
@@ -116,7 +133,15 @@ struct CityPlan {
         for j in 0...n {
             let lo = j < n ? z0[j] - roadsZ[j] : extent.hi.y - roadsZ[n]
             streets.append(Street(rect: Rect(lo: SIMD2(extent.lo.x, lo), hi: SIMD2(extent.hi.x, lo + roadsZ[j])), along: 0))
+            if j == canalRow {
+                let r = streets[streets.count - 1].rect
+                canal = Canal(rect: r, water: Rect(lo: r.lo + SIMD2(0, CityPlan.quay), hi: r.hi - SIMD2(0, CityPlan.quay)))
+            }
         }
+        // (The blocks' places without the canal: what their rings are of.)
+        let plainExtent = Rect(lo: SIMD2(-totalX / 2, -plainTotalZ / 2), hi: SIMD2(totalX / 2, plainTotalZ / 2))
+        var plainCenters: [SIMD2<Float>] = []
+        for j in 0..<n { for i in 0..<n { plainCenters.append(SIMD2(x0[i] + widths[i] / 2, plainZ0[j] + depths[j] / 2)) } }
 
         // Districts: towers in the middle, old houses and warehouses at the edge; one block near the middle is a park.
         let mid = Float(n - 1) / 2
@@ -131,7 +156,7 @@ struct CityPlan {
         }
 
         for b in blocks.indices {
-            let ring = n == 1 ? 0.6 : simd_reduce_max(abs(blocks[b].rect.center / (extent.size / 2)))
+            let ring = n == 1 ? 0.6 : simd_reduce_max(abs(plainCenters[b] / (plainExtent.size / 2)))
             if !blocks[b].park { subdivide(block: b, ring: ring, &rng) }
             furnish(block: b, &rng)
         }

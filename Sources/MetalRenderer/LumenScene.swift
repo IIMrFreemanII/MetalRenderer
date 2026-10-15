@@ -226,6 +226,19 @@ final class LumenScene {
     deinit { cancel() }
     /// Waits for the bakes (benchmarks: their pictures don't depend on how long a bake takes).
     func waitForBakes() { LumenScene.queue.sync {} }
+
+    /// Field `m` baked again from new triangles (a terrain's sector a brush reshaped), in the background; it lands as
+    /// the first bakes do (`receive`: the global field composes again).
+    func rebake(field m: Int, positions: [SIMD3<Float>], indices: [UInt32]) {
+        guard meshRecords.indices.contains(m) else { return }
+        LumenScene.queue.async { [weak self] in
+            guard let self, !self.isCancelled else { return }
+            let baked = LumenScene.bake(positions: positions, indices: indices)
+            self.lock.lock()
+            self.inbox.append((m, baked))
+            self.lock.unlock()
+        }
+    }
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
     private var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
 
@@ -308,7 +321,7 @@ final class LumenScene {
         lock.unlock()
         guard !done.isEmpty else { return }
         for (m, result) in done {
-            baked += 1
+            baked = min(baked + 1, toBake)
             if LumenScene.log {
                 switch result {
                 case nil: print("Lumen field \(m): none")

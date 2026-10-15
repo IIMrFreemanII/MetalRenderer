@@ -66,6 +66,7 @@ extension GIMode: EnvNamed {
     var envName: String { ["pt", "cascades", "restir", "lumen"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
+extension Realism: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
@@ -98,6 +99,8 @@ extension CharacterSceneSettings.View: EnvNamed {}
 extension MaterialWorkshopSettings.Layout: EnvNamed {}
 extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
 extension PainterWorkshopSettings.Subject: EnvNamed {}
+extension TerrainWorkshopSettings.Base: EnvNamed {}
+extension TerrainWorkshopSettings.Size: EnvNamed { var envName: String { "\(metres)" } }
 extension FaceExpression: EnvNamed {}
 extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
@@ -376,6 +379,7 @@ enum SettingsTable {
             S.check("Generated textures", \.scene.city.textures).env(.scene, "textures").when(city),
             S.check("Windows as modules", \.scene.city.modules).env(.scene, "modules").when(city),
             S.check("Interiors near the camera", \.scene.city.interiors).env(.scene, "interiors").when(city),
+            S.check("Canal", \.scene.city.canal).env(.scene, "canal").when(city),
             S.slider("Interior reach", \.scene.city.interiorReach, 10...80, step: 5, live: false) { String(format: "%.0f m", $0) }
                 .env(.scene, "reach").when(city),
             S.value(\.scene.buildings.style).env(.scene, "bstyle"),
@@ -397,6 +401,15 @@ enum SettingsTable {
             S.value(\.scene.painterWorkshop.model).env(.scene, "pmodel"),
             S.value(\.scene.painterWorkshop.document).env(.scene, "pdocument"),
             S.popup("Backdrop", \.scene.painterWorkshop.backdrop, titled(\.title)).env(.scene, "pbackdrop").when { $0.scene.kind == .painter },
+            S.popup("Terrain size", \.scene.terrainWorkshop.size, titled(\.title)).env(.scene, "tsize").when { $0.scene.kind == .terrain },
+            S.popup("Starts from", \.scene.terrainWorkshop.base, titled(\.title)).env(.scene, "tbase").when { $0.scene.kind == .terrain },
+            S.slider("Terrain seed", \.scene.terrainWorkshop.seed, SceneSettings.seedRange, live: false).env(.scene, "tseed")
+                .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
+            S.slider("Bodies dropped", \.scene.terrainWorkshop.bodies, 0...400, live: false).env(.scene, "tbodies")
+                .when { $0.scene.kind == .terrain },
+            S.check("Sea", \.scene.terrainWorkshop.sea).env(.scene, "tsea")
+                .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
+            S.value(\.scene.terrainWorkshop.document).env(.scene, "tdocument"),
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
             S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),
@@ -464,6 +477,7 @@ enum SettingsTable {
             S.slider("Workshop seed", \.scene.plants.seed, SceneSettings.seedRange, live: false).env(.scene, "plantseed").when(workshop),
             S.popup("Layout", \.scene.plants.layout, titled(\.title)).env(.scene, "layout").when(workshop),
             S.popup("View", \.scene.plants.view, titled(\.title)).env(.scene, "view").when(workshop),
+            S.popup("Realistic look", \.scene.realism, titled(\.title)).env(.scene, "realism"),
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
             S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),
@@ -492,6 +506,10 @@ enum SettingsTable {
             S.slider("Depth of field", \.post.aperture, PostSettings.apertureRange, step: 0.5, fmt("%.1f px")).env(.post, "aperture"),
             S.slider("Focus distance", \.post.focus, PostSettings.focusRange, step: 0.1) { $0 == 0 ? "Auto" : String(format: "%.1f m", $0) }
                 .env(.post, "focus").enabled(focus),
+            S.check("Auto exposure", \.post.autoExposure).env(.post, "autoexposure"),
+            S.slider("Warmth", \.post.warmth, PostSettings.warmthRange, step: 0.02, fmt("%.2f")).env(.post, "warmth"),
+            S.slider("Saturation", \.post.saturation, PostSettings.saturationRange, step: 0.02, fmt("%.2f")).env(.post, "saturation"),
+            S.slider("Contrast", \.post.contrast, PostSettings.contrastRange, step: 0.02, fmt("%.2f")).env(.post, "contrast"),
             S.slider("Vignette", \.post.vignette, PostSettings.vignetteRange, step: 0.05, fmt("%.2f")).env(.post, "vignette"),
             S.slider("Film grain", \.post.grain, PostSettings.grainRange, step: 0.005, fmt("%.3f")).env(.post, "grain"),
             S.slider("Chromatic aberration", \.post.aberration, PostSettings.aberrationRange, step: 0.0005) { String(format: "%.2f%%", $0 * 100) }
@@ -591,6 +609,7 @@ enum SettingsTable {
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
+            S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),

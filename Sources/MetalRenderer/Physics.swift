@@ -95,6 +95,8 @@ final class PhysicsWorld {
     var bodies: [GPUPhysicsBody] = []
     private(set) var statics: [GPUPhysicsBody] = []
     private(set) var staticBounds: [AABB] = []
+    /// The statics that are heightfields (a terrain's sectors), in the order they were added.
+    private(set) var heightfields: [Int] = []
     /// The state at the start (what a replay starts from).
     private(set) var initialBodies: [GPUPhysicsBody] = []
     /// Per body, `maxPairs` entries (`pairCounts` of them used), and per entry `maxContacts` contacts.
@@ -283,6 +285,77 @@ final class PhysicsWorld {
         b.info = SIMD4(UInt32(s), 0, PhysicsWorld.none, 0)
         statics.append(b)
         staticBounds.append(shape.bounds(volumes: sdfVolumes).transformed(transform))
+    }
+
+    /// A static heightfield (a terrain's sector, in the scene): `side` samples (x, z) `cell` metres apart from `lo` (x, z),
+    /// rows along z. Its index among the statics (`updateHeightfield` changes its heights).
+    @discardableResult
+    func addStaticHeightfield(lo: SIMD2<Float>, cell: Float, side: SIMD2<Int>, heights: [Float], friction: Float = 0.7,
+                              restitution: Float = 0.1) -> Int {
+        precondition(heights.count == side.x * side.y && side.x > 1 && side.y > 1, "a height per sample")
+        var shape = GPUPhysicsShape(comPosition: SIMD4(Float(side.y), 1, 0, 0),
+                                    info: SIMD4(PhysicsShapeKind.heightfield.rawValue, UInt32(samples.count), 0, UInt32(samples.count)))
+        shape.params = SIMD4(lo.x, lo.y, cell, Float(side.x))
+        shape.comRotation = SIMD4(0, 0, 0, 1)
+        samples += PhysicsWorld.packHeights(heights)
+        shapes.append(shape)
+        let s = shapes.count - 1
+        shapes[s].comPosition.y = PhysicsWorld.slopeBound(heights, side: side, cell: cell)
+        var b = GPUPhysicsBody()
+        b.position = SIMD4(.zero, 0)
+        b.rotation = SIMD4(0, 0, 0, 1)
+        b.velocity = SIMD4(.zero, friction)
+        b.angular = SIMD4(.zero, restitution)
+        b.prevPosition = b.position
+        b.prevRotation = b.rotation
+        b.invInertia = SIMD4(.zero, 0)   // no bounding sphere: its box (staticBounds) is what the broad phase tests
+        b.info = SIMD4(UInt32(s), 0, PhysicsWorld.none, 0)
+        statics.append(b)
+        let lowest = heights.min() ?? 0, highest = heights.max() ?? 0
+        staticBounds.append(AABB(lo: SIMD3(lo.x, lowest - 1, lo.y),
+                                 hi: SIMD3(lo.x + cell * Float(side.x - 1), highest + 0.5, lo.y + cell * Float(side.y - 1))))
+        heightfields.append(statics.count - 1)
+        return statics.count - 1
+    }
+
+    /// Heightfield static `k`'s heights changed (a brush moved the ground): its samples, slope bound and box. The range
+    /// of `samples` that changed (the GPU's copy is written again there: PhysicsGPU.updateSamples).
+    @discardableResult
+    func updateHeightfield(_ k: Int, heights: [Float]) -> Range<Int> {
+        let s = Int(statics[k].info.x), shape = shapes[s]
+        let side = SIMD2(Int(shape.params.w), Int(shape.comPosition.x)), first = Int(shape.info.w)
+        guard heights.count == side.x * side.y else { return first..<first }
+        let packed = PhysicsWorld.packHeights(heights)
+        samples.replaceSubrange(first..<(first + packed.count), with: packed)
+        shapes[s].comPosition.y = PhysicsWorld.slopeBound(heights, side: side, cell: shape.params.z)
+        let b = staticBounds[k]
+        staticBounds[k] = AABB(lo: SIMD3(b.lo.x, (heights.min() ?? 0) - 1, b.lo.z), hi: SIMD3(b.hi.x, (heights.max() ?? 0) + 0.5, b.hi.z))
+        return first..<(first + packed.count)
+    }
+
+    private static func packHeights(_ heights: [Float]) -> [SIMD4<Float>] {
+        stride(from: 0, to: heights.count, by: 4).map { k in
+            SIMD4(heights[k], k + 1 < heights.count ? heights[k + 1] : 0, k + 2 < heights.count ? heights[k + 2] : 0,
+                  k + 3 < heights.count ? heights[k + 3] : 0)
+        }
+    }
+
+    /// 1 / sqrt(1 + steepest slope squared): a height over the ground times it is no more than the distance to it.
+    private static func slopeBound(_ h: [Float], side: SIMD2<Int>, cell: Float) -> Float {
+        var steepest: Float = 0
+        for j in 0..<side.y {
+            for i in 0..<side.x {
+                let k = j * side.x + i
+                if i + 1 < side.x { steepest = max(steepest, abs(h[k + 1] - h[k]) / cell) }
+                if j + 1 < side.y { steepest = max(steepest, abs(h[k + side.x] - h[k]) / cell) }
+            }
+        }
+        return 1 / (1 + steepest * steepest).squareRoot()
+    }
+
+    /// Every body awake (the ground under them moved).
+    func wakeAll() {
+        for i in bodies.indices { bodies[i].info.y &= ~PhysicsWorld.asleep }
     }
 
     /// An endless static plane through `point`, facing `normal`.

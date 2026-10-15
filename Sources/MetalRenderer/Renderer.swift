@@ -178,6 +178,29 @@ final class FogTargets {
     }
 }
 
+/// Temporal AA without upscaling (Post.metal taaResolveKernel), at the traced resolution: the composite's light, and
+/// the resolved light of this frame and the last, by FramePlan.cur.
+final class TAATargets {
+    let width: Int, height: Int
+    let input: MTLTexture
+    let history: [MTLTexture]
+
+    init(device: MTLDevice, width: Int, height: Int) throws {
+        self.width = width
+        self.height = height
+        func make(_ label: String) throws -> MTLTexture {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+            t.label = label
+            return t
+        }
+        input = try make("taa input")
+        history = [try make("taa history0"), try make("taa history1")]
+    }
+}
+
 /// The lens and the finish (Shaders/Post.metal), at the output resolution.
 final class PostTargets {
     let width: Int, height: Int
@@ -334,7 +357,7 @@ final class Renderer: NSObject {
 
     /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
-    private var pipelines: Pipelines!
+    private(set) var pipelines: Pipelines!
     private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
     private let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
@@ -379,7 +402,7 @@ final class Renderer: NSObject {
     private var textureTables: [MTLBuffer] = []       // per slot, their MTLResourceIDs (MSL MaterialTexture array):
                                                       // a slot's own, as a procedural material's bake replaces its texture
                                                       // in the slots one by one (applyProcedural)
-    private var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
+    private(set) var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
     private var shadingResources: [MTLResource] = []
     /// Procedural materials (Scene+Procedural): per slot their extras (MSL MaterialExtra) and the instances' alpha tests
     /// (TraceScene.opacity), written when the scene's `extrasVersion` has moved on; the bakes' textures by their slot in
@@ -402,6 +425,16 @@ final class Renderer: NSObject {
     var painter = PainterGPU()
     /// A benchmark's painting still to do (Benchmark.Config.Event.paint), a step a frame.
     var painterScript: [PainterStep] = []
+    /// The Terrain Editor's side (Renderer+Terrain.swift): sculpt mode, the brush, the sectors' buffers' revisions.
+    var terrain = TerrainGPU()
+    /// The scene's water on the GPU (Renderer+Water.swift): its map, waves and per-frame record; nil without water.
+    var water: WaterSystem?
+    /// Its status, when it changes (on the render thread).
+    var onTerrain: ((TerrainStatus) -> Void)?
+    /// A benchmark's terrain edits still to do (Benchmark.Config.Event.terrain), frames to wait, the changes undone.
+    var terrainScript: [TerrainStep] = []
+    var terrainScriptWait = 0
+    var terrainUndone = Set<Int>()
     /// The displaced meshes' records (Scene.displaceVertices, displaceMembers), and per displacing material the height
     /// its meshes were last moved by (and the surface's values then), and the materials whose meshes wait to be moved.
     private var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
@@ -485,10 +518,13 @@ final class Renderer: NSObject {
     private var fogGrid: FogTargets?            // froxel grid at the current render resolution
     private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
     private var postTargetsCache: PostTargets?   // the lens and the finish, at the current output resolution
+    private var taaTargetsCache: TAATargets?     // temporal AA without upscaling, at the traced resolution...
+    private var taaHistory = false               // ...and the last frame left its resolved light in them
     private var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
     private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
     private var dummy2D: MTLTexture!
+    private var dummyUInt2D: MTLTexture!        // in place of the visibility buffer (rg32Uint) where there is none
     private var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
     // Sky and clouds (Shaders/Sky.metal), allocated when first used.
     private var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
@@ -512,12 +548,13 @@ final class Renderer: NSObject {
     private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
     private static let shadingExtrasOffset = shadingVSMOffset + 8    // MaterialExtra's address (MATERIAL_EXTRAS)
     private static let shadingProcParamsOffset = shadingVSMOffset + 16   // the programs' parameters (PROCEDURAL_CODE)
+    static let shadingWaterOffset = shadingVSMOffset + 24   // WaterScene's address (WATER), or 0
     private static let shadingArgsLength = shadingVSMOffset + 32      // 304: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
     private var instanceDataBuffers: [MTLBuffer] { sceneBuffers.instanceData }
-    private var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
+    private(set) var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
     private var restirGrid: RestirTargets?
     private var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
     private var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
@@ -558,15 +595,17 @@ final class Renderer: NSObject {
     /// structure is updated. One that stays as it is isn't refitted for nothing (a forest without wind).
     private var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
     private let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
+    /// Auto exposure's histograms (PostSettings.autoExposure: AutoExposure.swift).
+    private lazy var exposureMeter = AutoExposure(device: device, framesInFlight: Renderer.maxFramesInFlight)
 
     private var targets: RenderTargets?
 
     // State
     var camera = Camera()
     private var prevCamera = Camera()
-    private var frameIndex: UInt32 = 0
-    private var animTime: Float = 0
-    private var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
+    private(set) var frameIndex: UInt32 = 0
+    private(set) var animTime: Float = 0
+    private(set) var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
     private var lastTime = CACurrentMediaTime()
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
     var settings = RenderSettings() {
@@ -643,11 +682,18 @@ final class Renderer: NSObject {
     private var pathTraceAccum: MTLTexture?
     /// What liquidKernel leaves the trace and liquidApplyKernel (Shaders/Liquid.metal): per pixel the bent ray (its
     /// origin, w = 1 where it is bent; its direction, w = how far the liquid is), what comes through and the reflection.
+    /// Water's (waterKernel, Shaders/Water.metal) the same, w = 2 and up, and its own light in `scatter`.
     struct LiquidTargets {
         let ray: MTLTexture
         let direction: MTLTexture
         let through: MTLTexture
         let reflection: MTLTexture
+        let scatter: MTLTexture
+        /// Water's: the pixel whose raster triangle the bent ray likely meets (y << 16 | x), ~0 for none (traced).
+        let guess: MTLTexture
+        /// Water's reflections, this frame's and the last's by turns (rgb: what the surface's mirror ray found, a: the
+        /// surface's distance): half of them are traced a frame, the others taken from the last frame's.
+        let reflections: [MTLTexture]
     }
     private var liquidTextures: LiquidTargets?
     private var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
@@ -1281,6 +1327,51 @@ final class Renderer: NSObject {
         instanceASBuilt.removeAll()
     }
 
+    /// Instances moved for good (Scene.moveInstances: a terrain's scatter, what stands on it): their records and
+    /// descriptors written again, the top level refitted. A still scene's are one set for every slot: written once.
+    private func writeInstanceEdits(slot: Int, still: Bool) {
+        let edits = scene.takeInstanceEdits()
+        while pendingInstanceEdits.count < Renderer.maxFramesInFlight { pendingInstanceEdits.append([]) }
+        if !edits.isEmpty { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s].formUnion(edits) } }
+        let list = pendingInstanceEdits[slot]
+        guard !list.isEmpty else { return }
+        if still { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s] = [] } } else { pendingInstanceEdits[slot] = [] }
+        let records = instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count)
+        for i in list where i < scene.instances.count {
+            scene.writeInstanceData(into: records, all: true, range: i..<(i + 1))
+            sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: true, range: i..<(i + 1))
+        }
+        if still { stillRefitPending = true } else { instanceASStale[slot] = true }
+    }
+    private var pendingInstanceEdits: [Set<Int>] = []
+    private var stillRefitPending = false
+
+    /// The terrain's sectors the brushes changed (Renderer+Terrain.swift): their new vertices copied into their
+    /// buffers, their structures built again, the top level's after them (a still scene's refitted, another's built
+    /// again in every slot as it comes); the raster's bounds of them grown to hold them; the reference starts over.
+    private func encodeTerrain(slot: Int, passes: FrameEncoder) {
+        guard let work = prepareTerrainFrame(slot: slot, buffers: sceneBuffers), !work.meshes.isEmpty, var build = sceneBuffers.terrainBuild else {
+            // (Instances moved for good in a still scene: its one top level refitted.)
+            if stillRefitPending, let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") }
+            stillRefitPending = false
+            return
+        }
+        stillRefitPending = false
+        passes.copyBuffers(work.copies, pass: "terrain copy")
+        build.meshes = work.meshes
+        passes.updatePrimitives(build, pass: "terrain")
+        if let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") } else { instanceASBuilt.removeAll() }
+        if let rs = rasterScene {
+            let records = rs.meshes.contents().bindMemory(to: GPURasterMesh.self, capacity: rs.meshCount)
+            for (m, box) in work.bounds where m < rs.meshCount && !box.isEmpty {
+                let r = records[m]
+                records[m].lo = SIMD4(simd_min(SIMD3(r.lo.x, r.lo.y, r.lo.z), box.lo), r.lo.w)
+                records[m].hi = SIMD4(simd_max(SIMD3(r.hi.x, r.hi.y, r.hi.z), box.hi), r.hi.w)
+            }
+        }
+        resetReference()
+    }
+
     /// An RGBA8 texture's sRGB view (made once a texture).
     func srgbView(_ t: MTLTexture) -> MTLTexture {
         if let v = srgbViews[ObjectIdentifier(t)] { return v }
@@ -1453,7 +1544,7 @@ final class Renderer: NSObject {
     }
 
     private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
-        var segments = painterRingSegments() + selectionSegments()   // the Material Painter's brush, what the graph showed
+        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments()   // the brushes, what the graph showed
         if let target = gizmoTarget, let gpu = particlesGPU {
             let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
             gizmoHandle = handle
@@ -1517,6 +1608,7 @@ final class Renderer: NSObject {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
+            terrain.sceneChanged(scene, blocks: sceneBuffers.blocks)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old.parts!.scene
@@ -1727,13 +1819,17 @@ final class Renderer: NSObject {
         da.arrayLength = 2
         da.usage = .shaderRead
         da.storageMode = .private
+        let du = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg32Uint, width: 1, height: 1, mipmapped: false)
+        du.usage = .shaderRead
+        du.storageMode = .private
         guard let t3 = device.makeTexture(descriptor: d3), let t2 = device.makeTexture(descriptor: d2),
-              let ta = device.makeTexture(descriptor: da) else {
+              let ta = device.makeTexture(descriptor: da), let tu = device.makeTexture(descriptor: du) else {
             throw RendererError.resourceCreation("dummy textures")
         }
         dummy3D = t3
         dummy2D = t2
         dummyArray = ta
+        dummyUInt2D = tu
     }
 
     /// The fog's 3D noise (~50 ms to generate). Any thread.
@@ -1781,6 +1877,14 @@ final class Renderer: NSObject {
         fogGrid = try? FogTargets(device: device, renderWidth: width, renderHeight: height, slices: FogSettings.slices)
         fogLastFrame = nil
         return fogGrid
+    }
+
+    private func taaTargets(width: Int, height: Int) -> TAATargets? {
+        if let t = taaTargetsCache, t.width == width, t.height == height { return t }
+        taaTargetsCache = nil   // (the old ones go first)
+        taaTargetsCache = try? TAATargets(device: device, width: width, height: height)
+        taaHistory = false
+        return taaTargetsCache
     }
 
     private func postTargets(width: Int, height: Int) -> PostTargets? {
@@ -2112,6 +2216,7 @@ final class Renderer: NSObject {
         if scene.motionThisFrame { lastMotionFrame = Int(frameIndex) }
         let moved = !scene.movingInstances.isEmpty && slotRefitFrame[slot] <= lastMotionFrame
         instanceASStale[slot] = first || moved || virtualTracing != nil || scene.hasDeformingMeshes
+        writeInstanceEdits(slot: slot, still: still)   // (after: it may make the slot's structure stale)
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
                                                                first: sceneBuffers.instanceCount, scene: scene) {
@@ -2494,6 +2599,9 @@ final class Renderer: NSObject {
         camera.position = orbit.target - camera.forward * orbit.distance
     }
 
+    /// Auto exposure's scale for this frame (AutoExposure).
+    private func meterExposure() -> Float { exposureMeter.next() }
+
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
         func pack(_ c: Camera) -> (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) {
@@ -2508,6 +2616,18 @@ final class Renderer: NSObject {
         (u.prevCamPos, u.prevCamRight, u.prevCamUp, u.prevCamForward) = pack(prevCamera)
         u.skyColor = SIMD4<Float>(scene.skyColor, 0)
         u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, 0)
+        let lens = settings.post
+        if lens.grades {
+            u.post.z += Uniforms.gradeOn
+            let w = max(min(lens.warmth, 1), -1)
+            u.grade = SIMD4(1 + 0.1 * w, 1 - 0.14 * w, max(lens.saturation, 0), max(lens.contrast, 0.2))
+        }
+        if lens.autoExposure {
+            u.post.z += Uniforms.meterOn
+            u.post.x *= meterExposure()
+        } else {
+            exposureMeter.reset()
+        }
         u.width = UInt32(width)
         u.height = UInt32(height)
         u.frameIndex = frameIndex
@@ -2719,6 +2839,7 @@ final class Renderer: NSObject {
         do {
             targets = try RenderTargets(device: device, width: size.width, height: size.height)
             historyValid = false
+            taaHistory = false
         } catch {
             print(error)
             return nil
@@ -2933,6 +3054,7 @@ final class Renderer: NSObject {
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
+        var water = false                       // ...and into water (waterKernel; in the liquids' targets)
         var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
@@ -2966,6 +3088,9 @@ final class Renderer: NSObject {
         // The lens and the finish (not in references, nor in the views that aren't light)
         var post: PostTargets?
         var postParams = GPUPostParams()
+        // Temporal AA without upscaling (not in references or the views that aren't light)
+        var taa: TAATargets?
+        var taaHistory = false                  // the last frame resolved into taa.history[prev]
     }
 
     /// Reference "Path traced": pathTraceKernel adds `params.samples.y` paths per pixel to the mean of `samples.x` in
@@ -2990,7 +3115,8 @@ final class Renderer: NSObject {
         p.megaLights = directMode == .megalights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
-        if scene.hasLiquid { p.liquid = liquidTargets(width: width, height: height) }
+        if scene.hasLiquid || scene.hasWater { p.liquid = liquidTargets(width: width, height: height) }
+        p.water = scene.hasWater && p.liquid != nil && prepareWater(slot: slot)
         if particlesGPU != nil {
             let scale = settings.particleScale < 1 ? 0.5 : 1.0
             p.particles = particleLayerTarget(width: max(Int((Double(width) * scale).rounded()), 1), height: max(Int((Double(height) * scale).rounded()), 1))
@@ -2998,13 +3124,21 @@ final class Renderer: NSObject {
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
-        // The denoising scaler gathers jittered samples; supersampled references average 1024 jittered frames.
+        // The denoising scaler gathers jittered samples, and so does the temporal AA without it; supersampled references
+        // average 1024 jittered frames.
         if neuralDenoise {
             p.view = Upscaler.View(worldToView: camera.worldToView, viewToClip: camera.viewToClip(aspect: Float(width) / Float(height)))
         }
+        if Renderer.usesTAA(settings, upscaling: size.upscaling, accumulating: accumulating || supersampling || referenceMode != .off) {
+            p.taa = taaTargets(width: width, height: height)
+            p.taaHistory = taaHistory
+        } else {
+            taaTargetsCache = nil
+        }
         p.jitter = size.upscaling
             ? Upscaler.jitter(frame: frameIndex, scale: Float(size.outWidth) / Float(width))
-            : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
+            : p.taa != nil ? Upscaler.jitter(frame: frameIndex, scale: 1)
+            : supersampling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
         if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
@@ -3064,8 +3198,9 @@ final class Renderer: NSObject {
 
         // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
         // (the frames swap them in instance by instance, which the raster doesn't follow).
-        // Nor with liquids (a pixel seen through one isn't the triangle the raster drew there).
-        if settings.primary == .raster, !scene.hasVoxelBoxes, !scene.hasLiquid, let rs = currentRasterScene(),
+        // (A pixel seen through a liquid or water isn't the triangle the raster drew there: the trace meets its bent
+        // ray itself.)
+        if settings.primary == .raster, !scene.hasVoxelBoxes, let rs = currentRasterScene(),
            let rt = rasterTargets(width: width, height: height, scene: rs) {
             p.raster = (rs, rt)
             p.uniforms.flags |= UniformFlags.visBuffer
@@ -3208,6 +3343,7 @@ final class Renderer: NSObject {
         }
         prevCamera = camera
         prevJitter = plan.jitter
+        taaHistory = plan.taa != nil
         historyValid = plan.svgf || plan.neuralDenoise || (plan.accumulating && settings.denoiser.enabled)
         frameIndex &+= 1
     }
@@ -3306,6 +3442,8 @@ final class Renderer: NSObject {
             passes.updatePrimitives(primitiveRefit, pass: "blas")
         }
         encodeDisplacement(passes: passes)
+        encodeTerrain(slot: slot, passes: passes)
+        encodeWaterWaves(slot: slot, passes: passes)
         encodePainting(passes: passes)
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
@@ -3439,6 +3577,7 @@ final class Renderer: NSObject {
             if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
             if let drawable, let enc = passes.compute("composite") {
                 bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
                 setTextures(enc, [pt.accum, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
@@ -3488,9 +3627,9 @@ final class Renderer: NSObject {
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
         if let drawable, let enc = passes.compute("composite") {
-            let output = size.upscaling || supersampling ? t.upscaleColor : plan.post?.color ?? drawable.texture
+            let output = size.upscaling || supersampling ? t.upscaleColor : plan.taa?.input ?? plan.post?.color ?? drawable.texture
             var uniforms = c.uniforms
-            if plan.post != nil && !size.upscaling { uniforms.flags |= UniformFlags.post }
+            if (plan.post != nil || plan.taa != nil) && !size.upscaling { uniforms.flags |= UniformFlags.post }
             bind(enc, .composite, uniforms)
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
@@ -3501,6 +3640,8 @@ final class Renderer: NSObject {
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
+            enc.setBuffer(shadingArgs[plan.slot], offset: 0, index: 7)
+            if plan.water, let water { enc.useResources(water.resources(slot: plan.slot), usage: .read) }
             dispatch(enc, .composite, width: output.width, height: output.height)
         }
 
@@ -3520,7 +3661,27 @@ final class Renderer: NSObject {
 
         // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
-        if let drawable, let post = plan.post, !size.upscaling {
+        // ...or, at the traced resolution, the temporal AA resolves the jittered frames (the lens or the tone curve follow).
+        if let drawable, let taa = plan.taa, let enc = passes.compute("taa") {
+            let resolved = taa.history[cur]
+            bind(enc, .taaResolve, c.uniforms)
+            var reset: UInt32 = plan.taaHistory ? 0 : 1
+            enc.setBytes(&reset, length: MemoryLayout<UInt32>.stride, index: 1)
+            setTextures(enc, [taa.input, taa.history[plan.prev], t.motion, resolved])
+            dispatch(enc, .taaResolve, width: size.width, height: size.height)
+            passes.endCompute()
+            let light = encodeHaze(plan, input: resolved, normalDepth: t.normalDepth[cur], passes: passes)
+            if let post = plan.post {
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                           output: drawable.texture, passes: passes)
+            } else if let enc = passes.compute("taa") {
+                bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
+                setTextures(enc, [light, drawable.texture])
+                dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+        } else if let drawable, let post = plan.post, !size.upscaling {
             let light = encodeHaze(plan, input: post.color, normalDepth: t.normalDepth[cur], passes: passes)
             encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
@@ -3546,6 +3707,7 @@ final class Renderer: NSObject {
                            output: drawable.texture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
                 setTextures(enc, [light, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
@@ -3607,6 +3769,7 @@ final class Renderer: NSObject {
             }
         }
         start(.finish)
+        enc.setBuffer(exposureMeter.current, offset: 0, index: 2)
         setTextures(enc, [light, post.up.first ?? post.down.first ?? light, output])
         dispatch(enc, .finish, width: output.width, height: output.height)
         passes.endCompute()
@@ -3748,11 +3911,20 @@ final class Renderer: NSObject {
             })
         }
         // Liquids: the camera rays bent through them, which the trace goes on with.
-        if let liquid = plan.liquid {
+        if let liquid = plan.liquid, scene.hasLiquid {
             stages.append(ComputeStage(pass: "liquid") { [self] enc in
                 bind(enc, .liquid, uniforms, sceneSlot: slot)
                 setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture])
                 dispatch(enc, .liquid, width: size.width, height: size.height)
+            })
+        }
+        // Water: the camera rays bent into it, after the liquids' (a liquid in front keeps its pixels).
+        if let liquid = plan.liquid, plan.water {
+            stages.append(ComputeStage(pass: "water") { [self] enc in
+                bind(enc, .water, uniforms, sceneSlot: slot)
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture, liquid.scatter,
+                                  raster?.targets.visibility ?? dummyUInt2D, liquid.guess, liquid.reflections[1 - cur], liquid.reflections[cur]])
+                dispatch(enc, .water, width: size.width, height: size.height)
             })
         }
         stages.append(ComputeStage(pass: "trace") { [self] enc in
@@ -3767,9 +3939,19 @@ final class Renderer: NSObject {
             if let liquid = plan.liquid {
                 enc.setTexture(liquid.ray, index: 16)
                 enc.setTexture(liquid.direction, index: 17)
+                enc.setTexture(liquid.guess, index: 18)
             }
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
+        // Water's surface and what it does to what is seen under it, before window panes (they are in front of it).
+        if let liquid = plan.liquid, plan.water {
+            stages.append(ComputeStage(pass: "water apply") { [self] enc in
+                bind(enc, .waterApply, uniforms, sceneSlot: slot)
+                setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection, liquid.scatter,
+                                  t.normalDepth[cur], t.surfacePos])
+                dispatch(enc, .waterApply, width: size.width, height: size.height)
+            })
+        }
         if plan.glass {
             stages.append(ComputeStage(pass: "glass") { [self] enc in
                 bind(enc, .glass, uniforms, sceneSlot: slot)
@@ -3777,7 +3959,7 @@ final class Renderer: NSObject {
                 dispatch(enc, .glass, width: size.width, height: size.height)
             })
         }
-        if let liquid = plan.liquid {
+        if let liquid = plan.liquid, scene.hasLiquid {
             stages.append(ComputeStage(pass: "liquid") { [self] enc in
                 bind(enc, .liquidApply, uniforms)
                 setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection])
@@ -4221,6 +4403,7 @@ final class Renderer: NSObject {
         enc.useResources(shadingResources, usage: .read)
         if !slotTextures[slot].isEmpty { enc.useResources(proceduralResources(slot: slot), usage: .read) }
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
+        if scene.hasWater, let water { enc.useResources(water.resources(slot: slot), usage: .read) }
         if let vsm = vsmFrame {
             enc.useResources([vsm.pool, vsm.table, vsm.tags, vsm.lightTable, vsm.views[slot], vsm.sceneArgs[slot]], usage: .read)
             enc.useResource(vsm.requests, usage: [.read, .write])
@@ -4477,6 +4660,7 @@ final class Renderer: NSObject {
     /// Drops all temporal GI state (cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
+        taaHistory = false
         restirWritten = false
         megaLightsWritten = false
         restirGIWritten = false
@@ -4498,14 +4682,24 @@ final class Renderer: NSObject {
             }
         }
         runPainterScript()
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
+            if case .terrain(let steps) = e.event {
+                benchmarkFired.insert(k)
+                terrainScript += steps
+            }
+        }
+        runTerrainScript()
         guard let controls = scene.interiorControls else { return }
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
+            // (A painting's or a terrain edit's steps: theirs to fire, above, a few frames in.)
+            if case .paint = e.event { continue }
+            if case .terrain = e.event { continue }
             benchmarkFired.insert(k)
             switch e.event {
             case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
             case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
             case .flashlight(let on): controls.flashlight.on = on
-            case .paint: break
+            case .paint, .terrain: break
             }
         }
         if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
@@ -4707,8 +4901,11 @@ final class Renderer: NSObject {
             return t
         }
         guard let ray = make(.rgba32Float, "liquidRay"), let direction = make(.rgba32Float, "liquidDirection"),
-              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection") else { return nil }
-        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection)
+              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection"),
+              let scatter = make(.rgba16Float, "waterScatter"), let guess = make(.r32Uint, "waterGuess"),
+              let r0 = make(.rgba16Float, "waterReflections0"), let r1 = make(.rgba16Float, "waterReflections1") else { return nil }
+        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection, scatter: scatter, guess: guess,
+                                       reflections: [r0, r1])
         return liquidTextures
     }
 
@@ -5188,6 +5385,13 @@ final class Renderer: NSObject {
         return sizes
     }()
 
+    /// Whether a frame resolves jittered frames with the temporal AA: set, without upscaling (MetalFX's scaler does it
+    /// then), not in a reference picture (`accumulating`: those average their own jittered frames), and only in the
+    /// views that show the light.
+    static func usesTAA(_ settings: RenderSettings, upscaling: Bool, accumulating: Bool) -> Bool {
+        settings.taa && !upscaling && !accumulating && RenderSettings.showsLight(settings.viewMode)
+    }
+
     /// The light grid's per-frame origin jitter, in cells ([0, 1)^3), from a hash of the frame index.
     private static func regirJitter(frame: UInt32) -> SIMD3<Float> {
         func hash(_ v: UInt32) -> UInt32 {
@@ -5270,6 +5474,7 @@ final class Renderer: NSObject {
             passTimeFrames = 0
         }
         onTick?(status)
+        if scene.terrain != nil { reportTerrain() }   // (the Terrain Editor's map follows the camera)
     }
 
     /// One frame's pass timings, summed until the stats line shows their average.
@@ -5546,6 +5751,8 @@ final class Renderer: NSObject {
     func mouseDown(at cursor: SIMD2<Float>) {
         // Paint mode: a stroke (Option: the camera turns about the object).
         if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
+        // Sculpt mode: a stroke of the terrain's brush (Option: the camera's, as always).
+        if terrainMouseDown(at: cursor, pressure: penPressure, option: optionHeld, invert: controlHeld, smooth: shiftHeld) { return }
         holding = nil
         gizmoDrag = nil
         navDrag = nil
@@ -5576,6 +5783,7 @@ final class Renderer: NSObject {
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
+        if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
         if let drag = gizmoDrag {
             let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
             let move = min(max(s - drag.last, -5), 5)
@@ -5598,6 +5806,7 @@ final class Renderer: NSObject {
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
         if paintMouseUp() { return }
+        if terrainMouseUp() { return }
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
         // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
@@ -5689,6 +5898,16 @@ final class Renderer: NSObject {
         flight = nil
         pivot = camera.dolly(by: exp(dy * 0.05), pivot: pivot)
     }
+
+    /// Lumen's fields of a terrain's sectors baked again (Renderer+Terrain.swift), if Lumen traces fields now.
+    func rebakeLumenFields(_ meshes: [(mesh: Int, positions: [SIMD3<Float>], indices: [UInt32])]) {
+        guard let lumenScene, lumenSceneOf === scene else { return }
+        for m in meshes { lumenScene.rebake(field: m.mesh, positions: m.positions, indices: m.indices) }
+    }
+    var lumenTracesFields: Bool { lumenScene != nil && lumenSceneOf === scene }
+
+    /// What the terrain's colliders write to (Renderer+Terrain.swift).
+    var physicsGPUForTerrain: PhysicsGPU? { physicsGPU }
 
     // MARK: - What the painter (Renderer+Painter.swift) reads of the renderer
 

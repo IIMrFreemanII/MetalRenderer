@@ -23,7 +23,7 @@ struct SourceIndex: Equatable {
         .ragdolls: "buildRagdolls", .hair: "buildHair", .softBodies: "buildSoftBodies", .muscles: "buildMuscles",
         .fluids: "buildFluids", .particles: "buildParticles", .plants: "buildPlantWorkshop", .vfxStage: "buildVFXStage",
         .buildings: "buildBuildingWorkshop", .characters: "buildCharacterWorkshop", .materials: "buildMaterialWorkshop",
-        .mireland: "buildMireland", .painter: "buildPainterWorkshop",
+        .mireland: "buildMireland", .painter: "buildPainterWorkshop", .terrain: "buildTerrainWorkshop",
     ]
 
     /// The types each system is.

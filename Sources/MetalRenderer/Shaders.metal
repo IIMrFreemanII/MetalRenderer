@@ -17,6 +17,7 @@ using namespace metal::raytracing;
 #include "Shaders/ParticleTrace.metal"     // particles as rays meet them: billboards, flipbooks, their transmittance
 #include "Shaders/Procedural.metal"        // procedural materials as code (the Material Designer's shader-code mode)
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
+#include "Shaders/WaterCommon.metal"       // water: its looks, its map, waves, ripples and foam, the sun under it
 #include "Shaders/Raster.metal"            // the raster visibility buffer: culling, the pyramid, the draw, visibilityHit
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
 #include "Shaders/Hair.metal"              // strands: the hair BSDF (Chiang et al. 2016) and its lights
@@ -28,6 +29,7 @@ using namespace metal::raytracing;
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
 #include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/Liquid.metal"            // liquidKernel: camera rays bent through liquids, liquidApplyKernel
+#include "Shaders/Water.metal"             // waterKernel: camera rays bent into water, its surface, waterApplyKernel
 #include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
 #include "Shaders/MegaLights.metal"        // MegaLights-style direct light: tile light lists, MIS-combined samples
 #include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse

@@ -16,4 +16,5 @@ Rules:
 ## Handoff notes
 
 Status and next steps of work moved between Macs are in `.claude/notes/` (for example
-`metal-tracer-handoff.md`: the Metal-only tracer, to continue on the M4 Max). Read the one for your branch first.
+`metal-tracer-handoff.md`: the Metal-only tracer, to continue on the M4 Max; `terrain-editor-handoff.md` and
+`water-handoff.md` for this branch's terrain and water). Read the one for your branch first.

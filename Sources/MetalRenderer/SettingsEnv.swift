@@ -28,8 +28,10 @@ enum SettingsEnv {
         d.scene = SceneSettings()
         d.scene.kind = s.scene.kind
         d.scene.showcase = s.scene.showcase   // the model's look: its fog and lens
+        d.scene.realism = s.scene.realism     // the realistic look: its fog and lens
         d.scene.emissiveLights = true
         d.applySceneDefaults(from: defaults)   // the scene's GI method, light count, fog, sky and lens
+        d.scene.realism = SceneSettings().realism   // (exported as any choice is; its presets above)
         // The building workshop's sky by night is the city's (SkySettings.preset): what a reader gets once `night=1` is read.
         if s.scene.kind == .buildings && s.scene.buildings.night {
             var night = d

@@ -1,0 +1,20 @@
+{
+  "comment": "CC0 photo-scanned texture sets for the realistic look. Fetch with Tools/textures/fetch.py; they land in Assets/Textures/<set>/ (Git LFS). The renderer falls back to procedural graphs when a set is missing.",
+  "sets": [
+    {"set": "ground",       "source": "polyhaven", "id": "forest_ground_04",     "use": "terrain Ground"},
+    {"set": "grass",        "source": "ambientcg", "id": "Grass004",             "use": "terrain Grass"},
+    {"set": "rock",         "source": "polyhaven", "id": "rock_face_03",         "use": "terrain Rock, cliffs, scattered rocks"},
+    {"set": "snow",         "source": "polyhaven", "id": "snow_02",              "use": "terrain Snow"},
+    {"set": "sand",         "source": "polyhaven", "id": "coast_sand_01",        "use": "terrain Sand, shores"},
+    {"set": "mud",          "source": "polyhaven", "id": "brown_mud_02",         "use": "terrain Mud, banks"},
+    {"set": "gravel",       "source": "polyhaven", "id": "gravel_ground_01",     "use": "terrain Gravel"},
+    {"set": "moss",         "source": "ambientcg", "id": "Moss002",              "use": "terrain Moss"},
+    {"set": "earth",        "source": "polyhaven", "id": "dirt_floor",           "use": "terrain Earth, trails"},
+    {"set": "dry-grass",    "source": "polyhaven", "id": "withered_grass",       "use": "terrain Dry grass"},
+    {"set": "pebbles",      "source": "polyhaven", "id": "dry_river_pebbles",    "use": "terrain Pebbles, river beds"},
+    {"set": "forest-floor", "source": "polyhaven", "id": "forest_leaves_02",     "use": "Forest ground, leaf litter"},
+    {"set": "bark-pine",    "source": "polyhaven", "id": "pine_bark",            "use": "conifer bark"},
+    {"set": "bark-oak",     "source": "polyhaven", "id": "jolcham_oak_bark_01",  "use": "oak and broadleaf bark"},
+    {"set": "leaves",       "source": "ambientcg", "id": "LeafSet024",           "use": "leaf albedo/normal/translucency (interior crop)"}
+  ]
+}

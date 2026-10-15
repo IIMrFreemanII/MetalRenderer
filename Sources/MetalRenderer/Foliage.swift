@@ -500,7 +500,7 @@ enum Foliage {
     }
 
     /// Grows one plant of `def` (the species `species` of its catalog).
-    static func plant(_ def: SpeciesDef, _ species: Species, age: Age, seed: UInt64, palette: [Mesh]) -> Plant {
+    static func plant(_ def: SpeciesDef, _ species: Species, age: Age, seed: UInt64, palette: [Mesh], bark: Bark? = nil) -> Plant {
         if let grass = def.grass {
             let patch = grassPatch(seed: seed, size: grass.size, blades: grass.blades)
             return Plant(species: species, age: age, meshes: [patch], parts: [Part(mesh: 0, shared: false,
@@ -522,7 +522,7 @@ enum Foliage {
             // No boughs: one mesh, the stems and whatever leaves grow on them (ferns, dead trees).
             let anchors = recipe.leaf.map { leaves(on: skeleton, $0, up: recipe.up, rng: &rng) } ?? []
             let mesh = Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: recipe.leaf?.shape ?? .kite,
-                                    fold: recipe.leaf?.fold ?? 0, up: recipe.up, allLeaves: def.stemsAreLeaves)
+                                    fold: recipe.leaf?.fold ?? 0, up: recipe.up, allLeaves: def.stemsAreLeaves, bark: bark)
             return Plant(species: species, age: age, meshes: [mesh],
                          parts: [Part(mesh: 0, shared: false, transform: matrix_identity_float4x4, bone: 0)],
                          bones: bones, bounds: mesh.bounds)
@@ -532,7 +532,7 @@ enum Foliage {
         var groups = [[Int]](repeating: [], count: 1 + skeleton.limbs)
         for (i, s) in skeleton.stems.enumerated() { groups[Int(s.limb) + 1].append(i) }
         for (g, stems) in groups.enumerated() {
-            let mesh = Foliage.mesh(skeleton, stems: stems, leaves: [], shape: .kite, fold: 0, up: recipe.up, allLeaves: false)
+            let mesh = Foliage.mesh(skeleton, stems: stems, leaves: [], shape: .kite, fold: 0, up: recipe.up, allLeaves: false, bark: bark)
             bounds.grow(mesh.bounds)
             if g > 0 {
                 let s = skeleton.stems[stems[0]]
@@ -611,8 +611,9 @@ enum Foliage {
     /// Every species' palette and plants (of `catalog`; `species`: only these). The same seed gives the same
     /// library, built in parallel or not; a species' plants are the same whatever else is built with it.
     /// `cards`: the boughs' leaves as cards.
+    /// `bark`: by species, its bark's relief (the realistic look's, realism high: FoliageMesh.Bark).
     static func library(seed: UInt64, catalog: PlantCatalog = .builtIn, species: [Species]? = nil, parallel: Bool = true,
-                        cards: Bool = false) -> [SpeciesSet] {
+                        cards: Bool = false, bark: [Species: Bark] = [:]) -> [SpeciesSet] {
         let species = species ?? catalog.all
         struct Job { var species: Species; var age: Age; var index: Int }
         var boughJobs: [Job] = [], plantJobs: [Job] = []
@@ -629,7 +630,7 @@ enum Foliage {
         let plants = slots(plantJobs.count, parallel: parallel) { j -> Plant in
             let job = plantJobs[j], def = catalog[job.species]
             return plant(def, job.species, age: job.age, seed: Foliage.seed(seed, def.seedIndex, job.age.rawValue, job.index),
-                         palette: palettes[job.species.rawValue])
+                         palette: palettes[job.species.rawValue], bark: bark[job.species])
         }
         return species.map { s in
             SpeciesSet(species: s, palette: palettes[s.rawValue],

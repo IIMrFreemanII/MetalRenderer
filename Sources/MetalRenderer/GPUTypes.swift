@@ -1,3 +1,4 @@
+import Metal
 import simd
 
 // Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).
@@ -26,7 +27,10 @@ struct Uniforms {
     var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
     var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
     var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value)
+    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
+                                         // (gradeOn, meterOn)
+    var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
+    static let gradeOn: Float = 1, meterOn: Float = 2
 
     /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
     static let traceBounces: UInt32 = 1      // the path tracer's indirect light (`bounces` > 0)
@@ -249,6 +253,10 @@ struct GPUMesh {
     /// The level of detail it was made at, + 1 (0 = it has no levels): an open-world tile's ring, a crowd character's
     /// detail, a baked plant (its finest). Only the LOD debug view reads it (Scene.setDetailLevel).
     var lod: UInt32 = 0
+    /// A terrain's sector (TERRAIN, Shaders/Terrain.metal): 1 + where its terrain's layer table starts in the procedural
+    /// parameters; its block has its vertices' layer weights after its triangles' materials. 0: not a terrain's.
+    var terrain: UInt32 = 0
+    var pad: UInt32 = 0
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
@@ -322,7 +330,7 @@ struct GPUMaterial {
 /// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
 struct GPUMaterialExtra: Equatable {
     var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none; z = 1: procedural
-                                                    // (a mesh without UVs gets planar ones)
+                                                    // (a mesh without UVs gets planar ones), 2: a scan (TextureSets.swift)
     var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
                                                      // w = AO strength (0: the R channel isn't occlusion)
 }
@@ -789,9 +797,50 @@ struct GPUParticleStep {
 }
 
 /// Catches accidental layout drift between Swift and MSL at startup.
+/// One body of water's look (MSL WaterLook, WaterLook.gpu): a table of them, which the water map and the water's
+/// surfaces' triangles name.
+struct GPUWaterLook {
+    var absorption: SIMD4<Float>   // rgb = per metre, w = index of refraction
+    var scattering: SIMD4<Float>   // rgb = per metre, w = phase g
+    var waves: SIMD4<Float>        // x = share of the wind's sea, y = chop, z = ripples, w = roughness
+    var foam: SIMD4<Float>         // x = crest foam, y = shore foam width (m), z = white water, w = flow speed (m/s)
+}
+
+/// The water this frame (MSL WaterScene, Shaders/WaterCommon.metal), its address in the shading arguments
+/// (SceneShading.water): the time and wind of its waves, its map's two levels around the camera, the near patch, the
+/// looks, and its textures (the map, the FFT cascades, the caustics) by their resource IDs.
+struct GPUWaterScene {
+    var time = SIMD4<Float>.zero       // x = now (s), y = the last frame's, z = dt, w = the highest any water's surface reaches (its waves too)
+    var wind = SIMD4<Float>.zero       // xy = toward where it blows (unit; x, z), z = speed (m/s), w = 0
+    var cascades = SIMD4<Float>.zero   // xyz = the FFT cascades' tile sides (m), w = how many (0: no waves)
+    var phase0 = SIMD4<Float>.zero     // where the scene's origin is in each cascade's tile (m): xy = 0th, zw = 1st
+    var phase1 = SIMD4<Float>.zero     // xy = the 2nd's
+    var map0 = SIMD4<Float>.zero       // the map's near level: xy = scene x, z of texel (0, 0)'s corner, z = metres a texel, w = texels a side
+    var map1 = SIMD4<Float>.zero       // ...its far level
+    var near = SIMD4<Float>.zero       // xyz = the near patch's centre (scene), w = its radius (0: none)
+    var counts = SIMD4<UInt32>.zero    // x = looks, y = WATER_* flags, w = METALRENDERER_WATER_DEBUG
+    var looks: UInt64 = 0              // GPUWaterLook per look
+    var level = MTLResourceID()        // map: 2D array [near, far], r = surface (< -1e8: dry), g = ground
+    var info = MTLResourceID()         // map: rg = flow (m/s, 0.5 = still, 1/8 m/s a step: (v / 8) + 0.5), b = look / 255, a = turbulence
+    var waves = MTLResourceID()        // FFT: 2D array per cascade, xyz = displacement (m), w = foam
+    var slopes = MTLResourceID()       // FFT: 2D array per cascade, xy = height's slope (x, z), zw = sideways push's
+    var caustics = MTLResourceID()     // the sun's caustics on a bed a few metres down, tiled as cascade 1
+    var surfaces = MTLResourceID()     // the still surfaces' own structure (a primitive one, the scene's coordinates)
+    var surfaceVertices: UInt64 = 0    // ...their vertices (float4), indices, and a look per triangle (a byte)
+    var surfaceIndices: UInt64 = 0
+    var surfaceLooks: UInt64 = 0
+    var nearPatch = MTLResourceID()    // the near patch's structure (WATER_NEAR), refitted every frame
+    var nearVertices: UInt64 = 0       // ...its vertices as the waves moved them (float4: w = the look)
+    var nearIndices: UInt64 = 0
+    var nearRest: UInt64 = 0           // ...and where each is at rest (float2: x, z)
+    static let fft: UInt32 = 1, nearPatch: UInt32 = 2, causticsOn: UInt32 = 4, mapped: UInt32 = 8
+}
+
 func validateGPULayouts() {
-    precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
-    precondition(MemoryLayout<GPUMesh>.stride == 40 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
+    precondition(MemoryLayout<GPUWaterLook>.stride == 64, "GPUWaterLook layout mismatch")
+    precondition(MemoryLayout<GPUWaterScene>.stride == 256, "GPUWaterScene layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 272, "Uniforms layout mismatch")
+    precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")
     precondition(MemoryLayout<GPUJoint>.stride == 48, "GPUJoint layout mismatch")

@@ -170,6 +170,21 @@ enum ToneMap: Int, CaseIterable, Codable {
     }
 }
 
+/// How real the outdoor scenes look (SceneSettings.realism): off, the generated textures as they always were; on,
+/// photo-scanned ground, rocks and plants (TextureSet) height-blended into each other, with the lighting's realistic
+/// looks; high, also the costly parts (stochastic tiling, the ground displaced near the camera, denser grass).
+enum Realism: Int, CaseIterable, Codable {
+    case off, on, high
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .on: return "On"
+        case .high: return "High"
+        }
+    }
+}
+
 /// How indirect light (global illumination) is computed.
 enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
@@ -356,6 +371,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     case mireland           // a misty swamp (Scene+Mireland.swift) made of the Mireland materials, every one procedural
     case painter            // the painter workshop (Scene+Painter.swift): one object on a plinth, painted with the Material
                             // Painter (`SceneSettings.painterWorkshop`)
+    case terrain            // the terrain workshop (Scene+TerrainWorkshop.swift): a terrain of its own, 0.5 to 4 km, made with
+                            // the Terrain Editor (`SceneSettings.terrainWorkshop`)
 
     var title: String {
         switch self {
@@ -392,6 +409,7 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .materials: return "Material workshop"
         case .mireland: return "Mireland swamp"
         case .painter: return "Painter workshop"
+        case .terrain: return "Terrain workshop"
         }
     }
 
@@ -404,7 +422,7 @@ enum SceneKind: Int, CaseIterable, Codable {
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
     /// open world's whole day, with its night), or nil.
     var dayCycle: Float? {
-        self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : self == .world ? Heavens.day : nil
+        self == .sun ? 60 : self == .valley || self == .forest || self == .city || self == .terrain ? 180 : self == .world ? Heavens.day : nil
     }
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
@@ -413,13 +431,15 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop || self == .mireland }   // these frame what they hold
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop || self == .mireland || self == .terrain }   // these frame what they hold
     /// The editors' scenes: one thing (a plant, a building) made again at every edit, an orbit camera round it.
     var isWorkshop: Bool { self == .plants || self == .buildings || self == .characters }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
     var hasPlants: Bool { self == .forest || self == .valley || isWorld || self == .plants }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
     var hasForest: Bool { self == .forest || isWorld }
+    /// Scenes the realistic look changes (SceneSettings.realism): the ones on a terrain, outdoors.
+    var hasRealisticLook: Bool { hasPlants || self == .terrain || self == .sun || self == .crowd || self == .buildings }
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -462,6 +482,9 @@ struct CitySettings: Equatable, Codable {
     /// rooms, stairs, furniture, lights you can walk among (Scene+Interiors.swift). Off: every building a shell.
     var interiors = true
     var interiorReach: Float = 30
+    /// A canal through the city in place of its middle avenue (with 4 blocks a side or more): quays, bridges where
+    /// the streets cross it, water (CityPlan.canal).
+    var canal = true
 
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1
@@ -678,6 +701,8 @@ struct SceneSettings: Equatable, Codable {
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
     /// by an alpha mask the ray queries test. Off: every leaf is a mesh of its own.
     var leafCards = false
+    /// The outdoor scenes' realistic look (Realism): scanned materials, height-blended ground, realistic lighting.
+    var realism = Realism.on
     /// Far baked plants as their voxel grids (VoxelLOD) instead of their triangles. Off: it is slower wherever it was
     /// measured. In software (M1 Max) the ray queries a voxel box needs
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
@@ -708,6 +733,11 @@ struct SceneSettings: Equatable, Codable {
     var materialAssignments = ""
     /// The painter workshop: what it shows, painted with which document.
     var painterWorkshop = PainterWorkshopSettings()
+    /// The terrain workshop: how big its terrain is, what it starts from, its document.
+    var terrainWorkshop = TerrainWorkshopSettings()
+    /// Changed by the Terrain Editor when an edit of a terrain's document needs the scene made again (a layer's Material
+    /// Designer graph, its water): any new value does. Session state.
+    var terrainKey = ""
     /// Which scene objects the Material Painter paints (PaintAssignments): "" the saved ones
     /// (Assets/Painter/assignments.json), otherwise a key of the registry the painter fills. A change makes the scene
     /// again. Session state.
@@ -770,6 +800,7 @@ struct SceneSettings: Equatable, Codable {
         }
         return kind == .plants && other.kind == .plants && plants.layout == other.plants.layout && plants.view == other.plants.view
             && plants.species == other.plants.species && leafCards == other.leafCards && bakedPlants == other.bakedPlants
+            && realism == other.realism
     }
 
     /// The same city, with another building's interior in it (or none): the same streets and buildings, where they
@@ -1063,6 +1094,9 @@ struct FogSettings: Equatable, Codable {
         case .valley:
             f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
             f.maxDistance = 150
+        case .terrain:   // a light haze: the far side of kilometres of ground fades
+            f.enabled = true; f.density = 0.0003; f.heightFalloff = 0.006; f.anisotropy = 0.5; f.noise = 0.1
+            f.maxDistance = 400; f.haze = 0.25
         case .forest:
             f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
@@ -1102,6 +1136,18 @@ struct FogSettings: Equatable, Codable {
     static func preset(for scene: SceneSettings) -> FogSettings {
         var f = preset(for: scene.kind)
         if scene.kind == .showcase { ShowcaseLook.look(for: scene.showcase).fog(&f) }
+        if scene.realism != .off && scene.kind.hasRealisticLook {
+            // Air: the distance fades blue-grey (aerial perspective), a light haze in the forest's shade.
+            if !f.enabled {
+                f.enabled = true
+                f.density = 0.0025
+                f.heightFalloff = 0.025
+                f.anisotropy = 0.6
+                f.noise = 0.15
+                f.maxDistance = 90
+            }
+            f.haze = max(f.haze, scene.kind == .forest ? 0.3 : 0.55)
+        }
         return f
     }
 }
@@ -1186,6 +1232,9 @@ struct SkySettings: Equatable, Codable {
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
+        case .terrain:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
+            s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
         case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
             s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }
@@ -1212,6 +1261,14 @@ struct PostSettings: Equatable, Codable {
     var vignette: Float = 0             // how much the corners darken
     var grain: Float = 0                // film grain's strength
     var aberration: Float = 0           // chromatic aberration: red and blue apart by this share of the width at the corners
+    /// The exposure follows the frame's light (a histogram's middle, eased toward): `exposure` then shifts it.
+    var autoExposure = false
+    /// The colour grade (applied when any is off its neutral value): warmth (-1 cooler ... 1 warmer: white balance),
+    /// saturation (1 as it is) and contrast about middle grey (1 as it is).
+    var warmth: Float = 0
+    var saturation: Float = 1
+    var contrast: Float = 1
+    var grades: Bool { warmth != 0 || saturation != 1 || contrast != 1 }
 
     var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 }
 
@@ -1222,12 +1279,26 @@ struct PostSettings: Equatable, Codable {
     static let vignetteRange: ClosedRange<Float> = 0...1
     static let grainRange: ClosedRange<Float> = 0...0.2
     static let aberrationRange: ClosedRange<Float> = 0...0.01
+    static let warmthRange: ClosedRange<Float> = -1...1
+    static let saturationRange: ClosedRange<Float> = 0...2
+    static let contrastRange: ClosedRange<Float> = 0.5...1.5
     static let maxBlur: Float = 24      // the depth of field's widest blur circle (output pixels)
     static let bloomLevels = 6          // the glow's halvings, from half the output size
 
-    /// Off, but in the showcase: the model's look.
+    /// Off, but in the showcase: the model's look; and with the realistic look outdoors, a camera's: exposure that
+    /// follows the light, a gentle filmic grade, a little bloom and vignette.
     static func preset(for scene: SceneSettings) -> PostSettings {
-        scene.kind == .showcase ? ShowcaseLook.look(for: scene.showcase).post : PostSettings()
+        if scene.kind == .showcase { return ShowcaseLook.look(for: scene.showcase).post }
+        guard scene.realism != .off, scene.kind.hasRealisticLook else { return PostSettings() }
+        var p = PostSettings()
+        p.autoExposure = true
+        p.saturation = 1.06
+        p.contrast = 1.1
+        p.warmth = scene.kind == .forest ? 0.12 : 0.06
+        p.bloom = 0.035
+        p.bloomThreshold = 1.6
+        p.vignette = 0.16
+        return p
     }
 }
 
@@ -1284,6 +1355,7 @@ struct RenderSettings: Equatable, Codable {
     var giEnabled = true
     var bounces = 2
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
+    var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
     var paused = false
     var viewMode = 0
     var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)

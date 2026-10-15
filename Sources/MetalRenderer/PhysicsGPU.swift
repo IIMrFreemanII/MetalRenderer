@@ -113,6 +113,19 @@ final class PhysicsGPU {
 
     /// `simulates`: it steps the world; otherwise the CPU does and this only draws its cloths, soft bodies and hair. `clothPrevOffsets`: per
     /// cloth, its mesh's last-frame offset (GPUMesh.prevOffset).
+    /// The statics' heightfields changed (a terrain's sectors under a brush): their samples, shapes and boxes copied
+    /// again (shared buffers: a frame in flight may see them a frame early).
+    func refreshStatics(_ world: PhysicsWorld) {
+        func copy<T>(_ array: [T], into b: MTLBuffer) {
+            array.withUnsafeBytes { raw in
+                if !raw.isEmpty && raw.count <= b.length { b.contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count) }
+            }
+        }
+        copy(world.samples, into: samples)
+        copy(world.shapes, into: shapes)
+        copy(world.staticBounds.flatMap { [SIMD4($0.lo, 0), SIMD4($0.hi, 0)] }, into: staticBounds)
+    }
+
     init(device: MTLDevice, world: PhysicsWorld, sdfScene: MTLBuffer, sdfResources: [MTLBuffer], slots: Int, simulates: Bool = true,
          clothPrevOffsets: [UInt32] = []) throws {
         self.world = world

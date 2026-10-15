@@ -86,6 +86,10 @@ final class RendererController: InputHandler {
     /// The painter's status as the renderer last sent it, and who wants it.
     private(set) var painterStatus = PainterStatus()
     private var painterObservers: [(PainterStatus) -> Void] = []
+    /// The Terrain Editor's status as the renderer last sent it, and who wants it.
+    private(set) var terrainStatus = TerrainStatus()
+    private var terrainObservers: [(TerrainStatus) -> Void] = []
+    var onToggleTerrain: (() -> Void)?          // Shift-T
     /// An armed pick's answer (the Material Designer's).
     var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// Who wants to know what a click in the view selected (its instance; nil: nothing).
@@ -126,6 +130,13 @@ final class RendererController: InputHandler {
             DispatchQueue.main.async { self?.ticked(status) }
         }
         renderer.onPainter = { [weak self] status in self?.painterChanged(status) }
+        renderer.onTerrain = { [weak self] status in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.terrainStatus = status
+                for o in self.terrainObservers { o(status) }
+            }
+        }
         renderer.onOutline = { [weak self] outline in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -247,6 +258,23 @@ final class RendererController: InputHandler {
             }
             return
         }
+        // Shift-T: the Terrain Editor's window (T alone is Reference mode).
+        if key == "t" && event.modifierFlags.contains(.shift) {
+            if !event.isARepeat { onToggleTerrain?() }
+            return
+        }
+        // Sculpt mode: [ ] the brush's size, { } (Shift) its strength, Escape leaves it.
+        if terrainStatus.active {
+            if key == "[" || key == "]" || key == "{" || key == "}" {
+                let step = key == "[" || key == "{" ? -1 : 1, strength = key == "{" || key == "}"
+                renderer.perform { $0.resizeTerrainBrush(step, strength: strength) }
+                return
+            }
+            if event.keyCode == 53 {
+                renderer.perform { $0.setTerrainMode(false) }
+                return
+            }
+        }
         // V: the Material Painter's window (Shift-V walks, as V did).
         if key == "v" && !event.modifierFlags.contains(.shift) {
             if !event.isARepeat { onTogglePainter?() }
@@ -307,8 +335,8 @@ final class RendererController: InputHandler {
     func otherMouseDown(at cursor: SIMD2<Float>) { renderer.perform { $0.otherMouseDown(at: cursor) } }
     func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) { renderer.perform { $0.otherMouseDragged(dx: dx, dy: dy, at: cursor) } }
     func mouseMoved(at cursor: SIMD2<Float>) {
-        guard painterStatus.active != nil else { return }
-        renderer.perform { $0.paintMouseMoved(at: cursor) }
+        if painterStatus.active != nil { renderer.perform { $0.paintMouseMoved(at: cursor) } }
+        if terrainStatus.active { renderer.perform { $0.terrainMouseMoved(at: cursor) } }
     }
     func pressure(_ p: Float) { renderer.perform { $0.penPressure = p } }
 }
@@ -337,6 +365,17 @@ extension RendererController: PainterHost {
             for o in self.painterObservers { o(s) }
         }
     }
+}
+
+extension RendererController: TerrainHost {
+    /// Calls `observer` with the Terrain Editor's status now and whenever it changes.
+    func observeTerrain(_ observer: @escaping (TerrainStatus) -> Void) {
+        terrainObservers.append(observer)
+        observer(terrainStatus)
+    }
+
+    /// Work for the renderer's terrain side, on the render thread.
+    func terrain(_ work: @escaping (Renderer) -> Void) { renderer.perform(work) }
 }
 
 extension RendererController: ProjectGraphHost {

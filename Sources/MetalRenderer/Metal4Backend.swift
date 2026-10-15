@@ -298,6 +298,18 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
+    func copyBuffers(_ copies: [BufferCopy], pass: String) {
+        guard !copies.isEmpty, let enc = encoder(pass, newBuffer: true) else { return }
+        serial = true
+        order(.blit)
+        for c in copies {
+            keep(c.source)
+            keep(c.destination)
+            enc.copy(sourceBuffer: c.source, sourceOffset: c.sourceOffset, destinationBuffer: c.destination, destinationOffset: c.destinationOffset,
+                     size: c.size)
+        }
+    }
+
     /// The mapping updates go to the queue, between the command buffers so far and the ones after them (whose encoders
     /// wait for them, `queueStages`); the uploads into the new tiles follow in a command buffer of their own.
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {

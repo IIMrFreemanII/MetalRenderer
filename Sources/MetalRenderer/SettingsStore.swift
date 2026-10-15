@@ -29,6 +29,7 @@ enum SettingsStore {
         s.scene.materials = ""
         s.scene.materialAssignments = ""
         s.scene.paintAssignments = ""
+        s.scene.terrainKey = ""
         s.scene.sceneOverrides = ""
         s.scene.buildingCatalog = ""
         s.scene.characterCatalog = ""

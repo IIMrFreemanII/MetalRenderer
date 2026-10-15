@@ -80,7 +80,7 @@ final class Scene {
         var autumn: SIMD3<Float>? = nil
         var turn: Float = 0
         var translucency: Float
-        var gain: Float = 1                   // the material's colour is the leaf's times this (1 / its texture's mean)
+        var gain = SIMD3<Float>.one           // the material's colour is the leaf's times this (1 / its texture's mean)
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -487,6 +487,11 @@ final class Scene {
     var walkAreas: [WalkArea] = []
     /// The ground under what the colliders don't cover (the open world's terrain: its height at x, z).
     var walkGround: ((Float, Float) -> Float)?
+    /// The scene's terrain, if its ground is one (Scene+Terrain.swift): its sectors' meshes and instances.
+    var terrain: SceneTerrain?
+    /// The scene's water, if it has some (Scene+Water.swift): its looks, which materials are its surfaces', and where
+    /// it is (the water map's field).
+    var water: SceneWater?
     /// The city's buildings: which (LotRef.key), where (the world's x, z) and how tall: the renderer makes the interior
     /// of the one the camera comes near (SceneSettings.interior).
     var lotAreas: [(key: String, rect: CityPlan.Rect, height: Float)] = []
@@ -615,10 +620,14 @@ final class Scene {
         case .materials: buildMaterialWorkshop()
         case .mireland: buildMireland()
         case .painter: buildPainterWorkshop()
+        case .terrain: buildTerrainWorkshop()
         }
         while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
         buildProceduralPrograms()
+        finishTerrainLayers()
+        finishTerrainScatter()
+        addTerrainColliders()
         displaceProcedural()
         traceHoleShadows()
         }
@@ -866,6 +875,23 @@ final class Scene {
         instances[i].normalMatrix = transform.inverse.transpose
     }
 
+    /// Instances put elsewhere for good (a terrain's scatter and what stands on it, after a brush moved the ground: no
+    /// motion between frames). `record`: the renderer writes their records again (takeInstanceEdits).
+    func moveInstances(_ moves: [(Int, float4x4)], record: Bool) {
+        for (i, m) in moves where instances.indices.contains(i) {
+            setTransform(i, m)
+            instances[i].prevTransform = m
+            if record { instanceEdits.insert(i) }
+        }
+    }
+    private var instanceEdits = Set<Int>()
+
+    /// The instances moved for good since the last call (moveInstances), which are then forgotten.
+    func takeInstanceEdits() -> Set<Int> {
+        defer { instanceEdits = [] }
+        return instanceEdits
+    }
+
     /// Something moved in the last `update` (the renderer refits the top level only then: a door that stands still,
     /// a lift that waits, don't cost a refit every frame).
     private(set) var motionThisFrame = true
@@ -999,8 +1025,9 @@ final class Scene {
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
         // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
         // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes. Bit 13:
-        // PROCEDURAL_CODE, some of them are code the shading runs.
-        // (Shaders/Types.metal.)
+        // PROCEDURAL_CODE, some of them are code the shading runs. Bit 12: TERRAIN, its ground is a terrain whose
+        // vertices carry layer weights. Bit 11: WATER, it has water (Scene+Water.swift, Shaders/Water.metal).
+        // Bit 10: LEAF_TRANSMIT, some leaves are two-sided (a leaf sheet's). (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
@@ -1009,6 +1036,9 @@ final class Scene {
             | (hasParticles ? 0x0001_0000 : 0) | (materialExtras.isEmpty ? 0 : 0x8000)
             | (hasOpacity ? 0x2000_4000 : 0)   // OPACITY, with ALPHA_TEST's query loop
             | (proceduralCode.isEmpty ? 0 : 0x2000)   // PROCEDURAL_CODE
+            | (terrain == nil ? 0 : 0x1000)           // TERRAIN
+            | (hasWater ? 0x0800 : 0)                 // WATER
+            | (hasLeafSheets ? 0x0400 : 0)            // LEAF_TRANSMIT
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1199,6 +1229,8 @@ final class Scene {
         var uvs: Stored<SIMD2<Float>>
         var indices: Stored<UInt32>             // into its own vertices
         var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
+        /// A terrain's sector's: its vertices' layer weights (TERRAIN), after the triangles' materials in its block.
+        var weights: Stored<SIMD16<UInt8>>? = nil
         var mesh = 0                            // in `meshes`
     }
 
@@ -1252,6 +1284,25 @@ final class Scene {
 
     /// Mesh `m` was made at level of detail `level` (0 = the finest) of a system that has levels: the LOD debug view
     /// shows it (GPUMesh.lod).
+    /// Mesh `m` is a terrain's sector, its terrain's layer table at `table` in the procedural parameters (TERRAIN).
+    /// A borrowed mesh made again before the renderer has it (a terrain sector refined: Scene.refineTerrain), with
+    /// its new name and bounds; its size may change.
+    func replaceBorrowed(_ m: Int, with mesh: BorrowedMesh, bounds: AABB, name: String) {
+        guard let k = borrowed.firstIndex(where: { $0.mesh == m }) else { return }
+        var mesh = mesh
+        mesh.mesh = m
+        borrowed[k] = mesh
+        meshNames[m] = name
+        meshes[m].indexCount = UInt32(mesh.indices.count)
+        meshes[m].vertexCount = UInt32(mesh.positions.count)
+        meshBounds[m] = (bounds.lo, bounds.hi)
+    }
+
+    func setTerrainTable(_ m: Int, _ table: Int) {
+        guard m >= 0 else { return }
+        meshes[m].terrain = UInt32(table + 1)
+    }
+
     func setDetailLevel(_ m: Int, _ level: Int) {
         guard m >= 0 else { return }
         meshes[m].lod = UInt32(level + 1)
@@ -1499,7 +1550,7 @@ final class Scene {
 
     // MARK: - Physics
 
-    private func physicsWorld() -> PhysicsWorld {
+    func physicsWorld() -> PhysicsWorld {
         if let physics { return physics }
         let world = PhysicsWorld(substeps: settings.physics.substeps)
         physics = world
@@ -1765,6 +1816,8 @@ final class Scene {
     }
     /// Some instance is a liquid's surface (maskLiquid). Set by `addLiquidMaterial`.
     private(set) var hasLiquid = false
+    /// It has water (Scene+Water.swift). Set by `addWaterLook`.
+    var hasWater = false
 
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
     func addGlassMaterial(tint: SIMD3<Float>) -> Int {
@@ -1780,6 +1833,14 @@ final class Scene {
     }
     /// Some material is skin (GPUMaterial.params.w < 0): the shaders are compiled with SKIN.
     private(set) var hasSkin = false
+    /// Some leaves are a scanned leaf sheet's (the realistic look): LEAF_TRANSMIT lights them from both sides.
+    var hasLeafSheets = false
+    /// The scans' textures this scene has (albedo, normal, occlusion-roughness-height), by set and roughness floor:
+    /// each once, whatever number of materials wear it (TextureSets.swift).
+    var scanTextures: [String: SIMD3<UInt32>] = [:]
+    /// Where the realistic look's near ground is (realism high: Scene.refineTerrain): scene x, z; nil: the scene's
+    /// demo camera's place, else the origin.
+    var terrainDetailCenter: SIMD2<Float>?
 
     /// An image for materials to sample: its index for `GPUMaterial.textures`.
     func addTexture(_ source: TextureSource) -> UInt32 {

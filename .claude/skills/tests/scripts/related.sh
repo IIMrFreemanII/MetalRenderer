@@ -48,6 +48,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Physics.metal) add PhysicsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Fluid.metal|Sources/MetalRenderer/Shaders/FluidSurface.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/Liquid.metal) add FluidTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/Water.metal|Sources/MetalRenderer/Shaders/WaterCommon.metal) add WaterTests ShaderSourceTests KernelVariantsTests ;;   # and images (waterKernel: the offscreen skill)
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal|Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
@@ -57,6 +58,10 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
       Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
       Sources/MetalRenderer/VFXEditor/*.swift) add VFXEditorTests ;;
+      Sources/MetalRenderer/Water/*.swift) add WaterTests ;;
+      Sources/MetalRenderer/Terrain/TerrainWater.swift) add WaterTests TerrainDocumentTests ;;
+      Sources/MetalRenderer/Terrain/*.swift) add TerrainDocumentTests TerrainEditorTests ;;
+      Sources/MetalRenderer/TerrainEditor/*.swift) add TerrainEditorTests ;;
       Sources/MetalRenderer/GraphEditor/*.swift) add VFXEditorTests MaterialEditorTests ProjectGraphTests ;;
       Sources/MetalRenderer/ProjectGraph/*.swift|Sources/MetalRenderer/ProjectGraphEditor/*.swift) add ProjectGraphTests ;;
       Sources/MetalRenderer/SceneNavigation.swift|Sources/MetalRenderer/SceneGizmo.swift) add SceneNavigationTests ;;   # the gizmo's pictures: SCENE_GIZMO_PNG=<folder>
@@ -118,7 +123,10 @@ if [[ $suites == " " ]]; then
           LumenGlobalSDF.swift) add GlobalSDFTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           LoadActivity.swift) add LoadActivityTests ;;
+          World+Water.swift) add WorldTests WaterTests ;;
           World*.swift|Scene+World.swift|Terrain.swift) add WorldTests SceneBuffersTests ;;
+          Scene+Water.swift|Renderer+Water.swift) add WaterTests ;;   # and images (the offscreen skill: METALRENDERER_BENCH=water)
+          Scene+Terrain*.swift|Renderer+Terrain.swift) add TerrainDocumentTests TerrainEditorTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
           VGStreamer.swift|VirtualGeometry.swift|RasterClusters.swift) add VGStreamerTests VGCutTests ;;

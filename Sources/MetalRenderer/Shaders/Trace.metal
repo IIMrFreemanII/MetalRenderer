@@ -39,6 +39,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<uint, access::read>    visBuffer      [[texture(15)]],  // with FLAG_VIS_BUFFER: instance, triangle
                         texture2d<float, access::read>   liquidRay      [[texture(16)]],  // LIQUID: the camera ray bent through
                         texture2d<float, access::read>   liquidDir      [[texture(17)]],  // a liquid (liquidKernel)
+                        texture2d<uint, access::read>    waterGuess     [[texture(18)]],  // WATER: the pixel whose raster triangle the bent ray meets
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -58,20 +59,35 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     bool recordTextures = ((tid.x + 3u * tid.y + u.frameIndex) & 7u) == 0u;
     // Window glass isn't met here: glassKernel adds it over the surface behind it. Nor a liquid: where one is in view,
     // the ray goes on from where liquidKernel bent it, and liquidApplyKernel adds the liquid over what it finds.
+    // Water isn't in the scene's structure: waterKernel bends the ray into it the same way (Water.metal), and
+    // waterApplyKernel adds its surface.
     uint primaryMask = (GLASS ? MASK_ALL & ~MASK_GLASS : MASK_ALL) & (LIQUID ? ~MASK_LIQUID : MASK_ALL);
     float liquidEntry = -1.0f;
     float3 eye = dir;   // the camera's ray (dir: the ray that reaches what this pixel shows)
-    if (LIQUID) {
+    bool bentRay = false;
+    if (LIQUID || WATER) {
+        // w: 1 = bent by a liquid, 2 + WATER_RAY_* by water (bent where WATER_RAY_BENT is set).
         float4 bent = liquidRay.read(tid);
-        if (bent.w > 0.0f) {
+        if (bent.w == 1.0f || (bent.w >= 2.0f && ((uint(bent.w) - 2u) & 1u) != 0u)) {
             float4 along = liquidDir.read(tid);
             liquidEntry = along.w;
             dir = along.xyz;
             primary = makeRay(bent.xyz, dir, 0.0f, INFINITY);
+            bentRay = true;
         }
     }
     Hit hit;
-    if (!flagOn(u.flags, FLAG_VIS_BUFFER) || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
+    // (A bent ray isn't the raster's: its triangle there is what the straight one met. Water's says which pixel's
+    // triangle it likely meets, under the surface (waterKernel): met there when it does, else traced.)
+    bool guessed = false;
+    if (WATER && bentRay && flagOn(u.flags, FLAG_VIS_BUFFER)) {
+        uint g = waterGuess.read(tid).r;
+        if (g != 0xFFFFFFFFu && visibilityHit(visBuffer.read(uint2(g & 0xFFFFu, g >> 16)).xy, primary, accel, s, hit)) {
+            guessed = hit.hit && primary.direction.y * hit.distance < 0.0f && hit.distance < 400.0f;
+        }
+    }
+    if (guessed) {
+    } else if (!flagOn(u.flags, FLAG_VIS_BUFFER) || bentRay || !visibilityHit(visBuffer.read(tid).xy, primary, accel, s, hit)) {
         hit = intersectClosest(primary, primaryMask, accel);
     } else if (atomic_load_explicit(rasterTraced(rasterCounters), memory_order_relaxed) != 0u) {
         Ray nearer = primary;
@@ -116,7 +132,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
     outNormalDepth.write(float4(n, viewDepth), tid);
     // A strand's (Hair.metal): its tangent in the alphas. Skin: minus its strength (Hair.metal hairFromGBuffer).
-    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent) : float2(1.0f, -2.0f - (SKIN ? sf.skin : 0.0f));
+    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent)
+                      : float2(1.0f, -2.0f - (LEAF_TRANSMIT && sf.leaf > 0.0f ? leafCode(sf.leaf, sf.backlit) : SKIN ? sf.skin : 0.0f));
     outGeoNormal.write(float4(ng, tangentOct.y + 2.0f), tid);
     outAlbedo.write(float4(sf.albedo, tangentOct.x), tid);
     outEmission.write(float4(sf.emission, 1.0f), tid);
@@ -128,7 +145,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     // Seen through a liquid, the surface isn't where this pixel looks: the pixel moves as the liquid's surface it looks
     // through does (taken as still), its depth as the surface's.
     float3 seen = sf.position;
-    if (LIQUID && liquidEntry > 0.0f) {
+    if ((LIQUID || WATER) && liquidEntry > 0.0f) {
         seen = u.camPos.xyz + eye * liquidEntry;
         float ignored;
         prevPixel = projectToPixel(seen - u.prevCamPos.xyz, u.prevCamRight, u.prevCamUp, u.prevCamForward, size, ignored);
@@ -171,6 +188,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         hp.albedo = sf.albedo;
     } else if (SKIN && sf.skin > 0.0f) {
         hp = skinPoint(sf.skin);
+    } else if (LEAF_TRANSMIT && sf.leaf > 0.0f) {
+        hp = leafPoint(sf.leaf, sf.backlit);
     }
 
     // Direct light. The shadow denoiser filters visibility per light group (one rgba channel each; up to 4 lights,

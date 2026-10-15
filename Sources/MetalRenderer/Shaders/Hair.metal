@@ -29,6 +29,8 @@ struct HairPoint {
     float3 albedo;
     float  skin;
     bool   thin;
+    float  leaf;      // LEAF_TRANSMIT: a two-sided leaf's share of light through it (0: not one)
+    bool   flipped;   // ...one of those whose normal faces away (Surface.backlit), its colour tinted for that
 };
 
 inline HairPoint noHair() {
@@ -38,8 +40,22 @@ inline HairPoint noHair() {
     hp.h = 0.0f;
     hp.skin = 0.0f;
     hp.thin = false;
+    hp.leaf = 0.0f;
+    hp.flipped = false;
     return hp;
 }
+
+// A two-sided leaf letting `share` of the light through, its normal flipped or not (G-buffer code 4 + share, + 2 if
+// flipped: hairFromGBuffer).
+inline HairPoint leafPoint(float share, bool flipped) {
+    HairPoint hp = noHair();
+    hp.leaf = share;
+    hp.flipped = flipped;
+    return hp;
+}
+inline float leafCode(float share, bool flipped) { return 4.0f + share + (flipped ? 2.0f : 0.0f); }
+// What comes through a leaf: the light's colour after a leaf's thickness of chlorophyll (yellow-green).
+constant float3 LEAF_THROUGH_TINT = float3(1.05f, 1.25f, 0.5f);
 
 // Skin of Material.params.w = -`code`: its strength, 0...1, + 2 where it is thin.
 inline HairPoint skinPoint(float code) {
@@ -63,6 +79,10 @@ inline float3 hairOctDecode(float2 e) {
     return normalize(t);
 }
 inline HairPoint hairFromGBuffer(float4 albedo, float geoW, float3 n, float3 view) {
+    if (LEAF_TRANSMIT && geoW < -3.5f) {   // a leaf: minus its code (leafCode)
+        float code = -geoW - 4.0f;
+        return code > 1.5f ? leafPoint(code - 2.0f, true) : leafPoint(code, false);
+    }
     if (SKIN && geoW < -1e-4f) return skinPoint(-geoW);   // skin: minus its code (traceKernel)
     HairPoint hp = noHair();
     if (geoW < 0.5f) return hp;
@@ -215,9 +235,21 @@ inline float3 skinShadowOrigin(HairPoint hp, float3 position, float3 n, float3 p
     return hp.thin ? position + l * SKIN_THROUGH : p + n * (SKIN_LIFT * hp.skin);
 }
 
-// lightUnshadowed for any surface: a strand's by its BSDF, skin's wrapped.
+// A two-sided leaf's light: on its near side as any surface's, minus what passes through; from its far side the share
+// that comes through, tinted.
+// (A flipped leaf's colour is tinted already, and its normal faces away: both undone here.)
+inline float3 leafUnshadowed(Light light, float3 p, float3 n, HairPoint hp) {
+    float3 l = hairLightDirection(light, p);
+    float3 facing = lightUnshadowed(light, p, l, l);
+    float c = dot(hp.flipped ? -n : n, l);
+    float3 e = c >= 0.0f ? facing * ((1.0f - hp.leaf) * c) : facing * (LEAF_THROUGH_TINT * (hp.leaf * -c));
+    return hp.flipped ? e / LEAF_TRANSMIT_TINT : e;
+}
+
+// lightUnshadowed for any surface: a strand's by its BSDF, skin's wrapped, a two-sided leaf's from both sides.
 inline float3 litUnshadowed(Light light, float3 p, float3 n, float3 ng, HairPoint hp) {
     if (hp.on) return hairUnshadowed(light, p, hp);
+    if (LEAF_TRANSMIT && hp.leaf > 0.0f) return leafUnshadowed(light, p, n, hp);
     if (SKIN && hp.skin > 0.0f) return skinUnshadowed(light, p, n, hp);
     return lightUnshadowed(light, p, n, ng);
 }
@@ -233,5 +265,7 @@ inline float3 hairShadowOrigin(float3 position, float3 n, float3 target) {
 // (hairShadowOrigin), skin's (skinShadowOrigin), else `p`.
 inline float3 hairOrSurface(HairPoint hp, float3 position, float3 n, float3 p, float3 target) {
     if (hp.on) return hairShadowOrigin(position, n, target);
+    // A two-sided leaf: off the side the light is on.
+    if (LEAF_TRANSMIT && hp.leaf > 0.0f) return dot(target - position, n) >= 0.0f ? p : 2.0f * position - p;
     return SKIN && hp.skin > 0.0f ? skinShadowOrigin(hp, position, n, p, target) : p;
 }

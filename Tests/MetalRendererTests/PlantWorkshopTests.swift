@@ -10,6 +10,7 @@ final class PlantWorkshopTests: XCTestCase {
     private func workshop(_ change: (inout PlantSceneSettings) -> Void = { _ in }, catalog: String = "builtin",
                           assemblies: Bool = false) -> Scene {
         var settings = SceneSettings(kind: .plants)
+        settings.realism = .off   // (the plants alone: no meadow grass, no scans)
         settings.plantCatalog = catalog
         change(&settings.plants)
         return Scene(settings, assemblies: assemblies)
@@ -28,7 +29,9 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertEqual(stats.parts, plant.parts.count)
         XCTAssertGreaterThan(stats.boughs, 50)
         XCTAssertEqual(stats.height, plant.height)
-        XCTAssertEqual(scene.instances.count, 1 + 2)   // the lawn, the oak's wood and leaves
+        let ground = scene.terrain?.parts.count ?? 0
+        XCTAssertGreaterThan(ground, 0)
+        XCTAssertEqual(scene.instances.count, ground + 1 + 2)   // the ground's pieces, the plain, the oak's wood and leaves
         let focus = try XCTUnwrap(scene.focus)
         XCTAssertEqual(focus.hi.y, plant.bounds.hi.y, accuracy: 1e-4)
         // Its camera sees all of it.
@@ -46,9 +49,10 @@ final class PlantWorkshopTests: XCTestCase {
         let scene = workshop { $0.species = "birch"; $0.layout = .lineup }
         let variants = Foliage.Age.allCases.reduce(0) { $0 + PlantCatalog.builtIn[.birch].variants($1) }
         XCTAssertEqual(variants, 7)
-        XCTAssertEqual(scene.instances.count, 1 + 2 * variants)
+        let ground = Set(scene.terrain?.parts.map(\.instance) ?? [])
+        XCTAssertEqual(scene.instances.count, ground.count + 1 + 2 * variants)
         // No two plants stand in one place.
-        let feet = Set(scene.instances.dropFirst().map { "\($0.transform.columns.3.x) \($0.transform.columns.3.z)" })
+        let feet = Set(scene.instances.indices.filter { !ground.contains($0) }.map { scene.instances[$0] }.dropFirst().map { "\($0.transform.columns.3.x) \($0.transform.columns.3.z)" })
         XCTAssertEqual(feet.count, variants)
     }
 

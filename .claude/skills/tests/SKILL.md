@@ -96,7 +96,11 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `LumenGlobalSDF.swift` | GlobalSDFTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `LoadActivity` (the loading overlay's model) | LoadActivityTests (the overlay itself, `LoadingOverlay`: none, it is AppKit) |
+| `World+Water` | WorldTests, WaterTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
+| `Water/*`, `Scene+Water`, `Renderer+Water`, `Terrain/TerrainWater` | WaterTests (the shaders `Water.metal`, `WaterCommon.metal`: plus ShaderSourceTests, KernelVariantsTests; prove the look with images: `METALRENDERER_BENCH=water`, `waterunder`, `waterperf`) |
+| `Terrain/*`, `Scene+Terrain*`, `Renderer+Terrain` | TerrainDocumentTests, TerrainEditorTests |
+| `TerrainEditor/*` | TerrainEditorTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
 | `VGStreamer`, `VirtualGeometry`, `RasterClusters` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |

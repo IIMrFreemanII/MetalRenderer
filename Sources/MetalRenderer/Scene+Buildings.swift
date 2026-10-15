@@ -65,19 +65,31 @@ extension Scene {
         }
 
         section("Ground")
-        // The ground: the lot and a pavement round it at the pavement's height, the road in front, a lawn beyond.
+        // The ground: the lot and a pavement round it at the pavement's height, the road in front; round them rolling
+        // ground (a terrain of its own, a kilometre, level under the lot and the road: their extent in steps of 8 m,
+        // which its name says), a plain beyond to the horizon.
         let paving = SurfaceMaterial(color: [0.52, 0.5, 0.47], surface: .paving)
         let asphalt = SurfaceMaterial(color: [0.1, 0.1, 0.11], surface: .asphalt)
-        let grass = SurfaceMaterial(color: [0.2, 0.3, 0.13])
-        var pavement = MeshBuilder(uvScale: paving.uvScale), road = MeshBuilder(uvScale: asphalt.uvScale), lawn = MeshBuilder()
+        var pavement = MeshBuilder(uvScale: paving.uvScale), road = MeshBuilder(uvScale: asphalt.uvScale)
         let x0 = min(focus.lo.x, site.lo.x) - 6, x1 = max(focus.hi.x, site.hi.x) + 6
         let z0 = site.lo.z - 6, front = site.hi.z + CityPlan.sidewalk
         pavement.box([x0, -0.2, z0], [x1, 0, front], faces: [.top, .sides])
         road.floor(x0: x0 - 200, x1: x1 + 200, z0: front, z1: front + 12, y: -0.15)
-        lawn.floor(x0: -2000, x1: 2000, z0: -2000, z1: 2000, y: -0.2)
-        kit.add([(paving, pavement), (asphalt, road), (grass, lawn)])
+        kit.add([(paving, pavement), (asphalt, road)])
+        func step(_ v: Float, _ up: Bool) -> Float { (v / 8).rounded(up ? .up : .down) * 8 }
+        let lo = SIMD2(step(x0 - 4, false), step(z0 - 4, false)), hi = SIMD2(step(x1 + 4, true), step(front + 16, true))
+        let level: Float = -0.21
+        let shapes = TerrainShapes(flats: [TerrainShapes.Flat(lo: lo, hi: hi, corner: 4, level: level, blend: 24),
+                                           TerrainShapes.Flat(lo: [lo.x - 200, step(front, false) - 1], hi: [hi.x + 200, hi.y], level: level, blend: 24)])
+        let grass = addMaterial(albedo: [0.2, 0.3, 0.13])
+        addGroundTerrain("building-workshop-\(Int(lo.x)) \(Int(lo.y)) \(Int(hi.x)) \(Int(hi.y))",
+                         base: ShapedTerrainBase(NoiseTerrainBase(size: 1024, cells: 256, seed: 0xB1D, relief: 9, featureSize: 200), shapes: shapes),
+                         material: grass)
+        addGroundLook(GroundLook.meadow(lo: [-512, -512], size: [1024, 1024], texels: 1024, key: "building-workshop", seed: 0xB1D))
+        addInstance(Kit(self).quad, grass, translate([0, -18, 0]) * scale([20_000, 1, 20_000]))
+        // (The walker stands on the terrain's ground: Scene.walkGround.)
         walkColliders = kit.colliders + [Interior.Collider(lo: [x0, -1, z0], hi: [x1, 0, front]),
-                                         Interior.Collider(lo: [-2000, -2, -2000], hi: [2000, -0.15, 2000])]
+                                         Interior.Collider(lo: [x0 - 200, -1, front], hi: [x1 + 200, -0.15, front + 12])]
         kit.addFlashlight()
         walkAreas = [WalkArea(rect: CityPlan.Rect(lo: SIMD2(site.lo.x, site.lo.z), hi: SIMD2(site.hi.x, site.hi.z)), building: building, at: .identity)]
 

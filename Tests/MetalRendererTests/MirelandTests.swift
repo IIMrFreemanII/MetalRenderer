@@ -7,7 +7,9 @@ import simd
 final class MirelandTests: XCTestCase {
     func testTheSwampIsMadeOfTheMirelandMaterials() {
         let scene = Scene(SceneSettings(kind: .mireland))
-        XCTAssertEqual(Set(scene.procedural.map(\.graph)), Set(MaterialLibrary.mireland.map(\.name)))
+        // (All but Swamp Ground, the water's old look: the swamp's water is Water.metal's, its duckweed Swamp Duckweed.)
+        XCTAssertEqual(Set(scene.procedural.map(\.graph)), Set(MaterialLibrary.mireland.map(\.name)).subtracting(["Swamp Ground"]))
+        XCTAssertTrue(scene.hasWater)
         XCTAssertTrue(scene.hasOpacity)
         XCTAssertFalse(scene.isStill)
         var cutOut = 0

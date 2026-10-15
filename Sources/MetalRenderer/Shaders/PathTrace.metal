@@ -515,6 +515,17 @@ float3 ptTransmittance(float3 from, float3 to, SCENE_ACCEL accel, thread const S
             o = w.position + d * RAY_EPSILON;
         }
     }
+    if (WATER && any(T > 0.0f)) {
+        // Water's surface on the way (one crossing): Fresnel's share kept out, and from under it what the water
+        // absorbs up to it. (Straight through, as a liquid's: no caustics.)
+        WaterHit wh = waterIntersect(s.water, from, d, dist);
+        if (wh.hit) {
+            WaterLook look = s.water->looks[wh.look];
+            bool leaving = dot(d, wh.normal) > 0.0f;
+            if (leaving) T *= exp(-look.absorption.rgb * wh.distance);
+            T *= 1.0f - waterFresnel(abs(dot(d, wh.normal)), leaving ? look.absorption.w : 1.0f / look.absorption.w);
+        }
+    }
     if (fogOn && any(T > 0.0f)) T *= ptFogTransmittance(fog, from, d, dist, rng);
     return T;
 }
@@ -626,7 +637,12 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
         bool cameraRay = true;     // meets the lights' shapes and camera-only geometry, as the frame's camera rays do
         float spread = pixelSpread;
         uint bounce = 0;
-        float4 medium = float4(0.0f);   // LIQUID: the liquid the path is in (absorption, index), 0: none
+        float4 medium = float4(0.0f);   // LIQUID, WATER: the liquid or water the path is in (absorption, index), 0: none
+        // (A camera under water starts in it.)
+        if (WATER) {
+            WaterPlace at = waterAt(s.water, origin.xz);
+            if (at.wet && origin.y < at.level) medium = s.water->looks[at.look].absorption;
+        }
 
         for (uint event = 0; event < 2 * params.samples.z + 16u; ++event) {
             uint mask = (cameraRay ? MASK_ALL & ~MASK_GLASS : treeLights ? MASK_GEOMETRY | MASK_LIGHTS : MASK_GEOMETRY) & ~MASK_LIQUID;
@@ -665,6 +681,13 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
             if (LIQUID) {
                 wet = traceSurface(makeRay(origin, dir, 0.0f, tNear), MASK_LIQUID, accel, s, spread);
                 if (wet.hit) { tNear = distance(origin, wet.position); kind = 5u; }
+            }
+            // Water's surface in front of it (its own structures: the near patch's waves, the still surfaces).
+            WaterHit waterHit;
+            waterHit.hit = false;
+            if (WATER) {
+                waterHit = waterIntersect(s.water, origin, dir, tNear);
+                if (waterHit.hit) { tNear = waterHit.distance; kind = 7u; }
             }
             // Few lights: an analytic light in front of all that.
             if (fewLights && !cameraRay) {
@@ -782,8 +805,8 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 }
                 continue;
             }
-            // Inside a liquid, what it absorbed on the way here.
-            if (LIQUID && medium.a > 0.0f) {
+            // Inside a liquid (or water), what it absorbed on the way here.
+            if ((LIQUID || WATER) && medium.a > 0.0f) {
                 float3 kept = exp(-medium.rgb * (isFar(tNear) ? 1e3f : tNear));
                 throughput *= kept;
                 emitterThroughput *= kept;
@@ -808,6 +831,34 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                     dir = normalize(bent);
                     origin = wet.position - facing * RAY_EPSILON;
                     medium = entering ? m : float4(0.0f);
+                }
+                prevDelta = true;
+                continue;
+            }
+            if (kind == 7u) {
+                // Water: a dielectric whose surface the waves shape (the same normal as the frame's water), its look's
+                // absorption inside.
+                device const WaterScene* ws = s.water;
+                float3 at = origin + dir * waterHit.distance;
+                WaterPlace place = waterAt(ws, waterHit.rest);
+                WaterLook look = ws->looks[place.wet ? place.look : waterHit.look];
+                float shore = place.wet ? smoothstep(0.0f, 0.25f, place.level - place.ground) : 1.0f;
+                WaterSurface surface = waterSurfaceAt(ws, look, waterHit.rest, place.flow, spread * waterHit.distance);
+                float3 n = normalize(mix(float3(0.0f, 1.0f, 0.0f), surface.normal, shore));
+                bool entering = dot(dir, n) < 0.0f;
+                float3 facing = entering ? n : -n;
+                float eta = entering ? 1.0f / look.absorption.w : look.absorption.w;
+                float fresnel = waterFresnel(saturate(dot(-dir, facing)), eta) * (entering ? shore : 1.0f);
+                float3 bent = refract(dir, facing, eta);
+                if (fresnel >= 1.0f || length_squared(bent) == 0.0f || rng.next() < fresnel) {
+                    dir = reflect(dir, facing);
+                    origin = at + facing * RAY_EPSILON;
+                    emitterThroughput = throughput;
+                    cameraRay = false;
+                } else {
+                    dir = normalize(mix(dir, normalize(bent), entering ? shore : 1.0f));
+                    origin = at - facing * RAY_EPSILON;
+                    medium = entering ? look.absorption : float4(0.0f);
                 }
                 prevDelta = true;
                 continue;

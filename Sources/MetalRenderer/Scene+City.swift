@@ -77,14 +77,61 @@ extension Scene {
         let earth = SurfaceMaterial(color: [0.3, 0.33, 0.2])
         let grass = SurfaceMaterial(color: [0.2, 0.34, 0.12])
         let e = plan.extent, far = CityPlan.margin
-        var roads = builder(asphalt), around = builder(earth)
-        roads.floor(x0: e.lo.x, x1: e.hi.x, z0: e.lo.y, z1: e.hi.y, y: 0)
-        around.floor(x0: e.lo.x - far, x1: e.hi.x + far, z0: e.lo.y - far, z1: e.hi.y + far, y: -0.03)
+        var roads = builder(asphalt)
+        if let canal = plan.canal {
+            // The canal: the asphalt either side of it, paved quays down to stone walls, water a metre and a half under
+            // them, and a bridge where each street along z crosses it (a deck, a parapet each side).
+            let water = canal.water, stone = SurfaceMaterial(color: [0.42, 0.4, 0.37], surface: .paving)
+            roads.floor(x0: e.lo.x, x1: e.hi.x, z0: e.lo.y, z1: canal.rect.lo.y, y: 0)
+            roads.floor(x0: e.lo.x, x1: e.hi.x, z0: canal.rect.hi.y, z1: e.hi.y, y: 0)
+            var quays = builder(stone)
+            for (z0, z1) in [(canal.rect.lo.y, water.lo.y), (water.hi.y, canal.rect.hi.y)] {
+                quays.box([e.lo.x, 0, z0], [e.hi.x, 0.15, z1], faces: [.sides, .top])
+            }
+            quays.box([e.lo.x - far, -CityPlan.canalBed - 0.3, water.lo.y - 0.6], [e.hi.x + far, 0.15, water.lo.y], faces: [.sides, .top])
+            quays.box([e.lo.x - far, -CityPlan.canalBed - 0.3, water.hi.y], [e.hi.x + far, 0.15, water.hi.y + 0.6], faces: [.sides, .top])
+            for street in plan.streets where street.along == 1 {
+                let x0 = street.rect.lo.x, x1 = street.rect.hi.x
+                roads.box([x0, -0.7, water.lo.y], [x1, 0, water.hi.y], faces: [.sides, .top, .bottom])
+                quays.box([x0, 0, water.lo.y], [x0 + 0.35, 1.0, water.hi.y], faces: [.sides, .top])
+                quays.box([x1 - 0.35, 0, water.lo.y], [x1, 1.0, water.hi.y], faces: [.sides, .top])
+            }
+        } else {
+            roads.floor(x0: e.lo.x, x1: e.hi.x, z0: e.lo.y, z1: e.hi.y, y: 0)
+        }
+        // The open ground: the terrain "city-<seed>" (Terrain Editor), 4 m a cell, level 3 cm under the asphalt and kept
+        // so under the streets and blocks (protected from the brushes). Its sectors' instances after everything else's.
+        let groundSize = max(e.size.x, e.size.y) + 2 * far, groundCells = Int((groundSize / 4).rounded(.up))
+        let groundGrid = TerrainGrid.square(size: Float(groundCells) * 4, cells: groundCells,
+                                            center: SIMD2(Double(e.center.x), Double(e.center.y)))
+        // The canal's bed is cut into it (and on through the open ground out to its edge, between grassy banks there),
+        // its water a lake filling the cut.
+        var shapes = TerrainShapes()
+        var canalWater: [WaterBody] = []
+        if let canal = plan.canal {
+            let water = canal.water
+            shapes.flats.append(TerrainShapes.Flat(lo: SIMD2(e.lo.x - far, water.lo.y), hi: SIMD2(e.hi.x + far, water.hi.y), level: -CityPlan.canalBed,
+                                                   blend: 8, protect: true))
+            var look = WaterLook.preset(.lake)
+            look.waves = 0.06
+            look.absorption = [0.6, 0.18, 0.25]
+            var body = WaterBody(name: "Canal", kind: .lake, level: -CityPlan.canalLevel, seed: SIMD2(0, Double(water.center.y)))
+            body.look = look
+            canalWater.append(body)
+        }
+        let groundBase = ShapedTerrainBase(FlatTerrainBase(grid: groundGrid, level: -0.03, protect: [(e.lo - 2, e.hi + 2)]), shapes: shapes)
+        let groundEntry = Scene.openTerrain("city-\(seed)", base: groundBase, layers: TerrainDocument.sceneLayers())
+        let earthMaterial = sharedMaterial(earth)
+        defer {
+            addTerrain(name: groundEntry.document.name, field: groundEntry.field, tiles: groundGrid.tiles!.map { ($0, 0) },
+                       style: TerrainMeshStyle(uvOrigin: groundGrid.origin, uvScale: earth.uvScale), material: earthMaterial,
+                       generatedWater: canalWater)
+        }
 
         // The roads' centre lines: dashes a centimetre proud of the asphalt, none where two roads cross.
         let paint = SurfaceMaterial(color: [0.7, 0.7, 0.66])
         var lines = builder(paint)
-        for street in plan.streets {
+        for street in plan.streets where plan.canal.map({ $0.rect != street.rect }) ?? true {
             let along = street.along, r = street.rect
             let length = along == 1 ? r.size.y : r.size.x, start = along == 1 ? r.lo.y : r.lo.x
             let middle = along == 1 ? r.center.x : r.center.y
@@ -136,7 +183,7 @@ extension Scene {
             trunks.cylinder(p, radius: 0.16 * size, topRadius: 0.1 * size, height: 2.6 * size, segments: 6, cap: false)
             crowns.ball(p + [0, 3.9 * size, 0], radius: SIMD3(1.7, 1.9, 1.7) * size)
         }
-        add([(asphalt, roads), (earth, around), (paint, lines), (paving, sidewalks), (grass, lawns), (iron, posts), (bark, trunks),
+        add([(asphalt, roads), (paint, lines), (paving, sidewalks), (grass, lawns), (iron, posts), (bark, trunks),
              (leaves, crowns)])
         for head in heads { add([(lampLight, head)]) }
 
@@ -193,8 +240,21 @@ extension Scene {
             }
         }
 
-        // The walker's ground: the roads, the blocks' raised pavements.
-        solids.append(Interior.Collider(lo: SIMD3(e.lo.x - far, -2, e.lo.y - far), hi: SIMD3(e.hi.x + far, 0, e.hi.y + far)))
+        // The walker's ground: the roads, the blocks' raised pavements (and the canal's quays and bridges: its water, the
+        // terrain under it).
+        if let canal = plan.canal {
+            let water = canal.water
+            solids.append(Interior.Collider(lo: SIMD3(e.lo.x - far, -2, e.lo.y - far), hi: SIMD3(e.hi.x + far, 0, water.lo.y)))
+            solids.append(Interior.Collider(lo: SIMD3(e.lo.x - far, -2, water.hi.y), hi: SIMD3(e.hi.x + far, 0, e.hi.y + far)))
+            for (z0, z1) in [(canal.rect.lo.y, water.lo.y), (water.hi.y, canal.rect.hi.y)] {
+                solids.append(Interior.Collider(lo: SIMD3(e.lo.x, 0, z0), hi: SIMD3(e.hi.x, 0.15, z1)))
+            }
+            for street in plan.streets where street.along == 1 {
+                solids.append(Interior.Collider(lo: SIMD3(street.rect.lo.x, -0.7, water.lo.y), hi: SIMD3(street.rect.hi.x, 0, water.hi.y)))
+            }
+        } else {
+            solids.append(Interior.Collider(lo: SIMD3(e.lo.x - far, -2, e.lo.y - far), hi: SIMD3(e.hi.x + far, 0, e.hi.y + far)))
+        }
         for block in plan.blocks {
             solids.append(Interior.Collider(lo: SIMD3(block.rect.lo.x, 0, block.rect.lo.y), hi: SIMD3(block.rect.hi.x, 0.15, block.rect.hi.y)))
         }
