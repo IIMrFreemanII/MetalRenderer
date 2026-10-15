@@ -99,8 +99,8 @@ struct CharacterRig {
         bind = character.bindPoses
         // A dance lasts its clip less a crossfade, so the fade into the next ends as it does (it never starts over).
         var programme: [(clip: Int, start: Float)] = [], t: Float = 0
-        for step in CharacterRig.routine {
-            guard let c = character.clip(named: step.clip) else { continue }
+        for step in MixamoLibrary.routine ?? CharacterRig.routine {
+            guard let c = character.clip(named: step.clip) ?? MixamoLibrary.loadedClip(step.clip, in: character) else { continue }
             programme.append((c, t))
             t += step.seconds ?? character.clips[c].duration - CharacterRig.fade
         }
@@ -185,7 +185,8 @@ struct CharacterRig {
     // MARK: The programme
 
     /// The clips it goes through, each for its `seconds` (nil: its clip's length, once), and how long a crossfade into
-    /// one takes. The dances' travel (SkinnedCharacter.Clip.velocity) is put back as they dance.
+    /// one takes. The dances' travel (SkinnedCharacter.Clip.velocity) is put back as they dance. `METALRENDERER_ROUTINE`
+    /// replaces it (MixamoLibrary).
     static let routine: [(clip: String, seconds: Float?)] = [
         ("Idle", 2.5), ("Hip Hop Dancing", nil), ("Breakdance Freeze Var 2", nil), ("Hip Hop Dancing (1)", nil),
         ("Breakdance Freeze Var 3", nil), ("Hip Hop Dancing (2)", nil), ("Idle", 2),
