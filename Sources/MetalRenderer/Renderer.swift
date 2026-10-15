@@ -510,6 +510,14 @@ final class Renderer: NSObject {
     static func lightMapSize(lightCount: Int) -> Int {
         lightCount <= 16 ? 128 : max(32, Int(128 * (16 / Double(lightCount)).squareRoot()) / 8 * 8)
     }
+    /// The walkable interiors' box for the GPU (Uniforms / GPUFogParams interiorLo, interiorHi; empty: lo > hi). In it
+    /// GI's hits see the sun through a shadow ray and the fog's sky light is occluded: the sun's light map, over the
+    /// whole scene, has texels metres wide, sees no wall or ceiling, and lit every room inside as if the sun shone on
+    /// its walls.
+    static func interiorBox(_ scene: Scene) -> (lo: SIMD4<Float>, hi: SIMD4<Float>) {
+        guard let box = scene.interiorBox else { return (SIMD4(1, 1, 1, 0), SIMD4(-1, -1, -1, 0)) }
+        return (SIMD4(box.lo, 1), SIMD4(box.hi, 1))
+    }
     private var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
     private var blueNoiseReady = false
     // Volumetric fog (Shaders/Fog.metal), allocated when first turned on.
@@ -1918,6 +1926,7 @@ final class Renderer: NSObject {
         p.grid = SIMD4(near, far, log(far / near), Float(grid?.slices ?? 0))
         let volumes = f.volumes ? Array(scene.fogVolumes.prefix(GPUFogParams.maxVolumes)) : []
         for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
+        (p.interiorLo, p.interiorHi) = Renderer.interiorBox(scene)
         p.counts = SIMD4(UInt32(grid?.columns ?? 0), UInt32(grid?.rows ?? 0), UInt32(volumes.count),
                          GPUFogParams.enabled | (historyValid ? GPUFogParams.historyValid : 0)
                          | (f.reflections ? GPUFogParams.reflections : 0) | (f.lights ? 0 : GPUFogParams.skyLight))
@@ -2646,6 +2655,7 @@ final class Renderer: NSObject {
         default: break
         }
         if settings.lightMaps && giMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
+        (u.interiorLo, u.interiorHi) = Renderer.interiorBox(scene)
         u.viewMode = UInt32(settings.viewMode)
         let d = settings.denoiser
         u.denoise = SIMD4<Float>(DenoiserSettings.luminanceSigmaRange.clamp(d.luminanceSigma),
@@ -3058,6 +3068,7 @@ final class Renderer: NSObject {
         var water = false                       // ...and into water (waterKernel; in the liquids' targets)
         var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
+        var manyLightRays = 1                   // ...with this many shadow rays a group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
         var meshLights = false                  // emissive-mesh lights, sampled per pixel
@@ -3260,7 +3271,10 @@ final class Renderer: NSObject {
 
         // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
         p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir && !p.megaLights
-        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
+        // Rooms to walk into: two rays a group. A big room under many ceiling lights (an open office) speckles with
+        // one, even with its picks reused; two cost ~0.4 ms there, ReSTIR ~6 ms.
+        p.manyLightRays = settings.manyLightRays == 1 && scene.interiorBox != nil ? 2 : settings.manyLightRays
+        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && p.manyLightRays == 1
         p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
 
         // ReSTIR DI. References with many lights accumulate its unbiased initial sampling alone (32 candidates).
@@ -4159,7 +4173,7 @@ final class Renderer: NSObject {
         var stages: [ComputeStage] = []
         if plan.manyLights {
             let reuse = plan.lightReuse
-            let config = SIMD4<UInt32>(UInt32(settings.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
+            let config = SIMD4<UInt32>(UInt32(plan.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
                                        plan.lightPicksValid ? 1 : 0, 0)
             stages.append(ComputeStage(pass: "many lights") { [self] enc in
                 var config = config

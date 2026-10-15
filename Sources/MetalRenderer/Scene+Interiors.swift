@@ -121,6 +121,18 @@ final class BuildingKit {
     /// An interior at `transform`: each storey's mesh where its storeys are (its glass and its glowing parts
     /// instances of their own), its loose pieces, its lights, and its colliders.
     func addInterior(_ interior: Interior, at transform: float4x4) {
+        // Its box, world space, a little over its walls (Scene.interiorBox).
+        var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
+        for c in interior.colliders {
+            for k in 0..<8 {
+                let q = transform * SIMD4(k & 1 == 0 ? c.lo.x : c.hi.x, k & 2 == 0 ? c.lo.y : c.hi.y, k & 4 == 0 ? c.lo.z : c.hi.z, 1)
+                lo = simd_min(lo, SIMD3(q.x, q.y, q.z)); hi = simd_max(hi, SIMD3(q.x, q.y, q.z))
+            }
+        }
+        if lo.x <= hi.x {
+            (lo, hi) = (lo - 0.5, hi + 0.5)
+            scene.interiorBox = scene.interiorBox.map { (simd_min($0.lo, lo), simd_max($0.hi, hi)) } ?? (lo, hi)
+        }
         var meshes: [Int: (mesh: Int, first: Int)] = [:]
         var apart: [Int: [(mesh: Int, material: Int, glass: Bool)]] = [:]
         for (index, storey) in interior.storeys.enumerated() {
@@ -211,6 +223,23 @@ final class BuildingKit {
         // Its lights, each switched by its room's switch (InteriorControls.lights): at most a few hundred (the rest of
         // a tower's floors stay dark).
         var byRoom: [SIMD2<Int>: [Int]] = [:]
+        // A room's light shows its panels: one mesh for each layout, in the unit quad the rect light's proxy scales
+        // (x along its width, z against the lot's z: Scene.rectFrame's b for a light facing down).
+        var panelMeshes: [[SIMD4<Float>]: Int] = [:]
+        func panelMesh(_ l: Interior.Light) -> Int? {
+            guard !l.panels.isEmpty else { return nil }
+            if let m = panelMeshes[l.panels] { return m }
+            var p: [SIMD3<Float>] = [], n: [SIMD3<Float>] = [], idx: [UInt32] = []
+            for q in l.panels {
+                let c = SIMD2(q.x / l.size.x, -q.y / l.size.y), h = SIMD2(q.z / l.size.x, q.w / l.size.y) / 2, b = UInt32(p.count)
+                p += [[c.x - h.x, 0, c.y - h.y], [c.x + h.x, 0, c.y - h.y], [c.x + h.x, 0, c.y + h.y], [c.x - h.x, 0, c.y + h.y]]
+                n += [SIMD3<Float>](repeating: [0, 1, 0], count: 4)
+                idx += [b, b + 1, b + 2, b, b + 2, b + 3]
+            }
+            let m = scene.addMesh((p, n, idx), label: "ceiling panels")
+            panelMeshes[l.panels] = m
+            return m
+        }
         for l in interior.lights.filter({ interior.night || $0.on }).prefix(max(BuildingKit.lightBudget - c.lights.count, 0)) {
             let index = c.lights.count
             c.lights.append(l.on ? 1 : 0)
@@ -218,15 +247,18 @@ final class BuildingKit {
             let t4 = transform * SIMD4(1, 0, 0, 0)
             let position = world(l.position), tangent = SIMD3(t4.x, t4.y, t4.z)
             if still {
-                // (The open world's: on once the sun is down, as its windows are.)
+                // (The open world's: on once the sun is down, as its windows are; a dark room's all day.)
                 guard l.on else { continue }
-                scene.addLight(.rect(width: l.size.x, height: l.size.y), color: l.color, motion: .scaleOnly) { [weak scene] _ in
-                    let night = scene?.heavens.map { $0.sunElevation < -0.035 } ?? true
-                    return Scene.LightPose(position: position, direction: [0, -1, 0], tangent: tangent, scale: SIMD3(repeating: night ? 1 : 0))
+                let day = l.day
+                scene.addLight(.rect(width: l.size.x, height: l.size.y), color: l.color, proxyMesh: panelMesh(l), proxyEmission: l.glow, reach: l.reach,
+                               motion: .scaleOnly) { [weak scene] _ in
+                    let on = day || (scene?.heavens.map { $0.sunElevation < -0.035 } ?? true)
+                    return Scene.LightPose(position: position, direction: [0, -1, 0], tangent: tangent, scale: SIMD3(repeating: on ? 1 : 0))
                 }
                 continue
             }
-            scene.addLight(.rect(width: l.size.x, height: l.size.y), color: l.color, motion: .scaleOnly) { [unowned c] _ in
+            scene.addLight(.rect(width: l.size.x, height: l.size.y), color: l.color, proxyMesh: panelMesh(l), proxyEmission: l.glow, reach: l.reach,
+                           motion: .scaleOnly) { [unowned c] _ in
                 Scene.LightPose(position: position, direction: [0, -1, 0], tangent: tangent, scale: SIMD3(repeating: c.lights[index]))
             }
         }

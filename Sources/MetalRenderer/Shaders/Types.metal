@@ -27,6 +27,8 @@ struct Uniforms {
     float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none,
                             // z = flags: 1 the grade below, 2 auto exposure's meter (PostSettings)
     float4 grade;           // the colour grade: red and blue gains (white balance), saturation, contrast
+    float4 interiorLo;      // xyz: the walkable interiors' box (Scene.interiorBox; empty: lo > hi), where GI's hits see
+    float4 interiorHi;      //   the sun through a shadow ray (giSunVisibility), its light map too coarse for rooms
 };
 
 struct MeshData {
@@ -284,6 +286,9 @@ static_assert(sizeof(PostParams) == 80, "PostParams: GPUPostParams");
 
 constant uint FOG_MAX_VOLUMES = 8;
 
+// Whether p is inside the walkable interiors' box (lo > hi: there is none).
+inline bool inInteriorBox(float4 lo, float4 hi, float3 p) { return all(p >= lo.xyz) && all(p <= hi.xyz); }
+
 struct FogParams {
     float4 medium;          // x = height-fog extinction at the base (1/m), y = height falloff (1/m), z = base height
                             //   (constant density below), w = anisotropy g
@@ -294,6 +299,8 @@ struct FogParams {
                             //   the froxel grid, to the surface or without end (0 = none; fogHaze)
     float4 grid;            // x = near, y = far (view depth), z = log(far / near), w = depth slices
     uint4  counts;          // x, y = froxel columns and rows, z = volume count, w = FOG_* flags
+    float4 interiorLo;      // xyz: the walkable interiors' box (Uniforms.interiorLo / Hi), where the sky's ambient light
+    float4 interiorHi;      //   in the fog is occluded (fogSkyAmbient)
     FogVolume volumes[FOG_MAX_VOLUMES];
 };
 

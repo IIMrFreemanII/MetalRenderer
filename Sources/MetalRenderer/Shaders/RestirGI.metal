@@ -204,7 +204,8 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
                 Lo += throughput * sampleLightsRIS(lights, u.lightCount, u.lightTable, hp, hn, hng, 4, lr, accel, s);
             } else if (passOn(own, RGI_LIGHT_MAPS)) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b + 0x2545F491u)));
-                Lo += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags, s);   // no rays
+                Lo += throughput * lightIllumCached(lights, u.lightCount, lightMap, hp, hn, hng, seed, u.flags,
+                                                       inInteriorBox(u.interiorLo, u.interiorHi, hp), accel, s);   // no rays (but the sun's indoors)
             } else if (u.lightCount > 0) {
                 float pdf;
                 float uPick = rng.next();

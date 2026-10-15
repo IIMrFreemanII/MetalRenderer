@@ -1293,6 +1293,13 @@ struct PostSettings: Equatable, Codable {
     /// follows the light, a gentle filmic grade, a little bloom and vignette.
     static func preset(for scene: SceneSettings) -> PostSettings {
         if scene.kind == .showcase { return ShowcaseLook.look(for: scene.showcase).post }
+        if scene.kind == .city {
+            // Its rooms to walk into (CitySettings.interiors): exposure that follows the light (at the street's, a room
+            // lit by its windows is black).
+            var p = PostSettings()
+            p.autoExposure = true
+            return p
+        }
         guard scene.realism != .off, scene.kind.hasRealisticLook else { return PostSettings() }
         var p = PostSettings()
         p.autoExposure = true

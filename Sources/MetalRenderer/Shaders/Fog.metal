@@ -128,7 +128,7 @@ float3 lightVolumeWeight(Light light, float3 p, thread float3& l) {
     float r = light.positionRadius.w;
     if (type == LIGHT_RECT) {
         float cosL = -dot(light.axis.xyz, l);
-        if (cosL <= 0.0f) return float3(0.0f);
+        if (cosL <= 0.0f || !rectReaches(light, p)) return float3(0.0f);
         float area = 4.0f * length(light.params.xyz) * light.params.w;
         return light.color.rgb * (area * cosL / max(d2, area / M_PI_F));
     }
@@ -163,7 +163,7 @@ float3 lightVolumeSample(Light light, float3 p, float2 u, thread const SceneData
         float d2 = dot(w, w);
         l = w * rsqrt(max(d2, 1e-12f));
         float cosL = -dot(light.axis.xyz, l);
-        if (cosL <= 0.0f) return float3(0.0f);
+        if (cosL <= 0.0f || !rectReaches(light, p)) return float3(0.0f);
         float area = 4.0f * length(light.params.xyz) * light.params.w;
         return light.color.rgb * (area * cosL / max(d2, 1e-4f));
     }
@@ -241,8 +241,23 @@ inline float sunFogDistance(Light light, float3 p) {
 // u = (pick, subset, sample xy), uMix = pickFogLight's mix.
 constant uint FOG_GRID_CANDIDATES = 4;   // with the light grid: 3 from the grid + 1 from the table (+ the suns)
 
+// In the walkable interiors' box (FogParams.interiorLo / Hi), the sky's ambient light reaches a point of the fog only
+// where the sky is in sight: one cosine-weighted ray up to FOG_AMBIENT_REACH, open or not (the froxels' history and the
+// reference's frames average it). Without it the fog in a closed room glowed with the sky's light, a haze over the
+// whole interior. Only in the box: under a forest's leaves the rays cost a fifth of the frame on the M1 Max.
+constant float FOG_AMBIENT_REACH = 40.0f;
+inline float3 fogSkyAmbient(float3 p, float3 ambient, SCENE_ACCEL accel, thread Rng& rng) {
+    if (all(ambient <= 0.0f)) return ambient;
+    float2 xi = float2(rng.next(), rng.next());
+    float t;
+    bool blocked = intersectAny(makeRay(p, cosineSampleHemisphere(float3(0.0f, 1.0f, 0.0f), xi), 0.0f, FOG_AMBIENT_REACH),
+                                rayMask(MASK_GEOMETRY, RAY_GI), accel, t);
+    return blocked ? float3(0.0f) : ambient;
+}
+
 float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel, thread const SceneData& s,
                     constant FogParams& f, float3 ambient, thread Rng& rng) {
+    if (inInteriorBox(f.interiorLo, f.interiorHi, p)) ambient = fogSkyAmbient(p, ambient, accel, rng);
     float g = f.medium.w, pdf;
     // With the light grid (ReGIR, scenes with many lights): RIS over a few grid and table candidates by their
     // unshadowed in-scatter, then one shadow ray to the pick, in place of the weighted loop over a light subset.

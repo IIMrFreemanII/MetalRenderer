@@ -17,10 +17,12 @@
 struct RCParams {
     uint4  grids;      // xy = this cascade's probe grid, zw = the next cascade's probe grid
     uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = 1 if last cascade
-    float4 interval;   // x = start, y = end (meters), z = 1 to use last frame's indirect light at hits, w unused
+    float4 interval;   // x = start, y = end (meters), z = 1 to use last frame's indirect light at hits, w = 1 if there
+                       // is a last frame (the resolve's history in the interiors' box)
 };
 
 constant uint RC_MAX_CASCADES = 5;
+constant float RC_INTERIOR_BLEND = 0.1f;   // this frame's share of the indirect light in the interiors' box
 
 // Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
 struct RCProbeBatch {
@@ -116,13 +118,27 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     float4 pos = probePos.read(pc);
     if (pos.w <= 0.0f) { merged.write(float4(0.0f), texel); return; }
     float3 ng = probeNg.read(pc).xyz;
-    float3 dir = equalAreaOctDecode((float2(bc) + 0.5f) / float(dirSide) * 2.0f - 1.0f);
+    // In the walkable interiors' box a probe's rays take a new place inside their bins every frame (one offset for all
+    // of a probe's bins, so they stay one to a bin) and the resolve averages the frames (rcResolveKernel): a room lit
+    // by a small bright patch (the sun on a sofa) fell between a probe's few fixed rays or not, probe by probe, and
+    // its walls showed it as blotches. Elsewhere the rays stay fixed, noise-free with no history.
+    float2 offset = float2(0.5f);
+    if (inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz)) {
+        uint h = pcgHash(probe * 9781u + p.layout.z * 6271u + pcgHash(u.frameIndex));
+        offset = float2(float(h & 0xFFFFu), float(h >> 16)) * (1.0f / 65536.0f);
+    }
+    float3 dir = equalAreaOctDecode((float2(bc) + offset) / float(dirSide) * 2.0f - 1.0f);
     if (dot(dir, ng) < -0.05f) { merged.write(float4(0.0f), texel); return; }   // below the surface: never used
 
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
     bool last = p.layout.w != 0;
-    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, p.interval.x, last ? INFINITY : p.interval.y);
+    // In the walkable interiors' box an interval starts halfway into the one below: a coarse probe a little off this
+    // one's place would otherwise start its rays past a wall this probe's own rays missed, and bring the sunlit
+    // outside in (light leaking through walls and ceilings). Elsewhere the intervals only meet (it costs the forest
+    // ~3 ms of rays and changes little outdoors).
+    float start = inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz) ? p.interval.x * 0.5f : p.interval.x;
+    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, start, last ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
 
     float3 radiance = float3(0.0f);
@@ -229,6 +245,8 @@ kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outIndirect [[texture(7)]],
                             texture2d<float, access::write> outHistory [[texture(8)]],  // kept for next frame's multi-bounce
                             texture2d<float, access::write> giDebug    [[texture(9)]],
+                            texture2d<float, access::read>  prevND     [[texture(10)]],  // last frame's normal + depth
+                            texture2d<float, access::read>  prevHistory [[texture(11)]], // last frame's outHistory
                             uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -259,6 +277,11 @@ kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(
         wsum += w;
     }
     float3 indirect = wsum > 0.0f ? sum / wsum : float3(0.0f);
+    // In the interiors' box the probes' rays move every frame (rcTraceMergeKernel): average them where this point was
+    // on screen last frame (interval.w: there is a last frame).
+    uint2 q;
+    if (p.interval.w > 0.0f && inInteriorBox(u.interiorLo, u.interiorHi, sp.xyz) && lastFramePixel(u, sp.xyz, n, prevND, q))
+        indirect = mix(prevHistory.read(q).rgb, indirect, RC_INTERIOR_BLEND);
     outIndirect.write(float4(indirect, 1.0f), tid);
     outHistory.write(float4(indirect, 1.0f), tid);
     // Debug: probe grid lines over the strongest weight's confidence (dark = no good probe nearby).

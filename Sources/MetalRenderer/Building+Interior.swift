@@ -120,7 +120,9 @@ enum InteriorBuilder {
             case .hall, .storage, .lift: return SurfaceMaterial(color: [0.62, 0.61, 0.58], surface: .concrete)
             case .stairs: return SurfaceMaterial(color: paints[0] * 0.95, surface: .plaster)
             default:
-                var g = SplitMix64(seed: seed ^ UInt64(room.unit + 7) &* 0x9E37_79B9 ^ UInt64(room.type.hashValue & 0xFFFF))
+                var type = Hasher64()
+                type.add(room.type.rawValue)
+                var g = SplitMix64(seed: seed ^ UInt64(room.unit + 7) &* 0x9E37_79B9 ^ (type.value & 0xFFFF))
                 let c = paints[Int(g.nextUInt64() % UInt64(paints.count))]
                 return SurfaceMaterial(color: c, surface: .plaster)
             }
@@ -252,11 +254,34 @@ enum InteriorBuilder {
                 interior.props.append(Interior.Prop(item: p.item, frame: p.frame, storey: s,
                                                     materials: FurnitureItem.Role.allCases.map { palette.material($0, fabric: p.fabric) }))
             }
-            let i = a.style.def.interior
+            let i = a.style.def.interior, glow = i.lightColor * i.lightPower
+            // Each room's panels as one light over them (Interior.Light), in the order the rooms first come; a big room's
+            // in pieces of at most `piece` metres (one shadow ray to a random point of a 30 m office ceiling is noisy).
+            let piece: Float = 8
+            var order: [SIMD3<Int>] = [], panels: [SIMD3<Int>: [(position: SIMD3<Float>, size: SIMD2<Float>)]] = [:]
+            var first: [Int: SIMD2<Float>] = [:]
+            for l in furnisher.lights { first[l.room] = simd_min(first[l.room] ?? SIMD2(l.position.x, l.position.z), SIMD2(l.position.x, l.position.z)) }
             for l in furnisher.lights {
-                let room = f.rooms[l.room]
-                interior.lights.append(Interior.Light(position: l.position + SIMD3(0, f.floor, 0), size: l.size, color: i.lightColor * i.lightPower,
-                                                      storey: s, room: l.room, on: room.lit, switchID: -1))
+                let cell = SIMD2<Int>(((SIMD2(l.position.x, l.position.z) - first[l.room]!) / piece).rounded(.down))
+                let key = SIMD3(l.room, cell.x, cell.y)
+                if panels[key] == nil { order.append(key) }
+                panels[key, default: []].append((l.position, l.size))
+            }
+            for key in order {
+                let r = key.x, ps = panels[key]!
+                var lo = SIMD2<Float>(repeating: .infinity), hi = -lo, area: Float = 0
+                for q in ps {
+                    let c = SIMD2(q.position.x, q.position.z)
+                    (lo, hi) = (simd_min(lo, c - q.size / 2), simd_max(hi, c + q.size / 2))
+                    area += q.size.x * q.size.y
+                }
+                let size = hi - lo, mid = (lo + hi) / 2
+                let room = f.rooms[r], day = room.type.litByDay(office: a.style.isOffice)
+                interior.lights.append(Interior.Light(position: SIMD3(mid.x, ps[0].position.y + f.floor, mid.y), size: size,
+                                                      color: glow * (area / (size.x * size.y)), storey: s, room: r,
+                                                      on: room.lit || day, switchID: -1, day: day,
+                                                      panels: ps.count > 1 ? ps.map { SIMD4($0.position.x - mid.x, $0.position.z - mid.y, $0.size.x, $0.size.y) } : [],
+                                                      glow: glow, reach: f.ceiling - f.floor + 0.3))
             }
             for w in furnisher.switches {
                 interior.switches.append(Interior.Switch(position: w.position + SIMD3(0, f.floor, 0), normal: w.normal, storey: s, room: w.room))
@@ -267,23 +292,24 @@ enum InteriorBuilder {
             }
         }
 
-        /// What storey `s` is made of, relative to its floor: two storeys of the same key are the same mesh.
+        /// What storey `s` is made of, relative to its floor: two storeys of the same key are the same mesh. It seeds
+        /// the storey's furniture, so it is the same on every launch (FNV, not Swift's per-process `Hasher`).
         private func storeyKey(_ s: Int) -> Int {
             let f = plan.storeys[s]
-            var h = Hasher()
-            h.combine(s == 0)
-            h.combine(f.climbs)
-            h.combine(PropLibrary.shared.fingerprint)
-            h.combine(a.spec.cut == s)
-            h.combine(f.ceiling - f.floor)
-            h.combine(f.top - f.floor)
-            for r in f.rooms { h.combine(r.type); h.combine(r.unit); for v in [r.rect.lo.x, r.rect.lo.y, r.rect.hi.x, r.rect.hi.y] { h.combine(v) } }
-            for d in f.doors { h.combine(d.kind); h.combine(d.a); h.combine(d.b); h.combine(d.at.x); h.combine(d.at.y); h.combine(d.width) }
+            var h = Hasher64()
+            h.add(s == 0)
+            h.add(f.climbs)
+            h.add(PropLibrary.shared.fingerprint)
+            h.add(a.spec.cut == s)
+            h.add(f.ceiling - f.floor)
+            h.add(f.top - f.floor)
+            for r in f.rooms { h.add(r.type.rawValue); h.add(r.unit); for v in [r.rect.lo.x, r.rect.lo.y, r.rect.hi.x, r.rect.hi.y] { h.add(v) } }
+            for d in f.doors { h.add(d.kind.rawValue); h.add(d.a); h.add(d.b); h.add(d.at.x); h.add(d.at.y); h.add(d.width) }
             for o in a.b.openings where o.storey == s {
-                for v in [o.a.x, o.a.y, o.c.x, o.c.y, o.y0 - f.floor, o.y1 - f.floor] { h.combine(v) }
+                for v in [o.a.x, o.a.y, o.c.x, o.c.y, o.y0 - f.floor, o.y1 - f.floor] { h.add(v) }
             }
-            if s > 0 { h.combine(plan.storeys[s - 1].climbs) }
-            return h.finalize()
+            if s > 0 { h.add(plan.storeys[s - 1].climbs) }
+            return Int(bitPattern: UInt(h.value))
         }
 
         // MARK: - A storey
