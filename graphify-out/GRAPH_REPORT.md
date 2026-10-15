@@ -1,7 +1,7 @@
 # Graph Report - nanite-occlusion-7c9e53  (2026-10-15)
 
 ## Corpus Check
-- 525 files · ~9,710,740 words
+- 525 files · ~9,710,874 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 28 file(s) not represented in the graph (top: .fbx 12, .glb 11, (none) 4)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7ea4486f`
+- Built from commit: `31a9122b`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

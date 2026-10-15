@@ -5995,7 +5995,7 @@
       "file_type": "code",
       "norm_label": "vsmvertex",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L622"
+      "source_location": "L628"
     },
     {
       "id": "sources_metalrenderer_projectgraph_scene_outline_container",
@@ -11929,7 +11929,7 @@
       "file_type": "code",
       "norm_label": "vsmclusterargs",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L244"
+      "source_location": "L246"
     },
     {
       "id": "sources_metalrenderer_settingstable_envvariable",
@@ -14580,7 +14580,7 @@
       "file_type": "code",
       "norm_label": "vsminstance",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L230"
+      "source_location": "L232"
     },
     {
       "id": "sources_metalrenderer_shaders_restirgi_gireceiver",
@@ -45319,7 +45319,7 @@
       "file_type": "code",
       "norm_label": "shadowvisible()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686"
+      "source_location": "L692"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmallockernel",
@@ -45331,7 +45331,7 @@
       "file_type": "code",
       "norm_label": "vsmallockernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L364"
+      "source_location": "L366"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmboxpages",
@@ -45343,7 +45343,7 @@
       "file_type": "code",
       "norm_label": "vsmboxpages()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L286"
+      "source_location": "L288"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmchunkskernel",
@@ -45355,7 +45355,7 @@
       "file_type": "code",
       "norm_label": "vsmchunkskernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L581"
+      "source_location": "L587"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclearvertex",
@@ -45367,7 +45367,7 @@
       "file_type": "code",
       "norm_label": "vsmclearvertex()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L670"
+      "source_location": "L676"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclip",
@@ -45391,7 +45391,7 @@
       "file_type": "code",
       "norm_label": "vsmcliplocal()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L279"
+      "source_location": "L281"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmcullkernel",
@@ -45403,7 +45403,7 @@
       "file_type": "code",
       "norm_label": "vsmcullkernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L503"
+      "source_location": "L509"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmdebugkernel",
@@ -45415,7 +45415,7 @@
       "file_type": "code",
       "norm_label": "vsmdebugkernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723"
+      "source_location": "L729"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmentry",
@@ -45451,7 +45451,7 @@
       "file_type": "code",
       "norm_label": "vsmfragment()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L681"
+      "source_location": "L687"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmfreekernel",
@@ -45463,7 +45463,7 @@
       "file_type": "code",
       "norm_label": "vsmfreekernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L330"
+      "source_location": "L332"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmgap",
@@ -45487,7 +45487,7 @@
       "file_type": "code",
       "norm_label": "vsminvalidatekernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L424"
+      "source_location": "L426"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmpageclip",
@@ -45499,7 +45499,7 @@
       "file_type": "code",
       "norm_label": "vsmpageclip()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L628"
+      "source_location": "L634"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmpageready",
@@ -45511,7 +45511,7 @@
       "file_type": "code",
       "norm_label": "vsmpageready()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L704"
+      "source_location": "L710"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmpickview",
@@ -45535,7 +45535,7 @@
       "file_type": "code",
       "norm_label": "vsmprojection()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L266"
+      "source_location": "L268"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmresetkernel",
@@ -45547,7 +45547,7 @@
       "file_type": "code",
       "norm_label": "vsmresetkernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L484"
+      "source_location": "L490"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmsettlekernel",
@@ -45559,7 +45559,7 @@
       "file_type": "code",
       "norm_label": "vsmsettlekernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L465"
+      "source_location": "L467"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmtag",
@@ -45583,7 +45583,7 @@
       "file_type": "code",
       "norm_label": "vsmviewresetkernel()",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L318"
+      "source_location": "L320"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmvisibility",
@@ -110806,6 +110806,39 @@
       "source_location": "L221"
     },
     {
+      "id": "sources_metalrenderer_shaders_vsm_vsmcounters_cutx",
+      "label": "cutX",
+      "_origin": "ast",
+      "community": 147,
+      "community_name": "VSMCounters",
+      "file_type": "code",
+      "norm_label": "cutx",
+      "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
+      "source_location": "L224"
+    },
+    {
+      "id": "sources_metalrenderer_shaders_vsm_vsmcounters_cuty",
+      "label": "cutY",
+      "_origin": "ast",
+      "community": 147,
+      "community_name": "VSMCounters",
+      "file_type": "code",
+      "norm_label": "cuty",
+      "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
+      "source_location": "L225"
+    },
+    {
+      "id": "sources_metalrenderer_shaders_vsm_vsmcounters_cutz",
+      "label": "cutZ",
+      "_origin": "ast",
+      "community": 147,
+      "community_name": "VSMCounters",
+      "file_type": "code",
+      "norm_label": "cutz",
+      "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
+      "source_location": "L226"
+    },
+    {
       "id": "sources_metalrenderer_shaders_vsm_vsmcounters_drawn",
       "label": "drawn",
       "_origin": "ast",
@@ -110881,39 +110914,6 @@
       "norm_label": "instancecount",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
       "source_location": "L208"
-    },
-    {
-      "id": "sources_metalrenderer_shaders_vsm_vsmcounters_pad0",
-      "label": "pad0",
-      "_origin": "ast",
-      "community": 147,
-      "community_name": "VSMCounters",
-      "file_type": "code",
-      "norm_label": "pad0",
-      "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L224"
-    },
-    {
-      "id": "sources_metalrenderer_shaders_vsm_vsmcounters_pad1",
-      "label": "pad1",
-      "_origin": "ast",
-      "community": 147,
-      "community_name": "VSMCounters",
-      "file_type": "code",
-      "norm_label": "pad1",
-      "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L224"
-    },
-    {
-      "id": "sources_metalrenderer_shaders_vsm_vsmcounters_pad2",
-      "label": "pad2",
-      "_origin": "ast",
-      "community": 147,
-      "community_name": "VSMCounters",
-      "file_type": "code",
-      "norm_label": "pad2",
-      "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L224"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmcounters_taken",
@@ -136291,7 +136291,7 @@
       "file_type": "code",
       "norm_label": "changed",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L246"
+      "source_location": "L248"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_clusters",
@@ -136302,7 +136302,7 @@
       "file_type": "code",
       "norm_label": "clusters",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L251"
+      "source_location": "L253"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_grouppage",
@@ -136313,7 +136313,7 @@
       "file_type": "code",
       "norm_label": "grouppage",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L252"
+      "source_location": "L254"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_groups",
@@ -136324,7 +136324,7 @@
       "file_type": "code",
       "norm_label": "groups",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L250"
+      "source_location": "L252"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_instancecount",
@@ -136335,7 +136335,7 @@
       "file_type": "code",
       "norm_label": "instancecount",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L255"
+      "source_location": "L257"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_lastused",
@@ -136346,7 +136346,7 @@
       "file_type": "code",
       "norm_label": "lastused",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L254"
+      "source_location": "L256"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_pool",
@@ -136357,7 +136357,7 @@
       "file_type": "code",
       "norm_label": "pool",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L248"
+      "source_location": "L250"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_records",
@@ -136368,7 +136368,7 @@
       "file_type": "code",
       "norm_label": "records",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L245"
+      "source_location": "L247"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_requestcapacity",
@@ -136379,7 +136379,7 @@
       "file_type": "code",
       "norm_label": "requestcapacity",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L257"
+      "source_location": "L259"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_requests",
@@ -136390,7 +136390,7 @@
       "file_type": "code",
       "norm_label": "requests",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L247"
+      "source_location": "L249"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_requeststamp",
@@ -136401,7 +136401,7 @@
       "file_type": "code",
       "norm_label": "requeststamp",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L253"
+      "source_location": "L255"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_tau",
@@ -136412,7 +136412,7 @@
       "file_type": "code",
       "norm_label": "tau",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L258"
+      "source_location": "L260"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_vinstances",
@@ -136423,7 +136423,7 @@
       "file_type": "code",
       "norm_label": "vinstances",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L249"
+      "source_location": "L251"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsmclusterargs_workcount",
@@ -136434,7 +136434,7 @@
       "file_type": "code",
       "norm_label": "workcount",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L256"
+      "source_location": "L258"
     },
     {
       "id": "sources_metalrenderer_settingstable_envvariable_api",
@@ -145492,7 +145492,7 @@
       "file_type": "code",
       "norm_label": "corners",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L232"
+      "source_location": "L234"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_indices",
@@ -145503,7 +145503,7 @@
       "file_type": "code",
       "norm_label": "indices",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L233"
+      "source_location": "L235"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_meshindex",
@@ -145514,7 +145514,7 @@
       "file_type": "code",
       "norm_label": "meshindex",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L235"
+      "source_location": "L237"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_pages",
@@ -145525,7 +145525,7 @@
       "file_type": "code",
       "norm_label": "pages",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L236"
+      "source_location": "L238"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_view",
@@ -145536,7 +145536,7 @@
       "file_type": "code",
       "norm_label": "view",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L234"
+      "source_location": "L236"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_w",
@@ -145547,7 +145547,7 @@
       "file_type": "code",
       "norm_label": "w",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231"
+      "source_location": "L233"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_x",
@@ -145558,7 +145558,7 @@
       "file_type": "code",
       "norm_label": "x",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231"
+      "source_location": "L233"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_y",
@@ -145569,7 +145569,7 @@
       "file_type": "code",
       "norm_label": "y",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231"
+      "source_location": "L233"
     },
     {
       "id": "sources_metalrenderer_shaders_vsm_vsminstance_z",
@@ -145580,7 +145580,7 @@
       "file_type": "code",
       "norm_label": "z",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231"
+      "source_location": "L233"
     },
     {
       "id": "sources_metalrenderer_shaders_restirgi",
@@ -232683,7 +232683,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L689",
+      "source_location": "L695",
       "weight": 1.0
     },
     {
@@ -232695,7 +232695,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L689",
+      "source_location": "L695",
       "weight": 1.0
     },
     {
@@ -232707,7 +232707,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L392",
+      "source_location": "L394",
       "weight": 1.0
     },
     {
@@ -232719,7 +232719,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L291",
+      "source_location": "L293",
       "weight": 1.0
     },
     {
@@ -232731,7 +232731,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L314",
+      "source_location": "L316",
       "weight": 1.0
     },
     {
@@ -232743,7 +232743,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L604",
+      "source_location": "L610",
       "weight": 1.0
     },
     {
@@ -232755,7 +232755,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L612",
+      "source_location": "L618",
       "weight": 1.0
     },
     {
@@ -232767,7 +232767,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L541",
+      "source_location": "L547",
       "weight": 1.0
     },
     {
@@ -232779,7 +232779,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L543",
+      "source_location": "L549",
       "weight": 1.0
     },
     {
@@ -232791,7 +232791,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L741",
+      "source_location": "L747",
       "weight": 1.0
     },
     {
@@ -232803,7 +232803,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L741",
+      "source_location": "L747",
       "weight": 1.0
     },
     {
@@ -232815,7 +232815,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L742",
+      "source_location": "L748",
       "weight": 1.0
     },
     {
@@ -232827,7 +232827,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L351",
+      "source_location": "L353",
       "weight": 1.0
     },
     {
@@ -232875,7 +232875,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L452",
+      "source_location": "L454",
       "weight": 1.0
     },
     {
@@ -232887,7 +232887,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L454",
+      "source_location": "L456",
       "weight": 1.0
     },
     {
@@ -232899,7 +232899,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L457",
+      "source_location": "L459",
       "weight": 1.0
     },
     {
@@ -232911,7 +232911,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L706",
+      "source_location": "L712",
       "weight": 1.0
     },
     {
@@ -232923,7 +232923,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L710",
+      "source_location": "L716",
       "weight": 1.0
     },
     {
@@ -232935,7 +232935,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L712",
+      "source_location": "L718",
       "weight": 1.0
     },
     {
@@ -232959,7 +232959,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L664",
+      "source_location": "L670",
       "weight": 1.0
     },
     {
@@ -232971,7 +232971,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L664",
+      "source_location": "L670",
       "weight": 1.0
     },
     {
@@ -276339,7 +276339,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L245",
+      "source_location": "L247",
       "weight": 1.0
     },
     {
@@ -276351,7 +276351,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L246",
+      "source_location": "L248",
       "weight": 1.0
     },
     {
@@ -276363,7 +276363,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L247",
+      "source_location": "L249",
       "weight": 1.0
     },
     {
@@ -276375,7 +276375,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L248",
+      "source_location": "L250",
       "weight": 1.0
     },
     {
@@ -276387,7 +276387,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L249",
+      "source_location": "L251",
       "weight": 1.0
     },
     {
@@ -276399,7 +276399,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L250",
+      "source_location": "L252",
       "weight": 1.0
     },
     {
@@ -276411,7 +276411,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L251",
+      "source_location": "L253",
       "weight": 1.0
     },
     {
@@ -276423,7 +276423,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L252",
+      "source_location": "L254",
       "weight": 1.0
     },
     {
@@ -276435,7 +276435,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L253",
+      "source_location": "L255",
       "weight": 1.0
     },
     {
@@ -276447,7 +276447,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L254",
+      "source_location": "L256",
       "weight": 1.0
     },
     {
@@ -276459,7 +276459,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L255",
+      "source_location": "L257",
       "weight": 1.0
     },
     {
@@ -276471,7 +276471,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L256",
+      "source_location": "L258",
       "weight": 1.0
     },
     {
@@ -276483,7 +276483,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L257",
+      "source_location": "L259",
       "weight": 1.0
     },
     {
@@ -276495,7 +276495,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L258",
+      "source_location": "L260",
       "weight": 1.0
     },
     {
@@ -276704,7 +276704,7 @@
     },
     {
       "source": "sources_metalrenderer_shaders_vsm_vsmcounters",
-      "target": "sources_metalrenderer_shaders_vsm_vsmcounters_pad0",
+      "target": "sources_metalrenderer_shaders_vsm_vsmcounters_cutx",
       "relation": "defines",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -276716,26 +276716,26 @@
     },
     {
       "source": "sources_metalrenderer_shaders_vsm_vsmcounters",
-      "target": "sources_metalrenderer_shaders_vsm_vsmcounters_pad1",
+      "target": "sources_metalrenderer_shaders_vsm_vsmcounters_cuty",
       "relation": "defines",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L224",
+      "source_location": "L225",
       "weight": 1.0
     },
     {
       "source": "sources_metalrenderer_shaders_vsm_vsmcounters",
-      "target": "sources_metalrenderer_shaders_vsm_vsmcounters_pad2",
+      "target": "sources_metalrenderer_shaders_vsm_vsmcounters_cutz",
       "relation": "defines",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L224",
+      "source_location": "L226",
       "weight": 1.0
     },
     {
@@ -276747,7 +276747,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231",
+      "source_location": "L233",
       "weight": 1.0
     },
     {
@@ -276759,7 +276759,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231",
+      "source_location": "L233",
       "weight": 1.0
     },
     {
@@ -276771,7 +276771,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231",
+      "source_location": "L233",
       "weight": 1.0
     },
     {
@@ -276783,7 +276783,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231",
+      "source_location": "L233",
       "weight": 1.0
     },
     {
@@ -276795,7 +276795,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L232",
+      "source_location": "L234",
       "weight": 1.0
     },
     {
@@ -276807,7 +276807,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L233",
+      "source_location": "L235",
       "weight": 1.0
     },
     {
@@ -276819,7 +276819,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L234",
+      "source_location": "L236",
       "weight": 1.0
     },
     {
@@ -276831,7 +276831,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L235",
+      "source_location": "L237",
       "weight": 1.0
     },
     {
@@ -276843,7 +276843,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L236",
+      "source_location": "L238",
       "weight": 1.0
     },
     {
@@ -312063,7 +312063,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L254",
+      "source_location": "L256",
       "weight": 1.0
     },
     {
@@ -312075,7 +312075,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L257",
+      "source_location": "L259",
       "weight": 1.0
     },
     {
@@ -312099,7 +312099,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L224",
+      "source_location": "L226",
       "weight": 1.0
     },
     {
@@ -312111,7 +312111,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L231",
+      "source_location": "L233",
       "weight": 1.0
     },
     {
@@ -312123,7 +312123,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L233",
+      "source_location": "L235",
       "weight": 1.0
     },
     {
@@ -312135,7 +312135,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L235",
+      "source_location": "L237",
       "weight": 1.0
     },
     {
@@ -312147,7 +312147,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L236",
+      "source_location": "L238",
       "weight": 1.0
     },
     {
@@ -312231,7 +312231,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L623",
+      "source_location": "L629",
       "weight": 1.0
     },
     {
@@ -333231,7 +333231,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -333243,7 +333243,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -425478,7 +425478,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -425490,7 +425490,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -425502,7 +425502,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -425514,7 +425514,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -425526,7 +425526,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -425538,7 +425538,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -425550,7 +425550,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L364",
+      "source_location": "L366",
       "weight": 1.0
     },
     {
@@ -425562,7 +425562,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L364",
+      "source_location": "L366",
       "weight": 1.0
     },
     {
@@ -425574,7 +425574,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L364",
+      "source_location": "L366",
       "weight": 1.0
     },
     {
@@ -425586,7 +425586,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L312",
+      "source_location": "L314",
       "weight": 1.0
     },
     {
@@ -425598,7 +425598,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L312",
+      "source_location": "L314",
       "weight": 1.0
     },
     {
@@ -425610,7 +425610,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L312",
+      "source_location": "L314",
       "weight": 1.0
     },
     {
@@ -425622,7 +425622,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L581",
+      "source_location": "L587",
       "weight": 1.0
     },
     {
@@ -425634,7 +425634,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L581",
+      "source_location": "L587",
       "weight": 1.0
     },
     {
@@ -425646,7 +425646,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L581",
+      "source_location": "L587",
       "weight": 1.0
     },
     {
@@ -425658,7 +425658,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L670",
+      "source_location": "L676",
       "weight": 1.0
     },
     {
@@ -425670,7 +425670,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L670",
+      "source_location": "L676",
       "weight": 1.0
     },
     {
@@ -425706,7 +425706,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L279",
+      "source_location": "L281",
       "weight": 1.0
     },
     {
@@ -425718,7 +425718,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L279",
+      "source_location": "L281",
       "weight": 1.0
     },
     {
@@ -425730,7 +425730,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L503",
+      "source_location": "L509",
       "weight": 1.0
     },
     {
@@ -425742,7 +425742,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L503",
+      "source_location": "L509",
       "weight": 1.0
     },
     {
@@ -425754,7 +425754,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L503",
+      "source_location": "L509",
       "weight": 1.0
     },
     {
@@ -425766,7 +425766,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -425778,7 +425778,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -425790,7 +425790,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -425802,7 +425802,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -425862,7 +425862,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L330",
+      "source_location": "L332",
       "weight": 1.0
     },
     {
@@ -425874,7 +425874,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L330",
+      "source_location": "L332",
       "weight": 1.0
     },
     {
@@ -425886,7 +425886,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L330",
+      "source_location": "L332",
       "weight": 1.0
     },
     {
@@ -425946,7 +425946,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L424",
+      "source_location": "L426",
       "weight": 1.0
     },
     {
@@ -425958,7 +425958,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L424",
+      "source_location": "L426",
       "weight": 1.0
     },
     {
@@ -425970,7 +425970,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L424",
+      "source_location": "L426",
       "weight": 1.0
     },
     {
@@ -425982,7 +425982,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L628",
+      "source_location": "L634",
       "weight": 1.0
     },
     {
@@ -425994,7 +425994,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L628",
+      "source_location": "L634",
       "weight": 1.0
     },
     {
@@ -426006,7 +426006,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L628",
+      "source_location": "L634",
       "weight": 1.0
     },
     {
@@ -426018,7 +426018,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L704",
+      "source_location": "L710",
       "weight": 1.0
     },
     {
@@ -426030,7 +426030,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L704",
+      "source_location": "L710",
       "weight": 1.0
     },
     {
@@ -426042,7 +426042,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L704",
+      "source_location": "L710",
       "weight": 1.0
     },
     {
@@ -426090,7 +426090,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L266",
+      "source_location": "L268",
       "weight": 1.0
     },
     {
@@ -426102,7 +426102,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L266",
+      "source_location": "L268",
       "weight": 1.0
     },
     {
@@ -426114,7 +426114,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L484",
+      "source_location": "L490",
       "weight": 1.0
     },
     {
@@ -426126,7 +426126,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L484",
+      "source_location": "L490",
       "weight": 1.0
     },
     {
@@ -426138,7 +426138,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L484",
+      "source_location": "L490",
       "weight": 1.0
     },
     {
@@ -426150,7 +426150,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L465",
+      "source_location": "L467",
       "weight": 1.0
     },
     {
@@ -426162,7 +426162,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L465",
+      "source_location": "L467",
       "weight": 1.0
     },
     {
@@ -426174,7 +426174,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L465",
+      "source_location": "L467",
       "weight": 1.0
     },
     {
@@ -426198,7 +426198,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L634",
+      "source_location": "L640",
       "weight": 1.0
     },
     {
@@ -426210,7 +426210,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L634",
+      "source_location": "L640",
       "weight": 1.0
     },
     {
@@ -426222,7 +426222,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L634",
+      "source_location": "L640",
       "weight": 1.0
     },
     {
@@ -426234,7 +426234,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L318",
+      "source_location": "L320",
       "weight": 1.0
     },
     {
@@ -426246,7 +426246,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L318",
+      "source_location": "L320",
       "weight": 1.0
     },
     {
@@ -426258,7 +426258,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L318",
+      "source_location": "L320",
       "weight": 1.0
     },
     {
@@ -478947,7 +478947,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L364",
+      "source_location": "L366",
       "weight": 1.0
     },
     {
@@ -478959,7 +478959,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L581",
+      "source_location": "L587",
       "weight": 1.0
     },
     {
@@ -478971,7 +478971,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L670",
+      "source_location": "L676",
       "weight": 1.0
     },
     {
@@ -478995,7 +478995,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L279",
+      "source_location": "L281",
       "weight": 1.0
     },
     {
@@ -479007,7 +479007,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L503",
+      "source_location": "L509",
       "weight": 1.0
     },
     {
@@ -479019,7 +479019,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -479043,7 +479043,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L681",
+      "source_location": "L687",
       "weight": 1.0
     },
     {
@@ -479055,7 +479055,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L330",
+      "source_location": "L332",
       "weight": 1.0
     },
     {
@@ -479067,7 +479067,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L424",
+      "source_location": "L426",
       "weight": 1.0
     },
     {
@@ -479091,7 +479091,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L266",
+      "source_location": "L268",
       "weight": 1.0
     },
     {
@@ -479103,7 +479103,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L484",
+      "source_location": "L490",
       "weight": 1.0
     },
     {
@@ -479115,7 +479115,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L465",
+      "source_location": "L467",
       "weight": 1.0
     },
     {
@@ -479139,7 +479139,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L634",
+      "source_location": "L640",
       "weight": 1.0
     },
     {
@@ -479151,7 +479151,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L318",
+      "source_location": "L320",
       "weight": 1.0
     },
     {
@@ -524658,7 +524658,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L230",
+      "source_location": "L232",
       "weight": 1.0
     },
     {
@@ -524669,7 +524669,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L244",
+      "source_location": "L246",
       "weight": 1.0
     },
     {
@@ -524680,7 +524680,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L266",
+      "source_location": "L268",
       "weight": 1.0
     },
     {
@@ -524691,7 +524691,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L279",
+      "source_location": "L281",
       "weight": 1.0
     },
     {
@@ -524713,7 +524713,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L312",
+      "source_location": "L314",
       "weight": 1.0
     },
     {
@@ -524724,7 +524724,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L318",
+      "source_location": "L320",
       "weight": 1.0
     },
     {
@@ -524735,7 +524735,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L330",
+      "source_location": "L332",
       "weight": 1.0
     },
     {
@@ -524746,7 +524746,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L364",
+      "source_location": "L366",
       "weight": 1.0
     },
     {
@@ -524757,7 +524757,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L424",
+      "source_location": "L426",
       "weight": 1.0
     },
     {
@@ -524768,7 +524768,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L465",
+      "source_location": "L467",
       "weight": 1.0
     },
     {
@@ -524790,7 +524790,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L484",
+      "source_location": "L490",
       "weight": 1.0
     },
     {
@@ -524801,7 +524801,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L503",
+      "source_location": "L509",
       "weight": 1.0
     },
     {
@@ -524823,7 +524823,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L581",
+      "source_location": "L587",
       "weight": 1.0
     },
     {
@@ -524834,7 +524834,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L628",
+      "source_location": "L634",
       "weight": 1.0
     },
     {
@@ -524845,7 +524845,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L634",
+      "source_location": "L640",
       "weight": 1.0
     },
     {
@@ -524856,7 +524856,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L670",
+      "source_location": "L676",
       "weight": 1.0
     },
     {
@@ -524867,7 +524867,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L681",
+      "source_location": "L687",
       "weight": 1.0
     },
     {
@@ -524878,7 +524878,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L686",
+      "source_location": "L692",
       "weight": 1.0
     },
     {
@@ -524889,7 +524889,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L704",
+      "source_location": "L710",
       "weight": 1.0
     },
     {
@@ -524900,7 +524900,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L723",
+      "source_location": "L729",
       "weight": 1.0
     },
     {
@@ -664757,7 +664757,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L688",
+      "source_location": "L694",
       "weight": 1.0
     },
     {
@@ -664769,7 +664769,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L694",
+      "source_location": "L700",
       "weight": 1.0
     },
     {
@@ -664781,7 +664781,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L695",
+      "source_location": "L701",
       "weight": 1.0
     },
     {
@@ -664793,7 +664793,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L695",
+      "source_location": "L701",
       "weight": 1.0
     },
     {
@@ -664805,7 +664805,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L695",
+      "source_location": "L701",
       "weight": 1.0
     },
     {
@@ -664817,7 +664817,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L700",
+      "source_location": "L706",
       "weight": 1.0
     },
     {
@@ -664829,7 +664829,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L524",
+      "source_location": "L530",
       "weight": 1.0
     },
     {
@@ -664841,7 +664841,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L733",
+      "source_location": "L739",
       "weight": 1.0
     },
     {
@@ -664853,7 +664853,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L740",
+      "source_location": "L746",
       "weight": 1.0
     },
     {
@@ -664865,7 +664865,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L438",
+      "source_location": "L440",
       "weight": 1.0
     },
     {
@@ -664877,7 +664877,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/VSM.metal",
-      "source_location": "L661",
+      "source_location": "L667",
       "weight": 1.0
     },
     {
@@ -683779,5 +683779,5 @@
       "source_file": "Tools/eval/refs/gi/ref8-0.5x.png"
     }
   ],
-  "built_at_commit": "7ea4486f8db5a7f2dc15ec366a1238643bd0ba50"
+  "built_at_commit": "31a9122b78fd2e0607c253988056b569437973f4"
 }

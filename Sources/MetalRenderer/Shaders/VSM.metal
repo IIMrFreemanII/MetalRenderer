@@ -221,7 +221,9 @@ struct VSMCounters {
     uint cullZ;
     atomic_uint taken;           // free pages handed out by vsmAllocKernel
     atomic_uint freeCount;       // the free list's
-    uint pad0, pad1, pad2;
+    uint cutX;                   // vsmVGCutKernel's threadgroups: (virtual instance, group) pairs / 64, active views, 1
+    uint cutY;
+    uint cutZ;
 };
 static_assert(sizeof(VSMCounters) == 80, "VSMCounters: VSMTargets.countersSize");
 
@@ -462,8 +464,9 @@ kernel void vsmInvalidateKernel(device const InstanceData*    instances [[buffer
 
 // After the allocation: the free list loses what was taken, the clear draws one instance a page to draw, the cull
 // runs over the instances and the active views.
-kernel void vsmSettleKernel(constant VSMParams& vp       [[buffer(9)]],
-                            device VSMCounters* counters [[buffer(13)]],
+kernel void vsmSettleKernel(constant VSMClusterArgs& vg       [[buffer(7)]],
+                            constant VSMParams&      vp       [[buffer(9)]],
+                            device VSMCounters*      counters [[buffer(13)]],
                             uint i [[thread_position_in_grid]])
 {
     if (i != 0u) return;
@@ -478,6 +481,9 @@ kernel void vsmSettleKernel(constant VSMParams& vp       [[buffer(9)]],
     counters->clearBaseInstance = 0u;
     counters->cullX = (vp.instanceCount + 63u) / 64u;
     counters->cullZ = 1u;
+    counters->cutX = (vg.workCount + 63u) / 64u;   // (the active views are known: vsmAllocKernel counted them)
+    counters->cutY = atomic_load_explicit(&counters->cullY, memory_order_relaxed);
+    counters->cutZ = 1u;
 }
 
 // Every frame's start: the draw's and the chunks' counters, and the activity (vsmSettleKernel sets the rest).
