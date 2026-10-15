@@ -197,6 +197,145 @@ final class SoftwareRasterTests: XCTestCase {
                                  "\(differ) of \(covered) pixels differ: only edge pixel centres should")
     }
 
+    /// The shadow maps' software rasterizer (vsmSWKernel) and its merge into the pages (vsmMergeFragment) against the
+    /// pages' draw (vsmVertex): page 0 has both clusters drawn, page 1 the far one drawn and the near one rasterized in
+    /// software, then merged through the depth test. The two pages hold the same depths, but for the few texel centres
+    /// the two put on the other side of an edge. (32-bit atomics: every GPU.)
+    func testShadowSoftwareMatchesThePagesDraw() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        let library = try Pipelines.compile(device: device, source: SoftwareRasterTests.shaders, stats: false, compiler: nil)
+        let constants = MTLFunctionConstantValues()
+        var types: UInt32 = 0x3F
+        constants.setConstantValue(&types, type: .uint, index: 0)
+        let software = try Pipelines.makeState(device: device, library: library, compiler: nil, kernel: .vsmSW, constants: constants)
+        func renderState(_ vertex: String, _ fragment: String) throws -> MTLRenderPipelineState {
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = try library.makeFunction(name: vertex, constantValues: constants)
+            d.fragmentFunction = try library.makeFunction(name: fragment, constantValues: constants)
+            d.depthAttachmentPixelFormat = Pipelines.depthFormat
+            d.inputPrimitiveTopology = .triangle
+            return try device.makeRenderPipelineState(descriptor: d)
+        }
+        let draw = try renderState("vsmVertex", "vsmFragment"), merge = try renderState("vsmMergeVertex", "vsmMergeFragment")
+
+        func buffer(_ length: Int) throws -> MTLBuffer {
+            let b = try XCTUnwrap(device.makeBuffer(length: max(length, 16), options: .storageModeShared))
+            memset(b.contents(), 0, b.length)
+            return b
+        }
+        func buffer<T>(_ values: [T]) throws -> MTLBuffer {
+            let b = try buffer(values.count * MemoryLayout<T>.stride)
+            values.withUnsafeBytes { b.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            return b
+        }
+        let page = 128, texels = page * page   // VSM_PAGE
+        let (floats, at) = pool()
+        let poolBuffer = try buffer(floats)
+        // The one (view, virtual instance) record (MSL VSMInstance, 112 bytes): its rows to the view's clip space, the
+        // pool's points on the page at their (x, y) and reversed depth 1 / z, as a spot light's.
+        let records = try buffer(112)
+        let rows = records.contents().bindMemory(to: SIMD4<Float>.self, capacity: 4)
+        rows[0] = [1, 0, 0, 0]
+        rows[1] = [0, 1, 0, 0]
+        rows[2] = [0, 0, 0, 1]
+        rows[3] = [0, 0, 1, 0]
+        // MSL VSMClusterArgs: records and pool are all the two read.
+        var args = [UInt64](repeating: 0, count: 12)
+        args[0] = records.gpuAddress
+        args[3] = poolBuffer.gpuAddress
+        var vp = GPUVSMParams()
+        vp.maxDraws = 3
+        // The render list: two pages, each a whole view's one window page, in slices 0 and 1.
+        let renderList = try buffer([SIMD4<UInt32>(0, 0, 0, 1), SIMD4<UInt32>(1, 1, 0, 1)])
+        // The draws (record, pool offset, triangles | RASTER_CLUSTERS << 16, render-list place): both clusters into
+        // page 0, the far one into page 1.
+        let draws = try buffer([SIMD4<UInt32>(0, UInt32(at[0]), 128 | 5 << 16, 0), SIMD4<UInt32>(0, UInt32(at[1]), 128 | 5 << 16, 0),
+                                SIMD4<UInt32>(0, UInt32(at[0]), 128 | 5 << 16, 1)])
+        // The software list (VSW_ENTRIES words, then (record, pool offset, triangles, render-list place)): the near
+        // cluster into page 1.
+        var sw = [UInt32](repeating: 0, count: 16 + 4)
+        sw[0] = 1
+        sw[16 ..< 20] = [0, UInt32(at[1]), 128, 1]
+        let swBuffer = try buffer(sw)
+        let depths = try buffer(2 * texels * 4)
+
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Pipelines.depthFormat, width: page, height: page, mipmapped: false)
+        d.textureType = .type2DArray
+        d.arrayLength = 2
+        d.usage = [.renderTarget, .shaderRead]
+        d.storageMode = .private
+        let pages = try XCTUnwrap(device.makeTexture(descriptor: d))
+        let queue = try XCTUnwrap(device.makeCommandQueue())
+        let cb = try XCTUnwrap(queue.makeCommandBuffer())
+
+        let c = try XCTUnwrap(cb.makeComputeCommandEncoder())
+        c.setComputePipelineState(software)
+        c.useResource(records, usage: .read)
+        c.useResource(poolBuffer, usage: .read)
+        c.setBytes(&args, length: args.count * 8, index: 7)
+        c.setBuffer(swBuffer, offset: 0, index: 1)
+        c.setBuffer(depths, offset: 0, index: 3)
+        c.setBuffer(renderList, offset: 0, index: 30)
+        c.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: RasterScene.chunk, height: 1, depth: 1))
+        c.endEncoding()
+
+        let pass = MTLRenderPassDescriptor()
+        pass.depthAttachment.texture = pages
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 0
+        pass.depthAttachment.storeAction = .store
+        pass.renderTargetArrayLength = 2
+        pass.renderTargetWidth = page
+        pass.renderTargetHeight = page
+        let depthDescriptor = MTLDepthStencilDescriptor()
+        depthDescriptor.depthCompareFunction = .greater
+        depthDescriptor.isDepthWriteEnabled = true
+        let r = try XCTUnwrap(cb.makeRenderCommandEncoder(descriptor: pass))
+        r.useResource(records, usage: .read, stages: .vertex)
+        r.useResource(poolBuffer, usage: .read, stages: .vertex)
+        r.setDepthStencilState(device.makeDepthStencilState(descriptor: depthDescriptor))
+        r.setDepthClipMode(.clamp)
+        r.setVertexBytes(&args, length: args.count * 8, index: 7)
+        r.setVertexBytes(&vp, length: MemoryLayout<GPUVSMParams>.stride, index: 9)
+        r.setVertexBuffer(records, offset: 0, index: 17)   // (the instances' records: not read by a cluster's vertices)
+        r.setVertexBuffer(draws, offset: 0, index: 18)
+        r.setVertexBuffer(renderList, offset: 0, index: 30)
+        r.setRenderPipelineState(draw)
+        r.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3 * 3 * RasterScene.chunk)
+        r.setRenderPipelineState(merge)
+        r.setFragmentBuffer(depths, offset: 0, index: 3)
+        r.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: 2)   // (page 0's: nothing there)
+        r.endEncoding()
+
+        let read = try buffer(2 * texels * 4)
+        let blit = try XCTUnwrap(cb.makeBlitCommandEncoder())
+        for slice in 0..<2 {
+            blit.copy(from: pages, sourceSlice: slice, sourceLevel: 0, sourceOrigin: MTLOrigin(), sourceSize: MTLSize(width: page, height: page, depth: 1),
+                      to: read, destinationOffset: slice * texels * 4, destinationBytesPerRow: page * 4, destinationBytesPerImage: texels * 4)
+        }
+        blit.endEncoding()
+        cb.commit()
+        cb.waitUntilCompleted()
+        XCTAssertNil(cb.error)
+
+        let drawn = read.contents().bindMemory(to: Float.self, capacity: 2 * texels)
+        let rasterized = depths.contents().bindMemory(to: Float.self, capacity: 2 * texels)
+        var covered = 0, differ = 0, fromSoftware = 0, merged = 0
+        for i in 0..<texels {
+            XCTAssertEqual(rasterized[i], 0, "texel \(i): nothing rasterized into page 0")
+            let a = drawn[i], b = drawn[texels + i], s = rasterized[texels + i]
+            if s > 0 { fromSoftware += 1 }
+            if s > 0 && b == s { merged += 1 }
+            if a > 0 || b > 0 { covered += 1 }
+            if abs(a - b) > 1e-3 * max(a, b) { differ += 1 }
+        }
+        XCTAssertGreaterThan(fromSoftware, 1000, "the near cluster rasterized in software")
+        XCTAssertGreaterThan(merged, 1000, "and merged into the page, over the far one")
+        XCTAssertGreaterThan(covered, 2000)
+        XCTAssertLessThanOrEqual(Double(differ), 0.01 * Double(covered),
+                                 "\(differ) of \(covered) texels differ: only edge texel centres should")
+    }
+
     /// Without 64-bit atomics the software rasterizer falls back to the clusters drawn, and says why.
     func testWithoutAtomicsTheClustersAreDrawn() {
         var settings = RenderSettings()

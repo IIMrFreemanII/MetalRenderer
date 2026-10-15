@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792089438.3563526,
-    "seen": 1792089640.2970319,
-    "ast_hash": "a08f4d36405d0970b78c15f063f4abef",
+    "mtime": 1792089833.5498798,
+    "seen": 1792089849.726874,
+    "ast_hash": "d7f85e6ec63a2b3f82c749daa5f4cde8",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -930,15 +930,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/tests/scripts/related.sh": {
-    "mtime": 1792078015.6507964,
-    "seen": 1792089429.261642,
-    "ast_hash": "2c2d9656354b772b62fc1e0c4da7d4cf",
+    "mtime": 1792089818.806288,
+    "seen": 1792089849.726583,
+    "ast_hash": "57040a029350494c5de50437da29208a",
     "semantic_hash": ""
   },
   ".claude/skills/tests/SKILL.md": {
-    "mtime": 1792077997.4339917,
-    "seen": 1792089429.26189,
-    "ast_hash": "8f1f6a11696a61eac4d37d1348cadc35",
+    "mtime": 1792089818.8064454,
+    "seen": 1792089849.7268648,
+    "ast_hash": "85f0bc58089670860b3a51ed5be1fc81",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VoxelGrids.swift": {
@@ -3816,8 +3816,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RasterSoftware.metal": {
-    "mtime": 1792089438.3585107,
-    "seen": 1792089640.296923,
+    "mtime": 1792089794.9593663,
+    "seen": 1792089849.7267652,
     "ast_hash": "ca6be8d71766aa2d13d2b06a4fded542",
     "semantic_hash": ""
   },
@@ -3828,9 +3828,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SoftwareRasterTests.swift": {
-    "mtime": 1792077997.4468143,
-    "seen": 1792089429.261864,
-    "ast_hash": "bc10a63b63b2e6ef4494913cda8b2ae8",
+    "mtime": 1792089818.810405,
+    "seen": 1792089849.726835,
+    "ast_hash": "4470710dd45a90fe93bd3fdae34d6584",
     "semantic_hash": ""
   },
   "Tools/mixamo/download.py": {

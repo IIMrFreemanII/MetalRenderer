@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792089341.9230385,
-    "seen": 1792089429.2619011,
-    "ast_hash": "c97b85f8bbdf80e0c5b3ce36ad60635d",
+    "mtime": 1792089438.3563526,
+    "seen": 1792089640.2970319,
+    "ast_hash": "a08f4d36405d0970b78c15f063f4abef",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792089341.9248743,
-    "seen": 1792089429.261767,
-    "ast_hash": "605a65e665b4244e111c0083d07ee129",
+    "mtime": 1792089438.3577902,
+    "seen": 1792089640.2968802,
+    "ast_hash": "91a6bcd3ce30c62f8b9d628a6605b0b9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -246,9 +246,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
-    "mtime": 1792089341.925597,
-    "seen": 1792089429.261787,
-    "ast_hash": "64bc5f494f67901cf58b64b0083c2114",
+    "mtime": 1792089438.3580616,
+    "seen": 1792089640.296905,
+    "ast_hash": "e6f6c3522126610800e9af5b7c765d98",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsPanel.swift": {
@@ -414,9 +414,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1792089339.854941,
-    "seen": 1792089429.261749,
-    "ast_hash": "8afa6a252c3a42ce7d83543766b69022",
+    "mtime": 1792089438.357126,
+    "seen": 1792089640.296861,
+    "ast_hash": "fe9d4cb045ab29a3acb60aa34ca4c696",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
@@ -426,9 +426,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsTable.swift": {
-    "mtime": 1792089339.8564978,
-    "seen": 1792089429.2617888,
-    "ast_hash": "3ac5b53b251bdc1e0295588fff4e6190",
+    "mtime": 1792089438.3582208,
+    "seen": 1792089640.296907,
+    "ast_hash": "0a289eb53bc09a3f5ad364c03220d621",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/SettingsTableTests.swift": {
@@ -438,9 +438,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1792089339.8535686,
-    "seen": 1792089429.261678,
-    "ast_hash": "ff319bce9c50a61a4cc61b7513458dc4",
+    "mtime": 1792089438.3567178,
+    "seen": 1792089640.296782,
+    "ast_hash": "55ac1d9af75c695499f8b7becdab1d12",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/BenchmarkModesTests.swift": {
@@ -648,15 +648,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ComputePass.swift": {
-    "mtime": 1792089339.8541257,
-    "seen": 1792089429.261698,
-    "ast_hash": "a3bed03a8aefe0c23007496e03c17ae6",
+    "mtime": 1792089438.356854,
+    "seen": 1792089640.2968051,
+    "ast_hash": "ebb9914812fee25e4207e5fa83aec91f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1792089339.8546422,
-    "seen": 1792089429.261732,
-    "ast_hash": "6188b1469fcdcbd18c94ef7d44b4cf26",
+    "mtime": 1792089438.3569913,
+    "seen": 1792089640.296843,
+    "ast_hash": "65e28dc371d6c94a8c0a04176cdb6b70",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
@@ -1188,9 +1188,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RasterClusters.metal": {
-    "mtime": 1792089339.8574486,
-    "seen": 1792089429.261802,
-    "ast_hash": "4009d380c9c9ac7a302c836e53f91664",
+    "mtime": 1792089438.3583474,
+    "seen": 1792089640.296923,
+    "ast_hash": "872b20d0c370c95f858368b7d3640704",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/SDF.metal": {
@@ -1200,9 +1200,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/VSM.metal": {
-    "mtime": 1792089339.8583028,
-    "seen": 1792089429.2618072,
-    "ast_hash": "9f5badd22efbeebcd5420dfad037ca22",
+    "mtime": 1792089438.3586524,
+    "seen": 1792089640.296928,
+    "ast_hash": "43879280d758040095a28f65f4f7cfba",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Showcase.swift": {
@@ -3816,9 +3816,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RasterSoftware.metal": {
-    "mtime": 1792089339.8577077,
-    "seen": 1792089429.261803,
-    "ast_hash": "29f10006751cbff591f17c3f0ef827b8",
+    "mtime": 1792089438.3585107,
+    "seen": 1792089640.296923,
+    "ast_hash": "ca6be8d71766aa2d13d2b06a4fded542",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/MixamoLibraryTests.swift": {

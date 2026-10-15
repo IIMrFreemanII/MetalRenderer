@@ -53,7 +53,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/RasterClusters.metal|Sources/MetalRenderer/Shaders/Raster.metal) add VGCutTests SoftwareRasterTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/RasterSoftware.metal) add SoftwareRasterTests ShaderSourceTests KernelVariantsTests ;;
+      Sources/MetalRenderer/Shaders/RasterSoftware.metal|Sources/MetalRenderer/Shaders/VSM.metal) add SoftwareRasterTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
       Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
