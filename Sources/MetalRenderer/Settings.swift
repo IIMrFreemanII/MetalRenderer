@@ -170,6 +170,21 @@ enum ToneMap: Int, CaseIterable, Codable {
     }
 }
 
+/// How real the outdoor scenes look (SceneSettings.realism): off, the generated textures as they always were; on,
+/// photo-scanned ground, rocks and plants (TextureSet) height-blended into each other, with the lighting's realistic
+/// looks; high, also the costly parts (stochastic tiling, the ground displaced near the camera, denser grass).
+enum Realism: Int, CaseIterable, Codable {
+    case off, on, high
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .on: return "On"
+        case .high: return "High"
+        }
+    }
+}
+
 /// How indirect light (global illumination) is computed.
 enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
@@ -339,6 +354,25 @@ enum SceneKind: Int, CaseIterable, Codable {
     case softBodies         // `softBodies` soft bodies (PhysicsSoft.swift): jellies dropped onto steps, pegs and a bowl
     case muscles            // flesh, muscles and skin (PhysicsFlesh.swift) on a character walking and running round a
                             // circle among balls, and on ragdolls tumbling down steps
+    case fluids             // liquids (PhysicsFluid.swift): water, blood and honey poured side by side down steps into a
+                            // tray, boxes floating and sinking in them, a paddle in each to stir it
+    case particles          // GPU particle effects (Particles.swift), ray traced: fire and smoke, sparks that bounce and
+                            // smoke, magic motes in curl noise, rain that splashes
+    case plants             // the plant workshop (Scene+Plants.swift): one species' plants on a lawn under the sun, as the
+                            // plant editor shapes them (`SceneSettings.plants`)
+    case buildings          // the building workshop (Scene+Buildings.swift): one building, inside and out, on its lot, as
+                            // the building editor shapes it (`SceneSettings.buildings`)
+    case characters         // the character workshop (Scene+Characters.swift): generated people (CharacterDNA) in a studio,
+                            // as the character editor shapes them (`SceneSettings.characterWorkshop`)
+    case vfxStage           // the VFX stage (Scene+Stage.swift): effects (`SceneSettings.stage`) lined up in a studio, as
+                            // the VFX editor shapes them
+    case materials          // the material workshop (Scene+Materials.swift): a Material Designer graph's material on a
+                            // sphere, a cube, a cylinder and a tile (`SceneSettings.materialWorkshop`), baked as it is edited
+    case mireland           // a misty swamp (Scene+Mireland.swift) made of the Mireland materials, every one procedural
+    case painter            // the painter workshop (Scene+Painter.swift): one object on a plinth, painted with the Material
+                            // Painter (`SceneSettings.painterWorkshop`)
+    case terrain            // the terrain workshop (Scene+TerrainWorkshop.swift): a terrain of its own, 0.5 to 4 km, made with
+                            // the Terrain Editor (`SceneSettings.terrainWorkshop`)
 
     var title: String {
         switch self {
@@ -366,17 +400,29 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .hair: return "Hair and fur"
         case .softBodies: return "Soft bodies"
         case .muscles: return "Muscles and skin"
+        case .fluids: return "Fluids"
+        case .particles: return "Particles"
+        case .plants: return "Plant workshop"
+        case .buildings: return "Building workshop"
+        case .characters: return "Character workshop"
+        case .vfxStage: return "VFX stage"
+        case .materials: return "Material workshop"
+        case .mireland: return "Mireland swamp"
+        case .painter: return "Painter workshop"
+        case .terrain: return "Terrain workshop"
         }
     }
 
     /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
-    var simulates: Bool { self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles }
+    var simulates: Bool {
+        self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles || self == .fluids
+    }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
     /// open world's whole day, with its night), or nil.
     var dayCycle: Float? {
-        self == .sun ? 60 : self == .valley || self == .forest || self == .city ? 180 : self == .world ? Heavens.day : nil
+        self == .sun ? 60 : self == .valley || self == .forest || self == .city || self == .terrain ? 180 : self == .world ? Heavens.day : nil
     }
     /// The generated city, by day or by night (Scene+City.swift): the scenes `SceneSettings.city` describes.
     var isCity: Bool { self == .city || self == .cityNight }
@@ -385,11 +431,15 @@ enum SceneKind: Int, CaseIterable, Codable {
     var isWorld: Bool { self == .world }
     /// Scenes with a share of their windows lit at night (`CitySettings.lit`).
     var hasLitWindows: Bool { self == .cityNight || self == .world }
-    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase }   // the showcase's frames its model
+    var cameraFromScene: Bool { self == .crowd || isCity || isWorld || self == .showcase || isWorkshop || self == .mireland || self == .terrain }   // these frame what they hold
+    /// The editors' scenes: one thing (a plant, a building) made again at every edit, an orbit camera round it.
+    var isWorkshop: Bool { self == .plants || self == .buildings || self == .characters }
     /// Scenes with generated plants (Foliage): `SceneSettings.seed` picks them.
-    var hasPlants: Bool { self == .forest || self == .valley || isWorld }
+    var hasPlants: Bool { self == .forest || self == .valley || isWorld || self == .plants }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
     var hasForest: Bool { self == .forest || isWorld }
+    /// Scenes the realistic look changes (SceneSettings.realism): the ones on a terrain, outdoors.
+    var hasRealisticLook: Bool { hasPlants || self == .terrain || self == .sun || self == .crowd || self == .buildings }
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -428,6 +478,13 @@ struct CitySettings: Equatable, Codable {
     /// A window's shell (reveal, frame, sill, lintel, shutters) is made once and placed at every window like it
     /// (Building.Module), a building an assembly of them (Scene.Assembly.rigid); off: every building one mesh of its own.
     var modules = false
+    /// The building the camera comes near (within `interiorReach` metres) has its interior made, in the background:
+    /// rooms, stairs, furniture, lights you can walk among (Scene+Interiors.swift). Off: every building a shell.
+    var interiors = true
+    var interiorReach: Float = 30
+    /// A canal through the city in place of its middle avenue (with 4 blocks a side or more): quays, bridges where
+    /// the streets cross it, water (CityPlan.canal).
+    var canal = true
 
     static let blockRange = 1...10
     static let litRange: ClosedRange<Float> = 0...1
@@ -491,6 +548,30 @@ struct ExtraModel: Equatable, Codable {
     var yaw: Float
 }
 
+/// A scene's particle effects (Particles.swift; the particles scene's, the showcase's motes). Changing any of it
+/// rebuilds the scene, which starts them again.
+struct ParticleSettings: Equatable, Codable {
+    /// Every emitter's rate, bursts and pool times this: the effects thinner or denser (timing).
+    var budget: Float = 1
+    /// The particles that cast shadows do (shadow rays look through them); off, none does.
+    var shadows = true
+    /// Reflection rays see the particles in front of what they reflect (particleGather); off, mirrors miss them.
+    var reflections = true
+    static let budgetRange: ClosedRange<Float> = 0.25...4
+
+    /// `emitters` as these settings make them.
+    func applied(to emitters: [ParticleEmitter]) -> [ParticleEmitter] {
+        emitters.map { e in
+            var e = e
+            e.capacity = max(Int((Float(e.capacity) * budget).rounded()), 1)
+            e.rate *= budget
+            if let b = e.burst { e.burst = (b.time, max(Int((Float(b.count) * budget).rounded()), 1), b.period, b.repeats) }
+            if !shadows { e.castsShadows = false }
+            return e
+        }
+    }
+}
+
 /// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
 struct PhysicsSettings: Equatable, Codable {
     /// Where the steps run: the GPU (Shaders/Physics.metal), the CPU (PhysicsCPU.swift), or whichever suits the
@@ -535,6 +616,28 @@ struct PhysicsSettings: Equatable, Codable {
         var title: String { ["Skin", "Muscles"][rawValue] }
     }
     var body = Body.skin
+    /// The fluids scene (Scene+Fluids.swift): which liquids it pours, the solver each is stepped by (PhysicsFluid.swift),
+    /// or one for all of them, and how many particles each pours at most. Honey by MPM (its viscosity is what MPM is
+    /// for), water and blood by PBF: MPM's push on a body is weak in a thin liquid (a light box bobbed and sank in MPM
+    /// water and blood; PBF's boundary density holds it up).
+    enum Liquids: Int, CaseIterable, Codable {
+        case all, water, blood, honey
+        var title: String { ["All three", "Water", "Blood", "Honey"][rawValue] }
+    }
+    var liquids = Liquids.all
+    enum Solver: Int, CaseIterable, Codable {
+        case pbf, mpm
+        var title: String { ["Position based (PBF)", "Material point (MLS-MPM)"][rawValue] }
+    }
+    enum Solvers: Int, CaseIterable, Codable {
+        case auto, pbf, mpm
+        var title: String { ["Each liquid's own", "PBF for all", "MPM for all"][rawValue] }
+    }
+    var solver = Solvers.auto
+    var waterSolver = Solver.pbf
+    var bloodSolver = Solver.pbf
+    var honeySolver = Solver.mpm
+    var fluidParticles = 32768
 
     static let substepRange = 1...32
     static let bodyRange = 0...4096
@@ -548,6 +651,7 @@ struct PhysicsSettings: Equatable, Codable {
     static let muscleRagdollRange = 0...12
     static let fleshCellRange: ClosedRange<Float> = 2...6
     static let muscleGainRange: ClosedRange<Float> = 0...2
+    static let fluidRange = 1024...262144
     static let gpuFrom = 64
 
     /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
@@ -564,6 +668,9 @@ struct SceneSettings: Equatable, Codable {
     var poses = 64
     /// ...and at which level of detail they are skinned and traced: 0 = the full mesh, each level half the one before.
     var detail = 3
+    /// ...and who they are: the character library's (the Y and X Bots) or the character catalog's people, made from
+    /// their DNA (CharacterBuilder).
+    var crowdBodies = CrowdBodies.library
     var city = CitySettings()
     /// The showcase: which model of `Scene.galleryFiles()`, as a part of its file name (any case); "" = the first.
     var showcase = ""
@@ -594,6 +701,8 @@ struct SceneSettings: Equatable, Codable {
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
     /// by an alpha mask the ray queries test. Off: every leaf is a mesh of its own.
     var leafCards = false
+    /// The outdoor scenes' realistic look (Realism): scanned materials, height-blended ground, realistic lighting.
+    var realism = Realism.on
     /// Far baked plants as their voxel grids (VoxelLOD) instead of their triangles. Off: it is slower wherever it was
     /// measured. In software (M1 Max) the ray queries a voxel box needs
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
@@ -601,6 +710,54 @@ struct SceneSettings: Equatable, Codable {
     var voxelBoxes = false
     /// The physics scene: its bodies and how they are simulated.
     var physics = PhysicsSettings()
+    var particles = ParticleSettings()
+    /// The plant workshop: what it shows.
+    var plants = PlantSceneSettings()
+    /// The species the plants are grown from: a key of PlantCatalog's registry, which the plant editor sets as it
+    /// edits; "" the saved species (Assets/Plants), "builtin" the built-in ones. Session state, not a preference.
+    var plantCatalog = ""
+    /// The effects that replace the scenes' own of the same name (VFXCatalog): "" the saved ones (Assets/Effects),
+    /// "builtin" none, otherwise a key of the registry the VFX editor fills as it edits. Session state.
+    var effects = ""
+    /// The VFX stage: the effects it shows.
+    var stage = VFXStageSettings()
+    /// The material workshop: the graph it shows, on what.
+    var materialWorkshop = MaterialWorkshopSettings()
+    /// The material graphs procedural materials are baked from (MaterialCatalog): "" the saved ones (Assets/Materials),
+    /// "builtin" the built-in ones, otherwise a key of the registry the Material Designer fills as it edits. An edit
+    /// that keeps every graph's channels bakes in place (Renderer.editMaterials). Session state.
+    var materials = ""
+    /// Which scene materials graphs replace (MaterialAssignments: click-to-pick's): "" the saved ones
+    /// (Assets/Materials/assignments.json), otherwise a key of the registry the Material Designer fills. A change makes
+    /// the scene again. Session state.
+    var materialAssignments = ""
+    /// The painter workshop: what it shows, painted with which document.
+    var painterWorkshop = PainterWorkshopSettings()
+    /// The terrain workshop: how big its terrain is, what it starts from, its document.
+    var terrainWorkshop = TerrainWorkshopSettings()
+    /// Changed by the Terrain Editor when an edit of a terrain's document needs the scene made again (a layer's Material
+    /// Designer graph, its water): any new value does. Session state.
+    var terrainKey = ""
+    /// Which scene objects the Material Painter paints (PaintAssignments): "" the saved ones
+    /// (Assets/Painter/assignments.json), otherwise a key of the registry the painter fills. A change makes the scene
+    /// again. Session state.
+    var paintAssignments = ""
+    /// What the Project Graph hid and duplicated (SceneOverrides): "" the saved ones (Assets/Scenes/Overrides), otherwise
+    /// a key of the registry the graph fills. A change makes the scene again. Session state.
+    var sceneOverrides = ""
+    /// The building workshop: what it shows.
+    var buildings = BuildingSceneSettings()
+    /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
+    /// building editor sets as it edits; "" the saved ones (Assets/Buildings), "builtin" the built-in ones. Session state.
+    var buildingCatalog = ""
+    /// The character workshop: who it shows, and how.
+    var characterWorkshop = CharacterSceneSettings()
+    /// The characters scenes are made with: a key of CharacterCatalog's registry, which the character editor sets as it
+    /// edits; "" the saved ones (Assets/CharacterDefs), "builtin" the built-in ones. Session state.
+    var characterCatalog = ""
+    /// The city's building whose interior the scene has (LotRef.key; nil: none): the renderer's to set, as the camera
+    /// comes near a building and leaves it (Scene+Interiors.swift). Session state.
+    var interior: String? = nil
 
     static let objectRange = 0...2000
     static let treeRange = 0...20000
@@ -612,13 +769,239 @@ struct SceneSettings: Equatable, Codable {
     static let detailRange = 0...CharacterLibrary.coarserLevels
     static let marketLights = 4096       // the night market's default bulb count
 
+    /// The settings whose values differ from `other`'s, by name ("effects", "city.style"): why a scene is made again.
+    func changes(from other: SceneSettings) -> [String] {
+        func object(_ s: SceneSettings) -> [String: Any] {
+            let encoder = JSONEncoder()
+            encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
+            guard let data = try? encoder.encode(s) else { return [:] }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        }
+        func walk(_ a: [String: Any], _ b: [String: Any], _ path: String) -> [String] {
+            Set(a.keys).union(b.keys).sorted().flatMap { k -> [String] in
+                let name = path.isEmpty ? k : "\(path).\(k)"
+                if let x = a[k] as? [String: Any], let y = b[k] as? [String: Any] { return walk(x, y, name) }
+                return (a[k] as? NSObject) == (b[k] as? NSObject) ? [] : [name]
+            }
+        }
+        return walk(object(self), object(other), "")
+    }
+
+    /// The plant workshop both, showing the same species the same way (only the species' definitions and which of its
+    /// plants differ): what an edit changes.
+    func isSameWorkshop(as other: SceneSettings) -> Bool {
+        if kind == .characters && other.kind == .characters {
+            let a = characterWorkshop, b = other.characterWorkshop
+            return a.layout == b.layout && a.pose == b.pose && a.clip == b.clip && a.view == b.view
+        }
+        if kind == .buildings && other.kind == .buildings {
+            return buildings.layout == other.buildings.layout && buildings.style == other.buildings.style
+                && buildings.pinned == other.buildings.pinned
+        }
+        return kind == .plants && other.kind == .plants && plants.layout == other.plants.layout && plants.view == other.plants.view
+            && plants.species == other.plants.species && leafCards == other.leafCards && bakedPlants == other.bakedPlants
+            && realism == other.realism
+    }
+
+    /// The same city, with another building's interior in it (or none): the same streets and buildings, where they
+    /// were (Renderer: what the frames have gathered holds).
+    func isSameCity(as other: SceneSettings) -> Bool {
+        var a = self, b = other
+        (a.interior, b.interior) = (nil, nil)
+        return (kind.isCity || kind.isWorld) && a == b && interior != other.interior
+    }
+
     /// The same open world, whatever tile the scene is made around, wherever its origin is and whatever the time of day.
     func isSameWorld(as other: SceneSettings) -> Bool {
         var a = self, b = other
         (a.worldTile, b.worldTile, a.worldAnchor, b.worldAnchor) = (nil, nil, nil, nil)
         (a.worldLit, b.worldLit) = (false, false)
+        (a.interior, b.interior) = (nil, nil)
         return kind.isWorld && a == b
     }
+}
+
+/// The VFX stage (Scene+Stage.swift): the effects it lines up, by name (VFXLibrary's, or the catalog's: Scene.effect).
+struct VFXStageSettings: Equatable, Codable {
+    var effects = ["fireworks"]
+    var backdrop = VFXBackdrop.dark
+}
+
+/// The material workshop (Scene+Materials.swift): the graph whose material it shows (by name: MaterialCatalog's),
+/// on which shapes, against what.
+struct MaterialWorkshopSettings: Equatable, Codable {
+    var graph = "Red Bricks"
+    var layout = Layout.lineup
+    var backdrop = Backdrop.studio
+
+    enum Layout: String, Codable, CaseIterable {
+        /// (`card`: a standing card and a tile on the ground, for a cut-out material: a plant, a decal.)
+        case lineup, sphere, cube, cylinder, plane, card
+        var title: String { self == .lineup ? "Line-up" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+    enum Backdrop: String, Codable, CaseIterable {
+        case studio, outdoor, dark
+        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+}
+
+/// The painter workshop (Scene+Painter.swift): the object it paints (a shape, the base character, a glTF model's
+/// largest part), with which document (PaintDocuments, by name), against what.
+struct PainterWorkshopSettings: Equatable, Codable {
+    var subject = Subject.sphere
+    /// `.model`: the glTF file (a path, or a name under Assets).
+    var model = ""
+    var document = "Workshop"
+    var backdrop = MaterialWorkshopSettings.Backdrop.studio
+
+    enum Subject: String, Codable, CaseIterable {
+        case sphere, cube, cylinder, plane, character, model
+        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
+}
+
+/// What the VFX stage's effects are shown against.
+enum VFXBackdrop: String, Codable, CaseIterable {
+    /// A dark room, a key light and a cool one over it; a grey cyclorama (a floor curving up into a wall), softly lit;
+    /// nothing at all, black; a plain under the sun and a blue sky; the plain at night, under the moon.
+    case dark, grey, black, outdoor, night
+    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+}
+
+/// The building workshop (Scene+Buildings.swift): which building it shows, and how.
+struct BuildingSceneSettings: Equatable, Codable {
+    /// The style's id (BuildingCatalog), the lot (its width across the front, its depth), what its sides look onto,
+    /// its floors and seed.
+    var style = "residential"
+    var lot = SIMD2<Float>(20, 14)
+    var sides = Sides.row
+    var floors = 5
+    var seed = 1
+    var layout = Layout.single
+    var view = View.full
+    /// The cutaway's and the dollhouse's top storey (0: the ground floor).
+    var cut = 1
+    var night = false
+    /// A single building of a city to show instead (the editor's Pin), nil: the workshop's own.
+    var pinned: LotRef? = nil
+    /// Registry keys (BuildingCatalog.register), session state: the editor's variations of the style to show beside it
+    /// (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Sides: Int, CaseIterable, Codable {
+        case row            // between neighbours, a yard behind
+        case backToBack     // between neighbours, a neighbour behind too
+        case corner         // a street in front and on its right
+        case free           // streets and open ground all round
+        var edges: [CityPlan.Edge] {
+            switch self {
+            case .row: return [.street, .party, .open, .party]
+            case .backToBack: return [.street, .party, .party, .party]
+            case .corner: return [.street, .street, .party, .party]
+            case .free: return [.street, .open, .open, .street]
+            }
+        }
+        var title: String { ["In a row", "Back to back", "On a corner", "Free-standing"][rawValue] }
+    }
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the building on its lot
+        case street         // between two neighbours of its style
+        case mutate         // it and the editor's variations of it, along a street
+        var title: String { ["One building", "In its street", "Variations"][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case full
+        case cutaway        // no roof and nothing above storey `cut`
+        case dollhouse      // ...and no front wall up to it either
+        var title: String { ["Whole", "Cutaway", "Dollhouse"][rawValue] }
+    }
+
+    static let floorRange = 1...40
+    static let widthRange: ClosedRange<Float> = 6...48
+    static let depthRange: ClosedRange<Float> = 8...48
+}
+
+/// Who the crowd scene's characters are.
+enum CrowdBodies: Int, CaseIterable, Codable {
+    case library        // Assets/Characters: the Mixamo mannequins
+    case generated      // the character catalog's people (CharacterCatalog, CharacterBuilder)
+    var title: String { ["Mannequins", "Generated people"][rawValue] }
+}
+
+/// The character workshop (Scene+Characters.swift): who it shows, in what pose, and how.
+struct CharacterSceneSettings: Equatable, Codable {
+    /// The character's id (CharacterCatalog).
+    var character = "man"
+    var layout = Layout.single
+    var pose = Pose.aPose
+    /// Pose `clip`: the clip's name (any clip of the character library).
+    var clip = ""
+    var view = View.body
+    /// What the faces do (blinks always), and whether their eyes follow the camera.
+    var expression = FaceExpression.neutral
+    var lookAt = true
+    /// How hair is drawn (CharacterHair): strands, the caps crowds have, or none.
+    var hair = HairMode.strands
+    /// Registry keys (CharacterCatalog.register), session state: the editor's variations of the character to show
+    /// beside it (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the character
+        case lineup         // every character of the catalog, side by side
+        case mutate         // the character and the editor's variations of it, in a row
+        var title: String { ["One character", "Everyone", "Variations"][rawValue] }
+    }
+    enum Pose: Int, CaseIterable, Codable {
+        case tPose, aPose, idle, walk, clip
+        var title: String { ["T pose", "A pose", "Idle", "Walking", "Clip"][rawValue] }
+        /// The clip it plays (CharacterKit's names), for every pose but `clip`.
+        var clipName: String? { [Optional("T-Pose"), "A-Pose", "Idle", "Walking", nil][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case body           // the whole character
+        case face           // its head, close
+        var title: String { ["Body", "Face"][rawValue] }
+    }
+    enum HairMode: Int, CaseIterable, Codable {
+        case strands, caps, none
+        var title: String { ["Strands", "Caps", "None"][rawValue] }
+    }
+}
+
+/// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
+struct PlantSceneSettings: Equatable, Codable {
+    /// The species' id (PlantCatalog), and the age and seeded variant of the one plant shown.
+    var species = "oak"
+    var age = Foliage.Age.mature
+    var variant = 0
+    /// What the variants are grown from: the library's seed (SceneSettings.seed), so the workshop's oak 2 at seed 1 is
+    /// the forest's.
+    var seed = 1
+    var layout = Layout.single
+    var view = View.plant
+    /// Registry keys (PlantCatalog.register), session state: the editor's variations of the species to show beside it
+    /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
+    var mutants = ""
+    var compare = ""
+
+    enum Layout: Int, CaseIterable, Codable {
+        case single         // the one plant
+        case lineup         // every age (rows) and variant (columns)
+        case mutate         // the plant and the editor's variations of it, in a row
+
+        var title: String { ["One plant", "Ages and variants", "Variations"][rawValue] }
+    }
+    enum View: Int, CaseIterable, Codable {
+        case plant
+        case skeleton       // the stems as thin lines, a colour to a level; no leaves
+
+        var title: String { ["Plant", "Skeleton"][rawValue] }
+    }
+
+    static let variantRange = 0...7
 }
 
 /// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
@@ -699,7 +1082,8 @@ struct FogSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FogSettings {
         var f = FogSettings()
         switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles:   // at night: thousands of lit windows scatter in blotches
+        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
+             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -710,9 +1094,16 @@ struct FogSettings: Equatable, Codable {
         case .valley:
             f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
             f.maxDistance = 150
+        case .terrain:   // a light haze: the far side of kilometres of ground fades
+            f.enabled = true; f.density = 0.0003; f.heightFalloff = 0.006; f.anisotropy = 0.5; f.noise = 0.1
+            f.maxDistance = 400; f.haze = 0.25
         case .forest:
             f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
             f.maxDistance = 150
+        case .mireland:
+            // A misty morning: the far trees grey, the low sun's beams through the mist.
+            f.enabled = true; f.density = 0.05; f.heightFalloff = 0.1; f.anisotropy = 0.75; f.ambient = 0.35; f.noise = 0.5
+            f.maxDistance = 90
         case .world:
             // The noise's tile divides the tiles' 256 m, so the fog stays as it is when the scene's origin moves.
             f.enabled = true; f.density = 0.002; f.heightFalloff = 0.012; f.anisotropy = 0.6; f.noise = 0.2; f.noiseScale = 8
@@ -745,6 +1136,18 @@ struct FogSettings: Equatable, Codable {
     static func preset(for scene: SceneSettings) -> FogSettings {
         var f = preset(for: scene.kind)
         if scene.kind == .showcase { ShowcaseLook.look(for: scene.showcase).fog(&f) }
+        if scene.realism != .off && scene.kind.hasRealisticLook {
+            // Air: the distance fades blue-grey (aerial perspective), a light haze in the forest's shade.
+            if !f.enabled {
+                f.enabled = true
+                f.density = 0.0025
+                f.heightFalloff = 0.025
+                f.anisotropy = 0.6
+                f.noise = 0.15
+                f.maxDistance = 90
+            }
+            f.haze = max(f.haze, scene.kind == .forest ? 0.3 : 0.55)
+        }
         return f
     }
 }
@@ -794,11 +1197,18 @@ struct SkySettings: Equatable, Codable {
     static let override: String? = ProcessInfo.processInfo.environment["METALRENDERER_SKY"]
 
     /// The sky that suits scene `kind`: the atmosphere for the outdoor and window-lit scenes, a constant colour inside.
+    /// ...and for the scene's own settings: the building workshop at night has the city's night sky.
+    static func preset(for scene: SceneSettings) -> SkySettings {
+        var s = preset(for: scene.kind)
+        if scene.kind == .buildings && scene.buildings.night { s = preset(for: .cityNight) }
+        return s
+    }
+
     static func preset(for kind: SceneKind) -> SkySettings {
         var s = SkySettings()
         switch kind {
         case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles:
+             .softBodies, .muscles, .fluids, .particles, .vfxStage, .materials, .painter:
             break
         case .sun:
             s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
@@ -816,9 +1226,17 @@ struct SkySettings: Equatable, Codable {
         case .forest:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 900; s.cloudThickness = 900; s.cloudScale = 1400
             s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
+        case .mireland:
+            s.mode = .atmosphere; s.coverage = 0.45; s.cloudBase = 800; s.cloudThickness = 900; s.cloudScale = 1400
+            s.density = 0.04; s.windSpeed = 4; s.shadowStrength = 0.5
         case .world:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
+        case .terrain:
+            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
+            s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
+        case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
+            s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }
         if let o = override {
             switch o {
@@ -843,6 +1261,14 @@ struct PostSettings: Equatable, Codable {
     var vignette: Float = 0             // how much the corners darken
     var grain: Float = 0                // film grain's strength
     var aberration: Float = 0           // chromatic aberration: red and blue apart by this share of the width at the corners
+    /// The exposure follows the frame's light (a histogram's middle, eased toward): `exposure` then shifts it.
+    var autoExposure = false
+    /// The colour grade (applied when any is off its neutral value): warmth (-1 cooler ... 1 warmer: white balance),
+    /// saturation (1 as it is) and contrast about middle grey (1 as it is).
+    var warmth: Float = 0
+    var saturation: Float = 1
+    var contrast: Float = 1
+    var grades: Bool { warmth != 0 || saturation != 1 || contrast != 1 }
 
     var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 }
 
@@ -853,12 +1279,33 @@ struct PostSettings: Equatable, Codable {
     static let vignetteRange: ClosedRange<Float> = 0...1
     static let grainRange: ClosedRange<Float> = 0...0.2
     static let aberrationRange: ClosedRange<Float> = 0...0.01
+    static let warmthRange: ClosedRange<Float> = -1...1
+    static let saturationRange: ClosedRange<Float> = 0...2
+    static let contrastRange: ClosedRange<Float> = 0.5...1.5
     static let maxBlur: Float = 24      // the depth of field's widest blur circle (output pixels)
     static let bloomLevels = 6          // the glow's halvings, from half the output size
 
-    /// Off, but in the showcase: the model's look.
+    /// Off, but in the showcase: the model's look; and with the realistic look outdoors, a camera's: exposure that
+    /// follows the light, a gentle filmic grade, a little bloom and vignette.
     static func preset(for scene: SceneSettings) -> PostSettings {
-        scene.kind == .showcase ? ShowcaseLook.look(for: scene.showcase).post : PostSettings()
+        if scene.kind == .showcase { return ShowcaseLook.look(for: scene.showcase).post }
+        if scene.kind == .city {
+            // Its rooms to walk into (CitySettings.interiors): exposure that follows the light (at the street's, a room
+            // lit by its windows is black).
+            var p = PostSettings()
+            p.autoExposure = true
+            return p
+        }
+        guard scene.realism != .off, scene.kind.hasRealisticLook else { return PostSettings() }
+        var p = PostSettings()
+        p.autoExposure = true
+        p.saturation = 1.06
+        p.contrast = 1.1
+        p.warmth = scene.kind == .forest ? 0.12 : 0.06
+        p.bloom = 0.035
+        p.bloomThreshold = 1.6
+        p.vignette = 0.16
+        return p
     }
 }
 
@@ -904,6 +1351,7 @@ struct FoliageSettings: Equatable, Codable {
     static func preset(for kind: SceneKind) -> FoliageSettings {
         var f = FoliageSettings()
         if kind.hasPlants { f.wind = 0.4 }
+        if kind == .plants { f.lod = 0 }   // the workshop's plants are never voxels
         return f
     }
 }
@@ -914,6 +1362,7 @@ struct RenderSettings: Equatable, Codable {
     var giEnabled = true
     var bounces = 2
     var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
+    var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
     var paused = false
     var viewMode = 0
     var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
@@ -948,6 +1397,11 @@ struct RenderSettings: Equatable, Codable {
     var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     var timeScale: Float = 1           // animation speed (Pause stops it too)
     var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
+    /// The day is held where `timeOfDay` puts it (the day bar, DayClock): `timeOfDay` is then the time of the day
+    /// itself, as a fraction of the cycle, and the rest of the scene goes on moving.
+    var dayHeld = false
+    /// The particles' layer's size, as a share of the traced frame's (1 or 0.5): upsampled by depth over the picture.
+    var particleScale: Float = 1
 
     /// The physics scene's traced resolution (`usePhysicsLook`).
     static let physicsScale: CGFloat = 0.375
@@ -979,7 +1433,7 @@ struct RenderSettings: Equatable, Codable {
         post = PostSettings.preset(for: scene)
         foliage = FoliageSettings.preset(for: scene.kind)
         let image = sky.mode == .image ? sky : nil   // an image the user opened stays
-        sky = SkySettings.preset(for: scene.kind)
+        sky = SkySettings.preset(for: scene)
         if let image { sky.mode = .image; sky.imagePath = image.imagePath; sky.imageExposure = image.imageExposure }
     }
 
@@ -1009,4 +1463,9 @@ struct RenderSettings: Equatable, Codable {
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     static let geometryViews = 8...13
+}
+
+extension SceneKind {
+    /// The camera turns about what the scene shows (the plant workshop's plants, the VFX stage's effects; F frames them).
+    var orbits: Bool { isWorkshop || self == .vfxStage || self == .materials || self == .painter }
 }

@@ -34,6 +34,15 @@ bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& b
     float dist = length(d);
     float t;
     bool hit = intersectAny(makeRay(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_GEOMETRY, cls), accel, t);
+    if (PARTICLES && !hit) {
+        // The particles that cast shadows let T of the light through: the ray gets through with that chance (the
+        // denoisers and the averages make it a soft shadow, as the voxels' stochastic leaves are).
+        float T = particleTransmittance(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f), accel);
+        if (T < 1.0f) {
+            uint h = pcgHash(as_type<uint>(from.x) ^ pcgHash(as_type<uint>(from.y) + pcgHash(as_type<uint>(to.z) ^ pcgHash(accel.frame))));
+            if (float(h >> 8) * (1.0f / 16777216.0f) >= T) { blocker = 0.5f * dist; return false; }
+        }
+    }
     blocker = hit ? max(t, 1e-3f) : 0.0f;
     return !hit;
 }
@@ -50,6 +59,18 @@ inline float spotFactor(Light light, float3 fromLight) {
 
 // Rect lights: corners, counter-clockwise seen from the emitting side.
 struct RectCorners { float3 c[4]; };
+
+// Whether a rect light reaches p: its reach (axis.w, Scene.Light.reach; 0: all space) is how far below it and beyond
+// its edges it lights. A room's ceiling light (BuildingKit) lights its storey: not the storeys under it or the street,
+// which its floors and walls hide from it anyway; without the reach every pixel there spent a shadow ray finding that.
+inline bool rectReaches(Light light, float3 p) {
+    float reach = light.axis.w;
+    if (reach <= 0.0f) return true;
+    float3 d = p - light.positionRadius.xyz, U = light.params.xyz;
+    float hw = length(U);
+    float3 Uh = U / hw, Vh = normalize(cross(light.axis.xyz, U));
+    return dot(d, light.axis.xyz) <= reach && abs(dot(d, Uh)) <= hw + reach && abs(dot(d, Vh)) <= light.params.w + reach;
+}
 inline RectCorners rectCorners(Light light) {
     float3 U = light.params.xyz;
     float3 V = normalize(cross(light.axis.xyz, U)) * light.params.w;
@@ -149,7 +170,7 @@ float3 lightUnshadowedOther(Light light, float3 p, float3 n, float3 ng) {
     }
     if (type == LIGHT_RECT) {
         float3 center = light.positionRadius.xyz;
-        if (dot(p - center, light.axis.xyz) <= 0.0f) return float3(0.0f);   // behind the emitting side
+        if (dot(p - center, light.axis.xyz) <= 0.0f || !rectReaches(light, p)) return float3(0.0f);   // behind it, or past its reach
         RectCorners r = rectCorners(light);
         float above = max(max(dot(ng, r.c[0] - p), dot(ng, r.c[1] - p)), max(dot(ng, r.c[2] - p), dot(ng, r.c[3] - p)));
         if (above <= 0.0f) return float3(0.0f);
@@ -254,7 +275,7 @@ inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v
     }
     if (type == LIGHT_RECT) {
         float3 c = light.positionRadius.xyz, N = light.axis.xyz;
-        if (dot(p - c, N) <= 0.0f) return float3(0.0f);
+        if (dot(p - c, N) <= 0.0f || !rectReaches(light, p)) return float3(0.0f);
         float3 U = light.params.xyz;
         float hw = length(U), hh = light.params.w;
         float3 Uh = U / hw, Vh = normalize(cross(N, U));

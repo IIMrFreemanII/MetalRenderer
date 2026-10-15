@@ -1,4 +1,5 @@
 import AppKit
+import Metal
 
 /// What the renderer reports on its stats tick, twice a second, besides the settings.
 struct RendererStatus {
@@ -10,6 +11,33 @@ struct RendererStatus {
     var debugInfo: DebugInfo?
     /// The GPU pass timings averaged since the last tick, if passes are being profiled.
     var passTimes: [(name: String, ms: Double)]?
+    /// The plant workshop's plant: what it costs (Scene.plantStats).
+    var plantStats: PlantStats?
+    /// The scene's particle effects as they run (the VFX editor's status line).
+    var effects: VFXStatus?
+    /// The building workshop's building: what it costs, and its plan (the Floor Plan window).
+    var buildingStats: BuildingStats?
+    var buildingPlan: BuildingPlan?
+    /// The character workshop's character (Scene.characterStats).
+    var characterStats: CharacterStats?
+    /// What the procedural materials' displacement made of the scene's meshes (the Material Designer's inspector).
+    var displacement: String?
+    /// Walking: where (the Floor Plan window's you-are-here).
+    var walker: WalkerStatus?
+    /// Where the camera is (the building editor's Pin: the city's building nearest it).
+    var cameraPosition: SIMD3<Float>?
+}
+
+/// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).
+struct WalkerStatus: Equatable {
+    var position: SIMD3<Float>
+    var yaw: Float
+    var building: Int?
+    var storey: Int?
+    var local: SIMD3<Float>?
+    var message: String?
+    var flashlight: Bool
+    var crouched: Bool
 }
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the
@@ -42,6 +70,36 @@ final class RendererController: InputHandler {
     var onTogglePanel: (() -> Void)?            // Tab key
     var onToggleDebug: (() -> Void)?            // I key
     var onToggleLoading: (() -> Void)?          // P key
+    var onTogglePlants: (() -> Void)?           // K key
+    var onToggleVFX: (() -> Void)?              // X key
+    var onToggleBuildings: (() -> Void)?        // J key
+    var onToggleCharacters: (() -> Void)?       // H key
+    var onToggleMaterials: (() -> Void)?        // O key
+    var onTogglePainter: (() -> Void)?          // V key (Shift-V walks)
+    var onToggleProjectGraph: (() -> Void)?     // Y key
+    var onToggleDayBar: (() -> Void)?           // Z key
+    /// The time on the scene's day clock as the day runs (the day bar).
+    var onDayTime: ((Float) -> Void)?
+    /// The last scene's outline (the Project Graph's), and who wants them.
+    private(set) var lastOutline: SceneOutline?
+    private var outlineObservers: [(SceneOutline) -> Void] = []
+    /// The painter's status as the renderer last sent it, and who wants it.
+    private(set) var painterStatus = PainterStatus()
+    private var painterObservers: [(PainterStatus) -> Void] = []
+    /// The Terrain Editor's status as the renderer last sent it, and who wants it.
+    private(set) var terrainStatus = TerrainStatus()
+    private var terrainObservers: [(TerrainStatus) -> Void] = []
+    var onToggleTerrain: (() -> Void)?          // Shift-T
+    /// An armed pick's answer (the Material Designer's).
+    var onMaterialPicked: ((MaterialPick?) -> Void)?
+    /// Who wants to know what a click in the view selected (its instance; nil: nothing).
+    private var viewSelectionObservers: [(Int?) -> Void] = []
+    /// The camera's yaw and pitch as they change (the scene gizmo).
+    var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
+    /// C held down (true) and let go (false) in the plant workshop: the saved plant in place of the edited one.
+    var onCompare: ((Bool) -> Void)?
+    /// ...and in the character workshop: the saved character.
+    var onCompareCharacter: ((Bool) -> Void)?
     /// What loads in the background, for the loading overlay (thread-safe, so the main thread reads it directly).
     let loadActivity: LoadActivity
 
@@ -70,6 +128,36 @@ final class RendererController: InputHandler {
         }
         renderer.onTick = { [weak self] status in
             DispatchQueue.main.async { self?.ticked(status) }
+        }
+        renderer.onPainter = { [weak self] status in self?.painterChanged(status) }
+        renderer.onTerrain = { [weak self] status in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.terrainStatus = status
+                for o in self.terrainObservers { o(status) }
+            }
+        }
+        renderer.onOutline = { [weak self] outline in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lastOutline = outline
+                for o in self.outlineObservers { o(outline) }
+            }
+        }
+        renderer.onSelectedInView = { [weak self] instance in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for o in self.viewSelectionObservers { o(instance) }
+            }
+        }
+        renderer.onCameraTurned = { [weak self] yaw, pitch in
+            DispatchQueue.main.async { self?.onCameraTurned?(yaw, pitch) }
+        }
+        renderer.onDayTime = { [weak self] t in
+            DispatchQueue.main.async { self?.onDayTime?(t) }
+        }
+        renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
+            DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
         }
         renderer.onFrameTime = { [weak self] cpu, gpu in
             DispatchQueue.main.async { self?.onFrameTime?(cpu, gpu) }
@@ -129,6 +217,19 @@ final class RendererController: InputHandler {
     func addModels(_ urls: [URL]) { renderer.perform { $0.addModels(urls) } }
 
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
+    /// The plant workshop's camera at its plants again (F).
+    func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
+
+    /// The scene gizmo: the view from `axis`'s side, or 45° steps on, turning about the pivot.
+    func snapView(_ axis: ViewAxis) { renderer.perform { $0.snapView(axis) } }
+    func stepView(yawSteps: Int, pitchSteps: Int) { renderer.perform { $0.stepView(yawSteps: yawSteps, pitchSteps: pitchSteps) } }
+
+    /// The VFX editor's: the scene's clock at `t` (s), and what its gizmos show (nil: none).
+    func setTime(_ t: Float) { renderer.perform { $0.setTime(t) } }
+    func setGizmos(_ target: VFXGizmos.Target?) { renderer.perform { $0.setGizmos(target) } }
+    /// A gizmo's handle dragged in the view (Renderer.onGizmoMoved), on the main thread.
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+
     func setTraversalCounters(_ on: Bool, then done: @escaping () -> Void) {
         renderer.perform { [weak self] r in
             r.setTraversalCounters(on) {
@@ -145,9 +246,54 @@ final class RendererController: InputHandler {
 
     func keyDown(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+        // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
+        if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
-        if key == "\t" || key == "i" || key == "p" {
-            if !event.isARepeat { (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : onToggleLoading)?() }
+        if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" || key == "y"
+            || key == "z" {
+            if !event.isARepeat {
+                (key == "\t" ? onTogglePanel : key == "i" ? onToggleDebug : key == "p" ? onToggleLoading : key == "k" ? onTogglePlants
+                    : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials
+                    : key == "y" ? onToggleProjectGraph : key == "z" ? onToggleDayBar : onToggleBuildings)?()
+            }
+            return
+        }
+        // Shift-T: the Terrain Editor's window (T alone is Reference mode).
+        if key == "t" && event.modifierFlags.contains(.shift) {
+            if !event.isARepeat { onToggleTerrain?() }
+            return
+        }
+        // Sculpt mode: [ ] the brush's size, { } (Shift) its strength, Escape leaves it.
+        if terrainStatus.active {
+            if key == "[" || key == "]" || key == "{" || key == "}" {
+                let step = key == "[" || key == "{" ? -1 : 1, strength = key == "{" || key == "}"
+                renderer.perform { $0.resizeTerrainBrush(step, strength: strength) }
+                return
+            }
+            if event.keyCode == 53 {
+                renderer.perform { $0.setTerrainMode(false) }
+                return
+            }
+        }
+        // V: the Material Painter's window (Shift-V walks, as V did).
+        if key == "v" && !event.modifierFlags.contains(.shift) {
+            if !event.isARepeat { onTogglePainter?() }
+            return
+        }
+        // Paint mode: [ ] the brush's size, Escape leaves it.
+        if painterStatus.active != nil {
+            if key == "[" || key == "]" {
+                let step = key == "[" ? -1 : 1
+                renderer.perform { $0.resizeBrush(step) }
+                return
+            }
+            if event.keyCode == 53 {
+                renderer.perform { $0.setPaintMode(nil) }
+                return
+            }
+        }
+        if key == "c", settings.scene.kind == .plants || settings.scene.kind == .characters {
+            if !event.isARepeat { (settings.scene.kind == .plants ? onCompare : onCompareCharacter)?(true) }
             return
         }
         let isRepeat = event.isARepeat
@@ -156,12 +302,15 @@ final class RendererController: InputHandler {
 
     func keyUp(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
+        if key == "c", settings.scene.kind == .plants { onCompare?(false) }
+        if key == "c", settings.scene.kind == .characters { onCompareCharacter?(false) }
         renderer.perform { $0.keyUp(key) }
     }
 
     func flagsChanged(_ event: NSEvent) {
-        let shift = event.modifierFlags.contains(.shift)
-        renderer.perform { $0.setShift(shift) }
+        let shift = event.modifierFlags.contains(.shift), control = event.modifierFlags.contains(.control)
+        let option = event.modifierFlags.contains(.option), command = event.modifierFlags.contains(.command)
+        renderer.perform { $0.setShift(shift); $0.setControl(control); $0.setOption(option); $0.setCommand(command) }
     }
 
     func mouseDown(at cursor: SIMD2<Float>) {
@@ -178,5 +327,94 @@ final class RendererController: InputHandler {
 
     func scrolled(dy: Float) {
         renderer.perform { $0.scrolled(dy: dy) }
+    }
+
+    func rightMouseDown(at cursor: SIMD2<Float>) { renderer.perform { $0.rightMouseDown(at: cursor) } }
+    func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) { renderer.perform { $0.rightMouseDragged(dx: dx, dy: dy, at: cursor) } }
+    func rightMouseUp() { renderer.perform { $0.rightMouseUp() } }
+    func otherMouseDown(at cursor: SIMD2<Float>) { renderer.perform { $0.otherMouseDown(at: cursor) } }
+    func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) { renderer.perform { $0.otherMouseDragged(dx: dx, dy: dy, at: cursor) } }
+    func mouseMoved(at cursor: SIMD2<Float>) {
+        if painterStatus.active != nil { renderer.perform { $0.paintMouseMoved(at: cursor) } }
+        if terrainStatus.active { renderer.perform { $0.terrainMouseMoved(at: cursor) } }
+    }
+    func pressure(_ p: Float) { renderer.perform { $0.penPressure = p } }
+}
+
+extension RendererController: PainterHost {
+    func observePainter(_ observer: @escaping (PainterStatus) -> Void) {
+        painterObservers.append(observer)
+        observer(painterStatus)
+    }
+
+    func painter(_ work: @escaping (Renderer) -> Void) { renderer.perform(work) }
+
+    func paintInfo(_ instance: Int, _ answer: @escaping (String?) -> Void) {
+        renderer.perform { r in
+            let s = r.scene
+            let fingerprint = s.paintable(instance) ? s.paintFingerprint(instance) : nil
+            DispatchQueue.main.async { answer(fingerprint) }
+        }
+    }
+
+    /// From the render thread: the painter's status changed.
+    func painterChanged(_ s: PainterStatus) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.painterStatus = s
+            for o in self.painterObservers { o(s) }
+        }
+    }
+}
+
+extension RendererController: TerrainHost {
+    /// Calls `observer` with the Terrain Editor's status now and whenever it changes.
+    func observeTerrain(_ observer: @escaping (TerrainStatus) -> Void) {
+        terrainObservers.append(observer)
+        observer(terrainStatus)
+    }
+
+    /// Work for the renderer's terrain side, on the render thread.
+    func terrain(_ work: @escaping (Renderer) -> Void) { renderer.perform(work) }
+}
+
+extension RendererController: ProjectGraphHost {
+    func observeOutline(_ observer: @escaping (SceneOutline) -> Void) {
+        outlineObservers.append(observer)
+        if let lastOutline { observer(lastOutline) }
+    }
+
+    func frame(_ target: FrameTarget) { renderer.perform { $0.frame(target) } }
+
+    func select(_ target: FrameTarget?) { renderer.perform { $0.select(target) } }
+
+    func observeViewportSelection(_ observer: @escaping (Int?) -> Void) { viewSelectionObservers.append(observer) }
+}
+
+extension RendererController: MaterialEditorHost {
+    var metalDevice: MTLDevice? { renderer.metalDevice }
+    var displacementSummary: String? { status?.displacement }
+
+    /// Click-to-pick: the next click in the view (not a drag) names the material there.
+    func pickMaterial(_ picked: @escaping (MaterialPick?) -> Void) {
+        onMaterialPicked = picked
+        renderer.perform { [weak self] r in
+            r.onMaterialPicked = { p in self?.materialPicked(p) }
+            r.armPick()
+        }
+    }
+
+    func cancelPick() {
+        onMaterialPicked?(nil)
+        onMaterialPicked = nil
+        renderer.perform { $0.disarmPick() }
+    }
+
+    /// From the render thread: what a pick found.
+    func materialPicked(_ p: MaterialPick?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onMaterialPicked?(p)
+            self?.onMaterialPicked = nil
+        }
     }
 }

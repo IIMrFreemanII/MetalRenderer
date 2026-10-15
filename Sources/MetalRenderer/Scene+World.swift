@@ -82,7 +82,13 @@ extension Scene {
         world.undergrowth = Float(max(settings.undergrowth, 0)) / 100
         let lit = settings.worldLit
         world.lit = settings.city.lit
-        let flora = Flora(self, seed: world.seed, borrowing: true)
+        let catalog = PlantCatalog.resolve(settings.plantCatalog)
+        if !catalog.placesAsBuiltIn { world.plants = catalog.placementFingerprint }
+        let buildings = BuildingCatalog.resolve(settings.buildingCatalog)
+        world.buildingCatalog = buildings
+        if buildings != .builtIn { world.buildings = buildings.fingerprint }
+        world.interior = settings.interior
+        let flora = Flora(self, seed: world.seed, catalog: catalog, borrowing: true)
         // Every plant and its materials, first and in the library's order: every scene of the world then has the same
         // textures (the renderer keeps them) and the same numbers for its plants (so it keeps the tiles' trees too).
         // (The tiles' meshes stay in their files and the baked plants' in the library, `addMesh(borrowing:)`: the
@@ -158,11 +164,29 @@ extension Scene {
             }
         }
 
+        // The ground: the world's terrain "world-<seed>" (its edits: Terrain Editor), each tile's sectors at its level,
+        // in the world's ground materials (a cell's kind is its material's offset from the first).
+        let worldTerrain = Scene.openTerrain("world-\(world.seed)", base: WorldTerrainBase(world: world), layers: TerrainDocument.worldLayers())
+        if let base = worldTerrain.field.base as? WorldTerrainBase {
+            for (k, job) in jobs.enumerated() {
+                guard let tile = tiles[k] else { continue }
+                base.setKinds(tile.groundKinds, tile: SIMD2(job.x, job.z), level: job.level)
+                base.setHeights(tile.groundHeights, tile: SIMD2(job.x, job.z), level: job.level)
+            }
+        }
+        let snapshot = worldTerrain.field.snapshot()
+        // The next tiles' heights in full, from their files (what the brushes reach and the sectors read).
+        for (k, job) in jobs.enumerated() where job.level == 0 {
+            if let tile = tiles[k], !snapshot.baseCache.isCached(SIMD2(job.x, job.z)) {
+                snapshot.baseCache.set(SIMD2(job.x, job.z), heights: tile.groundHeights.array)
+            }
+        }
         var triangles = 0, trees = 0
         // (A plant is an instance, or where plants are baked two: its wood and its leaves.) A tile's trees are a group
         // of their own, not among the scene's instances; the ground cover changes with the middle tile and is.
         let placements = cover.reduce(0) { $0 + $1.count }
-        reserveGeometry(vertices: 0, indices: 0, instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2))
+        reserveGeometry(vertices: 0, indices: 0, instances: tiles.reduce(0) { $0 + $1!.chunks.count } + placements * (usesAssemblies ? 1 : 2)
+                        + jobs.count * 16)
         for (k, tile) in tiles.enumerated() {
             guard let tile else { continue }
             let origin = WorldTile.origin(jobs[k].x, jobs[k].z)
@@ -211,7 +235,7 @@ extension Scene {
             // Its trees, the same at every level: a group, which the renderer keeps from scene to scene. (Where they
             // are from this scene's origin is in the group's name.)
             let standing = tile.trees
-            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species))! }
+            func species(_ t: World.Placement) -> Foliage.Species { Foliage.Species(rawValue: Int(t.species)) }
             trees += standing.count
             guard Scene.groupsTrees else {
                 for t in standing {
@@ -221,26 +245,144 @@ extension Scene {
             }
             let count = standing.reduce(0) { $0 + flora.instanceCount(species($1), Int($1.plant)) }
             guard count > 0 else { continue }
-            addGroup(name: "trees of \(WorldTile.place(world, x: jobs[k].x, z: jobs[k].z)) from \(anchorTile.x) \(anchorTile.y), \(flora.name)",
+            // (On the terrain as its edits have it: a tree stands as much higher or lower as they moved the ground; the
+            // group's name says which edits, so another is made once they change.)
+            let tileOrigin = WorldTile.origin(jobs[k].x, jobs[k].z), edited = snapshot.tiles[SIMD2(jobs[k].x, jobs[k].z)]?.revision ?? 0
+            addGroup(name: "trees of \(WorldTile.place(world, x: jobs[k].x, z: jobs[k].z)) from \(anchorTile.x) \(anchorTile.y), \(flora.name)"
+                        + (edited > 0 ? " edits \(worldTerrain.document.name) \(edited)" : ""),
                      count: count) {
                 var out: [Instance] = []
                 out.reserveCapacity(count)
                 for t in standing {
-                    flora.instances(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y, t.z), yaw: t.yaw, size: t.size,
+                    let lift = edited > 0 ? snapshot.delta(x: tileOrigin.x + Double(t.x), z: tileOrigin.y + Double(t.z)) : 0
+                    flora.instances(species(t), Int(t.plant), at: corner + SIMD3(t.x, t.y + lift, t.z), yaw: t.yaw, size: t.size,
                                     shade: Int(t.shade), into: &out)
                 }
                 return out
             }
         }
 
+        // The realistic look: each ground's scan (one repeat in its own metres on the tiles' 5 m UVs), and a map of them
+        // round the middle tile that the shading blends by height (Terrain/GroundLook.swift).
+        let realistic = settings.realism != .off
+        var firstGround = -1
+        for (k, m) in World.groundMaterials.enumerated() {
+            var material = m
+            if m.textures.x == World.groundDetail { material.textures.x = detail }
+            if m.textures.x == World.fieldRows { material.textures.x = rows }
+            let scan = World.groundScans[k]
+            let added: Int
+            if realistic, let index = addScanMaterial(scan.set, tint: scan.tint) {
+                materialExtras[index]?.surface.y = World.groundTile / (TextureSet.find(scan.set)?.metres ?? World.groundTile)
+                added = index
+            } else {
+                added = addMaterial(material)
+            }
+            if firstGround < 0 { firstGround = added }
+        }
+        let terrain = addTerrain(name: worldTerrain.document.name, field: worldTerrain.field, snapshot: snapshot,
+                                 tiles: jobs.map { (SIMD2($0.x, $0.z), $0.level) },
+                                 style: TerrainMeshStyle(uvScale: 1 / World.groundTile, tileLocal: true, skirts: true, rock: UInt8(World.Ground.rock)),
+                                 material: firstGround, offset: anchor) { k in
+            var m = World.groundMaterials[k]
+            if m.textures.x == World.groundDetail { m.textures.x = detail }
+            if m.textures.x == World.fieldRows { m.textures.x = rows }
+            return m
+        }
+        triangles += terrain.parts.reduce(0) { $0 + $1.sector.triangleCount }
+        if realistic {
+            let middleCenter = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
+            let lo = SIMD2<Float>(Float(middleCenter.x - anchor.x) - 1024, Float(middleCenter.y - anchor.y) - 1024)
+            terrainDetailCenter = lo + 1024   // (realism high: the middle tile's near ground refined)
+            let shown = world
+            addGroundLook(GroundLook(
+                layers: World.groundScans.enumerated().map { k, g in
+                    let a = World.groundMaterials[k].albedo
+                    return .init(set: g.set, color: SIMD3(a.x, a.y, a.z) * FoliageTextures.mean, tint: g.tint, contrast: g.set == "rock" ? 1.4 : 0.7)
+                },
+                rock: World.Ground.rock, slope: [0.6, 0.78], lo: lo, size: [2048, 2048], texels: 2048,
+                key: "world \(world.seed) \(middle.x) \(middle.y) \(anchorTile.x) \(anchorTile.y) \(snapshot.editsFingerprint) v1") { x, z in
+                let wx = Double(x) + anchor.x, wz = Double(z) + anchor.y
+                let k = shown.ground(wx, wz, up: 1, city: shown.city(near: wx, wz))
+                var w = [Float](repeating: 0, count: 8)
+                w[min(max(k, 0), 7)] = 1
+                return w
+            })
+        }
+        addWorldWater(world, tiles: jobs.map { SIMD2($0.x, $0.z) }, anchor: anchor)
+
         var plants = 0
         for (c, placements) in cover.enumerated() {
             let corner = SIMD3(Float(lo.x + Double(c % cells) * cell - anchor.x), 0, Float(lo.y + Double(c / cells) * cell - anchor.y))
+            let cellOrigin = SIMD2(lo.x + Double(c % cells) * cell, lo.y + Double(c / cells) * cell)
             for p in placements {
-                flora.place(Foliage.Species(rawValue: Int(p.species))!, Int(p.plant), at: corner + SIMD3(p.x, p.y, p.z), yaw: p.yaw,
+                let lift = snapshot.delta(x: cellOrigin.x + Double(p.x), z: cellOrigin.y + Double(p.z))
+                flora.place(Foliage.Species(rawValue: Int(p.species)), Int(p.plant), at: corner + SIMD3(p.x, p.y + lift, p.z), yaw: p.yaw,
                             size: p.size, shade: Int(p.shade))
             }
             plants += placements.count
+        }
+
+        // The buildings next to the camera, for the renderer to choose the one whose interior to make (lotAreas), and
+        // that one with its interior (its tile left it out): still (the world's scenes are), its doors open.
+        let kit = BuildingKit(self, mapIndex: mapIndex)
+        kit.still = true
+        for (k, job) in jobs.enumerated() where job.level == 0 && tiles[k] != nil {
+            let o = WorldTile.origin(job.x, job.z)
+            guard let (city, blocks) = world.blocks(x0: o.x, z0: o.y, side: side) else { continue }
+            for block in blocks {
+                for (i, lot) in block.plan.lots.enumerated() {
+                    let ref = world.lotRef(city, block, i)
+                    let c = SIMD2(Float(city.center.x - anchor.x), Float(city.center.y - anchor.y))
+                    lotAreas.append((ref.key, CityPlan.Rect(lo: lot.rect.lo + c, hi: lot.rect.hi + c), Float(lot.floors) * 3.4 + 6))
+                    guard ref.key == settings.interior else { continue }
+                    var spec = BuildingSpec(lot: lot, city: settings.city, night: true, catalog: buildings)
+                    if let o = buildings.override(for: ref) { spec.apply(o, catalog: buildings) }
+                    spec.interior = true
+                    let building = BuildingGenerator.generate(spec)
+                    let transform = translate([c.x, city.level, c.y]) * lot.transform
+                    kit.addBuilding(building, at: transform)
+                    walkAreas.append(WalkArea(rect: CityPlan.Rect(lo: lot.rect.lo + c, hi: lot.rect.hi + c), building: building, at: transform))
+                }
+            }
+        }
+        walkColliders = kit.colliders   // (and the terrain's walkGround)
+        kit.addFlashlight()
+
+        // The realistic look's meadow grass and rocks round the middle tile (out to its corners and a little beyond):
+        // grass on the meadows (not on the roads, in the cities or the water), rocks where it is steep and in the woods.
+        if realistic {
+            let mc = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
+            let c = SIMD2<Float>(Float(mc.x - anchor.x), Float(mc.y - anchor.y))
+            let shown = world, waterField = water?.field, ground = self.terrain?.field.snapshot()
+            let tileSeed = world.seed ^ (UInt64(bitPattern: Int64(middle.x)) &* 0x9E37_79B9) ^ (UInt64(bitPattern: Int64(middle.y)) &* 0x85EB_CA6B)
+            func place(_ x: Float, _ z: Float) -> (x: Double, z: Double, city: World.City?) {
+                let wx = Double(x) + anchor.x, wz = Double(z) + anchor.y
+                return (wx, wz, shown.city(near: wx, wz))
+            }
+            func open(_ x: Float, _ z: Float) -> Bool {
+                let p = place(x, z)
+                // (Not on a city's blocks and streets; its apron's meadows are meadows.)
+                if let city = p.city, simd_distance(SIMD2(p.x, p.z), city.center) < Double(city.radius) + 6 { return false }
+                if let road = shown.highway(p.city, p.x, p.z), road.distance < road.half + 1.5 { return false }
+                return waterField?.wet(p.x, p.z, margin: 1) != true   // (the world's field: the world's places)
+            }
+            let grass = addMeadowGrass(center: c, reach: 190, seed: tileSeed, flora: flora) { x, z in
+                let p = place(x, z)
+                guard shown.ground(p.x, p.z, up: 1, city: p.city) == World.Ground.meadow, open(x, z) else { return 0 }
+                return 0.8 + 0.2 * GroundLook.smooth(-0.3, 0.4, Terrain.noise(SIMD2(x, z) / 19, seed: UInt32(truncatingIfNeeded: tileSeed)))
+            }
+            let rocks = addRocks(count: 9000, lo: c - 170, hi: c + 170, seed: tileSeed &+ 0x80C) { x, z in
+                guard open(x, z) else { return (0, 0.2...0.3) }
+                let p = place(x, z), kind = shown.ground(p.x, p.z, up: 1, city: p.city)
+                // (Not on the fields or the sand.)
+                if [World.Ground.wheat, World.Ground.crop, World.Ground.ploughed, World.Ground.sand].contains(kind) { return (0, 0.2...0.3) }
+                let up = ground?.normal(x: p.x, z: p.z).y ?? 1
+                let steep = 1 - GroundLook.smooth(0.72, 0.9, up)
+                let woods = shown.woods(p.x, p.z)
+                return (min(0.04 + 0.7 * steep + 0.12 * woods, 1) * 0.5, 0.2...(0.7 + 1.8 * steep + 0.3 * woods))
+            }
+            print("World: the realistic look's \(grass) grass patches and \(rocks) rocks round tile \(middle.x), \(middle.y)")
         }
 
         // The light from the sky: the sun, and once it has set the moon (its colour is the atmosphere's to say).

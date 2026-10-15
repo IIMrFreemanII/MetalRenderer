@@ -159,6 +159,20 @@ struct MeshBuilder {
         }
     }
 
+    /// A round rim: a ring from `inner` to `outer` radius round the vertical through `center` (its bottom), `height`
+    /// tall, `segments` sides: its top, and its walls outside and in (a pool's, a planter's).
+    mutating func ring(_ center: SIMD3<Float>, inner: Float, outer: Float, height: Float, segments: Int = 32) {
+        let up = SIMD3<Float>(0, height, 0)
+        for s in 0..<segments {
+            let a = 2 * Float.pi * Float(s) / Float(segments), b = 2 * Float.pi * Float(s + 1) / Float(segments)
+            let da = SIMD3<Float>(cos(a), 0, sin(a)), db = SIMD3<Float>(cos(b), 0, sin(b))
+            let oa = center + da * outer, ob = center + db * outer, ia = center + da * inner, ib = center + db * inner
+            quad(oa + up, ia + up, ib + up, ob + up)
+            quad(ob, oa, oa + up, ob + up)
+            quad(ia, ib, ib + up, ia + up)
+        }
+    }
+
     /// A ball of `radius` around `center`: an icosphere (the trees' crowns).
     mutating func ball(_ center: SIMD3<Float>, radius: SIMD3<Float>, subdivisions: Int = 1) {
         let sphere = Scene.icosphere(subdivisions: subdivisions)

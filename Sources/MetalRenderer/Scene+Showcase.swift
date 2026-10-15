@@ -52,18 +52,20 @@ extension Scene {
             print(String(format: "Showcase: %@ (%d triangles), %@ set", model.name, model.triangleCount, "\(look.stage)"))
             loadStep?.set(done: 1, detail: "\(look.stage) set")
         }
-        if !floats { addPlinth(stand, height: plinth) }
-        addKeyLight(stand)
-        switch look.stage {
-        case .studio: buildStudio(stand)
-        case .crypt: buildCrypt(stand)
-        case .forge: buildForge(stand)
-        case .underwater: buildUnderwater(stand)
-        case .neon: buildNeon(stand)
-        case .workshop: buildWorkshop(stand)
-        case .sanctum: buildSanctum(stand)
+        if !floats { object("Plinth") { addPlinth(stand, height: plinth) } }
+        object("Key light") { addKeyLight(stand) }
+        object("\(look.stage)".capitalized + " set") {
+            switch look.stage {
+            case .studio: buildStudio(stand)
+            case .crypt: buildCrypt(stand)
+            case .forge: buildForge(stand)
+            case .underwater: buildUnderwater(stand)
+            case .neon: buildNeon(stand)
+            case .workshop: buildWorkshop(stand)
+            case .sanctum: buildSanctum(stand)
+            }
         }
-        addParticles(stand)
+        object("Motes") { addMotes(stand) }
         defaultCamera = Scene.showcaseCamera(stand.target, extent: extent, view: look.view)
     }
 
@@ -83,7 +85,7 @@ extension Scene {
 
     /// A dark polished drum under the model, a thin ring of the accent colour round its top.
     private func addPlinth(_ s: Stand, height: Float) {
-        let drum = addMesh(Scene.cylinderMesh())
+        let drum = addMesh(Scene.cylinderMesh(), label: "cylinder")
         let r = max(s.radius * 1.15 + 0.2, 0.6)
         let stone = addPBRMaterial(baseColor: [0.05, 0.05, 0.055], metallic: 0, roughness: 0.2)
         addInstance(drum, stone, scale([r, height, r]))
@@ -103,6 +105,8 @@ extension Scene {
     /// Two spots high behind the model, left and right, `irradiance` W/m² on it: its outline, and two beams in the fog
     /// that meet at it.
     private func addRims(_ s: Stand, irradiance: Float = 3) {
+        beginObject("Rim lights")
+        defer { endObject() }
         let dist = max(4, s.extent.y * 2)
         for side: Float in [-1, 1] {
             let at = s.target + normalize(SIMD3<Float>(side * 0.8, 0.9, -1)) * dist
@@ -167,7 +171,7 @@ extension Scene {
         let iron = addPBRMaterial(baseColor: [0.3, 0.3, 0.32], metallic: 1, roughness: 0.45)
         kit.room(width: 12, height: 6, depth: 16, floor: floor, walls: brick, ceiling: true)
         let pit = SIMD3<Float>(-(s.radius + 1.6), 0, -1.6)
-        let drum = addMesh(Scene.cylinderMesh())
+        let drum = addMesh(Scene.cylinderMesh(), label: "cylinder")
         addInstance(drum, addMaterial(albedo: [0.1, 0.09, 0.08]), translate(pit) * scale([1.0, 0.35, 1.0]))
         addInstance(drum, addMaterial(albedo: .zero, emission: Scene.hue(s.look.accent) * 5), translate(pit) * scale([0.82, 0.37, 0.82]))
         addLight(.sphere(radius: 0.15), color: Scene.hue(s.look.accent) * 12, motion: .scaleOnly) { t in
@@ -308,7 +312,7 @@ extension Scene {
         let floor = addPBRMaterial(baseColor: [0.06, 0.06, 0.07], metallic: 0, roughness: 0.35)
         let stone = addMaterial(albedo: [0.3, 0.29, 0.32])
         addInstance(kit.quad, floor, scale([40, 1, 40]))
-        let drum = addMesh(Scene.cylinderMesh())
+        let drum = addMesh(Scene.cylinderMesh(), label: "cylinder")
         let r = max(3.2, s.radius + 2)
         addInstance(drum, stone, scale([r, 0.15, r]))
         addInstance(drum, addMaterial(albedo: .zero, emission: Scene.hue(s.look.accent) * 2),
@@ -329,59 +333,23 @@ extension Scene {
 
     // MARK: - Particles
 
-    /// What drifts in the air: small glowing shapes that only the camera sees (maskLights: no shadows, not lights).
-    private func addParticles(_ s: Stand) {
-        let mote = addMesh(Scene.icosphere(subdivisions: 1))
-        var rng = SplitMix64(seed: 0xD057)
+    /// What drifts in the air: GPU particle effects (VFXLibrary's graphs), ray traced as the camera sees them. None
+    /// casts a shadow; embers, bubbles and runes glow (unlit), the dust is lit by the beams (particleLightKernel).
+    private func addMotes(_ s: Stand) {
         switch s.look.particles {
         case .none:
-            break
-        case .embers:   // from the pit (Forge), rising and swaying, round again
-            let pit = SIMD3<Float>(-(s.radius + 1.6), 0.4, -1.6)
-            for _ in 0..<160 {
-                let start = pit + SIMD3(rng.range(-0.6, 0.6), 0, rng.range(-0.6, 0.6))
-                let speed = rng.range(0.35, 0.9), phase = rng.range(0, 1), size = rng.range(0.006, 0.016)
-                let ember = addMaterial(albedo: .zero, emission: SIMD3<Float>(1, 0.42, 0.1) * rng.range(15, 40))
-                addInstance(mote, ember, translate(start) * scale(size), mask: Scene.maskLights) { t in
-                    let y = (t * speed / 4.5 + phase).truncatingRemainder(dividingBy: 1) * 4.5
-                    let drift = SIMD3<Float>(0.25 * sin(1.7 * t + phase * 9) + 0.4 * y / 4.5, y, 0.2 * cos(1.3 * t + phase * 7))
-                    return translate(start + drift) * scale(size * (1 - 0.7 * y / 4.5))
-                }
-            }
+            return
+        case .embers:   // from the pit (Forge), rising and swaying in curl noise, shrinking as they cool
+            addEffect(builtIn: VFXLibrary.embers(at: [-(s.radius + 1.6), 0.4, -1.6]))
         case .bubbles:   // from the sea floor round the model, up and wobbling
-            let glow = addMaterial(albedo: .zero, emission: [0.6, 0.9, 1] * 0.35)
-            for _ in 0..<120 {
-                let a = rng.range(0, 2 * .pi), r = rng.range(0.5, s.radius + 3)
-                let start = SIMD3<Float>(r * sin(a), 0, r * cos(a))
-                let speed = rng.range(0.5, 1.2), phase = rng.range(0, 1), size = rng.range(0.006, 0.02)
-                addInstance(mote, glow, translate(start) * scale(size), mask: Scene.maskLights) { t in
-                    let y = (t * speed / 10 + phase).truncatingRemainder(dividingBy: 1) * 10
-                    return translate(start + [0.05 * sin(5 * t + phase * 20), y, 0.05 * cos(4 * t + phase * 13)]) * scale(size)
-                }
-            }
-        case .dust:   // motes drifting round the model, lit as if by the beams
-            let speck = addMaterial(albedo: .zero, emission: Scene.hue(s.look.key) * 1.5)
-            for _ in 0..<200 {
-                let c = s.target + SIMD3(rng.range(-3, 3), rng.range(-1.2, 1.8), rng.range(-3, 2.5))
-                let amp = SIMD3(rng.range(0.1, 0.4), rng.range(0.05, 0.2), rng.range(0.1, 0.4))
-                let f = SIMD3(rng.range(0.05, 0.2), rng.range(0.05, 0.15), rng.range(0.05, 0.2)), phase = rng.range(0, 6)
-                let size = rng.range(0.003, 0.007)
-                addInstance(mote, speck, translate(c) * scale(size), mask: Scene.maskLights) { t in
-                    translate(c + amp * SIMD3(sin(f.x * t + phase), sin(f.y * t + 2 * phase), cos(f.z * t + phase))) * scale(size)
-                }
-            }
+            addEffect(builtIn: VFXLibrary.bubbles(radius: s.radius + 3))
+        case .dust:   // motes drifting round the model, lit by the beams
+            addEffect(builtIn: VFXLibrary.dust(at: s.target + [0, 0.3, -0.25], half: [3, 1.5, 2.75]))
         case .runes:   // glowing tablets circling the model low, below its knees: never in front of its face
-            let rune = addMaterial(albedo: .zero, emission: Scene.hue(s.look.accent) * 3)
-            let count = 12, radius = s.radius + 0.35, height = s.base + 0.2 * s.extent.y
-            for i in 0..<count {
-                let phase = Float(i) / Float(count) * 2 * .pi
-                addInstance(s.kit.cube, rune, matrix_identity_float4x4, mask: Scene.maskLights) { t in
-                    let a = phase + 0.3 * t
-                    return translate([radius * sin(a), height + 0.08 * sin(0.7 * t + 2 * phase), radius * cos(a)])
-                        * rotate(a, [0, 1, 0]) * scale([0.05, 0.075, 0.006])
-                }
-            }
+            let radius = s.radius + 0.35, height = s.base + 0.2 * s.extent.y, speed: Float = 0.3 * radius
+            addEffect(builtIn: VFXLibrary.runes(height: height, radius: radius, speed: speed, color: Scene.hue(s.look.accent)))
         }
+        addEffects()
     }
 
     // MARK: - Meshes

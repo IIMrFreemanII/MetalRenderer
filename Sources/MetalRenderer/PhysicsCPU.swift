@@ -11,14 +11,20 @@ extension PhysicsWorld {
         broadPhase(p)
         wake(p)
         link()
+        particleBroadPhase(p)
+        // The liquids before each group of substeps (PhysicsFluidCPU.swift), against the bodies where they are, and
+        // what they push the bodies by, before the group's contacts.
+        stepFluids()
+        let start = bodies.map { SIMD8<Float>(lowHalf: $0.position, highHalf: $0.rotation) }
         narrowPhase(p, refresh: false)
         colourPairs()
-        particleBroadPhase(p)
-        let start = bodies.map { SIMD8<Float>(lowHalf: $0.position, highHalf: $0.rotation) }
         for sub in 0..<substeps {
             // The contacts again where the substeps have taken the bodies: found once a step, a turning body's
             // contacts stay where it was (a rolling rim's sinks into the floor, and the push out of it launches it).
-            if sub > 0 && sub % PhysicsWorld.contactRefresh == 0 { narrowPhase(p, refresh: true) }
+            if sub > 0 && sub % PhysicsWorld.contactRefresh == 0 {
+                stepFluids()
+                narrowPhase(p, refresh: true)
+            }
             integrate(p, sub: sub)
             integrateParticles(p)
             solveFlesh(p)       // the muscles, and the flesh held to its bones where this substep moved them

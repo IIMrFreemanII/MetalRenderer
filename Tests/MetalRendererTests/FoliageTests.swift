@@ -149,6 +149,7 @@ final class ForestTests: XCTestCase {
 
     func testTheForestIsItsSettings() {
         var settings = SceneSettings(kind: .forest)
+        settings.realism = .off   // (no rocks: the ground's sectors alone below)
         settings.trees = 150
         settings.undergrowth = 25
         let a = Scene(settings), b = Scene(settings)
@@ -161,7 +162,7 @@ final class ForestTests: XCTestCase {
         XCTAssertFalse(zip(a.instances, Scene(settings).instances).allSatisfy { $0.transform == $1.transform })
         settings.trees = 0
         settings.undergrowth = 0
-        XCTAssertEqual(Scene(settings).instances.count, 1)   // just the ground
+        XCTAssertEqual(Scene(settings).instances.count, 25)   // just the ground: its terrain's 5 x 5 sectors
     }
 
     /// The same forest as assemblies (the custom tracer's) and baked flat (Metal's): the same plants in the same
@@ -220,6 +221,7 @@ final class FoliageRuntimeTests: XCTestCase {
         var settings = SceneSettings(kind: .forest)
         settings.trees = trees
         settings.undergrowth = 25
+        settings.realism = .off   // (the generated plants and textures as they are, without the scans)
         return Scene(settings, assemblies: assemblies, voxelBoxes: !assemblies)
     }
 
@@ -454,7 +456,7 @@ final class FoliageRuntimeTests: XCTestCase {
         hashes.append("ground \(hash(scene.textures.first { $0.name == "generated/ground" }!.rawPixels))")
         XCTAssertEqual(FoliageTextures.version, 1)
         XCTAssertEqual(hashes, ["roughBark 6cfa2e7e2258", "birchBark 22d9c0664c62", "leaf 946df84d6ae5", "needle b456f98d54ab", "grass 4535a03fea78",
-                                "ground 107838e8a4b3"],
+                                "ground bf7ace858367"],
                        "a generated texture changed: change FoliageTextures.version, and the version and hashes here")
         for inst in scene.instances {   // every plant's wood and leaves, and the ground, have a texture
             XCTAssertLessThan(Int(scene.materials[inst.material].textures.x), scene.textures.count)

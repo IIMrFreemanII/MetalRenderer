@@ -43,6 +43,7 @@ extension Scene {
             addStaticCollider(sdf: s, transform, friction: friction, restitution: 0.1)
         }
 
+        section("Ramp")
         // The ramp: from 1.4 m up at the back down to the floor, between low walls, and a kerb across its foot.
         let stone = addPBRMaterial(baseColor: [0.55, 0.52, 0.48], metallic: 0, roughness: 0.6)
         let rail = addPBRMaterial(baseColor: [0.3, 0.42, 0.6], metallic: 0, roughness: 0.3)
@@ -56,6 +57,7 @@ extension Scene {
         }
         fixed(SDFShape(.box(halfExtents: [1.2, 0.08, 0.08], rounding: 0.02)), rail, translate([rampX, 0.08, 2.6]))
 
+        section("Furry bodies")
         // The furry bodies, dropped at the top of the ramp one after another, rolling down it.
         let skins: [SIMD3<Float>] = [[0.45, 0.3, 0.2], [0.3, 0.3, 0.32], [0.6, 0.45, 0.3]]
         let furs: [SIMD3<Float>] = [[0.75, 0.5, 0.28], [0.12, 0.1, 0.09], [0.9, 0.85, 0.75], [0.55, 0.25, 0.12], [0.4, 0.4, 0.42]]
@@ -80,6 +82,7 @@ extension Scene {
             addHair(body: body, style: style, material: furMaterials[k % furMaterials.count], bounds: room, seed: UInt32(100 + k))
         }
 
+        section("Long-haired mannequin")
         // The ragdoll with long hair, a mannequin on a stand: its pelvis held on a pole by a ball joint, its feet just
         // off the floor, swaying (pushed off sideways).
         let parts = RagdollShapes(self)
@@ -124,6 +127,7 @@ extension Scene {
 
         world.wind = SIMD4(0.9, 0, 0.35, 0.6)
 
+        section("Lights")
         addLight(.rect(width: 5, height: 2), color: SIMD3<Float>(1.0, 0.96, 0.9) * 4, motion: .constant) { _ in
             LightPose(position: [0, 5.97, -1.5], direction: [0, -1, 0], tangent: [1, 0, 0])
         }

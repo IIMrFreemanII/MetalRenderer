@@ -80,7 +80,7 @@ final class Scene {
         var autumn: SIMD3<Float>? = nil
         var turn: Float = 0
         var translucency: Float
-        var gain: Float = 1                   // the material's colour is the leaf's times this (1 / its texture's mean)
+        var gain = SIMD3<Float>.one           // the material's colour is the leaf's times this (1 / its texture's mean)
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -141,6 +141,10 @@ final class Scene {
         var proxyMaterial = -1
         var proxyEmission = SIMD3<Float>(repeating: 0)   // its radiance at scale 1
         var group = 0                         // shadow-denoiser channel (see assignLightGroups)
+        /// A rect light's reach (GPULight axis.w; 0: all space): how far below it, and beyond its edges, it lights.
+        var reach: Float = 0
+        /// Its place among the lights as they were added (assignLightGroups sorts them): what the outline names it by.
+        var order = 0
 
         var isMesh: Bool { if case .mesh = kind { return true }; return false }
     }
@@ -245,6 +249,8 @@ final class Scene {
     static let maskGlass: UInt32 = 4
     /// A far plant as its voxels (VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
+    /// A liquid's surface (FluidSurface.swift): only liquidKernel's rays meet it, which bend the camera's through it.
+    static let maskLiquid: UInt32 = 32
     /// Geometry the raster can't draw (RasterScene.kind's `skip`: an assembly's parts, leaf cards, ground cover that
     /// sways, SDF shapes), and the crowd, which deforms every frame: Virtual Shadow Maps leave it out, and their shadow samples
     /// trace a ray that meets only this (MASK_SHADOW_TRACED). Always with `geometry`.
@@ -329,6 +335,75 @@ final class Scene {
     func addGroup(name: String, count: Int, make: @escaping () -> [Instance]) {
         groups.append(InstanceGroup(name: name, count: count, make: make))
     }
+
+    /// What the builders say the scene's things are (the Project Graph's outline, Scene+Outline.swift): named objects
+    /// (`object`), each the instances, lights and effects added while it was open; and the meshes', assemblies' and SDF
+    /// shapes' names. Builders only append, so an object's things are ranges. Its lights are by `Light.order`.
+    struct ObjectTag {
+        var path: [String]
+        var instances: Range<Int>
+        var lights: Range<Int>
+        var effects: Range<Int>
+        /// What it is made from (a model file, a building's style).
+        var assets: [AssetKey]
+    }
+    private(set) var objectTags: [ObjectTag] = []
+    private var openTags: [(name: String, assets: [AssetKey], instances: Int, lights: Int, effects: Int)] = []
+    /// `shared`: the same mesh in every scene that has it (a model file's), not the scene's own. `asset`: what it is
+    /// part of (a plant species' wood).
+    private(set) var meshLabels: [Int: (name: String, shared: Bool, asset: AssetKey?)] = [:]
+    private(set) var assemblyLabels: [Int: String] = [:]
+    private(set) var sdfLabels: [Int: String] = [:]
+
+    /// What `body` adds is the object `path` ("Harbor/Crane": an object in a folder), inside the one open now, if any.
+    @discardableResult
+    func object<T>(_ path: String, assets: [AssetKey] = [], _ body: () throws -> T) rethrows -> T {
+        beginObject(path, assets: assets)
+        defer { endObject() }
+        return try body()
+    }
+
+    func beginObject(_ path: String, assets: [AssetKey] = []) {
+        openTags.append((path, assets, instances.count, lights.count, effects.count))
+    }
+
+    /// A builder's next part ("Stage", "Props", "Lights"): what it adds from here, until the next `section` (or the end of
+    /// the builder), is that object. It closes the section open before it, and what was opened in that.
+    func section(_ name: String, assets: [AssetKey] = []) {
+        if let d = sectionDepth { while openTags.count > d { endObject() } }
+        let depth = openTags.count
+        beginObject(name, assets: assets)
+        sectionDepth = depth
+    }
+    private var sectionDepth: Int?
+
+    func endObject() {
+        guard let open = openTags.popLast() else { return }
+        if let d = sectionDepth, openTags.count <= d { sectionDepth = nil }
+        let parent = openTags.flatMap { $0.name.split(separator: "/").map(String.init) }
+        objectTags.append(ObjectTag(path: parent + open.name.split(separator: "/").map(String.init),
+                                    instances: open.instances..<instances.count, lights: open.lights..<lights.count,
+                                    effects: open.effects..<effects.count, assets: open.assets))
+    }
+
+    /// What the Project Graph's edits did to the scene (Scene.applySceneOverrides).
+    var sceneOverrides = AppliedOverrides()
+
+    /// The edits' way in (SceneOverrides.swift): an instance changed, one appended, lights taken out.
+    func editInstance(_ i: Int, _ change: (inout Instance) -> Void) { change(&instances[i]) }
+    @discardableResult
+    func appendInstance(_ instance: Instance) -> Int {
+        instances.append(instance)
+        return instances.count - 1
+    }
+    func removeLights(where shouldRemove: (Light) -> Bool) { lights.removeAll(where: shouldRemove) }
+
+    /// Names a mesh, an assembly or an SDF shape for the outline ("oak", "lamp post"): unlike `meshNames`, only a label.
+    func label(mesh: Int, _ name: String, shared: Bool = false, asset: AssetKey? = nil) {
+        if mesh >= 0 { meshLabels[mesh] = (name, shared, asset) }
+    }
+    func label(assembly: Int, _ name: String) { if assembly >= 0 { assemblyLabels[assembly] = name } }
+    func label(sdf: Int, _ name: String) { if sdf >= 0 { sdfLabels[sdf] = name } }
     private(set) var meshes: [GPUMesh] = []
     /// Shapes given by signed distance fields (SDFShapes.swift), the baked grids their nodes may be, and each shape's box.
     private(set) var sdfShapes: [SDFShape] = []
@@ -341,6 +416,36 @@ final class Scene {
     /// there too (Metal's per-mesh structures: SceneBuffers).
     private(set) var meshNames: [Int: String] = [:]
     private(set) var materials: [GPUMaterial] = []
+    /// Procedural materials' extras (GPUMaterialExtra), by material index: height, opacity, UV scale, occlusion
+    /// (Scene+Procedural.swift). A scene with any compiles MATERIAL_EXTRAS in; one whose graphs give opacity, OPACITY.
+    var materialExtras: [Int: GPUMaterialExtra] = [:]
+    /// The materials a Material Designer graph bakes (Scene+Procedural.swift), and a count of their extras' edits.
+    var procedural: [ProceduralMaterial] = []
+    var extrasVersion = 0
+    /// Those that run as code (MatShaderCode): their programs spliced together (the pipelines compile it in), their
+    /// parameters (SceneShading.procParams), and a count of the parameters' edits.
+    var proceduralCode = ""
+    var proceduralParams: [SIMD4<Float>] = []
+    var proceduralParamsVersion = 0
+    /// The meshes a procedural material's height moves (Scene+Displacement.swift): their subdivided copies, and what
+    /// the GPU moves their vertices from (`displaceVertices`, two a vertex: where it is and its group's first member,
+    /// the way it moves and its group's size; `displaceMembers`: the groups' vertices).
+    var displaced: [DisplacedMesh] = []
+    var displaceVertices: [SIMD4<Float>] = []
+    var displaceMembers: [UInt32] = []
+    /// The materials whose every instance is displaced (their height isn't the parallax's too), and what the
+    /// displacement had to leave out or cap (the Material Designer's status).
+    var displacedMaterials: Set<Int> = []
+    var displacementNotes: [String] = []
+    /// Procedural materials a scene keeps undisplaced (their parallax instead), so its triangles go where relief shows:
+    /// the swamp's ground, its flat patches and its far trees, leaving them to its near gnarly trunks.
+    var undisplacedMaterials: Set<Int> = []
+    /// Objects the Material Painter paints (Scene+Painted.swift): each its instance's texture set's slots and layout,
+    /// and the UVs of their corners, three per triangle, after the meshes' own on the GPU (the painted materials' extras
+    /// say where theirs start). The painter workshop's object (Scene+Painter.swift), painted whatever is assigned.
+    var painted: [PaintedObject] = []
+    var paintUVs: [SIMD2<Float>] = []
+    var paintSubject: Int? = nil
     private(set) var instances: [Instance] = []
     private(set) var lights: [Light] = []
     private(set) var meshLights: [MeshLight] = []
@@ -363,12 +468,42 @@ final class Scene {
     /// The first sun among the lights (the sky follows it), if any.
     private(set) var firstSun: Int?
     private var meshBounds: [(SIMD3<Float>, SIMD3<Float>)] = []   // local AABB per mesh
+    /// Mesh `m`'s own bounds (the painter's orbit).
+    func meshBounds(_ m: Int) -> (SIMD3<Float>, SIMD3<Float>) { meshBounds.indices.contains(m) ? meshBounds[m] : (.zero, .zero) }
     /// The deforming meshes other than the crowd's: each one's mesh and its vertices (`addDeformingMesh`).
     private(set) var deforming: [(mesh: Int, first: Int, count: Int)] = []
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
     private var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
     var defaultCamera = Camera()
-    let settings: SceneSettings
+    /// The plant workshop's: what its camera orbits and frames, and what its plant costs (Scene+Plants.swift).
+    var focus: AABB?
+    var plantStats: PlantStats?
+    /// The building workshop's: what its building is, and its plan (the building editor's Floor Plan window).
+    var buildingStats: BuildingStats?
+    var buildingPlan: BuildingPlan?
+    /// The character workshop's: what its character is (Scene+Characters.swift).
+    var characterStats: CharacterStats?
+    /// What the walker (Walker.swift) meets: the interiors' walls, floors, stairs and furniture, the ground round
+    /// them; and the buildings that can be walked in, where they stand.
+    var walkColliders: [Interior.Collider] = []
+    var walkAreas: [WalkArea] = []
+    /// The ground under what the colliders don't cover (the open world's terrain: its height at x, z).
+    var walkGround: ((Float, Float) -> Float)?
+    /// The scene's terrain, if its ground is one (Scene+Terrain.swift): its sectors' meshes and instances.
+    var terrain: SceneTerrain?
+    /// The scene's water, if it has some (Scene+Water.swift): its looks, which materials are its surfaces', and where
+    /// it is (the water map's field).
+    var water: SceneWater?
+    /// The city's buildings: which (LotRef.key), where (the world's x, z) and how tall: the renderer makes the interior
+    /// of the one the camera comes near (SceneSettings.interior).
+    var lotAreas: [(key: String, rect: CityPlan.Rect, height: Float)] = []
+    /// What moves and switches in its interiors (doors, lights, lifts, the flashlight): read by their poses.
+    var interiorControls: InteriorControls?
+    /// Made again at every edit (the workshop): its structures are built to be ready soon, not to trace fastest or
+    /// keep least (uncompacted), and its plants keep all their leaves (no leaf fall's variants).
+    var remadeOften = false
+    /// Its settings; only the effects' key changes after it is made (`adoptEffects`).
+    private(set) var settings: SceneSettings
     /// While `init` builds the scene: the load's step that the builders report models to (the loading overlay).
     private(set) var loadStep: LoadStep?
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
@@ -381,11 +516,33 @@ final class Scene {
 
     /// The scene's animated characters, if it has any (Scene+Crowd.swift).
     private(set) var crowd: Crowd?
+    /// Where the camera is (the renderer sets it before `update`): the workshop's faces look at it.
+    var viewer: SIMD3<Float>?
     /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
     private(set) var physics: PhysicsWorld?
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
+    /// The scene's particle effects, if it has any (Particles.swift): always on the GPU (ParticlesGPU), which the rays
+    /// meet through a structure of their own (Shaders/ParticleTrace.metal).
+    private(set) var particles: ParticleSystem?
+    /// The effects placed in it (Scene+Effects.swift: addEffect), and the colliders of its own their Collide blocks
+    /// name; what of them couldn't be done (VFXLowering's notes).
+    var effects: [VFXInstance] = []
+    var effectColliders: [(name: String, collider: ParticleCollider)] = []
+    var effectNotes: [String] = []
+    /// Per emitter of `particles`, the effect it is one of (the editor's status).
+    var effectOwners: [String] = []
+    /// Reflection rays see them (ParticleSettings.reflections).
+    var particlesReflected: Bool { particles != nil && settings.particles.reflections }
+    /// The steps `update` asked for since the renderer last took them, and whether from the start.
+    private var particlesPending = (steps: 0, restart: true)
+    var hasParticles: Bool { particles != nil }
+    /// The interiors' loose furniture (Scene+Interiors.swift): its clock starts at the scene's first update, not at the
+    /// renderer's zero (a scene made ten minutes in doesn't step ten minutes first), and a slow frame skips time rather
+    /// than catching up.
+    var physicsFromInstall = false
+    private var physicsOrigin: Float?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).
@@ -414,6 +571,9 @@ final class Scene {
     var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
     private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
+    /// The walkable interiors' box, world space (BuildingKit.addInterior): where GI's hits see the sun through rays and the
+    /// fog's sky light is occluded (Renderer.interiorBox). Nil: no interiors.
+    var interiorBox: (lo: SIMD3<Float>, hi: SIMD3<Float>)?
     /// Every light and emissive triangle by power, for ReSTIR DI's candidates (built once, after the lights).
     private(set) var lightTable = LightTable()
 
@@ -456,7 +616,25 @@ final class Scene {
         case .hair: buildHair(settings.physics)
         case .softBodies: buildSoftBodies(settings.physics)
         case .muscles: buildMuscles(settings.physics)
+        case .fluids: buildFluids(settings.physics)
+        case .particles: buildParticles()
+        case .plants: buildPlantWorkshop()
+        case .vfxStage: buildVFXStage()
+        case .buildings: buildBuildingWorkshop()
+        case .characters: buildCharacterWorkshop()
+        case .materials: buildMaterialWorkshop()
+        case .mireland: buildMireland()
+        case .painter: buildPainterWorkshop()
+        case .terrain: buildTerrainWorkshop()
         }
+        while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
+        applyMaterialAssignments()
+        buildProceduralPrograms()
+        finishTerrainLayers()
+        finishTerrainScatter()
+        addTerrainColliders()
+        displaceProcedural()
+        traceHoleShadows()
         }
         if !settings.extraModels.isEmpty { loadStep?.set(done: 0, total: settings.extraModels.count) }
         for extra in settings.extraModels {
@@ -469,7 +647,10 @@ final class Scene {
         finishDeforming()
         finishHair()
         finishSoftBodies()
+        finishLiquids()
         physics?.finish()
+        applyPaintAssignments()
+        applySceneOverrides()
         hasBorrowedMeshes = !borrowed.isEmpty
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }
@@ -515,6 +696,8 @@ final class Scene {
         // cover's: the frames update it. Not the open world's, whose instance blocks need a still scene: its plants
         // stand still.)
         isStill = instances.allSatisfy(\.isStatic) && virtualMeshes.isEmpty && (!hasFoliage || hasGroups)
+        // (A displaced mesh's structure is built again when a bake moves its vertices: the top level's then too.)
+            && displaced.isEmpty
         changingLights = lights.indices.filter {
             if case .mesh(let m) = lights[$0].kind { return !instances[meshLights[m].instance].isStatic }
             return moves(lights[$0]) || lights[$0].motion == .scaleOnly
@@ -531,9 +714,19 @@ final class Scene {
     /// Poses everything at time `t`; suns and the sky colour follow `dayTime` instead (Time of day offsets it).
     func update(time t: Float, dayTime: Float? = nil) {
         let day = dayTime ?? t
+        var changed = false
         func move(_ i: Int) {
             instances[i].prevTransform = instances[i].transform
-            if let animation = instances[i].animation { setTransform(i, animation(t)) }
+            if let animation = instances[i].animation {
+                let now = animation(t)
+                if now != instances[i].transform { changed = true; setTransform(i, now) }
+            }
+        }
+        defer {
+            // (The loose furniture of an interior: only while some of it is awake.)
+            let bodies = physics.map { p in p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty || !p.cloths.isEmpty
+                || !p.softVertices.isEmpty || !p.hairGroups.isEmpty || settings.kind.simulates } ?? false
+            motionThisFrame = changed || crowd != nil || bodies || !deforming.isEmpty || animated == nil
         }
         // A light's pose; `placed`: its position and direction too (otherwise only its scale is taken).
         func pose(_ l: Int, placed: Bool) {
@@ -572,14 +765,23 @@ final class Scene {
             if physicsOnGPU {
                 let claim = physics.claim(to: t)
                 physicsPending = claim.restart ? claim : (physicsPending.steps + claim.steps, physicsPending.restart)
+            } else if physicsFromInstall {
+                if physicsOrigin.map({ t < $0 }) ?? true { physicsOrigin = t }
+                physics.advance(to: t - (physicsOrigin ?? t), atMost: 8)
+                placeBodies()
             } else {
                 physics.advance(to: t)
                 placeBodies()
             }
         }
+        if let particles {
+            let claim = particles.claim(to: t)
+            particlesPending = claim.restart ? (claim.steps, true) : (particlesPending.steps + claim.steps, particlesPending.restart)
+        }
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
+            crowd.viewer = viewer
             crowd.pose(at: t)
             for w in crowd.walkers {
                 let (p, previous) = w.positions(crowd.slots[w.slot])
@@ -620,10 +822,57 @@ final class Scene {
         physicsPending = (physics.stepIndex, true)
     }
 
-    /// The steps to encode this frame (the renderer's), which are then forgotten.
-    func takePhysicsSteps() -> (steps: Int, restart: Bool) {
-        defer { physicsPending = (0, false) }
-        return physicsPending
+    /// The particles' steps to encode this frame, `limit` at most (the rest wait for the next frames), and whether
+    /// from the start (a new scene, or time run back).
+    func takeParticleSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+        let taken = (steps: min(particlesPending.steps, limit), restart: particlesPending.restart)
+        particlesPending = (particlesPending.steps - taken.steps, false)
+        return taken
+    }
+
+    /// The renderer made the particles' buffers anew: it replays them from the start up to where they are.
+    func replayParticles() {
+        guard let particles else { return }
+        particlesPending = (particles.stepIndex, true)
+    }
+
+    /// The scene's particle effects (a builder's, once): see `particles`.
+    /// A mesh emitter's particles are instances, one a slot, reserved here (the GPU poses them: ParticlesGPU
+    /// .encodeMeshPose); they move every frame, so the scene isn't still.
+    func addParticles(_ system: ParticleSystem) {
+        precondition(particles == nil, "a scene has one particle system")
+        let p = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders,
+                               fields: Array(system.fields.prefix(system.bakedCurlField ?? system.fields.count)),
+                               programs: system.programs)
+        for (i, e) in p.emitters.enumerated() {
+            guard let (mesh, material) = e.mesh else { continue }
+            let hidden = translate(e.position) * scale(1e-4)
+            p.meshInstances[i] = instances.count
+            for _ in 0..<e.capacity { instances[addInstance(mesh, material, hidden)].simulated = true }
+        }
+        particles = p
+    }
+
+    /// The VFX editor's edit, run in place of the scene's particles (VFXLive.swift): `system` (made `continuing` the
+    /// one it replaces) from `effects`, as `key` names them (SceneSettings.effects), so the scene isn't made again.
+    /// Without `system` only the key: the edit's code compiles meanwhile.
+    /// The Material Designer's edit, baked in place (Renderer.editMaterials): its graphs' catalog's key.
+    func adoptMaterials(_ key: String) { settings.materials = key }
+
+    func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
+        settings.effects = key
+        guard let system else { return }   // the running ones until their new code is ready (Renderer.editEffects)
+        particles = system
+        self.effects = effects
+        effectOwners = owners
+        effectNotes = notes
+    }
+
+    /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.
+    func takePhysicsSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+        let taken = (steps: min(physicsPending.steps, limit), restart: physicsPending.restart)
+        physicsPending = (physicsPending.steps - taken.steps, false)
+        return taken
     }
 
     private func setTransform(_ i: Int, _ transform: float4x4) {
@@ -631,10 +880,43 @@ final class Scene {
         instances[i].normalMatrix = transform.inverse.transpose
     }
 
+    /// Instances put elsewhere for good (a terrain's scatter and what stands on it, after a brush moved the ground: no
+    /// motion between frames). `record`: the renderer writes their records again (takeInstanceEdits).
+    func moveInstances(_ moves: [(Int, float4x4)], record: Bool) {
+        for (i, m) in moves where instances.indices.contains(i) {
+            setTransform(i, m)
+            instances[i].prevTransform = m
+            if record { instanceEdits.insert(i) }
+        }
+    }
+    private var instanceEdits = Set<Int>()
+
+    /// The instances moved for good since the last call (moveInstances), which are then forgotten.
+    func takeInstanceEdits() -> Set<Int> {
+        defer { instanceEdits = [] }
+        return instanceEdits
+    }
+
+    /// Something moved in the last `update` (the renderer refits the top level only then: a door that stands still,
+    /// a lift that waits, don't cost a refit every frame).
+    private(set) var motionThisFrame = true
+
     /// The instances whose transform changes from frame to frame.
     var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
 
     /// The range of materials changed since the last call (nil: none), which is then forgotten.
+    /// Material `i` changed (a procedural one's bake): the renderer copies it to every slot.
+    func markMaterialDirty(_ i: Int) {
+        materialsDirty = materialsDirty.map { min($0.lowerBound, i)..<max($0.upperBound, i + 1) } ?? i..<(i + 1)
+    }
+
+    /// Material `i` replaced (a procedural one's values as its graph's bake gives them).
+    func setMaterial(_ i: Int, _ m: GPUMaterial) {
+        guard materials.indices.contains(i) else { return }
+        materials[i] = m
+        markMaterialDirty(i)
+    }
+
     func takeMaterialsDirty() -> Range<Int>? {
         defer { materialsDirty = nil }
         return materialsDirty
@@ -745,12 +1027,23 @@ final class Scene {
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
         // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: VG_CLUSTERS, virtual geometry is
         // traced as its cut of clusters (VirtualGeometry.clusterMode). Bit 20: HAIR_CURVES, some meshes are curves.
-        // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. (Shaders/Types.metal.)
+        // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
+        // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
+        // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes. Bit 13:
+        // PROCEDURAL_CODE, some of them are code the shading runs. Bit 12: TERRAIN, its ground is a terrain whose
+        // vertices carry layer weights. Bit 11: WATER, it has water (Scene+Water.swift, Shaders/Water.metal).
+        // Bit 10: LEAF_TRANSMIT, some leaves are two-sided (a leaf sheet's). (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
             | (hasSDFShapes ? 0x0040_0000 : 0) | (tracesClusters ? 0x0020_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
-            | (hasRigidAssemblies ? 0x0008_0000 : 0)
+            | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasSkin ? 0x0002_0000 : 0)
+            | (hasParticles ? 0x0001_0000 : 0) | (materialExtras.isEmpty ? 0 : 0x8000)
+            | (hasOpacity ? 0x2000_4000 : 0)   // OPACITY, with ALPHA_TEST's query loop
+            | (proceduralCode.isEmpty ? 0 : 0x2000)   // PROCEDURAL_CODE
+            | (terrain == nil ? 0 : 0x1000)           // TERRAIN
+            | (hasWater ? 0x0800 : 0)                 // WATER
+            | (hasLeafSheets ? 0x0400 : 0)            // LEAF_TRANSMIT
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -792,7 +1085,7 @@ final class Scene {
         case .rect(let w, let h):
             let (t, n, _) = Scene.rectFrame(p)
             return GPULight(positionRadius: SIMD4(p.position, 0), color: color(GPULight.rect),
-                            axis: SIMD4(n, 0), params: SIMD4(t * (w / 2), h / 2))
+                            axis: SIMD4(n, l.reach), params: SIMD4(t * (w / 2), h / 2))
         case .tube(let length, let r):
             return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.tube),
                             axis: SIMD4(normalize(p.direction) * (length / 2), 0), params: .zero)
@@ -817,9 +1110,9 @@ final class Scene {
     // MARK: - Scene construction
 
     private func buildCornell() {
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
-        let sphere = addMesh(Scene.icosphere(subdivisions: 3))
+        let quad = addMesh(Scene.quadMesh(), label: "quad")
+        let cube = addMesh(Scene.cubeMesh(), label: "box")
+        let sphere = addMesh(Scene.icosphere(subdivisions: 3), label: "ball")
 
         let white = addMaterial(albedo: [0.75, 0.75, 0.75])
         let red = addMaterial(albedo: [0.65, 0.06, 0.05])
@@ -829,35 +1122,45 @@ final class Scene {
 
         // Room: 10 wide, 5 high, 10 deep, open at the front (+Z) so a little sky light leaks in.
         let w: Float = 10, h: Float = 5, d: Float = 10
-        addInstance(quad, white, translate([0, 0, 0]) * scale([w, 1, d]))                                         // floor
-        addInstance(quad, white, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d]))                // ceiling
-        addInstance(quad, white, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))   // back
-        addInstance(quad, red, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))    // left
-        addInstance(quad, green, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))    // right
+        object("Room/Floor") { addInstance(quad, white, translate([0, 0, 0]) * scale([w, 1, d])) }
+        object("Room/Ceiling") { addInstance(quad, white, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([w, 1, d])) }
+        object("Room/Back wall") { addInstance(quad, white, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h])) }
+        object("Room/Left wall") { addInstance(quad, red, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
+        object("Room/Right wall") { addInstance(quad, green, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
 
         // Static objects
-        addInstance(cube, white, translate([-2.0, 1.6, -2.2]) * rotate(0.35, [0, 1, 0]) * scale([1.4, 3.2, 1.4]))
-        addInstance(cube, white, translate([2.2, 0.75, -1.2]) * rotate(-0.3, [0, 1, 0]) * scale(1.5))
-        addInstance(sphere, blue, translate([0.6, 0.7, 0.8]) * scale(0.7))
+        object("Tall box") { addInstance(cube, white, translate([-2.0, 1.6, -2.2]) * rotate(0.35, [0, 1, 0]) * scale([1.4, 3.2, 1.4])) }
+        object("Short box") { addInstance(cube, white, translate([2.2, 0.75, -1.2]) * rotate(-0.3, [0, 1, 0]) * scale(1.5)) }
+        object("Blue ball") { addInstance(sphere, blue, translate([0.6, 0.7, 0.8]) * scale(0.7)) }
 
         // Dynamic objects: their transforms change every frame, which only requires
         // rebuilding the (cheap) instance acceleration structure.
-        addInstance(cube, gold, matrix_identity_float4x4) { t in
-            translate([0, 2.8 + 0.25 * sin(1.3 * t), -2.0]) * rotate(0.8 * t, [1, 1, 0]) * scale(0.9)
+        object("Spinning cube") {
+            addInstance(cube, gold, matrix_identity_float4x4) { t in
+                translate([0, 2.8 + 0.25 * sin(1.3 * t), -2.0]) * rotate(0.8 * t, [1, 1, 0]) * scale(0.9)
+            }
         }
-        addInstance(sphere, white, matrix_identity_float4x4) { t in
-            translate([2.8 * sin(0.6 * t), 0.5, 2.0]) * scale(0.5)
+        object("Rolling ball") {
+            addInstance(sphere, white, matrix_identity_float4x4) { t in
+                translate([2.8 * sin(0.6 * t), 0.5, 2.0]) * scale(0.5)
+            }
         }
 
         // Moving sphere lights
-        addLight(color: SIMD3<Float>(1.0, 0.80, 0.60) * 30, radius: 0.15, sphereMesh: sphere) { t in
-            [2.2 * cos(0.5 * t), 4.0, -1.0 + 2.2 * sin(0.5 * t)]
+        object("Lights/Warm") {
+            addLight(color: SIMD3<Float>(1.0, 0.80, 0.60) * 30, radius: 0.15, sphereMesh: sphere) { t in
+                [2.2 * cos(0.5 * t), 4.0, -1.0 + 2.2 * sin(0.5 * t)]
+            }
         }
-        addLight(color: SIMD3<Float>(0.30, 0.50, 1.0) * 20, radius: 0.12, sphereMesh: sphere) { t in
-            [3.5 * sin(0.37 * t), 1.6 + 0.6 * sin(0.9 * t), -3.6]
+        object("Lights/Blue") {
+            addLight(color: SIMD3<Float>(0.30, 0.50, 1.0) * 20, radius: 0.12, sphereMesh: sphere) { t in
+                [3.5 * sin(0.37 * t), 1.6 + 0.6 * sin(0.9 * t), -3.6]
+            }
         }
-        addLight(color: SIMD3<Float>(1.0, 0.45, 0.15) * 15, radius: 0.12, sphereMesh: sphere) { t in
-            [-3.9 + 0.5 * sin(0.7 * t), 0.6, 0.8 + 1.6 * cos(0.45 * t)]
+        object("Lights/Orange") {
+            addLight(color: SIMD3<Float>(1.0, 0.45, 0.15) * 15, radius: 0.12, sphereMesh: sphere) { t in
+                [-3.9 + 0.5 * sin(0.7 * t), 0.6, 0.8 + 1.6 * cos(0.45 * t)]
+            }
         }
     }
 
@@ -899,8 +1202,11 @@ final class Scene {
     /// `materials`: for a mesh of several materials, each triangle's material as an offset from the material its
     /// instance names (which is then the first of a run of materials added one after the other).
     /// `name`: see `meshNames`.
-    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil) -> Int {
+    /// `label`: what the outline calls it (`label(mesh:)`).
+    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil,
+                 label: String? = nil) -> Int {
         if let name { meshNames[meshes.count] = name }
+        if let label { meshLabels[meshes.count] = (label, false, nil) }
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
         if let offsets {
@@ -928,6 +1234,8 @@ final class Scene {
         var uvs: Stored<SIMD2<Float>>
         var indices: Stored<UInt32>             // into its own vertices
         var materials: Stored<UInt8>? = nil     // per triangle, as `triangleMaterials` (nil: it has one material)
+        /// A terrain's sector's: its vertices' layer weights (TERRAIN), after the triangles' materials in its block.
+        var weights: Stored<SIMD16<UInt8>>? = nil
         var mesh = 0                            // in `meshes`
     }
 
@@ -965,7 +1273,8 @@ final class Scene {
         for p in crowd.parts.indices {
             let geometry = crowd.geometry(part: p)
             crowd.parts[p].bindVertex = positions.count
-            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs)
+            crowd.parts[p].mesh = addMesh((geometry.positions, geometry.normals, geometry.indices), uvs: geometry.uvs,
+                                          materials: geometry.materials.isEmpty ? nil : geometry.materials)
         }
         for i in crowd.slots.indices {
             // A pose: its character's triangles over vertices of its own, which `finishCrowd` places. Its bounds are
@@ -980,6 +1289,25 @@ final class Scene {
 
     /// Mesh `m` was made at level of detail `level` (0 = the finest) of a system that has levels: the LOD debug view
     /// shows it (GPUMesh.lod).
+    /// Mesh `m` is a terrain's sector, its terrain's layer table at `table` in the procedural parameters (TERRAIN).
+    /// A borrowed mesh made again before the renderer has it (a terrain sector refined: Scene.refineTerrain), with
+    /// its new name and bounds; its size may change.
+    func replaceBorrowed(_ m: Int, with mesh: BorrowedMesh, bounds: AABB, name: String) {
+        guard let k = borrowed.firstIndex(where: { $0.mesh == m }) else { return }
+        var mesh = mesh
+        mesh.mesh = m
+        borrowed[k] = mesh
+        meshNames[m] = name
+        meshes[m].indexCount = UInt32(mesh.indices.count)
+        meshes[m].vertexCount = UInt32(mesh.positions.count)
+        meshBounds[m] = (bounds.lo, bounds.hi)
+    }
+
+    func setTerrainTable(_ m: Int, _ table: Int) {
+        guard m >= 0 else { return }
+        meshes[m].terrain = UInt32(table + 1)
+    }
+
     func setDetailLevel(_ m: Int, _ level: Int) {
         guard m >= 0 else { return }
         meshes[m].lod = UInt32(level + 1)
@@ -1001,17 +1329,45 @@ final class Scene {
     /// A mesh whose vertices the GPU rewrites every frame (a cloth's: PhysicsGPU), within `bounds` whatever it does.
     /// Its vertices are its own (`vertexOffset` 0), and `finishDeforming` puts last frame's after everything else.
     /// `materials`: per triangle, its material's offset from the instance's (as `addMesh`'s).
-    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB) -> Int {
-        let m = addMesh(mesh, uvs: uvs, materials: materials)
+    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB,
+                          label: String? = nil) -> Int {
+        let m = addMesh(mesh, uvs: uvs, materials: materials, label: label)
         meshBounds[m] = (bounds.lo, bounds.hi)
         deforming.append((mesh: m, first: positions.count - mesh.positions.count, count: mesh.positions.count))
         return m
     }
 
+    /// Instance `i` on `mesh`, its mesh's displaced copy (Scene+Displacement.swift): its shadows traced (the virtual
+    /// shadow maps would keep their pages of it as it was before a bake moved it).
+    func setDisplacedMesh(_ i: Int, _ mesh: Int) {
+        instances[i].mesh = mesh
+        if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
+    /// Instance `i` given its painted materials (Scene+Painted.swift), its shadows traced if they cut holes.
+    func setPaintedMaterial(_ i: Int, _ material: Int, cutsHoles: Bool) {
+        instances[i].material = material
+        if cutsHoles && instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
+    }
+
+    /// The instances a procedural material cuts holes in (the raster leaves them to the rays): their shadows traced too
+    /// (the virtual shadow maps are drawn by the raster, which would leave them out).
+    func traceHoleShadows() {
+        guard groups.isEmpty, procedural.contains(where: { $0.channels.contains(.opacity) }) || painted.contains(where: \.opacity) else { return }
+        for i in instances.indices where instances[i].isGeometry {
+            if let e = materialExtras[instances[i].material], e.textures.y != .max { instances[i].mask |= Scene.maskShadowTraced }
+        }
+    }
+
+    /// Mesh `m`'s bounds grown by `d` every way (where its displaced vertices may go).
+    func growBounds(mesh m: Int, by d: Float) {
+        meshBounds[m] = (meshBounds[m].0 - SIMD3(repeating: d), meshBounds[m].1 + SIMD3(repeating: d))
+    }
+
     /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).
     @discardableResult
-    func addDeformingInstance(_ mesh: Int, _ material: Int) -> Int {
-        let i = addInstance(mesh, material, matrix_identity_float4x4)
+    func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4) -> Int {
+        let i = addInstance(mesh, material, transform)
         instances[i].deforms = true
         // Like the crowd's: virtual shadow maps would draw it again every frame (and can't draw curves): traced.
         if instances[i].isGeometry { instances[i].mask |= Scene.maskShadowTraced }
@@ -1174,6 +1530,7 @@ final class Scene {
 
     /// An SDF shape for instances to place (`addInstance(sdf:)`).
     func addSDFShape(_ shape: SDFShape) -> Int {
+        sdfLabels[sdfShapes.count] = shape.kindName   // (a builder's own name replaces it: `label(sdf:)`)
         sdfShapes.append(shape)
         sdfBounds.append(shape.bounds(volumes: sdfVolumes))
         return sdfShapes.count - 1
@@ -1198,7 +1555,7 @@ final class Scene {
 
     // MARK: - Physics
 
-    private func physicsWorld() -> PhysicsWorld {
+    func physicsWorld() -> PhysicsWorld {
         if let physics { return physics }
         let world = PhysicsWorld(substeps: settings.physics.substeps)
         physics = world
@@ -1221,6 +1578,30 @@ final class Scene {
         return i
     }
 
+    /// A loose piece of furniture (Scene+Interiors.swift): an instance of `mesh` (drawn as it is) that the physics moves
+    /// as a box of `halfExtents` round the mesh's origin, `mass` kg. The box is the physics' alone: nothing draws it.
+    @discardableResult
+    func addMeshBody(_ mesh: Int, _ material: Int, _ transform: float4x4, halfExtents: SIMD3<Float>, mass: Float, friction: Float = 0.55) -> Int {
+        let i = addInstance(mesh, material, transform)
+        instances[i].simulated = true
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        let shape = SDFShape(.box(halfExtents: halfExtents, rounding: min(0.008, halfExtents.min() * 0.2)))
+        let sdf = addSDFShape(shape)
+        let volume = 8 * halfExtents.x * halfExtents.y * halfExtents.z
+        return world.addBody(sdf: sdf, shape, transform: transform, instance: i, density: mass / max(volume, 1e-4), friction: friction,
+                             restitution: 0.1)
+    }
+
+    /// A box the physics' bodies meet (a wall, a floor, a cupboard), from `lo` to `hi`; nothing draws it.
+    func addStaticBox(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, friction: Float = 0.6) {
+        let world = physicsWorld()
+        world.setVolumes(sdfVolumes)
+        let half = simd_max((hi - lo) / 2, SIMD3(repeating: 0.005))
+        let shape = SDFShape(.box(halfExtents: half))
+        world.addStatic(sdf: addSDFShape(shape), shape, transform: translate((lo + hi) / 2), friction: friction, restitution: 0.1)
+    }
+
     /// A kinematic body (PhysicsFlesh.swift): an instance of SDF shape `sdf` that its column of the physics' pose table
     /// moves, starting at `transform`; `mask` 0 to keep it out of sight (a bone under flesh). Returns its body.
     @discardableResult
@@ -1239,7 +1620,7 @@ final class Scene {
                       materials: [UInt8]? = nil, own: [Int], rigid: [Int], weld: Bool, material: Int, bounds: AABB, skin: SkinShell? = nil) {
         var drawn = flesh
         drawn.model.embed(mesh, in: own, weld: weld)
-        let m = addDeformingMesh(mesh, uvs: uvs, materials: materials, bounds: bounds)
+        let m = addDeformingMesh(mesh, uvs: uvs, materials: materials, bounds: bounds, label: skin == nil ? "flesh" : "skin")
         addDeformingInstance(m, material)
         softMeshes.append(m)
         let world = physicsWorld(), base = deforming.last!.first, firstVertex = world.softVertices.count
@@ -1276,7 +1657,8 @@ final class Scene {
         let reach = max(length(across), length(down)) + 0.1
         box.lo = simd_min(box.lo - reach, SIMD3(box.lo.x - reach, -0.1, box.lo.z - reach))
         box.hi += reach
-        let mesh = addDeformingMesh((positions, [SIMD3<Float>](repeating: normal, count: positions.count), indices), uvs: uvs, bounds: box)
+        let mesh = addDeformingMesh((positions, [SIMD3<Float>](repeating: normal, count: positions.count), indices), uvs: uvs, bounds: box,
+                                    label: "cloth")
         addDeformingInstance(mesh, material)
         clothMeshes.append(mesh)
         physicsWorld().addCloth(origin: origin, across: across, down: down, columns: columns, rows: rows, pinned: pinned,
@@ -1295,7 +1677,8 @@ final class Scene {
         let rotation = simd_float3x3(columns: (PhysicsMath.xyz(transform.columns.0), PhysicsMath.xyz(transform.columns.1),
                                                PhysicsMath.xyz(transform.columns.2)))
         let positions = model.surface.positions.map { PhysicsMath.xyz(transform * SIMD4($0, 1)) }
-        let mesh = addDeformingMesh((positions, model.surface.normals.map { rotation * $0 }, model.surface.indices), bounds: bounds)
+        let mesh = addDeformingMesh((positions, model.surface.normals.map { rotation * $0 }, model.surface.indices), bounds: bounds,
+                                    label: "soft body")
         addDeformingInstance(mesh, material)
         softMeshes.append(mesh)
         physicsWorld().addSoftBody(model, transform: transform, vertexBase: deforming.last!.first, velocity: velocity, density: density,
@@ -1322,6 +1705,52 @@ final class Scene {
         }
     }
 
+    /// A liquid (PhysicsFluid.swift) held in `domain`, poured from `nozzle` (straight down) until it has `capacity`
+    /// particles. After the static colliders it meets.
+    /// Its surface is a mesh the GPU makes again every frame (FluidSurface.swift), whose structure is built again every
+    /// frame (`rebuiltMeshes`): it holds a fixed number of vertices (one spare) and triangles. It is drawn as the
+    /// liquid it is (`addLiquidMaterial`), or with `material` as an opaque surface.
+    func addLiquid(_ kind: LiquidKind, solver: PhysicsSettings.Solver, domain: AABB, nozzle: SIMD3<Float>, capacity: Int,
+                   material: Int? = nil) {
+        let world = physicsWorld()
+        world.addLiquid(kind, solver: solver, domain: domain, nozzle: nozzle, capacity: capacity)
+        let system = world.fluid!.systems.count - 1, s = world.fluid!.systems[system]
+        let bounds = s.surfaceBounds(s.surface), middle = (bounds.lo + bounds.hi) / 2
+        let v = Int(s.surface.mesh.w) + 1, t = Int(s.surface.triangles.x)
+        let mesh = addDeformingMesh(([SIMD3<Float>](repeating: middle, count: v), [SIMD3<Float>](repeating: SIMD3(0, 1, 0), count: v),
+                                     [UInt32](repeating: UInt32(v - 1), count: 3 * t)), bounds: bounds, label: "\(kind) surface")
+        rebuiltMeshes.insert(mesh)
+        if let material {
+            addDeformingInstance(mesh, material)
+        } else {
+            let i = addInstance(mesh, addLiquidMaterial(kind.look), matrix_identity_float4x4, mask: Scene.maskLiquid)
+            instances[i].deforms = true
+        }
+        liquidMeshes.append((system, mesh, deforming.last!.first))
+    }
+
+    /// The last body added held where it is until `time` (s), then dropped (PhysicsWorld.hold).
+    func holdBody(until time: Float) {
+        let world = physicsWorld()
+        world.hold(body: world.bodies.count - 1, until: time)
+    }
+
+    /// The liquids' surfaces: each system's mesh (its system, its mesh), and the meshes whose structures are built
+    /// again every frame (their triangles change).
+    private(set) var liquidMeshes: [(system: Int, mesh: Int, first: Int)] = []
+    private(set) var rebuiltMeshes: Set<Int> = []
+
+    /// The liquids' surfaces: where their meshes' vertices, indices and last-frame vertices are (once
+    /// `finishDeforming` put them).
+    private func finishLiquids() {
+        guard let physics else { return }
+        for (system, m, first) in liquidMeshes {
+            physics.fluid!.systems[system].surface.mesh.x = UInt32(first)   // (its indices are the buffer's, as every mesh's)
+            physics.fluid!.systems[system].surface.mesh.y = meshes[m].firstIndex
+            physics.fluid!.systems[system].surface.mesh.z = meshes[m].prevOffset
+        }
+    }
+
     /// Something bodies bounce off that never moves: SDF shape `sdf` at `transform` (draw it, or not, apart).
     func addStaticCollider(sdf: Int, _ transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
         let world = physicsWorld()
@@ -1338,11 +1767,62 @@ final class Scene {
     func notePlants() { hasPlants = true }
 
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
+    /// A generated character's run of materials (CharacterBuilder.materials), its first returned: an instance of the
+    /// character names it. `glossy` false: diffuse ones (a crowd's: glossy materials turn on the reflection pass for
+    /// the whole frame, about 3 ms at 1920 x 1200 on an M1 Max, for eyes a few pixels across). `maps`: the skin's
+    /// textures (colour, roughness, normals: `addSkinTextures`), for its skin's materials; `hair`: a hair cap's colour
+    /// (CharacterHair.colour); `strandBrows`: brows of strands, not painted.
+    func addCharacterMaterials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, glossy: Bool = true, maps: SIMD3<UInt32>? = nil,
+                               hair: SIMD3<Float> = [0.08, 0.05, 0.03], strandBrows: Bool = false) -> Int {
+        let run = CharacterBuilder.materials(look, skin: skin, hair: hair, strandBrows: strandBrows).map { m in
+            var material = GPUMaterial(albedo: SIMD4(m.color, 0), emission: SIMD4(.zero, glossy ? m.roughness : 1),
+                                       params: SIMD4(glossy ? 1 : 0, 1, 0, -m.skin))
+            if let maps, m.textured {
+                // The colour texture holds its multiplier scaled down (SkinTextures.colourScale), the roughness its too.
+                material.albedo = SIMD4(m.color / SkinTextures.colourScale, 0)
+                material.emission.w = min(m.roughness / SkinTextures.roughnessScale, 1)
+                material.textures = SIMD4(maps.x, glossy ? maps.y : .max, maps.z, .max)
+            }
+            return addMaterial(material)
+        }
+        return run[0]
+    }
+
+    /// The skin's textures for `dna` (SkinTextures, over the kit's chart): colour, roughness and normals, drawn only
+    /// when no cache has them (a remade workshop asks again at every edit).
+    func addSkinTextures(_ dna: CharacterDNA, kit: CharacterKit) -> SIMD3<UInt32> {
+        let marks = SkinTextures.Marks(dna), wrinkles = SkinTextures.wrinkles(age: dna.macro.age)
+        let size = SkinChart.defaultSize
+        let colour = addGeneratedTexture(name: "skin-colour", width: size, height: size, key: marks.key, srgb: false) {
+            SkinTextures.cached("colour \(marks.key)") { SkinTextures.colour(kit.chart, marks) }
+        }
+        let roughness = addGeneratedTexture(name: "skin-roughness", width: size / 2, height: size / 2, key: SkinTextures.versionKey,
+                                            srgb: false) {
+            SkinTextures.cached("roughness") { SkinTextures.roughness(kit.chart) }
+        }
+        let normals = addGeneratedTexture(name: "skin-normals", width: size, height: size,
+                                          key: "\(SkinTextures.versionKey)-w\(Int(wrinkles * 12))", srgb: false) {
+            SkinTextures.cached("normals \(wrinkles)") { SkinTextures.normals(kit.chart, wrinkles: wrinkles) }
+        }
+        return SIMD3(colour, roughness, normals)
+    }
+
     func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))
         return materials.count - 1
     }
+
+    /// A liquid (Shaders/Liquid.metal), for instances with `maskLiquid`: its absorption in the albedo's colour, its index
+    /// of refraction in its alpha, its roughness in the emission's alpha.
+    func addLiquidMaterial(_ look: LiquidKind.Look) -> Int {
+        hasLiquid = true
+        return addMaterial(GPUMaterial(albedo: SIMD4(look.absorption, look.ior), emission: SIMD4(.zero, look.roughness), params: SIMD4(0, 1, 0, 0)))
+    }
+    /// Some instance is a liquid's surface (maskLiquid). Set by `addLiquidMaterial`.
+    private(set) var hasLiquid = false
+    /// It has water (Scene+Water.swift). Set by `addWaterLook`.
+    var hasWater = false
 
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
     func addGlassMaterial(tint: SIMD3<Float>) -> Int {
@@ -1353,8 +1833,19 @@ final class Scene {
     /// Any material, as it is.
     func addMaterial(_ material: GPUMaterial) -> Int {
         materials.append(material)
+        if material.params.w < 0 { hasSkin = true }
         return materials.count - 1
     }
+    /// Some material is skin (GPUMaterial.params.w < 0): the shaders are compiled with SKIN.
+    private(set) var hasSkin = false
+    /// Some leaves are a scanned leaf sheet's (the realistic look): LEAF_TRANSMIT lights them from both sides.
+    var hasLeafSheets = false
+    /// The scans' textures this scene has (albedo, normal, occlusion-roughness-height), by set and roughness floor:
+    /// each once, whatever number of materials wear it (TextureSets.swift).
+    var scanTextures: [String: SIMD3<UInt32>] = [:]
+    /// Where the realistic look's near ground is (realism high: Scene.refineTerrain): scene x, z; nil: the scene's
+    /// demo camera's place, else the origin.
+    var terrainDetailCenter: SIMD2<Float>?
 
     /// An image for materials to sample: its index for `GPUMaterial.textures`.
     func addTexture(_ source: TextureSource) -> UInt32 {
@@ -1409,9 +1900,10 @@ final class Scene {
     /// A generated texture that `draw` draws only if no cache holds it: the caches name it by `key`, which says
     /// everything its pixels depend on (the generator's version, a seed). With the cache off it is drawn here and
     /// named by its pixels, as above.
-    func addGeneratedTexture(name: String, width: Int, height: Int, key: String, _ draw: @escaping () -> FoliageTextures.Image) -> UInt32 {
-        guard GeneratedCache.enabled else { return addGeneratedTexture(draw(), name: name) }
-        textures.append(TextureSource(data: Data(), srgb: true, name: "generated/\(name)",
+    func addGeneratedTexture(name: String, width: Int, height: Int, key: String, srgb: Bool = true,
+                             _ draw: @escaping () -> FoliageTextures.Image) -> UInt32 {
+        guard GeneratedCache.enabled else { return addGeneratedTexture(draw(), name: name, srgb: srgb) }
+        textures.append(TextureSource(data: Data(), srgb: srgb, name: "generated/\(name)",
                                       modelPath: GeneratedCache.folder.appendingPathComponent("\(settings.kind)").path,
                                       cacheKey: "\(name)-\(width)x\(height)-\(key)", raw: (width, height),
                                       pixels: { Data(draw().pixels) }))
@@ -1520,17 +2012,23 @@ final class Scene {
     /// the radiance itself for a rect, 2 I / (pi r length) for a tube (a cylinder whose broadside intensity per unit
     /// length, radiance x 2r, is the 4 I / (pi length) the shaders give it).
     @discardableResult
-    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, motion: LightMotion = .animated,
-                  pose: @escaping (Float) -> LightPose) -> Int {
-        var light = Light(kind: kind, color: color, pose: pose, motion: motion)
+    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, proxyEmission: SIMD3<Float>? = nil,
+                  reach: Float = 0, motion: LightMotion = .animated, proxy: Bool = true, pose: @escaping (Float) -> LightPose) -> Int {
+        var light = Light(kind: kind, color: color, pose: pose, motion: motion, order: lights.count)
+        light.reach = reach
         var mesh = -1, emission = SIMD3<Float>(repeating: 0)
+        if !proxy {
+            // Nothing drawn where it is (the walker's flashlight, at the eye).
+            lights.append(light)
+            return lights.count - 1
+        }
         switch kind {
         case .sphere(let r), .spot(let r, _, _):
-            if proxyMesh == nil && lightSphereMesh < 0 { lightSphereMesh = addMesh(Scene.icosphere(subdivisions: 2)) }
+            if proxyMesh == nil && lightSphereMesh < 0 { lightSphereMesh = addMesh(Scene.icosphere(subdivisions: 2), label: "ball") }
             mesh = proxyMesh ?? lightSphereMesh
             emission = color / (.pi * r * r)
         case .rect:
-            if proxyMesh == nil && lightQuadMesh < 0 { lightQuadMesh = addMesh(Scene.quadMesh()) }
+            if proxyMesh == nil && lightQuadMesh < 0 { lightQuadMesh = addMesh(Scene.quadMesh(), label: "quad") }
             mesh = proxyMesh ?? lightQuadMesh
             emission = color
         case .tube(let length, let r):
@@ -1543,6 +2041,7 @@ final class Scene {
             break
         }
         if mesh >= 0 {
+            emission = proxyEmission ?? emission   // (a rect over a room's panels: theirs, brighter than its own)
             light.proxyMaterial = addMaterial(albedo: .zero, emission: emission)
             light.proxyEmission = emission
             light.proxyInstance = addInstance(mesh, light.proxyMaterial, matrix_identity_float4x4, mask: Scene.maskLights)
@@ -1708,6 +2207,8 @@ final class Scene {
     /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
     /// materials and textures. `animation`, if given, replaces `transform` over time.
     func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+        beginObject(model.name, assets: [AssetKey(kind: .model, name: url.lastPathComponent)])   // the outline's: its parts, its lights
+        defer { endObject() }
         var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
         func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
             guard let ref else { return .max }
@@ -1745,6 +2246,7 @@ final class Scene {
         }
         for (i, mesh) in model.meshes.enumerated() where meshOf[i] == nil {
             meshOf[i] = (addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs), -1)
+            label(mesh: meshOf[i]!.mesh, "\(model.name)#\(i)", shared: true)
         }
         for part in model.parts {
             let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
@@ -1811,24 +2313,26 @@ final class Scene {
     /// Gallery: the models in `Assets/` on plinths in an arc, 1.6 m at their largest side, under 8 moving lights.
     /// Two of them turn slowly (dynamic instances); the rest are static.
     private func buildGallery() {
-        let quad = addMesh(Scene.quadMesh())
-        let cube = addMesh(Scene.cubeMesh())
-        let sphere = addMesh(Scene.icosphere(subdivisions: 2))
+        let quad = addMesh(Scene.quadMesh(), label: "quad")
+        let cube = addMesh(Scene.cubeMesh(), label: "box")
+        let sphere = addMesh(Scene.icosphere(subdivisions: 2), label: "ball")
         let floor = addPBRMaterial(baseColor: [0.32, 0.31, 0.30], metallic: 0, roughness: 0.25)   // polished stone
         let wall = addMaterial(albedo: [0.70, 0.70, 0.68])
         let plinth = addPBRMaterial(baseColor: [0.62, 0.62, 0.64], metallic: 1, roughness: 0.35)   // brushed steel
 
         let w: Float = 26, h: Float = 7, d: Float = 18
-        addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d]))
-        addInstance(quad, wall, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h]))
-        addInstance(quad, wall, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
-        addInstance(quad, wall, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d]))
+        object("Hall/Floor") { addInstance(quad, floor, translate([0, 0, 0]) * scale([w, 1, d])) }
+        object("Hall/Back wall") { addInstance(quad, wall, translate([0, h / 2, -d / 2]) * rotate(.pi / 2, [1, 0, 0]) * scale([w, 1, h])) }
+        object("Hall/Left wall") { addInstance(quad, wall, translate([-w / 2, h / 2, 0]) * rotate(-.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
+        object("Hall/Right wall") { addInstance(quad, wall, translate([w / 2, h / 2, 0]) * rotate(.pi / 2, [0, 0, 1]) * scale([h, 1, d])) }
 
         let files = Scene.galleryFiles()
         let plinthHeight: Float = 0.3
         let start = CFAbsoluteTimeGetCurrent()
         var triangles = 0
         loadStep?.set(done: 0, total: files.count)
+        beginObject("Exhibits")
+        defer { endObject() }
         for (i, url) in files.enumerated() {
             if loadStep?.isCancelled == true { break }   // another scene was asked for: this one is thrown away
             loadStep?.set(detail: url.deletingPathExtension().lastPathComponent)
@@ -1844,7 +2348,7 @@ final class Scene {
             // Arc of radius 6 around (0, 0, 1), from -60 to +60 degrees, each model facing the arc's centre.
             let a = files.count > 1 ? (-60 + 120 * Float(i) / Float(files.count - 1)) * .pi / 180 : 0
             let p = SIMD3<Float>(6 * sin(a), 0, 1 - 6 * cos(a))
-            addInstance(cube, plinth, translate(p + [0, plinthHeight / 2, 0]) * scale([1.3, plinthHeight, 1.3]))
+            object("Plinths/\(model.name)") { addInstance(cube, plinth, translate(p + [0, plinthHeight / 2, 0]) * scale([1.3, plinthHeight, 1.3])) }
             let base = translate(p + [0, plinthHeight, 0]) * rotate(-a, [0, 1, 0])
             let place = Scene.placement(model, size: 1.6)
             if i % 5 == 1 {   // turntables
@@ -1861,6 +2365,8 @@ final class Scene {
         // 8 lights drifting above the arc, warm and cool.
         var rng = SplitMix64(seed: 0x6A11_E7)
         let colors: [SIMD3<Float>] = [[1.0, 0.85, 0.65], [1.0, 0.55, 0.25], [0.45, 0.65, 1.0], [0.85, 0.75, 1.0]]
+        beginObject("Lights")
+        defer { endObject() }
         for j in 0..<8 {
             let color = colors[j % colors.count] / dot(colors[j % colors.count], [0.2126, 0.7152, 0.0722])
             let c = SIMD3<Float>(rng.range(-6, 6), rng.range(2.2, 3.6), rng.range(-4, 3))

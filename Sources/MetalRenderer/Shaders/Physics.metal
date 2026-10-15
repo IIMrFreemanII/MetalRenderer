@@ -12,7 +12,7 @@ constant uint PHYS_KINEMATIC = 2u;   // PhysicsBody.info.y: a kinematic body (Ph
 constant uint PHYS_PAIRS = 16, PHYS_CONTACTS = 4;   // PhysicsWorld.maxPairs, maxContacts
 constant uint PHYS_COLOURS = 32, PHYS_ROUNDS = 64;  // PhysicsWorld.maxColours, maxRounds
 constant uint PHYS_LEFTOVER = 0xFFFFFFFEu;          // PhysicsWorld.leftover
-constant uint PHYS_SDF = 0, PHYS_SPHERE = 1, PHYS_CAPSULE = 2, PHYS_BOX = 3, PHYS_PLANE = 4;   // PhysicsShapeKind
+constant uint PHYS_SDF = 0, PHYS_SPHERE = 1, PHYS_CAPSULE = 2, PHYS_BOX = 3, PHYS_PLANE = 4, PHYS_HEIGHTFIELD = 5;   // PhysicsShapeKind
 constant uint PHYS_REFINE_STEPS = 6;
 constant float PHYS_GRADIENT_STEP = 1e-3f;
 constant float PHYS_PUSH_SPEED = 3.0f;              // PhysicsWorld.pushSpeed
@@ -202,10 +202,30 @@ struct PhysicsShapes {
     SDFScene                   sdf;
 };
 
+inline float physHeightfieldSample(PhysicsShapes w, uint first, int nx, int nz, int a, int b) {
+    uint n = uint(clamp(b, 0, nz - 1) * nx + clamp(a, 0, nx - 1));
+    return w.samples[first + n / 4u][n % 4u];
+}
+
+// A terrain's heightfield (PhysicsWorld.heightfieldHeight): its height under (x, z), bilinear, held at its edges; its
+// heights four to a sample from info.w.
+inline float physHeightfieldHeight(PhysicsShapes w, PhysicsShape shape, float x, float z) {
+    float4 k = shape.params;
+    int nx = int(k.w), nz = int(shape.comPosition.x);
+    uint first = shape.info.w;
+    float gx = clamp((x - k.x) / k.z, 0.0f, float(nx - 1)), gz = clamp((z - k.y) / k.z, 0.0f, float(nz - 1));
+    int i = min(int(gx), nx - 2), j = min(int(gz), nz - 2);
+    float u = gx - float(i), v = gz - float(j);
+    float lo = mix(physHeightfieldSample(w, first, nx, nz, i, j), physHeightfieldSample(w, first, nx, nz, i + 1, j), u);
+    float hi = mix(physHeightfieldSample(w, first, nx, nz, i, j + 1), physHeightfieldSample(w, first, nx, nz, i + 1, j + 1), u);
+    return mix(lo, hi, v);
+}
+
 inline float physDistance(PhysicsShapes w, uint s, float3 p) {
     PhysicsShape shape = w.shapes[s];
     float4 k = shape.params;
     switch (shape.info.x) {
+    case PHYS_HEIGHTFIELD: return (p.y - physHeightfieldHeight(w, shape, p.x, p.z)) * shape.comPosition.y;
     case PHYS_SPHERE: return length(p) - k.x;
     case PHYS_CAPSULE: return length(float3(p.x, p.y - min(max(p.y, -k.x), k.x), p.z)) - k.y;
     case PHYS_BOX: return physBox(p, k.xyz, k.w);
@@ -222,6 +242,12 @@ inline float3 physGradient(PhysicsShapes w, uint s, float3 p) {
     float4 k = shape.params;
     switch (shape.info.x) {
     case PHYS_PLANE: return float3(0, 1, 0);
+    case PHYS_HEIGHTFIELD: {
+        float e = k.z * 0.5f;
+        float dx = physHeightfieldHeight(w, shape, p.x + e, p.z) - physHeightfieldHeight(w, shape, p.x - e, p.z);
+        float dz = physHeightfieldHeight(w, shape, p.x, p.z + e) - physHeightfieldHeight(w, shape, p.x, p.z - e);
+        return normalize(float3(-dx, 2.0f * e, -dz));
+    }
     case PHYS_SPHERE: return physDirection(p);
     case PHYS_CAPSULE: return physDirection(float3(p.x, p.y - min(max(p.y, -k.x), k.x), p.z));
     case PHYS_BOX: return physBoxGradient(p, k.xyz, k.w);
@@ -347,7 +373,7 @@ inline PhysManifold physCollide(PhysicsShapes w, PhysicsBody a, PhysicsBody b, f
     float ra = a.invInertia.w, rb = b.invInertia.w;
     float merge = 0.05f * min(ra, rb > 0.0f ? rb : ra);
     PhysicsShape shapeA = w.shapes[sa], shapeB = w.shapes[sb];
-    bool plane = shapeB.info.x == PHYS_PLANE;
+    bool plane = shapeB.info.x == PHYS_PLANE || shapeB.info.x == PHYS_HEIGHTFIELD;   // (no bounding sphere to reach)
     PhysManifold m;
     m.count = 0;
     m.normalSum = float3(0.0f);

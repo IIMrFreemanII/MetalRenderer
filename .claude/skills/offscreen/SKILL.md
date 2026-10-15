@@ -24,8 +24,10 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
 * Run anything longer than about 30 s with `run_in_background`, then wait for the notification.
 * Don't rebuild, and don't edit `Shaders.metal` or `Shaders/`, while a run is launching: it compiles the shaders it
   finds at launch.
-* Swift edits need `swift build -c release`; shader edits don't (the binary compiles the shaders at launch).
-  `render.sh` rebuilds when a Swift source is newer than the binary.
+* Swift edits need a build; shader edits don't (the binary compiles the shaders at launch). `render.sh` uses the
+  dev build (`Tools/build.sh`: the debug configuration with `-O`, in `.build-dev`, a one-file edit rebuilds in about
+  12 s) and rebuilds it when a Swift source is newer than the binary. It draws the same images as release, bit for
+  bit. Timings to quote come from release (`swift build -c release`, the `performance` skill).
 
 ## Render something: `scripts/render.sh`
 
@@ -41,6 +43,17 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
     plus `,objects=…,lights=…` (the crowd: `,characters=…,poses=…,detail=…`; the city: `,seed=…,blocks=…,style=…,lit=…,rooms=…,textures=…`;
     the showcase: `,showcase=owl`, a part of a model's file name; the physics scene, `physics`:
     `,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`);
+    the plant workshop, `plants`: `,species=oak|birch|…,age=…,variant=…,plantseed=…,layout=single|lineup|mutate,view=plant|skeleton`
+    (`-m plants` renders seven of them);
+    the building workshop, `buildings`: `,bstyle=residential|oldtown|office|…,width=…,depth=…,sides=row|backtoback|corner|free,floors=…,bseed=…,blayout=single|street|mutate,bview=full|cutaway|dollhouse,cut=…,night=…`
+    (`-m buildings` renders each style outside, the cutaway and dollhouse, rooms by day and night, an office floor, and
+    a city's and the open world's building from inside); the city's interiors near the camera: `,interiors=…,reach=…`
+    (benchmarks never make one by themselves: a config sets `SceneSettings.interior`);
+  * buildings: `METALRENDERER_BUILDINGS=builtin` leaves out the styles and single buildings saved in `Assets/Buildings`
+    (the building editor's), `=<folder>` reads another; `METALRENDERER_PROPS=none` leaves out the glTF props of
+    `Assets/Props/props.json`;
+  * plants: `METALRENDERER_PLANTS=builtin` leaves out the species saved in `Assets/Plants` (the plant editor's), for
+    comparisons between builds; `=<folder>` reads another folder;
   * lens: `METALRENDERER_POST="bloom=…,aperture=…,focus=…,vignette=…,grain=…,ca=…"` (`-m showcase` renders every model);
   * GI: `METALRENDERER_GI="mode=pt|cascades|restir,bounces=2,scale=0.75,factor=0"` (factor 0 means native, no
     upscaling);
@@ -69,8 +82,8 @@ python3 Tools/eval/pngdiff.py "$SCRATCH/before" "$SCRATCH/after"
 * A shader-only change needs only one binary: copy `Sources/MetalRenderer/Shaders.metal` and `Shaders/` to the
   scratchpad, then run the copy with `METALRENDERER_SHADERS=<copy>/Shaders.metal` on one side.
 * A Swift change needs the baseline built in the scratchpad (`git archive HEAD Sources Package.swift Tools | tar -x
-  -C "$SCRATCH/base"`, then `swift build -c release` there). Run it with `-b "$SCRATCH/base/.build/release/MetalRenderer"`
-  and `METALRENDERER_ASSETS=<repo>/Assets`.
+  -C "$SCRATCH/base"`, then `"$SCRATCH/base/Tools/build.sh"`). Run it with
+  `-b "$SCRATCH/base/.build-dev/debug/MetalRenderer"` and `METALRENDERER_ASSETS=<repo>/Assets`.
 * An image that must not change: max 0.0 everywhere. Fast-math variants can flip a few stochastic pixels; see
   measuring.md, "Kernel variants".
 
@@ -87,7 +100,10 @@ setting's frames:
 ```bash
 .claude/skills/offscreen/scripts/video.sh -m shapesdemo -o "$SCRATCH/shapes-demo.mp4"
 ```
-`-m stressdemo` tours the stress building the same way (58 s).
+`-m stressdemo` tours the stress building the same way (58 s). `-m buildingsdemo` is the building editor's demo
+(40 shots, about 4.5 min): the camera can walk (`.walking()`: doors open for it, it shoves loose furniture), ride a
+lift (`.riding(n)`) and act at times of its track (`.at(t, .callLift / .lights / .flashlight)`); `DemoWalk` makes
+its walks from a building's plan. Keep its frames (`-k`) to join the shots into one captioned video.
 It takes minutes (every frame of the track is rendered), so run it with `run_in_background`. To tune a track, look
 along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 
@@ -103,5 +119,5 @@ along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 
 The mechanism: `RenderSurface` (RenderSurface.swift) is either the window's `LayerSurface` (its view's CAMetalLayer) or
 an `OffscreenSurface` (a ring of textures in the drawable's format). Either way the frames are drawn on the render
-thread (RenderThread.swift). `Headless.isEnabled` picks the surface in main.swift, and the app runs with the
+thread (RenderThread.swift). `Headless.isEnabled` picks the surface in App.swift, and the app runs with the
 `.prohibited` activation policy.

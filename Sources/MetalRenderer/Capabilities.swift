@@ -1,7 +1,7 @@
 import Metal
 import MetalFX
 
-/// What the running GPU and system can do, asked once at launch (`main.swift`). The settings panel disables the
+/// What the running GPU and system can do, asked once at launch (`App.swift`). The settings panel disables the
 /// options that need something missing, `RenderSettings.clamped(to:)` swaps them for ones that work, and the
 /// benchmark skips the settings that need them.
 struct Capabilities: Equatable {

@@ -36,6 +36,12 @@ struct Terrain {
         }
     }
 
+    /// Heights made elsewhere (a terrain field's: Scene+Terrain), `(cells + 1)` squared, rows along z.
+    init(size: Float, cells: Int, relief: Float, heights: [Float]) {
+        precondition(heights.count == (cells + 1) * (cells + 1), "a height per sample")
+        (self.size, self.cells, self.relief, self.heights) = (size, cells, relief, heights)
+    }
+
     // MARK: - Noise
 
     @inline(__always) private static func hash(_ x: Int32, _ y: Int32, _ seed: UInt32) -> UInt32 {

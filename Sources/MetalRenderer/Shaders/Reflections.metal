@@ -158,6 +158,11 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, spread);
             float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect);
+            if (PARTICLES && (accel.particleFlags & PARTICLES_REFLECTED) != 0u) {   // the particles in front of what it reflects
+                float meanT;
+                float4 seen = particleGather<2>(p, l, hit.hit ? length(hit.position - p) : 1.0e5f, hit.hit, accel, meanT);
+                radiance = seen.rgb + (1.0f - seen.a) * radiance;
+            }
             bool fogged = (fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS);
             if (passOn(fogged ? REFLECT_FOG : 0u, REFLECT_FOG)) {
                 float2 uDistMix = rng.next2();

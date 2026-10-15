@@ -178,6 +178,29 @@ final class FogTargets {
     }
 }
 
+/// Temporal AA without upscaling (Post.metal taaResolveKernel), at the traced resolution: the composite's light, and
+/// the resolved light of this frame and the last, by FramePlan.cur.
+final class TAATargets {
+    let width: Int, height: Int
+    let input: MTLTexture
+    let history: [MTLTexture]
+
+    init(device: MTLDevice, width: Int, height: Int) throws {
+        self.width = width
+        self.height = height
+        func make(_ label: String) throws -> MTLTexture {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            guard let t = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture \(label)") }
+            t.label = label
+            return t
+        }
+        input = try make("taa input")
+        history = [try make("taa history0"), try make("taa history1")]
+    }
+}
+
 /// The lens and the finish (Shaders/Post.metal), at the output resolution.
 final class PostTargets {
     let width: Int, height: Int
@@ -321,10 +344,12 @@ final class Renderer: NSObject {
     /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
     private var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
 
-    private let device: MTLDevice
-    private let queue: MTLCommandQueue
+    let device: MTLDevice
+    /// The GPU it draws with (the Material Designer bakes on it). Any thread.
+    var metalDevice: MTLDevice { device }
+    let queue: MTLCommandQueue
     private weak var surface: RenderSurface?
-    private var scene = Scene()
+    private(set) var scene = Scene()
     /// The shaders' entry file: next to this source file, or `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which
     /// lets one binary run another copy of the shaders (an A/B of a shader change without a second build).
     private let shaderURL = ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0) }
@@ -332,7 +357,7 @@ final class Renderer: NSObject {
 
     /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
-    private var pipelines: Pipelines!
+    private(set) var pipelines: Pipelines!
     private var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
     private let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     private var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
@@ -348,7 +373,7 @@ final class Renderer: NSObject {
     private weak var lumenKeptScene: Scene?
 
     /// The scene's geometry, its instances' records and Metal's structures over them (SceneBuffers.swift).
-    private var sceneBuffers: SceneBuffers!
+    private(set) var sceneBuffers: SceneBuffers!
     private var positionBuffer: MTLBuffer { sceneBuffers.positions }
     private var normalBuffer: MTLBuffer { sceneBuffers.normals }
     private var indexBuffer: MTLBuffer { sceneBuffers.indices }
@@ -374,9 +399,47 @@ final class Renderer: NSObject {
     private var triangleMaterialBuffer: MTLBuffer { sceneBuffers.triangleMaterials }   // Scene.triangleMaterials (meshes of several materials)
     private var emissiveBuffer: MTLBuffer { sceneBuffers.emissive }                    // emissive-mesh lights' triangles (MSL EmissiveTriangle)
     private var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
-    private var textureTable: MTLBuffer!              // their MTLResourceIDs (MSL MaterialTexture array)
-    private var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
+    private var textureTables: [MTLBuffer] = []       // per slot, their MTLResourceIDs (MSL MaterialTexture array):
+                                                      // a slot's own, as a procedural material's bake replaces its texture
+                                                      // in the slots one by one (applyProcedural)
+    private(set) var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
     private var shadingResources: [MTLResource] = []
+    /// Procedural materials (Scene+Procedural): per slot their extras (MSL MaterialExtra) and the instances' alpha tests
+    /// (TraceScene.opacity), written when the scene's `extrasVersion` has moved on; the bakes' textures by their slot in
+    /// the table (the latest, and per frame slot what its table holds: what its frames declare), the table entries a slot
+    /// has still to take, and the textures replaced, kept until no frame in flight can read them.
+    private var extrasBuffers: [MTLBuffer] = []
+    private var opacityBuffers: [MTLBuffer] = []
+    private var extrasWritten: [Int] = []
+    private var procParamBuffers: [MTLBuffer] = []
+    private var procParamsWritten: [Int] = []
+    private var proceduralTextures: [UInt32: MTLTexture] = [:]
+    private var slotTextures: [[UInt32: MTLTexture]] = []
+    private var tablePending: [[UInt32: MTLTexture]] = []
+    private var retiredTextures: [(frame: UInt32, texture: MTLTexture)] = []
+    /// Per procedural material, the bake's key its textures are; per graph name in the catalog shown, its key.
+    private var proceduralApplied: [Int: String] = [:]
+    private var proceduralKeys: (catalog: String, keys: [String: String]) = ("", [:])
+    private var srgbViews: [ObjectIdentifier: MTLTexture] = [:]
+    /// The Material Painter's GPU side (Renderer+Painter.swift): per painted object its session (texture set, layers).
+    var painter = PainterGPU()
+    /// A benchmark's painting still to do (Benchmark.Config.Event.paint), a step a frame.
+    var painterScript: [PainterStep] = []
+    /// The Terrain Editor's side (Renderer+Terrain.swift): sculpt mode, the brush, the sectors' buffers' revisions.
+    var terrain = TerrainGPU()
+    /// The scene's water on the GPU (Renderer+Water.swift): its map, waves and per-frame record; nil without water.
+    var water: WaterSystem?
+    /// Its status, when it changes (on the render thread).
+    var onTerrain: ((TerrainStatus) -> Void)?
+    /// A benchmark's terrain edits still to do (Benchmark.Config.Event.terrain), frames to wait, the changes undone.
+    var terrainScript: [TerrainStep] = []
+    var terrainScriptWait = 0
+    var terrainUndone = Set<Int>()
+    /// The displaced meshes' records (Scene.displaceVertices, displaceMembers), and per displacing material the height
+    /// its meshes were last moved by (and the surface's values then), and the materials whose meshes wait to be moved.
+    private var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
+    private var displaceSource: [Int: (height: MTLTexture, surface: MatSurface)] = [:]
+    private var displacePending = Set<Int>()
     private var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
     private var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
     private var feedbackDummy: MTLBuffer!
@@ -389,6 +452,36 @@ final class Renderer: NSObject {
     private var crowdSkinner: CrowdSkinner?
     /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
     private var physicsGPU: PhysicsGPU?
+    /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
+    /// (a still frame has nothing to pose or build).
+    private var particlesGPU: ParticlesGPU?
+    /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
+    private var vfxSetup: VFXCompiler.Setup {
+        VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
+                          lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4)
+    }
+    private var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
+    private var particlesVersion = 0
+    /// The VFX editor's gizmos (VFX/VFXGizmos.swift): what they show, the selected emitter's handle (where it was last
+    /// drawn), the drag of one of its arrows (its axis, and how far along it the cursor was), and where a drag goes.
+    /// `METALRENDERER_GIZMOS=<effect>[/<emitter>]`: the gizmos from the start (offscreen pictures of them).
+    private var gizmoTarget: VFXGizmos.Target? = ProcessInfo.processInfo.environment["METALRENDERER_GIZMOS"].map {
+        let parts = $0.split(separator: "/", maxSplits: 1).map(String.init)
+        return VFXGizmos.Target(effect: parts.first ?? "", emitter: parts.count > 1 ? parts[1] : nil)
+    }
+    private var gizmoHandle: SIMD3<Float>?
+    private var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
+    private var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
+    private var gizmoViewSize = SIMD2<Float>(1280, 800)
+    /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
+    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+    /// The Material Painter's status, when it changes (Renderer+Painter.swift; on the render thread).
+    var onPainter: ((PainterStatus) -> Void)?
+    /// A pen's pressure for the next press or drag (1 for a mouse).
+    var penPressure: Float = 1
+    /// The VFX editor's last edit that needs new code (VFXLive.swift), until its library is compiled.
+    private var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
+    private var particlesCamera = SIMD4<Float>.zero
     private var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
     private var virtualTracing: VirtualTracing?
@@ -417,6 +510,14 @@ final class Renderer: NSObject {
     static func lightMapSize(lightCount: Int) -> Int {
         lightCount <= 16 ? 128 : max(32, Int(128 * (16 / Double(lightCount)).squareRoot()) / 8 * 8)
     }
+    /// The walkable interiors' box for the GPU (Uniforms / GPUFogParams interiorLo, interiorHi; empty: lo > hi). In it
+    /// GI's hits see the sun through a shadow ray and the fog's sky light is occluded: the sun's light map, over the
+    /// whole scene, has texels metres wide, sees no wall or ceiling, and lit every room inside as if the sun shone on
+    /// its walls.
+    static func interiorBox(_ scene: Scene) -> (lo: SIMD4<Float>, hi: SIMD4<Float>) {
+        guard let box = scene.interiorBox else { return (SIMD4(1, 1, 1, 0), SIMD4(-1, -1, -1, 0)) }
+        return (SIMD4(box.lo, 1), SIMD4(box.hi, 1))
+    }
     private var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
     private var blueNoiseReady = false
     // Volumetric fog (Shaders/Fog.metal), allocated when first turned on.
@@ -425,10 +526,13 @@ final class Renderer: NSObject {
     private var fogGrid: FogTargets?            // froxel grid at the current render resolution
     private var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
     private var postTargetsCache: PostTargets?   // the lens and the finish, at the current output resolution
+    private var taaTargetsCache: TAATargets?     // temporal AA without upscaling, at the traced resolution...
+    private var taaHistory = false               // ...and the last frame left its resolved light in them
     private var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
     private var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
     private var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
     private var dummy2D: MTLTexture!
+    private var dummyUInt2D: MTLTexture!        // in place of the visibility buffer (rg32Uint) where there is none
     private var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
     // Sky and clouds (Shaders/Sky.metal), allocated when first used.
     private var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
@@ -450,12 +554,15 @@ final class Renderer: NSObject {
     /// (16-byte aligned), the virtual shadow maps' VSMScene.
     private static let shadingSkyOffset = 56, shadingParamsOffset = 80
     private static let shadingVSMOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // VSMScene's address (or 0)
-    private static let shadingArgsLength = shadingVSMOffset + 16   // 288: the shader asserts it
+    private static let shadingExtrasOffset = shadingVSMOffset + 8    // MaterialExtra's address (MATERIAL_EXTRAS)
+    private static let shadingProcParamsOffset = shadingVSMOffset + 16   // the programs' parameters (PROCEDURAL_CODE)
+    static let shadingWaterOffset = shadingVSMOffset + 24   // WaterScene's address (WATER), or 0
+    private static let shadingArgsLength = shadingVSMOffset + 32      // 304: the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
     private var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
     private var instanceDataBuffers: [MTLBuffer] { sceneBuffers.instanceData }
-    private var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
+    private(set) var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
     private var restirGrid: RestirTargets?
     private var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
     private var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
@@ -496,15 +603,17 @@ final class Renderer: NSObject {
     /// structure is updated. One that stays as it is isn't refitted for nothing (a forest without wind).
     private var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
     private let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
+    /// Auto exposure's histograms (PostSettings.autoExposure: AutoExposure.swift).
+    private lazy var exposureMeter = AutoExposure(device: device, framesInFlight: Renderer.maxFramesInFlight)
 
     private var targets: RenderTargets?
 
     // State
-    private var camera = Camera()
+    var camera = Camera()
     private var prevCamera = Camera()
-    private var frameIndex: UInt32 = 0
-    private var animTime: Float = 0
-    private var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
+    private(set) var frameIndex: UInt32 = 0
+    private(set) var animTime: Float = 0
+    private(set) var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
     private var lastTime = CACurrentMediaTime()
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
     var settings = RenderSettings() {
@@ -518,6 +627,7 @@ final class Renderer: NSObject {
                 return
             }
             if settings.giMode != oldValue.giMode { resetGIState() }
+            dayChanged(from: oldValue)
             // Any change can change the picture: the reference starts over (a benchmark's starts with its config).
             if !benchmarkAccumulating { resetReference() }
             publishSettings()
@@ -538,6 +648,8 @@ final class Renderer: NSObject {
     var onSettings: ((_ settings: RenderSettings, _ update: Int, _ persist: Bool) -> Void)?
     /// Twice a second, when the stats (fps, GPU time, `statsLine`) are refreshed.
     var onTick: ((RendererStatus) -> Void)?
+    /// A scene installed: its outline (the Project Graph's).
+    var onOutline: ((SceneOutline) -> Void)?
     /// Every frame once its GPU work is done, while `debugActive`: the CPU time since the previous frame started and
     /// the GPU time, both in ms. For the Debug window's graph.
     var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
@@ -576,6 +688,24 @@ final class Renderer: NSObject {
     private var accumulating: Bool { referenceMode == .accumulated }
     // Reference "Path traced": pathTraceKernel's running mean, the paths in it per pixel, and the view it was made from.
     private var pathTraceAccum: MTLTexture?
+    /// What liquidKernel leaves the trace and liquidApplyKernel (Shaders/Liquid.metal): per pixel the bent ray (its
+    /// origin, w = 1 where it is bent; its direction, w = how far the liquid is), what comes through and the reflection.
+    /// Water's (waterKernel, Shaders/Water.metal) the same, w = 2 and up, and its own light in `scatter`.
+    struct LiquidTargets {
+        let ray: MTLTexture
+        let direction: MTLTexture
+        let through: MTLTexture
+        let reflection: MTLTexture
+        let scatter: MTLTexture
+        /// Water's: the pixel whose raster triangle the bent ray likely meets (y << 16 | x), ~0 for none (traced).
+        let guess: MTLTexture
+        /// Water's reflections, this frame's and the last's by turns (rgb: what the surface's mirror ray found, a: the
+        /// surface's distance): half of them are traced a frame, the others taken from the last frame's.
+        let reflections: [MTLTexture]
+    }
+    private var liquidTextures: LiquidTargets?
+    private var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
+    private var particleHazeTexture: MTLTexture?
     private var pathTraceCount: UInt32 = 0
     private var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
     private var referenceView: [SIMD4<Float>] = []
@@ -595,9 +725,48 @@ final class Renderer: NSObject {
     private var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
+    /// What the camera turns about (the scene view's pivot, `pivot`): the point it looks at, and how far it is from it.
+    /// The workshops frame theirs on what they show; elsewhere navigation sets it (nil: 8 m in front).
+    private var orbit: (target: SIMD3<Float>, distance: Float)?
+    /// The scene view's mouse (SceneNavigation.swift): what a drag does, chosen when its button went down, and where
+    /// the cursor last was; the right button held (W A S D Q E fly only then); Command held (Option-Command-drag pans).
+    private enum NavDrag { case orbit, look, pan, dolly }
+    private var navDrag: NavDrag?
+    private var rightDrag: NavDrag?
+    private var navCursor: SIMD2<Float>?
+    private var rightHeld = false
+    private var commandHeld = false
+    /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
+    private var walker: Walker?
+    /// The frame something last moved in, and each slot's last top-level refit (`writeFrameData`).
+    private var lastMotionFrame = 0
+    private var slotRefitFrame = [Int](repeating: -1, count: 8)
+    private var walkGrid: ColliderGrid?
+    private var walkRemainder: Float = 0
+    private var crouchHeld = false, jumpPending = false
+    private var lastLiftY: [Float] = []
+    private var walkMessage: String?
+    private var clickAt: SIMD2<Float>?
+    /// Click-to-pick (the Material Designer's): armed, the next click (not a drag) is picked: its ray traced at the end
+    /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
+    private var pickArmed = false
+    private var pickRequest: SIMD2<Float>?
+    private var pickPending: Int?
+    private var pickBuffer: MTLBuffer?
+    /// The pick is a plain click's: what it finds is selected (`selectedInView`), not told to `onMaterialPicked`.
+    private var pickSelects = false
+    var onMaterialPicked: ((MaterialPick?) -> Void)?
+    /// A click in the view selected instance `i` (nil: nothing, the sky); the Project Graph selects its node.
+    var onSelectedInView: ((Int?) -> Void)?
+    /// The camera's yaw and pitch, each frame they change (the scene gizmo).
+    var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
+    private var sentAngles: SIMD2<Float>?
+    /// The time on the scene's day clock (`dayTime`), when it has moved a minute of the day (the day bar).
+    var onDayTime: ((Float) -> Void)?
+    private var sentDayTime: Float?
     /// The view's width over its height, for the cursor's ray.
     private var viewAspect: Float = 1.6
-    private let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
+    let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
     private var gpuMs: Double = 0
@@ -645,7 +814,7 @@ final class Renderer: NSObject {
         if benchmark != nil {
             // Benchmarks start with everything in place: the same frames every run.
             pipelines = try Pipelines(device: device, source: shaderURL, api: builtAPI, compiler: compiler(for: builtAPI),
-                                      lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled)
+                                      lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled, procedural: scene.proceduralCode)
             keepPipelines(pipelines, generation: shaderGeneration)
         } else {
             // The app compiles them in the background: a second or two after a shader edit (Metal's cache has them
@@ -771,7 +940,9 @@ final class Renderer: NSObject {
                     instanceBlocks: namedInstanceBlocks,
                     voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels : nil,
                     leafFall: Scene.leafFall(season: settings.foliage.season),
-                    worldTextures: settings.scene.isSameWorld(as: scene.settings) && builtAPI == settings.api
+                    worldTextures: (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameWorkshop(as: scene.settings)
+                                    || settings.scene.isSameCity(as: scene.settings))
+                        && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
@@ -787,15 +958,17 @@ final class Renderer: NSObject {
     /// a set made for them before (`pipelineCache`), or compiled here (any thread). Its library is reused when only the
     /// light types differ.
     private func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
-                               current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
-        if current.stats == stats && current.api == api && current.lightTypes == lightTypes { return nil }
-        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation)
+                               procedural: String, current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
+        let sameCode = current.procedural == procedural
+        if current.stats == stats && current.api == api && current.lightTypes == lightTypes && sameCode { return nil }
+        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation, procedural: procedural)
         if let kept = pipelineCache.get(key) {
             load?.step("Shaders", detail: "kept from before").finish()
             return kept
         }
         let made = try Pipelines(device: device, source: shaderURL, api: api, compiler: compiler, lightTypes: lightTypes,
-                                 stats: stats, reusing: current.stats == stats && current.api == api ? current.library : nil,
+                                 stats: stats, procedural: procedural,
+                                 reusing: current.stats == stats && current.api == api && sameCode ? current.library : nil,
                                  load: load)
         pipelineCache.put(key, made)
         return made
@@ -803,7 +976,8 @@ final class Renderer: NSObject {
 
     /// Keeps `made`, of shader generation `generation`, for a later scene with its light types.
     private func keepPipelines(_ made: Pipelines, generation: Int) {
-        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation), made)
+        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation,
+                                                       procedural: made.procedural), made)
     }
 
     /// The scene's virtual geometry for the tracer, if it has virtual meshes (any thread).
@@ -849,7 +1023,7 @@ final class Renderer: NSObject {
         // The shaders too, when the API changes (a recompile) or the new scene has other light types.
         let pipelines = try makePipelines(api: options.api, compiler: options.compiler, lightTypes: newScene.lightTypeMask,
                                           stats: options.traversalStats, generation: options.shaderGeneration,
-                                          current: options.pipelines, load: load)
+                                          procedural: newScene.proceduralCode, current: options.pipelines, load: load)
         if let buffers { SceneBuffers.touch(buffers.buffers, device: device, queue: buildQueue) }
         // The open world's scene is made again for every tile the camera comes to, never built from twice: its vertex
         // arrays, now in the buffers, go.
@@ -871,12 +1045,30 @@ final class Renderer: NSObject {
     private func startLoadingScene() {
         let wanted = (scene: settings.scene, api: settings.api)
         if let loading, loading == wanted { return }
+        // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
+        if let loading, loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
+            return
+        }
+        // Only the effects' catalog changed (the VFX editor's draft, restored at launch): the load goes on, and the
+        // scene it makes takes the catalog when it is in (editEffects), in place if it can.
+        if let loading, loading.api == wanted.api, wanted.scene.effects != loading.scene.effects {
+            var same = wanted.scene
+            same.effects = loading.scene.effects
+            if same == loading.scene { return }
+        }
         loading = wanted
+        // Why the scene is made again (not a workshop's edit or the world's next tile: those are expected).
+        if wanted.scene.kind == scene.settings.kind, benchmark == nil, !wanted.scene.isSameWorkshop(as: scene.settings),
+           !wanted.scene.isSameWorld(as: scene.settings), !wanted.scene.isSameCity(as: scene.settings) {
+            let changes = wanted.scene.changes(from: scene.settings) + (wanted.api != builtAPI ? ["api"] : [])
+            print("\(wanted.scene.kind.title) made again: \(changes.isEmpty ? "virtual geometry or the season" : changes.joined(separator: ", ")) changed")
+        }
         let reuse = wanted.scene == scene.settings ? scene : nil   // only the API changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
         loadJob?.cancel()
-        let job = benchmark != nil ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
+        let job = benchmark != nil || wanted.scene.isSameWorkshop(as: scene.settings) || wanted.scene.isSameCity(as: scene.settings)
+            ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
             : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title)
         loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -915,6 +1107,9 @@ final class Renderer: NSObject {
         plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
         physicsGPU = nil
+        particlesGPU = nil
+        pendingEffects = nil
+        particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
         holding = nil
         lightBuffers = []
         frameDataWritten = [Bool](repeating: false, count: Renderer.maxFramesInFlight)
@@ -936,18 +1131,27 @@ final class Renderer: NSObject {
         primitiveASResources = buffers.primitives.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
-            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight)
+            let curves = crowd.hair.map { (first: scene.meshes[$0.mesh].vertexOffset, previous: scene.meshes[$0.mesh].prevOffset) }
+            crowdSkinner = try CrowdSkinner(device: device, crowd: crowd, frameSlots: Renderer.maxFramesInFlight, curves: curves)
         }
         // The physics on the GPU, or only its cloths', soft bodies' and hair's meshes when the CPU steps it (they are drawn
         // from the GPU's buffers).
         if let physics = scene.physics {
-            let onGPU = scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count)
+            let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
+            // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
+            let onGPU = scene.settings.kind.simulates
+                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
                                             clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
                 if onGPU { scene.runPhysicsOnGPU() }
             }
+        }
+        if let particles = scene.particles {
+            particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
+            particlesGPU?.sdfScene = buffers.sdf.scene
+            scene.replayParticles()
         }
         try createLightBuffers()
         virtualTracing = try prepared?.virtualTracing ?? makeVirtualTracing(scene, poolMB: settings.virtualGeometry.poolMB)
@@ -963,6 +1167,418 @@ final class Renderer: NSObject {
         guard let lm = device.makeTexture(descriptor: lmd) else { throw RendererError.resourceCreation("texture lightMap") }
         lm.label = "lightMap"
         lightMap = lm
+    }
+
+    /// The VFX editor's edit (`settings.scene.effects`, a catalog's key): run in the scene's particles' place when only
+    /// the effects differ and their layout stays (VFXLive.swift): their values at once, new code once it compiles (the
+    /// old running meanwhile). Otherwise the scene is made again, as for any other change of its settings.
+    private func editEffects() {
+        var same = settings.scene
+        same.effects = scene.settings.effects
+        guard same == scene.settings else { return }
+        // A scene that placed no effects (but the stage, which places what the catalog names) is the same with any
+        // catalog: only its key changes (the VFX editor's draft, restored at launch, set it).
+        if scene.effects.isEmpty && scene.settings.kind != .vfxStage {
+            scene.adoptEffects(settings.scene.effects, system: nil, effects: [], owners: [], notes: [])
+            return
+        }
+        guard let gpu = particlesGPU,
+              let next = scene.particleSystem(replacing: VFXCatalog.resolve(scene.settings.effects),
+                                              with: VFXCatalog.resolve(settings.scene.effects)) else { return }
+        let running = pendingEffects?.system ?? gpu.system
+        let kind = running.edit(to: next.system)
+        if benchmark != nil { print("Effects: the edit is \(kind == .values ? "run in place" : kind == .code ? "new code" : "a new scene")") }
+        guard kind != .rebuild else { pendingEffects = nil; return }
+        _ = next.system.continuing(gpu.system)
+        let key = settings.scene.effects
+        if kind == .values && pendingEffects == nil {
+            do {
+                try gpu.adopt(next.system, kernels: nil, device: device)
+            } catch {
+                print("Effects: the edit isn't run in place (\(error)); the scene is made again")
+                return
+            }
+            scene.adoptEffects(key, system: next.system, effects: next.effects, owners: next.owners, notes: next.notes)
+            particlesVersion += 1   // posed again, paused too
+        } else {
+            pendingEffects = next   // compiled while the running ones go on (the frame's particles step adopts it)
+            scene.adoptEffects(key, system: nil, effects: [], owners: [], notes: [])
+        }
+    }
+
+    // MARK: - Procedural materials
+
+    /// The Material Designer's edit (`settings.scene.materials`, a catalog's key): baked in place when every
+    /// procedural material's graph keeps its channels (what the scene was made for: its opacity decides how it is
+    /// traced, its textures' slots are there); otherwise the scene is made again, as for any other change.
+    private func editMaterials() {
+        var same = settings.scene
+        same.materials = scene.settings.materials
+        guard same == scene.settings else { return }
+        let catalog = MaterialCatalog.resolve(settings.scene.materials)
+        for pm in scene.procedural {
+            let g = catalog.graph(pm.graph)
+            let channels = Set(g?.channels.keys.map { $0 } ?? [])
+            guard channels.contains(.opacity) == pm.channels.contains(.opacity) else { return }
+            // As code: only an edit that keeps its code (its values) runs in place; another compiles it into the shading.
+            guard Renderer.programCode(g, pm, catalog) == pm.code else { return }
+            // Displacement switched on or off, another detail, or further than the meshes' bounds were grown by:
+            // other meshes (the scene is made again). Its amount within them: moved in place.
+            let was = pm.made?.surface ?? MatSurface(), now = g?.surface ?? MatSurface()
+            guard (was.displacement > 0) == (now.displacement > 0) else { return }
+            if now.displacement > 0 {
+                guard was.displacementDetail == now.displacementDetail, now.displacementReach <= was.displacementRoom else { return }
+            }
+        }
+        scene.adoptMaterials(settings.scene.materials)
+    }
+
+    /// `g`'s program as `pm`'s would be (its number and where its parameters start kept), if `g` runs as code.
+    private static func programCode(_ g: MaterialGraph?, _ pm: ProceduralMaterial, _ catalog: MaterialCatalog) -> String? {
+        guard let g, g.surface.shaderMode, let plan = try? MatPlan(g, library: { catalog.graph($0) }),
+              let p = try? MatShaderCode.program(plan, number: pm.program ?? 0, base: pm.paramBase) else { return nil }
+        return p.functions + p.body
+    }
+
+    /// What `slot`'s table holds of the procedural materials' bakes (what its frames declare).
+    private func proceduralResources(slot: Int) -> [MTLResource] { Array(slotTextures[slot].values) }
+
+    /// The procedural materials as their graphs are now: each whose graph's key isn't the one it shows gets its bake's
+    /// textures and values (a benchmark bakes it there and then; the app asks for it and takes it a frame when it is
+    /// ready). Then `slot`'s table and extras catch up, and textures no frame can read any more go.
+    private func updateProcedural(slot: Int) {
+        if !scene.procedural.isEmpty {
+            let key = scene.settings.materials
+            if proceduralKeys.catalog != key { proceduralKeys = (key, [:]) }
+            let catalog = MaterialCatalog.resolve(key)
+            let bake = MaterialBake.shared(device)
+            for pm in scene.procedural {
+                guard let g = catalog.graph(pm.graph) else { continue }
+                let k = proceduralKeys.keys[pm.graph] ?? MaterialBake.key(g, catalog: catalog)
+                proceduralKeys.keys[pm.graph] = k
+                guard proceduralApplied[pm.material] != k else { continue }
+                if let number = pm.program, let plan = try? MatPlan(g, library: { catalog.graph($0) }),
+                   let p = try? MatShaderCode.program(plan, number: number, base: pm.paramBase), p.functions + p.body == pm.code,
+                   pm.paramBase + p.params.count <= scene.proceduralParams.count {
+                    // As code: its values into the parameters (its bake still gives the height's parallax and the opacity).
+                    scene.proceduralParams.replaceSubrange(pm.paramBase..<(pm.paramBase + p.params.count), with: p.params)
+                    scene.proceduralParamsVersion += 1
+                }
+                if let o = bake.baked(k) ?? (benchmark != nil ? bake.bakeNow(g, key: k, catalog: catalog) : nil) {
+                    applyProcedural(pm, outputs: o, key: k)
+                } else {
+                    bake.request(g, key: k, catalog: catalog) {}
+                }
+            }
+        }
+        updatePainted()
+        guard slot < textureTables.count else { return }
+        if !tablePending[slot].isEmpty {
+            let table = textureTables[slot].contents().bindMemory(to: MTLResourceID.self, capacity: materialTextures.count)
+            for (i, t) in tablePending[slot] where Int(i) < materialTextures.count {
+                table[Int(i)] = t.gpuResourceID
+                slotTextures[slot][i] = t
+            }
+            tablePending[slot] = [:]
+        }
+        if extrasWritten[slot] != scene.extrasVersion {
+            let extras = scene.extrasArray(), opacity = scene.opacityRecords()
+            if extras.count * MemoryLayout<GPUMaterialExtra>.stride <= extrasBuffers[slot].length {
+                extras.withUnsafeBytes { extrasBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+            if !opacity.isEmpty, opacity.count * 16 <= opacityBuffers[slot].length {
+                opacity.withUnsafeBytes { opacityBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+            extrasWritten[slot] = scene.extrasVersion
+        }
+        if procParamsWritten[slot] != scene.proceduralParamsVersion {
+            let params = scene.proceduralParams
+            if !params.isEmpty, params.count * 16 <= procParamBuffers[slot].length {
+                params.withUnsafeBytes { procParamBuffers[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            }
+            procParamsWritten[slot] = scene.proceduralParamsVersion
+        }
+        retiredTextures.removeAll { frameIndex &- $0.frame > UInt32(2 * Renderer.maxFramesInFlight + 1) }
+    }
+
+    /// The displaced meshes whose material's height (or its displacement's values) changed: their vertices moved from
+    /// where they were (MaterialShaders/MatDisplace.metal), then their structures built again, and the top level's
+    /// (every slot's, as it comes).
+    private func encodeDisplacement(passes: FrameEncoder) {
+        guard !displacePending.isEmpty, let buffers = displaceBuffers, var build = sceneBuffers.displacedBuild,
+              let pipeline = try? MatCompiler.shared.state("matDisplace", device: device) else { return }
+        defer { displacePending = [] }
+        guard let enc = passes.compute("displace", serial: true) else { return }
+        enc.setComputePipelineState(pipeline)
+        enc.setBuffer(buffers.vertices, offset: 0, index: 1)
+        enc.setBuffer(buffers.members, offset: 0, index: 2)
+        enc.setBuffer(uvBuffer, offset: 0, index: 3)
+        enc.setBuffer(positionBuffer, offset: 0, index: 4)
+        enc.useResources([buffers.vertices, buffers.members, uvBuffer], usage: .read)
+        enc.useResource(positionBuffer, usage: [.read, .write])
+        for d in scene.displaced where displacePending.contains(d.material) {
+            guard let (height, s) = displaceSource[d.material] else { continue }
+            // The height's level whose texels are about as far apart as the vertices.
+            let spacing = 0.5 * d.edge * d.uvPerMetre * s.uvScale * Float(height.width)
+            var args = MatDisplaceArgs(first: UInt32(d.first), count: UInt32(d.count), records: UInt32(d.records), members: UInt32(d.members),
+                                       amount: s.displacement / d.scale, mid: s.displacementMid, uvScale: s.uvScale,
+                                       lod: min(max(log2(max(spacing, 1)), 0), Float(height.mipmapLevelCount - 1)))
+            enc.setBytes(&args, length: MemoryLayout<MatDisplaceArgs>.stride, index: 0)
+            enc.setTexture(height, index: 0)
+            enc.useResource(height, usage: .read)
+            enc.dispatchThreads(MTLSize(width: d.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+            build.meshes.append(d.mesh)
+        }
+        passes.endCompute()
+        guard !build.meshes.isEmpty else { return }
+        passes.updatePrimitives(build, pass: "displace")
+        instanceASBuilt.removeAll()
+    }
+
+    /// Instances moved for good (Scene.moveInstances: a terrain's scatter, what stands on it): their records and
+    /// descriptors written again, the top level refitted. A still scene's are one set for every slot: written once.
+    private func writeInstanceEdits(slot: Int, still: Bool) {
+        let edits = scene.takeInstanceEdits()
+        while pendingInstanceEdits.count < Renderer.maxFramesInFlight { pendingInstanceEdits.append([]) }
+        if !edits.isEmpty { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s].formUnion(edits) } }
+        let list = pendingInstanceEdits[slot]
+        guard !list.isEmpty else { return }
+        if still { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s] = [] } } else { pendingInstanceEdits[slot] = [] }
+        let records = instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count)
+        for i in list where i < scene.instances.count {
+            scene.writeInstanceData(into: records, all: true, range: i..<(i + 1))
+            sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: true, range: i..<(i + 1))
+        }
+        if still { stillRefitPending = true } else { instanceASStale[slot] = true }
+    }
+    private var pendingInstanceEdits: [Set<Int>] = []
+    private var stillRefitPending = false
+
+    /// The terrain's sectors the brushes changed (Renderer+Terrain.swift): their new vertices copied into their
+    /// buffers, their structures built again, the top level's after them (a still scene's refitted, another's built
+    /// again in every slot as it comes); the raster's bounds of them grown to hold them; the reference starts over.
+    private func encodeTerrain(slot: Int, passes: FrameEncoder) {
+        guard let work = prepareTerrainFrame(slot: slot, buffers: sceneBuffers), !work.meshes.isEmpty, var build = sceneBuffers.terrainBuild else {
+            // (Instances moved for good in a still scene: its one top level refitted.)
+            if stillRefitPending, let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") }
+            stillRefitPending = false
+            return
+        }
+        stillRefitPending = false
+        passes.copyBuffers(work.copies, pass: "terrain copy")
+        build.meshes = work.meshes
+        passes.updatePrimitives(build, pass: "terrain")
+        if let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") } else { instanceASBuilt.removeAll() }
+        if let rs = rasterScene {
+            let records = rs.meshes.contents().bindMemory(to: GPURasterMesh.self, capacity: rs.meshCount)
+            for (m, box) in work.bounds where m < rs.meshCount && !box.isEmpty {
+                let r = records[m]
+                records[m].lo = SIMD4(simd_min(SIMD3(r.lo.x, r.lo.y, r.lo.z), box.lo), r.lo.w)
+                records[m].hi = SIMD4(simd_max(SIMD3(r.hi.x, r.hi.y, r.hi.z), box.hi), r.hi.w)
+            }
+        }
+        resetReference()
+    }
+
+    /// An RGBA8 texture's sRGB view (made once a texture).
+    func srgbView(_ t: MTLTexture) -> MTLTexture {
+        if let v = srgbViews[ObjectIdentifier(t)] { return v }
+        let v = t.makeTextureView(pixelFormat: .rgba8Unorm_srgb) ?? t
+        srgbViews[ObjectIdentifier(t)] = v
+        if srgbViews.count > 64 {   // views of textures the bakes and the painter let go of
+            let live = Set(proceduralTextures.values.map { ObjectIdentifier($0) })
+            srgbViews = srgbViews.filter { live.contains(ObjectIdentifier($0.value)) || $0.value === v }
+        }
+        return v
+    }
+
+    /// Texture slot `index` (Scene.textures) holds `t` from now on: each frame slot's table takes it as it is next
+    /// written; what it held goes once no frame in flight can read it.
+    func installTexture(_ t: MTLTexture, slot index: UInt32) {
+        guard proceduralTextures[index] !== t else { return }
+        if let old = proceduralTextures[index] { retiredTextures.append((frameIndex, old)) }
+        proceduralTextures[index] = t
+        for s in tablePending.indices { tablePending[s][index] = t }
+    }
+
+    /// `pm`'s material as its graph's bake `o` says: its textures in its slots (each frame slot takes them as it is
+    /// next written), its values (a texture's channel is the value; a channel without one, a neutral value), its
+    /// extras (parallax, opacity cutoff, UV scale, occlusion).
+    private func applyProcedural(_ pm: ProceduralMaterial, outputs o: MatOutputs, key: String) {
+        let textures: [MTLTexture?] = [o.baseColor.map(srgbView), o.orm, o.normal, o.emissive.map(srgbView), o.height, o.opacity]
+        for (k, t) in textures.enumerated() {
+            guard let t, k < pm.slots.count else { continue }
+            installTexture(t, slot: pm.slots[k])
+        }
+        let code = pm.program != nil
+        // As code, the graph's channels are the shading's (its bake's textures stand by unread, but height and opacity).
+        func has(_ c: ProcSlot) -> Bool {
+            if code && c != .height && c != .opacity {
+                switch c {
+                case .baseColor: return pm.channels.contains(.baseColor)
+                case .orm: return !pm.channels.isDisjoint(with: [.ambientOcclusion, .roughness, .metallic])
+                case .normal: return pm.channels.contains(.normal)
+                default: return pm.channels.contains(.emissive)
+                }
+            }
+            return textures[c.rawValue] != nil
+        }
+        func slot(_ c: ProcSlot) -> UInt32 { has(c) && !code ? pm.slots[c.rawValue] : .max }
+        let s = o.surface
+        var m = scene.materials[pm.material]
+        m.textures = SIMD4(slot(.baseColor), slot(.orm), slot(.normal), slot(.emissive))
+        m.albedo = SIMD4(has(.baseColor) ? SIMD3(repeating: 1) : SIMD3(repeating: 0.5), has(.orm) ? 1 : 0)
+        m.emission = SIMD4(has(.emissive) ? SIMD3(repeating: s.emissiveIntensity) : .zero, has(.orm) ? 1 : 0.6)
+        m.params = SIMD4(1, s.normalStrength, 0, 0)
+        scene.setMaterial(pm.material, m)
+        // A material whose every instance is displaced: its height moves them (encodeDisplacement), and isn't the
+        // parallax's too.
+        let displaced = scene.displacedMaterials.contains(pm.material) && s.displacement > 0
+        let depth = displaced ? 0 : s.heightDepth
+        var e = GPUMaterialExtra()
+        e.textures = SIMD4(has(.height) && depth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
+                           pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, 1, pm.program.map(UInt32.init) ?? .max)
+        e.surface = SIMD4(depth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
+        if let h = o.height, scene.displaced.contains(where: { $0.material == pm.material }) {
+            let was = displaceSource[pm.material]
+            if was?.height !== h || was?.surface.displacement != s.displacement || was?.surface.displacementMid != s.displacementMid
+                || was?.surface.uvScale != s.uvScale {
+                displaceSource[pm.material] = (h, s)
+                displacePending.insert(pm.material)
+            }
+        }
+        if scene.materialExtras[pm.material] != e {
+            scene.materialExtras[pm.material] = e
+            scene.extrasVersion += 1
+        }
+        proceduralApplied[pm.material] = key
+    }
+
+    /// The pending edit's system in the particles' place, with its code's `kernels`, replayed from the start.
+    private func adoptEffects(_ pending: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String]),
+                              kernels: ParticleKernels?) {
+        pendingEffects = nil
+        guard let gpu = particlesGPU else { return }
+        do {
+            try gpu.adopt(pending.system.continuing(gpu.system), kernels: kernels, device: device)
+        } catch {
+            print("Effects: the edit isn't run (\(error))")
+            return
+        }
+        scene.adoptEffects(scene.settings.effects, system: pending.system, effects: pending.effects, owners: pending.owners, notes: pending.notes)
+        scene.replayParticles()
+        particlesVersion += 1
+    }
+
+    /// What the VFX editor shows of the scene's effects (nil: it has none).
+    private func effectsStatus() -> VFXStatus? {
+        guard let gpu = particlesGPU else { return nil }
+        var s = VFXStatus()
+        let system = gpu.system
+        s.emitters = system.emitters.indices.map { i in
+            VFXStatus.Emitter(effect: scene.effectOwners[safe: i] ?? "", name: system.emitters[i].name,
+                              program: system.programs[i] != nil, capacity: system.emitters[i].capacity)
+        }
+        if let source = pendingEffects?.system.programSource ?? system.programSource {
+            s.failure = VFXCompiler.shared.failure(for: source, setup: vfxSetup)
+            s.compiling = s.failure == nil && (pendingEffects != nil || gpu.programKernels == nil)
+        }
+        s.compileMs = VFXCompiler.shared.lastMilliseconds
+        s.notes = scene.effectNotes
+        s.key = scene.settings.effects
+        for (i, n) in gpu.aliveCounts().enumerated() where i < s.emitters.count { s.emitters[i].alive = n }
+        s.time = animTime
+        return s
+    }
+
+    /// What the VFX editor's gizmos show (nil: none).
+    func setGizmos(_ target: VFXGizmos.Target?) {
+        gizmoTarget = target
+        if target?.emitter == nil { gizmoHandle = nil }
+    }
+
+    /// The scene's clock at `t` (s): the VFX editor's timeline (the particles replay from the start to go back).
+    func setTime(_ t: Float) {
+        animTime = max(t, 0)
+        previousAnimTime = animTime
+    }
+
+    /// The gizmos over the finished frame `output` (Shaders/Gizmo.metal).
+    /// Arms click-to-pick (the controller's, for the Material Designer).
+    func armPick() { pickArmed = true }
+    func disarmPick() {
+        pickArmed = false
+        if !pickSelects { pickRequest = nil }
+    }
+
+    /// The pick's ray, traced this frame (one thread: pickKernel): its answer is read when this slot is next written.
+    private func encodePick(_ plan: FramePlan, passes: FrameEncoder) {
+        guard let cursor = pickRequest else { return }
+        pickRequest = nil
+        if pickBuffer == nil {
+            pickBuffer = device.makeBuffer(length: 48, options: .storageModeShared)
+            pickBuffer?.label = "pick"
+        }
+        guard let buffer = pickBuffer, let enc = passes.compute("pick") else { return }
+        var ray = (SIMD4<Float>(camera.position, 0), SIMD4<Float>(cursorRay(cursor), 0))
+        bind(enc, .pick, plan.uniforms, sceneSlot: plan.slot)
+        enc.setBytes(&ray, length: 32, index: 9)
+        enc.setBuffer(buffer, offset: 0, index: 10)
+        enc.useResource(buffer, usage: [.read, .write])
+        dispatch(enc, .pick, width: 1, height: 1)
+        passes.endCompute()
+        pickPending = plan.slot
+    }
+
+    /// A pick traced in `slot`'s last frame (which is done): what it found.
+    private func readPick(slot: Int) {
+        guard pickPending == slot, let buffer = pickBuffer else { return }
+        pickPending = nil
+        let v = buffer.contents().bindMemory(to: SIMD4<Float>.self, capacity: 3)
+        if pickSelects {
+            pickSelects = false
+            let i = v[0].x >= 0 ? Int(v[0].x) : nil
+            select(i.map { FrameTarget(kind: scene.settings.kind, scope: MaterialAssignments.scope(scene.settings), instances: [$0], box: nil) })
+            onSelectedInView?(i)
+            return
+        }
+        guard v[0].x >= 0 else { onMaterialPicked?(nil); return }
+        let material = Int(v[0].y)
+        // Its fingerprint as the scene made it: a procedural one's from before it was (Scene.makeProcedural).
+        let procedural = scene.procedural.first { $0.material == material }
+        let fingerprint = procedural?.fingerprint ?? (material < scene.materials.count ? MaterialAssignments.fingerprint(scene.materials[material]) : "")
+        onMaterialPicked?(MaterialPick(instance: Int(v[0].x), material: material, fingerprint: fingerprint, graph: procedural?.graph,
+                                       albedo: SIMD3(v[1].x, v[1].y, v[1].z), position: SIMD3(v[2].x, v[2].y, v[2].z)))
+    }
+
+    private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
+        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments()   // the brushes, what the graph showed
+        if let target = gizmoTarget, let gpu = particlesGPU {
+            let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
+            gizmoHandle = handle
+            segments += s
+        } else {
+            gizmoHandle = nil
+        }
+        gizmoViewSize = SIMD2(Float(output.width), Float(output.height))
+        guard !segments.isEmpty else { return }
+        let bytes = segments.count * MemoryLayout<VFXGizmos.Segment>.stride
+        if (gizmoBuffers[slot]?.length ?? 0) < bytes {
+            gizmoBuffers[slot] = device.makeBuffer(length: max(bytes * 2, 4096), options: .storageModeShared)
+            gizmoBuffers[slot]?.label = "gizmos\(slot)"
+        }
+        guard let buffer = gizmoBuffers[slot], let enc = passes.compute("gizmos") else { return }
+        segments.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        let c = camera
+        var view = VFXGizmos.View(position: SIMD4(c.position, 0), right: SIMD4(c.right, 0), up: SIMD4(c.up, 0), forward: SIMD4(c.forward, 0),
+                                  size: gizmoViewSize, tanY: tan(c.fovY / 2), aspect: gizmoViewSize.x / max(gizmoViewSize.y, 1),
+                                  count: UInt32(segments.count), samples: VFXGizmos.samples)
+        enc.setComputePipelineState(pipelines[.gizmoLines])
+        enc.setBytes(&view, length: MemoryLayout<VFXGizmos.View>.stride, index: 0)
+        enc.setBuffer(buffer, offset: 0, index: 1)
+        enc.setTexture(output, index: 0)
+        dispatch(enc, .gizmoLines, width: Int(VFXGizmos.samples), height: segments.count)
+        passes.endCompute()
     }
 
     /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
@@ -996,10 +1612,11 @@ final class Renderer: NSObject {
                 pipelines = ready
             } else if let made = try makePipelines(api: prepared.api, compiler: compiler(for: prepared.api),
                                                    lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled,
-                                                   generation: shaderGeneration, current: pipelines) {
+                                                   generation: shaderGeneration, procedural: scene.proceduralCode, current: pipelines) {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
             }
             try createSceneResources(prepared)
+            terrain.sceneChanged(scene, blocks: sceneBuffers.blocks)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old.parts!.scene
@@ -1010,7 +1627,11 @@ final class Renderer: NSObject {
         }
         // The open world made around another tile is the same world in the same place: what the frames have gathered
         // of it holds.
-        let sameWorld = scene.settings.isSameWorld(as: oldSettings)
+        // ...and the city with another building's interior in it: the same city where it was.
+        let sameWorld = scene.settings.isSameWorld(as: oldSettings) || scene.settings.isSameCity(as: oldSettings)
+        // The workshop edited: the same few plants a little changed, where they were. What the frames gathered of the
+        // light mostly holds (the plants are new, but the sky, the ground and the camera aren't).
+        let sameWorkshop = scene.settings.isSameWorkshop(as: oldSettings)
         var moved = SIMD2<Float>()
         if sameWorld, let was = oldPlace, let now = scene.worldPlace {
             // The scene's origin has moved: the camera is where it was in the world.
@@ -1022,7 +1643,9 @@ final class Renderer: NSObject {
             // ...and so is where Freeze LOD holds the detail for.
             frozenLOD?.0 += SIMD3(moved.x, 0, moved.y)
         }
-        if !(sameWorld && moved == .zero) {
+        if sameWorkshop {
+            resetReference()
+        } else if !(sameWorld && moved == .zero) {
             resetGIState()
             upscalerReset = true
             resetReference()
@@ -1037,8 +1660,29 @@ final class Renderer: NSObject {
             camera = scene.defaultCamera
             prevCamera = camera
         }
+        // Walking: on in what it was on (the same workshop or city a little changed), off otherwise.
+        walkGrid = scene.walkColliders.isEmpty && scene.walkGround == nil ? nil : ColliderGrid(scene.walkColliders)
+        if walkGrid == nil || !(sameWorkshop || scene.settings.isSameCity(as: oldSettings)) { walker = nil }
+        lastLiftY = scene.interiorControls?.lifts.map(\.y) ?? []
+        // The workshops and the VFX stage: the camera turns about what they show, framed on it when that changes (the
+        // stage's effects, not their edits: a capacity's edit makes the scene again).
+        let stageChanged = scene.settings.kind == .vfxStage
+            && (oldSettings.kind != .vfxStage || oldSettings.stage.effects != scene.settings.stage.effects)
+        // (Another scene's selection names other instances.)
+        if let s = selection, !inScene(s.target) { select(nil) }
+        if walker != nil {
+            orbit = nil
+        } else if !scene.settings.kind.orbits {
+            if resetCamera { orbit = nil }   // (the pivot navigation set stays while the camera does)
+        } else if resetCamera || stageChanged || (scene.settings.kind.isWorkshop && (!sameWorkshop
+                    || oldSettings.plants.layout != scene.settings.plants.layout || oldSettings.plants.species != scene.settings.plants.species
+                    || oldSettings.buildings.view != scene.settings.buildings.view)) {
+            frameWorkshop()
+        } else if orbit == nil, let focus = scene.focus {
+            orbit = (focus.centroid, length(camera.position - focus.centroid))
+        }
         // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
-        if sameWorld, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
+        if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
         if #available(macOS 26.0, *) { (metal4Storage as? Metal4Frame)?.noteSceneChange() }
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
@@ -1050,6 +1694,19 @@ final class Renderer: NSObject {
         }
         print(String(format: "Scene: %@, %d instances, %d lights, %@ (installed in %.0f ms)", scene.settings.kind.title,
                      sceneBuffers.instanceCount, scene.lights.count, builtAPI.title, installedMs))
+        if let target = pendingFrame, target.scope == MaterialAssignments.scope(scene.settings) || target.kind == scene.settings.kind {
+            frame(target)
+        }
+        // The Project Graph's outline of it (not of the open world's next tile, or the city's next interior).
+        if !(sameWorld && scene.settings.kind == oldSettings.kind) { publishOutline() }
+    }
+
+    /// The scene's outline to the Project Graph and its file.
+    private func publishOutline() {
+        guard OutlineStore.writes else { return }
+        let outline = scene.makeOutline()
+        onOutline?(outline)
+        OutlineStore.save(outline, wait: benchmark != nil)
     }
 
     /// What shading reads besides the scene's buffers: the textures and their table, and each slot's arguments.
@@ -1057,7 +1714,24 @@ final class Renderer: NSObject {
         // The materials are the scene's as the buffers were made; what has changed since goes to every slot.
         materialsPending = [Range<Int>?](repeating: scene.takeMaterialsDirty(), count: Renderer.maxFramesInFlight)
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
-        textureTable = try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable")
+        textureTables = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(materialTextures.map(\.gpuResourceID), "textureTable\($0)") }
+        let extras = scene.extrasArray(), opacity = scene.opacityRecords()
+        extrasBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(extras, "materialExtras\($0)") }
+        opacityBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(opacity, "opacity\($0)") }
+        extrasWritten = [Int](repeating: scene.extrasVersion, count: Renderer.maxFramesInFlight)
+        procParamBuffers = try (0..<Renderer.maxFramesInFlight).map { try makeBuffer(scene.proceduralParams, "proceduralParams\($0)") }
+        procParamsWritten = [Int](repeating: scene.proceduralParamsVersion, count: Renderer.maxFramesInFlight)
+        proceduralTextures = [:]
+        slotTextures = Array(repeating: [:], count: Renderer.maxFramesInFlight)
+        tablePending = Array(repeating: [:], count: Renderer.maxFramesInFlight)
+        proceduralApplied = [:]
+        painter.sceneChanged()
+        displaceBuffers = nil
+        if !scene.displaced.isEmpty {
+            displaceBuffers = (try makeBuffer(scene.displaceVertices, "displaceVertices"), try makeBuffer(scene.displaceMembers, "displaceMembers"))
+        }
+        displaceSource = [:]
+        displacePending = []
         staticMinLod = try makeBuffer([Float](repeating: 0, count: max(materialTextures.count, 1)), "textureMinLod")
         feedbackDummy = try makeBuffer([UInt32](repeating: 0, count: max(materialTextures.count, 1) * TextureStreamer.levelBins),
                                        "textureFeedback")
@@ -1070,11 +1744,13 @@ final class Renderer: NSObject {
             let p = args.contents()
             p.storeBytes(of: materialBuffers[slot].gpuAddress, toByteOffset: 0, as: UInt64.self)
             p.storeBytes(of: uvBuffer.gpuAddress, toByteOffset: 8, as: UInt64.self)
-            p.storeBytes(of: textureTable.gpuAddress, toByteOffset: 16, as: UInt64.self)
+            p.storeBytes(of: textureTables[slot].gpuAddress, toByteOffset: 16, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.minLodBuffer(slot: slot) ?? staticMinLod).gpuAddress, toByteOffset: 24, as: UInt64.self)
             p.storeBytes(of: (textureStreamer?.feedbackBuffer(slot: slot) ?? feedbackDummy).gpuAddress, toByteOffset: 32, as: UInt64.self)
             p.storeBytes(of: emissiveBuffer.gpuAddress, toByteOffset: 40, as: UInt64.self)
             p.storeBytes(of: triangleMaterialBuffer.gpuAddress, toByteOffset: 48, as: UInt64.self)
+            p.storeBytes(of: extrasBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingExtrasOffset, as: UInt64.self)
+            p.storeBytes(of: procParamBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingProcParamsOffset, as: UInt64.self)
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
@@ -1084,10 +1760,18 @@ final class Renderer: NSObject {
         // And the borrowed meshes' buffers, which a hit reaches through the mesh table, the instance blocks'
         // records, which it reaches through theirs, and the SDF shapes, which the ray queries reach through their boxes'
         // data.
-        shadingResources = materialBuffers + [uvBuffer, textureTable, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
-            + (textureStreamer?.placement == false ? [] : materialTextures) + sceneBuffers.blockBuffers
-        shadingResources += sceneBuffers.instanceResources + (sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? [])
-            + (sceneBuffers.sdf.shapeCount > 0 ? sceneBuffers.sdf.buffers : [])
+        // One += per part: a single expression of them all took the type checker over half a second.
+        var resources: [MTLResource] = []
+        for perSlot in [materialBuffers, textureTables, extrasBuffers, opacityBuffers, procParamBuffers] { resources += perSlot }
+        let shared: [MTLResource] = [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
+        resources += shared
+        if textureStreamer?.placement != false { resources += materialTextures }
+        resources += sceneBuffers.blockBuffers
+        resources += sceneBuffers.instanceResources
+        let voxels: [MTLBuffer] = sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? []
+        resources += voxels
+        if sceneBuffers.sdf.shapeCount > 0 { resources += sceneBuffers.sdf.buffers }
+        shadingResources = resources
     }
 
     /// The blue-noise tile as a texture; without `values`, zeros (bound until the tile is ready). Any thread.
@@ -1143,13 +1827,17 @@ final class Renderer: NSObject {
         da.arrayLength = 2
         da.usage = .shaderRead
         da.storageMode = .private
+        let du = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg32Uint, width: 1, height: 1, mipmapped: false)
+        du.usage = .shaderRead
+        du.storageMode = .private
         guard let t3 = device.makeTexture(descriptor: d3), let t2 = device.makeTexture(descriptor: d2),
-              let ta = device.makeTexture(descriptor: da) else {
+              let ta = device.makeTexture(descriptor: da), let tu = device.makeTexture(descriptor: du) else {
             throw RendererError.resourceCreation("dummy textures")
         }
         dummy3D = t3
         dummy2D = t2
         dummyArray = ta
+        dummyUInt2D = tu
     }
 
     /// The fog's 3D noise (~50 ms to generate). Any thread.
@@ -1199,6 +1887,14 @@ final class Renderer: NSObject {
         return fogGrid
     }
 
+    private func taaTargets(width: Int, height: Int) -> TAATargets? {
+        if let t = taaTargetsCache, t.width == width, t.height == height { return t }
+        taaTargetsCache = nil   // (the old ones go first)
+        taaTargetsCache = try? TAATargets(device: device, width: width, height: height)
+        taaHistory = false
+        return taaTargetsCache
+    }
+
     private func postTargets(width: Int, height: Int) -> PostTargets? {
         if let t = postTargetsCache, t.width == width, t.height == height { return t }
         postTargetsCache = try? PostTargets(device: device, width: width, height: height)
@@ -1230,6 +1926,7 @@ final class Renderer: NSObject {
         p.grid = SIMD4(near, far, log(far / near), Float(grid?.slices ?? 0))
         let volumes = f.volumes ? Array(scene.fogVolumes.prefix(GPUFogParams.maxVolumes)) : []
         for (i, v) in volumes.enumerated() { p.setVolume(i, v.gpu) }
+        (p.interiorLo, p.interiorHi) = Renderer.interiorBox(scene)
         p.counts = SIMD4(UInt32(grid?.columns ?? 0), UInt32(grid?.rows ?? 0), UInt32(volumes.count),
                          GPUFogParams.enabled | (historyValid ? GPUFogParams.historyValid : 0)
                          | (f.reflections ? GPUFogParams.reflections : 0) | (f.lights ? 0 : GPUFogParams.skyLight))
@@ -1524,7 +2221,11 @@ final class Renderer: NSObject {
         }
         if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
         // Deforming meshes (the crowd's, cloths, soft bodies, hair) change their structures' bounds: the top level's too.
-        instanceASStale[slot] = first || !scene.movingInstances.isEmpty || virtualTracing != nil || scene.hasDeformingMeshes
+        // (What moves only now and then, doors and lifts: only once each slot has caught up with its last move.)
+        if scene.motionThisFrame { lastMotionFrame = Int(frameIndex) }
+        let moved = !scene.movingInstances.isEmpty && slotRefitFrame[slot] <= lastMotionFrame
+        instanceASStale[slot] = first || moved || virtualTracing != nil || scene.hasDeformingMeshes
+        writeInstanceEdits(slot: slot, still: still)   // (after: it may make the slot's structure stale)
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
                                                                first: sceneBuffers.instanceCount, scene: scene) {
@@ -1551,6 +2252,8 @@ final class Renderer: NSObject {
                 plantsWritten[slot] = state
             }
         }
+        readPick(slot: slot)
+        updateProcedural(slot: slot)
         writeTraceScene(slot: slot)
         crowdSkinner?.write(slot: slot)
         if !scene.instances.isEmpty, !still {
@@ -1606,6 +2309,21 @@ final class Renderer: NSObject {
     }
 
     private func updateCamera(dt: Float) {
+        if flight != nil { fly(); return }
+        if walker != nil {
+            walk(dt)
+            return
+        }
+        followLocked()
+        // (A benchmark's walking camera: a body for the doors and the furniture.)
+        let body = benchmark?.current.body == true ? camera.position - SIMD3(0, Walker.eyeStanding, 0) : nil
+        scene.interiorControls?.advance(dt, walker: body)
+        if let body {
+            if let last = benchmarkBody, dt > 0 {
+                scene.interiorControls?.push(scene.physics, feet: body, velocity: (body - last) / dt, height: Walker.standing)
+            }
+            benchmarkBody = body
+        }
         var move = SIMD3<Float>(repeating: 0)
         let forward = camera.forward, right = camera.right
         if heldKeys.contains("w") { move += forward }
@@ -1614,11 +2332,284 @@ final class Renderer: NSObject {
         if heldKeys.contains("a") { move -= right }
         if heldKeys.contains("e") { move.y += 1 }
         if heldKeys.contains("q") { move.y -= 1 }
-        if length(move) > 0 {
+        // Flythrough: only while the right button is held, as in Unity's scene view.
+        if length(move) > 0, rightHeld {
             let speed = settings.moveSpeed * (shiftHeld ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
+            orbit?.target += normalize(move) * speed * dt   // it moves what it turns about with it
+            pivotLock = nil
         }
     }
+
+    // MARK: - Interiors on demand
+
+    private var interiorWanted: (key: String?, since: Double)?
+    private var lastCameraPosition: SIMD3<Float>?
+
+    /// The city's building the camera is in or nearest (within reach, not far above it): its interior is made, in the
+    /// background (SceneSettings.interior); left behind, it is dropped. It waits a moment and while the camera flies
+    /// fast, so that passing by doesn't make one.
+    private func chooseInterior() {
+        let now = CACurrentMediaTime()
+        let p = camera.position, flat = SIMD2(p.x, p.z)
+        let speed = lastCameraPosition.map { length($0 - p) } ?? 0
+        lastCameraPosition = p
+        guard speed < 0.25 else { return }   // (a frame's way at 15 m/s and 60 fps)
+        let reach = settings.scene.city.interiorReach
+        func gap(_ r: CityPlan.Rect) -> Float { length(simd_max(simd_max(r.lo - flat, flat - r.hi), .zero)) }
+        let current = settings.scene.interior
+        var wanted = current
+        if let inside = scene.lotAreas.first(where: { gap($0.rect) == 0 && p.y < $0.height + 1 }) {
+            wanted = inside.key
+        } else if let near = scene.lotAreas.filter({ p.y < $0.height + 25 }).min(by: { gap($0.rect) < gap($1.rect) }) {
+            let held = scene.lotAreas.first { $0.key == current }
+            if held.map({ gap($0.rect) > reach + 15 }) ?? true { wanted = gap(near.rect) < reach ? near.key : nil }
+        } else {
+            wanted = nil
+        }
+        guard wanted != current else { interiorWanted = nil; return }
+        if interiorWanted?.key != wanted { interiorWanted = (wanted, now); return }
+        if let since = interiorWanted?.since, now - since > 0.4 || benchmark != nil {
+            settings.scene.interior = wanted
+            interiorWanted = nil
+        }
+    }
+
+    // MARK: - Walking
+
+    /// Walk mode on or off. On: the walker stands under the camera (in the building workshop, outside, at the
+    /// building's door, if the camera isn't in the building).
+    private func toggleWalk() {
+        if walker != nil {
+            walker = nil
+            scene.interiorControls?.flashlight.on = false
+            walkMessage = "Flying"
+            return
+        }
+        guard let grid = walkGrid else { walkMessage = "Nothing to walk on here"; return }
+        var feet = camera.position
+        let inside = scene.walkAreas.contains { area in
+            let p = area.at.inverse * SIMD4(camera.position, 1)
+            return area.rect.contains(SIMD2(p.x, p.z)) && p.y < area.building.height
+        }
+        if scene.settings.kind == .buildings, !inside, let area = scene.walkAreas.first,
+           let door = area.building.plan.outsideDoors(0).first {
+            // In front of the door, facing it.
+            let room = area.building.plan.storeys[0].rooms[door.a].rect.center
+            var out = door.alongX ? SIMD2<Float>(0, door.at.y > room.y ? 1 : -1) : SIMD2<Float>(door.at.x > room.x ? 1 : -1, 0)
+            let p = door.at + out * 1.6
+            let w = area.at * SIMD4(p.x, 1, p.y, 1)
+            feet = SIMD3(w.x, w.y, w.z)
+            let o4 = area.at * SIMD4(out.x, 0, out.y, 0)
+            out = SIMD2(o4.x, o4.z)
+            camera.yaw = atan2(-out.x, out.y)
+            camera.pitch = 0
+        }
+        if let down = grid.raycast(feet + SIMD3(0, 0.5, 0), [0, -1, 0], limit: 300) { feet.y += 0.5 - down }
+        else if let ground = scene.walkGround { feet.y = ground(feet.x, feet.z) }
+        else { feet.y -= Walker.eyeStanding }
+        walker = Walker(feet: feet)
+        orbit = nil
+        camera.pitch = min(max(camera.pitch, -0.7), 0.7)
+        walkMessage = "Walking: W A S D, Shift runs, Space jumps, C crouches, E or a click uses, F the flashlight, V flies"
+    }
+
+    /// A walking frame: the walker told what is held, the doors and lifts moved on, the camera at its eyes.
+    private func walk(_ dt: Float) {
+        guard var w = walker, let grid = walkGrid else { walker = nil; return }
+        let controls = scene.interiorControls
+        let fw = camera.forward
+        let ahead = length(SIMD2(fw.x, fw.z)) > 1e-4 ? normalize(SIMD2(fw.x, fw.z)) : SIMD2<Float>(0, -1)
+        let right = SIMD2(-ahead.y, ahead.x)
+        var move = SIMD2<Float>.zero
+        if heldKeys.contains("w") { move += ahead }
+        if heldKeys.contains("s") { move -= ahead }
+        if heldKeys.contains("d") { move += right }
+        if heldKeys.contains("a") { move -= right }
+        if length(move) > 0 { move = normalize(move) }
+        let input = Walker.Input(move: move, run: shiftHeld, crouch: crouchHeld || controlHeld, jump: jumpPending)
+        jumpPending = false
+        controls?.advance(dt, walker: w.feet)
+        let lifts = controls?.lifts.map(\.y) ?? []
+        var moved = zip(lifts, lastLiftY).map { $0 - $1 }
+        lastLiftY = lifts
+        controls?.push(scene.physics, feet: w.feet, velocity: w.velocity, height: w.height)
+        let obstacles = (controls?.obstacles ?? []) + (controls?.propObstacles(scene.physics) ?? [])
+        w.advance(dt, input: input, world: grid, moving: obstacles, carry: { p in
+            defer { if p < moved.count { moved[p] = 0 } }
+            return p < moved.count ? SIMD3(0, moved[p], 0) : .zero
+        }, terrain: scene.walkGround, remainder: &walkRemainder)
+        // Fallen out of the world: back where it started.
+        if w.feet.y < -50 { w = Walker(feet: camera.position) }
+        walker = w
+        camera.position = w.eyePosition
+        if let c = controls, c.flashlight.on {
+            c.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            c.flashlight.direction = camera.forward
+        }
+    }
+
+    /// Uses what is along `ray` from the eyes: a door, a switch, a lift's button.
+    private func use(_ ray: SIMD3<Float>) {
+        guard let c = scene.interiorControls else { return }
+        let blocked = walkGrid?.raycast(camera.position, ray, limit: 3)
+        if let what = c.use(from: camera.position, along: ray, blocked: blocked) { walkMessage = what }
+    }
+
+    /// The storey the walker is on, of the building it is in (its plan's), if it is in one.
+    var walkerStatus: WalkerStatus? {
+        guard let w = walker else { return nil }
+        var status = WalkerStatus(position: w.feet, yaw: camera.yaw, building: nil, storey: nil, local: nil, message: walkMessage,
+                                  flashlight: scene.interiorControls?.flashlight.on ?? false, crouched: w.crouched)
+        for (i, area) in scene.walkAreas.enumerated() {
+            let p = area.at.inverse * SIMD4(w.feet, 1)
+            guard area.rect.contains(SIMD2(p.x, p.z), margin: 0.5) else { continue }
+            status.building = i
+            status.local = SIMD3(p.x, p.y, p.z)
+            status.storey = area.building.plan.storeys.lastIndex { $0.floor <= p.y + 0.3 } ?? 0
+        }
+        return status
+    }
+
+    // MARK: - The selection, and where the camera flies
+
+    /// The camera flying (0.6 s, eased) to what the Project Graph showed or F framed, or (`about`) turning about the
+    /// pivot to the scene gizmo's view; where it turns about when there; the target asked for before its scene was in.
+    private var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double, seconds: Double, about: Bool)?
+    private var pendingFrame: FrameTarget?
+    static let flightSeconds = 0.6, turnSeconds = 0.25
+    /// What is selected in the view (a click, the Project Graph): its instances, and the box round them now (drawn
+    /// while it is selected); Shift-F's lock: where the box's centre was last frame (the camera follows it).
+    private var selection: (target: FrameTarget, box: AABB)?
+    private var pivotLock: SIMD3<Float>?
+
+    /// The pivot: the workshops' orbit, or the one navigation set, or 8 m in front.
+    private var pivot: ViewPivot {
+        get { orbit.map { ViewPivot(target: $0.target, distance: $0.distance) } ?? camera.pivot() }
+        set { orbit = (newValue.target, newValue.distance) }
+    }
+
+    /// `target` is of the scene that is in.
+    private func inScene(_ target: FrameTarget) -> Bool {
+        MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind
+    }
+
+    /// Where `target` is now: its instances that are shown (at most `limit` of them), or failing those its box.
+    private func bounds(of target: FrameTarget, limit: Int = .max) -> AABB {
+        var box = AABB()
+        for i in target.instances.prefix(limit) where scene.instances.indices.contains(i) && scene.instances[i].mask != 0 {
+            box.grow(scene.worldBounds(of: i))
+        }
+        if box.isEmpty, let b = target.box { box = b.aabb }
+        return box
+    }
+
+    /// Selects `target` in the view (nil: nothing); another scene's is ignored. It ends Shift-F's lock.
+    func select(_ target: FrameTarget?) {
+        pivotLock = nil
+        guard let target, inScene(target) else { selection = nil; return }
+        let box = bounds(of: target)
+        selection = box.isEmpty || !box.lo.x.isFinite || !box.hi.x.isFinite ? nil : (target, box)
+    }
+
+    /// The camera at `target`: now if its scene is in, otherwise once it is. It is selected.
+    func frame(_ target: FrameTarget) {
+        guard MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind && loading == nil else {
+            pendingFrame = target
+            return
+        }
+        pendingFrame = nil
+        select(target)
+        guard let box = selection?.box else { return }
+        if walker != nil { toggleWalk() }
+        let pitch = min(max(camera.pitch, -0.6), -0.1)
+        let framed = Camera.framing(box, fovY: camera.fovY, aspect: viewAspect, yaw: camera.yaw, pitch: pitch)
+        flight = (camera, framed.camera, framed.target, framed.distance, CACurrentMediaTime(), Renderer.flightSeconds, false)
+    }
+
+    /// F: the camera at the selection (nothing selected: the workshop's at what it shows). Shift-F: and it follows the
+    /// selection as it moves, until Shift-F again (or a pan, a flight, another selection).
+    private func frameSelection(lock: Bool) {
+        if lock, pivotLock != nil { pivotLock = nil; return }
+        guard let s = selection else { frameWorkshop(); return }
+        frame(s.target)
+        if lock, let box = selection?.box { pivotLock = box.centroid }
+    }
+
+    /// Shift-F's lock: the camera and its pivot moved as the selection's centre moved since the last frame.
+    private func followLocked() {
+        guard let last = pivotLock, let s = selection else { return }
+        let box = bounds(of: s.target, limit: 64)
+        guard !box.isEmpty else { return }
+        let d = box.centroid - last
+        pivotLock = box.centroid
+        guard d != .zero else { return }
+        camera.position += d
+        orbit?.target += d
+    }
+
+    /// The scene gizmo: the view from `axis`'s side (its cone clicked), or 45° steps on (dragged), turning about the
+    /// pivot.
+    func snapView(_ axis: ViewAxis) { turnView(to: Camera.angles(viewing: axis, yaw: camera.yaw)) }
+    func stepView(yawSteps: Int, pitchSteps: Int) {
+        turnView(to: Camera.stepped(yaw: camera.yaw, pitch: camera.pitch, yawSteps: yawSteps, pitchSteps: pitchSteps))
+    }
+    private func turnView(to angles: (yaw: Float, pitch: Float)) {
+        guard walker == nil, painter.active == nil else { return }
+        let p = pivot
+        var to = camera
+        to.yaw = angles.yaw
+        to.pitch = angles.pitch
+        to.position = p.target - to.forward * p.distance
+        flight = (camera, to, p.target, p.distance, CACurrentMediaTime(), Renderer.turnSeconds, true)
+    }
+
+    /// The flight's next step (the frame's camera), and where it ends: the pivot.
+    private func fly() {
+        guard let f = flight else { return }
+        let t = Float(min((CACurrentMediaTime() - f.start) / f.seconds, 1))
+        let e = t * t * (3 - 2 * t)
+        var c = f.to
+        var dyaw = (f.to.yaw - f.from.yaw).truncatingRemainder(dividingBy: 2 * .pi)
+        if dyaw > .pi { dyaw -= 2 * .pi } else if dyaw < -.pi { dyaw += 2 * .pi }
+        c.yaw = f.from.yaw + dyaw * e
+        c.pitch = f.from.pitch + (f.to.pitch - f.from.pitch) * e
+        // Turning about the pivot: on its sphere all the way; flying to a thing: straight there.
+        c.position = f.about ? f.target - c.forward * f.distance : f.from.position + (f.to.position - f.from.position) * e
+        camera = c
+        guard t >= 1 else { return }
+        flight = nil
+        camera.yaw = f.from.yaw + dyaw   // (the yaw it was asked for, give or take whole turns)
+        orbit = (f.target, f.distance)
+    }
+
+    /// The box round the selection, as gizmo lines (a few hundred instances' boxes are measured again each frame, so it
+    /// follows them as they move).
+    private func selectionSegments() -> [VFXGizmos.Segment] {
+        guard var s = selection else { return [] }
+        if s.target.instances.count <= 256 {
+            let box = bounds(of: s.target)
+            if !box.isEmpty { s.box = box; selection = s }
+        }
+        return VFXGizmos.box(s.box.centroid, (s.box.hi - s.box.lo) / 2, [1, 0.72, 0.25, 1], 2)
+    }
+
+    /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
+    func frameWorkshop() {
+        guard scene.settings.kind.orbits, let focus = scene.focus else { return }
+        let framed = Camera.framing(focus, fovY: settings.fovDegrees * .pi / 180, aspect: viewAspect)
+        camera = framed.camera
+        prevCamera = camera
+        orbit = (framed.target, framed.distance)
+    }
+
+    private func placeOrbitingCamera() {
+        guard let orbit else { return }
+        camera.position = orbit.target - camera.forward * orbit.distance
+    }
+
+    /// Auto exposure's scale for this frame (AutoExposure).
+    private func meterExposure() -> Float { exposureMeter.next() }
 
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
@@ -1634,6 +2625,18 @@ final class Renderer: NSObject {
         (u.prevCamPos, u.prevCamRight, u.prevCamUp, u.prevCamForward) = pack(prevCamera)
         u.skyColor = SIMD4<Float>(scene.skyColor, 0)
         u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, 0)
+        let lens = settings.post
+        if lens.grades {
+            u.post.z += Uniforms.gradeOn
+            let w = max(min(lens.warmth, 1), -1)
+            u.grade = SIMD4(1 + 0.1 * w, 1 - 0.14 * w, max(lens.saturation, 0), max(lens.contrast, 0.2))
+        }
+        if lens.autoExposure {
+            u.post.z += Uniforms.meterOn
+            u.post.x *= meterExposure()
+        } else {
+            exposureMeter.reset()
+        }
         u.width = UInt32(width)
         u.height = UInt32(height)
         u.frameIndex = frameIndex
@@ -1652,6 +2655,7 @@ final class Renderer: NSObject {
         default: break
         }
         if settings.lightMaps && giMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
+        (u.interiorLo, u.interiorHi) = Renderer.interiorBox(scene)
         u.viewMode = UInt32(settings.viewMode)
         let d = settings.denoiser
         u.denoise = SIMD4<Float>(DenoiserSettings.luminanceSigmaRange.clamp(d.luminanceSigma),
@@ -1671,6 +2675,7 @@ final class Renderer: NSObject {
 
     /// Starts making frames on the render thread (main thread, once, after `init` and the `on…` callbacks are set).
     func startRenderThread() {
+        perform { $0.publishOutline() }   // the first scene's (the others' when they are installed)
         renderThread.start { [weak self] in self?.drawFrame() ?? false }
     }
 
@@ -1712,11 +2717,16 @@ final class Renderer: NSObject {
             }
         }
         if scene.worldPlace != nil { scene.follow(camera.position) }
+        if settings.scene.kind.isCity || settings.scene.kind.isWorld, settings.scene.city.interiors, loading == nil, benchmark == nil {
+            chooseInterior()
+        }
         setWorldLights()
+        if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
+        if settings.scene.materials != scene.settings.materials, loading == nil { editMaterials() }
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
-            let streamed = settings.scene.isSameWorld(as: scene.settings) && settings.api == builtAPI
+            let streamed = (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)) && settings.api == builtAPI
             if benchmark != nil && !streamed { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
@@ -1767,6 +2777,8 @@ final class Renderer: NSObject {
             stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
             stages.denoise += svgfStages(plan, targets: t, composite: &composite)
             stages.fog = fogStages(plan, targets: t, composite: &composite)
+            stages.head = particleLightStages(plan) + stages.head
+            stages.fog += particleLayerStages(plan, targets: t, composite: &composite)
         }
 
         if let raster = plan.raster { encodeRaster(plan, raster, passes: passes) }
@@ -1837,6 +2849,7 @@ final class Renderer: NSObject {
         do {
             targets = try RenderTargets(device: device, width: size.width, height: size.height)
             historyValid = false
+            taaHistory = false
         } catch {
             print(error)
             return nil
@@ -1880,6 +2893,7 @@ final class Renderer: NSObject {
                 camera = Benchmark.cameraPose(progress: benchmark.progressInConfig, scene: settings.scene.kind, sceneCamera: scene.defaultCamera)
             }
             if let track = benchmark.current.track { camera = track.camera(at: benchmark.trackTime) }
+            benchmarkActs(benchmark)
             // A flight: the setting's, or METALRENDERER_FLIGHT="x,y,z,frames" for every setting (metres a second; with
             // `frames`, there and back again, turning every so many frames).
             if let velocity = benchmark.current.flight ?? Renderer.flightOverride?.velocity {
@@ -1888,12 +2902,20 @@ final class Renderer: NSObject {
             }
         }
         updateCamera(dt: dt)
+        let angles = SIMD2(camera.yaw, camera.pitch)
+        if angles != sentAngles {
+            sentAngles = angles
+            onCameraTurned?(angles.x, angles.y)
+        }
         camera.fovY = settings.fovDegrees * .pi / 180
         viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
         moveGrab()
         previousAnimTime = animTime
-        if !settings.paused { animTime += dt * settings.timeScale }
+        // Paint mode holds the scene still (a character's pose is where the brush's tiles were measured).
+        if !settings.paused && painter.active == nil { animTime += dt * settings.timeScale }
+        scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
+        sendDayTime()
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }
 
@@ -1903,8 +2925,28 @@ final class Renderer: NSObject {
         if settings.scene.kind.isWorld { settings.scene.worldLit = Heavens(at: dayTime).sunElevation < World.lightsReady }
     }
 
-    /// The sun's day cycle can be offset (Time of day); everything else keeps the animation time.
-    private var dayTime: Float { animTime + settings.timeOfDay * (settings.scene.kind.dayCycle ?? 0) }
+    /// The sun's day cycle can be offset or held (Time of day, DayClock); everything else keeps the animation time.
+    private var dayTime: Float { settings.dayTime(animTime: animTime) }
+
+    /// A settings change that moved the day: a hold turned on or off keeps the day where it is, and a day that jumped
+    /// draws its sky again at once, and drops what the frames before had gathered of the light if it went far.
+    private func dayChanged(from old: RenderSettings) {
+        guard settings.scene.kind == old.scene.kind, let cycle = settings.scene.kind.dayCycle else { return }
+        settings.keepDay(from: old, animTime: animTime)
+        let moved = abs(settings.dayTime(animTime: animTime) - old.dayTime(animTime: animTime)) / cycle
+        let jump = min(moved - moved.rounded(.down), 1 - (moved - moved.rounded(.down)))
+        guard jump > 1e-5 else { return }
+        if jump > DayClock.lightJump { resetGIState() } else { skyRefreshed = nil }
+    }
+
+    /// Tells the day bar the day's time once it has moved a minute of the day (and at a new scene).
+    private func sendDayTime() {
+        guard let onDayTime, let cycle = settings.scene.kind.dayCycle else { sentDayTime = nil; return }
+        let day = dayTime
+        if let sent = sentDayTime, abs(day - sent) < cycle / (24 * 60) { return }
+        sentDayTime = day
+        onDayTime(day)
+    }
 
     /// The wind on the plants this frame (Shaders/Foliage.metal).
     private var windFrame: WindFrame {
@@ -2021,7 +3063,11 @@ final class Renderer: NSObject {
         var raster: (scene: RasterScene, targets: RasterTargets)?   // primary hits from the raster visibility buffer
         var specular = false                    // reflections (glTF specular materials)
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
+        var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
+        var water = false                       // ...and into water (waterKernel; in the liquids' targets)
+        var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
+        var manyLightRays = 1                   // ...with this many shadow rays a group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
         var meshLights = false                  // emissive-mesh lights, sampled per pixel
@@ -2053,6 +3099,9 @@ final class Renderer: NSObject {
         // The lens and the finish (not in references, nor in the views that aren't light)
         var post: PostTargets?
         var postParams = GPUPostParams()
+        // Temporal AA without upscaling (not in references or the views that aren't light)
+        var taa: TAATargets?
+        var taaHistory = false                  // the last frame resolved into taa.history[prev]
     }
 
     /// Reference "Path traced": pathTraceKernel adds `params.samples.y` paths per pixel to the mean of `samples.x` in
@@ -2077,16 +3126,30 @@ final class Renderer: NSObject {
         p.megaLights = directMode == .megalights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
+        if scene.hasLiquid || scene.hasWater { p.liquid = liquidTargets(width: width, height: height) }
+        p.water = scene.hasWater && p.liquid != nil && prepareWater(slot: slot)
+        if particlesGPU != nil {
+            let scale = settings.particleScale < 1 ? 0.5 : 1.0
+            p.particles = particleLayerTarget(width: max(Int((Double(width) * scale).rounded()), 1), height: max(Int((Double(height) * scale).rounded()), 1))
+        }
         p.history = historyValid
 
         var u = makeUniforms(width: width, height: height, giMode: p.giMode, directMode: directMode)
-        // The denoising scaler gathers jittered samples; supersampled references average 1024 jittered frames.
+        // The denoising scaler gathers jittered samples, and so does the temporal AA without it; supersampled references
+        // average 1024 jittered frames.
         if neuralDenoise {
             p.view = Upscaler.View(worldToView: camera.worldToView, viewToClip: camera.viewToClip(aspect: Float(width) / Float(height)))
         }
+        if Renderer.usesTAA(settings, upscaling: size.upscaling, accumulating: accumulating || supersampling || referenceMode != .off) {
+            p.taa = taaTargets(width: width, height: height)
+            p.taaHistory = taaHistory
+        } else {
+            taaTargetsCache = nil
+        }
         p.jitter = size.upscaling
             ? Upscaler.jitter(frame: frameIndex, scale: Float(size.outWidth) / Float(width))
-            : supersampling && !size.upscaling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
+            : p.taa != nil ? Upscaler.jitter(frame: frameIndex, scale: 1)
+            : supersampling ? Upscaler.jitter(frame: accumCount, scale: 11.32) : .zero
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
         if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
@@ -2146,6 +3209,8 @@ final class Renderer: NSObject {
 
         // The raster visibility buffer: the primary rays meet the triangles it drew. Not with far plants as voxel boxes
         // (the frames swap them in instance by instance, which the raster doesn't follow).
+        // (A pixel seen through a liquid or water isn't the triangle the raster drew there: the trace meets its bent
+        // ray itself.)
         if settings.primary == .raster, !scene.hasVoxelBoxes, let rs = currentRasterScene(),
            let rt = rasterTargets(width: width, height: height, scene: rs) {
             p.raster = (rs, rt)
@@ -2205,7 +3270,10 @@ final class Renderer: NSObject {
 
         // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
         p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir && !p.megaLights
-        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
+        // Rooms to walk into: two rays a group. A big room under many ceiling lights (an open office) speckles with
+        // one, even with its picks reused; two cost ~0.4 ms there, ReSTIR ~6 ms.
+        p.manyLightRays = settings.manyLightRays == 1 && scene.interiorBox != nil ? 2 : settings.manyLightRays
+        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && p.manyLightRays == 1
         p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
 
         // ReSTIR DI. References with many lights accumulate its unbiased initial sampling alone (32 candidates).
@@ -2289,6 +3357,7 @@ final class Renderer: NSObject {
         }
         prevCamera = camera
         prevJitter = plan.jitter
+        taaHistory = plan.taa != nil
         historyValid = plan.svgf || plan.neuralDenoise || (plan.accumulating && settings.denoiser.enabled)
         frameIndex &+= 1
     }
@@ -2330,9 +3399,13 @@ final class Renderer: NSObject {
         // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
         // Cloths too: their vertices, from where the physics (or the CPU's) left them.
         var deformed = false
-        if let physicsGPU, let enc = passes.compute("physics", serial: true) {
+        if let physicsGPU, let enc = passes.compute("physics", serial: true, concurrent: physicsGPU.hasFluid) {
+            physicsGPU.concurrent = physicsGPU.hasFluid   // (its own barriers: the liquids' steps side by side)
             if physicsGPU.simulates {
-                let (steps, restart) = scene.takePhysicsSteps()
+                // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
+                // buffer, past the watchdog: it catches up over the next frames instead.
+                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid ? 20 : .max)
+                if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
                 physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
                 let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
@@ -2342,7 +3415,20 @@ final class Renderer: NSObject {
             physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
             physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
-            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair
+            // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
+            let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0
+            if liquids {
+                physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
+                physicsGPU.liquidFrames -= 1
+            }
+            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
+            passes.endCompute()
+        }
+        // Mesh particles (debris): their instances where the particles are, ahead of the top level. (Their steps run
+        // after it, with the billboards': below.)
+        if let particlesGPU, particlesGPU.system.meshCapacity > 0, let enc = passes.compute("particle meshes", serial: true) {
+            particlesGPU.encodeMeshPose(enc, pipelines: pipelines, instances: instanceDataBuffers[slot],
+                                        descriptors: !sceneBuffers.still ? instanceDescBuffers[slot] : nil, descriptorStride: instanceDescriptorStride)
             passes.endCompute()
         }
         // 0. The crowd: this frame's poses and skinned vertices. Then the deforming meshes' (the pose slots', cloths')
@@ -2350,13 +3436,29 @@ final class Renderer: NSObject {
         //    Ahead of the top level, which takes the new bounds.
         if let crowdSkinner, !CrowdSkinner.frozen {
             if let enc = passes.compute("skin", serial: true) {
-                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], slot: slot,
+                crowdSkinner.encode(enc, pose: pipelines[.crowdPose], skin: pipelines[.crowdSkin], hair: pipelines[.crowdHair], slot: slot,
                                     positions: positionBuffer, normals: normalBuffer)
                 passes.endCompute()
             }
             deformed = true
         }
-        if deformed, let primitiveRefit { passes.updatePrimitives(primitiveRefit, pass: "blas") }
+        if deformed, let primitiveRefit {
+            // A liquid's surface: built over as many triangles as it last needed (read back a few frames late), with
+            // room to grow by a fifth (a pour's surface grows by a few percent over those frames; past it, the
+            // triangles left out wait a frame). The build's time is its triangles': on the M1 Max about 5 ms for 100k.
+            if let fluid = physicsGPU?.fluid {
+                for (i, m) in primitiveRefit.rebuiltMeshes.enumerated() {
+                    guard let s = scene.liquidMeshes.first(where: { $0.mesh == m })?.system else { continue }
+                    let room = Int(fluid.systems[s].system.surface.triangles.x), used = Int(fluid.readSurfaceStats(s).y)
+                    primitiveRefit.setTriangles(i, min(room, (used * 6 / 5 + 2048 + 1023) / 1024 * 1024))
+                }
+            }
+            passes.updatePrimitives(primitiveRefit, pass: "blas")
+        }
+        encodeDisplacement(passes: passes)
+        encodeTerrain(slot: slot, passes: passes)
+        encodeWaterWaves(slot: slot, passes: passes)
+        encodePainting(passes: passes)
         // The plants' variants in the wind: their parts posed, then their structures refitted (and once more at rest).
         if let plants = sceneBuffers.plants, plants.needsPosing(slot: slot, wind: windFrame) {
             if let enc = passes.compute("wind", serial: true) {
@@ -2391,6 +3493,50 @@ final class Renderer: NSObject {
                                             + (sceneBuffers.plants?.structures(slot: slot) ?? []),
                                          indirect: sceneBuffers.indirect), pass: "tlas")
             instanceASBuilt.insert(slot)
+            slotRefitFrame[slot] = Int(frameIndex)
+        }
+        // 2. Particle effects: the steps since last frame (or a replay from the start; their scene collisions trace this
+        //    frame's TLAS), then this slot's records and boxes and the structures over them, which only the particle
+        //    queries trace (not in the TLAS). A slot built at these steps already (time paused) keeps its structures.
+        if let particlesGPU {
+            // The editor's edit whose code was compiling: in once it is ready.
+            if let pending = pendingEffects {
+                if let source = pending.system.programSource {
+                    if let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                                                                wait: benchmark != nil) {
+                        adoptEffects(pending, kernels: kernels)
+                    } else if VFXCompiler.shared.failure(for: source, setup: vfxSetup) != nil {
+                        pendingEffects = nil   // the old code keeps running; the editor says why
+                    }
+                } else {
+                    adoptEffects(pending, kernels: nil)
+                }
+            }
+            // An effect's programs (VFXProgram): the VFX library's kernels once compiled (benchmarks wait for them), then
+            // a replay from the start with them, so what is drawn doesn't depend on when the compile finished.
+            if particlesGPU.hasPrograms, particlesGPU.programKernels == nil, let source = particlesGPU.system.programSource,
+               let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                                                        wait: benchmark != nil) {
+                particlesGPU.programKernels = kernels
+                scene.replayParticles()
+            }
+            let (steps, restart) = scene.takeParticleSteps(limit: ParticlesGPU.maxStepsPerFrame)
+            // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
+            let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
+            let camera = SIMD4(lod.camPos, 1 / max(lod.pixelScale * layerScale, 1e-6))
+            if steps > 0 || restart || camera != particlesCamera { particlesVersion += 1 }
+            particlesCamera = camera
+            if particlesBuilt[slot] != particlesVersion, let enc = passes.compute("particles", serial: true) {
+                if restart { particlesGPU.encodeReset(enc, pipelines: pipelines, slot: slot) }
+                particlesGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot, wind: windFrame.wind) { [self] in
+                    bindScene($0, slot: slot)
+                }
+                particlesGPU.encodePose(enc, pipelines: pipelines, slot: slot, camera: camera)
+                passes.endCompute()
+                if let build = particlesGPU.build(slot: slot) { passes.updatePrimitives(build, pass: "particle build") }
+                particlesBuilt[slot] = particlesVersion
+                writeTraceScene(slot: slot)   // the structures' new sizes (written above with the last ones)
+            }
         }
         // Streamed textures: map and upload the levels last frame's hits asked for, ahead of this frame's work.
         if let textureStreamer {
@@ -2445,6 +3591,7 @@ final class Renderer: NSObject {
             if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
             if let drawable, let enc = passes.compute("composite") {
                 bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
                 setTextures(enc, [pt.accum, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
@@ -2494,18 +3641,21 @@ final class Renderer: NSObject {
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
         if let drawable, let enc = passes.compute("composite") {
-            let output = size.upscaling || supersampling ? t.upscaleColor : plan.post?.color ?? drawable.texture
+            let output = size.upscaling || supersampling ? t.upscaleColor : plan.taa?.input ?? plan.post?.color ?? drawable.texture
             var uniforms = c.uniforms
-            if plan.post != nil && !size.upscaling { uniforms.flags |= UniformFlags.post }
+            if (plan.post != nil || plan.taa != nil) && !size.upscaling { uniforms.flags |= UniformFlags.post }
             bind(enc, .composite, uniforms)
             setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
                               plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
                               plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
-                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D])
+                              plan.lumen ? lumen?.giRadiance ?? dummy2D : dummy2D, plan.particles?.color ?? dummy2D,
+                              plan.particles?.depth ?? dummy2D])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
+            enc.setBuffer(shadingArgs[plan.slot], offset: 0, index: 7)
+            if plan.water, let water { enc.useResources(water.resources(slot: plan.slot), usage: .read) }
             dispatch(enc, .composite, width: output.width, height: output.height)
         }
 
@@ -2525,27 +3675,76 @@ final class Renderer: NSObject {
 
         // 5. Upscale: MetalFX's denoising scaler denoises the raw light as it upscales.
         passes.endCompute()
-        if let drawable, let post = plan.post, !size.upscaling {
-            encodePost(plan, post: post, input: post.color, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+        // ...or, at the traced resolution, the temporal AA resolves the jittered frames (the lens or the tone curve follow).
+        if let drawable, let taa = plan.taa, let enc = passes.compute("taa") {
+            let resolved = taa.history[cur]
+            bind(enc, .taaResolve, c.uniforms)
+            var reset: UInt32 = plan.taaHistory ? 0 : 1
+            enc.setBytes(&reset, length: MemoryLayout<UInt32>.stride, index: 1)
+            setTextures(enc, [taa.input, taa.history[plan.prev], t.motion, resolved])
+            dispatch(enc, .taaResolve, width: size.width, height: size.height)
+            passes.endCompute()
+            let light = encodeHaze(plan, input: resolved, normalDepth: t.normalDepth[cur], passes: passes)
+            if let post = plan.post {
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                           output: drawable.texture, passes: passes)
+            } else if let enc = passes.compute("taa") {
+                bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
+                setTextures(enc, [light, drawable.texture])
+                dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+        } else if let drawable, let post = plan.post, !size.upscaling {
+            let light = encodeHaze(plan, input: post.color, normalDepth: t.normalDepth[cur], passes: passes)
+            encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
         }
         if let drawable, let upscaler {
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
                                                    reset: upscalerReset), pass: "upscale")
             upscalerReset = false
-            // It leaves linear, unbounded light: the lens and the finish, or only the exposure and the tone curve, into
-            // the drawable.
+            // The particles over what it made (it would smear them: particleOverlayKernel).
+            if let layer = plan.particles, let enc = passes.compute("particle overlay") {
+                bind(enc, .particleOverlay, plan.uniforms, sceneSlot: plan.slot)
+                var fp = plan.fogParams
+                enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+                setTextures(enc, [upscaler.hdrOutput, layer.color, layer.depth, t.normalDepth[cur], plan.fog?.grid.integrated ?? dummy3D])
+                dispatch(enc, .particleOverlay, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+            // It leaves linear, unbounded light (bent by the heat haze, if any): the lens and the finish, or only the
+            // exposure and the tone curve, into the drawable.
+            let light = encodeHaze(plan, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], passes: passes)
             if let post = plan.post {
-                encodePost(plan, post: post, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                            output: drawable.texture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
-                setTextures(enc, [upscaler.hdrOutput, drawable.texture])
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
+                setTextures(enc, [light, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
         }
+        if let drawable { encodeGizmos(drawable.texture, slot: plan.slot, passes: passes) }
+        encodePick(plan, passes: passes)
         return (drawable, drawableWait)
+    }
+
+    /// 5b. The heat haze (distortion particles: particleDistortKernel): `input`, the frame's linear light at the output
+    /// size, bent where hot air is in front of it, into a texture of its own, which it returns for the lens to take;
+    /// `input` itself when the scene has no distorters (or no particles).
+    private func encodeHaze(_ plan: FramePlan, input: MTLTexture, normalDepth: MTLTexture, passes: FrameEncoder) -> MTLTexture {
+        guard let gpu = particlesGPU, gpu.system.distortCapacity > 0, let haze = particleHazeTarget(width: input.width, height: input.height),
+              let enc = passes.compute("particle distortion", serial: true) else { return input }
+        bind(enc, .particleDistortDiscs, plan.uniforms)
+        gpu.encodeDistortDiscs(enc)
+        bind(enc, .particleDistort, plan.uniforms)
+        setTextures(enc, [input, haze, normalDepth])
+        dispatch(enc, .particleDistort, width: input.width, height: input.height)
+        passes.endCompute()
+        return haze
     }
 
     /// 6. The lens and the finish (Shaders/Post.metal): `input`, the frame's linear light at the output size, through the
@@ -2584,6 +3783,7 @@ final class Renderer: NSObject {
             }
         }
         start(.finish)
+        enc.setBuffer(exposureMeter.current, offset: 0, index: 2)
         setTextures(enc, [light, post.up.first ?? post.down.first ?? light, output])
         dispatch(enc, .finish, width: output.width, height: output.height)
         passes.endCompute()
@@ -2602,6 +3802,7 @@ final class Renderer: NSObject {
                   + (Renderer.voxelAsync ? ", \(voxelLevels.swaps) background rebuilds swapped in" : ""))
         }
         if let benchmark, benchmark.shouldCapture, plan.raster != nil || plan.vsm != nil, let rc = rasterClusters { print("  " + rc.summary) }
+        if let benchmark, benchmark.shouldCapture, let fluid = physicsGPU?.fluid { print("  Fluids: " + fluid.summary) }
         if let benchmark, benchmark.shouldCapture, let ts = textureStreamer {
             print("  " + ts.summary)
             if ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_DEBUG"] != nil { print(ts.details) }
@@ -2678,6 +3879,10 @@ final class Renderer: NSObject {
             let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)
             print(String(format: "  Crowd check: %d poses, GPU against CPU: positions within %.2g m, normals within %.2g",
                          crowdSkinner.crowd.slots.count, skin.position, skin.normal))
+            if !crowdSkinner.crowd.hair.isEmpty {
+                print(String(format: "  Hair check: %d grooms, GPU against CPU within %.2g m", crowdSkinner.crowd.hair.count,
+                             crowdSkinner.checkHair(positions: positionBuffer)))
+            }
         }
     }
 
@@ -2719,6 +3924,23 @@ final class Renderer: NSObject {
                                     threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
             })
         }
+        // Liquids: the camera rays bent through them, which the trace goes on with.
+        if let liquid = plan.liquid, scene.hasLiquid {
+            stages.append(ComputeStage(pass: "liquid") { [self] enc in
+                bind(enc, .liquid, uniforms, sceneSlot: slot)
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture])
+                dispatch(enc, .liquid, width: size.width, height: size.height)
+            })
+        }
+        // Water: the camera rays bent into it, after the liquids' (a liquid in front keeps its pixels).
+        if let liquid = plan.liquid, plan.water {
+            stages.append(ComputeStage(pass: "water") { [self] enc in
+                bind(enc, .water, uniforms, sceneSlot: slot)
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture, liquid.scatter,
+                                  raster?.targets.visibility ?? dummyUInt2D, liquid.guess, liquid.reflections[1 - cur], liquid.reflections[cur]])
+                dispatch(enc, .water, width: size.width, height: size.height)
+            })
+        }
         stages.append(ComputeStage(pass: "trace") { [self] enc in
             bind(enc, .trace, uniforms, pass: uniforms.tracePassFlags, sceneSlot: slot)
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
@@ -2728,8 +3950,22 @@ final class Renderer: NSObject {
                 enc.setTexture(raster.targets.visibility, index: 15)
                 enc.setBuffer(raster.targets.counters, offset: 0, index: 13)
             }
+            if let liquid = plan.liquid {
+                enc.setTexture(liquid.ray, index: 16)
+                enc.setTexture(liquid.direction, index: 17)
+                enc.setTexture(liquid.guess, index: 18)
+            }
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
+        // Water's surface and what it does to what is seen under it, before window panes (they are in front of it).
+        if let liquid = plan.liquid, plan.water {
+            stages.append(ComputeStage(pass: "water apply") { [self] enc in
+                bind(enc, .waterApply, uniforms, sceneSlot: slot)
+                setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection, liquid.scatter,
+                                  t.normalDepth[cur], t.surfacePos])
+                dispatch(enc, .waterApply, width: size.width, height: size.height)
+            })
+        }
         if plan.glass {
             stages.append(ComputeStage(pass: "glass") { [self] enc in
                 bind(enc, .glass, uniforms, sceneSlot: slot)
@@ -2737,7 +3973,53 @@ final class Renderer: NSObject {
                 dispatch(enc, .glass, width: size.width, height: size.height)
             })
         }
+        if let liquid = plan.liquid, scene.hasLiquid {
+            stages.append(ComputeStage(pass: "liquid") { [self] enc in
+                bind(enc, .liquidApply, uniforms)
+                setTextures(enc, [t.albedo, t.emission, t.material, liquid.ray, liquid.through, liquid.reflection])
+                dispatch(enc, .liquidApply, width: size.width, height: size.height)
+            })
+        }
         return stages
+    }
+
+    /// 1c. The particles' light, once a particle (Shaders/ParticleLight.metal): it needs only the structures.
+    private func particleLightStages(_ plan: FramePlan) -> [ComputeStage] {
+        guard plan.particles != nil, let gpu = particlesGPU else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot
+        return [ComputeStage(pass: "particle light") { [self] enc in
+            bind(enc, .particleLight, uniforms, sceneSlot: slot)
+            enc.setBuffer(gpu.render[slot], offset: 0, index: 13)
+            enc.setBuffer(gpu.lighting, offset: 0, index: 14)
+            var n = UInt32(gpu.system.capacity)
+            enc.setBytes(&n, length: 4, index: 15)
+            dispatch(enc, .particleLight, width: gpu.system.capacity, height: 1)
+        }]
+    }
+
+    /// 3e. The particles in front of the camera's surfaces, after the fog's grid (they're fogged where they are). The
+    /// composite puts the layer over the scene, or particleOverlayKernel over MetalFX's output (which would filter it
+    /// with the scene's motion), upsampled by depth where the layer is smaller than the frame (`particleScale`).
+    private func particleLayerStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+        guard let layer = plan.particles else { return [] }
+        if !plan.neuralDenoise { composite.uniforms.flags |= UniformFlags.particles }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        let fogGrid = plan.fog?.grid.integrated
+        var fogParams = plan.fogParams
+        // Its rays through the frame's own (jittered) pixels when it is the frame's size and goes in the composite;
+        // otherwise through its texels' centres, steady (nothing filters it over time). Over MetalFX's output the
+        // overlay traces the thin ones again at its size (`detail`).
+        struct Params { var size: SIMD2<UInt32>; var jitter: UInt32; var detail: UInt32 }
+        let fits = layer.color.width == size.width && layer.color.height == size.height
+        var params = Params(size: SIMD2(UInt32(layer.color.width), UInt32(layer.color.height)), jitter: fits && !plan.neuralDenoise ? 1 : 0,
+                            detail: plan.neuralDenoise ? 1 : 0)
+        return [ComputeStage(pass: "particle layer") { [self] enc in
+            bind(enc, .particleLayer, uniforms, sceneSlot: slot)
+            enc.setBytes(&fogParams, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            enc.setBytes(&params, length: MemoryLayout<Params>.stride, index: 10)
+            setTextures(enc, [t.normalDepth[cur], layer.color, fogGrid ?? dummy3D, layer.depth])
+            dispatch(enc, .particleLayer, width: layer.color.width, height: layer.color.height)
+        }]
     }
 
     /// 2b. The GI technique, if one runs: it writes t.indirect (the path tracer already did, inside traceKernel), after
@@ -2885,7 +4167,7 @@ final class Renderer: NSObject {
         var stages: [ComputeStage] = []
         if plan.manyLights {
             let reuse = plan.lightReuse
-            let config = SIMD4<UInt32>(UInt32(settings.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
+            let config = SIMD4<UInt32>(UInt32(plan.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
                                        plan.lightPicksValid ? 1 : 0, 0)
             stages.append(ComputeStage(pass: "many lights") { [self] enc in
                 var config = config
@@ -3133,7 +4415,9 @@ final class Renderer: NSObject {
         guard declare else { return }
         sceneDeclaredIn = enc.declarationScope
         enc.useResources(shadingResources, usage: .read)
+        if !slotTextures[slot].isEmpty { enc.useResources(proceduralResources(slot: slot), usage: .read) }
         enc.useResources([skyActive ? skyMap ?? dummyArray : dummyArray, skyActive ? cloudShadowMap ?? dummy2D : dummy2D], usage: .read)
+        if scene.hasWater, let water { enc.useResources(water.resources(slot: slot), usage: .read) }
         if let vsm = vsmFrame {
             enc.useResources([vsm.pool, vsm.table, vsm.tags, vsm.lightTable, vsm.views[slot], vsm.sceneArgs[slot]], usage: .read)
             enc.useResource(vsm.requests, usage: [.read, .write])
@@ -3153,13 +4437,21 @@ final class Renderer: NSObject {
             tlas: instanceAS[slot], vgTable: virtualTracing?.vgTable(slot), clusters: clusters,
             pool: virtualTracing?.pool ?? rasterClusters?.streamer.pool, parts: plants?.parts, meshes: sceneBuffers.meshes,
             indices: sceneBuffers.indices, uvs: sceneBuffers.uvs, wind: windFrame, cutouts: plants?.cutouts,
-            clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max))
+            clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max,
+            particleCasters: particlesGPU?.parts[slot].casters?.structure, particleOthers: particlesGPU?.parts[slot].others?.structure,
+            particleRender: particlesGPU?.render[slot], particleAtlas: particlesGPU?.atlas,
+            particleCounts: particlesGPU?.traceCounts(slot: slot) ?? .zero,
+            particleFlags: scene.particlesReflected ? 1 : 0,
+            particleTrails: particlesGPU?.trails[slot]?.structure, trailPoints: particlesGPU?.trailPoints[slot],
+            trailRecords: particlesGPU?.trailRecords[slot], trailShape: particlesGPU?.trailShape ?? .zero,
+            frame: frameIndex, opacity: scene.hasOpacity ? opacityBuffers[slot] : nil, textures: textureTables[slot]))
     }
 
     /// What `slot`'s TraceScene points at besides the structures.
     private func traceSceneResources(slot: Int) -> [MTLResource] {
         (virtualTracing?.resources(slot: slot) ?? []) + (rasterClusters?.resources(slot: slot) ?? [])
-            + (sceneBuffers.plants?.resources(slot: slot) ?? [])
+            + (sceneBuffers.plants?.resources(slot: slot) ?? []) + (particlesGPU?.resources(slot: slot) ?? [])
+            + (scene.hasOpacity ? [opacityBuffers[slot], textureTables[slot]] + proceduralResources(slot: slot) : [])
     }
 
     /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
@@ -3382,6 +4674,7 @@ final class Renderer: NSObject {
     /// Drops all temporal GI state (cascade feedback, denoiser history).
     private func resetGIState() {
         historyValid = false
+        taaHistory = false
         restirWritten = false
         megaLightsWritten = false
         restirGIWritten = false
@@ -3393,11 +4686,56 @@ final class Renderer: NSObject {
 
     // MARK: - Benchmark
 
+    /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
+    private func benchmarkActs(_ benchmark: Benchmark) {
+        let c = benchmark.current
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
+            if case .paint(let steps) = e.event {
+                benchmarkFired.insert(k)
+                painterScript += steps
+            }
+        }
+        runPainterScript()
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
+            if case .terrain(let steps) = e.event {
+                benchmarkFired.insert(k)
+                terrainScript += steps
+            }
+        }
+        runTerrainScript()
+        guard let controls = scene.interiorControls else { return }
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 0 {
+            // (A painting's or a terrain edit's steps: theirs to fire, above, a few frames in.)
+            if case .paint = e.event { continue }
+            if case .terrain = e.event { continue }
+            benchmarkFired.insert(k)
+            switch e.event {
+            case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
+            case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
+            case .flashlight(let on): controls.flashlight.on = on
+            case .paint, .terrain: break
+            }
+        }
+        if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
+            camera.position.y += controls.lifts[n].y - base
+        }
+        if controls.flashlight.on {
+            controls.flashlight.position = camera.position + camera.right * 0.18 - camera.up * 0.12
+            controls.flashlight.direction = camera.forward
+        }
+    }
+    private var benchmarkFired = Set<Int>()
+    private var benchmarkBody: SIMD3<Float>?
+
     private func applyBenchmarkConfig(_ c: Benchmark.Config) {
+        benchmarkFired = []
+        benchmarkBody = nil
         settings = c.resolvedSettings()
         animTime = c.startTime
         previousAnimTime = c.startTime
         setWorldLights()   // the scene it starts with is the one its time of day asks for
+        if settings.scene.effects != scene.settings.effects { editEffects() }   // the VFX editor's edits, as the app runs them
+        if settings.scene.materials != scene.settings.materials { editMaterials() }   // the Material Designer's
         if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }
@@ -3539,6 +4877,50 @@ final class Renderer: NSObject {
         pathTraceAccum = device.makeTexture(descriptor: d)
         pathTraceCount = 0
         return pathTraceAccum
+    }
+
+    private func particleLayerTarget(width: Int, height: Int) -> (color: MTLTexture, depth: MTLTexture)? {
+        if let t = particleLayerTexture, t.color.width == width, t.color.height == height { return t }
+        func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            let t = device.makeTexture(descriptor: d)
+            t?.label = label
+            return t
+        }
+        guard let color = make(.rgba16Float, "particleLayer"), let depth = make(.rg32Float, "particleLayerDepth") else { return nil }
+        particleLayerTexture = (color, depth)
+        return particleLayerTexture
+    }
+
+    private func particleHazeTarget(width: Int, height: Int) -> MTLTexture? {
+        if let t = particleHazeTexture, t.width == width, t.height == height { return t }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        particleHazeTexture = device.makeTexture(descriptor: d)
+        particleHazeTexture?.label = "particleHaze"
+        return particleHazeTexture
+    }
+
+    private func liquidTargets(width: Int, height: Int) -> LiquidTargets? {
+        if let t = liquidTextures, t.ray.width == width, t.ray.height == height { return t }
+        func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+            d.usage = [.shaderRead, .shaderWrite]
+            d.storageMode = .private
+            let t = device.makeTexture(descriptor: d)
+            t?.label = label
+            return t
+        }
+        guard let ray = make(.rgba32Float, "liquidRay"), let direction = make(.rgba32Float, "liquidDirection"),
+              let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection"),
+              let scatter = make(.rgba16Float, "waterScatter"), let guess = make(.r32Uint, "waterGuess"),
+              let r0 = make(.rgba16Float, "waterReflections0"), let r1 = make(.rgba16Float, "waterReflections1") else { return nil }
+        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection, scatter: scatter, guess: guess,
+                                       reflections: [r0, r1])
+        return liquidTextures
     }
 
     private func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)? {
@@ -4017,6 +5399,13 @@ final class Renderer: NSObject {
         return sizes
     }()
 
+    /// Whether a frame resolves jittered frames with the temporal AA: set, without upscaling (MetalFX's scaler does it
+    /// then), not in a reference picture (`accumulating`: those average their own jittered frames), and only in the
+    /// views that show the light.
+    static func usesTAA(_ settings: RenderSettings, upscaling: Bool, accumulating: Bool) -> Bool {
+        settings.taa && !upscaling && !accumulating && RenderSettings.showsLight(settings.viewMode)
+    }
+
     /// The light grid's per-frame origin jitter, in cells ([0, 1)^3), from a hash of the frame index.
     private static func regirJitter(frame: UInt32) -> SIMD3<Float> {
         func hash(_ v: UInt32) -> UInt32 {
@@ -4078,18 +5467,28 @@ final class Renderer: NSObject {
         traversalFrames = 0
         var status = RendererStatus(directMode: activeDirectMode, traversalCounters: traversalCounters,
                                     debugInfo: debugActive ? debugInfo() : nil)
+        status.plantStats = scene.plantStats
+        status.effects = effectsStatus()
+        status.buildingStats = scene.buildingStats
+        status.characterStats = scene.characterStats
+        status.displacement = scene.displacementSummary
+        status.buildingPlan = scene.buildingPlan
+        status.walker = walkerStatus
+        status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }
             let other = passTimeFrameMs / n - times.reduce(0) { $0 + $1.ms }
             if other > 0.005 { times.append((name: "other", ms: other)) }   // MetalFX, its copy, texture streaming
             status.passTimes = times
+            for t in times where t.name.hasPrefix("particle") || t.name == "gizmos" { status.effects?.passMs[t.name] = t.ms }
             passTimeOrder = []
             passTimeSums = [:]
             passTimeFrameMs = 0
             passTimeFrames = 0
         }
         onTick?(status)
+        if scene.terrain != nil { reportTerrain() }   // (the Terrain Editor's map follows the camera)
     }
 
     /// One frame's pass timings, summed until the stats line shows their average.
@@ -4110,12 +5509,13 @@ final class Renderer: NSObject {
         // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
         let device = device, url = shaderURL
         let lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
+        let procedural = pipelines?.procedural ?? scene.proceduralCode
         let api = pipelines?.api ?? builtAPI, compiler = compiler(for: api)
         let stats = TraceSceneArgs.statsEnabled
         let job = benchmark != nil ? nil : loadActivity.begin("shaders", verbs: ("Compiling", "Compiled"))
         shaderQueue.async { [weak self] in
             let result = Result {
-                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats,
+                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats, procedural: procedural,
                               load: job)
             }
             if case .failure = result { job?.fail() } else { job?.finish() }
@@ -4124,7 +5524,8 @@ final class Renderer: NSObject {
                 switch result {
                 case .success(let made):
                     // A scene with another API or other light types came in meanwhile: compile again, for that one.
-                    if let current = self.pipelines, made.api != current.api || made.lightTypes != current.lightTypes {
+                    if let current = self.pipelines, made.api != current.api || made.lightTypes != current.lightTypes
+                        || made.procedural != current.procedural {
                         return self.reloadShaders(then: done)
                     }
                     self.pipelines = made
@@ -4280,6 +5681,30 @@ final class Renderer: NSObject {
 
     /// A key went down: `key` is its character without modifiers, lowercased.
     func keyDown(_ key: String, isRepeat: Bool) {
+        if key == "v" && !isRepeat { toggleWalk(); return }
+        if let w = walker {
+            switch key {
+            case " ": jumpPending = true; return
+            case "c": crouchHeld = true; return
+            case "e": if !isRepeat { use(camera.forward) }; return
+            case "f":
+                if !isRepeat, let c = scene.interiorControls {
+                    c.flashlight.on.toggle()
+                    c.flashlight.position = camera.position
+                    c.flashlight.direction = camera.forward
+                    walkMessage = c.flashlight.on ? "Flashlight on" : "Flashlight off"
+                }
+                return
+            case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+                // In a lift: to that floor (0 the ground floor).
+                if let p = w.standingOn, let c = scene.interiorControls, c.lifts.indices.contains(p) {
+                    c.lifts[p].call(Int(key)!)
+                    walkMessage = "Lift to floor \(key)"
+                    return
+                }
+            default: break
+            }
+        }
         if ["w", "a", "s", "d", "q", "e"].contains(key) {
             heldKeys.insert(key)
             return
@@ -4311,19 +5736,57 @@ final class Renderer: NSObject {
             let steps = upscaleSteps
             settings.upscaleFactor = steps[((steps.firstIndex(of: settings.upscaleFactor) ?? 0) + 1) % steps.count]
         case "r": reloadShaders { if $0 { print("Shaders reloaded") } }
+        case "f": frameSelection(lock: shiftHeld)
         default: break
         }
     }
 
-    func keyUp(_ key: String) { heldKeys.remove(key) }
+    func keyUp(_ key: String) {
+        heldKeys.remove(key)
+        if key == "c" { crouchHeld = false }
+    }
+
+    /// Control: crouching, while walking.
+    func setControl(_ held: Bool) { controlHeld = held }
+    private var controlHeld = false
 
     /// Shift: faster movement.
     func setShift(_ held: Bool) { shiftHeld = held }
+    /// Option: a drag orbits the pivot (Option-right: dollies); in paint mode it turns the camera instead of painting.
+    func setOption(_ held: Bool) { optionHeld = held }
+    private var optionHeld = false
+    /// Command: Option-Command-drag pans (a trackpad's middle drag, as in Unity).
+    func setCommand(_ held: Bool) { commandHeld = held }
 
-    /// A click on a body grabs it where the cursor meets it (Physics.swift's `grab`); anywhere else, the drag turns the
-    /// camera.
+    // The scene view's mouse, as Unity's: a click selects, Option-drag orbits the pivot, Option-Command-drag and a
+    // middle drag pan, a right drag looks around (W A S D Q E fly while it is held), Option-right-drag and the scroll
+    // wheel dolly. A press on a body grabs it (Physics.swift's `grab`). Walking: a drag looks, a click uses.
+
     func mouseDown(at cursor: SIMD2<Float>) {
+        // Paint mode: a stroke (Option: the camera turns about the object).
+        if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
+        // Sculpt mode: a stroke of the terrain's brush (Option: the camera's, as always).
+        if terrainMouseDown(at: cursor, pressure: penPressure, option: optionHeld, invert: controlHeld, smooth: shiftHeld) { return }
         holding = nil
+        gizmoDrag = nil
+        navDrag = nil
+        navCursor = cursor
+        if walker == nil, optionHeld {
+            navDrag = commandHeld ? .pan : .orbit
+            flight = nil
+            return
+        }
+        // The VFX editor's handle: an arrow under the cursor is dragged along its axis.
+        if let handle = gizmoHandle, let target = gizmoTarget, let emitter = target.emitter,
+           let k = VFXGizmos.pick(handle: handle, cursor: cursor, camera: camera, aspect: viewAspect, size: gizmoViewSize) {
+            var axis = SIMD3<Float>.zero
+            axis[k] = 1
+            let s = VFXGizmos.along(origin: handle, axis: axis, from: camera.position, dir: cursorRay(cursor))
+            gizmoDrag = (axis, handle, s)
+            onGizmoMoved?(target.effect, emitter, .zero, 0)
+            return
+        }
+        clickAt = cursor
         guard let physics = scene.physics else { return }
         let direction = cursorRay(cursor)
         guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
@@ -4333,25 +5796,159 @@ final class Renderer: NSObject {
     }
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
+        if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
+        if let drag = gizmoDrag {
+            let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
+            let move = min(max(s - drag.last, -5), 5)
+            gizmoDrag?.last = s
+            if move != 0, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, drag.axis * move, 1) }
+            return
+        }
+        if let c = clickAt, length(c - cursor) > 0.004 { clickAt = nil }
         if holding != nil {
             holding?.cursor = cursor
             return
         }
-        camera.yaw += dx * 0.004
-        camera.pitch = min(max(camera.pitch - dy * 0.004, -1.5), 1.5)
+        if let nav = navDrag {
+            navigate(nav, dx: dx, dy: dy, at: cursor)
+        } else if walker != nil {
+            walkLook(dx: dx, dy: dy)
+        }
     }
 
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
+        if paintMouseUp() { return }
+        if terrainMouseUp() { return }
+        if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
+        gizmoDrag = nil
+        // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
+        if let c = clickAt, holding == nil, navDrag == nil {
+            if pickArmed {
+                pickRequest = c
+                pickSelects = false
+                pickArmed = false
+            } else if walker != nil {
+                use(cursorRay(c))
+            } else {
+                pickRequest = c
+                pickSelects = true
+            }
+        }
+        clickAt = nil
+        navDrag = nil
         holding = nil
         scene.physics?.grab.target.w = 0
     }
 
-    /// While holding: the body nearer (down) or farther (up).
-    func scrolled(dy: Float) {
-        guard let depth = holding?.depth else { return }
-        holding?.depth = max(depth * exp(dy * 0.05), 0.3)
+    /// The right button: looks around (Option: dollies); W A S D Q E fly while it is held. In paint mode the camera
+    /// turns about the object.
+    func rightMouseDown(at cursor: SIMD2<Float>) {
+        if paintMouseDown(at: cursor, pressure: 1, orbit: true) { return }
+        rightHeld = true
+        rightDrag = walker == nil && optionHeld ? .dolly : .look
+        navCursor = cursor
+        flight = nil
     }
+    func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: 1) { return }
+        if walker != nil { walkLook(dx: dx, dy: dy); return }
+        navigate(rightDrag ?? .look, dx: dx, dy: dy, at: cursor)
+    }
+    func rightMouseUp() {
+        rightHeld = false
+        rightDrag = nil
+        _ = paintMouseUp()
+    }
+
+    /// The middle button: pans.
+    func otherMouseDown(at cursor: SIMD2<Float>) {
+        navCursor = cursor
+        flight = nil
+    }
+    func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        guard walker == nil, painter.active == nil else { return }
+        navigate(.pan, dx: dx, dy: dy, at: cursor)
+    }
+
+    /// A drag's step (`dx`, `dy`: in points; `cursor`: where it is now, 0...1 across and down).
+    private func navigate(_ nav: NavDrag, dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+        flight = nil
+        switch nav {
+        case .orbit:
+            let p = pivot
+            camera.orbit(dx: dx, dy: dy, about: p)
+            pivot = p
+        case .look:
+            pivot = camera.look(dx: dx, dy: dy, pivot: pivot)
+        case .pan:
+            pivot = camera.pan(by: cursor - (navCursor ?? cursor), pivot: pivot, aspect: viewAspect)
+            pivotLock = nil
+        case .dolly:
+            pivot = camera.dolly(by: exp((dy - dx) * 0.005), pivot: pivot)
+        }
+        navCursor = cursor
+    }
+
+    /// Walking: a drag turns the head.
+    private func walkLook(dx: Float, dy: Float) {
+        camera.yaw += dx * Camera.turnRate
+        camera.pitch = min(max(camera.pitch - dy * Camera.turnRate, -1.5), 1.5)
+    }
+
+    /// The scroll wheel: the held body nearer (down) or farther (up); the right button held: the fly speed; otherwise
+    /// the camera nearer the pivot or farther.
+    func scrolled(dy: Float) {
+        if let depth = holding?.depth {
+            holding?.depth = max(depth * exp(dy * 0.05), 0.3)
+            return
+        }
+        guard walker == nil else { return }
+        if rightHeld {
+            settings.moveSpeed = RenderSettings.moveSpeedRange.clamp(settings.moveSpeed * exp(dy * 0.05))
+            return
+        }
+        flight = nil
+        pivot = camera.dolly(by: exp(dy * 0.05), pivot: pivot)
+    }
+
+    /// Lumen's fields of a terrain's sectors baked again (Renderer+Terrain.swift), if Lumen traces fields now.
+    func rebakeLumenFields(_ meshes: [(mesh: Int, positions: [SIMD3<Float>], indices: [UInt32])]) {
+        guard let lumenScene, lumenSceneOf === scene else { return }
+        for m in meshes { lumenScene.rebake(field: m.mesh, positions: m.positions, indices: m.indices) }
+    }
+    var lumenTracesFields: Bool { lumenScene != nil && lumenSceneOf === scene }
+
+    /// What the terrain's colliders write to (Renderer+Terrain.swift).
+    var physicsGPUForTerrain: PhysicsGPU? { physicsGPU }
+
+    // MARK: - What the painter (Renderer+Painter.swift) reads of the renderer
+
+    var renderTargetsForPainter: RenderTargets? { targets }
+    var materialTexturesForPainter: [MTLTexture] { materialTextures }
+    func resetReferenceForPainting() { resetReference() }
+    func cursorRayForPainter(_ cursor: SIMD2<Float>) -> SIMD3<Float> { cursorRay(cursor) }
+    /// The render's size in pixels, and its pixels per point of the view (a brush's size is in points).
+    var renderSizeForPainter: SIMD2<Float> {
+        guard let t = targets else { return SIMD2(1280, 800) }
+        return SIMD2(Float(t.width), Float(t.height))
+    }
+    var renderPixelsPerPoint: Float { renderSizeForPainter.y / max(painter.viewPoints.y, 1) }
+    var orbitForPainter: (target: SIMD3<Float>, distance: Float)? {
+        get { orbit }
+        set { orbit = newValue }
+    }
+    /// The camera turned to look at `p` (from where it is), then placed on its orbit.
+    func lookAtForPainter(_ p: SIMD3<Float>) {
+        let d = p - camera.position
+        guard simd_length(d) > 1e-4 else { return }
+        let n = simd_normalize(d)
+        camera.pitch = asin(min(max(n.y, -1), 1))
+        camera.yaw = atan2(n.x, -n.z)
+        placeOrbitingCamera()
+    }
+    func placeOrbitForPainter() { placeOrbitingCamera() }
 
     /// The ray from the camera through `cursor` (0...1 across and down), unjittered.
     private func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {

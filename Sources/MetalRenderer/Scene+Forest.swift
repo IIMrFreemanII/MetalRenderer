@@ -28,6 +28,8 @@ extension Scene {
         private var sheets: [(texture: UInt32, layer: Int)?]    // by species: its leaf cards' colours and alpha layer
         private let library: String                             // what the plants' meshes are named by (Scene.meshNames)
         private let borrows: Bool                               // the baked plants' meshes stay here (Scene.BorrowedMesh)
+        /// The species the plants are of.
+        let catalog: PlantCatalog
 
         /// The last library made and what `add` needs of its plants (200 MB of meshes where they are baked): a scene
         /// made again with the same plants, as the open world's is around every tile the camera comes to, takes them
@@ -43,16 +45,34 @@ extension Scene {
         }
 
         /// `borrowing`: the scene borrows the baked plants' meshes instead of copying them into its arrays.
-        init(_ scene: Scene, seed: UInt64, species: [Foliage.Species] = Foliage.Species.allCases, borrowing: Bool = false) {
+        /// `keep`: the library is kept for the next scene made with the same plants (not the workshop's, made anew at
+        /// every edit: it would push out the forest's).
+        init(_ scene: Scene, seed: UInt64, catalog: PlantCatalog = .builtIn, species: [Foliage.Species]? = nil, borrowing: Bool = false,
+             keep: Bool = true) {
             self.scene = scene
+            self.catalog = catalog
             borrows = borrowing
+            let species = species ?? catalog.all
+            // The realistic look's bark relief (realism high): the species whose bark is a scan, theirs.
+            var bark: [Foliage.Species: Foliage.Bark] = [:]
+            if scene.settings.realism == .high {
+                for s in species where catalog[s].look.barkTexture == .roughBark {
+                    let needles = catalog[s].look.leafTexture == .needle
+                    if let height = TextureSet.find(needles ? "bark-pine" : "bark-oak")?.heightField(size: 512) {
+                        bark[s] = Foliage.Bark(height: height, relief: needles ? 0.025 : 0.03)
+                    }
+                }
+            }
+            // (Edited species name what they are: no cache then holds plants of other recipes under their names.)
             library = "plants v\(Foliage.version) seed \(seed) of \(species.map(\.rawValue)) cards \(scene.usesCards)"
-            palettes = [[Int]](repeating: [], count: Foliage.Species.allCases.count)
-            shades = [[Int]](repeating: [], count: Foliage.Species.allCases.count)
-            sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: Foliage.Species.allCases.count)
+                + (catalog == .builtIn ? "" : " recipes \(catalog.fingerprint)")
+                + (bark.isEmpty ? "" : " bark v2 \(bark.keys.map(\.rawValue).sorted())")
+            palettes = [[Int]](repeating: [], count: catalog.count)
+            shades = [[Int]](repeating: [], count: catalog.count)
+            sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: catalog.count)
             let key = "\(library) assemblies \(scene.usesAssemblies)"
             Flora.lastLock.lock()
-            let known = Flora.last
+            let known = keep ? Flora.last : nil
             Flora.lastLock.unlock()
             if let known, known.key == key {
                 (sets, prepared) = (known.sets, known.prepared)
@@ -60,8 +80,10 @@ extension Scene {
                 scene.notePlants()
                 return
             }
-            var bySpecies = [Foliage.SpeciesSet?](repeating: nil, count: Foliage.Species.allCases.count)
-            for set in Foliage.library(seed: seed, species: species, cards: scene.usesCards) { bySpecies[set.species.rawValue] = set }
+            var bySpecies = [Foliage.SpeciesSet?](repeating: nil, count: catalog.count)
+            for set in Foliage.library(seed: seed, catalog: catalog, species: species, cards: scene.usesCards, bark: bark) {
+                bySpecies[set.species.rawValue] = set
+            }
             sets = bySpecies
             placed = bySpecies.map { [Placed?](repeating: nil, count: $0?.plants.count ?? 0) }
             let jobs = bySpecies.enumerated().flatMap { s, set in (set?.plants.indices ?? 0..<0).map { (species: s, plant: $0) } }
@@ -70,7 +92,7 @@ extension Scene {
             made.withUnsafeMutableBufferPointer { slots in
                 DispatchQueue.concurrentPerform(iterations: jobs.count) { j in   // a plant each: its own slot
                     let set = bySpecies[jobs[j].species]!, plant = set.plants[jobs[j].plant]
-                    guard assemblies, Flora.hasVoxels(plant, set.species) else {
+                    guard assemblies, Flora.hasVoxels(plant, catalog[set.species]) else {
                         let baked = Foliage.flatten(plant, palette: set.palette)
                         slots[j] = .flat(wood: baked.wood, leaves: baked.leaves)
                         return
@@ -91,59 +113,14 @@ extension Scene {
                 defer { next += set?.plants.count ?? 0 }
                 return Array(made[next..<(next + (set?.plants.count ?? 0))])
             }
-            Flora.lastLock.lock()
-            Flora.last = (key, sets, prepared)
-            Flora.lastLock.unlock()
+            if keep {
+                Flora.lastLock.lock()
+                Flora.last = (key, sets, prepared)
+                Flora.lastLock.unlock()
+            }
             scene.notePlants()
         }
 
-        private static func barkColor(_ species: Foliage.Species) -> SIMD3<Float> {
-            switch species {
-            case .oak: return [0.2, 0.15, 0.11]
-            case .birch: return [0.72, 0.7, 0.65]
-            case .conifer: return [0.19, 0.13, 0.09]
-            case .dead: return [0.36, 0.33, 0.29]
-            default: return [0.22, 0.16, 0.11]
-            }
-        }
-
-        private static func leafColors(_ species: Foliage.Species) -> [SIMD3<Float>] {
-            switch species {
-            case .oak: return [[0.11, 0.22, 0.05], [0.14, 0.25, 0.06], [0.09, 0.19, 0.05], [0.16, 0.24, 0.05]]
-            case .birch: return [[0.19, 0.31, 0.07], [0.23, 0.34, 0.08], [0.16, 0.28, 0.07]]
-            case .conifer: return [[0.045, 0.11, 0.055], [0.055, 0.13, 0.06], [0.04, 0.1, 0.06]]
-            case .bush: return [[0.12, 0.24, 0.07], [0.1, 0.2, 0.06], [0.15, 0.25, 0.06]]
-            case .fern: return [[0.13, 0.28, 0.07], [0.16, 0.3, 0.08]]
-            case .grass: return [[0.19, 0.32, 0.09], [0.23, 0.34, 0.1], [0.27, 0.33, 0.12]]
-            case .dead: return [[0.3, 0.27, 0.2]]
-            }
-        }
-
-        /// What a species' leaves turn to in autumn (nil: they stay as they are), and how much light they let through.
-        private static func autumn(_ species: Foliage.Species) -> SIMD3<Float>? {
-            switch species {
-            case .oak: return [0.3, 0.14, 0.035]
-            case .birch: return [0.42, 0.33, 0.04]
-            case .bush: return [0.36, 0.09, 0.04]
-            case .fern: return [0.27, 0.17, 0.06]
-            case .grass: return [0.3, 0.27, 0.11]
-            case .conifer, .dead: return nil
-            }
-        }
-
-        private static func translucency(_ species: Foliage.Species) -> Float {
-            switch species {
-            case .oak, .birch, .bush, .fern: return 0.35
-            case .grass: return 0.3
-            case .conifer: return 0.12
-            case .dead: return 0
-            }
-        }
-
-        private static func bark(_ species: Foliage.Species) -> FoliageTextures.Kind { species == .birch ? .birchBark : .roughBark }
-        private static func leaf(_ species: Foliage.Species) -> FoliageTextures.Kind {
-            species == .conifer ? .needle : species == .grass ? .grass : .leaf
-        }
         private func texture(_ kind: FoliageTextures.Kind) -> UInt32 {
             if let made = textures[kind.rawValue] { return made }
             let size = FoliageTextures.size(kind)
@@ -156,10 +133,11 @@ extension Scene {
 
         /// The species' card sheet, if its leaves are cards here: made on first use.
         private func sheet(_ species: Foliage.Species) -> (texture: UInt32, layer: Int)? {
-            guard scene.usesCards, species.hasBoughs, let leaf = Foliage.boughRecipe(species, variant: 0).leaf else { return nil }
+            let def = catalog[species]
+            guard scene.usesCards, def.paletteSize > 0, let leaf = def.boughRecipe(variant: 0)?.leaf else { return nil }
             if let made = sheets[species.rawValue] { return made }
-            let sheet = FoliageTextures.cardSheet(leaf, twig: Foliage.cardTwig, seed: 0xCA2D &+ UInt64(species.rawValue))
-            let made = (scene.addGeneratedTexture(sheet.image, name: "cards-\(species)"), scene.addCutout(alpha: sheet.alpha, coverage: sheet.coverage))
+            let sheet = FoliageTextures.cardSheet(leaf, twig: Foliage.cardTwig, seed: 0xCA2D &+ UInt64(def.seedIndex))
+            let made = (scene.addGeneratedTexture(sheet.image, name: "cards-\(def.id)"), scene.addCutout(alpha: sheet.alpha, coverage: sheet.coverage))
             sheets[species.rawValue] = made
             return made
         }
@@ -172,6 +150,9 @@ extension Scene {
         }
 
         func height(_ species: Foliage.Species, _ plant: Int) -> Float { sets[species.rawValue]?.plants[plant].height ?? 0 }
+
+        /// The species' palette and plants, as the library grew them.
+        func set(_ species: Foliage.Species) -> Foliage.SpeciesSet? { sets[species.rawValue] }
 
         /// The vertices and indices of every plant here that go into the scene's arrays (for `reserveGeometry`): each
         /// baked plant, unless they are lent, and for the others a species' boughs once and each plant's own meshes.
@@ -195,35 +176,35 @@ extension Scene {
         /// A plant that is an assembly where the scene has them, and voxels when far: one with
         /// boughs, or a dead tree (an assembly only for the wind to lean it). Ferns and grass are meshes that lean by
         /// themselves (`sways`), close to the ground: always triangles.
-        static func hasVoxels(_ plant: Foliage.Plant, _ species: Foliage.Species) -> Bool { plant.parts.count > 1 || species == .dead }
+        static func hasVoxels(_ plant: Foliage.Plant, _ def: Foliage.SpeciesDef) -> Bool { plant.parts.count > 1 || def.role == .tree }
 
         /// What the plant's voxels are made of (FoliageVoxels): its parts, as its assembly places them.
         private func voxelPlant(_ set: Foliage.SpeciesSet, _ index: Int) -> FoliageVoxels.Plant {
             let plant = set.plants[index]
-            return FoliageVoxels.Plant(key: "\(library): \(set.species) \(index)", pieces: plant.parts.map { part in
+            return FoliageVoxels.Plant(key: "\(library): \(catalog[set.species].id) \(index)", pieces: plant.parts.map { part in
                 let mesh = part.shared ? set.palette[part.mesh] : plant.meshes[part.mesh]
                 // A card is only there where its picture is (the shared boughs' leaves are the cards).
                 let coverage = part.shared && mesh.cutout ? sheet(set.species).map { scene.cutouts[$0.layer].coverage } ?? 1 : 1
                 return FoliageVoxels.Piece(mesh: mesh, transform: part.transform, firstLeaf: UInt32(mesh.leafIndex / 3), leafCoverage: coverage)
-            }, evergreen: set.species == .conifer)
+            }, evergreen: catalog[set.species].look.evergreen)
         }
 
         /// The library's plants by species and age, for the open world's placing (World.swift).
-        var index: World.Flora { World.Flora(sets.compactMap { $0 }) }
+        var index: World.Flora { World.Flora(sets.compactMap { $0 }, catalog: catalog) }
 
         /// The plant as the scene holds it, added on first use.
         private func add(_ set: Foliage.SpeciesSet, _ index: Int) -> Placed {
-            let plant = set.plants[index], s = set.species.rawValue
+            let plant = set.plants[index], s = set.species.rawValue, def = catalog[set.species]
             let boxes: [AABB]
             switch prepared[s][index] {
             case .flat(let wood, let leaves):
-                let sways = scene.usesAssemblies && (set.species == .fern || set.species == .grass)
-                let name = "\(library): \(set.species) \(index)"
+                let sways = scene.usesAssemblies && def.role == .groundCover
+                let name = "\(library): \(def.id) \(index)"
                 let layer = leaves.cutout ? sheet(set.species)?.layer : nil
                 // A baked plant is its finest level; one with boughs is voxels when far (VoxelLOD).
                 func finest(_ m: Int) -> Int { scene.setDetailLevel(m, 0); return m }
                 func flat(wood w: Int, leaves l: Int) -> Placed {
-                    if scene.usesVoxelBoxes, w >= 0, Flora.hasVoxels(plant, set.species) {
+                    if scene.usesVoxelBoxes, w >= 0, Flora.hasVoxels(plant, def) {
                         let voxels = scene.addVoxelPlant(voxelPlant(set, index))
                         scene.setMeshVoxels(w, plant: voxels, leaves: false)
                         scene.setMeshVoxels(l, plant: voxels, leaves: true)
@@ -266,7 +247,7 @@ extension Scene {
                 let box = boxes[p]
                 var placed = Assembly.Part(mesh: part.shared ? palettes[s][part.mesh] : own[part.mesh], transform: part.transform,
                                            firstLeaf: UInt32(mesh.leafIndex / 3),
-                                           leafCount: set.species == .conifer ? 0 : UInt32(mesh.leafTriangles), bone: part.bone, bounds: box)
+                                           leafCount: def.look.evergreen ? 0 : UInt32(mesh.leafTriangles), bone: part.bone, bounds: box)
                 if part.bone > 0 {   // part 0, the trunk, only leans with the whole plant
                     let own = plant.bones[part.bone]
                     if part.shared {
@@ -284,7 +265,7 @@ extension Scene {
             let sway = 1.1 * Assembly.rootSway * reach(bounds, .zero)
             bounds.lo -= SIMD3(repeating: sway)
             bounds.hi += SIMD3(repeating: sway)
-            let assembly = scene.addAssembly(Assembly(parts: parts, bounds: bounds, evergreen: set.species == .conifer))
+            let assembly = scene.addAssembly(Assembly(parts: parts, bounds: bounds, evergreen: def.look.evergreen))
             let voxels = scene.addVoxelPlant(voxelPlant(set, index))
             precondition(voxels == assembly, "an assembly's grid is the voxel plant of its number")
             return .assembly(assembly)
@@ -293,17 +274,35 @@ extension Scene {
         /// The species' materials and their textures. `place` adds a species' with its first plant; a scene whose
         /// plants come in an order of its own (the open world's: tile by tile) adds them all first, so that every
         /// scene of it has the same textures in the same order.
-        func addMaterials(of species: [Foliage.Species] = Foliage.Species.allCases) {
-            for species in species where sets[species.rawValue] != nil && shades[species.rawValue].isEmpty {
+        func addMaterials(of species: [Foliage.Species]? = nil) {
+            for species in species ?? catalog.all where sets[species.rawValue] != nil && shades[species.rawValue].isEmpty {
+                let look = catalog[species].look
                 // A material's colour is the plant's over its texture's mean: the texture is detail on top of it.
                 let gain = 1 / FoliageTextures.mean
-                let bark = texture(Flora.bark(species)), blade = sheet(species)?.texture ?? texture(Flora.leaf(species))
-                shades[species.rawValue] = Flora.leafColors(species).enumerated().map { i, leaf in
-                    let wood = scene.addMaterial(albedo: Flora.barkColor(species) * gain, texture: bark)
-                    let leaves = scene.addMaterial(albedo: leaf * gain, translucency: Flora.translucency(species), texture: blade)
+                let bark = texture(look.barkTexture), blade = sheet(species)?.texture ?? texture(look.leafTexture)
+                // The realistic look: scanned bark (not the birch's white), and broad leaves from the scanned leaf sheet.
+                let realistic = scene.settings.realism != .off
+                let barkScan = realistic && look.barkTexture == .roughBark ? (look.leafTexture == .needle ? "bark-pine" : "bark-oak") : nil
+                let sheetLeaves = realistic && look.leafTexture == .leaf && !scene.usesCards && TextureSet.find("leaves") != nil
+                shades[species.rawValue] = look.leaves.enumerated().map { i, leaf in
+                    var wood = -1
+                    if let barkScan, let set = TextureSet.find(barkScan) {
+                        wood = scene.addScanMaterial(barkScan, tint: look.bark / simd_max(set.meanColor(), SIMD3(repeating: 0.01)), normalScale: 1.4) ?? -1
+                    }
+                    if wood < 0 { wood = scene.addMaterial(albedo: look.bark * gain, texture: bark) }
+                    var leafGain = SIMD3<Float>(repeating: gain), leaves = -1
+                    if sheetLeaves, let set = TextureSet.find("leaves") {
+                        leafGain = 1 / simd_max(set.meanColor(), SIMD3(repeating: 0.01))
+                        leaves = scene.addLeafSheetMaterial(albedo: leaf * leafGain, translucency: look.translucency) ?? -1
+                    }
+                    if leaves < 0 {
+                        leafGain = SIMD3(repeating: gain)
+                        leaves = scene.addMaterial(albedo: leaf * gain, translucency: look.translucency, texture: blade)
+                        if realistic && !scene.usesCards { scene.markRealisticLeaf(leaves) }
+                    }
                     // Each shade turns at its own time, and to its own shade of autumn.
-                    scene.addLeafMaterial(LeafMaterial(material: leaves, summer: leaf, autumn: Flora.autumn(species).map { $0 * (0.8 + 0.2 * Float(i)) },
-                                                       turn: 0.52 + 0.07 * Float(i), translucency: Flora.translucency(species), gain: gain))
+                    scene.addLeafMaterial(LeafMaterial(material: leaves, summer: leaf, autumn: look.autumn.map { $0 * (0.8 + 0.2 * Float(i)) },
+                                                       turn: 0.52 + 0.07 * Float(i), translucency: look.translucency, gain: leafGain))
                     return wood
                 }
             }
@@ -319,11 +318,42 @@ extension Scene {
             let wood = shades[s][shade % shades[s].count]
             switch known {
             case .assembly(let assembly):
+                scene.label(assembly: assembly, catalog[species].id)
                 scene.addInstance(assembly: assembly, wood, transform)
             case .flat(let woodMesh, let leafMesh):
+                let plant = AssetKey(kind: .species, name: catalog[species].id)
+                scene.label(mesh: woodMesh, "\(plant.name) wood", asset: plant)
+                scene.label(mesh: leafMesh, "\(plant.name) leaves", asset: plant)
                 if woodMesh >= 0 { scene.addInstance(woodMesh, wood, transform) }
                 if leafMesh >= 0 { scene.addInstance(leafMesh, wood + 1, transform) }
             }
+        }
+
+        /// The realistic look's meadow: grass patches on a grid of 2 m cells within `reach` of `center`, thinning toward
+        /// its edge, each laid on the ground (`ground`: its height and normal) and kept where `density` (0...1) says.
+        /// How many.
+        @discardableResult
+        func meadow(center: SIMD2<Float>, reach: Float, seed: UInt64, ground: (Float, Float) -> (Float, SIMD3<Float>),
+                    density: (Float, Float) -> Float) -> Int {
+            let species = Foliage.Species.grass
+            guard sets[species.rawValue] != nil, let cover = catalog[species].habitat.cover else { return 0 }
+            let patches = plants(species, .mature)
+            guard !patches.isEmpty else { return 0 }
+            var rng = SplitMix64(seed: seed &* 0x9E37_79B9_7F4A_7C15 ^ 0x6EAD)
+            var count = 0
+            let n = Int(reach / 2)
+            for j in -n...n {
+                for i in -n...n {
+                    let x = center.x + Float(i) * 2 + rng.range(-0.4, 0.4), z = center.y + Float(j) * 2 + rng.range(-0.4, 0.4)
+                    let chance = rng.next(), turn = Float(rng.int(4)) * .pi / 2, patch = patches[rng.int(patches.count)], shade = rng.int(16)
+                    let r = simd_length(SIMD2(x, z) - center), t = min(max((r - reach * 0.6) / (reach * 0.4), 0), 1)
+                    guard chance < density(x, z) * (1 - t * t * (3 - 2 * t)) else { continue }
+                    let (y, normal) = ground(x, z)
+                    place(species, patch, translate([x, y, z]) * Scene.alignY(normal) * rotate(turn, [0, 1, 0]) * scale(cover.gridScale), shade: shade)
+                    count += 1
+                }
+            }
+            return count
         }
 
         func place(_ species: Foliage.Species, _ plant: Int, at position: SIMD3<Float>, yaw: Float, size: Float, shade: Int) {
@@ -343,6 +373,9 @@ extension Scene {
 
         /// The library and how the scene holds its plants: what a group of these instances is named by.
         var name: String { "\(library) assemblies \(scene.usesAssemblies)" }
+
+        /// How many plants the library has of a species.
+        func plantCount(_ species: Foliage.Species) -> Int { sets[species.rawValue]?.plants.count ?? 0 }
 
         /// How many instances a plant is (after `addAll`): one, or where plants are baked its wood and its leaves.
         func instanceCount(_ species: Foliage.Species, _ plant: Int) -> Int {
@@ -378,15 +411,47 @@ extension Scene {
 
     // MARK: - Forest
 
+    /// The Forest's water: a stream from the hills on the north side down to a pond in a hollow beyond the clearing,
+    /// on the side of the trail the seed picks (it never crosses it), shaped into `hills`. The pond fills to a little
+    /// under the lowest ground round its rim, so it stays in its bowl.
+    static func forestWater(_ hills: TerrainBase, seed: UInt64) -> (TerrainShapes, [WaterBody]) {
+        var rng = SplitMix64(seed: seed &* 0x9E37_79B9_7F4A_7C15 ^ 0x57EA)
+        let side: Float = rng.next() < 0.5 ? -1 : 1
+        let pondCenter = SIMD2<Float>(side * rng.range(70, 95), rng.range(-10, 25)), radii = SIMD2(rng.range(13, 18), rng.range(9, 13))
+        let source = SIMD2<Double>(Double(side * rng.range(45, 110)), -148)
+        // The stream ends at the pond's near rim.
+        let towards = simd_normalize(SIMD2<Double>(pondCenter) - source)
+        let mouth = SIMD2<Double>(pondCenter) - towards * Double(min(radii.x, radii.y) * 0.8)
+        let stream = SceneWaterMaker.river(name: "Stream", base: hills, from: source, to: mouth, width: 5, depth: 1.1, meander: 14, seed: seed)
+        var rim = Float.infinity
+        for k in 0..<24 {
+            let a = Float(k) / 24 * 2 * .pi, p = pondCenter + SIMD2(cos(a), sin(a)) * radii * 1.25
+            rim = min(rim, SceneWaterMaker.height(hills, Double(p.x), Double(p.y)))
+        }
+        let level = min(SceneWaterMaker.endLevel(stream.body), rim - 0.25)
+        let pond = SceneWaterMaker.pond(name: "Pond", center: pondCenter, radii: radii, level: level, depth: 2.2)
+        print(String(format: "Forest water: a stream from (%.0f, %.0f), a pond at (%.0f, %.0f), %.0f x %.0f m, its water at %.2f m",
+                     source.x, source.y, pondCenter.x, pondCenter.y, radii.x * 2, radii.y * 2, level))
+        return (TerrainShapes(bowls: [pond.bowl], channels: [stream.channel]), [stream.body, pond.body])
+    }
+
     /// The trail from the clearing into the forest (north, -z): its x at depth z.
-    private static func trail(_ z: Float) -> Float { 9 * sin(z / 31) + 4 * sin(z / 13 + 1) }
+    static func trail(_ z: Float) -> Float { 9 * sin(z / 31) + 4 * sin(z / 13 + 1) }
 
     /// A forest of `settings.trees` trees on 320 m of rolling ground (`settings.seed` picks the ground, the plants
-    /// and where they stand), with a grassy clearing around the camera and a trail leading out of it; the valley's
-    /// day cycle. `settings.undergrowth` scales the bushes, ferns and grass.
+    /// and where they stand), with a grassy clearing around the camera and a trail leading out of it, a stream coming
+    /// down from the north to a pond on one side of it; the valley's day cycle. `settings.undergrowth` scales the
+    /// bushes, ferns and grass.
     func buildForest() {
         let seed = UInt64(max(settings.seed, 0))
-        let terrain = Terrain(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        // The ground: the terrain "forest-<seed>" (its edits, Terrain Editor), over the seed's rolling hills with its
+        // stream's bed and its pond's bowl shaped into them.
+        let hills = NoiseTerrainBase(size: 320, cells: 320, seed: seed, relief: 9, flat: (center: [0, 0], inner: 12, outer: 55))
+        let (shapes, water) = Scene.forestWater(hills, seed: seed)
+        let base = ShapedTerrainBase(hills, shapes: shapes)
+        let entry = Scene.openTerrain("forest-\(seed)", base: base, layers: TerrainDocument.sceneLayers())
+        let snapshot = entry.field.snapshot()
+        let terrain = Terrain(snapshot, relief: 9)
         let half = terrain.size / 2, undergrowth = Float(settings.undergrowth) / 100
         let noiseSeed = UInt32(truncatingIfNeeded: seed) &+ 101
         func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
@@ -399,7 +464,8 @@ extension Scene {
 
         // The ground's colours, a texel every 31 cm: leaf litter and soil under the trees, moss in patches, greener in
         // the clearing, the trail's bare earth, rock where it is steep.
-        let colors = addGeneratedTexture(name: "ground", width: 1024, height: 1024, key: "seed \(seed) v\(FoliageTextures.version)") {
+        let colors = addGeneratedTexture(name: "ground", width: 1024, height: 1024,
+                                         key: "seed \(seed) v\(FoliageTextures.version)\(snapshot.editsFingerprint) \(shapes.fingerprint)") {
             FoliageTextures.image(1024, 1024) { u, v in
                 let x = (u - 0.5) * terrain.size, z = (v - 0.5) * terrain.size, p = SIMD2(x, z)
                 var color = SIMD3<Float>(0.15, 0.13, 0.075)
@@ -411,9 +477,66 @@ extension Scene {
             }
         }
         let ground = addMaterial(albedo: [1, 1, 1], texture: colors)
-        addInstance(addMesh(terrain.mesh()), ground, matrix_identity_float4x4)
+        // Its first sector where the ground's one mesh was, the others after the plants: a plant's sway goes by its
+        // instance's number, which then stays what it was.
+        let sectors = base.grid.tiles!.flatMap { TerrainSector.sectors(of: $0, level: 0, grid: base.grid) }
+        let style = TerrainMeshStyle(uvOrigin: base.grid.origin, uvScale: 1 / terrain.size)
+        addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.prefix(1)), style: style, material: ground,
+                   generatedWater: water)
+        // (Nothing grows in the water or on the stream's banks.)
+        let waterField = self.water?.field
+        func dry(_ x: Float, _ z: Float, margin: Double = 1.5) -> Bool { !(waterField?.wet(Double(x), Double(z), margin: margin) ?? false) }
+        // The realistic look: the ground of scans, leaf litter and soil under the trees with moss in patches, grass in
+        // the clearing, the trail's bare earth, mud on the banks and pebbles in the stream's bed, rock where it is steep.
+        addGroundLook(GroundLook(
+            layers: [.init(set: "forest-floor", color: [0.15, 0.13, 0.075], tint: [0.86, 0.82, 0.76], contrast: 1),
+                     .init(set: "moss", color: [0.085, 0.13, 0.05], contrast: 0.6),
+                     .init(set: "grass", color: [0.12, 0.16, 0.06], contrast: 0.5),
+                     .init(set: "earth", color: [0.27, 0.215, 0.145], tint: [0.78, 0.72, 0.64], contrast: 0.8),
+                     .init(set: "rock", color: [0.24, 0.23, 0.21], metres: 4, contrast: 1.4),
+                     .init(set: "mud", color: [0.12, 0.09, 0.06], contrast: 0.7),
+                     .init(set: "pebbles", color: [0.42, 0.4, 0.37], metres: 1.4, contrast: 0.8),
+                     .init(set: "ground", color: [0.16, 0.12, 0.08], tint: [0.92, 0.88, 0.84], contrast: 1)],
+            rock: 4, slope: [0.64, 0.82], lo: [-half, -half], size: [terrain.size, terrain.size], texels: 1024,
+            key: "forest \(seed) v3 \(snapshot.editsFingerprint) \(shapes.fingerprint)") { x, z in
+            let p = SIMD2(x, z)
+            let moss = GroundLook.smooth(0.05, 0.35, Terrain.noise(p / 9, seed: noiseSeed &+ 31)) * 0.85
+            let soil = GroundLook.smooth(-0.25, 0.35, Terrain.noise(p / 7, seed: noiseSeed &+ 36))
+            let clearing = 1 - GroundLook.smooth(26, 60, length(p) + 9 * Terrain.noise(p / 13, seed: noiseSeed &+ 35))
+            let trail = 1 - offTrail(x, z)
+            let bed = dry(x, z, margin: 0) ? Float(0) : 1
+            let bank = (dry(x, z, margin: 1.5) ? Float(0) : 0.6) + (dry(x, z, margin: 3.5) ? Float(0) : 0.4)
+            var w = [Float](repeating: 0, count: 8)
+            w[0] = (1 - moss) * (1 - soil)
+            w[7] = (1 - moss) * soil * 0.8
+            w[1] = moss
+            func over(_ k: Int, _ amount: Float) {
+                guard amount > 0 else { return }
+                for i in w.indices { w[i] *= 1 - amount }
+                w[k] += amount
+            }
+            over(2, clearing * 0.9)
+            over(7, trail)
+            over(5, max(bank, bed))
+            over(6, bed * GroundLook.smooth(0, 0.5, Terrain.noise(p / 3, seed: noiseSeed &+ 37)) * 0.7)
+            return w
+        })
+        // ...and its rocks: boulders where it is steep and along the stream, stones scattered under the trees, none on
+        // the trail or in the clearing.
+        addRocks(count: 9000, lo: [-half + 6, -half + 6], hi: [half - 6, half - 6], seed: seed &+ 0x80C) { x, z in
+            let r = (x * x + z * z).squareRoot()
+            guard r > 16, offTrail(x, z) > 0.9 else { return (0, 0.1...0.2) }
+            let steep = 1 - GroundLook.smooth(0.8, 0.93, terrain.normal(x, z).y)
+            let banks = dry(x, z, margin: 0) && !dry(x, z, margin: 3) ? Float(1) : 0
+            let clusters = GroundLook.smooth(0.2, 0.6, Terrain.noise(SIMD2(x, z) / 23, seed: noiseSeed &+ 38))
+            return (min(0.06 + 0.6 * steep + 0.6 * banks + 0.3 * clusters, 1) * 0.6, 0.2...(0.8 + 1.8 * steep + 0.6 * clusters))
+        }
+        defer {
+            addTerrain(name: entry.document.name, field: entry.field, snapshot: snapshot, sectors: Array(sectors.dropFirst()), style: style,
+                       material: ground)
+        }
 
-        let flora = Flora(self, seed: seed)
+        let flora = Flora(self, seed: seed, catalog: PlantCatalog.resolve(settings.plantCatalog))
         var rng = SplitMix64(seed: seed &* 0x2545_F491_4F6C_DD1D &+ 0xF07E57)
 
         // Trees: one candidate per cell of a grid (jittered inside it, so no two stand too close), kept by the
@@ -430,7 +553,7 @@ extension Scene {
                 let chance = rng.next(), rank = rng.next()
                 let density = smoothstep(11, 19, (x * x + z * z).squareRoot()) * offTrail(x, z)
                     * smoothstep(0.72, 0.86, terrain.normal(x, z).y)
-                    * (0.6 + 0.6 * Terrain.noise(SIMD2(x, z) / 23, seed: noiseSeed &+ 7))
+                    * (0.6 + 0.6 * Terrain.noise(SIMD2(x, z) / 23, seed: noiseSeed &+ 7)) * (dry(x, z, margin: 2.5) ? 1 : 0)
                 if chance < density { sites.append(Site(x: x, z: z, rank: rank)) }
             }
         }
@@ -444,25 +567,19 @@ extension Scene {
         var trunks = [Bool](repeating: false, count: lots * lots)
         func lotIndex(_ x: Float, _ z: Float) -> Int { min(Int((z + half) / lot), lots - 1) * lots + min(Int((x + half) / lot), lots - 1) }
 
-        var counts = [Int](repeating: 0, count: Foliage.Species.allCases.count)
+        var counts = [Int](repeating: 0, count: flora.catalog.count)
+        let catalog = flora.catalog, picker = Foliage.TreePicker(catalog)
         for site in sites {
             let (x, z) = (site.x, site.z)
             let y = terrain.height(x, z), slope = 1 - terrain.normal(x, z).y
             let high = y / terrain.relief, mix = stand(x, z), r = (x * x + z * z).squareRoot()
-            // Conifers up the hills and on slopes, oaks on low ground, birches at the clearing's edge and along the
-            // trail (they want light), a dead tree now and then.
-            let conifer = max(0.05, 0.3 + 1.1 * smoothstep(-0.1, 0.7, high) + 3 * slope + 1.6 * mix)
-            let oak = max(0.05, 0.9 - 0.7 * smoothstep(0, 0.7, high) - 1.6 * mix)
-            let birch = 0.25 + 1.2 * (1 - smoothstep(18, 42, r)) + 0.8 * (1 - smoothstep(4, 9, abs(x - Scene.trail(z))))
-            let total = conifer + oak + birch
-            var pick = rng.next() * total * 1.035
-            let species: Foliage.Species
-            if pick < conifer { species = .conifer } else {
-                pick -= conifer
-                if pick < oak { species = .oak } else { species = pick - oak < birch ? .birch : .dead }
-            }
+            // (Built in: conifers up the hills and on slopes, oaks on low ground, birches where the light comes in, at
+            // the clearing's edge and along the trail, a dead tree now and then.)
+            let light = [SIMD2<Float>(1.2, 1 - smoothstep(18, 42, r)), SIMD2<Float>(0.8, 1 - smoothstep(4, 9, abs(x - Scene.trail(z))))]
+            let chosen = picker.pick(rng.next(), high: high, slope: slope, stand: mix, light: light)
             let u = rng.next()
-            let age: Foliage.Age = u < 0.12 ? .sapling : u < 0.4 ? .young : .mature
+            guard let species = chosen else { continue }
+            let age = Foliage.TreePicker.age(u, catalog[species].habitat)
             let plants = flora.plants(species, age)
             trunks[lotIndex(x, z)] = true
             counts[species.rawValue] += 1
@@ -470,41 +587,50 @@ extension Scene {
                         size: rng.range(0.85, 1.2), shade: rng.int(16))
         }
 
-        // Bushes and ferns: in patches (a low noise each), off the trail and the trunks.
-        func scatter(_ species: Foliage.Species, count: Int, patch: Float, noise: UInt32, size: ClosedRange<Float>, sink: Float) {
+        // Bushes and ground cover, in their order: in patches (a low noise each) off the trail and the trunks, or in
+        // the open; grass on a grid, laid on the ground's slope, thinning out under the trees.
+        func scatter(_ species: Foliage.Species, _ cover: Foliage.Habitat.Cover, frequency: Float) {
             let ages: [Foliage.Age] = [.young, .mature]
-            for _ in 0..<count {
+            for _ in 0..<Int(cover.count * undergrowth) {
                 let x = rng.range(-half + 4, half - 4), z = rng.range(-half + 4, half - 4)
-                let chance = rng.next(), yaw = rng.range(0, 2 * .pi), s = rng.range(size.lowerBound, size.upperBound)
+                let chance = rng.next(), yaw = rng.range(0, 2 * .pi), s = rng.range(cover.size.lowerBound, cover.size.upperBound)
                 let plants = flora.plants(species, ages[rng.int(2)])
                 let plant = plants[rng.int(plants.count)], shade = rng.int(16)
-                let likely = smoothstep(7, 12, (x * x + z * z).squareRoot()) * offTrail(x, z)
-                    * smoothstep(-0.25, 0.35, Terrain.noise(SIMD2(x, z) / patch, seed: noise))
-                guard chance < likely, !trunks[lotIndex(x, z)] else { continue }
+                let patches = smoothstep(-0.25, 0.35, Terrain.noise(SIMD2(x, z) / cover.patch, seed: noiseSeed &+ cover.salt))
+                let r = (x * x + z * z).squareRoot()
+                let likely = (cover.open ? (1 - smoothstep(34, 70, r)) * (0.25 + 0.75 * offTrail(x, z)) * patches
+                                         : smoothstep(7, 12, r) * offTrail(x, z) * patches) * frequency
+                guard chance < likely, !trunks[lotIndex(x, z)], dry(x, z, margin: 0.5) else { continue }
                 counts[species.rawValue] += 1
-                flora.place(species, plant, at: [x, terrain.height(x, z) - sink, z], yaw: yaw, size: s, shade: shade)
+                flora.place(species, plant, at: [x, terrain.height(x, z) - cover.sink, z], yaw: yaw, size: s, shade: shade)
             }
         }
-        scatter(.bush, count: Int(2600 * undergrowth), patch: 28, noise: noiseSeed &+ 31, size: 0.8...1.3, sink: 0.05)
-        scatter(.fern, count: Int(6000 * undergrowth), patch: 17, noise: noiseSeed &+ 47, size: 0.9...1.7, sink: 0.02)
-
-        // Grass: patches on a 2 m grid, laid on the ground's slope, thinning out under the trees.
-        let patches = flora.plants(.grass, .mature)
-        let reach = 72
-        for j in stride(from: -reach, through: reach, by: 2) {
-            for i in stride(from: -reach, through: reach, by: 2) {
-                let x = Float(i), z = Float(j)
-                let chance = rng.next(), turn = Float(rng.int(4)) * .pi / 2, patch = patches[rng.int(patches.count)], shade = rng.int(16)
-                let likely = (1 - smoothstep(34, 70, (x * x + z * z).squareRoot())) * (0.25 + 0.75 * offTrail(x, z)) * min(undergrowth, 1)
-                guard chance < likely else { continue }
-                counts[Foliage.Species.grass.rawValue] += 1
-                flora.place(.grass, patch, translate([x, terrain.height(x, z), z]) * Scene.alignY(terrain.normal(x, z))
-                            * rotate(turn, [0, 1, 0]) * scale(1.12), shade: shade)
+        func grid(_ species: Foliage.Species, _ cover: Foliage.Habitat.Cover, step: Int, frequency: Float) {
+            let patches = flora.plants(species, .mature)
+            guard !patches.isEmpty else { return }
+            let reach = 72
+            for j in stride(from: -reach, through: reach, by: max(step, 1)) {
+                for i in stride(from: -reach, through: reach, by: max(step, 1)) {
+                    let x = Float(i), z = Float(j)
+                    let chance = rng.next(), turn = Float(rng.int(4)) * .pi / 2, patch = patches[rng.int(patches.count)], shade = rng.int(16)
+                    let likely = (1 - smoothstep(34, 70, (x * x + z * z).squareRoot())) * (0.25 + 0.75 * offTrail(x, z)) * min(undergrowth, 1)
+                        * frequency
+                    guard chance < likely, dry(x, z, margin: 0.3) else { continue }
+                    counts[species.rawValue] += 1
+                    flora.place(species, patch, translate([x, terrain.height(x, z), z]) * Scene.alignY(terrain.normal(x, z))
+                                * rotate(turn, [0, 1, 0]) * scale(cover.gridScale), shade: shade)
+                }
             }
         }
-        print("Forest: " + Foliage.Species.allCases.map { "\(counts[$0.rawValue]) \($0)" }.joined(separator: ", "))
+        for species in catalog.covers {
+            let habitat = catalog[species].habitat, cover = habitat.cover!
+            if let step = cover.grid { grid(species, cover, step: step, frequency: habitat.frequency) } else {
+                scatter(species, cover, frequency: habitat.frequency)
+            }
+        }
+        print("Forest: " + flora.catalog.all.map { "\(counts[$0.rawValue]) \(flora.catalog[$0].id)" }.joined(separator: ", "))
 
-        addDaySun(half: 90)
+        addDaySun()
         defaultCamera = Scene.demoCamera(.forest)!
     }
 }

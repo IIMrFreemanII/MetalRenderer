@@ -3,8 +3,9 @@
 #
 #   same.sh [--self] <mode> [<filter>] [-- KEY=VALUE …]
 #
-# Builds the current tree in release, runs METALRENDERER_BENCH=<mode> on the baseline (baseline.sh) and on the
-# current binary with METALRENDERER_BENCH_DIR set, and compares the PNGs by name. <filter> is a
+# Builds the current tree (the dev build, Tools/build.sh: it draws the same images as release), runs
+# METALRENDERER_BENCH=<mode> on the baseline (baseline.sh) and on the current binary with METALRENDERER_BENCH_DIR set,
+# and compares the PNGs by name. <filter> is a
 # METALRENDERER_BENCH_ONLY value; the assignments after -- go to both runs. The converged references are skipped
 # (METALRENDERER_GI_REFS=0) unless an assignment says otherwise. Exits 0 when every image is identical, 1 otherwise.
 #
@@ -37,11 +38,11 @@ for e in "${extra[@]+"${extra[@]}"}"; do
 done
 
 bin_a=$("$here/baseline.sh" --path)
-bin_b="$repo/.build/release/MetalRenderer"
+bin_b="$repo/.build-dev/debug/MetalRenderer"
 if [[ $self == 1 ]]; then
   bin_b=$bin_a
 else
-  swift build -c release --package-path "$repo" 2>&1 | tail -n 1   # a stale binary would prove nothing
+  "$repo/Tools/build.sh" 2>&1 >/dev/null | tail -n 1   # a stale binary would prove nothing
 fi
 
 out="${TMPDIR:-/tmp}/metalrenderer-same-$(date +%Y%m%d-%H%M%S)"
@@ -50,7 +51,7 @@ echo "images and logs: $out (a = baseline, b = $([[ $self == 1 ]] && echo 'basel
 
 run() {   # run <a|b> <bin>
   local side=$1 bin=$2
-  local root; root=$(cd "$(dirname "$bin")/../.." && pwd)   # <root>/.build/release/MetalRenderer
+  local root; root=$(cd "$(dirname "$bin")/../.." && pwd)   # <root>/.build(-dev)/<config>/MetalRenderer
   printf '  %s … ' "$side"
   local start=$SECONDS
   if (cd "$root" && env METALRENDERER_GI_REFS=0 "METALRENDERER_BENCH=$mode" "METALRENDERER_BENCH_DIR=$out/$side" \

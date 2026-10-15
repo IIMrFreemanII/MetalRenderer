@@ -24,7 +24,11 @@ struct Uniforms {
     float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off), w = variance scale
     uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
     uint4 lightTable;       // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none
+    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none,
+                            // z = flags: 1 the grade below, 2 auto exposure's meter (PostSettings)
+    float4 grade;           // the colour grade: red and blue gains (white balance), saturation, contrast
+    float4 interiorLo;      // xyz: the walkable interiors' box (Scene.interiorBox; empty: lo > hi), where GI's hits see
+    float4 interiorHi;      //   the sun through a shadow ray (giSunVisibility), its light map too coarse for rooms
 };
 
 struct MeshData {
@@ -40,8 +44,12 @@ struct MeshData {
     device const float3* block;
     uint vertexCount;
     uint lod;           // level of detail + 1, 0 = none (GPUMesh.lod): the geometry debug views' LOD level
+    // TERRAIN: a terrain's sector: 1 + its layer table's first record in SceneShading.procParams (Shaders/Terrain.metal);
+    // its block has a layer weight per vertex (16 bytes) after its triangles' materials. 0: not a terrain's.
+    uint terrain;
+    uint pad;
 };
-static_assert(sizeof(MeshData) == 40, "MeshData: GPUMesh");
+static_assert(sizeof(MeshData) == 48, "MeshData: GPUMesh");
 
 struct InstanceData {
     float4x4 transform;
@@ -58,8 +66,18 @@ struct Material {
     float4 emission;    // rgb = emitted radiance, a = roughness
     float4 params;      // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
                         // z = 1: its emission is sampled as an emissive-mesh light,
-                        // w = translucency (leaves): this share of them is lit from behind (traceSurface)
+                        // w = translucency (leaves): this share of them is lit from behind (traceSurface);
+                        //     < 0: skin, -w its strength (0...1), + 2 where it is thin (Hair.metal skinUnshadowed)
     uint4  textures;    // base colour, metallic-roughness (G = roughness, B = metallic), normal, emissive; ~0 = none
+};
+
+// A procedural material's extras (GPUTypes.swift GPUMaterialExtra; MATERIAL_EXTRAS: one per material, defaults for
+// the others): its height (parallax) and opacity textures, and how it is sampled.
+struct MaterialExtra {
+    uint4  textures;    // x = height, y = opacity; ~0 = none; z = 1: procedural (a mesh without UVs gets planar ones);
+                        // w = its program (PROCEDURAL_CODE: computed in the shading, MatShaderCode), ~0: baked
+    float4 surface;     // x = parallax depth (UV units), y = UV scale, z = opacity cutoff, w = AO strength (the
+                        //   metallic-roughness texture's R darkens the base colour by it; 0: R isn't occlusion)
 };
 
 // Bindless material textures (Renderer: an array of MTLResourceIDs).
@@ -95,6 +113,7 @@ constant uint SKY_CLOUDS = 1, SKY_SHADOWS = 2, SKY_UPDATE_ALL = 4, SKY_CLOUDS_OV
 
 // Buffer 7 of every kernel that shades ray hits: materials, per-vertex UVs and the texture table; the sky.
 struct VSMScene;   // Shaders/VSM.metal
+struct WaterScene; // Shaders/WaterCommon.metal
 
 struct SceneShading {
     device const Material*        materials;
@@ -109,8 +128,13 @@ struct SceneShading {
     texture2d<float>              cloudShadow; // with SKY_SHADOWS: transmittance toward the sun (cloudShadowKernel)
     SkyParams                     skyParams;
     device const VSMScene*        vsm;         // with FLAG_VSM: the virtual shadow maps (VSMTargets.writeScene)
+    device const MaterialExtra*   extras;      // with MATERIAL_EXTRAS: per material (procedural materials' extras)
+    device const float4*          procParams;  // with PROCEDURAL_CODE: the programs' parameters (MatShaderCode)
+    device const WaterScene*      water;       // with WATER: this frame's water (Renderer+Water.swift)
 };
-static_assert(sizeof(SceneShading) == 288, "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset)");
+static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 280 && __builtin_offsetof(SceneShading, procParams) == 288
+              && __builtin_offsetof(SceneShading, water) == 296,
+              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingVSMOffset, shadingExtrasOffset, shadingWaterOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
@@ -155,7 +179,35 @@ constant bool FOLIAGE = (LIGHT_SPEC & 0x40000000u) != 0;
 // queries walk three levels and a hit names its part (FOLIAGE's plants or these); the wind, the leaves and the voxels
 // stay FOLIAGE's, so a city of modules doesn't trace the plants' code.
 constant bool RIGID_ASSEMBLIES = (LIGHT_SPEC & 0x00080000u) != 0;
+// Bit 18 = LIQUID: some instances are a liquid's surface (MASK_LIQUID), which camera rays are bent through (liquidKernel).
+constant bool LIQUID = (LIGHT_SPEC & 0x00040000u) != 0;
+// Bit 17 = SKIN: some materials are skin (Material.params.w < 0), lit wrapped and through thin parts (Hair.metal
+// skinUnshadowed); without it the lights' code is what it was before skin (0.3 ms of the crowd's trace on an M1 Max).
+constant bool SKIN = (LIGHT_SPEC & 0x00020000u) != 0;
+// Bit 16 = PARTICLES: the scene has particle effects (ParticleTrace.metal), whose own structure the camera's layer,
+// shadow rays, reflections and the path tracer look through.
+constant bool PARTICLES = (LIGHT_SPEC & 0x00010000u) != 0;
 constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
+// Bit 15 = MATERIAL_EXTRAS: some materials are procedural (Material Designer graphs, Scene+Procedural.swift): the
+// shading reads their extras (SceneShading.extras): a UV scale, parallax from a height, occlusion.
+constant bool MATERIAL_EXTRAS = (LIGHT_SPEC & 0x00008000u) != 0;
+// Bit 14 = OPACITY: some of their instances cut holes by an opacity texture (TraceScene.opacity), which the queries
+// alpha-test (OpacityLevels, Intersect.metal); always with ALPHA_TEST (its query loop).
+constant bool OPACITY = (LIGHT_SPEC & 0x00004000u) != 0;
+// Bit 13 = PROCEDURAL_CODE: some of them are code the shading runs (proceduralMaterial, Procedural.metal) rather than
+// baked textures.
+constant bool PROCEDURAL_CODE = (LIGHT_SPEC & 0x00002000u) != 0;
+// Bit 12 = TERRAIN: the scene's ground is a terrain (Scene+Terrain.swift): its sectors' vertices carry 16 layer
+// weights, and the shading blends the layers over their own material (terrainLayers, Surface.metal).
+constant bool TERRAIN = (LIGHT_SPEC & 0x00001000u) != 0;
+// Bit 11 = WATER: the scene has water (Scene+Water.swift): waterKernel bends the camera's rays into it through its
+// own structures (Shaders/Water.metal), the composite puts its caustics on the sun's light under it.
+constant bool WATER = (LIGHT_SPEC & 0x00000800u) != 0;
+// Bit 10 = LEAF_TRANSMIT: the realistic look's leaves (SceneSettings.realism) are two-sided where the camera sees them:
+// each takes the light on its near side and, tinted, what comes through it from the far side (Hair.metal
+// leafUnshadowed), with its shadow rays from the side the light is on; elsewhere (GI's hits) a share of them is lit
+// from behind as always (Surface.backlit).
+constant bool LEAF_TRANSMIT = (LIGHT_SPEC & 0x00000400u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
@@ -234,6 +286,9 @@ static_assert(sizeof(PostParams) == 80, "PostParams: GPUPostParams");
 
 constant uint FOG_MAX_VOLUMES = 8;
 
+// Whether p is inside the walkable interiors' box (lo > hi: there is none).
+inline bool inInteriorBox(float4 lo, float4 hi, float3 p) { return all(p >= lo.xyz) && all(p <= hi.xyz); }
+
 struct FogParams {
     float4 medium;          // x = height-fog extinction at the base (1/m), y = height falloff (1/m), z = base height
                             //   (constant density below), w = anisotropy g
@@ -244,6 +299,8 @@ struct FogParams {
                             //   the froxel grid, to the surface or without end (0 = none; fogHaze)
     float4 grid;            // x = near, y = far (view depth), z = log(far / near), w = depth slices
     uint4  counts;          // x, y = froxel columns and rows, z = volume count, w = FOG_* flags
+    float4 interiorLo;      // xyz: the walkable interiors' box (Uniforms.interiorLo / Hi), where the sky's ambient light
+    float4 interiorHi;      //   in the fog is occluded (fogSkyAmbient)
     FogVolume volumes[FOG_MAX_VOLUMES];
 };
 
@@ -276,6 +333,7 @@ constant uint FLAG_POST          = 524288; // the lens effects follow (Post.meta
 constant uint FLAG_VIS_BUFFER    = 1048576; // traceKernel's primary hits come from the raster visibility buffer (Raster.metal)
 constant uint FLAG_VSM           = 2097152; // the camera's surfaces' shadows through virtual shadow maps (VSM.metal)
 constant uint FLAG_GI_RADIANCE   = 4194304; // the composite keeps the lit diffuse light (Lumen's screen traces read it)
+constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
@@ -304,6 +362,7 @@ constant uint MASK_LIGHTS   = 2;     // the lights' visible shapes and the camer
 constant uint MASK_GLASS    = 4;     // window glass: met by camera rays only (MASK_ALL), so light passes through it
 constant uint MASK_VOXELS   = 8;     // VOXEL_BOXES: a far plant's box, met by the rays that meet MASK_GEOMETRY (voxelMask)
 constant uint MASK_SHADOW_TRACED = 16; // geometry the raster can't draw (Scene.maskShadowTraced): traced by VSM shadows
+constant uint MASK_LIQUID   = 32;    // a liquid's surface (Scene.maskLiquid): only liquidKernel's rays meet it
 constant uint MASK_ALL      = 0xFF;
 // What a ray is for, in bits 8-11 of the mask it is traced with (rayMask): the traversal counters are kept per class
 // (RT_STATS, TraversalStats). Instances' masks never have these bits; the ray queries take them off.

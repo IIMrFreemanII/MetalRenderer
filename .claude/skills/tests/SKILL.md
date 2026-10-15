@@ -24,15 +24,19 @@ development down, so run only the suites that cover what you changed.
 .claude/skills/tests/scripts/related.sh
 ```
 * It reads the files changed against `HEAD` (uncommitted and untracked), maps them to suites and runs
-  `swift test --filter '<A>|<B>'`.
+  `Tools/build.sh test --filter '<A>|<B>'`: the dev build (the debug configuration with `-O`, in `.build-dev`). It
+  rebuilds a one-file edit in about 20 s and runs the CPU-stepped physics suites as fast as release does.
 * `--base <rev>` takes the changes since a revision instead, for example `--base main` for a whole branch.
 * `--dry-run` prints the suites and the uncovered files and runs nothing.
 * `related.sh CityTests BuildingTests` runs the suites you name and skips the map.
 
 By hand, with the same filter:
 ```bash
-swift test --filter 'CityTests|BuildingTests'
+Tools/build.sh test --filter 'CityTests|BuildingTests'
 ```
+In release, when a check needs that exact build: `swift test -c release --filter …`. Release builds are testable
+(`Package.swift`), so it shares `.build/release` with `swift build -c release` and needs no `-Xswiftc -enable-testing`;
+but a Swift edit recompiles the whole module there (about 4 min).
 For one test, use `--filter CityTests/testThePlanIsSeeded`.
 
 ## Map
@@ -47,17 +51,40 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `Shaders/Intersect.metal` (the ray queries) | ShaderSourceTests, KernelVariantsTests, PlantTracingTests |
 | `BVH.swift` (the SAH builder over boxes, the clusters' trees) | BVHTests, CacheTests |
 | `CacheFile`, `SectionFile`, `BlueNoise` | CacheTests |
-| `Building*.swift`, `MeshBuilder` | BuildingTests, CityTests |
+| `Building*.swift` (the generator, its floor plans, interiors, styles as data, the store, the editor's parameters and Mutate), `BuiltInBuildings`, `MeshBuilder` | BuildingTests, CityTests, BuildingPlanTests, BuildingEditorTests, BuildingWorkshopTests, WalkerTests |
+| `PlanEdits`, `PropLibrary`, `BuildingEditor/FloorPlanView` (hand edits, glTF props) | BuildingEditorTests, BuildingPlanTests |
+| `FurnitureKit` | BuildingPlanTests, BuildingWorkshopTests |
+| `Walker`, `InteriorControls`, `InteriorLifts` (walking, doors, switches, lifts) | WalkerTests, BuildingWorkshopTests |
+| `Scene+Buildings` (the building workshop), `Scene+Interiors` (buildings into scenes, interiors on demand) | BuildingWorkshopTests, CityTests, WorldTests, WalkerTests |
+| `BuildingEditor/*` (the SwiftUI panel, the Floor Plan window) | BuildingEditorTests covers its model; the views: prove with the app |
 | `CityPlan`, `Scene+City` | CityTests, BuildingTests |
 | `Scene+Stress` | StressSceneTests |
-| `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests (`SkinnedCharacter`: + MuscleTests, the rig's poses) |
+| `Crowd*.swift`, `SkinnedCharacter`, `Scene+Crowd`, `Shaders/Crowd.metal` | CrowdTests, FBXTests, CharacterBaseTests, CharacterFaceTests, CharacterHairTests (`SkinnedCharacter`: + MuscleTests, the rig's poses; the face and hair passes on the GPU: `METALRENDERER_CROWD_CHECK=1` with `-m characters`) |
+| `Character*.swift` (DNA, base body, morphs, face rig, builder, params, store), `Face*.swift` (the sculpted head, eyes, teeth), `CharacterEditor/*` | CharacterDNATests, CharacterBaseTests, CharacterFaceTests, CharacterSkinTests, CharacterHairTests, CharacterEditorTests (the editor's views: prove with the app) |
+| `CharacterSkin` (skin UVs and textures), `CharacterHair*` (strands, caps) | CharacterSkinTests, CharacterHairTests (the skin shading in `Shaders/Hair.metal`: images, `-m characters`) |
+| `Scene+Characters` (the character workshop) | CharacterBaseTests, CharacterHairTests |
 | `FBXReader` | FBXTests |
-| `Foliage*.swift`, `Scene+Forest` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`) |
+| `Foliage*.swift`, `Scene+Forest` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`), PlantGoldenTests, PlantCatalogTests |
+| `Plant*.swift` (species as data, curves, habitats, the store, the editor's parameters and Mutate), `BuiltInPlants` | PlantGoldenTests, PlantCatalogTests, PlantWorkshopTests, PlantEditorTests, FoliageTests, ForestTests |
+| `Scene+Plants` (the plant workshop) | PlantWorkshopTests, PlantGoldenTests |
+| `PlantEditor/*` (the SwiftUI panel) | PlantEditorTests covers its model; the views: prove with the app |
 | `PlantTracing`, `Shaders/Foliage.metal` (the plants' variants, the wind) | PlantTracingTests, FoliageTests, ForestTests, FoliageRuntimeTests (the shader: + the shader pair) |
 | `VoxelGrids`, `VoxelLOD` | FoliageRuntimeTests, SceneBuffersTests |
-| `SDF*.swift`, `Scene+Shapes`, `Shaders/SDF.metal` | SDFTests, SceneBuffersTests, PhysicsTests (the shader: SDFTests + PhysicsTests + the shader pair) |
-| `Physics*.swift`, `Scene+Physics`, `Scene+Ragdolls`, `Scene+Hair`, `Scene+Soft`, `Scene+Muscles`, `Shaders/Physics.metal` | PhysicsTests, RagdollTests, HairTests, SoftBodyTests, MuscleTests (the shader: + the shader pair) |
-| `MuscleAtlas`, `SkeletonAtlas` | MuscleTests (the écorché and its skeleton) |
+| `SDF*.swift`, `Scene+Shapes`, `Shaders/SDF.metal` | SDFTests, SceneBuffersTests, PhysicsTests, CharacterBaseTests (sparse surface nets) (the shader: SDFTests + PhysicsTests + the shader pair) |
+| `Physics*.swift`, `Scene+Physics`, `Scene+Ragdolls`, `Scene+Hair`, `Scene+Soft`, `Scene+Muscles`, `Shaders/Physics.metal` | PhysicsTests, RagdollTests, HairTests, SoftBodyTests, MuscleTests, FluidTests (the shader: + the shader pair) |
+| `FluidSurface`, `Scene+Fluids`, `Shaders/Fluid.metal`, `Shaders/FluidSurface.metal`, `Shaders/Liquid.metal` | FluidTests (the shaders: + the shader pair) |
+| `Particles`, `ParticleMath`, `ParticlesGPU`, `ParticleTextures`, `Scene+Particles`, `Scene+Effects`, `Shaders/ParticleSim.metal`, `Shaders/ParticleLight.metal`, `Shaders/ParticleTrace.metal` | ParticleTests VFXTests (the shaders: + the shader pair) |
+| `VFX/*` (the effects' graphs), `ShadersVFX.metal`, `LegacyEffects` (the golden test's fixture) | VFXTests ParticleTests (`ShadersVFX`: + ShaderSourceTests) |
+| `VFXEditor/*` (the VFX editor), `VFX/VFXLive` (its edits in the running scene) | VFXEditorTests (`VFXLive`: + VFXTests ParticleTests) |
+| `GraphEditor/*` (the graph editors' shared canvas) | VFXEditorTests, MaterialEditorTests, ProjectGraphTests |
+| `ProjectGraph/*`, `ProjectGraphEditor/*` (the Project Graph: outlines, overrides, the graph, its layouts, its window) | ProjectGraphTests covers the model; the views: `PROJECT_GRAPH_PNG=<folder>` draws them (and the 3D cone into a texture); `-m outlines` writes every scene's outline |
+| `Scene.swift`, `Scene+City`, `Scene+Forest`, `Scene+Physics` (the builders' outline tags) | their own suites and ProjectGraphTests |
+| `SceneNavigation.swift`, `SceneGizmo.swift` (the scene view's camera about its pivot, the gizmo) | SceneNavigationTests; the gizmo's pictures: `SCENE_GIZMO_PNG=<folder>`; the mouse itself (Renderer's input) by hand |
+| `DayClock.swift`, `DayBar.swift` (the day as a clock, holding it, the day bar) | DayClockTests; the bar's pictures: `DAY_BAR_PNG=<folder>`; the bar's clicks in the window by hand |
+| `MaterialGraph/*`, `MaterialShaders/*`, `ShadersMaterial*.metal` (the Material Designer's graphs, engine, shader code) | MaterialGraphTests, MaterialEngineTests, MaterialEditorTests, MaterialDisplacementTests |
+| `MaterialEditor/*` (the Material Designer's window) | MaterialEditorTests covers its model; the views: `MATERIAL_EDITOR_PNG=<folder>` draws them |
+| `Scene+Procedural`, `Scene+Materials` (procedural materials, the material workshop), `Shaders/Procedural.metal`, `Shaders/Pick.metal` | MaterialEditorTests, SceneBuffersTests (the shaders: ShaderSourceTests, KernelVariantsTests, MaterialGraphTests); renders: `-m materials`, `-m matedit` |
+| `MuscleAtlas`, `SkeletonAtlas` | MuscleTests (the écorché and its skeleton), CharacterBaseTests (BodySurface) |
 | `HairBSDF.swift`, `Shaders/Hair.metal` | HairTests (the shader: + the shader pair) |
 | `GLTFLoader` | GLTFLoaderTests |
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
@@ -69,7 +96,11 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `LumenGlobalSDF.swift` | GlobalSDFTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `LoadActivity` (the loading overlay's model) | LoadActivityTests (the overlay itself, `LoadingOverlay`: none, it is AppKit) |
+| `World+Water` | WorldTests, WaterTests |
 | `World*.swift`, `Scene+World`, `Terrain` | WorldTests, SceneBuffersTests |
+| `Water/*`, `Scene+Water`, `Renderer+Water`, `Terrain/TerrainWater` | WaterTests (the shaders `Water.metal`, `WaterCommon.metal`: plus ShaderSourceTests, KernelVariantsTests; prove the look with images: `METALRENDERER_BENCH=water`, `waterunder`, `waterperf`) |
+| `Terrain/*`, `Scene+Terrain*`, `Renderer+Terrain` | TerrainDocumentTests, TerrainEditorTests |
+| `TerrainEditor/*` | TerrainEditorTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
 | `VGStreamer`, `VirtualGeometry`, `RasterClusters` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |

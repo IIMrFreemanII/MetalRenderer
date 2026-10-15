@@ -5,8 +5,9 @@ import simd
 /// from the seed and the tile's place alone, in metres from the tile's corner (y is the world's height). A tile is
 /// kept as a file of its arrays (SectionFile), so it is made once.
 ///
-///   The ground     a grid of cells (1, 4 or 16 m by level) with a skirt down its sides, which hides the step to a
-///                  neighbour of another level; each cell of one of the world's ground materials.
+///   The ground     what each of its cells (1, 4 or 16 m by level) is made of where it is level (`groundKinds`: one
+///                  of the world's ground materials). The ground itself is the world's terrain (Scene+Terrain), meshed
+///                  by the scene from World.height and the terrain's edits.
 ///   The city       the blocks whose middle is in the tile: sidewalks inside a kerb, lawns in the courtyards, street
 ///                  lamps and trees, and the buildings (BuildingGenerator): whole at level 0, without their glass at
 ///                  level 1, a box each at level 2. And the roads of the tile's part of the city's grid, each a
@@ -60,6 +61,11 @@ struct WorldTile {
 
     let x: Int, z: Int, level: Int
     var chunks: [Chunk] = []
+    /// What each ground cell is where level: World.ground's kind, rows along z.
+    var groundKinds: Stored<UInt8> = .made([])
+    /// The ground's heights (World.height) at the tile's own samples at its level: (256 / cell) squared, rows along z
+    /// (what the terrain's base is there: WorldTerrainBase).
+    var groundHeights: Stored<Float> = .made([])
     var trees: [World.Placement] = []
     var lights: [Light] = []
     /// The lights' triangles, in their chunks' coordinates: a light's one after the other.
@@ -140,9 +146,10 @@ struct WorldTile {
         var tile = WorldTile(x: x, z: z, level: level)
         let origin = WorldTile.origin(x, z), side = Double(World.tileSize)
         var opaque = Assembler(glass: false), glass = Assembler(glass: true)
-        ground(world, origin: origin, level: level, into: &opaque)
+        tile.groundKinds = .made(groundKinds(world, origin: origin, level: level))
+        tile.groundHeights = .made(groundHeights(world, origin: origin, level: level))
         if let (city, blocks) = world.blocks(x0: origin.x, z0: origin.y, side: side) {
-            for block in blocks { add(block, of: city, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
+            for block in blocks { add(block, of: city, in: world, level: level, lit: world.lit, opaque: &opaque, glass: &glass) }
         }
         if let (city, from, roads) = world.roads(x0: origin.x, z0: origin.y, side: side) {
             add(roads, of: city, from: from, level: level, into: &opaque)
@@ -184,75 +191,39 @@ struct WorldTile {
         emissive = .made(triangles)
     }
 
-    /// The ground: the grid's cells, then a skirt down each of its four sides.
-    private static func ground(_ world: World, origin: SIMD2<Double>, level: Int, into assembler: inout Assembler) {
+    /// The ground's heights at the tile's samples at a level, as the world's terrain has them (WorldTerrainBase).
+    private static func groundHeights(_ world: World, origin: SIMD2<Double>, level: Int) -> [Float] {
         let cell = World.cellSize(level), n = Int(World.tileSize / cell)
         let city = world.city(near: origin.x + Double(World.tileSize) / 2, origin.y + Double(World.tileSize) / 2)
-        // Heights on the grid and one ring around it: a vertex's normal is from its neighbours, the neighbouring
-        // tile's among them, so the two tiles' normals along their shared side are the same.
-        let m = n + 3
-        var heights = [Float](repeating: 0, count: m * m)
+        var heights = [Float](repeating: 0, count: n * n)
         heights.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: m) { j in   // a row each
-                for i in 0..<m {
-                    out[j * m + i] = world.height(origin.x + Double(Float(i - 1) * cell), origin.y + Double(Float(j - 1) * cell), city: city)
-                }
+            DispatchQueue.concurrentPerform(iterations: n) { j in
+                for i in 0..<n { out[j * n + i] = world.height(origin.x + Double(Float(i) * cell), origin.y + Double(Float(j) * cell), city: city) }
             }
         }
-        func h(_ i: Int, _ j: Int) -> Float { heights[(j + 1) * m + i + 1] }
-        // Every ground material, in the world's order: a cell's material index is then the world's.
-        for material in World.groundMaterials { _ = assembler.slot(material) }
-        let scale = 1 / World.groundTile
-        assembler.withOpen { chunk in
-            let base = UInt32(chunk.positions.count)
-            precondition(base == 0, "the ground is a tile's first mesh")
-            for j in 0...n {
-                for i in 0...n {
-                    let p = SIMD3(Float(i) * cell, h(i, j), Float(j) * cell)
-                    chunk.positions.append(p)
-                    chunk.normals.append(normalize(SIMD3(h(i - 1, j) - h(i + 1, j), 2 * cell, h(i, j - 1) - h(i, j + 1))))
-                    chunk.uvs.append(SIMD2(p.x, p.z) * scale)
-                }
-            }
-            var kinds = [UInt8](repeating: 0, count: n * n)
-            for j in 0..<n {
+        return heights
+    }
+
+    /// What the ground's cells are made of where level (World.ground at each cell's middle, `up` 1: steep ground is
+    /// rock whatever this says, TerrainSectorMesh).
+    private static func groundKinds(_ world: World, origin: SIMD2<Double>, level: Int) -> [UInt8] {
+        let cell = World.cellSize(level), n = Int(World.tileSize / cell)
+        let city = world.city(near: origin.x + Double(World.tileSize) / 2, origin.y + Double(World.tileSize) / 2)
+        var kinds = [UInt8](repeating: 0, count: n * n)
+        kinds.withUnsafeMutableBufferPointer { out in
+            DispatchQueue.concurrentPerform(iterations: n) { j in
                 for i in 0..<n {
-                    let a = UInt32(j * (n + 1) + i), b = a + 1, c = a + UInt32(n + 1), d = c + 1
-                    chunk.indices += [a, d, b, a, c, d]
-                    let dx = (h(i + 1, j) + h(i + 1, j + 1) - h(i, j) - h(i, j + 1)) / (2 * cell)
-                    let dz = (h(i, j + 1) + h(i + 1, j + 1) - h(i, j) - h(i + 1, j)) / (2 * cell)
-                    let kind = UInt8(world.ground(origin.x + Double((Float(i) + 0.5) * cell), origin.y + Double((Float(j) + 0.5) * cell),
-                                                  up: 1 / (1 + dx * dx + dz * dz).squareRoot(), city: city))
-                    kinds[j * n + i] = kind
-                    chunk.triangleMaterials += [kind, kind]
+                    out[j * n + i] = UInt8(world.ground(origin.x + Double((Float(i) + 0.5) * cell), origin.y + Double((Float(j) + 0.5) * cell),
+                                                        up: 1, city: city))
                 }
             }
-            // The skirt: under each side, as deep as a coarser neighbour's ground can lie below this one's.
-            let drop = 2 * cell + 2
-            func skirt(_ count: Int, vertex: (Int) -> Int, kind: (Int) -> UInt8) {
-                let first = UInt32(chunk.positions.count)
-                for k in 0...count {
-                    let v = vertex(k)
-                    chunk.positions.append(chunk.positions[v] - SIMD3(0, drop, 0))
-                    chunk.normals.append(chunk.normals[v])
-                    chunk.uvs.append(chunk.uvs[v])
-                }
-                for k in 0..<count {
-                    let a = UInt32(vertex(k)), b = UInt32(vertex(k + 1)), c = first + UInt32(k), d = c + 1
-                    chunk.indices += [a, b, d, a, d, c]
-                    chunk.triangleMaterials += [kind(k), kind(k)]
-                }
-            }
-            skirt(n, vertex: { $0 }, kind: { kinds[$0] })
-            skirt(n, vertex: { n * (n + 1) + $0 }, kind: { kinds[(n - 1) * n + $0] })
-            skirt(n, vertex: { $0 * (n + 1) }, kind: { kinds[$0 * n] })
-            skirt(n, vertex: { $0 * (n + 1) + n }, kind: { kinds[$0 * n + n - 1] })
         }
+        return kinds
     }
 
     /// A block of a city: its sidewalk and what stands on it. `lit`: the share of its windows with a light behind
     /// them. (What emits has a colour too: what it looks like by day, with its light off.)
-    private static func add(_ block: World.Block, of city: World.City, level: Int, lit: Float, opaque: inout Assembler,
+    private static func add(_ block: World.Block, of city: World.City, in world: World, level: Int, lit: Float, opaque: inout Assembler,
                             glass: inout Assembler) {
         let plan = block.plan
         let place = translate([block.origin.x, city.level, block.origin.y])
@@ -321,14 +292,18 @@ struct WorldTile {
         settings.lit = lit
         // Beyond the camera's ring, made flat: what that leaves out is a fraction of a pixel there (and a box at
         // level 2 is the flat building's).
-        let specs = plan.lots.map { lot in
-            var spec = BuildingSpec(lot: lot, city: settings, night: true)
+        // Each in its style (and with its own plan's edits); the one whose interior the scene has is the scene's to add.
+        let catalog = world.buildingCatalog
+        let specs = plan.lots.indices.map { k in
+            var spec = BuildingSpec(lot: plan.lots[k], city: settings, night: true, catalog: catalog)
+            if let o = catalog.override(for: world.lotRef(city, block, k)) { spec.apply(o, catalog: catalog) }
             if level > 0 { spec.detail = .flat }
             return spec
         }
+        let skipped = plan.lots.indices.map { k in level == 0 && world.interior == world.lotRef(city, block, k).key }
         var built = [Building?](repeating: nil, count: specs.count)
         built.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: specs.count) { i in out[i] = BuildingGenerator.generate(specs[i]) }
+            DispatchQueue.concurrentPerform(iterations: specs.count) { i in if !skipped[i] { out[i] = BuildingGenerator.generate(specs[i]) } }
         }
         for (i, building) in built.enumerated() {
             guard let building else { continue }
@@ -540,6 +515,7 @@ struct WorldTile {
         static let chunks = SectionFile.id("chnk"), positions = SectionFile.id("posi"), normals = SectionFile.id("norm")
         static let uvs = SectionFile.id("uvco"), indices = SectionFile.id("indx"), triangleMaterials = SectionFile.id("tmat")
         static let materials = SectionFile.id("matl"), trees = SectionFile.id("tree")   // the plants
+        static let groundKinds = SectionFile.id("gknd"), groundHeights = SectionFile.id("ghgt")
         /// The tile's lights and their triangles, if it has any.
         static let lights = SectionFile.id("lite"), emissive = SectionFile.id("emtr")
     }
@@ -558,13 +534,20 @@ struct WorldTile {
 
     /// What the file was made for: the world's settings and the plants' library too.
     static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
-        "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
+        var key = "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
+        if hasCity(world, x: x, z: z) && !world.buildings.isEmpty { key += " buildings \(world.buildings)" }
+        // The tile with the building whose interior the scene has: made without it.
+        if level == 0, let interior = world.interior, let m = world.blockMiddle(of: interior) {
+            let o = origin(x, z), side = Double(World.tileSize)
+            if m.x >= o.x && m.x < o.x + side && m.y >= o.y && m.y < o.y + side { key += " without \(interior)" }
+        }
+        return key
     }
 
     /// The same without the level: what a tile's trees are made for (every level has the same ones).
     static func place(_ world: World, x: Int, z: Int) -> String {
         "tile v\(World.version) plants v\(Foliage.version) seed \(world.seed) trees \(world.treeDensity) under \(world.undergrowth) "
-            + "cities \(world.cityShare) at \(x) \(z)"
+            + "cities \(world.cityShare) at \(x) \(z)" + (world.plants.isEmpty ? "" : " habitat \(world.plants)")
     }
 
     func write(to url: URL, key: String) throws {
@@ -588,6 +571,8 @@ struct WorldTile {
         writer.add(Section.triangleMaterials, stride: MemoryLayout<UInt8>.stride, parts: chunks.map(\.triangleMaterials.data))
         writer.add(Section.materials, materials)
         writer.add(Section.trees, trees)
+        writer.add(Section.groundKinds, stride: 1, parts: [groundKinds.data])
+        writer.add(Section.groundHeights, stride: 4, parts: [groundHeights.data])
         if !lights.isEmpty {
             writer.add(Section.lights, lights)
             writer.add(Section.emissive, stride: MemoryLayout<GPUEmissiveTriangle>.stride, parts: [emissive.data])
@@ -611,6 +596,11 @@ struct WorldTile {
               normals.count == positions.count, uvs.count * 2 == positions.count, triangleMaterials.count * 12 == indices.count else { return nil }
         (self.x, self.z, self.level) = (x, z, level)
         self.trees = trees
+        let n = Int(World.tileSize / World.cellSize(level))
+        guard let kinds = file.mapped(Section.groundKinds, of: UInt8.self), kinds.count == n * n,
+              let heights = file.mapped(Section.groundHeights, of: Float.self), heights.count == n * n * 4 else { return nil }
+        groundKinds = .mapped(kinds)
+        groundHeights = .mapped(heights)
         /// Elements `range` of a section, still in the mapping.
         func slice(_ data: Data, _ range: Range<Int>, stride: Int) -> Data? {
             guard range.upperBound * stride <= data.count else { return nil }

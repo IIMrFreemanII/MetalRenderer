@@ -23,6 +23,8 @@ final class WorldTests: XCTestCase {
             XCTAssertEqual(p.bounds.hi, q.bounds.hi, what, file: file, line: line)
         }
         XCTAssertEqual(a.trees, b.trees, what, file: file, line: line)
+        XCTAssertEqual(a.groundKinds.array, b.groundKinds.array, what, file: file, line: line)
+        XCTAssertEqual(a.groundHeights.array, b.groundHeights.array, what, file: file, line: line)
     }
 
     /// A tile is the same whatever was made before it, and the same from its file.
@@ -31,7 +33,8 @@ final class WorldTests: XCTestCase {
         _ = WorldTile.build(world, x: 4, z: -2, level: 1, flora: flora)
         _ = WorldTile.build(world, x: -90, z: 55, level: 2, flora: flora)
         assertSame(first, WorldTile.build(world, x: 3, z: -2, level: 1, flora: flora), "made again")
-        XCTAssertGreaterThan(first.triangles, 2 * 64 * 64)
+        XCTAssertEqual(first.groundKinds.count, 64 * 64)
+        XCTAssertEqual(first.groundHeights.count, 64 * 64)
         XCTAssertFalse(first.trees.isEmpty)
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("WorldTests-\(UUID().uuidString).tile")
@@ -40,7 +43,7 @@ final class WorldTests: XCTestCase {
         assertSame(first, try XCTUnwrap(WorldTile(url: url, key: "a key", x: 3, z: -2, level: 1)), "from its file")
         XCTAssertNil(WorldTile(url: url, key: "another key", x: 3, z: -2, level: 1))
         // Another world is another ground.
-        XCTAssertNotEqual(WorldTile.build(World(seed: 8), x: 3, z: -2, level: 1, flora: flora).chunks[0].positions.array, first.chunks[0].positions.array)
+        XCTAssertNotEqual(WorldTile.build(World(seed: 8), x: 3, z: -2, level: 1, flora: flora).groundHeights.array, first.groundHeights.array)
     }
 
     /// A tile is made once: written to its file, and read back from it (its arrays mapped), the tile as it was built.
@@ -53,6 +56,7 @@ final class WorldTests: XCTestCase {
 
         let stored = WorldTile.make(world, x: 3, z: -2, level: 1, flora: flora)
         XCTAssertTrue(stored.chunks.allSatisfy { if case .mapped = $0.positions { return true } else { return false } }, "from its file")
+        if case .mapped = stored.groundHeights {} else { XCTFail("its ground's heights from its file") }
         let built = WorldTile.build(world, x: 3, z: -2, level: 1, flora: flora)
         assertSame(built, stored, "from its file")
         let url = WorldTile.url(world, x: 3, z: -2, level: 1), key = WorldTile.key(world, x: 3, z: -2, level: 1)
@@ -60,14 +64,19 @@ final class WorldTests: XCTestCase {
         assertSame(built, again, "read again")
     }
 
-    /// Neighbouring tiles' grounds meet: the same heights and normals along the side they share, near the origin
-    /// and 50 km from it; and every level's vertices lie on the world's ground.
+    /// The world's terrain (WorldTerrainBase, TerrainSectorMesh): neighbouring tiles' grounds meet, with the same
+    /// heights and normals along the side they share, near the origin and 50 km from it; every level's vertices lie on
+    /// the world's ground; a tile's file has the heights the world gives its samples.
     func testNeighboursShareTheirSides() {
+        let base = WorldTerrainBase(world: world)
+        let s = TerrainField(base: base).snapshot()
+        let style = TerrainMeshStyle(uvScale: 1 / World.groundTile, tileLocal: true, skirts: true, rock: UInt8(World.Ground.rock))
+        func mesh(_ x: Int, _ z: Int, level: Int) -> TerrainSectorMesh {
+            TerrainSectorMesh(s, sector: TerrainSector.sectors(of: SIMD2(x, z), level: level, grid: base.grid)[0], style: style)
+        }
         for (x, z) in [(0, 0), (-1, 5), (200, -150)] {
             let level = 1, n = Int(World.tileSize / World.cellSize(level))
-            let here = WorldTile.build(world, x: x, z: z, level: level, flora: flora).chunks[0]
-            let east = WorldTile.build(world, x: x + 1, z: z, level: level, flora: flora).chunks[0]
-            let south = WorldTile.build(world, x: x, z: z + 1, level: level, flora: flora).chunks[0]
+            let here = mesh(x, z, level: level), east = mesh(x + 1, z, level: level), south = mesh(x, z + 1, level: level)
             for k in 0...n {
                 let a = k * (n + 1) + n, b = k * (n + 1)   // this tile's last column, the eastern one's first
                 XCTAssertEqual(here.positions[a].y, east.positions[b].y, "tile \(x) \(z) east \(k)")
@@ -80,15 +89,22 @@ final class WorldTests: XCTestCase {
             let origin = WorldTile.origin(x, z)
             for level in 0..<World.levels where level > 0 || (x, z) == (0, 0) {
                 let cell = World.cellSize(level), m = Int(World.tileSize / cell)
-                let ground = level == 1 ? here : WorldTile.build(world, x: x, z: z, level: level, flora: flora).chunks[0]
-                for (i, j) in [(0, 0), (m / 2, 3), (m, m), (5, m - 1)] {
-                    let p = ground.positions[j * (m + 1) + i]
-                    XCTAssertEqual(p.y, world.height(origin.x + Double(Float(i) * cell), origin.y + Double(Float(j) * cell)), "level \(level)")
+                let ground = level == 1 ? here : mesh(x, z, level: level)
+                let w = level == 0 ? 64 : m   // (level 0: the tile's first sector)
+                for (i, j) in [(0, 0), (w / 2, 3), (w, w), (5, w - 1)] {
+                    let p = ground.positions[j * (w + 1) + i]
+                    XCTAssertEqual(p.y, world.height(origin.x + Double(Float(i) * cell), origin.y + Double(Float(j) * cell)), accuracy: 1e-3,
+                                   "level \(level)")
                 }
-                XCTAssertTrue(ground.positions.array.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.y) < 400 })
-                XCTAssertTrue(ground.indices.array.allSatisfy { Int($0) < ground.positions.count })
-                XCTAssertTrue(ground.triangleMaterials.array.allSatisfy { Int($0) < ground.materials.count })
-                XCTAssertEqual(ground.triangleMaterials.count * 3, ground.indices.count)
+                XCTAssertTrue(ground.positions.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.y) < 400 })
+                XCTAssertTrue(ground.indices.allSatisfy { Int($0) < ground.positions.count })
+                XCTAssertTrue(ground.materials!.allSatisfy { Int($0) < World.groundMaterials.count })
+                XCTAssertEqual(ground.materials!.count * 3, ground.indices.count)
+                let tile = WorldTile.build(world, x: x, z: z, level: level, flora: flora)
+                for (i, j) in [(0, 0), (m - 1, 2), (7, m - 1)] {
+                    XCTAssertEqual(tile.groundHeights[j * m + i], world.height(origin.x + Double(Float(i) * cell), origin.y + Double(Float(j) * cell)),
+                                   accuracy: 1e-3)
+                }
             }
         }
     }
@@ -152,6 +168,26 @@ final class WorldTests: XCTestCase {
         XCTAssertEqual(place.wanted(for: SIMD3(Float(10.5 * 256 - place.anchor.x), 5, Float(-2.5 * 256))), SIMD2(10, -3))
         XCTAssertEqual(SceneKind.world.envName, "world")
         XCTAssertTrue(SceneKind.world.hasPlants && SceneKind.world.cameraFromScene)
+    }
+
+    /// The building whose interior the scene has: its tile is made without it (another file, another name), and only
+    /// its tile; a lot's name finds its block again.
+    func testATileWithoutTheBuildingThatHasItsInterior() throws {
+        let city = try XCTUnwrap(world.city(cell: SIMD2(0, 0)))
+        let side = Double(World.tileSize)
+        let tx = Int((city.center.x / side).rounded(.down)), tz = Int((city.center.y / side).rounded(.down))
+        let found = try XCTUnwrap(world.blocks(x0: Double(tx) * side, z0: Double(tz) * side, side: side))
+        let block = try XCTUnwrap(found.blocks.first { !$0.plan.lots.isEmpty })
+        let ref = world.lotRef(found.city, block, 0)
+        let middle = try XCTUnwrap(world.blockMiddle(of: ref.key))
+        XCTAssertEqual(middle.x, city.center.x + Double(block.plan.blocks[0].rect.center.x), accuracy: 0.01)
+        var without = world
+        without.interior = ref.key
+        XCTAssertNotEqual(WorldTile.key(without, x: tx, z: tz, level: 0), WorldTile.key(world, x: tx, z: tz, level: 0))
+        XCTAssertEqual(WorldTile.key(without, x: tx + 1, z: tz, level: 0), WorldTile.key(world, x: tx + 1, z: tz, level: 0))
+        XCTAssertEqual(WorldTile.key(without, x: tx, z: tz, level: 1), WorldTile.key(world, x: tx, z: tz, level: 1))
+        let all = WorldTile.build(world, x: tx, z: tz, level: 0, flora: flora), less = WorldTile.build(without, x: tx, z: tz, level: 0, flora: flora)
+        XCTAssertLessThan(less.triangles, all.triangles)
     }
 
     /// A city's tile: blocks with their buildings and glass at level 0, less at each level after it; a block belongs
@@ -414,7 +450,8 @@ final class WorldTests: XCTestCase {
             for at in tiles.sorted(by: { ($0.x, $0.y) < ($1.x, $1.y) }) {
                 let tile = WorldTile.build(world, x: at.x, z: at.y, level: level, flora: flora)
                 let x0 = Double(at.x) * side, z0 = Double(at.y) * side
-                let cell = World.cellSize(level), n = Int(World.tileSize / cell), ground = tile.chunks[0].positions.array
+                let cell = World.cellSize(level), n = Int(World.tileSize / cell)
+                func ground(_ i: Int, _ j: Int) -> Float { world.height(x0 + Double(Float(i) * cell), z0 + Double(Float(j) * cell)) }
                 for corners in triangles(tile, asphalt) {
                     for p in corners {
                         XCTAssertTrue(p.x > -1e-3 && p.x < World.tileSize + 1e-3 && p.z > -1e-3 && p.z < World.tileSize + 1e-3, "in its tile")
@@ -424,8 +461,7 @@ final class WorldTests: XCTestCase {
                             // On the triangle of the tile's own ground that is under it.
                             let i = min(Int(p.x / cell), n - 1), j = min(Int(p.z / cell), n - 1)
                             let s = p.x / cell - Float(i), t = p.z / cell - Float(j)
-                            let a = ground[j * (n + 1) + i].y, b = ground[j * (n + 1) + i + 1].y
-                            let c = ground[(j + 1) * (n + 1) + i].y, d = ground[(j + 1) * (n + 1) + i + 1].y
+                            let a = ground(i, j), b = ground(i + 1, j), c = ground(i, j + 1), d = ground(i + 1, j + 1)
                             let under = s >= t ? a + (b - a) * s + (d - b) * t : a + (c - a) * t + (d - c) * s
                             XCTAssertEqual(p.y, under + 0.02, accuracy: 5e-3, "level 2")
                         }
