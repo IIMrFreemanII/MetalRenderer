@@ -245,7 +245,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         guard let enc = buffer(name).makeRenderCommandEncoder(descriptor: d) else { return }
         enc.label = name
         enc.barrier(afterQueueStages: Metal4Frame.queueStages, beforeStages: [.vertex, .fragment], visibilityOptions: .device)
-        enc.setArgumentTable(table, stages: [.vertex, .mesh])
+        enc.setArgumentTable(table, stages: [.vertex, .mesh, .fragment])
         encode(RenderPass4(frame: self, enc: enc))
         enc.endEncoding()
     }
@@ -259,6 +259,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         func clampDepth() { enc.setDepthClipMode(.clamp) }
         func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { frame.setBytes(bytes, length: length, index: index) }
         func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { frame.setBuffer(buffer, offset: offset, index: index) }
+        // (One argument table serves the vertex, mesh and fragment stages.)
+        func setFragmentBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { frame.setBuffer(buffer, offset: offset, index: index) }
         func useResources(_ resources: [MTLResource]) { frame.useResources(resources, usage: .read) }
         func drawTriangles(indirectBuffer: MTLBuffer, indirectBufferOffset: Int) {
             frame.keep(indirectBuffer)

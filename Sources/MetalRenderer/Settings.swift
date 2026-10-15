@@ -534,6 +534,11 @@ struct VSMSettings: Equatable, Codable {
     /// whatever the camera draws it from: its pages then stay drawn while the camera moves. Off: the BLAS's triangles,
     /// all of them into every page the instance covers, every frame.
     var clusters = true
+    /// With `clusters`: the clusters whose box covers at most `softwareSide` texels of a page rasterized by a compute
+    /// kernel instead of drawn (RasterSoftware.metal: vsmSWKernel), as Nanite rasterizes its small triangles. On an M4
+    /// Max a camera move's frames are 1-2 ms shorter for it (the pages' draw halved), stills the same, the same image.
+    var software = true
+    static let softwareSide = Float(ProcessInfo.processInfo.environment["METALRENDERER_VSM_SW_TEXELS"] ?? "") ?? 32
 
     static let poolOptions = [256, 512, 1024, 2048]
     static let budgetRange = 16...1024

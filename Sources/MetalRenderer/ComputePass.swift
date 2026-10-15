@@ -61,6 +61,7 @@ protocol RenderPass {
     func clampDepth()
     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int)
     func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int)
+    func setFragmentBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int)
     /// What the vertices reach through addresses (the meshes' own buffers, the instance blocks', the cut's BLASes).
     func useResources(_ resources: [MTLResource])
     /// Triangles, as many as an `MTLDrawPrimitivesIndirectArguments` the GPU wrote says.
@@ -79,6 +80,7 @@ struct Metal3RenderPass: RenderPass {
     func clampDepth() { enc.setDepthClipMode(.clamp) }
     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { enc.setVertexBytes(bytes, length: length, index: index) }
     func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { enc.setVertexBuffer(buffer, offset: offset, index: index) }
+    func setFragmentBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { enc.setFragmentBuffer(buffer, offset: offset, index: index) }
     func useResources(_ resources: [MTLResource]) {
         if !resources.isEmpty { enc.useResources(resources, usage: .read, stages: [.vertex, .mesh]) }
     }

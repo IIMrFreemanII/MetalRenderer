@@ -974,6 +974,16 @@ extension Benchmark {
         }
         out.append(config("gallery clusters pool 128", SceneSettings(kind: .gallery), nil, paths[2])
             .with { $0.virtualGeometry.rasterPoolMB = 128 }.cameraMove())
+        // The virtual shadow maps' clusters, drawn or with the small ones in software (VSMSettings.software), the camera
+        // on the BLAS: still (the pages stay drawn) and in a camera move (pages drawn every frame).
+        for (tag, kind) in [("gallery", SceneKind.gallery), ("storeroom", .storeroom)] {
+            for software in [false, true] {
+                let shadows = config("\(tag) shadows\(software ? " software" : "")", SceneSettings(kind: kind), nil, paths[1])
+                    .with { $0.shadowMethod = .virtualMaps; $0.vsm.software = software }
+                out.append(shadows.still().frames(30))
+                out.append(shadows.named("\(tag) shadows\(software ? " software" : "") camera").cameraMove())
+            }
+        }
         return out
     }
 

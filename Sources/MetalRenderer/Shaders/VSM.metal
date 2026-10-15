@@ -281,8 +281,9 @@ inline float4 vsmClipLocal(float3 local, thread const VSMInstance& r) {
     return float4(dot(r.x, p), dot(r.y, p), dot(r.z, p), dot(r.w, p));
 }
 
-// The window pages an object-space box covers in a view (`pages` a side): false when it is outside.
-inline bool vsmBoxPages(float3 lo, float3 hi, thread const VSMInstance& r, uint pages, thread uint4& rect) {
+// The window pages an object-space box covers in a view (`pages` a side): false when it is outside. `texels`: the
+// longer side of its rectangle on the page, in texels (infinite when it reaches behind the light).
+inline bool vsmBoxPages(float3 lo, float3 hi, thread const VSMInstance& r, uint pages, thread uint4& rect, thread float& texels) {
     float2 a = float2(INFINITY), b = float2(-INFINITY);
     uint outside = 0x1Fu;
     bool behind = false;
@@ -295,8 +296,10 @@ inline bool vsmBoxPages(float3 lo, float3 hi, thread const VSMInstance& r, uint 
         a = min(a, ndc);
         b = max(b, ndc);
     }
+    texels = INFINITY;
     if (outside != 0u) return false;
     if (behind) { a = float2(-1.0f); b = float2(1.0f); }   // around the light: the whole view
+    else texels = max(b.x - a.x, b.y - a.y) * 0.5f * float(pages) * float(VSM_PAGE);
     // ndc -> window pages: x right, y down.
     float n = float(pages);
     float2 lo2 = float2(a.x * 0.5f + 0.5f, 0.5f - b.y * 0.5f) * n, hi2 = float2(b.x * 0.5f + 0.5f, 0.5f - a.y * 0.5f) * n;
@@ -305,6 +308,10 @@ inline bool vsmBoxPages(float3 lo, float3 hi, thread const VSMInstance& r, uint 
     if (any(p0 > p1)) return false;
     rect = uint4(uint2(p0), uint2(p1));
     return true;
+}
+inline bool vsmBoxPages(float3 lo, float3 hi, thread const VSMInstance& r, uint pages, thread uint4& rect) {
+    float texels;
+    return vsmBoxPages(lo, hi, r, pages, rect, texels);
 }
 
 // The views' bookkeeping for this frame: each view's rectangle of pages to draw (empty) and its activity.

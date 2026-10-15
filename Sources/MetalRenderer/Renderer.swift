@@ -5239,6 +5239,22 @@ final class Renderer: NSObject {
 
     /// The scene's virtual shadow maps for this frame's lights (the first `analytic` of the slot's light buffer, as
     /// writeFrameData left them): made again for other buffers, other mapped lights or other pool or level settings.
+    /// The shadow maps' software rasterizer (VSMSettings.software): its list (RasterClusters.metal: VSW_*) and a page of
+    /// depths per page drawn this frame, for a budget of pages (made when first wanted, again when the budget grows).
+    private var vsmSoftware: (list: MTLBuffer, depths: MTLBuffer, budget: Int)?
+    static let vsmSoftwareCapacity = 1 << 18   // (cluster, page) entries a frame; past them, the draws take the rest
+    private func vsmSoftwareBuffers(budget: Int) -> (list: MTLBuffer, depths: MTLBuffer, budget: Int)? {
+        if let s = vsmSoftware, s.budget >= budget { return s }
+        vsmSoftware = nil
+        guard let list = device.makeBuffer(length: 64 + Renderer.vsmSoftwareCapacity * 16, options: .storageModePrivate),
+              let depths = device.makeBuffer(length: budget * VSMTargets.page * VSMTargets.page * 4, options: .storageModePrivate)
+        else { return nil }
+        list.label = "vsm software list"
+        depths.label = "vsm software depths"
+        vsmSoftware = (list, depths, budget)
+        return vsmSoftware
+    }
+
     private func vsmTargets(slot: Int, analytic: Int) -> VSMTargets? {
         let lights = Array(UnsafeBufferPointer(start: lightBuffers[slot].contents().bindMemory(to: GPULight.self, capacity: analytic),
                                                count: analytic))
@@ -5291,6 +5307,10 @@ final class Renderer: NSObject {
         let clusterArgs = clusters?.shadowArgs(slot: slot, views: vsm.viewCount, tau: settings.virtualGeometry.pixelError)
         var vgArgs = clusterArgs?.bytes ?? [UInt64](repeating: 0, count: 12)
         let group = MTLSize(width: 64, height: 1, depth: 1), one = MTLSize(width: 1, height: 1, depth: 1)
+        // The small clusters in software (VSMSettings.software): a side of 0 sends every one to the draws.
+        let software = settings.vsm.software && clusterArgs != nil ? vsmSoftwareBuffers(budget: Int(params.budget)) : nil
+        var softwareParams = SIMD4<UInt32>(software != nil ? VSMSettings.softwareSide.bitPattern : 0,
+                                           UInt32(Renderer.vsmSoftwareCapacity), 0, 0)   // (MSL VSMSoftwareParams)
         guard let enc = passes.compute("vsm", serial: true) else { return }
         enc.useResources(resources, usage: .read)
         if let clusterArgs { enc.useResources(clusterArgs.resources, usage: [.read, .write]) }
@@ -5334,6 +5354,9 @@ final class Renderer: NSObject {
         enc.setBuffer(vsm.requests, offset: 0, index: 28)
         enc.setBuffer(vsm.slots, offset: 0, index: 29)
         enc.setBuffer(vsm.renderList, offset: 0, index: 30)
+        enc.setBuffer(software?.list ?? vsm.counters, offset: 0, index: 1)     // (stand-ins nothing reads without it)
+        enc.setBuffer(software?.depths ?? vsm.counters, offset: 0, index: 3)
+        enc.setBytes(&softwareParams, length: 16, index: 8)
         let entries = MTLSize(width: vsm.entries, height: 1, depth: 1)
         enc.setComputePipelineState(pipelines[.vsmReset])
         enc.dispatchThreads(one, threadsPerThreadgroup: one)
@@ -5349,11 +5372,24 @@ final class Renderer: NSObject {
         enc.dispatchThreads(entries, threadsPerThreadgroup: group)
         enc.setComputePipelineState(pipelines[.vsmSettle])
         enc.dispatchThreads(one, threadsPerThreadgroup: one)
+        if let software {   // (the pages to draw are settled) the list, and those pages' depths, empty
+            enc.setComputePipelineState(pipelines[.vsmSWClear])
+            enc.dispatchThreads(one, threadsPerThreadgroup: one)
+            enc.setComputePipelineState(pipelines[.vsmSWWipe])
+            enc.dispatchThreadgroups(indirectBuffer: software.list, indirectBufferOffset: 32, threadsPerThreadgroup: group)
+        }
         enc.setComputePipelineState(pipelines[.vsmCull])
         enc.dispatchThreadgroups(indirectBuffer: vsm.counters, indirectBufferOffset: 48, threadsPerThreadgroup: group)
         if let clusters, clusters.workCount > 0 {   // (after the cull: it reads the records the cull left)
             enc.setComputePipelineState(pipelines[.vsmVGCut])
             enc.dispatchThreads(MTLSize(width: clusters.workCount, height: vsm.viewCount, depth: 1), threadsPerThreadgroup: group)
+            if let software {   // the small ones, a threadgroup a (cluster, page)
+                enc.setComputePipelineState(pipelines[.vsmSWArgs])
+                enc.dispatchThreads(one, threadsPerThreadgroup: one)
+                enc.setComputePipelineState(pipelines[.vsmSW])
+                enc.dispatchThreadgroups(indirectBuffer: software.list, indirectBufferOffset: 16,
+                                         threadsPerThreadgroup: MTLSize(width: RasterScene.chunk, height: 1, depth: 1))
+            }
         }
         enc.setComputePipelineState(pipelines[.vsmChunks])
         enc.dispatchThreadgroups(indirectBuffer: vsm.counters, indirectBufferOffset: 16, threadsPerThreadgroup: group)
@@ -5373,6 +5409,11 @@ final class Renderer: NSObject {
             r.setDepthStencilState(depthState)
             r.clampDepth()
             r.drawTriangles(indirectBuffer: vsm.counters, indirectBufferOffset: 0)
+            if let software {   // what the software rasterizer drew: a quad a page (the clear's), through the same test
+                r.setRenderPipelineState(pipelines.vsmMerge)
+                r.setFragmentBuffer(software.depths, offset: 0, index: 3)
+                r.drawTriangles(indirectBuffer: vsm.counters, indirectBufferOffset: 32)
+            }
         }
     }
 

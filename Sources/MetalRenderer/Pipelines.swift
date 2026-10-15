@@ -49,6 +49,7 @@ enum Kernel: Int, CaseIterable {
     case vgReset, vgCut, vgBoxes
     case rasterVGCut, rasterVGRetest, rasterVGMeshArgs   // the raster clusters (Shaders/RasterClusters.metal)
     case rasterSWClear, rasterSWArgs, rasterSW, rasterSWResolve   // ...their software rasterizer (64-bit atomics)
+    case vsmSWClear, vsmSWWipe, vsmSWArgs, vsmSW   // ...and the shadow maps' (32-bit atomics)
     case vsmVGCut               // ...in the shadow maps
     case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
     case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
@@ -229,6 +230,8 @@ struct Pipelines {
     /// page's slice of the pool (VSMTargets.pool).
     let vsm: MTLRenderPipelineState
     let vsmClear: MTLRenderPipelineState
+    /// The shadow maps' software rasterizer's depths into the pages (vsmMergeVertex, vsmMergeFragment).
+    let vsmMerge: MTLRenderPipelineState
 
     subscript(_ kernel: Kernel) -> MTLComputePipelineState { states[kernel.rawValue]! }
 
@@ -290,6 +293,8 @@ struct Pipelines {
                                             vertex: "vsmVertex", fragment: "vsmFragment", color: nil)
         vsmClear = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
                                                  vertex: "vsmClearVertex", fragment: "vsmFragment", color: nil)
+        vsmMerge = try Pipelines.makeRenderState(device: device, library: library, compiler: compiler, lightTypes: lightTypes,
+                                                 vertex: "vsmMergeVertex", fragment: "vsmMergeFragment", color: nil)
         step?.finish()
         self.stats = stats
         self.api = api

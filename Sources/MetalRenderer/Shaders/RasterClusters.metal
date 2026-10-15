@@ -273,8 +273,20 @@ inline float vsmTexels(thread const VSMView& v, thread const VSMInstance& r, flo
 // covers (vsmCullKernel's record). The cut by vgCutKernel's rule, but measured in the view's texels instead of the
 // camera's pixels: a page drawn stays right while the camera moves. Each picked cluster is drawn into every page to draw
 // that its box covers (as vsmChunksKernel draws a chunk), from the raster clusters' pool, which it asks for finer groups.
+// The shadow maps' software rasterizer (RasterSoftware.metal: vsmSWKernel): which clusters it takes, and its list.
+struct VSMSoftwareParams {
+    float side;            // a cluster whose box covers at most this many texels a side of a page (0: none)
+    uint  capacity;        // the list's entries
+    uint  pad0, pad1;
+};
+// The list (Renderer.vsmSoftware): a count, its threadgroups (MTLDispatchThreadgroupsIndirectArguments) at VSW_ARGS,
+// then from VSW_ENTRIES the (record place, pool offset, triangles, render-list place) of each (cluster, page).
+constant uint VSW_COUNT = 0, VSW_ARGS = 4, VSW_ENTRIES = 16;
+
 kernel void vsmVGCutKernel(device const InstanceData*    instances  [[buffer(6)]],
                            constant VSMClusterArgs&      vg         [[buffer(7)]],
+                           device atomic_uint*           sw         [[buffer(1)]],    // the software list
+                           constant VSMSoftwareParams&   swp        [[buffer(8)]],
                            constant VSMParams&           vp         [[buffer(9)]],
                            device VSMCounters*           counters   [[buffer(13)]],
                            device uint4*                 draws      [[buffer(18)]],
@@ -322,7 +334,9 @@ kernel void vsmVGCutKernel(device const InstanceData*    instances  [[buffer(6)]
             }
         }
         uint4 rect;
-        if (!vsmBoxPages(cl.lo.xyz, cl.hi.xyz, r, v.pages, rect)) continue;
+        float texels;
+        if (!vsmBoxPages(cl.lo.xyz, cl.hi.xyz, r, v.pages, rect, texels)) continue;
+        bool soft = swp.side > 0.0f && texels <= swp.side;   // small enough for the software rasterizer (its triangles about a texel)
         rect = uint4(max(rect.xy, r.pages.xy), min(rect.zw, r.pages.zw));
         if (any(rect.xy > rect.zw)) continue;
         used = true;
@@ -336,6 +350,13 @@ kernel void vsmVGCutKernel(device const InstanceData*    instances  [[buffer(6)]
                 uint entry = vsmEntry(v, uint2(x, y));
                 uint slot = slots[entry];
                 if (slot >= drawn || renderList[slot].x != entry) continue;   // not drawn this frame
+                if (soft) {
+                    uint q = atomic_fetch_add_explicit(&sw[VSW_COUNT], 1u, memory_order_relaxed);
+                    if (q < swp.capacity) {
+                        ((device uint4*)(sw + VSW_ENTRIES))[q] = uint4(place, at, tris, slot);
+                        continue;
+                    }
+                }
                 uint k = atomic_fetch_add_explicit(&counters->vertexCount, RASTER_CHUNK_VERTICES, memory_order_relaxed) / RASTER_CHUNK_VERTICES;
                 if (k < vp.maxDraws) draws[k] = uint4(place, at, tris, slot);
                 else atomic_fetch_and_explicit(&table[entry], ~VSM_RENDERED, memory_order_relaxed);

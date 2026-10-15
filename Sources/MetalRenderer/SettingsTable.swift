@@ -552,6 +552,8 @@ enum SettingsTable {
             S.slider("March steps", \.vsm.steps, VSMSettings.stepRange).env(.vsm, "steps").advanced().when(vsm),
             S.slider("Depth bias", \.vsm.bias, VSMSettings.biasRange, step: 0.25, fmt("%.2f texels")).env(.vsm, "bias").advanced().when(vsm),
             S.check("Virtual geometry as clusters", \.vsm.clusters).env(.vsm, "clusters").advanced().when(vsm),
+            S.check("Small clusters in software", \.vsm.software).env(.vsm, "software").advanced().when(vsm)
+                .enabled { $0.vsm.clusters },
             S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
             S.value(\.manyLightRays).env(.gi, "lightrays"),
             S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }

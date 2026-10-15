@@ -131,3 +131,126 @@ kernel void rasterSWResolveKernel(device const ulong*             depths [[buffe
     uint y = uint(word);
     vis.write(uint4(list[p.capacity + ((y >> 7) & 0xFFFFFFu)].y, y, 0u, 0u), tid);
 }
+
+// ---------------------------------------------------------------------------------------------
+// The shadow maps' software rasterizer (VSMSettings.software): a cluster of the shadow views' cut whose box covers at
+// most VSMSoftwareParams.side texels of a page is rasterized here for each page to draw it covers, instead of drawn.
+// The pages are a depth array, which a kernel can't write, so it rasterizes into a word a texel of each page drawn
+// this frame (Renderer.vsmSoftware: the render list's places), the largest reversed depth by 32-bit atomic max (no id:
+// the shadow maps keep depth alone, so it needs no 64-bit atomics), and in the pages' draw a quad a page writes those
+// depths through the depth test (vsmMergeFragment), as the draws' own.
+// ---------------------------------------------------------------------------------------------
+
+constant uint VSW_TEXELS = VSM_PAGE * VSM_PAGE;
+
+// After vsmSettleKernel (the pages to draw are known), one thread: the list empty, and vsmSWWipeKernel's threadgroups
+// (64 threads each) for the pages to draw this frame alone, at VSW_WIPE.
+constant uint VSW_WIPE = 8;
+kernel void vsmSWClearKernel(constant VSMParams&  vp       [[buffer(9)]],
+                             device VSMCounters*  counters [[buffer(13)]],
+                             device uint*         sw       [[buffer(1)]])
+{
+    for (uint i = 0; i < VSW_ENTRIES; ++i) sw[i] = 0u;
+    uint drawn = min(atomic_load_explicit(&counters->drawn, memory_order_relaxed), vp.budget);
+    sw[VSW_WIPE] = drawn * (VSW_TEXELS / 64u);
+    sw[VSW_WIPE + 1u] = 1u;
+    sw[VSW_WIPE + 2u] = 1u;
+}
+
+// Those pages' software depths at 0 (nothing drawn).
+kernel void vsmSWWipeKernel(device uint* depths [[buffer(3)]], uint i [[thread_position_in_grid]]) { depths[i] = 0u; }
+
+// After the cut: the list's threadgroups, one a (cluster, page).
+kernel void vsmSWArgsKernel(constant VSMSoftwareParams& swp [[buffer(8)]],
+                            device uint*                sw  [[buffer(1)]])
+{
+    sw[VSW_ARGS] = min(sw[VSW_COUNT], swp.capacity);
+    sw[VSW_ARGS + 1u] = 1u;
+    sw[VSW_ARGS + 2u] = 1u;
+}
+
+// One threadgroup of RASTER_CHUNK threads a (cluster, page): its vertices to the page's texels once (as vsmVertex puts
+// them: vsmClipLocal, vsmPageClip), then a thread a triangle over the texel centres of its box on the page, depth
+// interpolated and clamped as the draws' (clampDepth). The cut only lists boxes in front of the light (w > 0).
+kernel void vsmSWKernel(constant VSMClusterArgs& vg         [[buffer(7)]],
+                        device const uint*       sw         [[buffer(1)]],
+                        device atomic_uint*      depths     [[buffer(3)]],
+                        device const uint4*      renderList [[buffer(30)]],
+                        uint tg [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]])
+{
+    threadgroup int2  screen[256];
+    threadgroup float depth[256];
+    uint4 e = ((device const uint4*)(sw + VSW_ENTRIES))[tg];   // record place, pool offset, triangles, render-list place
+    VSMInstance r = vg.records[e.x];
+    device const float4* blob = vg.pool + e.y;
+    uint4 header = ((device const uint4*)blob)[0];    // nodes, vertices, triangles
+    uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
+    device const uchar* base = (device const uchar*)blob;
+    device const float4* positions = (device const float4*)(base + offsets.y);
+    uint4 page = renderList[e.w];                      // entry, physical page, window page x | y << 16, pages a side
+    uint2 window = uint2(page.z & 0xFFFFu, page.z >> 16);
+    for (uint v = lane; v < header.y; v += RASTER_CHUNK) {
+        float4 c = vsmPageClip(vsmClipLocal(positions[v].xyz, r), window, page.w);
+        float2 ndc = c.xy / c.w;
+        screen[v] = int2(rint(float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f) * float(VSM_PAGE) * float(RSW_SCALE)));
+        depth[v] = c.z / c.w;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (lane >= min(header.z, e.z & 0xFFFFu)) return;
+
+    uint packed = ((device const uint*)(base + offsets.w))[lane];
+    uint i0 = packed & 0xFFu, i1 = (packed >> 8) & 0xFFu, i2 = (packed >> 16) & 0xFFu;
+    int2 a = screen[i0], b = screen[i1], c = screen[i2];
+    float za = depth[i0], zb = depth[i1], zc = depth[i2];
+    long area = rswEdge(a, b, c);
+    if (area == 0) return;
+    if (area < 0) {
+        int2 t = b; b = c; c = t;
+        float tz = zb; zb = zc; zc = tz;
+        area = -area;
+    }
+    int2 lo = min(a, min(b, c)), hi = max(a, max(b, c));
+    int2 first = max((lo - RSW_HALF + RSW_SCALE - 1) >> RSW_BITS, int2(0));
+    int2 last = min((hi - RSW_HALF) >> RSW_BITS, int2(int(VSM_PAGE) - 1));
+    long t0 = rswTie(b, c), t1 = rswTie(c, a), t2 = rswTie(a, b);
+    float inv = 1.0f / float(area);
+    device atomic_uint* texels = depths + e.w * VSW_TEXELS;
+    for (int y = first.y; y <= last.y; ++y) {
+        for (int x = first.x; x <= last.x; ++x) {
+            int2 s = int2(x, y) * RSW_SCALE + RSW_HALF;
+            long w0 = rswEdge(b, c, s), w1 = rswEdge(c, a, s), w2 = rswEdge(a, b, s);
+            if (w0 + t0 < 0 || w1 + t1 < 0 || w2 + t2 < 0) continue;
+            float z = saturate((float(w0) * za + float(w1) * zb + float(w2) * zc) * inv);
+            if (z > 0.0f) atomic_fetch_max_explicit(&texels[uint(y) * VSM_PAGE + uint(x)], as_type<uint>(z), memory_order_relaxed);
+        }
+    }
+}
+
+// The pages' draw, after the draws: a quad a page drawn this frame (the clear's), whose texels the software rasterizer
+// reached write its depth, through the same depth test.
+struct VSMMergeVertex {
+    float4 position [[position]];
+    uint   layer [[render_target_array_index]];
+    uint   place [[flat]];       // the page's in the render list (its software depths)
+};
+vertex VSMMergeVertex vsmMergeVertex(device const uint4* renderList [[buffer(30)]],
+                                     uint vid [[vertex_id]], uint iid [[instance_id]])
+{
+    VSMMergeVertex out;
+    float2 c = float2((vid == 1u || vid == 2u || vid == 4u) ? 1.0f : -1.0f, (vid == 2u || vid == 4u || vid == 5u) ? 1.0f : -1.0f);
+    out.position = float4(c, 0.0f, 1.0f);
+    out.layer = renderList[iid].y;
+    out.place = iid;
+    return out;
+}
+struct VSMMergeDepth {
+    float depth [[depth(greater)]];
+};
+fragment VSMMergeDepth vsmMergeFragment(VSMMergeVertex in [[stage_in]], device const uint* depths [[buffer(3)]]) {
+    uint2 t = min(uint2(in.position.xy), uint2(VSM_PAGE - 1u));
+    uint d = depths[in.place * VSW_TEXELS + t.y * VSM_PAGE + t.x];
+    if (d == 0u) discard_fragment();
+    VSMMergeDepth out;
+    out.depth = as_type<float>(d);
+    return out;
+}
