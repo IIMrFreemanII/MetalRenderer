@@ -92,8 +92,6 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `LightTree.swift`, `Shaders/LightTree.metal` | LightTreeTests (the shader: plus the shader pair) |
 | `RasterScene.swift` | RasterSceneTests |
 | `VSM.swift` | VSMTests |
-| `MeshSDFBuilder.swift`, `LumenScene.swift` | MeshSDFBuilderTests |
-| `LumenGlobalSDF.swift` | GlobalSDFTests |
 | `TextureStreamer` | TextureStreamerTests |
 | `LoadActivity` (the loading overlay's model) | LoadActivityTests (the overlay itself, `LoadingOverlay`: none, it is AppKit) |
 | `World+Water` | WorldTests, WaterTests |

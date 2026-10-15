@@ -252,8 +252,8 @@ final class SettingsTableTests: XCTestCase {
     /// A saved value that no longer decodes (an enum case since removed) takes its default; the other settings stay.
     func testInvalidEnumValuesFallBackToTheirDefaults() throws {
         var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
-        saved["directLight"] = 99
-        saved["giMode"] = 99
+        saved["directLight"] = 4   // (MegaLights, since removed)
+        saved["giMode"] = 3   // (Lumen, since removed)
         saved["toneMap"] = 99
         var scene = try XCTUnwrap(saved["scene"] as? [String: Any])
         scene["kind"] = 9999
@@ -271,18 +271,6 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.scene.kind, defaults.scene.kind)
         XCTAssertEqual(s.api, .metal4)
         XCTAssertEqual(s.bounces, defaults.bounces + 1)
-    }
-
-    func testLumenIsRead() {
-        var s = defaults
-        SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
-            "METALRENDERER_GI": "mode=lumen",
-            "METALRENDERER_LUMEN": "spacing=4,history=8,filter=0",
-        ])
-        XCTAssertEqual(s.giMode, .lumen)
-        XCTAssertEqual(s.lumen.probeSpacing, 4)
-        XCTAssertEqual(s.lumen.history, 8)
-        XCTAssertFalse(s.lumen.filter)
     }
 
     func testListsAreRead() {

@@ -277,15 +277,6 @@ extension Renderer {
         let lo = corners.reduce(SIMD2(Double.infinity, .infinity), simd_min), hi = corners.reduce(SIMD2(-Double.infinity, -.infinity), simd_max)
         scene.rescatter(lo: lo, hi: hi)
         if scene.worldPlace != nil { settings.scene.terrainKey = UUID().uuidString }
-        // Lumen's distance fields of the sectors there (their triangles as they are now, in the background).
-        if lumenTracesFields {
-            let s = t.field.snapshot()
-            let parts = t.parts.filter { p in tiles.contains { max(abs($0.x - p.sector.tile.x), abs($0.y - p.sector.tile.y)) <= 1 } }
-            rebakeLumenFields(parts.map { p in
-                let m = TerrainSectorMesh(s, sector: p.sector, style: t.meshStyle)
-                return (p.mesh, m.positions, m.indices)
-            })
-        }
     }
 
     /// A change kept for undo (a stroke, a generator's run, an import): its id goes to the window's undo manager.

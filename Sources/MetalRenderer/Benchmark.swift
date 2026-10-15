@@ -139,7 +139,7 @@ final class Benchmark {
             }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.restir, .restirGI, .vsm, .lumen, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.restir, .restirGI, .vsm, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }

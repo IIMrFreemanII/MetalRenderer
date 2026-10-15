@@ -12,9 +12,6 @@ enum Kernel: Int, CaseIterable {
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
     case restirGIInitial, restirGITemporal, restirGISpatial
     case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
-    case lumenProbe, lumenTrace, lumenFilter, lumenSH, lumenResolve, lumenHZB, lumenCardCapture, lumenCardLight,
-         lumenCardRadiosity, lumenCardCombine, lumenCull,
-         lumenGlobalBin, lumenGlobalCompose
     case reflection
     case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
@@ -240,14 +237,6 @@ struct Pipelines {
     var rc: RCPipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
-    }
-    var lumen: LumenPipelines {
-        LumenPipelines(probe: self[.lumenProbe], trace: self[.lumenTrace], filter: self[.lumenFilter], sh: self[.lumenSH],
-                       clearAmbient: self[.rcClearAmbient], resolve: self[.lumenResolve],
-                       hzb: self[.lumenHZB], hzbReduce: self[.hzbReduce], cardCapture: self[.lumenCardCapture],
-                       cardLight: self[.lumenCardLight], cardRadiosity: self[.lumenCardRadiosity],
-                       cardCombine: self[.lumenCardCombine], cull: self[.lumenCull], globalBin: self[.lumenGlobalBin],
-                       globalCompose: self[.lumenGlobalCompose])
     }
     var vg: VGPipelines { VGPipelines(reset: self[.vgReset], cut: self[.vgCut], boxes: self[.vgBoxes]) }
 

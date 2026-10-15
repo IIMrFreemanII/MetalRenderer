@@ -120,8 +120,6 @@ if [[ $suites == " " ]]; then
           LightTree.swift) add LightTreeTests ;;
           RasterScene.swift) add RasterSceneTests ;;
           VSM.swift) add VSMTests ;;
-          MeshSDFBuilder.swift|LumenScene.swift) add MeshSDFBuilderTests ;;
-          LumenGlobalSDF.swift) add GlobalSDFTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           LoadActivity.swift) add LoadActivityTests ;;
           World+Water.swift) add WorldTests WaterTests ;;

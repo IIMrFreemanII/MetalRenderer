@@ -59,11 +59,10 @@ enum UniformFlags {
     static let restir: UInt32 = 32768        // direct light from a pass of its own: ReSTIR DI
     static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
-    static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI, Lumen)
+    static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
     static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
     static let visBuffer: UInt32 = 1048576   // traceKernel takes its primary hits from the raster visibility buffer
     static let vsm: UInt32 = 2097152         // the camera's surfaces' shadows through virtual shadow maps (VSM.swift)
-    static let giRadiance: UInt32 = 4194304  // the composite keeps the lit diffuse light for Lumen's screen traces
     static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 

@@ -63,7 +63,7 @@ extension EnvNamed {
     }
 }
 extension GIMode: EnvNamed {
-    var envName: String { ["pt", "cascades", "restir", "lumen"][rawValue] }
+    var envName: String { ["pt", "cascades", "restir"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
 extension Realism: EnvNamed {}
@@ -71,7 +71,6 @@ extension DirectLightMode: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
 extension RasterVirtual: EnvNamed {}
-extension LumenTrace: EnvNamed {}
 extension ShadowMethod: EnvNamed {
     var envName: String { ["rays", "vsm"][rawValue] }
 }
@@ -120,7 +119,7 @@ enum EnvVariable: String, CaseIterable {
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
     case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
-    case foliage = "METALRENDERER_FOLIAGE", vsm = "METALRENDERER_VSM", lumen = "METALRENDERER_LUMEN", post = "METALRENDERER_POST"
+    case foliage = "METALRENDERER_FOLIAGE", vsm = "METALRENDERER_VSM", post = "METALRENDERER_POST"
 
     var isList: Bool { self.index >= EnvVariable.scene.index }
     private var index: Int { EnvVariable.allCases.firstIndex(of: self)! }
@@ -604,7 +603,7 @@ enum SettingsTable {
     private static let globalIllumination: Section = {
         let on: When = { $0.giEnabled }
         let paths: When = { $0.giMode == .pathTraced }, cascades: When = { $0.giMode == .radianceCascades }
-        let restir: When = { $0.giMode == .restirGI }, lumen: When = { $0.giMode == .lumen }
+        let restir: When = { $0.giMode == .restirGI }
         let spatial: When = { restir($0) && $0.restirGI.spatialPasses > 0 }
         let feedback: When = { restir($0) && $0.restirGI.feedback }
         let denoised: When = { restir($0) && $0.restirGI.denoise }
@@ -621,34 +620,6 @@ enum SettingsTable {
                 .env(.gi, "b1").when(cascades).enabled(on),
             S.check("Multi-bounce", \.cascades.feedback).env(.gi, "feedback").when(cascades).enabled(on),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
-            S.popup("Probe spacing", \.lumen.probeSpacing, counts: LumenSettings.spacingOptions) { "\($0) px" }
-                .env(.lumen, "spacing").when(lumen).enabled(on),
-            S.check("Multi-bounce", \.lumen.feedback).env(.lumen, "feedback").when(lumen).enabled(on),
-            S.check("Probe filter", \.lumen.filter).env(.lumen, "filter").advanced().when(lumen),
-            S.check("Temporal accumulation", \.lumen.temporal).env(.lumen, "temporal").advanced().when(lumen),
-            S.slider("History length", \.lumen.history, LumenSettings.historyRange, step: 1, fmt("%.0f fr"))
-                .env(.lumen, "history").advanced().when(lumen),
-            S.check("Denoise Lumen GI", \.lumen.denoiseIndirect).env(.lumen, "denoise").advanced().when(lumen),
-            S.check("Screen traces", \.lumen.screenTraces).env(.lumen, "screen").when(lumen).enabled(on),
-            S.check("Surface cache (cards)", \.lumen.cards).env(.lumen, "cards").when(lumen).enabled(on),
-            S.popup("Trace", \.lumen.trace, [("Triangles", LumenTrace.triangles), ("Distance fields", .sdf)])
-                .env(.lumen, "trace").when(lumen).enabled(on),
-            S.slider("Distance field reach", \.lumen.meshReach, LumenSettings.meshReachRange, step: 0.25, fmt("%.2f m"))
-                .env(.lumen, "reach2").advanced().when(lumen),
-            S.slider("Global field voxel", \.lumen.globalVoxel, LumenSettings.globalVoxelRange, step: 0.025)
-                { $0 == 0 ? "auto" : String(format: "%.3f m", $0) }.env(.lumen, "gvoxel").advanced().when(lumen),
-            S.check("Radiosity", \.lumen.radiosity).env(.lumen, "radiosity").when(lumen).enabled { $0.giEnabled && $0.lumen.cards },
-            S.slider("Radiosity rays", \.lumen.radiosityRays, LumenSettings.radiosityRayRange).env(.lumen, "rrays").advanced().when(lumen),
-            S.slider("Radiosity budget", \.lumen.radiosityBudget, LumenSettings.radiosityBudgetRange) { "\($0)K texels" }
-                .env(.lumen, "rbudget").advanced().when(lumen),
-            S.check("Radiosity through distance fields", \.lumen.radiosityThroughSDF).env(.lumen, "rsdf").advanced().when(lumen),
-            S.slider("Screen steps", \.lumen.screenSteps, LumenSettings.screenStepRange).env(.lumen, "steps").advanced().when(lumen),
-            S.slider("Screen thickness", \.lumen.thickness, LumenSettings.thicknessRange, step: 0.005, fmt("%.3f × depth"))
-                .env(.lumen, "thickness").advanced().when(lumen),
-            S.slider("Screen reach", \.lumen.screenReach, LumenSettings.screenReachRange, step: 1, log: true, fmt("%.0f m"))
-                .env(.lumen, "reach").advanced().when(lumen),
-            S.popup("GI debug view", \.lumen.debug, LumenSettings.debugViews.enumerated().map { ($1, $0) })
-                .env(.lumen, "debug").advanced().when(lumen),
             S.popup("Rays", \.restirGI.quarterBudget, [("1 per pixel", false), ("1 per 2×2 pixels", true)])
                 .env(.restirGI, "quarter").when(restir).enabled(on),
             S.slider("Bounces", \.restirGI.bounces, RenderSettings.bounceRange).env(.restirGI, "bounces").when(restir).enabled(on),

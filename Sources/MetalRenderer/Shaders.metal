@@ -39,9 +39,6 @@ using namespace metal::raytracing;
 #include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
 #include "Shaders/Post.metal"              // the lens and the finish: depth of field, bloom, vignette, grain
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
-#include "Shaders/LumenSDF.metal"          // Lumen's distance fields: meshes' bricks, the global clipmap, tracing
-#include "Shaders/LumenCards.metal"        // Lumen's surface cache: card capture, lighting, sampling
-#include "Shaders/Lumen.metal"             // the Lumen GI mode: screen probes (uses the cascades' probe weight and SH)
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its clusters' boxes (vg* kernels)
 #include "Shaders/RasterClusters.metal"    // the raster clusters: virtual geometry's cut, culled and drawn as Nanite does
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices and vertices (crowd* kernels)
