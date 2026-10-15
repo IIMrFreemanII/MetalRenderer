@@ -149,6 +149,7 @@ final class ForestTests: XCTestCase {
 
     func testTheForestIsItsSettings() {
         var settings = SceneSettings(kind: .forest)
+        settings.realism = .off   // (no rocks: the ground's sectors alone below)
         settings.trees = 150
         settings.undergrowth = 25
         let a = Scene(settings), b = Scene(settings)
@@ -220,6 +221,7 @@ final class FoliageRuntimeTests: XCTestCase {
         var settings = SceneSettings(kind: .forest)
         settings.trees = trees
         settings.undergrowth = 25
+        settings.realism = .off   // (the generated plants and textures as they are, without the scans)
         return Scene(settings, assemblies: assemblies, voxelBoxes: !assemblies)
     }
 

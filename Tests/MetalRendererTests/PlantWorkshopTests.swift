@@ -10,6 +10,7 @@ final class PlantWorkshopTests: XCTestCase {
     private func workshop(_ change: (inout PlantSceneSettings) -> Void = { _ in }, catalog: String = "builtin",
                           assemblies: Bool = false) -> Scene {
         var settings = SceneSettings(kind: .plants)
+        settings.realism = .off   // (the plants alone: no meadow grass, no scans)
         settings.plantCatalog = catalog
         change(&settings.plants)
         return Scene(settings, assemblies: assemblies)

@@ -133,7 +133,9 @@ final class Benchmark {
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
             if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
-            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase { s.post = PostSettings.preset(for: s.scene) }
+            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase || s.scene.realism != settings.scene.realism {
+                s.post = PostSettings.preset(for: s.scene)
+            }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
             for variable in [EnvVariable.restir, .restirGI, .megaLights, .vsm, .lumen, .view] { SettingsEnv.apply(variable, to: &s, from: env) }

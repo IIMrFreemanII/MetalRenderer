@@ -211,6 +211,7 @@ extension Scene {
                                                                   shapes: TerrainShapes(flats: [TerrainShapes.Flat(lo: [-30, -30], hi: [30, 30], level: -0.03,
                                                                                                                    blend: 50)])),
                          material: meadow)
+        addGroundLook(GroundLook.meadow(lo: [-384, -384], size: [768, 768], texels: 1024, key: "sun-courtyard", seed: 0x5A11))
         addInstance(kit.quad, meadow, translate([0, -20, 0]) * scale([20_000, 1, 20_000]))
         // Courtyard walls (open toward the camera).
         section("Courtyard walls")
@@ -573,15 +574,45 @@ extension Scene {
                    generatedWater: [stream.body, lake.body])
         let waterField = water?.field
         func dry(_ x: Float, _ z: Float) -> Bool { !(waterField?.wet(Double(x), Double(z), margin: 2.5) ?? false) }
+        // The realistic look: meadow, worn to earth round the village; the fields and roads in the ground itself (wheat as
+        // ripe dry grass, the meadow field's lusher grass, gravel roads), mud by the stream and the lake.
+        let realistic = settings.realism != .off
+        let fields: [(lo: SIMD2<Float>, hi: SIMD2<Float>, wheat: Bool)] = [([-90, -60], [-20, 10], true), ([25, -80], [110, -15], true),
+                                                                          ([25, 5], [90, 60], false)]
+        if realistic {
+            let meadow = GroundLook.meadow(lo: [-400, -400], size: [800, 800], texels: 2048, key: "", seed: 0x7A11, water: waterField) { x, z in
+                (1 - GroundLook.smooth(0, 14, simd_length(SIMD2(x, z)) - 30)) * 0.45
+            }
+            var look = meadow
+            look.layers += [.init(set: "gravel", color: [0.35, 0.33, 0.3], tint: [0.85, 0.83, 0.8], metres: 3, contrast: 0.6),
+                            .init(set: "dry-grass", color: [0.42, 0.36, 0.15], tint: [1.15, 1.0, 0.62], metres: 2.5, contrast: 0.5)]
+            look.key = "valley \(valley.field.snapshot().editsFingerprint) v1"
+            look.weights = { x, z in
+                var w = meadow.weights(x, z) + [0, 0]
+                func over(_ k: Int, _ amount: Float) {
+                    guard amount > 0 else { return }
+                    for i in w.indices { w[i] *= 1 - amount }
+                    w[k] += amount
+                }
+                for f in fields {
+                    let d = max(max(f.lo.x - x, x - f.hi.x), max(f.lo.y - z, z - f.hi.y))
+                    let inside = 1 - GroundLook.smooth(-1.5, 0.5, d)
+                    over(f.wheat ? 7 : 0, inside)
+                }
+                let road = min(abs(z) - 3, max(abs(x) - 3, z + 3))
+                over(6, 1 - GroundLook.smooth(-0.3, 0.8, road))
+                over(2, (1 - GroundLook.smooth(0.5, 2.5, road)) * GroundLook.smooth(-0.3, 0.8, road) * 0.7)
+                return w
+            }
+            addGroundLook(look)
+        }
         // Fields and the road.
         section("Fields and roads")
-        for (lo, hi, m) in [(SIMD3<Float>(-90, 0, -60), SIMD3<Float>(-20, 0.02, 10), wheat),
-                            (SIMD3<Float>(25, 0, -80), SIMD3<Float>(110, 0.02, -15), wheat),
-                            (SIMD3<Float>(25, 0, 5), SIMD3<Float>(90, 0.02, 60), meadow)] as [(SIMD3<Float>, SIMD3<Float>, Int)] {
-            kit.slab(lo, hi, m)
+        if !realistic {
+            for f in fields { kit.slab(SIMD3(f.lo.x, 0, f.lo.y), SIMD3(f.hi.x, 0.02, f.hi.y), f.wheat ? wheat : meadow) }
+            kit.slab([-200, 0, -3], [200, 0.04, 3], road)
+            kit.slab([-3, 0, -200], [3, 0.04, -3], road)
         }
-        kit.slab([-200, 0, -3], [200, 0.04, 3], road)
-        kit.slab([-3, 0, -200], [3, 0.04, -3], road)
         // The village around the crossroads: houses with pitched roofs, and a church with a tower.
         func house(_ x: Float, _ z: Float, _ yaw: Float, _ w: Float = 6, _ d: Float = 8, _ h: Float = 4) {
             let t = translate([x, 0, z]) * rotate(yaw, [0, 1, 0])
@@ -604,7 +635,7 @@ extension Scene {
         // Trees (Foliage): young oaks and birches along the road, grown trees in a copse and alone in the fields.
         section("Trees")
         let flora = Flora(self, seed: UInt64(max(settings.seed, 0)), catalog: PlantCatalog.resolve(settings.plantCatalog),
-                          species: [.oak, .birch, .conifer])
+                          species: realistic ? [.oak, .birch, .conifer, .grass] : [.oak, .birch, .conifer])
         var pick = SplitMix64(seed: 0x7EE5 &+ UInt64(max(settings.seed, 0)))
         func tree(_ x: Float, _ z: Float, _ species: Foliage.Species, _ age: Foliage.Age, _ size: Float) {
             let plants = flora.plants(species, age)
@@ -615,6 +646,25 @@ extension Scene {
         for i in 0..<8 { tree(-60 + Float(i) * 14, 6, i % 2 == 0 ? .oak : .birch, .young, 0.75 + 0.08 * Float(i % 3)) }
         for (i, (x, z)) in [(Float(55), Float(-30)), (60, -24), (66, -32), (58, -38), (70, -26), (-60, 40), (80, 30), (-110, -20)].enumerated() {
             tree(x, z, [.oak, .conifer, .birch, .oak][i % 4], .mature, 0.6)
+        }
+        // The realistic look's rocks: along the stream and the lake, and at the hills' feet.
+        if realistic {
+            addRocks(count: 6000, lo: [-260, -260], hi: [260, 120], seed: 0x7A14) { x, z in
+                let near = !dry(x, z) ? Float(0) : (waterField?.wet(Double(x), Double(z), margin: 4) == true ? 1 : 0)
+                let h = self.terrain?.height(x, z) ?? 0
+                let foot = h > 0.5 ? Float(0.35) : 0
+                return (max(near * 0.7, foot), 0.25...(0.8 + 1.8 * foot))
+            }
+        }
+        // The realistic look's grass round the village and the camera: not on the roads, the wheat or in the water.
+        if realistic {
+            addMeadowGrass(center: [-10, 30], reach: 80, seed: 0x7A12, flora: flora) { x, z in
+                guard dry(x, z) else { return 0 }
+                let road = min(abs(z) - 3, max(abs(x) - 3, z + 3))
+                if road < 1.5 { return 0 }
+                for f in fields where f.wheat && x > f.lo.x - 1 && x < f.hi.x + 1 && z > f.lo.y - 1 && z < f.hi.y + 1 { return 0 }
+                return 0.75 + 0.25 * GroundLook.smooth(-0.3, 0.4, Terrain.noise(SIMD2(x, z) / 17, seed: 0x7A13))
+            }
         }
         // A fence along the meadow, close to the camera.
         section("Fence")

@@ -24,7 +24,7 @@ extension Benchmark {
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
         "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
-    ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }
+    ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
 
     static func configs(for mode: String) -> [Config] {
         if let build = modes[mode] { return build() }
@@ -558,7 +558,7 @@ extension Benchmark {
     }
 
     /// A camera `up` metres above the ground at world position (x, z) of `w`, in the coordinates of its start's scene.
-    private static func worldCamera(_ w: World, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
+    static func worldCamera(_ w: World, _ x: Double, _ z: Double, up: Float, yaw: Float = 0, pitch: Float) -> Camera {
         let anchor = WorldTile.origin(w.anchorTile.x, w.anchorTile.y)
         var c = Camera()
         c.position = SIMD3(Float(x - anchor.x), w.height(x, z) + up, Float(z - anchor.y))
@@ -568,7 +568,7 @@ extension Benchmark {
     }
 
     /// The world the run's scenes are of (`METALRENDERER_SCENE=seed=...`), for placing the cameras in it.
-    private static func worldOfRun() -> World {
+    static func worldOfRun() -> World {
         var s = RenderSettings()
         SettingsEnv.apply(.scene, to: &s, from: env)
         return World(seed: UInt64(max(s.scene.seed, 0)))

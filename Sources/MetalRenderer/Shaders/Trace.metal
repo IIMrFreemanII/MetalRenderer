@@ -132,7 +132,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
     outNormalDepth.write(float4(n, viewDepth), tid);
     // A strand's (Hair.metal): its tangent in the alphas. Skin: minus its strength (Hair.metal hairFromGBuffer).
-    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent) : float2(1.0f, -2.0f - (SKIN ? sf.skin : 0.0f));
+    float2 tangentOct = sf.hair ? hairOctEncode(sf.tangent)
+                      : float2(1.0f, -2.0f - (LEAF_TRANSMIT && sf.leaf > 0.0f ? leafCode(sf.leaf, sf.backlit) : SKIN ? sf.skin : 0.0f));
     outGeoNormal.write(float4(ng, tangentOct.y + 2.0f), tid);
     outAlbedo.write(float4(sf.albedo, tangentOct.x), tid);
     outEmission.write(float4(sf.emission, 1.0f), tid);
@@ -187,6 +188,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         hp.albedo = sf.albedo;
     } else if (SKIN && sf.skin > 0.0f) {
         hp = skinPoint(sf.skin);
+    } else if (LEAF_TRANSMIT && sf.leaf > 0.0f) {
+        hp = leafPoint(sf.leaf, sf.backlit);
     }
 
     // Direct light. The shadow denoiser filters visibility per light group (one rgba channel each; up to 4 lights,

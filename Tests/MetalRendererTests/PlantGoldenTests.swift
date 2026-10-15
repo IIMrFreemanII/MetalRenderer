@@ -71,6 +71,7 @@ final class PlantGoldenTests: XCTestCase {
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
+        settings.realism = .off             // (the generated plants, not the scans: the same with or without them)
         settings.trees = 300
         settings.undergrowth = 25
         XCTAssertEqual(scene(Scene(settings)), "d1743c9d79a7")
@@ -83,6 +84,7 @@ final class PlantGoldenTests: XCTestCase {
     func testTheValleyIsAsItWas() {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
+        settings.realism = .off
         XCTAssertEqual(scene(Scene(settings)), "39fb20810e13")
     }
 

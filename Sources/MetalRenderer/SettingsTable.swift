@@ -66,6 +66,7 @@ extension GIMode: EnvNamed {
     var envName: String { ["pt", "cascades", "restir", "lumen"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
+extension Realism: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension PrimaryVisibility: EnvNamed {}
@@ -476,6 +477,7 @@ enum SettingsTable {
             S.slider("Workshop seed", \.scene.plants.seed, SceneSettings.seedRange, live: false).env(.scene, "plantseed").when(workshop),
             S.popup("Layout", \.scene.plants.layout, titled(\.title)).env(.scene, "layout").when(workshop),
             S.popup("View", \.scene.plants.view, titled(\.title)).env(.scene, "view").when(workshop),
+            S.popup("Realistic look", \.scene.realism, titled(\.title)).env(.scene, "realism"),
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
             S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),
@@ -504,6 +506,10 @@ enum SettingsTable {
             S.slider("Depth of field", \.post.aperture, PostSettings.apertureRange, step: 0.5, fmt("%.1f px")).env(.post, "aperture"),
             S.slider("Focus distance", \.post.focus, PostSettings.focusRange, step: 0.1) { $0 == 0 ? "Auto" : String(format: "%.1f m", $0) }
                 .env(.post, "focus").enabled(focus),
+            S.check("Auto exposure", \.post.autoExposure).env(.post, "autoexposure"),
+            S.slider("Warmth", \.post.warmth, PostSettings.warmthRange, step: 0.02, fmt("%.2f")).env(.post, "warmth"),
+            S.slider("Saturation", \.post.saturation, PostSettings.saturationRange, step: 0.02, fmt("%.2f")).env(.post, "saturation"),
+            S.slider("Contrast", \.post.contrast, PostSettings.contrastRange, step: 0.02, fmt("%.2f")).env(.post, "contrast"),
             S.slider("Vignette", \.post.vignette, PostSettings.vignetteRange, step: 0.05, fmt("%.2f")).env(.post, "vignette"),
             S.slider("Film grain", \.post.grain, PostSettings.grainRange, step: 0.005, fmt("%.3f")).env(.post, "grain"),
             S.slider("Chromatic aberration", \.post.aberration, PostSettings.aberrationRange, step: 0.0005) { String(format: "%.2f%%", $0 * 100) }

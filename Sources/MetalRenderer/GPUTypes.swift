@@ -27,7 +27,10 @@ struct Uniforms {
     var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
     var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
     var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value)
+    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
+                                         // (gradeOn, meterOn)
+    var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
+    static let gradeOn: Float = 1, meterOn: Float = 2
 
     /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
     static let traceBounces: UInt32 = 1      // the path tracer's indirect light (`bounces` > 0)
@@ -327,7 +330,7 @@ struct GPUMaterial {
 /// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
 struct GPUMaterialExtra: Equatable {
     var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none; z = 1: procedural
-                                                    // (a mesh without UVs gets planar ones)
+                                                    // (a mesh without UVs gets planar ones), 2: a scan (TextureSets.swift)
     var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
                                                      // w = AO strength (0: the R channel isn't occlusion)
 }
@@ -836,7 +839,7 @@ struct GPUWaterScene {
 func validateGPULayouts() {
     precondition(MemoryLayout<GPUWaterLook>.stride == 64, "GPUWaterLook layout mismatch")
     precondition(MemoryLayout<GPUWaterScene>.stride == 256, "GPUWaterScene layout mismatch")
-    precondition(MemoryLayout<Uniforms>.stride == 256, "Uniforms layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 272, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")

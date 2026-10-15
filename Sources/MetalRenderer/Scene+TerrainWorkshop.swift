@@ -35,6 +35,25 @@ extension Scene {
         }
         addTerrain(name: entry.document.name, field: entry.field, tiles: grid.tiles!.map { ($0, 0) },
                    style: TerrainMeshStyle(uvOrigin: grid.origin, uvScale: 1), material: ground, generatedWater: water)
+        // The realistic look: earth and dry grass under the rules' layers, sand along the sea.
+        let seaLevel = water.first?.level, shore = entry.field.snapshot()
+        let sandSeed = UInt32(truncatingIfNeeded: max(w.seed, 0))
+        addGroundLook(GroundLook(
+            layers: [.init(set: "ground", color: [0.2, 0.24, 0.13], contrast: 1), .init(set: "dry-grass", color: [0.33, 0.29, 0.14], contrast: 0.7),
+                     .init(set: "sand", color: [0.52, 0.45, 0.3], metres: 4, contrast: 0.6), .init(set: "rock", color: [0.31, 0.28, 0.24], metres: 6, contrast: 1.4)],
+            rock: 3, slope: [0.6, 0.78], lo: [-size / 2, -size / 2], size: [size, size], texels: 2048,
+            key: "\(entry.document.name) \(w.seed) \(size) \(seaLevel ?? -1e9) \(shore.editsFingerprint) v1") { x, z in
+            let p = SIMD2(x, z)
+            let dry = GroundLook.smooth(0.1, 0.6, Terrain.noise(p / 37, seed: sandSeed &+ 5)) * 0.7
+            var out: [Float] = [1 - dry, dry, 0, 0]
+            if let seaLevel {
+                let h = shore.height(x: Double(x), z: Double(z))
+                let sand = 1 - GroundLook.smooth(seaLevel + 1, seaLevel + 3 + 1.5 * Terrain.noise(p / 17, seed: sandSeed &+ 6), h)
+                out = out.map { $0 * (1 - sand) }
+                out[2] += sand
+            }
+            return out
+        })
         if w.bodies > 0 { dropBodies(w.bodies, on: entry.field.snapshot(), seed: UInt64(max(w.seed, 0))) }
         section("Sun")
         addDaySun()

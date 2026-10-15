@@ -165,6 +165,7 @@ kernel void bloomUpKernel(constant Uniforms&               u      [[buffer(0)]],
 
 kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
                          constant PostParams&             p      [[buffer(1)]],
+                         device atomic_uint*              histogram [[buffer(2)]],   // with auto exposure's meter on
                          texture2d<float, access::sample> input  [[texture(0)]],
                          texture2d<float, access::sample> bloom  [[texture(1)]],
                          texture2d<float, access::write>  output [[texture(2)]],
@@ -182,8 +183,9 @@ kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
         c = input.sample(postSampler, uv).rgb;
     }
     c = max(c, 0.0f);
+    if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
     if (p.bloom.x > 0.0f) c = mix(c, bloom.sample(postSampler, uv).rgb / p.bloom.w, p.bloom.x);
-    c = toneMap(c, u.post);
+    c = toneMap(c, u.post, u.grade);
     if (p.finish.x > 0.0f) {
         float r2 = dot(fromCentre * float2(size.x / size.y, 1.0f), fromCentre * float2(size.x / size.y, 1.0f)) * 2.0f;
         c *= 1.0f - p.finish.x * smoothstep(0.15f, 1.6f, r2);

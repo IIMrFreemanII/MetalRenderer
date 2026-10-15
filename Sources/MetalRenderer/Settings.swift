@@ -170,6 +170,21 @@ enum ToneMap: Int, CaseIterable, Codable {
     }
 }
 
+/// How real the outdoor scenes look (SceneSettings.realism): off, the generated textures as they always were; on,
+/// photo-scanned ground, rocks and plants (TextureSet) height-blended into each other, with the lighting's realistic
+/// looks; high, also the costly parts (stochastic tiling, the ground displaced near the camera, denser grass).
+enum Realism: Int, CaseIterable, Codable {
+    case off, on, high
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .on: return "On"
+        case .high: return "High"
+        }
+    }
+}
+
 /// How indirect light (global illumination) is computed.
 enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
@@ -423,6 +438,8 @@ enum SceneKind: Int, CaseIterable, Codable {
     var hasPlants: Bool { self == .forest || self == .valley || isWorld || self == .plants }
     /// Scenes whose amount of plants is `SceneSettings.trees` and `undergrowth`.
     var hasForest: Bool { self == .forest || isWorld }
+    /// Scenes the realistic look changes (SceneSettings.realism): the ones on a terrain, outdoors.
+    var hasRealisticLook: Bool { hasPlants || self == .terrain || self == .sun || self == .crowd || self == .buildings }
 }
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -684,6 +701,8 @@ struct SceneSettings: Equatable, Codable {
     /// The trees' and bushes' leaves as cards: a few rectangles a bough, each showing a twig with its leaves, cut out
     /// by an alpha mask the ray queries test. Off: every leaf is a mesh of its own.
     var leafCards = false
+    /// The outdoor scenes' realistic look (Realism): scanned materials, height-blended ground, realistic lighting.
+    var realism = Realism.on
     /// Far baked plants as their voxel grids (VoxelLOD) instead of their triangles. Off: it is slower wherever it was
     /// measured. In software (M1 Max) the ray queries a voxel box needs
     /// cost every ray about 30%; in hardware (M4 Max) each box a ray meets hands it back to the shader, and the
@@ -781,6 +800,7 @@ struct SceneSettings: Equatable, Codable {
         }
         return kind == .plants && other.kind == .plants && plants.layout == other.plants.layout && plants.view == other.plants.view
             && plants.species == other.plants.species && leafCards == other.leafCards && bakedPlants == other.bakedPlants
+            && realism == other.realism
     }
 
     /// The same city, with another building's interior in it (or none): the same streets and buildings, where they
@@ -1116,6 +1136,18 @@ struct FogSettings: Equatable, Codable {
     static func preset(for scene: SceneSettings) -> FogSettings {
         var f = preset(for: scene.kind)
         if scene.kind == .showcase { ShowcaseLook.look(for: scene.showcase).fog(&f) }
+        if scene.realism != .off && scene.kind.hasRealisticLook {
+            // Air: the distance fades blue-grey (aerial perspective), a light haze in the forest's shade.
+            if !f.enabled {
+                f.enabled = true
+                f.density = 0.0025
+                f.heightFalloff = 0.025
+                f.anisotropy = 0.6
+                f.noise = 0.15
+                f.maxDistance = 90
+            }
+            f.haze = max(f.haze, scene.kind == .forest ? 0.3 : 0.55)
+        }
         return f
     }
 }
@@ -1229,6 +1261,14 @@ struct PostSettings: Equatable, Codable {
     var vignette: Float = 0             // how much the corners darken
     var grain: Float = 0                // film grain's strength
     var aberration: Float = 0           // chromatic aberration: red and blue apart by this share of the width at the corners
+    /// The exposure follows the frame's light (a histogram's middle, eased toward): `exposure` then shifts it.
+    var autoExposure = false
+    /// The colour grade (applied when any is off its neutral value): warmth (-1 cooler ... 1 warmer: white balance),
+    /// saturation (1 as it is) and contrast about middle grey (1 as it is).
+    var warmth: Float = 0
+    var saturation: Float = 1
+    var contrast: Float = 1
+    var grades: Bool { warmth != 0 || saturation != 1 || contrast != 1 }
 
     var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 }
 
@@ -1239,12 +1279,26 @@ struct PostSettings: Equatable, Codable {
     static let vignetteRange: ClosedRange<Float> = 0...1
     static let grainRange: ClosedRange<Float> = 0...0.2
     static let aberrationRange: ClosedRange<Float> = 0...0.01
+    static let warmthRange: ClosedRange<Float> = -1...1
+    static let saturationRange: ClosedRange<Float> = 0...2
+    static let contrastRange: ClosedRange<Float> = 0.5...1.5
     static let maxBlur: Float = 24      // the depth of field's widest blur circle (output pixels)
     static let bloomLevels = 6          // the glow's halvings, from half the output size
 
-    /// Off, but in the showcase: the model's look.
+    /// Off, but in the showcase: the model's look; and with the realistic look outdoors, a camera's: exposure that
+    /// follows the light, a gentle filmic grade, a little bloom and vignette.
     static func preset(for scene: SceneSettings) -> PostSettings {
-        scene.kind == .showcase ? ShowcaseLook.look(for: scene.showcase).post : PostSettings()
+        if scene.kind == .showcase { return ShowcaseLook.look(for: scene.showcase).post }
+        guard scene.realism != .off, scene.kind.hasRealisticLook else { return PostSettings() }
+        var p = PostSettings()
+        p.autoExposure = true
+        p.saturation = 1.06
+        p.contrast = 1.1
+        p.warmth = scene.kind == .forest ? 0.12 : 0.06
+        p.bloom = 0.035
+        p.bloomThreshold = 1.6
+        p.vignette = 0.16
+        return p
     }
 }
 

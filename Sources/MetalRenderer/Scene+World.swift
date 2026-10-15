@@ -262,12 +262,22 @@ extension Scene {
             }
         }
 
+        // The realistic look: each ground's scan (one repeat in its own metres on the tiles' 5 m UVs), and a map of them
+        // round the middle tile that the shading blends by height (Terrain/GroundLook.swift).
+        let realistic = settings.realism != .off
         var firstGround = -1
-        for m in World.groundMaterials {
+        for (k, m) in World.groundMaterials.enumerated() {
             var material = m
             if m.textures.x == World.groundDetail { material.textures.x = detail }
             if m.textures.x == World.fieldRows { material.textures.x = rows }
-            let added = addMaterial(material)
+            let scan = World.groundScans[k]
+            let added: Int
+            if realistic, let index = addScanMaterial(scan.set, tint: scan.tint) {
+                materialExtras[index]?.surface.y = World.groundTile / (TextureSet.find(scan.set)?.metres ?? World.groundTile)
+                added = index
+            } else {
+                added = addMaterial(material)
+            }
             if firstGround < 0 { firstGround = added }
         }
         let terrain = addTerrain(name: worldTerrain.document.name, field: worldTerrain.field, snapshot: snapshot,
@@ -280,6 +290,24 @@ extension Scene {
             return m
         }
         triangles += terrain.parts.reduce(0) { $0 + $1.sector.triangleCount }
+        if realistic {
+            let middleCenter = WorldTile.origin(middle.x, middle.y) + SIMD2(side / 2, side / 2)
+            let lo = SIMD2<Float>(Float(middleCenter.x - anchor.x) - 1024, Float(middleCenter.y - anchor.y) - 1024)
+            let shown = world
+            addGroundLook(GroundLook(
+                layers: World.groundScans.enumerated().map { k, g in
+                    let a = World.groundMaterials[k].albedo
+                    return .init(set: g.set, color: SIMD3(a.x, a.y, a.z) * FoliageTextures.mean, tint: g.tint, contrast: g.set == "rock" ? 1.4 : 0.7)
+                },
+                rock: World.Ground.rock, slope: [0.6, 0.78], lo: lo, size: [2048, 2048], texels: 2048,
+                key: "world \(world.seed) \(middle.x) \(middle.y) \(anchorTile.x) \(anchorTile.y) \(snapshot.editsFingerprint) v1") { x, z in
+                let wx = Double(x) + anchor.x, wz = Double(z) + anchor.y
+                let k = shown.ground(wx, wz, up: 1, city: shown.city(near: wx, wz))
+                var w = [Float](repeating: 0, count: 8)
+                w[min(max(k, 0), 7)] = 1
+                return w
+            })
+        }
         addWorldWater(world, tiles: jobs.map { SIMD2($0.x, $0.z) }, anchor: anchor)
 
         var plants = 0

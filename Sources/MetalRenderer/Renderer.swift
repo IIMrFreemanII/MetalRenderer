@@ -570,6 +570,8 @@ final class Renderer: NSObject {
     /// structure is updated. One that stays as it is isn't refitted for nothing (a forest without wind).
     private var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
     private let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
+    /// Auto exposure's histograms (PostSettings.autoExposure: AutoExposure.swift).
+    private lazy var exposureMeter = AutoExposure(device: device, framesInFlight: Renderer.maxFramesInFlight)
 
     private var targets: RenderTargets?
 
@@ -2564,6 +2566,9 @@ final class Renderer: NSObject {
         camera.position = orbit.target - camera.forward * orbit.distance
     }
 
+    /// Auto exposure's scale for this frame (AutoExposure).
+    private func meterExposure() -> Float { exposureMeter.next() }
+
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
         func pack(_ c: Camera) -> (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) {
@@ -2578,6 +2583,18 @@ final class Renderer: NSObject {
         (u.prevCamPos, u.prevCamRight, u.prevCamUp, u.prevCamForward) = pack(prevCamera)
         u.skyColor = SIMD4<Float>(scene.skyColor, 0)
         u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, 0)
+        let lens = settings.post
+        if lens.grades {
+            u.post.z += Uniforms.gradeOn
+            let w = max(min(lens.warmth, 1), -1)
+            u.grade = SIMD4(1 + 0.1 * w, 1 - 0.14 * w, max(lens.saturation, 0), max(lens.contrast, 0.2))
+        }
+        if lens.autoExposure {
+            u.post.z += Uniforms.meterOn
+            u.post.x *= meterExposure()
+        } else {
+            exposureMeter.reset()
+        }
         u.width = UInt32(width)
         u.height = UInt32(height)
         u.frameIndex = frameIndex
@@ -3514,6 +3531,7 @@ final class Renderer: NSObject {
             if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
             if let drawable, let enc = passes.compute("composite") {
                 bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
                 setTextures(enc, [pt.accum, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
@@ -3623,6 +3641,7 @@ final class Renderer: NSObject {
                            output: drawable.texture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
+                enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
                 setTextures(enc, [light, drawable.texture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
@@ -3684,6 +3703,7 @@ final class Renderer: NSObject {
             }
         }
         start(.finish)
+        enc.setBuffer(exposureMeter.current, offset: 0, index: 2)
         setTextures(enc, [light, post.up.first ?? post.down.first ?? light, output])
         dispatch(enc, .finish, width: output.width, height: output.height)
         passes.endCompute()

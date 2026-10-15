@@ -85,6 +85,7 @@ extension Scene {
         addGroundTerrain("building-workshop-\(Int(lo.x)) \(Int(lo.y)) \(Int(hi.x)) \(Int(hi.y))",
                          base: ShapedTerrainBase(NoiseTerrainBase(size: 1024, cells: 256, seed: 0xB1D, relief: 9, featureSize: 200), shapes: shapes),
                          material: grass)
+        addGroundLook(GroundLook.meadow(lo: [-512, -512], size: [1024, 1024], texels: 1024, key: "building-workshop", seed: 0xB1D))
         addInstance(Kit(self).quad, grass, translate([0, -18, 0]) * scale([20_000, 1, 20_000]))
         // (The walker stands on the terrain's ground: Scene.walkGround.)
         walkColliders = kit.colliders + [Interior.Collider(lo: [x0, -1, z0], hi: [x1, 0, front]),

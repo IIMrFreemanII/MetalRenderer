@@ -222,6 +222,13 @@ struct World {
                 natural([0.42, 0.36, 0.15], fieldRows), natural([0.13, 0.24, 0.07], fieldRows), natural([0.19, 0.14, 0.095], fieldRows),
                 natural([0.46, 0.41, 0.31])]
     }()
+    /// Each ground's scan in the realistic look (TextureSet), and its albedo's tint: litter, moss, meadow, rock, wheat,
+    /// crop, ploughed, sand.
+    static let groundScans: [(set: String, tint: SIMD3<Float>)] = [
+        ("forest-floor", [0.85, 0.8, 0.74]), ("moss", [1, 1, 1]), ("grass", [1, 1, 1]), ("rock", [1, 1, 1]),
+        ("dry-grass", [1.15, 1.0, 0.62]), ("grass", [0.8, 0.95, 0.7]), ("earth", [0.62, 0.52, 0.45]), ("sand", [1, 1, 1]),
+    ]
+
     /// `GPUMaterial.textures.x` of a material with the ground's detail texture, or with a field's rows
     /// (Scene+World.swift makes them), and the side of one repeat of either, metres.
     static let groundDetail: UInt32 = 0x4100_0000, fieldRows: UInt32 = 0x4100_0001, groundTile: Float = 5

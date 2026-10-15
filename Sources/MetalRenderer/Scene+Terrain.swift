@@ -34,6 +34,17 @@ final class SceneTerrain {
     var colliders: [Int: Int] = [:]
     /// The scene's own water on it (made from its seed, shaped into its base: SceneWaterMaker), after its document's.
     var generatedWater: [WaterBody] = []
+    /// The realistic look (SceneSettings.realism): its table's rows past the layers', and the scene's own ground made
+    /// of scans (Scene.addGroundLook; nil: layer 0 is the sectors' material as it is).
+    var realistic = false
+    var high = false
+    var ground: GroundRows?
+    /// The generated detail texture the plain layers' colours are multiplied by.
+    var detail: UInt32 = .max
+    /// The realistic ground's tiling noise (Scene.terrainMacroTexture).
+    var macro: UInt32 = .max
+    /// The scanned layers' repeats, metres (by layer).
+    var scanMetres: [Int: Float] = [:]
 
     /// A sector's heights as its collider has them: its samples' (rows along z) and where its first is in the scene.
     func colliderHeights(_ p: Part, _ s: TerrainSnapshot) -> (lo: SIMD2<Float>, heights: [Float], side: SIMD2<Int>) {
@@ -47,14 +58,28 @@ final class SceneTerrain {
         meshStyle = style
     }
 
-    /// The layer table (TERRAIN, Shaders/Terrain.metal): a header (the first layer's material, the scene's origin in
-    /// the world), then per layer 1...15: its UV per metre, the slope (normal's y) under which it is projected from the
-    /// sides too, whether it has a material.
-    static func table(_ layers: [TerrainLayer], firstLayer: Int, offset: SIMD2<Double>) -> [SIMD4<Float>] {
-        var out = [SIMD4<Float>(Float(firstLayer), Float(offset.x), Float(offset.y), Float(TerrainTile.layers - 1))]
+    /// The layer table (TERRAIN, Shaders/Surface.metal): a header (the first layer's material, the scene's origin in
+    /// the world, 15, or 16 with the realistic look), then per layer 1...15: its UV per metre, the slope (normal's y)
+    /// under which it is projected from the sides too, and with the realistic look its height's contrast and its
+    /// occlusion's strength (else 1, 0). With the realistic look, then: how many layers the scene's own ground has, its
+    /// maps' and the macro noise's textures; the maps' rectangle; its rock layer and slopes; and per ground layer its
+    /// material, UV per metre, contrast.
+    static func table(_ layers: [TerrainLayer], firstLayer: Int, offset: SIMD2<Double>, realistic: Bool = false, high: Bool = false,
+                      ground: GroundRows? = nil, macro: UInt32 = .max, metres: (Int) -> Float? = { _ in nil }) -> [SIMD4<Float>] {
+        let header = realistic ? (high ? 17 : 16) : TerrainTile.layers - 1   // (17: realism high, its parallax)
+        var out = [SIMD4<Float>(Float(firstLayer), Float(offset.x), Float(offset.y), Float(header))]
         for l in 1..<TerrainTile.layers {
             let layer = l < layers.count ? layers[l] : TerrainLayer(name: "")
-            out.append(SIMD4(1 / max(layer.tileMetres, 0.05), 0.7, 1, 0))
+            out.append(realistic ? SIMD4(1 / max(metres(l) ?? layer.tileMetres, 0.05), 0.7, 1, 1) : SIMD4(1 / max(layer.tileMetres, 0.05), 0.7, 1, 0))
+        }
+        guard realistic else { return out }
+        func index(_ v: UInt32) -> Float { v == .max ? -1 : Float(v) }
+        let g = ground ?? GroundRows()
+        out.append(SIMD4(Float(g.materials.count), index(g.mapA), index(g.mapB), index(macro)))
+        out.append(SIMD4(g.lo.x, g.lo.y, 1 / max(g.size.x, 1e-3), 1 / max(g.size.y, 1e-3)))
+        out.append(SIMD4(Float(g.rock), g.slope.x, g.slope.y, 0))
+        for k in g.materials.indices {
+            out.append(SIMD4(Float(g.materials[k]), 1 / max(g.metres[k], 0.05), g.contrast[k], 1))
         }
         return out
     }
@@ -149,7 +174,15 @@ extension Scene {
         Scene.terrainMeshesLock.unlock()
         let t = terrain.flatMap { $0.name == name ? $0 : nil } ?? SceneTerrain(name: name, field: field, style: style, offset: offset, material: material)
         if t.firstLayer < 0 {
-            t.firstLayer = addTerrainLayerMaterials(layers, builtIn: builtIn)
+            let made = addTerrainLayerMaterials(layers, builtIn: builtIn)
+            t.firstLayer = made.first
+            t.detail = made.detail
+            t.scanMetres = made.scans
+            if settings.realism != .off {
+                t.realistic = true
+                t.high = settings.realism == .high
+                t.macro = terrainMacroTexture()
+            }
             t.generatedWater = generatedWater
             let bodies = (TerrainDocuments.shared.document(name)?.water ?? []) + generatedWater
             if !bodies.isEmpty { addTerrainWater(bodies, snapshot: s, offset: offset, sectors: sectors) }
@@ -173,21 +206,20 @@ extension Scene {
 
     /// Layers 1...15's materials, one after the other: a layer's Material Designer graph (baked by the renderer), a
     /// material of the scene's own (`builtIn`: the open world's grounds), or its plain colour over a generated detail
-    /// texture. The first one's index.
-    func addTerrainLayerMaterials(_ layers: [TerrainLayer], builtIn: (Int) -> GPUMaterial?) -> Int {
+    /// texture; with the realistic look, its scan first (TextureSet, by its `scanSet`). The first one's index, the
+    /// detail texture, and each scanned layer's repeat in metres.
+    func addTerrainLayerMaterials(_ layers: [TerrainLayer], builtIn: (Int) -> GPUMaterial?) -> (first: Int, detail: UInt32, scans: [Int: Float]) {
         let catalog = MaterialCatalog.resolve(settings.materials)
-        let detail = addGeneratedTexture(name: "terrain-detail", width: 512, height: 512, key: "v\(FoliageTextures.version)") {
-            FoliageTextures.image(512, 512, normalized: true) { u, v in
-                let clumps = FoliageTextures.noise(u * 6, v * 6, 6, 6, 41) + 0.6 * FoliageTextures.noise(u * 17, v * 17, 17, 17, 42)
-                let specks = FoliageTextures.noise(u * 60, v * 60, 60, 60, 43)
-                return SIMD3(repeating: max(0.75 + 0.3 * clumps + 0.22 * specks, 0.1))
-            }
-        }
+        let detail = terrainDetailTexture()
         var first = -1
+        var scans: [Int: Float] = [:]
         for l in 1..<TerrainTile.layers {
             let layer = l < layers.count ? layers[l] : TerrainLayer(name: "")
             let index: Int
-            if !layer.material.isEmpty {
+            if settings.realism != .off, layer.material.isEmpty, let set = layer.scanSet, let scan = addScanMaterial(set) {
+                index = scan
+                scans[l] = TextureSet.find(set)?.metres
+            } else if !layer.material.isEmpty {
                 index = addProceduralMaterial(graph: layer.material, catalog: catalog)
             } else if let k = layer.builtIn, let m = builtIn(k) {
                 index = addMaterial(m)
@@ -198,7 +230,7 @@ extension Scene {
             }
             if first < 0 { first = index }
         }
-        return first
+        return (first, detail, scans)
     }
 
     /// The terrain's water (TerrainWater): a sea's sheet over the terrain (an endless one's: over these sectors' tiles),
@@ -251,7 +283,8 @@ extension Scene {
     func finishTerrainLayers() {
         guard let t = terrain, t.firstLayer >= 0 else { return }
         t.table = proceduralParams.count
-        proceduralParams += SceneTerrain.table(t.meshStyle.layers, firstLayer: t.firstLayer, offset: t.offset)
+        proceduralParams += SceneTerrain.table(t.meshStyle.layers, firstLayer: t.firstLayer, offset: t.offset, realistic: t.realistic,
+                                               high: t.high, ground: t.ground, macro: t.macro, metres: { t.scanMetres[$0] })
         for p in t.parts { setTerrainTable(p.mesh, t.table) }
     }
 

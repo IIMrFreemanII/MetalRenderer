@@ -165,6 +165,7 @@ final class PlantCatalogTests: XCTestCase {
     /// An edit renames the plants for every cache; a change of colour alone leaves where they stand as it was.
     func testEditsChangeTheKeys() {
         var settings = SceneSettings(kind: .forest)
+        settings.realism = .off   // (its rocks are the same in both)
         settings.trees = 60
         settings.undergrowth = 10
         settings.plantCatalog = "builtin"

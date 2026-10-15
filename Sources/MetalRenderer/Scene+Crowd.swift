@@ -44,6 +44,7 @@ extension Scene {
                                                                                                         relief: 8, featureSize: 150),
                                                                                        shapes: TerrainShapes(flats: [flat])),
                          material: meadow)
+        addGroundLook(GroundLook.meadow(lo: [-size / 2, -size / 2], size: [size, size], texels: 1024, key: "crowd \(Int(size))", seed: 0xC20D))
         addInstance(quad, meadow, translate([0, -14, 0]) * scale([20_000, 1, 20_000]))
         section("Fountain")
         // A round pool between the crowd and the blocks: a stone rim, a dark floor, still water a little under the rim.

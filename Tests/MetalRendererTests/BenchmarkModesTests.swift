@@ -138,7 +138,7 @@ final class BenchmarkModesTests: XCTestCase {
         let env = ["METALRENDERER_SCENE": "valley"]
         let plain = Benchmark.Config("x").resolvedSettings(env: env)
         XCTAssertEqual(plain.scene.kind, .valley)
-        XCTAssertEqual(plain.fog, FogSettings.preset(for: .valley))
+        XCTAssertEqual(plain.fog, FogSettings.preset(for: plain.scene))
         XCTAssertEqual(plain.sky, SkySettings.preset(for: .valley))
         let own = Benchmark.Config("x").fog { $0.density = 0.2 }.sky { $0 = SkySettings() }.resolvedSettings(env: env)
         XCTAssertEqual(own.fog.density, 0.2)

@@ -143,6 +143,19 @@ extension Scene {
                                                                                                level: 0, blend: 16)],
                                                                     bowls: [pond.bowl]))
         addGroundTerrain("plant-workshop-\(Int(reach))", base: ground, material: lawn, water: [pond.body])
+        addGroundLook(GroundLook.meadow(lo: [-256, -256], size: [512, 512], texels: 1024, key: "plant-workshop-\(Int(reach))", seed: 0x9A7D,
+                                        water: water?.field) { x, z in
+            // Bare earth round the plants' feet.
+            (1 - GroundLook.smooth(0, 6, simd_length(SIMD2(x, z)) - 0.4 * reach + 2 * Terrain.noise(SIMD2(x, z) / 2, seed: 0x9A7E))) * 0.8
+        })
+        // The realistic look's grass round the bare patch, not in the pond: "high" only (the workshop is remade at every
+        // edit, and the grass took its frame from 8.5 to 24 ms on the M1 Max).
+        let pondField = water?.field
+        if settings.realism == .high { addMeadowGrass(center: .zero, reach: 36, seed: 0x9A7F) { x, z in
+            if pondField?.wet(Double(x), Double(z), margin: 1) == true { return 0 }
+            return GroundLook.smooth(0.4 * reach + 1, 0.4 * reach + 5, simd_length(SIMD2(x, z)))
+                * (0.75 + 0.25 * GroundLook.smooth(-0.3, 0.4, Terrain.noise(SIMD2(x, z) / 13, seed: 0x9A80)))
+        } }
         addInstance(kit.quad, lawn, translate([0, -9, 0]) * scale([20_000, 1, 20_000]))
         addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { _ in
             let e = Scene.degrees(38), a = Scene.degrees(235)

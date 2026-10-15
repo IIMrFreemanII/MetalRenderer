@@ -415,11 +415,14 @@ extension Renderer {
         for (name, b) in terrain.built { terrain.built[name] = (b.block, -1) }   // every sector meshed again
         terrain.backlog = true
         if t.table >= 0, t.table + TerrainTile.layers <= scene.proceduralParams.count {
-            let table = SceneTerrain.table(doc.layers, firstLayer: t.firstLayer, offset: t.offset)
+            let table = SceneTerrain.table(doc.layers, firstLayer: t.firstLayer, offset: t.offset, realistic: t.realistic, high: t.high,
+                                           ground: t.ground,
+                                           macro: t.macro, metres: { t.scanMetres[$0] })
             scene.proceduralParams.replaceSubrange(t.table..<(t.table + table.count), with: table)
             scene.proceduralParamsVersion += 1
         }
-        for l in 1..<min(doc.layers.count, TerrainTile.layers) where doc.layers[l].material.isEmpty && doc.layers[l].builtIn == nil {
+        for l in 1..<min(doc.layers.count, TerrainTile.layers)
+        where doc.layers[l].material.isEmpty && doc.layers[l].builtIn == nil && t.scanMetres[l] == nil {
             var m = scene.materials[t.firstLayer + l - 1]
             m.albedo = SIMD4(doc.layers[l].color / FoliageTextures.mean, 0)
             m.emission.w = doc.layers[l].roughness

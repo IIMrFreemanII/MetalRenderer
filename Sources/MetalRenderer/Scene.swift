@@ -80,7 +80,7 @@ final class Scene {
         var autumn: SIMD3<Float>? = nil
         var turn: Float = 0
         var translucency: Float
-        var gain: Float = 1                   // the material's colour is the leaf's times this (1 / its texture's mean)
+        var gain = SIMD3<Float>.one           // the material's colour is the leaf's times this (1 / its texture's mean)
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
@@ -1027,7 +1027,7 @@ final class Scene {
         // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes. Bit 13:
         // PROCEDURAL_CODE, some of them are code the shading runs. Bit 12: TERRAIN, its ground is a terrain whose
         // vertices carry layer weights. Bit 11: WATER, it has water (Scene+Water.swift, Shaders/Water.metal).
-        // (Shaders/Types.metal.)
+        // Bit 10: LEAF_TRANSMIT, some leaves are two-sided (a leaf sheet's). (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
@@ -1038,6 +1038,7 @@ final class Scene {
             | (proceduralCode.isEmpty ? 0 : 0x2000)   // PROCEDURAL_CODE
             | (terrain == nil ? 0 : 0x1000)           // TERRAIN
             | (hasWater ? 0x0800 : 0)                 // WATER
+            | (hasLeafSheets ? 0x0400 : 0)            // LEAF_TRANSMIT
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {
@@ -1819,6 +1820,11 @@ final class Scene {
     }
     /// Some material is skin (GPUMaterial.params.w < 0): the shaders are compiled with SKIN.
     private(set) var hasSkin = false
+    /// Some leaves are a scanned leaf sheet's (the realistic look): LEAF_TRANSMIT lights them from both sides.
+    var hasLeafSheets = false
+    /// The scans' textures this scene has (albedo, normal, occlusion-roughness-height), by set and roughness floor:
+    /// each once, whatever number of materials wear it (TextureSets.swift).
+    var scanTextures: [String: SIMD3<UInt32>] = [:]
 
     /// An image for materials to sample: its index for `GPUMaterial.textures`.
     func addTexture(_ source: TextureSource) -> UInt32 {

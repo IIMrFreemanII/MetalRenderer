@@ -3060,9 +3060,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Water/WaterField.swift": {
-    "mtime": 1792040573.8007154,
-    "seen": 1792042885.077176,
-    "ast_hash": "8b2e66c98d70d5649f7f00193ad9a7d9",
+    "mtime": 1792043965.776938,
+    "seen": 1792044079.7472792,
+    "ast_hash": "2e4f1e61c8be4d8ff168fa733a8c3f40",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Water/WaterLook.swift": {
@@ -3102,9 +3102,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/water-handoff.md": {
-    "mtime": 1792041883.1072214,
-    "seen": 1792042885.077276,
-    "ast_hash": "3ed77cb51c296c55129d827682897c29",
+    "mtime": 1792043826.5601544,
+    "seen": 1792044079.747371,
+    "ast_hash": "141ef5b6c29b8fb264b055ee89395466",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainShapes.swift": {

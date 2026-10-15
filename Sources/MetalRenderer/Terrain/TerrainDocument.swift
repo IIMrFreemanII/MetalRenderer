@@ -46,6 +46,29 @@ struct TerrainLayer: Codable, Equatable {
     /// Where the open world's ground already has a material of its own (World.groundMaterials), its index: what the
     /// layer is before anyone gives it another.
     var builtIn: Int? = nil
+    /// The scanned material it wears in the realistic look (TextureSet's name): nil, the one its name says
+    /// (`scanSet`), "" none.
+    var textureSet: String? = nil
+
+    /// The scan it wears in the realistic look: its own, or by its name.
+    var scanSet: String? {
+        if let textureSet { return textureSet.isEmpty ? nil : textureSet }
+        switch name.lowercased() {
+        case "grass", "meadow", "crop": return "grass"
+        case "rock": return "rock"
+        case "snow": return "snow"
+        case "sand": return "sand"
+        case "mud": return "mud"
+        case "gravel": return "gravel"
+        case "moss": return "moss"
+        case "earth", "ploughed": return "earth"
+        case "dry grass", "wheat": return "dry-grass"
+        case "pebbles": return "pebbles"
+        case "litter": return "forest-floor"
+        case "ground": return "ground"
+        default: return nil
+        }
+    }
 }
 
 /// A step of a terrain's generator: a shape of noise, or an operation on what the steps before made.

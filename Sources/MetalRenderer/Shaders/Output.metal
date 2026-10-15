@@ -162,15 +162,37 @@ inline bool viewIsHDR(uint mode) {
     return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || mode == 15 || mode == 16);
 }
 
-/// Exposure, then the selected curve (RenderSettings.toneMap).
-inline float3 toneMap(float3 c, float4 post) {
+/// The colour grade (PostSettings): white balance as red and blue gains, saturation, then contrast about middle grey
+/// on a log scale (a film's: the darks deepen as the lights brighten).
+inline float3 colorGrade(float3 c, float4 g) {
+    c *= float3(g.x, 1.0f, g.y);
+    float l = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+    c = max(mix(float3(l), c, g.z), 0.0f);
+    return 0.18f * pow(max(c, 1e-7f) / 0.18f, float3(g.w));
+}
+
+/// Exposure, the grade if it is on, then the selected curve (RenderSettings.toneMap).
+inline float3 toneMap(float3 c, float4 post, float4 grade) {
     c *= post.x;
+    if ((uint(post.z) & 1u) != 0u) c = colorGrade(c, grade);
     switch (uint(post.y)) {
         case 1: return agxFilm(c);
         case 2: return c / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f)));   // Reinhard on luminance: keeps hue
         case 3: return c;
         default: return acesFilm(c);
     }
+}
+
+// Auto exposure's meter (PostSettings.autoExposure): one pixel in 8 x 8 adds its light's log2 luminance (before the
+// exposure) to a histogram of EXPOSURE_BINS bins from EXPOSURE_LOG_MIN to EXPOSURE_LOG_MAX, which the renderer reads a
+// few frames on (Renderer.meterExposure).
+constant float EXPOSURE_LOG_MIN = -14.0f, EXPOSURE_LOG_MAX = 10.0f;
+constant uint EXPOSURE_BINS = 64;
+inline void meterExposure(float3 c, uint2 tid, device atomic_uint* histogram) {
+    if ((tid.x & 7u) != 3u || (tid.y & 7u) != 3u) return;
+    float l = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+    float t = saturate((log2(max(l, 1e-7f)) - EXPOSURE_LOG_MIN) / (EXPOSURE_LOG_MAX - EXPOSURE_LOG_MIN));
+    atomic_fetch_add_explicit(&histogram[min(uint(t * float(EXPOSURE_BINS)), EXPOSURE_BINS - 1u)], 1u, memory_order_relaxed);
 }
 
 kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
@@ -359,7 +381,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         return;
     }
-    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post, u.grade);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
     output.write(float4(saturate(c), 1.0f), tid);
 }
@@ -367,14 +389,16 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
 // 4c. Tone map, after MetalFX's denoising scaler (FLAG_HDR_OUTPUT): its output is the denoised light at the output
 //     resolution, still linear and unbounded. This applies the exposure and the tone curve the composite left out
 //     and writes the drawable.
-kernel void tonemapKernel(constant Uniforms&              u        [[buffer(0)]],
-                          texture2d<float, access::read>  upscaled [[texture(0)]],
-                          texture2d<float, access::write> output   [[texture(1)]],
+kernel void tonemapKernel(constant Uniforms&              u         [[buffer(0)]],
+                          device atomic_uint*             histogram [[buffer(1)]],   // with the meter on
+                          texture2d<float, access::read>  upscaled  [[texture(0)]],
+                          texture2d<float, access::write> output    [[texture(1)]],
                           uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
     float3 c = max(upscaled.read(tid).rgb, 0.0f);
-    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post);
+    if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post, u.grade);
     output.write(float4(saturate(c), 1.0f), tid);
 }
 

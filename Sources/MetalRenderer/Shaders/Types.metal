@@ -24,7 +24,9 @@ struct Uniforms {
     float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off), w = variance scale
     uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
     uint4 lightTable;       // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none
+    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none,
+                            // z = flags: 1 the grade below, 2 auto exposure's meter (PostSettings)
+    float4 grade;           // the colour grade: red and blue gains (white balance), saturation, contrast
 };
 
 struct MeshData {
@@ -199,6 +201,11 @@ constant bool TERRAIN = (LIGHT_SPEC & 0x00001000u) != 0;
 // Bit 11 = WATER: the scene has water (Scene+Water.swift): waterKernel bends the camera's rays into it through its
 // own structures (Shaders/Water.metal), the composite puts its caustics on the sun's light under it.
 constant bool WATER = (LIGHT_SPEC & 0x00000800u) != 0;
+// Bit 10 = LEAF_TRANSMIT: the realistic look's leaves (SceneSettings.realism) are two-sided where the camera sees them:
+// each takes the light on its near side and, tinted, what comes through it from the far side (Hair.metal
+// leafUnshadowed), with its shadow rays from the side the light is on; elsewhere (GI's hits) a share of them is lit
+// from behind as always (Surface.backlit).
+constant bool LEAF_TRANSMIT = (LIGHT_SPEC & 0x00000400u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).
