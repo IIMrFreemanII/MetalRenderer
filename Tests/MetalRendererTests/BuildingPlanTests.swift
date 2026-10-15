@@ -178,6 +178,21 @@ final class BuildingPlanTests: XCTestCase {
         print(String(format: "Interiors: %d triangles; the slowest building with its interior %.1f ms", triangles, worst * 1000))
     }
 
+    /// The same building is furnished and painted alike on every launch: nothing seeds it from Swift's per-process
+    /// `Hasher` (it did: the storeys' keys and the wall paints, so a room changed from one run to the next).
+    func testInteriorsAreTheSameOnEveryLaunch() throws {
+        var spec = BuildingSpec(size: SIMD2(22, 14))
+        (spec.style, spec.edges, spec.floors, spec.seed, spec.interior) = (.residential, [.street, .party, .open, .party], 3, 7, true)
+        let interior = try XCTUnwrap(BuildingGenerator.generate(spec).interior)
+        var h = Hasher64()
+        for storey in interior.storeys {
+            h.add(storey.key)
+            for part in storey.parts { for v in [part.material.color.x, part.material.color.y, part.material.color.z] { h.add(v) } }
+        }
+        for c in interior.colliders where c.kind == .furniture { for v in [c.lo, c.hi] { h.add(v.x); h.add(v.y); h.add(v.z) } }
+        XCTAssertEqual(h.value, 7_677_431_328_885_172_621, "the interior's fingerprint; a new one is fine after a deliberate change to the furnishing")
+    }
+
     /// A plan drawn in characters, to look at.
     func testDrawAPlan() {
         for (style, size, edges, floors) in [(CityStyle.residential, SIMD2<Float>(22, 14), [CityPlan.Edge.street, .party, .open, .party], 5),

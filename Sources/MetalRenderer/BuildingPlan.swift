@@ -30,6 +30,12 @@ enum RoomType: String, Codable, CaseIterable {
     var hasBalcony: Bool { [.living, .bedroom, .dining, .kitchen].contains(self) }
     /// The structure's own (the editor doesn't retype or split them).
     var isCore: Bool { self == .stairs || self == .lift }
+    /// Its lights are on by day as well: a room with no window of its own (halls, corridors, stairs, wet rooms), or
+    /// an office's work room. Without them such a room is near black by day.
+    func litByDay(office: Bool) -> Bool {
+        [.entrance, .corridor, .landing, .lobby, .stairs, .bath, .wc, .toilets, .kitchenette, .hall].contains(self)
+            || office && [.office, .openOffice, .meeting].contains(self)
+    }
 }
 
 /// A room: a rectangle of a storey's plan, from wall middle to wall middle (an outer wall's inner face), x and z in

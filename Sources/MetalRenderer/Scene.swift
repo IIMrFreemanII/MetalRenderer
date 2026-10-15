@@ -141,6 +141,8 @@ final class Scene {
         var proxyMaterial = -1
         var proxyEmission = SIMD3<Float>(repeating: 0)   // its radiance at scale 1
         var group = 0                         // shadow-denoiser channel (see assignLightGroups)
+        /// A rect light's reach (GPULight axis.w; 0: all space): how far below it, and beyond its edges, it lights.
+        var reach: Float = 0
         /// Its place among the lights as they were added (assignLightGroups sorts them): what the outline names it by.
         var order = 0
 
@@ -572,6 +574,9 @@ final class Scene {
     var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
     private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
+    /// The walkable interiors' box, world space (BuildingKit.addInterior): where GI's hits see the sun through rays and the
+    /// fog's sky light is occluded (Renderer.interiorBox). Nil: no interiors.
+    var interiorBox: (lo: SIMD3<Float>, hi: SIMD3<Float>)?
     /// Every light and emissive triangle by power, for ReSTIR DI's candidates (built once, after the lights).
     private(set) var lightTable = LightTable()
 
@@ -1084,7 +1089,7 @@ final class Scene {
         case .rect(let w, let h):
             let (t, n, _) = Scene.rectFrame(p)
             return GPULight(positionRadius: SIMD4(p.position, 0), color: color(GPULight.rect),
-                            axis: SIMD4(n, 0), params: SIMD4(t * (w / 2), h / 2))
+                            axis: SIMD4(n, l.reach), params: SIMD4(t * (w / 2), h / 2))
         case .tube(let length, let r):
             return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.tube),
                             axis: SIMD4(normalize(p.direction) * (length / 2), 0), params: .zero)
@@ -2011,9 +2016,10 @@ final class Scene {
     /// the radiance itself for a rect, 2 I / (pi r length) for a tube (a cylinder whose broadside intensity per unit
     /// length, radiance x 2r, is the 4 I / (pi length) the shaders give it).
     @discardableResult
-    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, motion: LightMotion = .animated, proxy: Bool = true,
-                  pose: @escaping (Float) -> LightPose) -> Int {
+    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, proxyEmission: SIMD3<Float>? = nil,
+                  reach: Float = 0, motion: LightMotion = .animated, proxy: Bool = true, pose: @escaping (Float) -> LightPose) -> Int {
         var light = Light(kind: kind, color: color, pose: pose, motion: motion, order: lights.count)
+        light.reach = reach
         var mesh = -1, emission = SIMD3<Float>(repeating: 0)
         if !proxy {
             // Nothing drawn where it is (the walker's flashlight, at the eye).
@@ -2039,6 +2045,7 @@ final class Scene {
             break
         }
         if mesh >= 0 {
+            emission = proxyEmission ?? emission   // (a rect over a room's panels: theirs, brighter than its own)
             light.proxyMaterial = addMaterial(albedo: .zero, emission: emission)
             light.proxyEmission = emission
             light.proxyInstance = addInstance(mesh, light.proxyMaterial, matrix_identity_float4x4, mask: Scene.maskLights)

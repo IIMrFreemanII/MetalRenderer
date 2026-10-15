@@ -78,7 +78,7 @@ It's built for Apple Silicon and tuned for an M1 Max.
   * **ReSTIR GI:** the same paths, but each path's first bounce is kept as a reservoir sample and resampled from frame to frame (optionally also from neighbouring pixels, unbiased). Its paths' last hits add last frame's indirect light (multi-bounce). It is the most accurate method: 42.2 dB in the Cornell room and 36.4 dB in the stress hall, against 36.1 and 25.5 dB for radiance cascades, for 2–3× their cost (see "Indirect light (ReSTIR GI)" below).
   * **Lumen (Unreal Engine 5-style, software):** screen probes trace the screen first, then each mesh's signed distance field, a global distance field around the camera and the sky; what they hit is lit from a surface cache of cards, lit ahead of time with their own multi-bounce radiosity. 41.2 dB in the Cornell room and 28.8 dB in the stress building, against 36.1 and 25.6 dB for radiance cascades, for 16–55% more per frame (see "Lumen GI" below).
   * Radiance cascades get **multi-bounce** light, and light their ray hits from per-light **light-visibility maps**, so they need no shadow rays.
-* **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). The sun's map is orthographic instead, over the scene's bounding sphere. Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps").
+* **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). The sun's map is orthographic instead, over the scene's bounding sphere. Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps"). The sun's map has texels metres wide in a big scene, too coarse to see a wall or a ceiling, so inside the walkable interiors' box (`Scene.interiorBox`, the buildings with rooms) a hit traces one ray toward the sun instead, the map taking over beyond its reach (`giSunVisibility`); there the cascades' intervals also overlap by half (no sunlit outside leaking through walls), their rays move inside their bins every frame with the resolve averaging the frames (no blotches where a small sunlit patch lights a room), and the fog's sky light is occluded by one ray up (`fogSkyAmbient`). Outside the box nothing changes, and costs nothing (rays through a forest's leaves would cost a third of its frame on the M1 Max).
 * **Upscaling (optional, macOS 26):** the frame is traced at low resolution with sub-pixel jitter, and MetalFX's denoising scaler (`MTLFXTemporalDenoisedScaler`) takes the raw 1-sample light and returns it denoised, sharper and anti-aliased at up to 3× the resolution, in place of SVGF and the shadow denoiser. It's on by default at 3×. Press **U** to cycle through off, 1.5×, 2× and 3×. Off (and on a GPU or system without the MetalFX denoiser) the frame is traced at the output resolution and this project's denoisers below filter it. The custom TAAU upscaler and MetalFX's temporal and spatial scalers were removed in October 2026; the results below still name them where they were measured.
 * **Temporal AA without upscaling (on by default; Rendering > Temporal AA, `METALRENDERER_GI=taa=0` turns it off):** with upscaling off, the rays go through a different sub-pixel place every frame (8 Halton phases), and `taaResolveKernel` (`Shaders/Post.metal`) blends each frame into the last one's result. It finds that result where the pixel's surface was (the trace's motion vectors, the sky by the camera's turn), and clips it to the 3×3 neighbourhood's colour box (YCoCg, mean ± 1.25σ) so what moved or came into view doesn't smear. There is no depth test: a blade or a leaf thinner than a pixel would lose its history in most frames and flicker. The current frame weighs 0.1, up to 0.35 moving 4 pixels a frame, with Karis weights. The tone curve (or the lens) then takes the resolved light, so the auto-exposure meter works at native resolution too. It is off in references and the debug views, and benchmark settings leave it off unless they set it (`METALRENDERER_BENCH=taa` renders it against a supersampled reference). Forest at 1280×800 (M1 Max): 21.0 → 25.5 dB against the supersampled frame, flicker between two still frames 4.9 → 3.2 RMS; cost about 0.2 ms.
 * **Blue-noise sampling (on by default, B):** random numbers come from a 128×128 void-and-cluster blue-noise tile, shifted every frame by the golden ratio or the R2 sequence. Its stratified shadow samples steady the shadow denoiser's history clamp.
@@ -876,10 +876,18 @@ buildings are made in, and single buildings' own floor plans; the **Building wor
   `{"props": [{"file": "Props/armchair.glb", "replaces": "armchair", "rooms": ["living"], "chance": 0.5}]}`. Each is
   fitted into the piece's box wherever the furnishing put it (scaled evenly, its front, +z, into the room).
   `METALRENDERER_PROPS=none` leaves them out.
-* **Costs** (M1 Max, 640×400 upscaled 3×, cascades GI, `METALRENDERER_BENCH=buildings`): a building from outside or a
-  room by day 6–8 ms a frame; at night, with every room's lights there to switch (190–420 rect lights), 18–21 ms,
-  ReSTIR DI most of it. By day only lit rooms have lights (an off light still costs its sampling); a scene's
-  doors and lifts cost a refit of the top level only on the frames they move.
+* **Light by day:** rooms without windows of their own (halls, corridors, stairs, wet rooms) and an office's work
+  rooms keep their ceiling lights on by day too (`RoomType.litByDay`); other rooms only at night. Inside, GI's hits
+  see the sun through rays (see "Light-visibility maps"), so a room is lit by its sun patch and its windows, with
+  dark corners, not evenly. The city has auto exposure, so a room lit by its windows isn't black at the street's.
+* **Ceiling lights:** a room's panels are one rect light per 8 m piece, drawn as its panels; each lights only its
+  storey under it (`Scene.Light.reach`), so the street and the other storeys spend no shadow rays on it. Scenes with
+  interiors trace two shadow rays per light group (an open office under many lights speckles with one).
+* **Costs** (M1 Max, release, whole frames, 640×400 upscaled 3×, cascades GI, `METALRENDERER_BENCH=buildings`): a
+  building from outside 10–17 ms a frame by day, a room 14 ms (an open office 19 ms, 189 lights); at night, with
+  every room's lights there to switch, 21–25 ms, ReSTIR DI most of it. An off
+  light still costs its sampling; a scene's doors and lifts cost a refit of the top level only on the frames they
+  move.
 * `METALRENDERER_SCENE=buildings,bstyle=office,width=34,depth=30,sides=free,floors=12,bview=cutaway,cut=3,night=1`;
   the city's `interiors=0` turns interiors off, `reach=` sets how near. `METALRENDERER_BENCH=buildings` renders each
   style, the cutaway and the dollhouse, rooms by day and at night, an office floor and a city's and the open world's
@@ -1135,7 +1143,7 @@ Before, on an M4 Max, the forest moving, 640×400 upscaled to 1920×1200 (`METAL
 
 ### Animated characters
 
-The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk and a run. Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
+The **Crowd** scene fills a square with the characters in `Assets/Characters`: every `.fbx` file there is a character, and every `.fbx` in `Assets/Characters/Animations` is a clip all of them can play. The repository's are Mixamo's X Bot and Y Bot with two idles, a walk, a run and the muscles figure's dances, plus any clips a run asks for from the Mixamo library (below). Rows of characters walk and run along lanes at their clip's own speed, and others stand around.
 
 * **Poses are animated, not characters.** Everything here is ray traced, so a deformed mesh is not something a vertex shader does to an instance: it needs vertices of its own and an acceleration structure around them. The crowd keeps a pool of *pose slots* (`Crowd.swift`). A slot is one character playing one clip, or a cross-fade of two, from some point of its loop. Each frame the GPU animates every slot once, and every character in the square is an ordinary instance of one slot's mesh. A frame's cost follows the number of slots, not of characters: 131072 characters on 64 slots cost what 64 poses cost, plus a larger top-level tree. Characters on the same slot move in step, which a few dozen slots per clip hide well; a character that must move on its own takes a slot to itself.
 * **A frame's work, all in compute** (`Shaders/Crowd.metal`, `CrowdSkinner.swift`):
@@ -1175,6 +1183,19 @@ The **Crowd** scene fills a square with the characters in `Assets/Characters`: e
   * A character has one material, so the bots' two colours (body and joints) are one tint each.
   * A walking row shares one motion and one size, so its members keep their distances; nothing steers around anything.
   * Cross-fades keep two clips at the same point of their loops, which is right for clips that start on the same foot.
+
+#### The Mixamo library
+
+`Tools/mixamo/download.py` fetches every Mixamo motion (about 2,450) baked on a character, as skinless 60 fps FBX files, into `~/MixamoAnimations/<character>/` with an `index.json`. The files stay out of Git.
+
+1. Sign in at mixamo.com, run `copy(localStorage.access_token)` in the browser's console, then `pbpaste > ~/.config/mixamo/token`. The token lasts about a day.
+2. `python3 Tools/mixamo/download.py --character "Y Bot" --character "X Bot"`. Each character takes one export at a time (about 7 s a clip, 4–5 h for the lot); the characters run in parallel. A rerun skips what is there, and after an expired token it resumes. `--limit`, `--query`, `--dry-run`, `--retry-failed` and `--list-characters` are for trials.
+
+`MixamoLibrary.swift` reads the indexes (`METALRENDERER_MIXAMO`, or `~/MixamoAnimations`). A run loads only the clips it names, with the ones in `Assets/Characters/Animations`, and the cache keeps each set:
+* `METALRENDERER_CLIPS="Zombie Walk, Samba Dancing, random:24"`: more clips for the crowd, which shares its pose slots over every clip. `random:N:seed` picks the same N each time.
+* `METALRENDERER_ROUTINE="2hand Idle:3, Thriller Part 2"`: the muscles figure's programme instead of its dance, each clip for its seconds or its length once.
+
+A name is a Mixamo name in any case, a part of only one name, or the start of the clip's id. Mixamo gives some different motions the same name (a man's and a woman's version); such a name means the first. `METALRENDERER_MIXAMO_ALL=1 swift test --filter MixamoLibraryTests` reads every downloaded file (all 4,892 of Y Bot's and X Bot's, 3.9 GB, in about 2 s on an M1 Max).
 
 ### Procedural city
 
