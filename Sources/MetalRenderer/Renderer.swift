@@ -551,6 +551,7 @@ final class Renderer: NSObject {
     private(set) var animTime: Float = 0
     private(set) var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
     private var lastTime = CACurrentMediaTime()
+    private var frameDt: Float = 1.0 / 60   // this frame's step of the clock (simulate): auto exposure eases by it
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
     var settings = RenderSettings() {
         didSet {
@@ -2527,7 +2528,7 @@ final class Renderer: NSObject {
     }
 
     /// Auto exposure's scale for this frame (AutoExposure).
-    private func meterExposure() -> Float { exposureMeter.next() }
+    private func meterExposure() -> Float { exposureMeter.next(dt: frameDt) }
 
     private func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
@@ -2814,6 +2815,7 @@ final class Renderer: NSObject {
                 camera.position += velocity * (back ? -dt : dt)
             }
         }
+        frameDt = dt
         updateCamera(dt: dt)
         let angles = SIMD2(camera.yaw, camera.pitch)
         if angles != sentAngles {
@@ -2981,7 +2983,7 @@ final class Renderer: NSObject {
         var history = false                     // the last frame left denoiser history
         var svgf = false                        // the denoiser is on (never for references)
         var neuralDenoise = false               // MetalFX's denoising scaler denoises instead, as it upscales
-        var shadowDenoiser = false              // direct light's visibility goes through its own filter
+        var shadowDenoiser = false             // direct light's visibility goes through its own filter
         var restirSplit = false                 // ReSTIR's visibility too, and its unshadowed light through SVGF
         var separate = false                    // direct and indirect light are separate signals
         var denoiseIndirect = false
@@ -3872,10 +3874,16 @@ final class Renderer: NSObject {
         guard plan.specular else { return ([], []) }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
         let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular
+        let roomAmbient = plan.cascades ? radianceCascades?.lastAmbient : nil
         let trace = [ComputeStage(pass: "reflections") { [self] enc in
             bind(enc, .reflection, uniforms, pass: fogParams.reflectionPassFlags, sceneSlot: slot)
             var fp = fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
+            // The cascades' mean probe light (none: zeros, and its hits off screen keep the sky's).
+            if let ambient = roomAmbient { enc.setBuffer(ambient, offset: 0, index: 10) } else {
+                var none = SIMD4<UInt32>(repeating: 0)
+                enc.setBytes(&none, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 10)
+            }
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
                               fogNoise ?? dummy3D, restirSpecular ?? dummy2D])
             dispatch(enc, .reflection, width: size.width, height: size.height)

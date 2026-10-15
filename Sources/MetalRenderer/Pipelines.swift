@@ -11,7 +11,7 @@ enum Kernel: Int, CaseIterable {
     case waterCaustics          // the sun's caustics under the waves
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
     case restirGIInitial, restirGITemporal, restirGISpatial
-    case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
+    case rcProbe, rcTraceMerge, rcFilter, rcSH, rcClearAmbient, rcResolve
     case reflection
     case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
@@ -216,7 +216,7 @@ struct Pipelines {
     }
 
     var rc: RCPipelines {
-        RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
+        RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], filter: self[.rcFilter], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
     }
     var vg: VGPipelines { VGPipelines(reset: self[.vgReset], cut: self[.vgCut], boxes: self[.vgBoxes]) }
