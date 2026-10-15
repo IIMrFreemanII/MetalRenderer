@@ -349,8 +349,18 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
         }
     }
     if (total <= 0.0f) return sum;
-    for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k)
-        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng, sunRay, accel, s) * (total / pickedWeight[k]);
+    // A light picked more than once (the sun, by day, mostly is) is lit once, times its picks: its map read or its
+    // sun ray once, not four times.
+    for (uint k = 0; k < CACHED_LIGHT_SAMPLES; ++k) {
+        bool seen = false;
+        float picks = 0.0f;
+        for (uint j = 0; j < CACHED_LIGHT_SAMPLES; ++j) {
+            seen = seen || (j < k && picked[j] == picked[k]);
+            picks += picked[j] == picked[k] ? 1.0f : 0.0f;
+        }
+        if (seen) continue;
+        sum += lightIllumCachedOne(lights[picked[k]], picked[k], lightMap, p, n, ng, sunRay, accel, s) * (picks * total / pickedWeight[k]);
+    }
     return sum * (ls.scale / float(CACHED_LIGHT_SAMPLES));
 }
 

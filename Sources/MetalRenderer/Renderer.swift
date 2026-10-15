@@ -3067,6 +3067,7 @@ final class Renderer: NSObject {
         var water = false                       // ...and into water (waterKernel; in the liquids' targets)
         var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
         var manyLights = false                  // more than 4 lights: one sampled light per group...
+        var manyLightRays = 1                   // ...with this many shadow rays a group...
         var lightReuse = false                  // ...whose picks are kept for the next frame...
         var lightPicksValid = false             // ...and the last frame's are there to reuse
         var meshLights = false                  // emissive-mesh lights, sampled per pixel
@@ -3269,7 +3270,10 @@ final class Renderer: NSObject {
 
         // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
         p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir && !p.megaLights
-        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && settings.manyLightRays == 1
+        // Rooms to walk into: two rays a group. A big room under many ceiling lights (an open office) speckles with
+        // one, even with its picks reused; two cost ~0.4 ms there, ReSTIR ~6 ms.
+        p.manyLightRays = settings.manyLightRays == 1 && scene.interiorBox != nil ? 2 : settings.manyLightRays
+        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && p.manyLightRays == 1
         p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
 
         // ReSTIR DI. References with many lights accumulate its unbiased initial sampling alone (32 candidates).
@@ -4163,7 +4167,7 @@ final class Renderer: NSObject {
         var stages: [ComputeStage] = []
         if plan.manyLights {
             let reuse = plan.lightReuse
-            let config = SIMD4<UInt32>(UInt32(settings.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
+            let config = SIMD4<UInt32>(UInt32(plan.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
                                        plan.lightPicksValid ? 1 : 0, 0)
             stages.append(ComputeStage(pass: "many lights") { [self] enc in
                 var config = config

@@ -254,11 +254,34 @@ enum InteriorBuilder {
                 interior.props.append(Interior.Prop(item: p.item, frame: p.frame, storey: s,
                                                     materials: FurnitureItem.Role.allCases.map { palette.material($0, fabric: p.fabric) }))
             }
-            let i = a.style.def.interior
+            let i = a.style.def.interior, glow = i.lightColor * i.lightPower
+            // Each room's panels as one light over them (Interior.Light), in the order the rooms first come; a big room's
+            // in pieces of at most `piece` metres (one shadow ray to a random point of a 30 m office ceiling is noisy).
+            let piece: Float = 8
+            var order: [SIMD3<Int>] = [], panels: [SIMD3<Int>: [(position: SIMD3<Float>, size: SIMD2<Float>)]] = [:]
+            var first: [Int: SIMD2<Float>] = [:]
+            for l in furnisher.lights { first[l.room] = simd_min(first[l.room] ?? SIMD2(l.position.x, l.position.z), SIMD2(l.position.x, l.position.z)) }
             for l in furnisher.lights {
-                let room = f.rooms[l.room], day = room.type.litByDay(office: a.style.isOffice)
-                interior.lights.append(Interior.Light(position: l.position + SIMD3(0, f.floor, 0), size: l.size, color: i.lightColor * i.lightPower,
-                                                      storey: s, room: l.room, on: room.lit || day, switchID: -1, day: day))
+                let cell = SIMD2<Int>(((SIMD2(l.position.x, l.position.z) - first[l.room]!) / piece).rounded(.down))
+                let key = SIMD3(l.room, cell.x, cell.y)
+                if panels[key] == nil { order.append(key) }
+                panels[key, default: []].append((l.position, l.size))
+            }
+            for key in order {
+                let r = key.x, ps = panels[key]!
+                var lo = SIMD2<Float>(repeating: .infinity), hi = -lo, area: Float = 0
+                for q in ps {
+                    let c = SIMD2(q.position.x, q.position.z)
+                    (lo, hi) = (simd_min(lo, c - q.size / 2), simd_max(hi, c + q.size / 2))
+                    area += q.size.x * q.size.y
+                }
+                let size = hi - lo, mid = (lo + hi) / 2
+                let room = f.rooms[r], day = room.type.litByDay(office: a.style.isOffice)
+                interior.lights.append(Interior.Light(position: SIMD3(mid.x, ps[0].position.y + f.floor, mid.y), size: size,
+                                                      color: glow * (area / (size.x * size.y)), storey: s, room: r,
+                                                      on: room.lit || day, switchID: -1, day: day,
+                                                      panels: ps.count > 1 ? ps.map { SIMD4($0.position.x - mid.x, $0.position.z - mid.y, $0.size.x, $0.size.y) } : [],
+                                                      glow: glow, reach: f.ceiling - f.floor + 0.3))
             }
             for w in furnisher.switches {
                 interior.switches.append(Interior.Switch(position: w.position + SIMD3(0, f.floor, 0), normal: w.normal, storey: s, room: w.room))

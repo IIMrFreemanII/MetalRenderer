@@ -62,12 +62,27 @@ evenly with sunlight. Now:
   `Hasher`. Now FNV (`Hasher64`); `BuildingPlanTests.testInteriorsAreTheSameOnEveryLaunch` pins a fingerprint.
 - **Against path-traced GI** (bench `buildings`, `METALRENDERER_GI=mode=pt`, before the day lights): RMS by day
   living room 52 → 21, stair 87 → 3, office floor 48 → 26, city interior 67 → 4, world interior 64 → 33.
-- **Cost (release, whole frames):** day frames 9–10 → 17–18 ms for a house (66 lights by day), office floor 10 → 26 ms
-  (423 lights: ReSTIR DI), city interior 10 → 22, world interior 25 → 35. Night +1 ms. Nearly all of it is the day
-  lights (many-light sampling, GI hits with more than 8 lights, reflections, fog's light picks).
-- **Still to do:** cheaper day lights (only the storeys near the camera, or fewer per room); radiance cascades'
-  blotches where a small bright patch (the sun on a sofa) lights a room (its 16 cascade-0 directions alias); the
-  corridor plaster's grain under grazing panels. Check in the window and on the M4 Max.
+- **Cheaper lights (same day):**
+  - **Pieces:** a room's ceiling panels are one rect light per 8 m piece (`Interior.Light.panels`, drawn as its proxy
+    mesh at the panels' own radiance, `Scene.addLight(proxyEmission:)`). A house has 46 lights by day (was 66), the
+    office tower 189 (was 423, so no ReSTIR).
+  - **Reach:** a rect light lights only its storey under it (`Scene.Light.reach`, GPULight `axis.w`, `rectReaches` in
+    the diffuse, specular and fog evaluations; not in the reference path tracer), so the street and the other storeys
+    spend no shadow rays on it.
+  - **Fewer repeat picks:** GI's cached lighting lights a light picked several times once (by day the sun takes most
+    picks: 4 sun rays a hit before).
+  - **Two shadow rays a group** in scenes with interiors (`FramePlan.manyLightRays`): an open office speckled with
+    one; two cost ~0.4 ms, ReSTIR ~6 ms.
+- **Cost (release, whole frames; before the fix, after it, now):**
+  - house outside 9.6 → 16.9 → 13.5 ms;
+  - living room by day 9.0 → 18.1 → 13.7 ms;
+  - office floor 10.0 → 26.5 → 19.1 ms;
+  - city interior 9.9 → 21.8 → 16.4 ms;
+  - world interior 25.4 → 35.2 → 29.9 ms;
+  - nights back to before (21.0, 25.0 ms).
+- **Still to do:** radiance cascades' blotches where a small bright patch (the sun on a sofa) lights a room (its 16
+  cascade-0 directions alias); the fog's lamp light (`FogSettings.lights` off saves 0.3–0.8 ms but drops the lamps'
+  glow in the haze). Check in the window and on the M4 Max.
 
 ## Checked in the window (M1 Max, Oct 8)
 Every tab; Whole / Cutaway / Dollhouse; Night (40-420 rect lights); the Floor Plan's tools (Split, Type, Merge, Door,
