@@ -21,6 +21,7 @@ extension Benchmark {
         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
         "fluids": fluids, "fluidsdemo": fluidsDemo,
         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
+        "interiormotion": interiorMotion, "exposurewalk": exposureWalk, "darkroom": darkRoom,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
         "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
@@ -381,10 +382,147 @@ extension Benchmark {
             shown("living room night") { $0 = night }.from(inside(night, .living, storey: 1, lit: true)),
             shown("bedroom night") { $0 = night }.from(inside(night, .bedroom, storey: 2, lit: true)),
             shown("stair") { $0 = home }.from(inside(home, .corridor, storey: 1)),
+            shown("storeroom") { $0 = home }.from(inside(home, .storage, storey: storageStorey(home))),
             shown("office floor") { $0 = office }.from(inside(office, .openOffice, storey: 3)),
             Config("buildings city interior", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: inCity).still().frames(30)
                 .from(inside(citySpec, .living, storey: 1, transform: lot.transform)),
         ] + worldInterior { inside($0, $1, storey: $2, lit: $3, transform: $4) }
+    }
+
+    /// The lowest storey of the workshop's building `p` with a storeroom (0 if none has one).
+    private static func storageStorey(_ p: BuildingSceneSettings) -> Int {
+        let plan = BuildingGenerator.generate(Scene.workshopSpec(p, catalog: .builtIn).spec).plan
+        return plan.storeys.firstIndex { $0.rooms.contains { $0.type == .storage } } ?? 0
+    }
+
+    /// Inside the workshop's home while the camera turns fast, as the window shows it moved by hand at 11-14 fps (5 and 12
+    /// degrees a frame on the 60 Hz clock): round living rooms, through their doors, and round storerooms' racks (one
+    /// with a window, one lit only through its door). Recorded.
+    /// "user": the look the window ran with (MegaLights, traced at the window's 1280x800, MetalFX 2x); "default": the
+    /// app's (Auto, 0.5x, MetalFX 3x). The cascades' interior history, MegaLights under MetalFX and the room lights at
+    /// GI's hits under the shelves show here.
+    private static func interiorMotion() -> [Config] {
+        var home = BuildingSceneSettings()
+        (home.style, home.lot, home.floors) = ("residential", SIMD2(20, 14), 5)
+        var scene = SceneSettings(kind: .buildings)
+        scene.buildings = home
+        let plan = BuildingGenerator.generate(Scene.workshopSpec(home, catalog: .builtIn).spec).plan
+        /// Standing in a corner of the room, the view swings 46 degrees either side of its far corner, back and forth,
+        /// every `sweep` seconds, for 10 sweeps (0.3 s: 5 degrees a frame; 0.13 s: 12, a quick turn at the window's 14 fps).
+        func pan(_ r: CityPlan.Rect, floor: Float, sweep: Float) -> CameraTrack {
+            let eye = SIMD3(r.lo.x + 0.5, floor + 1.6, r.lo.y + 0.5)
+            let far = SIMD3(r.hi.x - 0.3, floor + 1.0, r.hi.y - 0.3) - eye
+            let yaw = atan2(far.z, far.x), swing: Float = 0.8
+            let keys = (0...10).map { k -> CameraTrack.Key in
+                let a = yaw + (k % 2 == 0 ? -swing : swing)
+                return CameraTrack.Key(time: Float(k) * sweep, position: eye, target: eye + SIMD3(cos(a), -0.15, sin(a)))
+            }
+            return CameraTrack(keys, linear: true)
+        }
+        /// The biggest room of `type` on the lowest storey with one that `keep` takes.
+        func room(_ type: RoomType, _ keep: (PlanRoom, FloorPlan) -> Bool = { _, _ in true }) -> (CityPlan.Rect, Float)? {
+            for f in plan.storeys {
+                if let r = f.rooms.filter({ $0.type == type && keep($0, f) }).max(by: { $0.area < $1.area }) { return (r.rect, f.floor) }
+            }
+            return nil
+        }
+        /// No outer wall, so no window: lit only through its door (a dark storeroom).
+        func inner(_ r: PlanRoom, _ f: FloorPlan) -> Bool {
+            let lo = f.usable.map(\.lo).reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) }
+            let hi = f.usable.map(\.hi).reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+            return all(r.rect.lo .> lo + 0.2) && all(r.rect.hi .< hi - 0.2)
+        }
+        let rooms: [(String, (CityPlan.Rect, Float)?)] = [
+            ("living room", room(.living)), ("storeroom", room(.storage)), ("dark storeroom", room(.storage, inner)),
+            ("top living room", plan.storeys.reversed().lazy.compactMap { f in
+                f.rooms.filter { $0.type == .living }.max { $0.area < $1.area }.map { ($0.rect, f.floor) } }.first),
+        ]
+        var out: [Config] = []
+        for (name, found) in rooms {
+            guard let (r, floor) = found else { continue }
+            let track = pan(r, floor: floor, sweep: 0.3)
+            out.append(Config("interior motion \(name) user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene)
+                .direct(.megalights).track(track).recording())
+            out.append(Config("interior motion \(name) user fast", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene)
+                .direct(.megalights).track(pan(r, floor: floor, sweep: 0.13)).recording())
+            out.append(Config("interior motion \(name) default", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+                .track(track).recording())
+        }
+        return out
+    }
+
+    /// A walk in the workshop's home from a living room (sunlit) through the doors into a storeroom with no window (lit
+    /// only through its door), 3 s there, and back: auto exposure going from a bright room to a dark one and back.
+    /// "user": the window's look (MegaLights, traced at 1280x800, MetalFX 2x); "default": the app's. Recorded.
+    private static func exposureWalk() -> [Config] {
+        var home = BuildingSceneSettings()
+        (home.style, home.lot, home.floors) = ("residential", SIMD2(20, 14), 5)
+        var scene = SceneSettings(kind: .buildings)
+        scene.buildings = home
+        let plan = BuildingGenerator.generate(Scene.workshopSpec(home, catalog: .builtIn).spec).plan
+        func inner(_ r: PlanRoom, _ f: FloorPlan) -> Bool {
+            let lo = f.usable.map(\.lo).reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) }
+            let hi = f.usable.map(\.hi).reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+            return all(r.rect.lo .> lo + 0.2) && all(r.rect.hi .< hi - 0.2)
+        }
+        for (s, f) in plan.storeys.enumerated() {
+            guard let dark = f.rooms.firstIndex(where: { $0.type == .storage && inner($0, f) }),
+                  let lit = f.rooms.indices.filter({ f.rooms[$0].type == .living }).max(by: { f.rooms[$0].area < f.rooms[$1].area })
+            else { continue }
+            var walk = DemoWalk(plan: plan)
+            walk.go(f.rooms[lit].rect.center, storey: s)
+            walk.wait(1.5)
+            walk.route(storey: s, from: lit, to: dark)
+            walk.go(f.rooms[dark].rect.center, storey: s)
+            walk.wait(3)
+            walk.route(storey: s, from: dark, to: lit)
+            walk.go(f.rooms[lit].rect.center, storey: s)
+            walk.wait(2)
+            let track = walk.track(.identity).track
+            return [
+                Config("exposure walk user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene)
+                    .direct(.megalights).track(track).walking().recording(),
+                Config("exposure walk default", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+                    .track(track).walking().recording(),
+            ]
+        }
+        return []
+    }
+
+    /// The workshop's home's storeroom with no window (lit only through its door), paused, with the window's look
+    /// (MegaLights, traced at 1280x800, MetalFX 2x) and the app's: across to its racks (shiny shelves in the dark) and up
+    /// at a ceiling corner (the light of the rooms round it must not come through its walls); "indirect": that corner's
+    /// raw indirect light (view 2).
+    private static func darkRoom() -> [Config] {
+        var home = BuildingSceneSettings()
+        (home.style, home.lot, home.floors) = ("residential", SIMD2(20, 14), 5)
+        var scene = SceneSettings(kind: .buildings)
+        scene.buildings = home
+        let plan = BuildingGenerator.generate(Scene.workshopSpec(home, catalog: .builtIn).spec).plan
+        for f in plan.storeys {
+            let lo = f.usable.map(\.lo).reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) }
+            let hi = f.usable.map(\.hi).reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+            guard let r = f.rooms.first(where: { $0.type == .storage && all($0.rect.lo .> lo + 0.2) && all($0.rect.hi .< hi - 0.2) })?.rect
+            else { continue }
+            func look(from a: SIMD3<Float>, at b: SIMD3<Float>) -> Camera {
+                let d = simd_normalize(b - a)
+                var c = Camera()
+                c.position = a
+                c.yaw = atan2(d.x, -d.z)
+                c.pitch = asin(d.y)
+                return c
+            }
+            let racks = look(from: SIMD3(r.lo.x + 0.4, f.floor + 1.6, r.lo.y + 0.4), at: SIMD3(r.hi.x - 0.3, f.floor + 1.0, r.hi.y - 0.3))
+            let corner = look(from: SIMD3(r.center.x, f.floor + 1.5, r.center.y), at: SIMD3(r.hi.x, f.ceiling, r.hi.y))
+            func shown(_ name: String, user: Bool) -> Config {
+                user ? Config("dark room \(name) user", scale: 1, upscale: 2, gi: .radianceCascades, scene: scene).direct(.megalights).still().frames(30)
+                     : Config("dark room \(name) default", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).still().frames(30)
+            }
+            return [shown("racks", user: true).from(racks), shown("ceiling", user: true).from(corner),
+                    shown("ceiling indirect", user: true).from(corner).view(2),
+                    shown("racks", user: false).from(racks), shown("ceiling", user: false).from(corner)]
+        }
+        return []
     }
 
     /// The open world with the building nearest where it starts walkable: from inside it (its tile without its shell).

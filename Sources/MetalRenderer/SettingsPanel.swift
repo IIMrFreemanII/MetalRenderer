@@ -397,7 +397,9 @@ final class SettingsPanel: NSObject {
     private func updateDenoiserCaption(_ s: RenderSettings) {
         let text: String
         if s.neuralDenoiser {
-            text = "While upscaling (Rendering), the MetalFX denoiser denoises as it upscales: these are off."
+            text = renderer.status?.directMode == .megalights && s.denoiser.enabled
+                ? "While upscaling (Rendering), the MetalFX denoiser denoises as it upscales: these are off, but MegaLights' direct light still takes its own temporal pass and up to 2 à-trous passes first."
+                : "While upscaling (Rendering), the MetalFX denoiser denoises as it upscales: these are off."
         } else if !s.denoiser.enabled {
             text = "Off: the composite shows the raw samples."
         } else {

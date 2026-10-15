@@ -11,7 +11,7 @@ enum Kernel: Int, CaseIterable {
     case waterCaustics          // the sun's caustics under the waves
     case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial, megaLightsCull, megaLightsSample
     case restirGIInitial, restirGITemporal, restirGISpatial
-    case rcProbe, rcTraceMerge, rcSH, rcClearAmbient, rcResolve
+    case rcProbe, rcTraceMerge, rcFilter, rcSH, rcClearAmbient, rcResolve
     case lumenProbe, lumenTrace, lumenFilter, lumenSH, lumenResolve, lumenHZB, lumenCardCapture, lumenCardLight,
          lumenCardRadiosity, lumenCardCombine, lumenCull,
          lumenGlobalBin, lumenGlobalCompose
@@ -239,7 +239,7 @@ struct Pipelines {
     }
 
     var rc: RCPipelines {
-        RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
+        RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], filter: self[.rcFilter], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
     }
     var lumen: LumenPipelines {
