@@ -56,6 +56,8 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
   maps: the port fuses multiply-adds as clang does on arm64, or ~1 in 60k values is a few half steps off).
   `SCAN_IMPORT=<zip> Tools/build.sh test --filter ScanMaterialTests` imports a real download into a temp folder:
   rock_wall_17_4k.blend.zip 4.1 s, its 4K bake 1.2 s. Rock Wall's first bake in the workshop: 0.9 s, GPU 18.5 ms.
+  Hand-tested in the window (Oct 16 2026, the user): Graph ▸ Import Scanned Material… with rock_wall_10_4k.blend.zip
+  saved Rock Wall 10 (four 4K maps, both DWAA EXRs decoded) and baked it; left uncommitted, not part of the repo.
   Not mapped in the tests skill (protected path): EXRImage.swift, ScanMaterial.swift -> EXRImageTests ScanMaterialTests.
 
 ## Verified (M1 Max, Metal 3)
@@ -70,8 +72,7 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
 
 ## Not verified / not done
 
-- The window by hand (no clicks into native windows from here): canvas drags, pickers, pick popover, export panel,
-  the scan import's open panel and sheet.
+- The window by hand (no clicks into native windows from here): canvas drags, pickers, pick popover, export panel.
 - Metal 4 (argument tables, residency of the procedural textures, OpacityLevels on MTL4): written, untried.
 - Opacity on meshes without UVs (the alpha test reads the mesh's UVs); SDF shapes.
 - The open world's tiles can't take assignments. Multi-material meshes: opacity per instance's own material only.
