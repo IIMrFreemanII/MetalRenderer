@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792103350.5138416,
-    "seen": 1792103923.858134,
-    "ast_hash": "8ad9379ab84f9ad0649cbb030d8409a2",
+    "mtime": 1792114996.2378125,
+    "seen": 1792115006.6223629,
+    "ast_hash": "cc7e8147b6179682eb695967656e93a2",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -228,8 +228,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792103889.3711877,
-    "seen": 1792103923.857992,
+    "mtime": 1792114109.4317663,
+    "seen": 1792115006.622218,
     "ast_hash": "b89272d2bccca4cf3734d138ac962b2b",
     "semantic_hash": ""
   },
@@ -276,8 +276,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualBLAS.swift": {
-    "mtime": 1792102579.157318,
-    "seen": 1792103923.858064,
+    "mtime": 1792114109.4320312,
+    "seen": 1792115006.622287,
     "ast_hash": "a502b6a8ebaf6ae92b6df68fe9129e22",
     "semantic_hash": ""
   },
@@ -438,8 +438,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1792103885.154359,
-    "seen": 1792103923.857894,
+    "mtime": 1792114549.401769,
+    "seen": 1792115006.622112,
     "ast_hash": "357dee152352841516f8f5186f0dce69",
     "semantic_hash": ""
   },
@@ -654,9 +654,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1792103217.84756,
-    "seen": 1792103923.857952,
-    "ast_hash": "0b58d560ffb17c2f0def25dee635f2dd",
+    "mtime": 1792114549.4730034,
+    "seen": 1792115006.622174,
+    "ast_hash": "d80ff6e8dbc84eaa538169540e07c235",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
@@ -1782,8 +1782,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ParticlesGPU.swift": {
-    "mtime": 1792077779.4101834,
-    "seen": 1792103923.857965,
+    "mtime": 1792114109.431179,
+    "seen": 1792115006.622186,
     "ast_hash": "3a79b88cc647e5fc655d897145d751cf",
     "semantic_hash": ""
   },
@@ -2430,9 +2430,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/buildings.json": {
-    "mtime": 1792089341.9203112,
-    "seen": 1792103923.85786,
-    "ast_hash": "c17ca4d2ac17d1c1628cfa3abf08ce1c",
+    "mtime": 1792104058.1131377,
+    "seen": 1792115006.6220741,
+    "ast_hash": "123a5bef72ee14cabef49bc001d8ba96",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/city.json": {
@@ -3705,6 +3705,12 @@
     "mtime": 1792089341.926952,
     "seen": 1792103923.858112,
     "ast_hash": "58a9a88f57e8a87c93a97905a40641a4",
+    "semantic_hash": ""
+  },
+  ".claude/notes/metal4-hang-handoff.md": {
+    "mtime": 1792114549.4755147,
+    "seen": 1792115006.6223428,
+    "ast_hash": "7adb9f744e0ab5041c305e710bd5f22b",
     "semantic_hash": ""
   }
 }

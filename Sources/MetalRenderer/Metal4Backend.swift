@@ -46,6 +46,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private let metal3Queue: MTLCommandQueue
     private let event: MTLSharedEvent
     private var eventValue: UInt64 = 0
+    /// How long `commit` waits for the Metal 4 queue before an interlude (a hung GPU never signals).
+    private static let interludeTimeoutMs: UInt64 = 2000
 
     // The frame being encoded.
     private var slot = 0
@@ -155,7 +157,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     }
 
     /// A Metal 3 command buffer in the middle of the frame, for what has no working Metal 4 form: it runs after the
-    /// frame's command buffers so far, and the ones after it wait for it.
+    /// frame's command buffers so far, and the ones after it wait for it. `commit` commits it once the ones before it
+    /// are done.
     private func interlude(_ name: String, _ encode: (MTLCommandBuffer) -> Void) {
         endCompute()
         cmd?.endCommandBuffer()
@@ -339,8 +342,15 @@ final class Metal4Frame: FrameEncoder, ComputePass {
             case .metal3(let name, let cb, let value):
                 queue.signalEvent(event, value: value)         // once what was committed so far is done
                 cb.addCompletedHandler { cb in
+                    if let error = cb.error { print("Metal 3 command buffer \(name) failed: \(error)") }
                     collector.add(name: split ? name : nil, start: cb.gpuStartTime, end: cb.gpuEndTime)
                 }
+                // Committed only once the Metal 4 work before it is done, and before anything after it is committed.
+                // Committed earlier (its own wait on the GPU holding it back), it hung the GPU now and then in one of
+                // the ray-tracing passes before it, or the next frame's: macOS 26.5 on an M4 Max, 16 of 30 runs of
+                // 1,080 showcase frames, 1 of 60 this way. The render thread waits here for the GPU to get through
+                // the frame so far (the queue has the frames before it too).
+                _ = event.wait(untilSignaledValue: value, timeoutMS: Metal4Frame.interludeTimeoutMs)
                 cb.commit()
                 queue.waitForEvent(event, value: value + 1)    // what follows runs after it
             case .mappings(let heap, let textures):
