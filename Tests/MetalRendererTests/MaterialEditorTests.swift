@@ -118,6 +118,35 @@ final class MaterialEditorTests: XCTestCase {
         XCTAssertEqual(pasted.count, 1, "the wire between them, renamed")
     }
 
+    /// "Import Scanned Material…": the maps go into Textures/ beside the graphs' folder, the graph is shown and saved.
+    func testImportScan() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("material-editor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("Materials")
+        let download = root.appendingPathComponent("download")
+        try FileManager.default.createDirectory(at: download, withIntermediateDirectories: true)
+        try MatExport.write(Array(repeating: SIMD4<Float>(0.5, 0.4, 0.3, 1), count: 64 * 64), side: 64, grey: false, srgb: true, format: .png8,
+                            to: download.appendingPathComponent("old_bricks_diff_1k.png"))
+        let (m, _) = editor(folder: folder)
+        var finished = false
+        m.importScan(from: download, name: "Old Bricks", metres: 3) { finished = true }
+        let deadline = Date().addingTimeInterval(10)
+        while !finished && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertTrue(finished)
+        XCTAssertEqual(m.selectedGraph, "Old Bricks", m.message ?? "")
+        XCTAssertFalse(m.isDirty)
+        XCTAssertEqual(MaterialStore.load(from: folder).graphs.keys.sorted(), ["Old Bricks"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("Textures/old-bricks/albedo.png").path))
+        XCTAssertEqual(m.graph.surface.uvScale, 1 / 3, accuracy: 1e-6)
+
+        // Again: a name and a folder of its own.
+        finished = false
+        m.importScan(from: download, name: "Old Bricks", metres: 3) { finished = true }
+        while !finished && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        XCTAssertEqual(m.selectedGraph, "Old Bricks 2")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("Textures/old-bricks-2/albedo.png").path))
+    }
+
     func testSaveRenameAndRevert() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("material-editor-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

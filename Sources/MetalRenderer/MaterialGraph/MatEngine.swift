@@ -372,7 +372,20 @@ final class MatEngine {
         if let t = bitmaps[path] { lock.unlock(); return t }
         lock.unlock()
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : Scene.assetsDirectory.appendingPathComponent(path)
-        let t = try MTKTextureLoader(device: device).newTexture(URL: url, options: [.SRGB: false, .textureStorageMode: MTLStorageMode.private.rawValue])
+        let usage: MTLTextureUsage = [.shaderRead, .pixelFormatView]
+        var t = try MTKTextureLoader(device: device).newTexture(URL: url, options: [.SRGB: false, .textureStorageMode: MTLStorageMode.private.rawValue,
+                                                                                    .textureUsage: usage.rawValue])
+        // A grey file loads as one channel (a grey with alpha as two): seen as grey in R, G and B, so its colour and its
+        // luminance are the grey.
+        switch t.pixelFormat {
+        case .r8Unorm, .r16Unorm, .r16Float, .r32Float:
+            t = t.makeTextureView(pixelFormat: t.pixelFormat, textureType: t.textureType, levels: 0..<t.mipmapLevelCount, slices: 0..<1,
+                                  swizzle: MTLTextureSwizzleChannels(red: .red, green: .red, blue: .red, alpha: .one)) ?? t
+        case .rg8Unorm, .rg16Unorm, .rg16Float, .rg32Float:
+            t = t.makeTextureView(pixelFormat: t.pixelFormat, textureType: t.textureType, levels: 0..<t.mipmapLevelCount, slices: 0..<1,
+                                  swizzle: MTLTextureSwizzleChannels(red: .red, green: .red, blue: .red, alpha: .green)) ?? t
+        default: break
+        }
         lock.lock()
         bitmaps[path] = t
         lock.unlock()

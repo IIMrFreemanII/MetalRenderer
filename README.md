@@ -1796,7 +1796,7 @@ opacity, emissive).
   its parameters a buffer (a value's edit is a write; a structural edit compiles the shaders again). The Marble
   starter runs so. Height (for parallax) and opacity still come from its bake.
 * **Starters** (`MaterialLibrary.swift`): Red Bricks, Cobblestone, Rusted Paint, Brushed Steel, Scratched Copper,
-  Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code); and Mireland's.
+  Perforated Metal (opacity), Oak Planks, Bark and Moss, Sci-fi Panels (emissive), Marble (as code); Mireland's; and the scans.
 * **Mireland** (`MaterialLibrary+Mireland.swift`): the eleven swamp materials of the Substance 3D Assets collection
   "Welcome to Mireland" (Sherif Dawoud), made again as our own graphs by eye from its previews: Swamp Mud, Gnarly
   Bark, Birch Bark, Loose Dirt, Dead Grass, Swamp Ground (black water, duckweed, twigs), and five cut out: Mud Cracks
@@ -1806,6 +1806,14 @@ opacity, emissive).
   and leaves on it, bare birches and gnarly old trunks (displaced, the rest keeping parallax: `undisplacedMaterials`),
   grass and plant cards along the water's edge, a low sun through ground mist; `seed=` places it. Saved graphs are
   `Assets/Materials/<name>.mat.json` (`METALRENDERER_MATERIALS=builtin|<folder>`).
+* **Scans** (`ScanMaterial.swift`, `MaterialLibrary+Scans.swift`): photo-scanned materials as Bitmap nodes over their
+  maps in `Assets/Textures/<set>/` (Git LFS). Built in: Rock Wall 17 (Poly Haven, 4K, 1.8 m a repeat, displaced).
+  **Graph ▸ Import Scanned Material…** takes a download (a Poly Haven or ambientCG .zip, or its folder), finds its maps
+  by their names (`_diff_`, `_nor_gl_`/`_nor_dx_`, `_rough_`, `_disp_`, `_ao_`, `_arm_`, `_metal_`; `_Color`,
+  `_NormalGL`, `_Roughness`, `_Displacement`, `_AmbientOcclusion`, `_Opacity`…), asks its name and the side of one
+  repeat in metres (Poly Haven's page: "Dimensions"), copies the maps into `Assets/Textures/<name>/` (an EXR becomes a
+  16-bit PNG; `EXRImage` reads the DWA compression macOS can't) and saves the graph. What a download lacks comes from
+  its height: the normal, the occlusion. The `.blend` is not read.
 * **Checked:** `MaterialDisplacementTests` (subdivision to the detail, the cap, groups across hard edges, the
   kernel's surface staying closed, the workshop's displaced copies), `MaterialGraphTests` (the JSON, the plan: order, types, sizes, precision, hashes, subgraphs, functions,
   shader code), `MaterialEngineTests` (every node bakes; blend modes, normals, blur, tiling, the cache, distance,
