@@ -657,6 +657,10 @@ final class Renderer: NSObject {
     private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
+    /// The arrow keys (AppKit's function-key characters): up, down, left, right; held, they turn the camera.
+    private static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
+    /// How fast an arrow turns the camera, in drag points a second (Camera.turnRate: about 90° a second).
+    private static let arrowTurnSpeed: Float = 400
     private var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
@@ -670,6 +674,10 @@ final class Renderer: NSObject {
     private var rightDrag: NavDrag?
     private var navCursor: SIMD2<Float>?
     private var rightHeld = false
+    /// The left button looks around: pressed on nothing that took the press (a stroke, a handle, a body).
+    private var leftLook = false
+    /// A button that looks around is held: W A S D Q E fly, the scroll wheel sets their speed.
+    private var lookHeld: Bool { rightHeld || leftLook }
     private var commandHeld = false
     /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
     private var walker: Walker?
@@ -2228,6 +2236,7 @@ final class Renderer: NSObject {
     }
 
     private func updateCamera(dt: Float) {
+        turnByArrows(dt)
         if flight != nil { fly(); return }
         if walker != nil {
             walk(dt)
@@ -2252,12 +2261,27 @@ final class Renderer: NSObject {
         if heldKeys.contains("e") { move.y += 1 }
         if heldKeys.contains("q") { move.y -= 1 }
         // Flythrough: only while the right button is held, as in Unity's scene view.
-        if length(move) > 0, rightHeld {
+        if length(move) > 0, lookHeld {
             let speed = settings.moveSpeed * (shiftHeld ? 3.2 : 1)
             camera.position += normalize(move) * speed * dt
             orbit?.target += normalize(move) * speed * dt   // it moves what it turns about with it
             pivotLock = nil
         }
+    }
+
+    /// The arrow keys held: the camera looks around as a right drag would (Option: orbits the pivot; Shift: faster);
+    /// walking, the head turns.
+    private func turnByArrows(_ dt: Float) {
+        let keys = Self.arrowKeys
+        var d = SIMD2<Float>.zero
+        if heldKeys.contains(keys[0]) { d.y -= 1 }
+        if heldKeys.contains(keys[1]) { d.y += 1 }
+        if heldKeys.contains(keys[2]) { d.x -= 1 }
+        if heldKeys.contains(keys[3]) { d.x += 1 }
+        guard d != .zero else { return }
+        let step = d * Self.arrowTurnSpeed * dt * (shiftHeld ? 2.5 : 1)
+        if walker != nil { walkLook(dx: step.x, dy: step.y); return }
+        navigate(optionHeld ? .orbit : .look, dx: step.x, dy: step.y, at: navCursor ?? SIMD2(0.5, 0.5))
     }
 
     // MARK: - Interiors on demand
@@ -5029,7 +5053,7 @@ final class Renderer: NSObject {
             default: break
             }
         }
-        if ["w", "a", "s", "d", "q", "e"].contains(key) {
+        if ["w", "a", "s", "d", "q", "e"].contains(key) || Self.arrowKeys.contains(key) {
             heldKeys.insert(key)
             return
         }
@@ -5083,8 +5107,9 @@ final class Renderer: NSObject {
     func setCommand(_ held: Bool) { commandHeld = held }
 
     // The scene view's mouse, as Unity's: a click selects, Option-drag orbits the pivot, Option-Command-drag and a
-    // middle drag pan, a right drag looks around (W A S D Q E fly while it is held), Option-right-drag and the scroll
-    // wheel dolly. A press on a body grabs it (Physics.swift's `grab`). Walking: a drag looks, a click uses.
+    // middle drag pan, a drag or a right drag looks around (W A S D Q E fly while it is held), Option-right-drag and the
+    // scroll wheel dolly; the arrows look around (Option: orbit). A press on a body grabs it (Physics.swift's `grab`).
+    // Walking: a drag looks, a click uses.
 
     func mouseDown(at cursor: SIMD2<Float>) {
         // Paint mode: a stroke (Option: the camera turns about the object).
@@ -5094,6 +5119,7 @@ final class Renderer: NSObject {
         holding = nil
         gizmoDrag = nil
         navDrag = nil
+        leftLook = false
         navCursor = cursor
         if walker == nil, optionHeld {
             navDrag = commandHeld ? .pan : .orbit
@@ -5111,12 +5137,14 @@ final class Renderer: NSObject {
             return
         }
         clickAt = cursor
+        leftLook = walker == nil
         guard let physics = scene.physics else { return }
         let direction = cursorRay(cursor)
         guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
         let point = camera.position + direction * hit.distance
         physics.grab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
         holding = (cursor, dot(point - camera.position, camera.forward))
+        leftLook = false
     }
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
@@ -5138,6 +5166,8 @@ final class Renderer: NSObject {
             navigate(nav, dx: dx, dy: dy, at: cursor)
         } else if walker != nil {
             walkLook(dx: dx, dy: dy)
+        } else if leftLook, clickAt == nil {   // (once it is a drag: a click doesn't turn the view)
+            navigate(.look, dx: dx, dy: dy, at: cursor)
         }
     }
 
@@ -5162,12 +5192,13 @@ final class Renderer: NSObject {
         }
         clickAt = nil
         navDrag = nil
+        leftLook = false
         holding = nil
         scene.physics?.grab.target.w = 0
     }
 
-    /// The right button: looks around (Option: dollies); W A S D Q E fly while it is held. In paint mode the camera
-    /// turns about the object.
+    /// The right button: looks around, as a left drag does (Option: dollies); W A S D Q E fly while it is held. In
+    /// paint mode the camera turns about the object.
     func rightMouseDown(at cursor: SIMD2<Float>) {
         if paintMouseDown(at: cursor, pressure: 1, orbit: true) { return }
         rightHeld = true
@@ -5221,7 +5252,7 @@ final class Renderer: NSObject {
         camera.pitch = min(max(camera.pitch - dy * Camera.turnRate, -1.5), 1.5)
     }
 
-    /// The scroll wheel: the held body nearer (down) or farther (up); the right button held: the fly speed; otherwise
+    /// The scroll wheel: the held body nearer (down) or farther (up); a button that looks held: the fly speed; otherwise
     /// the camera nearer the pivot or farther.
     func scrolled(dy: Float) {
         if let depth = holding?.depth {
@@ -5229,7 +5260,7 @@ final class Renderer: NSObject {
             return
         }
         guard walker == nil else { return }
-        if rightHeld {
+        if lookHeld {
             settings.moveSpeed = RenderSettings.moveSpeedRange.clamp(settings.moveSpeed * exp(dy * 0.05))
             return
         }

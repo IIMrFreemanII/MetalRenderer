@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792140977.4662366,
-    "seen": 1792143895.643392,
-    "ast_hash": "b89272d2bccca4cf3734d138ac962b2b",
+    "mtime": 1792192491.6795616,
+    "seen": 1792192545.909581,
+    "ast_hash": "a365c13cfb7c4c94565e50e59cf987b4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -2202,9 +2202,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/material-designer-handoff.md": {
-    "mtime": 1792143874.8305175,
-    "seen": 1792143895.6435761,
-    "ast_hash": "596bc4d492de415fadf2a59212366bbd",
+    "mtime": 1792144948.9077828,
+    "seen": 1792191859.077905,
+    "ast_hash": "68d7ec6e8d1858faa565bcfdd6a45c53",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/MaterialGraph/MeshSubdivider.swift": {
@@ -2502,9 +2502,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/materials.json": {
-    "mtime": 1792142722.2806277,
-    "seen": 1792143895.6432168,
-    "ast_hash": "af97ad31571f519b84a3621064e298cc",
+    "mtime": 1792192523.0969622,
+    "seen": 1792192545.9093509,
+    "ast_hash": "0f26b6544c4b781e632640c47f7fa084",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/mireland.json": {
@@ -2700,9 +2700,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/App.swift": {
-    "mtime": 1792087718.989268,
-    "seen": 1792143895.643248,
-    "ast_hash": "5bfbca148b8d09266777551d2160943c",
+    "mtime": 1792192486.6758344,
+    "seen": 1792192545.909395,
+    "ast_hash": "fabdbb7bd3030e13ba2f446e0edd0f84",
     "semantic_hash": ""
   },
   "Sources/MetalRendererApp/main.swift": {
@@ -3708,8 +3708,8 @@
     "semantic_hash": ""
   },
   ".claude/settings.local.json": {
-    "mtime": 1792140978.3801446,
-    "seen": 1792143895.643193,
+    "mtime": 1792190947.2601063,
+    "seen": 1792191859.0774221,
     "ast_hash": "6f0546f4ce70b38225c82a939c0376b9",
     "semantic_hash": ""
   },
@@ -3783,6 +3783,48 @@
     "mtime": 1792142253.5153885,
     "seen": 1792143895.6436548,
     "ast_hash": "ec8cb6db8b7d1443283e92d39bcff73a",
+    "semantic_hash": ""
+  },
+  "Assets/Materials/rock-wall-10.mat.json": {
+    "mtime": 1792144895.4181397,
+    "seen": 1792191859.0774348,
+    "ast_hash": "7603a64601a80793f93356754fefa671",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/rock-wall-10/info.json": {
+    "mtime": 1792144895.4209964,
+    "seen": 1792191859.0774882,
+    "ast_hash": "d826cdf570abc64c820fbc71eb9553fa",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/rock-wall-10/LICENSE.txt": {
+    "mtime": 1792144948.886278,
+    "seen": 1792191859.077937,
+    "ast_hash": "cb9f0ff870913eb29023dca20dd1b6ad",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/rock-wall-10/albedo.jpg": {
+    "mtime": 1792144408.0,
+    "seen": 1792191859.078002,
+    "ast_hash": "5b4aaea79bf40ad7bafc3c34a59ddcb9",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/rock-wall-10/height.png": {
+    "mtime": 1792144410.0,
+    "seen": 1792191859.078003,
+    "ast_hash": "53d17496e14c2acbabbb5a22f6ad062b",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/rock-wall-10/normal.png": {
+    "mtime": 1792144492.111779,
+    "seen": 1792191859.078004,
+    "ast_hash": "a136684e2c526ffd87d3cfc39edb8817",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/rock-wall-10/roughness.png": {
+    "mtime": 1792144493.0268486,
+    "seen": 1792191859.078005,
+    "ast_hash": "5eddfd30a44615b8752e3c714849f99e",
     "semantic_hash": ""
   }
 }
