@@ -657,6 +657,10 @@ final class Renderer: NSObject {
     private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     private var heldKeys = Set<String>()
+    /// The arrow keys (AppKit's function-key characters): up, down, left, right; held, they turn the camera.
+    private static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
+    /// How fast an arrow turns the camera, in drag points a second (Camera.turnRate: about 90° a second).
+    private static let arrowTurnSpeed: Float = 400
     private var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
@@ -2228,6 +2232,7 @@ final class Renderer: NSObject {
     }
 
     private func updateCamera(dt: Float) {
+        turnByArrows(dt)
         if flight != nil { fly(); return }
         if walker != nil {
             walk(dt)
@@ -2258,6 +2263,21 @@ final class Renderer: NSObject {
             orbit?.target += normalize(move) * speed * dt   // it moves what it turns about with it
             pivotLock = nil
         }
+    }
+
+    /// The arrow keys held: the camera looks around as a right drag would (Option: orbits the pivot; Shift: faster);
+    /// walking, the head turns.
+    private func turnByArrows(_ dt: Float) {
+        let keys = Self.arrowKeys
+        var d = SIMD2<Float>.zero
+        if heldKeys.contains(keys[0]) { d.y -= 1 }
+        if heldKeys.contains(keys[1]) { d.y += 1 }
+        if heldKeys.contains(keys[2]) { d.x -= 1 }
+        if heldKeys.contains(keys[3]) { d.x += 1 }
+        guard d != .zero else { return }
+        let step = d * Self.arrowTurnSpeed * dt * (shiftHeld ? 2.5 : 1)
+        if walker != nil { walkLook(dx: step.x, dy: step.y); return }
+        navigate(optionHeld ? .orbit : .look, dx: step.x, dy: step.y, at: navCursor ?? SIMD2(0.5, 0.5))
     }
 
     // MARK: - Interiors on demand
@@ -5029,7 +5049,7 @@ final class Renderer: NSObject {
             default: break
             }
         }
-        if ["w", "a", "s", "d", "q", "e"].contains(key) {
+        if ["w", "a", "s", "d", "q", "e"].contains(key) || Self.arrowKeys.contains(key) {
             heldKeys.insert(key)
             return
         }
@@ -5084,7 +5104,8 @@ final class Renderer: NSObject {
 
     // The scene view's mouse, as Unity's: a click selects, Option-drag orbits the pivot, Option-Command-drag and a
     // middle drag pan, a right drag looks around (W A S D Q E fly while it is held), Option-right-drag and the scroll
-    // wheel dolly. A press on a body grabs it (Physics.swift's `grab`). Walking: a drag looks, a click uses.
+    // wheel dolly; the arrows look around (Option: orbit). A press on a body grabs it (Physics.swift's `grab`). Walking:
+    // a drag looks, a click uses.
 
     func mouseDown(at cursor: SIMD2<Float>) {
         // Paint mode: a stroke (Option: the camera turns about the object).
