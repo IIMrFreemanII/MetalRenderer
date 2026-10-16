@@ -1,0 +1,225 @@
+{
+  "format" : 1,
+  "graph" : {
+    "bits" : "inherit",
+    "inputs" : [
+
+    ],
+    "links" : [
+      {
+        "from" : "albedo",
+        "input" : "in",
+        "output" : "out",
+        "to" : "baseColor"
+      },
+      {
+        "from" : "height",
+        "input" : "in",
+        "output" : "out",
+        "to" : "height2"
+      },
+      {
+        "from" : "normal",
+        "input" : "in",
+        "output" : "out",
+        "to" : "normal2"
+      },
+      {
+        "from" : "roughness",
+        "input" : "in",
+        "output" : "out",
+        "to" : "roughness2"
+      },
+      {
+        "from" : "height",
+        "input" : "in",
+        "output" : "out",
+        "to" : "ambientOcclusion"
+      },
+      {
+        "from" : "ambientOcclusion",
+        "input" : "in",
+        "output" : "out",
+        "to" : "ambientOcclusion2"
+      }
+    ],
+    "name" : "Rock Wall 10",
+    "nodes" : [
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "albedo",
+        "kind" : "bitmap",
+        "params" : {
+          "channel" : {
+            "choice" : "color"
+          },
+          "path" : {
+            "text" : "Textures\/rock-wall-10\/albedo.jpg"
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          180
+        ],
+        "id" : "height",
+        "kind" : "bitmap",
+        "params" : {
+          "channel" : {
+            "choice" : "luminance"
+          },
+          "path" : {
+            "text" : "Textures\/rock-wall-10\/height.png"
+          }
+        }
+      },
+      {
+        "at" : [
+          210,
+          0
+        ],
+        "id" : "baseColor",
+        "kind" : "output",
+        "params" : {
+          "name" : {
+            "text" : "baseColor"
+          },
+          "usage" : {
+            "choice" : "baseColor"
+          }
+        }
+      },
+      {
+        "at" : [
+          210,
+          180
+        ],
+        "id" : "height2",
+        "kind" : "output",
+        "params" : {
+          "name" : {
+            "text" : "height"
+          },
+          "usage" : {
+            "choice" : "height"
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          360
+        ],
+        "id" : "normal",
+        "kind" : "bitmap",
+        "params" : {
+          "channel" : {
+            "choice" : "color"
+          },
+          "path" : {
+            "text" : "Textures\/rock-wall-10\/normal.png"
+          }
+        }
+      },
+      {
+        "at" : [
+          210,
+          360
+        ],
+        "id" : "normal2",
+        "kind" : "output",
+        "params" : {
+          "name" : {
+            "text" : "normal"
+          },
+          "usage" : {
+            "choice" : "normal"
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          540
+        ],
+        "id" : "roughness",
+        "kind" : "bitmap",
+        "params" : {
+          "channel" : {
+            "choice" : "luminance"
+          },
+          "path" : {
+            "text" : "Textures\/rock-wall-10\/roughness.png"
+          }
+        }
+      },
+      {
+        "at" : [
+          210,
+          540
+        ],
+        "id" : "roughness2",
+        "kind" : "output",
+        "params" : {
+          "name" : {
+            "text" : "roughness"
+          },
+          "usage" : {
+            "choice" : "roughness"
+          }
+        }
+      },
+      {
+        "at" : [
+          210,
+          720
+        ],
+        "id" : "ambientOcclusion",
+        "kind" : "ambientOcclusion",
+        "params" : {
+          "depth" : {
+            "float" : 0.04
+          },
+          "radius" : {
+            "float" : 0.02
+          }
+        }
+      },
+      {
+        "at" : [
+          420,
+          0
+        ],
+        "id" : "ambientOcclusion2",
+        "kind" : "output",
+        "params" : {
+          "name" : {
+            "text" : "ambientOcclusion"
+          },
+          "usage" : {
+            "choice" : "ambientOcclusion"
+          }
+        }
+      }
+    ],
+    "seed" : 0,
+    "size" : 12,
+    "surface" : {
+      "alphaCutoff" : 0.5,
+      "aoStrength" : 1,
+      "displacement" : 0.09,
+      "displacementDetail" : 0.02,
+      "displacementMid" : 0.5,
+      "emissiveIntensity" : 4,
+      "heightDepth" : 0.04,
+      "normalDirectX" : false,
+      "normalStrength" : 1,
+      "shaderMode" : false,
+      "uvScale" : 0.5555556
+    }
+  }
+}
