@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792191286.752985,
-    "seen": 1792191329.333318,
-    "ast_hash": "e75e4cf387068a7f1076dda06896d40d",
+    "mtime": 1792193831.4376853,
+    "seen": 1792193841.886542,
+    "ast_hash": "8bbe80f287bc74cd91aabba9bbe626d5",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792134215.318967,
-    "seen": 1792191329.3331861,
-    "ast_hash": "b89272d2bccca4cf3734d138ac962b2b",
+    "mtime": 1792193322.9280336,
+    "seen": 1792193841.886382,
+    "ast_hash": "75343312eedf04933a04e447782b898c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -276,9 +276,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualBLAS.swift": {
-    "mtime": 1792134215.3192232,
-    "seen": 1792191329.3332522,
-    "ast_hash": "a502b6a8ebaf6ae92b6df68fe9129e22",
+    "mtime": 1792191584.0236135,
+    "seen": 1792193841.8864582,
+    "ast_hash": "211cb46fccedbf5942fd6eb5b1a70e4d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualGeometry.swift": {
@@ -438,8 +438,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Modes.swift": {
-    "mtime": 1792134215.3183105,
-    "seen": 1792191329.333097,
+    "mtime": 1792193322.8459017,
+    "seen": 1792193841.886278,
     "ast_hash": "357dee152352841516f8f5186f0dce69",
     "semantic_hash": ""
   },
@@ -648,15 +648,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ComputePass.swift": {
-    "mtime": 1792103207.3033016,
-    "seen": 1792191329.333118,
-    "ast_hash": "ef8756ac94d26cd8995100b6dbdae24d",
+    "mtime": 1792191584.022347,
+    "seen": 1792193841.886305,
+    "ast_hash": "2f2244b8704ddc2270ca9fb7eb792f04",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1792114549.4730034,
-    "seen": 1792191329.333152,
-    "ast_hash": "d80ff6e8dbc84eaa538169540e07c235",
+    "mtime": 1792191584.022843,
+    "seen": 1792193841.8863418,
+    "ast_hash": "a14ed6fc0ac33611346c5544f185eb88",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
@@ -1140,9 +1140,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/VirtualTracing.swift": {
-    "mtime": 1792134215.3194435,
-    "seen": 1792191329.3332531,
-    "ast_hash": "59eccdcd1ab33511756f91e9b84aa924",
+    "mtime": 1792191584.02386,
+    "seen": 1792193841.8864589,
+    "ast_hash": "be3d7d3fb2cb7f204f872ad863b5b0b9",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/HairTests.swift": {
@@ -3792,9 +3792,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/metal4-hang-handoff.md": {
-    "mtime": 1792134238.8385391,
-    "seen": 1792191329.333301,
-    "ast_hash": "1912eae7162b05f06af41dd900df0b8b",
+    "mtime": 1792193831.4369931,
+    "seen": 1792193841.886518,
+    "ast_hash": "027fdda6646ab5443ac0ccf893006f77",
     "semantic_hash": ""
   },
   "Assets/Textures/rock-wall-10/LICENSE.txt": {
