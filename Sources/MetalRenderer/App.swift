@@ -117,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print("""
         MetalRenderer controls
           Click        select (the Project Graph selects it too); press on a body to grab it, scroll moves it
-          Right-drag   look around; while held, W A S D / Q E fly (Shift = faster) and scroll sets the speed
+          Drag / right-drag   look around; while held, W A S D / Q E fly (Shift = faster) and scroll sets the speed
           Arrows       look around (Shift = faster); Option-arrows orbit the pivot
           Option-drag  orbit the pivot          Middle-drag / Option-Cmd-drag   pan
           Scroll       zoom to the pivot        Option-right-drag   zoom

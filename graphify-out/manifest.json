@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer.swift": {
-    "mtime": 1792191789.907098,
-    "seen": 1792191859.077677,
-    "ast_hash": "f7bfb1506914aba7b2597ddea94a504a",
+    "mtime": 1792192491.6795616,
+    "seen": 1792192545.909581,
+    "ast_hash": "a365c13cfb7c4c94565e50e59cf987b4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene+Lights.swift": {
@@ -2502,8 +2502,8 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/materials.json": {
-    "mtime": 1792191834.1072965,
-    "seen": 1792191859.077452,
+    "mtime": 1792192523.0969622,
+    "seen": 1792192545.9093509,
     "ast_hash": "0f26b6544c4b781e632640c47f7fa084",
     "semantic_hash": ""
   },
@@ -2700,9 +2700,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/App.swift": {
-    "mtime": 1792191795.087053,
-    "seen": 1792191859.077494,
-    "ast_hash": "2725c7c44f3dd0a2d133e0ad9b8e5414",
+    "mtime": 1792192486.6758344,
+    "seen": 1792192545.909395,
+    "ast_hash": "fabdbb7bd3030e13ba2f446e0edd0f84",
     "semantic_hash": ""
   },
   "Sources/MetalRendererApp/main.swift": {
