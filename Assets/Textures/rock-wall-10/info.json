@@ -1,0 +1,11 @@
+{
+  "from" : "rock_wall_10_4k.blend.zip",
+  "maps" : {
+    "albedo" : "rock_wall_10_diff_4k.jpg",
+    "height" : "rock_wall_10_disp_4k.png",
+    "normal" : "rock_wall_10_nor_gl_4k.exr",
+    "roughness" : "rock_wall_10_rough_4k.exr"
+  },
+  "metres" : 1.8,
+  "source" : "import"
+}

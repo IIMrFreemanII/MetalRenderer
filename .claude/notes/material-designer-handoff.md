@@ -46,6 +46,20 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
   Histogram Scan's
   position is the share kept (threshold = 1 - position). `MATERIAL_STATS=1` with testMirelandStartersBake prints
   every node's mean and max.
+- Scans (Oct 16 2026, branch claude/dev-mode-setup-40be61): `ScanMaterial.swift` (map names, the Bitmap graph,
+  install: unzip with ditto, copy into Assets/Textures/<slug>/, EXR -> 16-bit PNG), `MaterialLibrary+Scans.swift`
+  (Rock Wall 17, 4K: its normal/roughness were DWAA EXRs, converted with Python OpenEXR), Graph menu "Import Scanned
+  Material…" (MaterialEditorModel.importScan: saves the new graph at once), `EXRImage.swift` (OpenEXR reader incl.
+  DWAA/DWAB). The Bitmap node now reads grey files (r8/r16) as greys (a swizzled view; before, a grey PNG's
+  luminance was 0.21 × its value). Tests: ScanMaterialTests, MaterialEditorTests.testImportScan, EXRImageTests
+  (fixtures + make.py in Tools/test-assets/exr; DWA bit-exact against Python OpenEXR 3.5, including Rock Wall's 4K
+  maps: the port fuses multiply-adds as clang does on arm64, or ~1 in 60k values is a few half steps off).
+  `SCAN_IMPORT=<zip> Tools/build.sh test --filter ScanMaterialTests` imports a real download into a temp folder:
+  rock_wall_17_4k.blend.zip 4.1 s, its 4K bake 1.2 s. Rock Wall's first bake in the workshop: 0.9 s, GPU 18.5 ms.
+  Hand-tested in the window (Oct 16 2026, the user): Graph ▸ Import Scanned Material… with rock_wall_10_4k.blend.zip
+  saved Rock Wall 10 (four 4K maps, both DWAA EXRs decoded) and baked it; committed as a saved graph
+  (Assets/Materials/rock-wall-10.mat.json, maps in Assets/Textures/rock-wall-10, size fixed to Poly Haven's 1.8 m).
+  Not mapped in the tests skill (protected path): EXRImage.swift, ScanMaterial.swift -> EXRImageTests ScanMaterialTests.
 
 ## Verified (M1 Max, Metal 3)
 

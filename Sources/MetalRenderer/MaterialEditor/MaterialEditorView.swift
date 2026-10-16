@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Material Designer's window: the toolbar (the graph shown, its file, export, the workshop), the node library,
 /// the canvas, and on the right the 2D view of a node's image, the 3D preview of the material and the inspector; the
@@ -38,6 +39,10 @@ struct MaterialToolbar: View {
     @EnvironmentObject var model: MaterialEditorModel
     @State private var renaming = false
     @State private var newName = ""
+    /// The download picked for "Import Scanned Material…", its name and size while the sheet asks for them.
+    @State private var scan: URL?
+    @State private var scanName = ""
+    @State private var scanMetres = 2.0
 
     var body: some View {
         HStack(spacing: 8) {
@@ -51,6 +56,7 @@ struct MaterialToolbar: View {
             Menu {
                 Button("New Graph") { model.newGraph() }
                 Button("Duplicate") { model.duplicate() }
+                Button("Import Scanned Material…") { chooseScan() }.disabled(model.texturesFolder == nil || model.importing)
                 Button("Rename…") { newName = model.selectedGraph; renaming = true }.disabled(model.isBuiltIn(model.selectedGraph))
                 Divider()
                 Button(model.isBuiltIn(model.selectedGraph) ? "Reset to Built-in" : "Delete") { model.deleteGraph() }
@@ -63,6 +69,7 @@ struct MaterialToolbar: View {
                     }
                     .padding(10)
                 }
+                .sheet(isPresented: Binding(get: { scan != nil }, set: { if !$0 { scan = nil } })) { scanSheet }
             Divider().frame(height: 18)
             Button { model.save() } label: { Label("Save", systemImage: "square.and.arrow.down") }.disabled(!model.isDirty)
             Menu {
@@ -94,6 +101,44 @@ struct MaterialToolbar: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
+    }
+
+    /// A scan's download: a .zip or its folder (Poly Haven, ambientCG), then its name and size.
+    private func chooseScan() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.zip, .folder]
+        panel.prompt = "Import"
+        panel.message = "A scanned material's download: a .zip or a folder of its maps (colour, normal, roughness, height…)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        scanName = ScanMaterial.suggestedName(for: url)
+        let folder = url.pathExtension.lowercased() == "zip" ? nil : url
+        scanMetres = Double(folder.flatMap { ScanMaterial.metres(in: $0) } ?? 2)
+        scan = url
+    }
+
+    private var scanSheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Import \(scan?.lastPathComponent ?? "")").font(.headline)
+            Form {
+                TextField("Name", text: $scanName)
+                TextField("Size (m)", value: $scanMetres, format: .number.precision(.fractionLength(0...3)))
+                    .help("The side of one repeat of the texture, metres (the download's page says it: Poly Haven's \"Dimensions\")")
+            }
+            .frame(width: 320)
+            Text("The maps are copied into \(model.texturesFolder?.path ?? "")").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { scan = nil }.keyboardShortcut(.cancelAction)
+                Button("Import") {
+                    if let url = scan { model.importScan(from: url, name: scanName, metres: Float(max(scanMetres, 0.01))) }
+                    scan = nil
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
     }
 
     private func export(_ format: MatExport.Format) {
