@@ -328,6 +328,53 @@ final class MaterialEditorModel: GraphCanvasModel {
 
     func duplicate() { newGraph(from: graph) }
 
+    /// Where an imported scan's maps go: `Textures/` beside the graphs' folder (Assets/Textures).
+    var texturesFolder: URL? { folder?.deletingLastPathComponent().appendingPathComponent("Textures") }
+    @Published private(set) var importing = false
+
+    /// A scanned material's download (a .zip or a folder of maps: ScanMaterial) as a new graph, `name` (made unique),
+    /// one repeat `metres` wide: its maps copied into `texturesFolder`, the graph saved at once (the maps are already
+    /// there) and shown. Unpacking and copying run off the main thread; `done` is called on it.
+    func importScan(from source: URL, name: String, metres: Float, done: (() -> Void)? = nil) {
+        guard let folder, let textures = texturesFolder else {
+            message = "METALRENDERER_MATERIALS=builtin: nothing is imported"
+            done?()
+            return
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let unique = uniqueName(trimmed.isEmpty ? ScanMaterial.suggestedName(for: source) : trimmed)
+        importing = true
+        message = "Importing \(source.lastPathComponent)…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try ScanMaterial.install(from: source, name: unique, metres: metres, texturesRoot: textures) }
+            DispatchQueue.main.async { [self] in
+                importing = false
+                defer { done?() }
+                switch result {
+                case .success(let imported):
+                    var c = catalog
+                    c.graphs[unique] = imported.graph
+                    commit(c)
+                    select(unique)
+                    do {
+                        try MaterialStore.save(imported.graph, in: folder)
+                        var s = saved
+                        s.graphs[unique] = imported.graph
+                        saved = s
+                    } catch {
+                        message = "Imported, not saved: \(error.localizedDescription)"
+                        return
+                    }
+                    let maps = imported.graph.nodes.filter { $0.kind == .bitmap }.count
+                    message = "Imported \(unique): \(maps) maps in \(imported.folder.path)"
+                        + (imported.skipped.isEmpty ? "" : "; skipped \(imported.skipped.joined(separator: ", "))")
+                case .failure(let error):
+                    message = "Not imported: \((error as? MatError)?.description ?? error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     private func uniqueName(_ base: String) -> String {
         var name = base, n = 2
         while graphNames.contains(name) { name = "\(base) \(n)"; n += 1 }
