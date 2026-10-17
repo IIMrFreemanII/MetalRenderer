@@ -69,7 +69,10 @@ Frames overlapping as in the app (the benchmark's wait off), one command buffer 
   placeholder, `MaterialTextures`). Virtual geometry's case says Metal 3 work beside the frames isn't enough to hang
   them, so this is probably fine; untested beyond the realism switches above and the open world's swaps.
 - ~~The mips as Metal 4 compute~~: done (2026-10-17, `Shaders/Mips.metal`): bilinear samples, the blit's bits; Metal 4
-  frames 6-14% faster in the world and the Forest. MetalFX's interlude is the one left each frame.
+  frames 6-14% faster in the world and the Forest. MetalFX's interlude was the one left each frame; from macOS 27 it is
+  gone too (MetalFX's Metal 4 scaler in the frame, 2026-10-17): an upscaled Metal 4 frame has no Metal 3 work left
+  (the frame interpolator's, when it runs, aside). Not yet run against the hang repro above (no hang in the
+  1000-frame and showcase runs with `METALRENDERER_RESIDENCY_LIFE=16`).
 
 ## Reproducing
 The temporary benchmark mode (not committed):

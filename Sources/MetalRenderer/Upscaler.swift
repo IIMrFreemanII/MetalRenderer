@@ -13,7 +13,15 @@ final class Upscaler {
     /// The scaler's output, linear and unbounded, for tonemapKernel (MetalFX needs a private output texture, so it
     /// can't write the drawable).
     let hdrOutput: MTLTexture
-    let scaler: AnyObject                   // MTLFXTemporalDenoisedScaler (the frame interpolator reads it too)
+    let scaler: AnyObject                   // MTLFXTemporalDenoisedScaler, or with `metal4` MTL4FXTemporalDenoisedScaler
+    /// Metal 4's scaler, encoded into the frame's own command buffer (Metal4Frame.upscale); otherwise Metal 3's.
+    let metal4: Bool
+    /// Whether a Metal 4 frame gets Metal 4's scaler: from macOS 27, unless `METALRENDERER_MFX4=0` (Metal 3's in an
+    /// interlude, as on macOS 26).
+    static let metal4Available: Bool = {
+        guard #available(macOS 27.0, *) else { return false }
+        return ProcessInfo.processInfo.environment["METALRENDERER_MFX4"] != "0"
+    }()
     static let hdrFormat = MTLPixelFormat.rgba16Float
 
     /// Largest per-axis scale factor the GPU supports.
@@ -24,12 +32,12 @@ final class Upscaler {
 
     /// `synchronous` waits for MetalFX to compile its fast scaler. Otherwise MetalFX returns at once and uses a slower
     /// interim one for the first frames (same image quality), which skews benchmarks.
-    /// It is always the Metal 3 scaler: MetalFX's Metal 4 denoising scaler fails an assertion in MPSGraph as it is made
-    /// ("Incompatible shape for parameter at index 0") for nearly every size on macOS 26.5: of 19 tried, only 960x540
-    /// and 960x544 to twice that worked. So under Metal 4 it runs on a Metal 3 command buffer between two of the
-    /// frame's (Metal4Frame.interlude).
+    /// `compiler`: the Metal 4 frame's, for MetalFX's Metal 4 scaler, from macOS 27 on. On macOS 26.5 it failed an
+    /// assertion in MPSGraph as it was made ("Incompatible shape for parameter at index 0") for nearly every size (of 19
+    /// tried, only 960x540 and 960x544 to twice that worked), so there Metal 3's runs under Metal 4 too, on a Metal 3
+    /// command buffer between two of the frame's (Metal4Frame.interlude). On macOS 27.0.1 every size tried is made.
     init(device: MTLDevice, inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
-         synchronous: Bool = false) throws {
+         synchronous: Bool = false, compiler: AnyObject? = nil) throws {   // compiler: MTL4Compiler
         self.inputWidth = inputWidth
         self.inputHeight = inputHeight
         self.outputWidth = outputWidth
@@ -52,7 +60,15 @@ final class Upscaler {
         // The light arrives before the camera's exposure (tonemapKernel applies it), so MetalFX finds its own. A fixed
         // exposure texture, and a denoise-strength mask over the sky and the emitters, scored the same (hwrtq).
         d.isAutoExposureEnabled = true
-        guard let scaler = d.makeTemporalDenoisedScaler(device: device) else {
+        let made: MTLFXTemporalDenoisedScalerBase?
+        if let compiler = compiler as? MTL4Compiler, Upscaler.metal4Available {
+            made = d.makeTemporalDenoisedScaler(device: device, compiler: compiler)
+            metal4 = true
+        } else {
+            made = d.makeTemporalDenoisedScaler(device: device)
+            metal4 = false
+        }
+        guard let scaler = made else {
             throw RendererError.resourceCreation("MetalFX denoising scaler \(inputWidth)×\(inputHeight) → \(outputWidth)×\(outputHeight)")
         }
         scaler.motionVectorScaleX = 1   // motion is already in input pixels
@@ -72,6 +88,27 @@ final class Upscaler {
     /// Denoises and upscales this frame's light into `hdrOutput`, for tonemapKernel to write the drawable.
     func encode(into cmd: MTLCommandBuffer, _ inputs: UpscaleInputs) {
         guard #available(macOS 26.0, *), let scaler = scaler as? MTLFXTemporalDenoisedScaler else { return }
+        set(scaler, inputs)
+        scaler.encode(commandBuffer: cmd)
+    }
+
+    /// The same into a Metal 4 command buffer (`metal4`): MetalFX waits for `fence`, which the frame's encoder updated.
+    @available(macOS 26.0, *)
+    func encode(into cmd: MTL4CommandBuffer, _ inputs: UpscaleInputs, fence: MTLFence) {
+        guard #available(macOS 26.0, *), let scaler = scaler as? MTL4FXTemporalDenoisedScaler else { return }
+        set(scaler, inputs)
+        scaler.fence = fence
+        scaler.encode(commandBuffer: cmd)
+    }
+
+    /// What MetalFX reads and writes, for a Metal 4 frame's residency set.
+    func resources(_ inputs: UpscaleInputs) -> [MTLTexture] {
+        let t = inputs.targets
+        return [t.upscaleColor, t.deviceDepth, t.pixelMotion, t.albedo, t.specularAlbedo, inputs.normalDepth, t.roughness, hdrOutput]
+    }
+
+    @available(macOS 26.0, *)
+    private func set(_ scaler: MTLFXTemporalDenoisedScalerBase, _ inputs: UpscaleInputs) {
         let t = inputs.targets
         scaler.colorTexture = t.upscaleColor
         scaler.depthTexture = t.deviceDepth
@@ -88,7 +125,6 @@ final class Upscaler {
         scaler.worldToViewMatrix = inputs.view.worldToView   // (as of macOS 26.5 the result is the same without them)
         scaler.viewToClipMatrix = inputs.view.viewToClip
         scaler.shouldResetHistory = inputs.reset
-        scaler.encode(commandBuffer: cmd)
     }
 
     /// The camera a frame was traced with, for the denoising scaler.

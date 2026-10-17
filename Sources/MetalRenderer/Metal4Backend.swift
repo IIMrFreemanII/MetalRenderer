@@ -45,6 +45,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     // through this event's values.
     private let metal3Queue: MTLCommandQueue
     private let event: MTLSharedEvent
+    /// MetalFX's Metal 4 scaler waits for the frame's work before it through this (Upscaler.encode).
+    private lazy var upscaleFence: MTLFence = device.makeFence()!
     private var eventValue: UInt64 = 0
     /// How long `commit` waits for the Metal 4 queue before an interlude (a hung GPU never signals).
     private static let interludeTimeoutMs: UInt64 = 2000
@@ -334,9 +336,19 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
-    /// Always the Metal 3 scaler, between two of the frame's command buffers (see Upscaler.init).
+    /// Metal 4's scaler (macOS 27) in the frame's command buffer: it waits for the frame's work so far through
+    /// `upscaleFence`, and the next encoder (its queue barrier) for it. Metal 3's between two of the frame's command
+    /// buffers, in an interlude (see Upscaler.init).
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String) {
-        interlude(pass) { upscaler.encode(into: $0, inputs) }
+        guard upscaler.metal4 else {
+            interlude(pass) { upscaler.encode(into: $0, inputs) }
+            return
+        }
+        guard let enc = encoder(pass, newBuffer: true), let cb = cmd else { return }
+        upscaler.resources(inputs).forEach(keep)
+        enc.updateFence(upscaleFence, afterEncoderStages: Metal4Frame.stages)
+        endCompute()
+        upscaler.encode(into: cb, inputs, fence: upscaleFence)
     }
 
     /// The Metal 3 interpolator too, with the copy of the frame's picture (one interlude).
@@ -418,9 +430,10 @@ final class Metal4Frame: FrameEncoder, ComputePass {
             self.completed = completed
         }
 
+        /// `start` 0: the command buffer reported none (one whose work is all MetalFX's Metal 4 scaler's).
         func add(name: String?, start: CFTimeInterval, end: CFTimeInterval) {
             lock.lock()
-            times.start = min(times.start, start)
+            if start > 0 { times.start = min(times.start, start) }
             times.end = max(times.end, end)
             if let name { times.passes.append((name, start, end)) }
             left -= 1
@@ -431,6 +444,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
         func finish() {
             if times.start == .infinity { times.start = 0 }
+            // A pass without a start began when the one before it ended (split passes run one after another).
+            for (i, p) in times.passes.enumerated() where p.start == 0 {
+                let before = times.passes.filter { $0.start > 0 && $0.end <= p.end }.map(\.end).max()
+                times.passes[i].start = before ?? p.end
+            }
             completed(times)
         }
     }

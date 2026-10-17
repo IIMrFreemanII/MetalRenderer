@@ -49,7 +49,7 @@ final class FrameInterpolator {
         d.depthTextureFormat = RenderTargets.upscaleDepthFormat
         d.motionTextureFormat = RenderTargets.upscaleMotionFormat
         (d.inputWidth, d.inputHeight, d.outputWidth, d.outputHeight) = (inputWidth, inputHeight, outputWidth, outputHeight)
-        d.scaler = upscaler.scaler as? MTLFXFrameInterpolatableScaler
+        d.scaler = upscaler.metal4 ? nil : upscaler.scaler as? MTLFXFrameInterpolatableScaler   // (a Metal 3 interpolator)
         guard let interpolator = d.makeFrameInterpolator(device: device) else {
             throw RendererError.resourceCreation("MetalFX frame interpolator \(inputWidth)×\(inputHeight) → \(outputWidth)×\(outputHeight)")
         }
