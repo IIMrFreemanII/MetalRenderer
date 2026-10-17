@@ -111,6 +111,17 @@ final class WorldTests: XCTestCase {
 
     /// The trees of a square are the trees of its parts: asking for another square moves none. They stand on the
     /// ground, in their own tile, and none in a city.
+    func testTheWorldBakesItsPlantsWhileNoLeavesFall() {
+        let world = SceneSettings(kind: .world)
+        XCTAssertTrue(Scene.bakesPlants(world, leafFall: Scene.leafFall(season: 0.3)), "summer: baked, a level of instancing fewer")
+        XCTAssertFalse(Scene.bakesPlants(world, leafFall: Scene.leafFall(season: 0.8)), "leaves falling: only assemblies drop them")
+        var cards = world; cards.leafCards = true
+        XCTAssertFalse(Scene.bakesPlants(cards, leafFall: 0), "only assemblies have cards")
+        var voxels = world; voxels.voxelBoxes = true
+        XCTAssertFalse(Scene.bakesPlants(voxels, leafFall: 0))
+        XCTAssertFalse(Scene.bakesPlants(SceneSettings(kind: .forest), leafFall: 0), "the forest moves in the wind")
+    }
+
     func testTreesStandWhereTheWorldPutsThem() throws {
         let side = Double(World.tileSize)
         let whole = world.trees(x0: 512, z0: -1024, side: 2 * side, flora: flora)
