@@ -11,7 +11,7 @@ extension Benchmark {
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
-        "hwrt": hwrt, "hwrtq": hwrtq, "api": api,
+        "hwrt": hwrt, "hwrtq": hwrtq, "api": api, "interp": interp,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
@@ -1034,6 +1034,36 @@ extension Benchmark {
             }
         }
         return out
+    }
+
+    /// Frame interpolation (FrameInterpolator): what it costs, and how close its in-between picture comes to a frame
+    /// really rendered at that moment (Tools/eval/interp.py). Per scene, the app's look, the animation running and the
+    /// camera on a 4 s track (eased at its keys, so at full speed at 2 s):
+    /// * "<scene> 30 fps": frames 1/30 s apart, interpolated. Its last frame is at 2 s of the track, the one before it
+    ///   is `-prev`, and the in-between picture before the last is `-interp` (at 2 s - 1/60).
+    /// * "<scene> 60 fps between": frames 1/60 s apart, not interpolated, ending where the in-between picture is.
+    /// * "<scene> 60 fps last": the same one frame longer, ending with the 30 fps setting's last frame: how close two
+    ///   runs come at the same moment (the scores' ceiling).
+    /// The 60 fps settings start their animation so that it is where the 30 fps one's is at the same moment.
+    private static func interp() -> [Config] {
+        let n = 61   // measured 30 fps frames: the last at 2 s of the track
+        let warmup = 60   // Benchmark.warmupFrames
+        func key(_ time: Float, _ c: Camera) -> CameraTrack.Key { .init(time: time, position: c.position, target: c.position + c.forward) }
+        func set(_ name: String, _ base: Config, _ track: CameraTrack) -> [Config] {
+            var fast = base.named("\(name) 30 fps").track(track).step(1.0 / 30).frames(n).with { $0.frameInterpolation = .on }
+            fast.capturePrevious = true
+            // Frame k of a setting (warm-up included) shows the animation at startTime + (k + 1) steps.
+            let end = base.startTime + Float(warmup + n) / 30
+            var slow = base.track(track).with { $0.frameInterpolation = .off }
+            slow.startTime = end - Float(warmup + 2 * n - 1) / 60
+            return [fast, slow.named("\(name) 60 fps between").frames(2 * n - 2), slow.named("\(name) 60 fps last").frames(2 * n - 1)]
+        }
+        let cornell = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades)
+        let forest = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .forest))
+        let walk = CameraTrack([.init(time: 0, position: [-8, 1.6, -7.5], target: [10, 3, -30]),
+                                .init(time: 4, position: [0, 1.6, -13.5], target: [10, 3, -30])])
+        return set("cornell", cornell, CameraTrack([key(0, cameraPose(progress: 0)), key(4, cameraPose(progress: 1))]))
+            + set("forest", forest, walk)
     }
 
     /// White- and blue-noise sampling next to converged references, all at t = 5 s (Tools/eval/noise.py). "moving" runs

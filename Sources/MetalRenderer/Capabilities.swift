@@ -8,6 +8,7 @@ struct Capabilities: Equatable {
     var metalRayTracing = true      // Metal's acceleration structures and intersector: the renderer needs them
     var hardwareRayTracing = true   // ... traversed by ray-tracing hardware (Apple9: M3, A17 Pro and later), not in software
     var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26): the upscaler
+    var frameInterpolator = true    // MetalFX frame interpolator (macOS 26): an in-between picture each frame
     var metal4 = true               // Metal 4's command queue, argument tables and compiler (macOS 26)
     /// Metal 4's acceleration structures, for Metal ray tracing on Metal 4. Metal has no query for it, only a validation
     /// error ("this device does not support Metal 4 ray tracing", M1 Max); the M4 Max, with ray-tracing hardware, has it.
@@ -18,17 +19,19 @@ struct Capabilities: Equatable {
 
     init() {}
 
-    /// `METALRENDERER_CAPS="rt,denoiser"` keeps only the capabilities it names (rt, hwrt, denoiser, metal4;
+    /// `METALRENDERER_CAPS="rt,denoiser"` keeps only the capabilities it names (rt, hwrt, denoiser, interpolator, metal4;
     /// `none` keeps nothing), to try the fallbacks on a GPU that has them all.
     init(device: MTLDevice, env: [String: String] = ProcessInfo.processInfo.environment) {
         metalRayTracing = device.supportsRaytracing
         hardwareRayTracing = metalRayTracing && device.supportsFamily(.apple9)
         if #available(macOS 26.0, *) {
             metalFXDenoiser = MTLFXTemporalDenoisedScalerDescriptor.supportsDevice(device)
+            frameInterpolator = MTLFXFrameInterpolatorDescriptor.supportsDevice(device)
             metal4 = device.supportsFamily(.metal4)
             metal4RayTracing = metal4 && hardwareRayTracing
         } else {
             metalFXDenoiser = false
+            frameInterpolator = false
             metal4 = false
             metal4RayTracing = false
         }
@@ -36,6 +39,7 @@ struct Capabilities: Equatable {
             metalRayTracing = metalRayTracing && keep.contains("rt")
             hardwareRayTracing = hardwareRayTracing && metalRayTracing && keep.contains("hwrt")
             metalFXDenoiser = metalFXDenoiser && keep.contains("denoiser")
+            frameInterpolator = frameInterpolator && keep.contains("interpolator")
             metal4 = metal4 && keep.contains("metal4")
             metal4RayTracing = metal4RayTracing && metal4 && hardwareRayTracing
         }
@@ -45,7 +49,8 @@ struct Capabilities: Equatable {
     var summary: String {
         func mark(_ on: Bool) -> String { on ? "yes" : "no" }
         let rt = !metalRayTracing ? "no" : hardwareRayTracing ? "hardware" : "software"
-        return "Metal ray tracing: \(rt), MetalFX denoiser: \(mark(metalFXDenoiser)), Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing)))"
+        return "Metal ray tracing: \(rt), MetalFX denoiser: \(mark(metalFXDenoiser)), frame interpolator: \(mark(frameInterpolator)), "
+            + "Metal 4: \(mark(metal4)) (ray tracing: \(mark(metal4RayTracing)))"
     }
 }
 
@@ -55,6 +60,7 @@ extension RenderSettings {
         var needs: [String] = []
         if !caps.metalRayTracing { needs.append("Metal ray tracing") }
         if upscaleFactor > 1 && !caps.metalFXDenoiser { needs.append("the MetalFX denoiser") }
+        if upscaleFactor > 1 && frameInterpolation == .on && !caps.frameInterpolator { needs.append("the MetalFX frame interpolator") }
         if api == .metal4 && !caps.metal4 { needs.append("Metal 4") }
         if api == .metal4 && caps.metalRayTracing && caps.metal4 && !caps.metal4RayTracing {
             needs.append("Metal 4 ray tracing")
@@ -69,6 +75,10 @@ extension RenderSettings {
         if s.upscaleFactor > 1 && !caps.metalFXDenoiser {
             s.upscaleFactor = 0
             notes.append("The MetalFX denoiser is not supported on this GPU or system: upscaling is off, SVGF denoises")
+        }
+        if s.frameInterpolation != .off && !caps.frameInterpolator {
+            if s.frameInterpolation == .on { notes.append("The MetalFX frame interpolator is not supported on this GPU or system: it is off") }
+            s.frameInterpolation = .off
         }
         if s.api == .metal4 && !caps.metal4 {
             s.api = .metal3
