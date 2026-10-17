@@ -25,6 +25,7 @@ using namespace metal::raytracing;
 #include "Shaders/LightTree.metal"         // the path tracer's many lights: a bounding hierarchy, drawn by importance
 #include "Shaders/Fog.metal"               // volumetric fog: fogInject / fogIntegrate / fogReference
 #include "Shaders/Sky.metal"               // atmosphere, clouds, the sky map and its noise
+#include "Shaders/Mips.metal"              // mip chains under Metal 4: 2x2 means (Metal4Frame.generateMipmaps)
 #include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
 #include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/Liquid.metal"            // liquidKernel: camera rays bent through liquids, liquidApplyKernel

@@ -68,7 +68,8 @@ Frames overlapping as in the app (the benchmark's wait off), one command buffer 
 - **Scene loads** build their BLASes on a Metal 3 queue in the background (`SceneBuffers`, `VirtualTracing`'s
   placeholder, `MaterialTextures`). Virtual geometry's case says Metal 3 work beside the frames isn't enough to hang
   them, so this is probably fine; untested beyond the realism switches above and the open world's swaps.
-- The mips as Metal 4 compute (above): about 9% of the open world's frame rate under Metal 4.
+- ~~The mips as Metal 4 compute~~: done (2026-10-17, `Shaders/Mips.metal`): bilinear samples, the blit's bits; Metal 4
+  frames 6-14% faster in the world and the Forest. MetalFX's interlude is the one left each frame.
 
 ## Reproducing
 The temporary benchmark mode (not committed):

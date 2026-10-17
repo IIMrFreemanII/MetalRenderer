@@ -224,10 +224,33 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         self.enc = nil
     }
 
-    /// Through the Metal 3 queue: on macOS 26.5 Metal 4's `generateMipmaps` keeps one texel of each 2x2 (or 2x2x2)
-    /// instead of their mean, for every texture type and format tried (a ramp of 0...1 ends in a 1x1 level of 0.98, not
-    /// 0.49). The sky's mips are its means (they light the scene), so the frames differed from Metal 3's.
+    /// The mip kernels (Shaders/Mips.metal), set by the renderer with each frame: 2D textures', 2D arrays'.
+    var mipKernels: (flat: MTLComputePipelineState, array: MTLComputePipelineState)?
+
+    /// On macOS 26.5 Metal 4's `generateMipmaps` keeps one texel of each 2x2 (or 2x2x2) instead of their mean, for
+    /// every texture type and format tried (a ramp of 0...1 ends in a 1x1 level of 0.98, not 0.49). The sky's mips are
+    /// its means (they light the scene), so the frames differed from Metal 3's. 2D textures and arrays (the sky's, the
+    /// water's: every frame) get theirs from mipKernels in the frame's own encoder, one level after another; others
+    /// (the clouds' 3D noise, made once) through the Metal 3 queue, in an interlude: each one left the GPU idle about
+    /// 0.15 ms between the Metal 4 work before it and the blit.
     func generateMipmaps(_ textures: [MTLTexture], pass: String) {
+        if let kernels = mipKernels, textures.allSatisfy({ $0.textureType == .type2D || $0.textureType == .type2DArray }) {
+            guard let enc = compute(pass, serial: true) else { return }
+            for texture in textures {
+                let flat = texture.textureType == .type2D
+                for level in 0..<max(texture.mipmapLevelCount - 1, 0) {
+                    var l = UInt32(level)
+                    enc.setComputePipelineState(flat ? kernels.flat : kernels.array)
+                    enc.setTexture(texture, index: 0)   // sampled at level l
+                    enc.setTexture(texture, index: 1)   // written at level l + 1
+                    enc.setBytes(&l, length: MemoryLayout<UInt32>.stride, index: 0)
+                    enc.dispatchThreads(MTLSize(width: max(texture.width >> (level + 1), 1), height: max(texture.height >> (level + 1), 1),
+                                                depth: flat ? 1 : texture.arrayLength),
+                                        threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+                }
+            }
+            return
+        }
         interlude(pass) { cb in
             guard let blit = cb.makeBlitCommandEncoder() else { return }
             for texture in textures { blit.generateMipmaps(for: texture) }

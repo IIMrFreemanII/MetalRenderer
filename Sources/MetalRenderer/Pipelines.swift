@@ -17,6 +17,7 @@ enum Kernel: Int, CaseIterable {
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
+    case mipDown2D, mipDown2DArray   // mip chains under Metal 4 (Shaders/Mips.metal)
     case composite, accumulateColor, tonemap
     case taaResolve             // temporal AA without upscaling (Post.metal)
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
