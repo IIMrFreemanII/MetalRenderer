@@ -2818,10 +2818,12 @@ final class Renderer: NSObject {
         if !size.upscaling {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
-                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight {
+                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight || upscaler!.metal4 != (builtAPI == .metal4 && Upscaler.metal4Available) {
             do {
-                upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height,
-                                        outputWidth: outWidth, outputHeight: outHeight, synchronous: benchmark != nil)
+                var compiler: AnyObject?   // Metal 4's, for MetalFX's Metal 4 scaler
+                if #available(macOS 26.0, *), builtAPI == .metal4 { compiler = metal4?.compiler }
+                upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height, outputWidth: outWidth,
+                                        outputHeight: outHeight, synchronous: benchmark != nil, compiler: compiler)
                 upscalerReset = true
                 interpolator = nil   // it reads the scaler's depth and motion: made again with it
                 historyValid = false   // the denoising scaler comes or goes: SVGF's history is not this frame's

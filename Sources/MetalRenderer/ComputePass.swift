@@ -113,9 +113,14 @@ extension PrimitiveWork {
 /// Per-mesh work Metal 4 encodes in the frame's own encoder (Metal4Frame.updatePrimitives), side by side, rather
 /// than through the Metal 3 queue between the frame's command buffers: the plants' refits, the particles' build.
 protocol PrimitiveWork4: PrimitiveWork {
+    /// Whether this one can (else it goes through the Metal 3 queue after all).
+    var encodes4: Bool { get }
     /// Encodes all of it into `enc`; `keep` makes what it touches resident.
     @available(macOS 26.0, *)
     func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void)
+}
+extension PrimitiveWork4 {
+    var encodes4: Bool { true }
 }
 
 /// This frame's refit of the per-mesh structures that deform (the crowd's pose slots): each keeps its tree and takes
@@ -145,6 +150,84 @@ struct PrimitiveRefit: PrimitiveWork {
         }
         for r in rebuilt {
             enc.build(accelerationStructure: r.structure, descriptor: r.descriptor, scratchBuffer: scratch, scratchBufferOffset: r.scratchOffset)
+        }
+    }
+}
+
+/// Metal 4: in the frame's own encoder when it only rebuilds (a liquid's surfaces), rather than through the Metal 3
+/// queue between the frame's command buffers (an interlude, which leaves the GPU idle around it). Not refits: on
+/// macOS 27.0.1 a Metal 4 refit of a structure Metal 3 built lost its triangles (the water's near patch missing from
+/// every frame), and of one Metal 4 had built came out stale after a change of scene, while a Metal 4 build matched
+/// Metal 3's frames bit for bit. And building the near patch every frame instead of refitting it cost Metal 4 frames
+/// 0.3-0.5 ms more than its interlude does. So refits (the near patch, the crowd's poses) stay on the Metal 3 queue.
+extension PrimitiveRefit: PrimitiveWork4 {
+    /// Triangles and curves only, and nothing to refit.
+    var encodes4: Bool {
+        guard #available(macOS 26.0, *), structures.isEmpty else { return false }
+        return (descriptors + rebuilt.map(\.descriptor)).allSatisfy { d in
+            d.motionKeyframeCount <= 1 && (d.geometryDescriptors ?? []).allSatisfy {
+                ($0 is MTLAccelerationStructureTriangleGeometryDescriptor || $0 is MTLAccelerationStructureCurveGeometryDescriptor)
+                    && $0.primitiveDataBuffer == nil
+            }
+        }
+    }
+
+    @available(macOS 26.0, *)
+    func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
+        keep(scratch)
+        func range(_ buffer: MTLBuffer, _ offset: Int) -> MTL4BufferRange {
+            keep(buffer)
+            return MTL4BufferRange(bufferAddress: buffer.gpuAddress + UInt64(offset), length: UInt64(buffer.length - offset))
+        }
+        func metal4(_ d: MTLPrimitiveAccelerationStructureDescriptor) -> MTL4PrimitiveAccelerationStructureDescriptor {
+            let out = MTL4PrimitiveAccelerationStructureDescriptor()
+            out.usage = d.usage
+            out.geometryDescriptors = (d.geometryDescriptors ?? []).map { g -> MTL4AccelerationStructureGeometryDescriptor in
+                if let t = g as? MTLAccelerationStructureTriangleGeometryDescriptor {
+                    let n = MTL4AccelerationStructureTriangleGeometryDescriptor()
+                    if let v = t.vertexBuffer { n.vertexBuffer = range(v, t.vertexBufferOffset) }
+                    n.vertexStride = t.vertexStride
+                    n.vertexFormat = t.vertexFormat
+                    if let i = t.indexBuffer { n.indexBuffer = range(i, t.indexBufferOffset) }
+                    n.indexType = t.indexType
+                    n.triangleCount = t.triangleCount
+                    n.opaque = t.opaque
+                    n.allowDuplicateIntersectionFunctionInvocation = t.allowDuplicateIntersectionFunctionInvocation
+                    n.intersectionFunctionTableOffset = t.intersectionFunctionTableOffset
+                    return n
+                }
+                let c = g as! MTLAccelerationStructureCurveGeometryDescriptor
+                let n = MTL4AccelerationStructureCurveGeometryDescriptor()
+                if let p = c.controlPointBuffer { n.controlPointBuffer = range(p, c.controlPointBufferOffset) }
+                n.controlPointCount = c.controlPointCount
+                n.controlPointStride = c.controlPointStride
+                n.controlPointFormat = c.controlPointFormat
+                if let r = c.radiusBuffer { n.radiusBuffer = range(r, c.radiusBufferOffset) }
+                n.radiusStride = c.radiusStride
+                n.radiusFormat = c.radiusFormat
+                if let i = c.indexBuffer { n.indexBuffer = range(i, c.indexBufferOffset) }
+                n.indexType = c.indexType
+                n.segmentCount = c.segmentCount
+                n.segmentControlPointCount = c.segmentControlPointCount
+                n.curveType = c.curveType
+                n.curveBasis = c.curveBasis
+                n.curveEndCaps = c.curveEndCaps
+                n.opaque = c.opaque
+                n.allowDuplicateIntersectionFunctionInvocation = c.allowDuplicateIntersectionFunctionInvocation
+                n.intersectionFunctionTableOffset = c.intersectionFunctionTableOffset
+                return n
+            }
+            return out
+        }
+        // Each structure's scratch runs to the next one's offset (they share the buffer).
+        let offsets = rebuilt.map(\.scratchOffset).sorted()
+        func scratchRange(_ offset: Int) -> MTL4BufferRange {
+            let end = offsets.first { $0 > offset } ?? scratch.length
+            return MTL4BufferRange(bufferAddress: scratch.gpuAddress + UInt64(offset), length: UInt64(end - offset))
+        }
+        for r in rebuilt {
+            keep(r.structure)
+            enc.build(destinationAccelerationStructure: r.structure, descriptor: metal4(r.descriptor), scratchBuffer: scratchRange(r.scratchOffset))
         }
     }
 }
