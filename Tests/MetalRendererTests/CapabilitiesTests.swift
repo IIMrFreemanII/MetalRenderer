@@ -7,7 +7,7 @@ final class CapabilitiesTests: XCTestCase {
     private var none: Capabilities {
         var c = Capabilities()
         c.metalRayTracing = false; c.hardwareRayTracing = false
-        c.metalFXDenoiser = false; c.metal4 = false; c.metal4RayTracing = false
+        c.metalFXDenoiser = false; c.frameInterpolator = false; c.metal4 = false; c.metal4RayTracing = false
         return c
     }
 
@@ -77,6 +77,28 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertEqual(few.run.map(\.name), ["plain"])
         XCTAssertEqual(few.skipped.count, 2)
         XCTAssertTrue(few.skipped[1].contains("MetalFX denoiser"))
+    }
+
+    func testFrameInterpolationFallsBackQuietlyUnlessAskedFor() {
+        var caps = Capabilities()
+        caps.frameInterpolator = false
+        XCTAssertNil(settings { $0.upscaleFactor = 3; $0.frameInterpolation = .auto }.missing(in: caps), "Auto needs nothing")
+        XCTAssertNotNil(settings { $0.upscaleFactor = 3; $0.frameInterpolation = .on }.missing(in: caps))
+        XCTAssertNil(settings { $0.upscaleFactor = 0; $0.frameInterpolation = .on }.missing(in: caps), "only with MetalFX's upscaling")
+        var (c, notes) = settings { $0.upscaleFactor = 3; $0.frameInterpolation = .auto }.clamped(to: caps)
+        XCTAssertEqual(c.frameInterpolation, .off)
+        XCTAssertTrue(notes.isEmpty)
+        (c, notes) = settings { $0.upscaleFactor = 3; $0.frameInterpolation = .on }.clamped(to: caps)
+        XCTAssertEqual(c.frameInterpolation, .off)
+        XCTAssertEqual(notes.count, 1)
+    }
+
+    func testAutoInterpolatesOnlyWhileBothPicturesCanShow() {
+        let refresh = 1000.0 / 120
+        XCTAssertFalse(FrameInterpolation.autoOn(frameMs: 10, refreshMs: refresh, was: false), "faster than half the display's rate")
+        XCTAssertTrue(FrameInterpolation.autoOn(frameMs: 20, refreshMs: refresh, was: false))
+        XCTAssertTrue(FrameInterpolation.autoOn(frameMs: 16, refreshMs: refresh, was: true), "stays on a little below where it came on")
+        XCTAssertFalse(FrameInterpolation.autoOn(frameMs: 14, refreshMs: refresh, was: true))
     }
 
     func testAPINamesReadBack() {

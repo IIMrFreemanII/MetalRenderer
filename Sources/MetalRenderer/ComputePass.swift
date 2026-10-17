@@ -158,6 +158,13 @@ struct UpscaleInputs {
     let reset: Bool
 }
 
+/// A drawable a frame presents: at once, or (frame interpolation's two pictures) once the one before it has shown for
+/// at least `after` seconds.
+struct Presentation {
+    let drawable: CAMetalDrawable
+    var after: CFTimeInterval? = nil
+}
+
 /// When a frame's GPU work ran: the whole frame, and with a benchmark's split passes each pass's command buffer.
 struct FrameTimes {
     var start: CFTimeInterval = 0
@@ -186,10 +193,14 @@ protocol FrameEncoder: AnyObject {
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
     /// MetalFX's denoising scaler, into its own texture (`Upscaler.hdrOutput`), which tonemapKernel then reads.
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String)
+    /// MetalFX's frame interpolator: the picture between the last frame's and this one's into `between`, and this
+    /// frame's into `own` (FrameInterpolator.encode).
+    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, own: MTLTexture, between: MTLTexture?, pass: String)
     /// Copies `texture` (4 bytes a pixel) into `buffer`, for a benchmark's PNG.
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer)
-    /// Presents `drawable` and commits. `completed` runs on another thread once the GPU is done; `wait` blocks until then.
-    func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void)
+    /// Presents the drawables, in order, and commits. `completed` runs on another thread once the GPU is done; `wait`
+    /// blocks until then.
+    func commit(presenting drawables: [Presentation], wait: Bool, completed: @escaping (FrameTimes) -> Void)
     /// `resources` are no longer used by any frame (Metal 3 tracks what each one uses: nothing to do).
     func release(_ resources: [MTLResource])
 }
@@ -198,6 +209,9 @@ extension FrameEncoder {
     func release(_ resources: [MTLResource]) {}
     func compute(_ name: String) -> ComputePass? { compute(name, serial: false, concurrent: false) }
     func compute(_ name: String, serial: Bool) -> ComputePass? { compute(name, serial: serial, concurrent: false) }
+    func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void) {
+        commit(presenting: drawable.map { [Presentation(drawable: $0)] } ?? [], wait: wait, completed: completed)
+    }
 
     /// Runs stages in order, each in its named pass (consecutive stages of one pass share it).
     func run(_ stages: [ComputeStage]) {
@@ -308,6 +322,11 @@ final class Metal3Frame: FrameEncoder {
         upscaler.encode(into: buffer(pass), inputs)
     }
 
+    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, own: MTLTexture, between: MTLTexture?, pass: String) {
+        endCompute()
+        interpolator.encode(into: buffer(pass), inputs, own: own, between: between)
+    }
+
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
         endCompute()
         guard let blit = cmd.makeBlitCommandEncoder() else { return }
@@ -318,9 +337,11 @@ final class Metal3Frame: FrameEncoder {
         blit.endEncoding()
     }
 
-    func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void) {
+    func commit(presenting drawables: [Presentation], wait: Bool, completed: @escaping (FrameTimes) -> Void) {
         endCompute()
-        if let drawable { cmd.present(drawable) }
+        for p in drawables {
+            if let after = p.after { cmd.present(p.drawable, afterMinimumDuration: after) } else { cmd.present(p.drawable) }
+        }
         let buffers = buffers
         cmd.addCompletedHandler { cb in
             var times = FrameTimes(start: cb.gpuStartTime, end: cb.gpuEndTime)

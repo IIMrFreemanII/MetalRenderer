@@ -17,6 +17,9 @@ protocol RenderSurface: AnyObject {
     var title: String? { get set }
     /// False while nothing would show the frames (the window hidden or minimized): the renderer then draws none.
     var isVisible: Bool { get }
+    /// The display's time between refreshes in seconds, for frame interpolation's Auto; nil without a display that
+    /// paces the frames (offscreen, a benchmark's window).
+    var refreshInterval: CFTimeInterval? { get }
 }
 
 struct FrameOutput {
@@ -32,6 +35,7 @@ final class LayerSurface: RenderSurface {
     private var points = CGSize(width: 1280, height: 800)
     private var scale: CGFloat = 2
     private var visible = true
+    private var refreshRate = 60
     private var titleText: String?
     /// The window whose title `title` sets. Main thread.
     weak var window: NSWindow?
@@ -50,9 +54,9 @@ final class LayerSurface: RenderSurface {
         }
     }
 
-    /// The view's size and its screen's scale (main thread, on every change).
-    func setSize(_ points: CGSize, backingScale: CGFloat) {
-        lock.lock(); self.points = points; scale = backingScale; lock.unlock()
+    /// The view's size, its screen's scale and its screen's highest refresh rate (main thread, on every change).
+    func setSize(_ points: CGSize, backingScale: CGFloat, refreshRate: Int) {
+        lock.lock(); self.points = points; scale = backingScale; self.refreshRate = max(refreshRate, 1); lock.unlock()
     }
     var pointSize: CGSize { lock.lock(); defer { lock.unlock() }; return points }
     // Not the layer's contentsScale: the drawable has the render size, and the layer stretches it.
@@ -61,6 +65,11 @@ final class LayerSurface: RenderSurface {
     var isVisible: Bool {
         get { lock.lock(); defer { lock.unlock() }; return visible }
         set { lock.lock(); visible = newValue; lock.unlock() }
+    }
+    var refreshInterval: CFTimeInterval? {
+        guard layer.displaySyncEnabled else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        return 1 / Double(refreshRate)
     }
     var outputSize: CGSize {
         get { layer.drawableSize }
@@ -98,6 +107,7 @@ final class OffscreenSurface: RenderSurface {
     var outputSize: CGSize = .zero
     var title: String?
     let isVisible = true
+    let refreshInterval: CFTimeInterval? = nil
     private let device: MTLDevice
     private var ring: [MTLTexture] = []
     private var next = 0

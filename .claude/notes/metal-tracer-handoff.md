@@ -74,6 +74,39 @@ Capability line: `Metal ray tracing: hardware, MetalFX denoiser: yes, Metal 4: y
     mesh lights 15, cascades 27 + 47, reflections 54; the per-frame box structure (`vg`) only 1.7 ms. The cost is the
     software cluster walk in every ray query, so its relative cost grew as hardware RT made everything else fast.
 
+## Where the M4 Max's frame goes (2026-10-17, main at `b229576`)
+The passes on their own (split mode, release, one run each, ms; Metal 3 / Metal 4 where they differ):
+
+| Setting | Frame | Biggest passes |
+|---|---|---|
+| `shot` (default look, MetalFX 640×400 → 1920×1200) | 2.27 | MetalFX 1.76, trace 0.19, rc trace 0.17 |
+| `showcase` Android Battle Maiden camera (3x) | 4.42 | MetalFX 1.66, many lights 0.45, reflections 0.40, rc probes 0.39, particles 0.27 |
+| `forest static` (960×600) | 8.18 / 7.38 | trace 2.88, rc trace 1.53, reflections 0.83 / 0.66, fog 0.53 / 0.33 |
+| `forest moving 3x` | 8.69 / 6.61 | wind 1.91 / 0.13, MetalFX 1.64, trace 1.55, rc trace 1.00 |
+| `world start` (960×600) | 5.61 / 4.64 | reflections 0.83 / 0.73, trace 0.74, rc trace 0.66, glass 0.61 |
+| `world woods` | 6.54 / 4.39 | trace 1.59 / 1.20, rc trace 0.94 / 0.71, reflections 0.50 / 0.29 |
+| `world flight 3x` | 7.01 / 6.85 | trace 1.62, MetalFX 1.50, rc trace 0.85, water 0.55 |
+
+- **With MetalFX on, it is most of the frame:** 77% of the default look, 38% of the showcase. Nothing in our own
+  passes moves those frames much. MetalFX's frame interpolation came next (`FrameInterpolator`, README "Frame
+  interpolation"): +1.21 ms a rendered frame, twice the frames shown. It is only worth it below half the display's
+  rate (Auto); this Mac's display is 120 Hz.
+- **At native resolution, the ray-tracing passes are about half the frame:** trace, rc trace, reflections and glass.
+- **Traversal is already cheap.** `METALRENDERER_RT_STATS=1` counts the triangles Metal hands the queries (all of
+  them non-opaque in that build):
+  - forest: 0.7 triangle candidates a ray (camera 1.3, shadow 0.5, GI 0.2);
+  - world: 0.2–0.3 a ray;
+  - no box candidates in either.
+  So these passes pay for shading (materials, textures, light sampling), not for finding hits.
+- **Leaf cards (forestcheck `cards`, 11.3 ms against 4.4)** only cost that where cards are switched on: the default
+  forest and world have none.
+- **No GPU counters:** `xctrace record --template 'Metal System Trace'` records them with "Counter Set: (null)", so a
+  pass's limiter (ALU, texture, occupancy) needs a capture with a counter set chosen in Instruments or Xcode.
+- **Fast math against relaxed math:** forest static's trace passes within 1%. `METALRENDERER_MATH=safe` doesn't start
+  here: the compiler service drops its connection compiling the shaders ("XPC_ERROR_CONNECTION_INTERRUPTED").
+- **Split mode's per-pass sums aren't whole frames.** Metal 4's sums seem to leave out the mips in its interludes
+  (water waves 0.30 → 0.15). So its lower totals here aren't a Metal 4 win: whole frames are 3–10% slower on it (above).
+
 ## To do on the M4 Max, in order (1, 2, 3 and 6 done on 2026-10-07: see above)
 1. Check the capability line (hardware RT, Metal 4 ray tracing: yes?).
 2. Run the related suites (`.claude/skills/tests/scripts/related.sh --base main`) — the Metal 4 + RT path has

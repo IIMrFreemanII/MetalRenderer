@@ -608,6 +608,9 @@ final class Renderer: NSObject {
     private(set) var statsLine = ""
     private var upscaler: Upscaler?           // MetalFX's denoising scaler, while upscaling
     private var upscalerReset = true          // drop the upscaler's history on the next frame
+    private var interpolator: FrameInterpolator?   // MetalFX's frame interpolator, while upscaling with it on
+    private var interpolating = false         // the last frame presented an in-between picture (Auto's switch)
+    private var smoothedFrameMs = 0.0         // the time between frames, smoothed: Auto's switch and the pictures' pacing
     private var supersampling = false         // benchmark reference: jitter + average the final colour
     private var colorAccum: MTLTexture?
     private var colorAccumCount: UInt32 = 0
@@ -1483,7 +1486,8 @@ final class Renderer: NSObject {
                                        albedo: SIMD3(v[1].x, v[1].y, v[1].z), position: SIMD3(v[2].x, v[2].y, v[2].z)))
     }
 
-    private func encodeGizmos(_ output: MTLTexture, slot: Int, passes: FrameEncoder) {
+    private func encodeGizmos(_ outputs: [MTLTexture], slot: Int, passes: FrameEncoder) {
+        guard let output = outputs.first else { return }
         var segments = painterRingSegments() + terrainRingSegments() + selectionSegments()   // the brushes, what the graph showed
         if let target = gizmoTarget, let gpu = particlesGPU {
             let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
@@ -1508,8 +1512,10 @@ final class Renderer: NSObject {
         enc.setComputePipelineState(pipelines[.gizmoLines])
         enc.setBytes(&view, length: MemoryLayout<VFXGizmos.View>.stride, index: 0)
         enc.setBuffer(buffer, offset: 0, index: 1)
-        enc.setTexture(output, index: 0)
-        dispatch(enc, .gizmoLines, width: Int(VFXGizmos.samples), height: segments.count)
+        for output in outputs {   // the frame's picture, and the in-between one before it
+            enc.setTexture(output, index: 0)
+            dispatch(enc, .gizmoLines, width: Int(VFXGizmos.samples), height: segments.count)
+        }
         passes.endCompute()
     }
 
@@ -2723,7 +2729,8 @@ final class Renderer: NSObject {
 
         encode(stages, plan: plan, passes: passes)
         let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: passes)
-        commit(plan, passes: passes, profile: profile, output: output.output, encodeStart: encodeStart + output.wait)
+        commit(plan, passes: passes, profile: profile, output: output.output, between: output.between,
+               encodeStart: encodeStart + output.wait)
 
         finishFrame(plan)
         updateTitle(width: size.width, height: size.height, outWidth: size.outWidth, outHeight: size.outHeight)
@@ -2744,6 +2751,7 @@ final class Renderer: NSObject {
         let drawStart = CACurrentMediaTime()
         if let last = lastDrawTime {
             frameIntervalMs = (drawStart - last) * 1000
+            smoothedFrameMs = smoothedFrameMs == 0 ? frameIntervalMs : smoothedFrameMs * 0.9 + min(frameIntervalMs, 250) * 0.1
             frameIntervalSum += frameIntervalMs
             frameIntervalCount += 1
         }
@@ -2808,6 +2816,7 @@ final class Renderer: NSObject {
                 upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height,
                                         outputWidth: outWidth, outputHeight: outHeight, synchronous: benchmark != nil)
                 upscalerReset = true
+                interpolator = nil   // it reads the scaler's depth and motion: made again with it
                 historyValid = false   // the denoising scaler comes or goes: SVGF's history is not this frame's
             } catch {
                 print(error)
@@ -2816,7 +2825,33 @@ final class Renderer: NSObject {
                 return false
             }
         }
+        if let upscaler, settings.frameInterpolation != .off, Capabilities.current.frameInterpolator {
+            if interpolator == nil {
+                do {
+                    interpolator = try FrameInterpolator(device: device, upscaler: upscaler)
+                } catch {
+                    print(error)
+                    settings.frameInterpolation = .off
+                }
+            }
+        } else {
+            interpolator = nil
+        }
         return true
+    }
+
+    /// Whether this frame presents an in-between picture before its own: On always, Auto while frames take over two of
+    /// the display's refreshes (both pictures then show; faster, they would hold the frames back to half the display's
+    /// rate). Never without a display that paces the frames, except On (benchmarks).
+    private func interpolatesFrame(on surface: RenderSurface) -> Bool {
+        guard interpolator != nil else { return false }
+        switch settings.frameInterpolation {
+        case .off: return false
+        case .on: return true
+        case .auto:
+            guard let refresh = surface.refreshInterval else { return false }
+            return FrameInterpolation.autoOn(frameMs: smoothedFrameMs, refreshMs: refresh * 1000, was: interpolating)
+        }
     }
 
     /// Advances the clock, the camera and the scene's animation by one frame.
@@ -2977,6 +3012,7 @@ final class Renderer: NSObject {
         var jitter = SIMD2<Float>()
         var uniforms = Uniforms()               // what every kernel gets (the composite adds flags: CompositeInputs)
         var view = Upscaler.View()              // the camera as matrices (MetalFX's denoising scaler)
+        var interpolate = false                 // an in-between picture before the frame's own (FrameInterpolator)
         var accumulating = false                // benchmark reference: raw frames are averaged instead of denoised
         var splitPasses = false                 // benchmark: a command buffer per pass, so its GPU time can be read back
         var overlap = false                     // one concurrent encoder: the cascades and the denoisers overlap on the GPU
@@ -3070,6 +3106,7 @@ final class Renderer: NSObject {
         // average 1024 jittered frames.
         if neuralDenoise {
             p.view = Upscaler.View(worldToView: camera.worldToView, viewToClip: camera.viewToClip(aspect: Float(width) / Float(height)))
+            p.interpolate = surface.map(interpolatesFrame) ?? false
         }
         if Renderer.usesTAA(settings, upscaling: size.upscaling, accumulating: accumulating || supersampling || referenceMode != .off) {
             p.taa = taaTargets(width: width, height: height)
@@ -3475,9 +3512,10 @@ final class Renderer: NSObject {
     }
 
     /// 3c-5. The geometry debug view, the composite and the upscale into the drawable (or the offscreen texture standing
-    /// in for it). Returns it (nil if the surface had none of the right size) and how long the surface took to hand it out.
+    /// in for it). Returns it (nil if the surface had none of the right size), the drawable with the in-between picture
+    /// to present before it (frame interpolation) and how long the surface took to hand them out.
     private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
-                              passes: FrameEncoder) -> (output: FrameOutput?, wait: CFTimeInterval) {
+                              passes: FrameEncoder) -> (output: FrameOutput?, between: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
         // Reference "Path traced": the paths' mean, exposed and tone mapped into the drawable.
         if let pt = plan.pathTrace {
@@ -3492,7 +3530,7 @@ final class Renderer: NSObject {
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
-            return (drawable, drawableWait)
+            return (drawable, nil, drawableWait)
         }
         // 3c. Geometry debug views: their own pass, only while one is shown.
         if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
@@ -3573,7 +3611,12 @@ final class Renderer: NSObject {
             encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
         }
+        // Frame interpolation: the picture goes to the interpolator's texture, and from there into the drawable.
+        let interpolation = plan.interpolate ? interpolator : nil
+        var between: FrameOutput?
+        var drawableWaitAll = drawableWait
         if let drawable, let upscaler {
+            if upscalerReset { interpolator?.reset() }
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
                                                    reset: upscalerReset), pass: "upscale")
             upscalerReset = false
@@ -3589,20 +3632,35 @@ final class Renderer: NSObject {
             // It leaves linear, unbounded light (bent by the heat haze, if any): the lens and the finish, or only the
             // exposure and the tone curve, into the drawable.
             let light = encodeHaze(plan, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], passes: passes)
+            let picture = interpolation?.color ?? drawable.texture
             if let post = plan.post {
                 encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
-                           output: drawable.texture, passes: passes)
+                           output: picture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
                 enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
-                setTextures(enc, [light, drawable.texture])
+                setTextures(enc, [light, picture])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
+            if let interpolation {
+                if interpolation.hasHistory {
+                    let start = CACurrentMediaTime()
+                    between = surface.nextOutput()
+                    drawableWaitAll += CACurrentMediaTime() - start
+                    if let b = between, b.texture.width != size.outWidth || b.texture.height != size.outHeight { between = nil }
+                }
+                passes.interpolate(interpolation, InterpolateInputs(targets: t, view: plan.view, jitter: plan.jitter, deltaTime: frameDt,
+                                                                    fovDegrees: settings.fovDegrees),
+                                   own: drawable.texture, between: between?.texture, pass: "interpolate")
+            }
         }
-        if let drawable { encodeGizmos(drawable.texture, slot: plan.slot, passes: passes) }
+        // The next frame's interpolation starts from this frame's picture only if it went through the interpolator.
+        interpolator?.advance(kept: interpolation != nil && drawable != nil && upscaler != nil)
+        interpolating = interpolation != nil
+        if let drawable { encodeGizmos([drawable.texture] + (between.map { [$0.texture] } ?? []), slot: plan.slot, passes: passes) }
         encodePick(plan, passes: passes)
-        return (drawable, drawableWait)
+        return (drawable, between, drawableWaitAll)
     }
 
     /// 5b. The heat haze (distortion particles: particleDistortKernel): `input`, the frame's linear light at the output
@@ -3665,7 +3723,7 @@ final class Renderer: NSObject {
     /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
     /// `encodeStart`: when the CPU started on this frame, not counting its waits.
     private func commit(_ plan: FramePlan, passes: FrameEncoder, profile: GPUProfiler.Frame?, output: FrameOutput?,
-                        encodeStart: CFTimeInterval) {
+                        between: FrameOutput?, encodeStart: CFTimeInterval) {
         let slot = plan.slot
         var writeCapture: (() -> Void)?
         if let benchmark, benchmark.shouldCapture, let summary = virtualTracing?.summary { print("  " + summary) }
@@ -3690,6 +3748,11 @@ final class Renderer: NSObject {
            let capture = benchmark.capture(of: output.texture, device: device, sequence: !benchmark.shouldCapture) {
             passes.capture(output.texture, into: capture.buffer)
             writeCapture = capture.write
+            if let between, benchmark.shouldCapture,
+               let other = benchmark.capture(of: between.texture, device: device, suffix: "-interp") {
+                passes.capture(between.texture, into: other.buffer)
+                writeCapture = { capture.write(); other.write() }
+            }
         }
         let checkCrowd = benchmark?.shouldCapture == true && CrowdSkinner.checked && !CrowdSkinner.frozen
         let semaphore = frameSemaphore
@@ -3702,7 +3765,17 @@ final class Renderer: NSObject {
         encodeCount += 1
         // Benchmark: finish this frame before encoding the next (`wait`), so passes from consecutive frames
         // never overlap on the GPU and inflate each other's timings.
-        passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
+        // With an in-between picture: it first, then the frame's own, each held for half the time between frames.
+        var presented: [Presentation] = []
+        if let drawable = output?.drawable {
+            if let other = between?.drawable {
+                let half = smoothedFrameMs / 2000
+                presented = [Presentation(drawable: other, after: half), Presentation(drawable: drawable, after: half)]
+            } else {
+                presented = [Presentation(drawable: drawable)]
+            }
+        }
+        passes.commit(presenting: presented, wait: benchmark != nil) { [weak self] frame in
             if !Benchmark.isEnabled {
                 vg?.collect(slot: slot, frame: vgFrame)
                 streamer?.collect(slot: slot)
