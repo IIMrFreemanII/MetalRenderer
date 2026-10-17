@@ -41,13 +41,34 @@ lets them out as soon as no frame uses them (`VirtualBLAS.takeReleased`, `FrameE
 Particle shadows make it about eight times as likely (every shadow ray then also walks the particles' box
 structure), but aren't needed for it.
 
+## The open world and the frame rate (2026-10-17, main at `0e113e4`)
+Frames overlapping as in the app (the benchmark's wait off), one command buffer a frame (`METALRENDERER_BENCH_SPLIT=0`):
+- **Open world:** four flights of 1,200 frames at 60 m/s from the start (east, south, west, north), about 18 scene swaps
+  a run: 0 of 30 runs hung, and 0 of 30 with the interlude gate taken out too. The open world doesn't bring this hang
+  out, so it says nothing either way about the gate; its residency churn hung nothing.
+- **What the gate costs:** wall-clock frame rate, 900 frames a setting, six runs each, alternating (spread under 1%):
+
+  | Setting | Gate off | Gate on (main) | Cost |
+  |---|---|---|---|
+  | open world, native 960×600 | 220.0 fps | 200.4 | 9%, 0.45 ms |
+  | default look, MetalFX 640×400 → 1920×1200 | 415.9 | 395.1 | 5%, 0.13 ms |
+  | showcase, realism on | 75.7 | 74.6 | 1.5%, 0.2 ms |
+
+  It's about 0.15 ms per interlude: the GPU sits idle from the end of the Metal 4 work before one until the Metal 3
+  command buffer, committed only then, starts. The default look has one interlude (MetalFX). The open world has three
+  (the sky's mips, the water waves' mips and the caustics' mips) and no MetalFX at native resolution.
+- **Committing from a thread of its own** (the same `commit` loop on a serial queue, so the render thread encodes the
+  next frame meanwhile) gained nothing: 198.8 against 199.9 fps inline in the world, within noise elsewhere. It hung
+  nothing either: 0 of 60 showcase runs, 0 of 30 world runs. The time isn't the render thread's; it's the GPU's gap.
+- **So the way to win it back is fewer interludes.** The three mip chains could be a Metal 4 compute downsample: a 2x2
+  mean, or 2x2x2 for the sky's 3D noise, which is only made once. Metal 4's own `generateMipmaps` keeps one texel
+  instead of the mean, so it can't be used. That leaves MetalFX's interlude, about 0.13 ms.
+
 ## Still open
 - **Scene loads** build their BLASes on a Metal 3 queue in the background (`SceneBuffers`, `VirtualTracing`'s
   placeholder, `MaterialTextures`). Virtual geometry's case says Metal 3 work beside the frames isn't enough to hang
-  them, so this is probably fine; untested beyond the realism switches above.
-- The open world swaps gigabytes of scene every few seconds: its residency churn is the other place to look if a hang
-  comes back (`releaseUnused(since:)` lets a replaced scene go 8 frames after the swap).
-- The app's frame rate with the interlude gate when GPU-bound: benchmarks wait for each frame, so it isn't measured.
+  them, so this is probably fine; untested beyond the realism switches above and the open world's swaps.
+- The mips as Metal 4 compute (above): about 9% of the open world's frame rate under Metal 4.
 
 ## Reproducing
 The temporary benchmark mode (not committed):
