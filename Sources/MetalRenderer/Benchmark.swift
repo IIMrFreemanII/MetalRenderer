@@ -20,6 +20,7 @@ final class Benchmark {
         /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / Auto.
         var directLight: DirectLightMode? = nil
         var startTime: Float = 0            // the animation clock at the first frame
+        var dt: Float = 1.0 / 60.0          // the clock's step a frame (seconds)
         var frames: Int? = nil              // measured frames, if not the default
         var accumulate = false              // reference image: average raw frames instead of denoising
         var accumulateTechnique = false     // with accumulate: average the GI method's frames instead of path tracing (restirgicheck)
@@ -78,6 +79,8 @@ final class Benchmark {
         /// The same for the sky.
         func sky(_ change: (inout SkySettings) -> Void) -> Config { var c = self; change(&c.settings.sky); c.ownSky = true; return c }
         func frames(_ count: Int?) -> Config { var c = self; c.frames = count; return c }
+        /// The clock steps `seconds` a frame (the animation, tracks, flights) instead of 1/60.
+        func step(_ seconds: Float) -> Config { var c = self; c.dt = seconds; return c }
         func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
         func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
         func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
@@ -257,7 +260,8 @@ final class Benchmark {
 
     let warmupFrames = 60
     let measuredFrames = 240
-    let fixedDt: Float = 1.0 / 60.0
+    /// The current setting's clock step.
+    var fixedDt: Float { current.dt }
     let captureDir = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_DIR"].map { URL(fileURLWithPath: $0) }
 
     private(set) var configIndex = 0
@@ -371,7 +375,8 @@ final class Benchmark {
     /// A buffer for a copy of `texture` (bgra8Unorm_srgb: the bytes are already sRGB-encoded; the frame encodes the
     /// copy, FrameEncoder.capture) and a closure that writes it as PNG, or (`sequence`: a recording's frame) as a JPEG
     /// numbered in the setting's own folder.
-    func capture(of texture: MTLTexture, device: MTLDevice, sequence: Bool = false) -> (buffer: MTLBuffer, write: () -> Void)? {
+    /// `suffix` goes after the setting's name ("-interp": frame interpolation's in-between picture).
+    func capture(of texture: MTLTexture, device: MTLDevice, sequence: Bool = false, suffix: String = "") -> (buffer: MTLBuffer, write: () -> Void)? {
         guard var dir = captureDir else { return nil }
         let w = texture.width, h = texture.height, rowBytes = w * 4
         guard let buffer = device.makeBuffer(length: rowBytes * h, options: .storageModeShared) else { return nil }
@@ -383,7 +388,7 @@ final class Benchmark {
             dir.appendPathComponent(name)
             (fileName, type) = (String(format: "f%04d.jpg", (frameInConfig - warmupFrames) / 2 + 1), .jpeg)
         } else {
-            (fileName, type) = (name + (framesLeftInConfig == 2 ? "-prev" : "") + ".png", .png)
+            (fileName, type) = (name + (framesLeftInConfig == 2 ? "-prev" : "") + suffix + ".png", .png)
         }
         let url = dir.appendingPathComponent(fileName)
         return (buffer, {

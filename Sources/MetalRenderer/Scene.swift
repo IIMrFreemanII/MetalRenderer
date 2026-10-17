@@ -1877,6 +1877,16 @@ final class Scene {
         return UInt32(textures.count - 1)
     }
 
+    /// Whether the scene's generated plants are baked into meshes even though assemblies were asked for: the open
+    /// world's, which stand still there (one set of variants at rest), while no leaves have fallen (only variants drop
+    /// them), leaves aren't cards (only assemblies have them) and far plants aren't voxels (VoxelLOD would rebuild its
+    /// half a million instances' structure). On an M4 Max
+    /// the assemblies' third level of instancing made every ray that meets a plant cost about twice as much: whole
+    /// frames 14-15% faster baked, for about 100 MB more of ray-tracing structures.
+    static func bakesPlants(_ settings: SceneSettings, leafFall: Float) -> Bool {
+        settings.kind.isWorld && leafFall == 0 && !settings.leafCards && !settings.voxelBoxes
+    }
+
     /// The share of the deciduous plants' leaves that have fallen at `season` (the plants' variants drop them).
     static func leafFall(season: Float) -> Float {
         let t = min(max((season - 0.62) / 0.33, 0), 1)

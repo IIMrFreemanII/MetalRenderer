@@ -339,6 +339,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         interlude(pass) { upscaler.encode(into: $0, inputs) }
     }
 
+    /// The Metal 3 interpolator too, with the copy of the frame's picture (one interlude).
+    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, slot: Int, pass: String) {
+        interlude(pass) { interpolator.encode(into: $0, inputs, slot: slot) }
+    }
+
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
         guard let enc = encoder("capture", newBuffer: true) else { return }
         keep(texture)

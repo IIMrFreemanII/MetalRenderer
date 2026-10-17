@@ -83,7 +83,7 @@ final class RenderView: NSView {
         }
     }
     private func updateSurfaceSize() {
-        surface.setSize(bounds.size, backingScale: window?.backingScaleFactor ?? 2)
+        surface.setSize(bounds.size, backingScale: window?.backingScaleFactor ?? 2, refreshRate: window?.screen?.maximumFramesPerSecond ?? 60)
     }
 
     private func modelURLs(_ info: NSDraggingInfo) -> [URL] {

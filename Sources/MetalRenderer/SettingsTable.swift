@@ -69,6 +69,7 @@ extension ToneMap: EnvNamed {}
 extension Realism: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
 extension RenderAPI: EnvNamed {}
+extension FrameInterpolation: EnvNamed {}
 extension SceneKind: EnvNamed {
     // cityNight is read back without regard to case; the character workshop is `people` (`characters=` is the crowd's count).
     var envName: String { self == .characters ? "people" : "\(self)".lowercased() }
@@ -320,7 +321,8 @@ enum SettingsTable {
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }
-        let assemblies: When = { !$0.scene.bakedPlants }   // baked plants stand still
+        // Baked plants stand still, and so do the open world's.
+        let assemblies: When = { !$0.scene.bakedPlants && !$0.scene.kind.isWorld }
         return Section(title: "Foliage", rows: [
             S.slider("Wind", \.foliage.wind, FoliageSettings.windRange, step: 0.05, fmt("%.2f")).env(.foliage, "wind").when(plants).enabled(assemblies),
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
@@ -567,6 +569,9 @@ enum SettingsTable {
                      ticks: true, fmt("%.3g×")).env(.gi, "scale"),
             S.custom(.upscale, "Upscale (MetalFX denoiser)"),
             S.value(\.upscaleFactor).env(.gi, "factor"),
+            S.popup("Frame interpolation", \.frameInterpolation, titled(\.title)).env(.gi, "interp")
+                .when { $0.upscaleFactor > 1 }
+                .available { FrameInterpolation.allCases[$0] == .off || Capabilities.current.frameInterpolator },
             S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
