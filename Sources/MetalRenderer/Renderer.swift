@@ -2694,6 +2694,7 @@ final class Renderer: NSObject {
             frameSemaphore.signal()
             return false
         }
+        if let released = virtualTracing?.takeReleased(), !released.isEmpty { passes.release(released) }   // (before the frame binds)
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
         if skyActive { encodeSky(passes) }
 
