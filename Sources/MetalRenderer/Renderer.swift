@@ -3307,7 +3307,9 @@ final class Renderer: NSObject {
     /// The frame's encoder (ComputePass.swift) for the API in use.
     private func makeFrame(_ plan: FramePlan, profile: GPUProfiler.Frame?) -> FrameEncoder? {
         if builtAPI == .metal4, #available(macOS 26.0, *) {
-            return metal4?.begin(slot: plan.slot, split: plan.splitPasses, overlap: plan.overlap)
+            let frame = metal4?.begin(slot: plan.slot, split: plan.splitPasses, overlap: plan.overlap)
+            frame?.mipKernels = (pipelines[.mipDown2D], pipelines[.mipDown2DArray])
+            return frame
         }
         return Metal3Frame(queue: queue, profile: profile, split: plan.splitPasses, overlap: plan.overlap)
     }
