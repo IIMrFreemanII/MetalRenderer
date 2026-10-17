@@ -857,10 +857,13 @@ final class Renderer: NSObject {
     }
 
     /// A still scene's plants (the open world's) name the variants of the season they were built for: another season
-    /// is another scene.
+    /// is another scene. So is one whose leaves start or stop falling: the open world's plants are baked without.
     private var plantSeasonChanged: Bool {
-        guard let buffers = sceneBuffers, buffers.still, buffers.plants != nil else { return false }
-        return buffers.leafFall != Scene.leafFall(season: settings.foliage.season)
+        guard let buffers = sceneBuffers, buffers.still else { return false }
+        let fall = Scene.leafFall(season: settings.foliage.season)
+        if scene.hasPlants && !scene.settings.bakedPlants
+            && scene.usesAssemblies == Scene.bakesPlants(scene.settings, leafFall: fall) { return true }
+        return buffers.plants != nil && buffers.leafFall != fall
     }
 
     /// What a scene load reads from the renderer, copied on the render thread: `prepareScene` runs in the background while
@@ -943,9 +946,9 @@ final class Renderer: NSObject {
     private func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
                               options: LoadOptions, load: LoadJob? = nil) throws -> PreparedScene {
         let virtual = options.virtualGeometry
-        // Generated plants are assemblies (unless SceneSettings.bakedPlants); baked ones far away are voxels if asked for
-        // (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
-        let assemblies = true
+        // Generated plants are assemblies (unless SceneSettings.bakedPlants, or the open world's: Scene.bakesPlants); baked
+        // ones far away are voxels if asked for (SceneSettings.voxelBoxes), which makes the scene's plants differently too.
+        let assemblies = !Scene.bakesPlants(sceneSettings, leafFall: options.leafFall)
         let voxelBoxes = sceneSettings.voxelBoxes
         let reused = current.flatMap { !$0.geometryReleased && $0.usesVirtualGeometry == virtual
             && (!$0.hasPlants || ($0.usesAssemblies == (assemblies && !sceneSettings.bakedPlants) && $0.usesVoxelBoxes == voxelBoxes)) ? $0 : nil }

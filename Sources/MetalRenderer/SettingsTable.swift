@@ -321,7 +321,8 @@ enum SettingsTable {
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }
-        let assemblies: When = { !$0.scene.bakedPlants }   // baked plants stand still
+        // Baked plants stand still, and so do the open world's.
+        let assemblies: When = { !$0.scene.bakedPlants && !$0.scene.kind.isWorld }
         return Section(title: "Foliage", rows: [
             S.slider("Wind", \.foliage.wind, FoliageSettings.windRange, step: 0.05, fmt("%.2f")).env(.foliage, "wind").when(plants).enabled(assemblies),
             S.slider("Wind direction", \.foliage.windDirection, FoliageSettings.directionRange, step: 5, fmt("%.0f°"))
