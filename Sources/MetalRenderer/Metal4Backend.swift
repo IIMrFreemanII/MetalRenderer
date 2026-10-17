@@ -281,7 +281,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     /// encoded in the frame's own encoder, side by side: through the Metal 3 queue the forest's 231 refits ran one
     /// after another (11 ms on an M4 Max, 0.13 here).
     func updatePrimitives(_ work: PrimitiveWork, pass: String) {
-        if let work = work as? PrimitiveWork4 {
+        if let work = work as? PrimitiveWork4, work.encodes4 {
             guard let enc = encoder(pass, newBuffer: true) else { return }
             serial = true
             order(.accelerationStructure)

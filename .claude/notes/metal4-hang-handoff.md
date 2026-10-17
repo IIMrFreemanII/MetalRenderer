@@ -73,6 +73,11 @@ Frames overlapping as in the app (the benchmark's wait off), one command buffer 
   gone too (MetalFX's Metal 4 scaler in the frame, 2026-10-17): an upscaled Metal 4 frame has no Metal 3 work left
   (the frame interpolator's, when it runs, aside). Not yet run against the hang repro above (no hang in the
   1000-frame and showcase runs with `METALRENDERER_RESIDENCY_LIFE=16`).
+- **Metal 4's remaining gap** (whole frames 5-13% behind Metal 3 on macOS 27.0.1): in the world, the water's near
+  patch refit through the Metal 3 queue (about 0.25 ms of GPU idle around it, Metal System Trace). Metal 4 refits of
+  triangle structures failed here (README, "What Metal 4 still costs"); a per-frame Metal 4 build was slower. Next
+  to try: a near patch whose structure Metal 4 builds at creation and refits from then on, made again with each
+  scene (the stale refits came after scene changes), or the patch as a vertex-only update of a structure built once.
 
 ## Reproducing
 The temporary benchmark mode (not committed):
