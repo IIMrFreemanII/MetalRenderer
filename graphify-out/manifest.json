@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792264385.025995,
-    "seen": 1792264395.428603,
-    "ast_hash": "7f1ccc2416a895770e3389d5174afcee",
+    "mtime": 1792266465.452337,
+    "seen": 1792266475.9788392,
+    "ast_hash": "9c0cb9ae404d96720081438c801d150d",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -648,15 +648,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/ComputePass.swift": {
-    "mtime": 1792262893.4700358,
-    "seen": 1792262909.545629,
-    "ast_hash": "5fe6d4d5a4d2a2e794dba5c992aa77e8",
+    "mtime": 1792266107.1475112,
+    "seen": 1792266475.978576,
+    "ast_hash": "fddf227af010af04c821207e1c0b95d5",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Metal4Backend.swift": {
-    "mtime": 1792264314.4947503,
-    "seen": 1792264395.428417,
-    "ast_hash": "69ddcd058214461042ba1f594c6236bb",
+    "mtime": 1792266107.1475997,
+    "seen": 1792266475.978622,
+    "ast_hash": "b8c289fac0396a11794cbff1a11ab7ec",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CapabilitiesTests.swift": {
@@ -2910,8 +2910,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer+Water.swift": {
-    "mtime": 1792077779.4146779,
-    "seen": 1792207888.9855418,
+    "mtime": 1792265740.3377595,
+    "seen": 1792266475.978664,
     "ast_hash": "1fa2d1d1cb400556aa46e52c2986799c",
     "semantic_hash": ""
   },
@@ -3822,9 +3822,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/metal4-hang-handoff.md": {
-    "mtime": 1792264385.0254574,
-    "seen": 1792264395.4285839,
-    "ast_hash": "4d79339211f30c9ba37a8c58809973a8",
+    "mtime": 1792266465.4527144,
+    "seen": 1792266475.978818,
+    "ast_hash": "68c565ce59b04ddf220ae04e8ca15348",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/FrameInterpolator.swift": {
