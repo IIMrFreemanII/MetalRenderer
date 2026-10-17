@@ -13,7 +13,7 @@ final class Upscaler {
     /// The scaler's output, linear and unbounded, for tonemapKernel (MetalFX needs a private output texture, so it
     /// can't write the drawable).
     let hdrOutput: MTLTexture
-    private let scaler: AnyObject           // MTLFXTemporalDenoisedScaler
+    let scaler: AnyObject                   // MTLFXTemporalDenoisedScaler (the frame interpolator reads it too)
     static let hdrFormat = MTLPixelFormat.rgba16Float
 
     /// Largest per-axis scale factor the GPU supports.

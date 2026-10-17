@@ -186,6 +186,9 @@ protocol FrameEncoder: AnyObject {
     func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int)
     /// MetalFX's denoising scaler, into its own texture (`Upscaler.hdrOutput`), which tonemapKernel then reads.
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String)
+    /// MetalFX's frame interpolator: this frame's picture and the one between the last frame's and it into the
+    /// interpolator's `slot` (FrameInterpolator.encode).
+    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, slot: Int, pass: String)
     /// Copies `texture` (4 bytes a pixel) into `buffer`, for a benchmark's PNG.
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer)
     /// Presents `drawable` and commits. `completed` runs on another thread once the GPU is done; `wait` blocks until then.
@@ -306,6 +309,11 @@ final class Metal3Frame: FrameEncoder {
     func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String) {
         endCompute()
         upscaler.encode(into: buffer(pass), inputs)
+    }
+
+    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, slot: Int, pass: String) {
+        endCompute()
+        interpolator.encode(into: buffer(pass), inputs, slot: slot)
     }
 
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
