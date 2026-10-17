@@ -1213,7 +1213,7 @@ struct RenderSettings: Equatable, Codable {
     var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
     var upscaleFactor: CGFloat = 3     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
     /// With upscaling: MetalFX's in-between picture each frame, presented half a frame before the frame's own
-    /// (FrameInterpolator). Auto only while frames take over two of the display's refreshes; never offscreen.
+    /// (FrameInterpolator). Auto only while frames take over three of the display's refreshes; never offscreen.
     var frameInterpolation = FrameInterpolation.auto
     var giEnabled = true
     var bounces = 2

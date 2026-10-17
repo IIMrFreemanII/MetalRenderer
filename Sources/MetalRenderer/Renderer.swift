@@ -610,7 +610,12 @@ final class Renderer: NSObject {
     private var upscalerReset = true          // drop the upscaler's history on the next frame
     private var interpolator: FrameInterpolator?   // MetalFX's frame interpolator, while upscaling with it on
     private var interpolating = false         // the last frame presented an in-between picture (Auto's switch)
-    private var smoothedFrameMs = 0.0         // the time between frames, smoothed: Auto's switch and the pictures' pacing
+    /// Presents interpolated frames' pictures once they are done (FrameInterpolator.Presenter): the window's layer only.
+    private lazy var presenter = (surface as? LayerSurface).flatMap { FrameInterpolator.Presenter(device: device, layer: $0.layer) }
+    /// The GPU's time a frame, smoothed: Auto's switch and how long each picture is held. Not the time between frames,
+    /// which the holds themselves stretch (the frames wait for drawables): held for half of that, they slowed down
+    /// until each was held five refreshes.
+    private var smoothedGPUMs = 0.0
     private var supersampling = false         // benchmark reference: jitter + average the final colour
     private var colorAccum: MTLTexture?
     private var colorAccumCount: UInt32 = 0
@@ -2751,7 +2756,6 @@ final class Renderer: NSObject {
         let drawStart = CACurrentMediaTime()
         if let last = lastDrawTime {
             frameIntervalMs = (drawStart - last) * 1000
-            smoothedFrameMs = smoothedFrameMs == 0 ? frameIntervalMs : smoothedFrameMs * 0.9 + min(frameIntervalMs, 250) * 0.1
             frameIntervalSum += frameIntervalMs
             frameIntervalCount += 1
         }
@@ -2828,7 +2832,7 @@ final class Renderer: NSObject {
         if let upscaler, settings.frameInterpolation != .off, Capabilities.current.frameInterpolator {
             if interpolator == nil {
                 do {
-                    interpolator = try FrameInterpolator(device: device, upscaler: upscaler)
+                    interpolator = try FrameInterpolator(device: device, upscaler: upscaler, slots: Renderer.maxFramesInFlight)
                 } catch {
                     print(error)
                     settings.frameInterpolation = .off
@@ -2840,9 +2844,9 @@ final class Renderer: NSObject {
         return true
     }
 
-    /// Whether this frame presents an in-between picture before its own: On always, Auto while frames take over two of
-    /// the display's refreshes (both pictures then show; faster, they would hold the frames back to half the display's
-    /// rate). Never without a display that paces the frames, except On (benchmarks).
+    /// Whether this frame presents an in-between picture before its own: On always, Auto while a frame's GPU time is
+    /// over three of the display's refreshes (FrameInterpolation.autoOn). Never without a display that paces the
+    /// frames, except On (benchmarks).
     private func interpolatesFrame(on surface: RenderSurface) -> Bool {
         guard interpolator != nil else { return false }
         switch settings.frameInterpolation {
@@ -2850,7 +2854,7 @@ final class Renderer: NSObject {
         case .on: return true
         case .auto:
             guard let refresh = surface.refreshInterval else { return false }
-            return FrameInterpolation.autoOn(frameMs: smoothedFrameMs, refreshMs: refresh * 1000, was: interpolating)
+            return FrameInterpolation.autoOn(frameMs: smoothedGPUMs, refreshMs: refresh * 1000, was: interpolating)
         }
     }
 
@@ -3520,7 +3524,7 @@ final class Renderer: NSObject {
         // Reference "Path traced": the paths' mean, exposed and tone mapped into the drawable.
         if let pt = plan.pathTrace {
             let drawableStart = CACurrentMediaTime()
-            var drawable = surface.nextOutput()
+            var drawable = nextOutput(plan, surface: surface)
             let drawableWait = CACurrentMediaTime() - drawableStart
             if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
             if let drawable, let enc = passes.compute("composite") {
@@ -3547,7 +3551,7 @@ final class Renderer: NSObject {
         // 4. Composite: albedo * illumination + emission, tonemap, write to the drawable
         //    (or, with upscaling, to MetalFX's input color texture).
         let drawableStart = CACurrentMediaTime()
-        var drawable = surface.nextOutput()
+        var drawable = nextOutput(plan, surface: surface)
         let drawableWait = CACurrentMediaTime() - drawableStart
         // Right after a size change the view can still hand out a drawable of the old size: skip drawing this frame.
         if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
@@ -3611,10 +3615,9 @@ final class Renderer: NSObject {
             encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
         }
-        // Frame interpolation: the picture goes to the interpolator's texture, and from there into the drawable.
+        // Frame interpolation: the picture goes to the interpolator's texture, and from there into its slot.
         let interpolation = plan.interpolate ? interpolator : nil
         var between: FrameOutput?
-        var drawableWaitAll = drawableWait
         if let drawable, let upscaler {
             if upscalerReset { interpolator?.reset() }
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
@@ -3644,15 +3647,10 @@ final class Renderer: NSObject {
                 passes.endCompute()
             }
             if let interpolation {
-                if interpolation.hasHistory {
-                    let start = CACurrentMediaTime()
-                    between = surface.nextOutput()
-                    drawableWaitAll += CACurrentMediaTime() - start
-                    if let b = between, b.texture.width != size.outWidth || b.texture.height != size.outHeight { between = nil }
-                }
+                if interpolation.hasHistory { between = FrameOutput(texture: interpolation.between[plan.slot], drawable: nil) }
                 passes.interpolate(interpolation, InterpolateInputs(targets: t, view: plan.view, jitter: plan.jitter, deltaTime: frameDt,
                                                                     fovDegrees: settings.fovDegrees),
-                                   own: drawable.texture, between: between?.texture, pass: "interpolate")
+                                   slot: plan.slot, pass: "interpolate")
             }
         }
         // The next frame's interpolation starts from this frame's picture only if it went through the interpolator.
@@ -3660,7 +3658,18 @@ final class Renderer: NSObject {
         interpolating = interpolation != nil
         if let drawable { encodeGizmos([drawable.texture] + (between.map { [$0.texture] } ?? []), slot: plan.slot, passes: passes) }
         encodePick(plan, passes: passes)
-        return (drawable, between, drawableWaitAll)
+        return (drawable, between, drawableWait)
+    }
+
+    /// The frame's output: with frame interpolation the interpolator's slot (the presenter takes the drawables once the
+    /// frame is done); otherwise the surface's drawable, after what the presenter was handed is committed.
+    private func nextOutput(_ plan: FramePlan, surface: RenderSurface) -> FrameOutput? {
+        if plan.interpolate, let interpolator {
+            interpolator.claim(plan.slot)
+            return FrameOutput(texture: interpolator.shown[plan.slot], drawable: nil)
+        }
+        if interpolating { presenter?.drain() }
+        return surface.nextOutput()
     }
 
     /// 5b. The heat haze (distortion particles: particleDistortKernel): `input`, the frame's linear light at the output
@@ -3765,17 +3774,15 @@ final class Renderer: NSObject {
         encodeCount += 1
         // Benchmark: finish this frame before encoding the next (`wait`), so passes from consecutive frames
         // never overlap on the GPU and inflate each other's timings.
-        // With an in-between picture: it first, then the frame's own, each held for half the time between frames.
-        var presented: [Presentation] = []
-        if let drawable = output?.drawable {
-            if let other = between?.drawable {
-                let half = smoothedFrameMs / 2000
-                presented = [Presentation(drawable: other, after: half), Presentation(drawable: drawable, after: half)]
-            } else {
-                presented = [Presentation(drawable: drawable)]
+        // An interpolated frame's pictures go to the presenter once the frame is done (or, offscreen, the slot is free
+        // again): the in-between one first, then the frame's own, each held as many refreshes as half a frame takes.
+        let handOver = plan.interpolate && output != nil ? interpolator : nil, presenter = presenter
+        let withBetween = between != nil
+        let hold = FrameInterpolation.hold(frameMs: smoothedGPUMs, refreshMs: surface?.refreshInterval.map { $0 * 1000 })
+        passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
+            if let handOver {
+                if let presenter { presenter.present(handOver, slot: slot, withBetween: withBetween, hold: hold) } else { handOver.release(slot) }
             }
-        }
-        passes.commit(presenting: presented, wait: benchmark != nil) { [weak self] frame in
             if !Benchmark.isEnabled {
                 vg?.collect(slot: slot, frame: vgFrame)
                 streamer?.collect(slot: slot)
@@ -3806,6 +3813,7 @@ final class Renderer: NSObject {
                     r.onFirstFrame?()
                 }
                 r.gpuMs = ms
+                r.smoothedGPUMs = r.smoothedGPUMs == 0 ? ms : r.smoothedGPUMs * 0.9 + min(ms, 250) * 0.1
                 if r.debugActive { r.onFrameTime?(cpuInterval, ms) }
                 if let times { r.addPassTimes(times, frameMs: ms) }
             }

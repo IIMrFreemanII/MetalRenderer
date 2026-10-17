@@ -93,12 +93,21 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertEqual(notes.count, 1)
     }
 
-    func testAutoInterpolatesOnlyWhileBothPicturesCanShow() {
+    func testAutoInterpolatesOnlyWhereItCostsNoFrames() {
         let refresh = 1000.0 / 120
-        XCTAssertFalse(FrameInterpolation.autoOn(frameMs: 10, refreshMs: refresh, was: false), "faster than half the display's rate")
-        XCTAssertTrue(FrameInterpolation.autoOn(frameMs: 20, refreshMs: refresh, was: false))
-        XCTAssertTrue(FrameInterpolation.autoOn(frameMs: 16, refreshMs: refresh, was: true), "stays on a little below where it came on")
-        XCTAssertFalse(FrameInterpolation.autoOn(frameMs: 14, refreshMs: refresh, was: true))
+        XCTAssertFalse(FrameInterpolation.autoOn(frameMs: 20, refreshMs: refresh, was: false), "over 40 fps: two pictures would cost frames")
+        XCTAssertTrue(FrameInterpolation.autoOn(frameMs: 30, refreshMs: refresh, was: false))
+        XCTAssertTrue(FrameInterpolation.autoOn(frameMs: 24, refreshMs: refresh, was: true), "stays on a little below where it came on")
+        XCTAssertFalse(FrameInterpolation.autoOn(frameMs: 20, refreshMs: refresh, was: true))
+    }
+
+    func testEachPictureIsHeldWholeRefreshes() {
+        let refresh = 1000.0 / 120
+        // A 30 ms frame: two pictures of two refreshes each (a little under, for a late refresh).
+        XCTAssertEqual(FrameInterpolation.hold(frameMs: 30, refreshMs: refresh), (2 * refresh - 2) / 1000, accuracy: 1e-9)
+        XCTAssertEqual(FrameInterpolation.hold(frameMs: 5, refreshMs: refresh), (refresh - 2) / 1000, accuracy: 1e-9, "at least one")
+        XCTAssertEqual(FrameInterpolation.hold(frameMs: 40, refreshMs: refresh), (3 * refresh - 2) / 1000, accuracy: 1e-9)
+        XCTAssertEqual(FrameInterpolation.hold(frameMs: 30, refreshMs: nil), 0.015, accuracy: 1e-9, "no display: half a frame")
     }
 
     func testAPINamesReadBack() {

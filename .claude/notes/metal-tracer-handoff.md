@@ -89,8 +89,8 @@ The passes on their own (split mode, release, one run each, ms; Metal 3 / Metal 
 
 - **With MetalFX on, it is most of the frame:** 77% of the default look, 38% of the showcase. Nothing in our own
   passes moves those frames much. MetalFX's frame interpolation came next (`FrameInterpolator`, README "Frame
-  interpolation"): +1.21 ms a rendered frame, twice the frames shown. It is only worth it below half the display's
-  rate (Auto); this Mac's display is 120 Hz.
+  interpolation"): +1.21 ms a rendered frame, twice the frames shown. Auto runs it only under 40 fps (frames over three
+  refreshes of this Mac's 120 Hz display), where whole-refresh holds cost no frames.
 - **At native resolution, the ray-tracing passes are about half the frame:** trace, rc trace, reflections and glass.
 - **Traversal is already cheap.** `METALRENDERER_RT_STATS=1` counts the triangles Metal hands the queries (all of
   them non-opaque in that build):

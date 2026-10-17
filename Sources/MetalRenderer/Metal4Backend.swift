@@ -316,9 +316,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         interlude(pass) { upscaler.encode(into: $0, inputs) }
     }
 
-    /// The Metal 3 interpolator too, the copies into the drawables with it (one interlude).
-    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, own: MTLTexture, between: MTLTexture?, pass: String) {
-        interlude(pass) { interpolator.encode(into: $0, inputs, own: own, between: between) }
+    /// The Metal 3 interpolator too, with the copy of the frame's picture (one interlude).
+    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, slot: Int, pass: String) {
+        interlude(pass) { interpolator.encode(into: $0, inputs, slot: slot) }
     }
 
     func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
@@ -332,7 +332,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
                  destinationBytesPerRow: w * 4, destinationBytesPerImage: w * 4 * h)
     }
 
-    func commit(presenting drawables: [Presentation], wait: Bool, completed: @escaping (FrameTimes) -> Void) {
+    func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void) {
         endCompute()
         cmd?.endCommandBuffer()
         cmd = nil
@@ -347,7 +347,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
             completed(times)
             done?.signal()
         }
-        for p in drawables { queue.waitForDrawable(p.drawable) }
+        if let drawable { queue.waitForDrawable(drawable) }
         for buffer in buffers {
             switch buffer {
             case .metal4(let name, let cb):
@@ -376,9 +376,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
             }
         }
         if commandBuffers == 0 { collector.finish() }
-        for p in drawables {
-            queue.signalDrawable(p.drawable)
-            if let after = p.after { p.drawable.present(afterMinimumDuration: after) } else { p.drawable.present() }
+        if let drawable {
+            queue.signalDrawable(drawable)
+            drawable.present()
         }
         done?.wait()
     }
