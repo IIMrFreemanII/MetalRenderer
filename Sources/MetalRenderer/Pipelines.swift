@@ -27,6 +27,7 @@ enum Kernel: Int, CaseIterable {
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
+    case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsFracturePose, physicsFractureEvents   // destruction (Physics+Fracture.swift)
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder
@@ -37,6 +38,7 @@ enum Kernel: Int, CaseIterable {
     // Particle effects (ParticlesGPU, Shaders/ParticleSim.metal): a step's begin, emit and simulate, then the frame's
     // records and boxes for the rays.
     case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
+    case particleInject         // destruction's dust: the physics' breaks as a proxy emitter's events
     case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
     case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
     // Virtual geometry: the per-frame cut, and its clusters' boxes (METALRENDERER_VG_MODE=clusters).

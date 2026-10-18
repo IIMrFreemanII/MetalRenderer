@@ -26,6 +26,8 @@ struct RendererStatus {
     var walker: WalkerStatus?
     /// Where the camera is (the building editor's Pin: the city's building nearest it).
     var cameraPosition: SIMD3<Float>?
+    /// The destruction scene's tool (DestructionOverlay).
+    var destruction: DestructionStatus?
 }
 
 /// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).

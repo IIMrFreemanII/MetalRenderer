@@ -26,6 +26,7 @@ extension Benchmark {
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
         "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
+     .merging(destructionModes) { a, _ in a }
 
     static func configs(for mode: String) -> [Config] {
         if let build = modes[mode] { return build() }

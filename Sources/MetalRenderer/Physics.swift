@@ -29,6 +29,12 @@ final class PhysicsWorld {
     /// bit 8 (PhysicsFlesh.swift).
     static let asleep: UInt32 = 1
     static let kinematicBit: UInt32 = 2
+    /// A disabled body neither moves, collides nor shows (a fractured object's piece before its parent breaks, a shot
+    /// not yet fired: Physics+Fracture.swift); a piece of a fractured object (it has a fracture node and welds); one
+    /// held by the ground until it comes free (its inverse mass 0 meanwhile).
+    static let disabledBit: UInt32 = 4
+    static let pieceBit: UInt32 = 8
+    static let anchoredBit: UInt32 = 16
     static let clothBit: UInt32 = 1
     static let softBit: UInt32 = 2
     static let skinBit: UInt32 = 4
@@ -185,6 +191,20 @@ final class PhysicsWorld {
     /// Liquids (PhysicsFluid.swift), if there are any.
     var fluid: FluidWorld?
 
+    /// Fractured objects (Physics+Fracture.swift): per body its node (all bodies, once one object is fractured), the
+    /// welds (and as they start), per body its welds' (partner, weld) sorted by partner from `weldStarts[i]`, per body
+    /// what the step did to it, and the shots and blasts, kept across replays.
+    var fractureNodes: [GPUFractureNode] = []
+    var welds: [GPUFractureWeld] = []
+    private(set) var initialWelds: [GPUFractureWeld] = []
+    private(set) var weldStarts: [UInt32] = [0]
+    private(set) var weldList: [SIMD2<UInt32>] = []
+    var fractureState: [GPUFractureState] = []
+    var fractureCommands: [GPUFractureCommand] = []
+    /// GPUFractureParams.tuning: fade delay and length (s), damage reach (m), push.
+    var fractureTuning = SIMD4<Float>(6, 1.5, 0.18, 0.15)
+    var fractures: Bool { !fractureNodes.isEmpty }
+
     /// How far the simulation has gone (whole steps).
     var stepIndex = 0
     var time: Float { Float(stepIndex) * PhysicsWorld.stepLength }
@@ -195,12 +215,13 @@ final class PhysicsWorld {
 
     // MARK: - Building
 
-    /// The physics shape of SDF shape `sdf` (made the first time it is asked for).
-    private func shape(sdf: Int, _ shape: SDFShape) -> Int {
+    /// The physics shape of SDF shape `sdf` (made the first time it is asked for; from `prebuilt` if given: a
+    /// fractured object's pieces are built side by side, Scene+Fracture.swift).
+    private func shape(sdf: Int, _ shape: SDFShape, prebuilt: ShapeBuild? = nil) -> Int {
         if let s = shapeOf[sdf] { return s }
         while sdfShapes.count <= sdf { sdfShapes.append(shape) }
         sdfShapes[sdf] = shape
-        var build = PhysicsWorld.buildShape(shape, index: sdf, volumes: sdfVolumes)
+        var build = prebuilt ?? PhysicsWorld.buildShape(shape, index: sdf, volumes: sdfVolumes)
         build.shape.info.y = UInt32(samples.count)
         build.shape.info.z = UInt32(build.samples.count)
         samples += build.samples
@@ -227,8 +248,9 @@ final class PhysicsWorld {
     /// A body moving `instance`, SDF shape `sdf`, placed by `transform` (no scale); `density` kg/m^3.
     @discardableResult
     func addBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, density: Float = 500, friction: Float = 0.5,
-                 restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero) -> Int {
-        let s = self.shape(sdf: sdf, shape)
+                 restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero,
+                 prebuilt: ShapeBuild? = nil) -> Int {
+        let s = self.shape(sdf: sdf, shape, prebuilt: prebuilt)
         let (p, q) = pose(shape: s, transform)
         let mass = massOf[s]!
         let m = density * mass.volume
@@ -508,6 +530,7 @@ final class PhysicsWorld {
         colourConstraints()
         colourJoints()
         (tets, tetStarts) = PhysicsWorld.colourTets(unsortedTets)
+        finishFracture()
         pairs = [GPUPhysicsPair](repeating: GPUPhysicsPair(), count: bodies.count * PhysicsWorld.maxPairs)
         pairCounts = [UInt32](repeating: 0, count: bodies.count)
         contacts = [GPUPhysicsContact](repeating: GPUPhysicsContact(), count: pairs.count * PhysicsWorld.maxContacts)
@@ -518,7 +541,26 @@ final class PhysicsWorld {
         initialBodies = bodies
         initialParticles = particles
         initialHairVertices = hairVertices
+        initialWelds = welds
         resetFluids()
+    }
+
+    /// The per-body weld lists (once the welds are in).
+    private func finishFracture() {
+        guard fractures else { return }
+        while fractureNodes.count < bodies.count { fractureNodes.append(GPUFractureNode()) }
+        fractureState = [GPUFractureState](repeating: GPUFractureState(), count: bodies.count)
+        var lists = [[SIMD2<UInt32>]](repeating: [], count: bodies.count)
+        for (w, weld) in welds.enumerated() {
+            lists[Int(weld.info.x)].append(SIMD2(weld.info.y, UInt32(w)))
+            lists[Int(weld.info.y)].append(SIMD2(weld.info.x, UInt32(w)))
+        }
+        weldStarts = [0]
+        weldList = []
+        for l in lists {
+            weldList += l.sorted { $0.x < $1.x }
+            weldStarts.append(UInt32(weldList.count))
+        }
     }
 
     /// Back to the start.
@@ -527,6 +569,8 @@ final class PhysicsWorld {
         particles = initialParticles
         hairVertices = initialHairVertices
         for i in hairStrands.indices { hairStrands[i].info.w = 0 }
+        welds = initialWelds
+        for i in fractureState.indices { fractureState[i] = GPUFractureState() }
         resetFluids()
         stepIndex = 0
     }
@@ -605,9 +649,14 @@ final class PhysicsWorld {
 
     /// The nearest body the ray from `origin` along `direction` (unit) meets, where it meets it (in the body's space)
     /// and how far along: each body whose bounding sphere the ray crosses, sphere-traced through its distance.
-    func pick(origin: SIMD3<Float>, direction: SIMD3<Float>) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
+    /// `pieces`: a fractured object's anchored pieces too (a blast's aim), which nothing else moves.
+    func pick(origin: SIMD3<Float>, direction: SIMD3<Float>, pieces: Bool = false) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
         var best: (body: Int, anchor: SIMD3<Float>, distance: Float)?
-        for i in bodies.indices where bodies[i].position.w > 0 {   // (not what nothing moves: a kinematic body, a mount)
+        // (Not what nothing moves: a kinematic body, a mount; nor a hidden one: disabled, as last drawn when the GPU
+        // steps the world, whose `bodies` are the start's.)
+        let drawn = drawnPoses.count == 2 * bodies.count
+        for i in bodies.indices where (bodies[i].position.w > 0 || (pieces || drawn) && bodies[i].info.y & PhysicsWorld.pieceBit != 0)
+            && !(drawn ? drawnPoses[2 * i].w >= 0.999 : bodies[i].info.y & PhysicsWorld.disabledBit != 0) {
             let (x, q) = drawnPose(i)
             let radius = bodies[i].invInertia.w, oc = origin - x
             let b = dot(oc, direction), c = dot(oc, oc) - radius * radius, disc = b * b - c
@@ -629,20 +678,25 @@ final class PhysicsWorld {
 
     // MARK: - Drawing
 
-    /// Body `i`'s instance transform: its shape space in the world.
+    /// Body `i`'s instance transform: its shape space in the world (shrunk to nothing if it is disabled, smaller as
+    /// it fades: Physics+Fracture.swift).
     func transform(_ i: Int) -> float4x4 {
-        transform(i, position: PhysicsMath.xyz(bodies[i].position), rotation: bodies[i].rotation)
+        transform(i, position: PhysicsMath.xyz(bodies[i].position), rotation: bodies[i].rotation, scale: fractures ? drawnScale(i) : 1)
     }
 
     /// Particle `i`'s instance transform.
     func particleTransform(_ i: Int) -> float4x4 { translate(PhysicsMath.xyz(particles[i].position)) }
 
-    /// ...for the pose given (the GPU's).
-    func transform(_ i: Int, position: SIMD3<Float>, rotation: SIMD4<Float>) -> float4x4 {
+    /// ...for the pose given (the GPU's), drawn at `scale` about its centre of mass.
+    func transform(_ i: Int, position: SIMD3<Float>, rotation: SIMD4<Float>, scale s: Float = 1) -> float4x4 {
         let shape = shapes[Int(bodies[i].info.x)]
         let q = PhysicsMath.qmul(rotation, PhysicsMath.qconj(shape.comRotation))
-        return translate(position) * float4x4(PhysicsMath.simdQuat(q)) * translate(-PhysicsMath.xyz(shape.comPosition))
+        let turned = translate(position) * float4x4(PhysicsMath.simdQuat(q))
+        return (s < 1 ? turned * scale(max(s, PhysicsWorld.hiddenScale)) : turned) * translate(-PhysicsMath.xyz(shape.comPosition))
     }
+
+    /// How small a hidden body is drawn (Scene.addParticles hides a mesh particle so).
+    static let hiddenScale: Float = 1e-4
 }
 
 /// What a joint keeps (PhysicsWorld.addJoint): GPUPhysicsJoint.info.z.

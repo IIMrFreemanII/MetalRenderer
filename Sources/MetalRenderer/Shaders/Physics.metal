@@ -9,6 +9,8 @@
 
 constant uint PHYS_STATIC = 0x80000000u, PHYS_NONE = 0xFFFFFFFFu, PHYS_ASLEEP = 1u;
 constant uint PHYS_KINEMATIC = 2u;   // PhysicsBody.info.y: a kinematic body (PhysicsWorld.kinematicBit), its column << 8
+// ...a disabled body, a fractured object's piece, one the ground holds (PhysicsWorld.disabledBit, pieceBit, anchoredBit)
+constant uint PHYS_DISABLED = 4u, PHYS_PIECE = 8u, PHYS_ANCHORED = 16u;
 constant uint PHYS_PAIRS = 16, PHYS_CONTACTS = 4;   // PhysicsWorld.maxPairs, maxContacts
 constant uint PHYS_COLOURS = 32, PHYS_ROUNDS = 64;  // PhysicsWorld.maxColours, maxRounds
 constant uint PHYS_LEFTOVER = 0xFFFFFFFEu;          // PhysicsWorld.leftover
@@ -18,6 +20,9 @@ constant float PHYS_GRADIENT_STEP = 1e-3f;
 constant float PHYS_PUSH_SPEED = 3.0f;              // PhysicsWorld.pushSpeed
 constant float PHYS_SOFT_PUSH_SPEED = 10.0f;        // PhysicsWorld.softPushSpeed
 constant float PHYS_GYRATION = 0.15f;               // PhysicsWorld.gyration
+constant float PHYS_STEP = 1.0f / 60.0f;            // PhysicsWorld.stepLength
+constant float PHYS_IMPACT_SPEED = 1.0f, PHYS_FREED_PUSH = 4.0f;   // PhysicsWorld.impactSpeed, freedPush
+constant float PHYS_WELD_GAP = 3e-3f, PHYS_WELD_TWIST = 0.03f;     // PhysicsWorld.weldGap, weldTwist
 
 struct PhysicsBody {
     float4 position;       // centre of mass; w = inverse mass
@@ -30,6 +35,8 @@ struct PhysicsBody {
     uint4  info;           // x = shape, y = flags, z = instance, w = the body a joint hangs it from + 1 (0: none)
 };
 static_assert(sizeof(PhysicsBody) == 128, "PhysicsBody: GPUPhysicsBody");
+// PhysicsWorld.held: an anchored piece the ground still holds.
+inline bool physHeld(PhysicsBody b) { return (b.info.y & PHYS_ANCHORED) != 0 && b.position.w == 0.0f; }
 
 // A joint between two bodies: GPUPhysicsJoint (PhysicsCPU.solveJoint).
 struct PhysicsJoint {
@@ -42,6 +49,65 @@ struct PhysicsJoint {
 };
 static_assert(sizeof(PhysicsJoint) == 112, "PhysicsJoint: GPUPhysicsJoint");
 constant uint PHYS_HINGE = 1;   // PhysicsJointKind.hinge
+
+// A fractured object's node as its body (GPUFractureNode, Physics+Fracture.swift).
+struct PhysicsFractureNode {
+    uint4  info;       // x = parent body (none: a root), y = first child body, z = children, w = flags (1: anchored)
+    float4 offset;     // its centre of mass in its parent's body space; w = the impact that breaks it (0: no children)
+    float4 rotation;   // its rotation in its parent's
+    float4 extra;      // x = inverse mass once free, y = the impact that frees it, z = its radius if it fades, w = material
+};
+static_assert(sizeof(PhysicsFractureNode) == 64, "PhysicsFractureNode: GPUFractureNode");
+
+// A weld between two pieces (GPUFractureWeld).
+struct PhysicsFractureWeld {
+    float4 anchorA;    // A's body space; w = the force it holds (N)
+    float4 anchorB;    // B's body space; w = its lever (m)
+    float4 rest;       // B's rotation in A's
+    uint4  info;       // x = A, y = B, z = 1 once broken
+};
+static_assert(sizeof(PhysicsFractureWeld) == 64, "PhysicsFractureWeld: GPUFractureWeld");
+
+// A fractured body's step (GPUFractureState).
+struct PhysicsFractureState {
+    float4 strain;     // x = this step's impacts (N s), y = time lying still, z = taken over from its parent, w = verdict
+    float4 impact;     // xyz = impacts' points x impulse, w = impulse
+    float4 direction;  // xyz = their push x impulse, w = its drawn scale
+};
+static_assert(sizeof(PhysicsFractureState) == 48, "PhysicsFractureState: GPUFractureState");
+
+struct PhysicsFractureCommand {
+    uint4  info;       // x = first step, y = kind, z = body, w = steps
+    float4 origin;     // w = radius
+    float4 direction;  // w = speed
+};
+static_assert(sizeof(PhysicsFractureCommand) == 48, "PhysicsFractureCommand: GPUFractureCommand");
+constant uint PHYS_SHOOT = 0, PHYS_BLAST = 1, PHYS_WAKE = 2, PHYS_RELEASE = 3;   // PhysicsWorld.FractureCommand
+
+// Where a piece broke, for the dust (ParticleSim.metal's particleInjectKernel): in a ring of steps (PHYS_RING_SLOTS,
+// each a header uint4: its step + 1, how many events; then PHYS_RING_EVENTS events each), GPUBreakEvent.
+struct PhysicsBreakEvent {
+    float4 position;   // its centre of mass; w = its radius
+    float4 velocity;   // w = its material (FractureMaterial)
+};
+static_assert(sizeof(PhysicsBreakEvent) == 32, "PhysicsBreakEvent: GPUBreakEvent");
+constant uint PHYS_RING_SLOTS = 64, PHYS_RING_EVENTS = 256;   // PhysicsWorld.ringSlots, ringEvents
+
+struct PhysicsFractureParams {
+    uint4  counts;     // bodies, welds, commands
+    float4 tuning;     // fade delay, fade length, damage reach, push
+};
+static_assert(sizeof(PhysicsFractureParams) == 32, "PhysicsFractureParams: GPUFractureParams");
+
+// The substeps' tables bound as one (PhysicsGPU: the kernel's buffer slots are all taken): the soft bodies' tets by
+// colour, where each colour starts, the welds, each body's fracture state.
+struct PhysicsTables {
+    device const struct PhysicsTet* tets;
+    device const uint*              tetStarts;
+    device PhysicsFractureWeld*     welds;
+    device PhysicsFractureState*    fracture;
+    uint4                           flags;      // x = 1: there are fractured objects
+};
 constant uint PHYS_JOINT_ITERATIONS = 2;   // PhysicsWorld.jointIterations
 
 struct PhysicsShape {
@@ -479,7 +545,7 @@ kernel void physicsInsertKernel(constant PhysicsParams&   p      [[buffer(0)]],
                                 device uint*              next   [[buffer(3)]],
                                 uint i [[thread_position_in_grid]])
 {
-    if (i >= p.counts.x) return;
+    if (i >= p.counts.x || (bodies[i].info.y & PHYS_DISABLED) != 0) return;   // (in no cell: nothing finds it)
     uint h = physHash(physCell(bodies[i].position.xyz, p.grid.x), p.counts.w);
     next[i] = atomic_exchange_explicit(&heads[h], i, memory_order_relaxed);
 }
@@ -529,6 +595,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
 {
     if (i >= p.counts.x) return;
     PhysicsBody b = bodies[i];
+    if ((b.info.y & PHYS_DISABLED) != 0) { counts[i] = 0; return; }
     float3 x = b.position.xyz;
     float r = physReach(b, p);
     float d2s[PHYS_PAIRS];
@@ -554,6 +621,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                     PhysicsBody o = bodies[j];
                     if (b.info.w == j + 1 || o.info.w == i + 1) continue;   // joined: PhysicsWorld.joined
                     if ((b.info.y & o.info.y & PHYS_KINEMATIC) != 0) continue;   // neither gives
+                    if (physHeld(b) && physHeld(o)) continue;                    // two anchored pieces
                     float reach = r + physReach(o, p);
                     float d2 = physDistance2(o.position.xyz, x);
                     if (d2 < reach * reach) physKeepNearest(d2s, ids, count, d2, j);
@@ -568,7 +636,7 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
     }
 }
 
-inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y & PHYS_ASLEEP) == 0; }
+inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y & (PHYS_ASLEEP | PHYS_DISABLED)) == 0; }
 
 // PhysicsCPU.stirs: body b moves fast enough to wake what it touches.
 inline bool physStirs(PhysicsBody b, constant PhysicsParams& p) {
@@ -745,6 +813,9 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
                                 device const uint*         counts   [[buffer(7)]],
                                 device PhysicsContact*     contacts [[buffer(8)]],
                                 constant PhysicsGroup&     group    [[buffer(9)]],
+                                device const uint*         weldStarts [[buffer(10)]],   // per body, into weldList
+                                device const uint2*        weldList [[buffer(11)]],     // (partner, weld), by partner
+                                device const PhysicsFractureWeld* welds [[buffer(12)]],
                                 uint t [[thread_position_in_grid]],
                                 ushort lane [[thread_index_in_simdgroup]],
                                 ushort lanes [[threads_per_simdgroup]])
@@ -754,6 +825,28 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
     PhysicsBody a = bodies[i], b = physPartner(pairs[e].partner, bodies, statics);
     // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
     if (group.first > 0 && (pairs[e].pad == PHYS_NONE || (!physMoves(a) && !physMoves(b)))) return;
+    // Two welded pieces: the weld is the pair's one contact (PhysicsWorld.liveWeld, weldContact).
+    uint code = pairs[e].partner;
+    if ((code & PHYS_STATIC) == 0 && (a.info.y & b.info.y & PHYS_PIECE) != 0) {
+        uint weld = PHYS_NONE;
+        for (uint k = weldStarts[i], end = weldStarts[i + 1]; k < end; ++k) {
+            if (weldList[k].x != code) continue;
+            if (welds[weldList[k].y].info.z == 0) weld = weldList[k].y;
+            break;
+        }
+        if (weld != PHYS_NONE) {
+            if (lane == 0) {
+                pairs[e].contacts = 1;
+                PhysicsContact marker;
+                marker.normal = float4(0, 1, 0, 0);
+                marker.anchorA = float4(float(weld), 0, 0, 0);
+                marker.anchorB = float4(0.0f);
+                marker.lambda = float4(0, 0, 0, 1);
+                contacts[e * PHYS_CONTACTS] = marker;
+            }
+            return;
+        }
+    }
     float closing = (length(a.velocity.xyz) + length(b.velocity.xyz) + length(a.angular.xyz) * a.invInertia.w
                      + length(b.angular.xyz) * b.invInertia.w) * p.grid.w;
     PhysicsShapes w = {shapes, samples, sdf};
@@ -887,6 +980,15 @@ inline void physKick(thread PhysicsBody& b, float3 impulse, float3 r, float3 twi
     b.angular = float4(b.angular.xyz + physInvInertia(b.rotation, b.invInertia.xyz, cross(r, impulse) + twist), b.angular.w);
 }
 
+inline void physSolveWeld(device PhysicsFractureWeld& w, thread PhysicsBody& a, thread PhysicsBody& b, bool ownerIsA, float h, float substeps);
+
+// PhysicsWorld.strike: an impact's impulse onto a piece's strain.
+inline void physStrike(device PhysicsFractureState& s, float3 point, float3 push, float impulse) {
+    s.strain.x += impulse;
+    s.impact += float4(point * impulse, impulse);
+    s.direction.xyz += push * impulse;
+}
+
 // PhysicsCPU.solvePositions for pair e: its contacts one after the other, each pushing both bodies.
 inline void physPushPair(constant PhysicsParams& p, device PhysicsBody* bodies, device const PhysicsBody* statics,
                          device const PhysicsPair* pairs, device PhysicsContact* contacts, uint e) {
@@ -902,6 +1004,38 @@ inline void physPushPair(constant PhysicsParams& p, device PhysicsBody* bodies, 
     }
     bodies[i] = a;
     if ((code & PHYS_STATIC) == 0) bodies[code] = b;
+}
+
+// ...with fractured objects (PhysicsWorld.pushFracturePair): an impact's impulse onto both pieces' strain too, or the
+// pair's weld. (Its own function: the plain one stays as it was, so scenes without fractures step as they did.)
+inline void physPushFracturePair(constant PhysicsParams& p, device PhysicsBody* bodies, device const PhysicsBody* statics,
+                                 device const PhysicsPair* pairs, device PhysicsContact* contacts, uint e, device const PhysicsTables& t) {
+    uint i = e / PHYS_PAIRS, code = pairs[e].partner;
+    bool dynamic = (code & PHYS_STATIC) == 0;
+    PhysicsBody a = bodies[i], b = physPartner(code, bodies, statics);
+    float h = p.gravity.w, g = length(p.gravity.xyz);
+    for (uint c = 0; c < pairs[e].contacts; ++c) {
+        uint ci = e * PHYS_CONTACTS + c;
+        PhysicsContact contact = contacts[ci];
+        if (contact.lambda.w == 1.0f) {   // a weld
+            uint w = uint(contact.anchorA.x);
+            physSolveWeld(t.welds[w], a, b, t.welds[w].info.x == i, h, p.softDamping.z);
+            continue;
+        }
+        PhysPush push = physContactPush(contact, a, b, h);
+        contacts[ci].lambda = float4(push.lambda, push.speed, 0.0f, 0.0f);
+        if (!(push.lambda > 0.0f)) continue;
+        if (((a.info.y | b.info.y) & PHYS_PIECE) != 0 && -push.speed > PHYS_IMPACT_SPEED) {   // an impact, not a rest
+            float impulse = push.lambda / h;
+            float3 point = physPoints(contact, a, b, false).pa, n = contact.normal.xyz;
+            if ((a.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[i], point, n, impulse);
+            if (dynamic && (b.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[code], point, -n, impulse);
+        }
+        physShove(a, push.impulse, push.ra);
+        physShove(b, -push.impulse, push.rb);
+    }
+    bodies[i] = a;
+    if (dynamic) bodies[code] = b;
 }
 
 // PhysicsCPU.hold: the held body i, right after it is integrated (by its thread).
@@ -995,6 +1129,34 @@ inline void physKickPair(constant PhysicsParams& p, device PhysicsBody* bodies, 
     }
     bodies[i] = a;
     if ((code & PHYS_STATIC) == 0) bodies[code] = b;
+}
+
+// PhysicsWorld.kickFracturePair: the kicks, an impact's normal impulse onto both pieces' strain too.
+inline void physKickFracturePair(constant PhysicsParams& p, device PhysicsBody* bodies, device const PhysicsBody* statics,
+                                 device const PhysicsPair* pairs, device const PhysicsContact* contacts, uint e,
+                                 device const PhysicsTables& t) {
+    uint i = e / PHYS_PAIRS, code = pairs[e].partner;
+    bool dynamic = (code & PHYS_STATIC) == 0;
+    PhysicsBody a = bodies[i], b = physPartner(code, bodies, statics);
+    float g = length(p.gravity.xyz), h = p.gravity.w;
+    for (uint c = 0; c < pairs[e].contacts; ++c) {
+        PhysicsContact contact = contacts[e * PHYS_CONTACTS + c];
+        PhysKick kick = physContactKick(contact, a, b, p);
+        if (!kick.valid) continue;
+        if (contact.lambda.y < -PHYS_IMPACT_SPEED && ((a.info.y | b.info.y) & PHYS_PIECE) != 0) {
+            float3 n = contact.normal.xyz;
+            float impulse = max(dot(kick.impulse, n), 0.0f);
+            if (impulse > 0.0f) {
+                float3 point = physPoints(contact, a, b, false).pa;
+                if ((a.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[i], point, n, impulse);
+                if (dynamic && (b.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[code], point, -n, impulse);
+            }
+        }
+        physKick(a, kick.impulse, kick.ra, kick.twist);
+        physKick(b, -kick.impulse, kick.rb, -kick.twist);
+    }
+    bodies[i] = a;
+    if (dynamic) bodies[code] = b;
 }
 
 // MARK: - Joints
@@ -1097,6 +1259,57 @@ inline void physDampJoint(device PhysicsBody* bodies, PhysicsJoint j, float h) {
     }
     bodies[j.info.x] = a;
     bodies[j.info.y] = b;
+}
+
+// MARK: - Welds (Physics+Fracture.swift)
+
+// PhysicsWorld.weld: y's turn back to x's times the rest, then their anchors together; broken instead when the force
+// and moment that takes pass what it holds.
+inline void physWeld(device PhysicsFractureWeld& w, thread PhysicsBody& x, thread PhysicsBody& y, float h, float substeps) {
+    float4 target = quatMul(x.rotation, w.rest);
+    float4 dq = quatMul(y.rotation, physConj(target));
+    if (dq.w < 0.0f) dq = -dq;
+    float3 theta = 2.0f * dq.xyz;
+    float angle = length(theta);
+    float moment = 0.0f;
+    if (angle > 1e-7f) {
+        float3 k = theta / angle;
+        float wa = physTurnWeight(x, k) + physTurnWeight(y, k);
+        if (wa > 0.0f) moment = angle / wa / (h * h);
+    }
+    float3 ra = quatRotate(x.rotation, w.anchorA.xyz), rb = quatRotate(y.rotation, w.anchorB.xyz);
+    float3 gap = (y.position.xyz + rb) - (x.position.xyz + ra);
+    float l = length(gap);
+    float force = 0.0f;
+    if (l > 1e-7f) {
+        float3 n = gap / l;
+        float wl = physWeight(x, ra, n) + physWeight(y, rb, n);
+        if (wl > 0.0f) force = l / wl / (h * h);
+    }
+    float load = force / w.anchorA.w + moment / (w.anchorA.w * max(w.anchorB.w, 1e-3f));
+    float k = 1.0f / substeps, average = as_type<float>(w.info.w) * (1.0f - k) + load * k;
+    w.info.w = as_type<uint>(average);
+    if (average > 1.0f || l > PHYS_WELD_GAP || angle > PHYS_WELD_TWIST) {
+        w.info.z = 1;
+        return;
+    }
+    if (angle > 1e-7f) physSwivel(x, y, theta);
+    ra = quatRotate(x.rotation, w.anchorA.xyz);
+    rb = quatRotate(y.rotation, w.anchorB.xyz);
+    gap = (y.position.xyz + rb) - (x.position.xyz + ra);
+    l = length(gap);
+    if (!(l > 1e-7f)) return;
+    float3 n = gap / l;
+    float wl = physWeight(x, ra, n) + physWeight(y, rb, n);
+    if (!(wl > 0.0f)) return;
+    physShove(x, n * (l / wl), ra);
+    physShove(y, -n * (l / wl), rb);
+}
+
+// PhysicsWorld.solveWeld: a is the pair's owner, b its partner; the weld's A is a if ownerIsA.
+inline void physSolveWeld(device PhysicsFractureWeld& w, thread PhysicsBody& a, thread PhysicsBody& b, bool ownerIsA, float h, float substeps) {
+    if (w.info.z != 0 || (!physMoves(a) && !physMoves(b))) return;
+    if (ownerIsA) physWeld(w, a, b, h, substeps); else physWeld(w, b, a, h, substeps);
 }
 
 // MARK: - Colours
@@ -1461,8 +1674,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
                                   device const PhysicsJoint* joints [[buffer(25)]],
                                   device const uint*        jointStarts [[buffer(26)]],
                                   device const uint2*       ragdolls [[buffer(27)]],   // first body, count
-                                  device const PhysicsTet*  tets [[buffer(28)]],
-                                  device const uint*        tetStarts [[buffer(29)]],
+                                  device const PhysicsTables& tables [[buffer(28)]],   // the tets, their colours, welds, fracture
                                   device float4*            flesh [[buffer(30)]],   // PhysicsFleshHeader, then its parts
                                   uint t [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]])
@@ -1516,7 +1728,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         }
         // The soft bodies' tets, a colour at a time (PhysicsWorld.solveTets).
         for (uint c = 0; c < p.soft.y; ++c) {
-            for (uint k = tetStarts[c] + t; k < tetStarts[c + 1]; k += width) physSolveTet(particles, tets[k], p.gravity.w, flesh, hd);
+            for (uint k = tables.tetStarts[c] + t; k < tables.tetStarts[c + 1]; k += width) physSolveTet(particles, tables.tets[k], p.gravity.w, flesh, hd);
             threadgroup_barrier(mem_flags::mem_device);
         }
         // The skin held to the flesh (PhysicsWorld.solveSkin): one attachment a skin particle.
@@ -1536,12 +1748,20 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             }
         }
         for (uint c = 0; c < colours; ++c) {
-            for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physPushPair(p, bodies, statics, pairs, contacts, order[j]);
+            if (tables.flags.x != 0) {
+                for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physPushFracturePair(p, bodies, statics, pairs, contacts, order[j], tables);
+            } else {
+                for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physPushPair(p, bodies, statics, pairs, contacts, order[j]);
+            }
             threadgroup_barrier(mem_flags::mem_device);
         }
         if (leftovers) {
             if (t == 0) {
-                for (uint e = 0; e < entries; ++e) if (physLeftover(pairs, e)) physPushPair(p, bodies, statics, pairs, contacts, e);
+                for (uint e = 0; e < entries; ++e) {
+                    if (!physLeftover(pairs, e)) continue;
+                    if (tables.flags.x != 0) physPushFracturePair(p, bodies, statics, pairs, contacts, e, tables);
+                    else physPushPair(p, bodies, statics, pairs, contacts, e);
+                }
             }
             threadgroup_barrier(mem_flags::mem_device);
         }
@@ -1549,12 +1769,20 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         for (uint i = t; i < np; i += width) particles[i] = particlesOut[i];
         threadgroup_barrier(mem_flags::mem_device);
         for (uint c = 0; c < colours; ++c) {
-            for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physKickPair(p, bodies, statics, pairs, contacts, order[j]);
+            if (tables.flags.x != 0) {
+                for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physKickFracturePair(p, bodies, statics, pairs, contacts, order[j], tables);
+            } else {
+                for (uint j = starts[c] + t; j < starts[c + 1]; j += width) physKickPair(p, bodies, statics, pairs, contacts, order[j]);
+            }
             threadgroup_barrier(mem_flags::mem_device);
         }
         if (leftovers) {
             if (t == 0) {
-                for (uint e = 0; e < entries; ++e) if (physLeftover(pairs, e)) physKickPair(p, bodies, statics, pairs, contacts, e);
+                for (uint e = 0; e < entries; ++e) {
+                    if (!physLeftover(pairs, e)) continue;
+                    if (tables.flags.x != 0) physKickFracturePair(p, bodies, statics, pairs, contacts, e, tables);
+                    else physKickPair(p, bodies, statics, pairs, contacts, e);
+                }
             }
             threadgroup_barrier(mem_flags::mem_device);
         }
@@ -1626,6 +1854,14 @@ inline float4x4 physTransform(float3 x, float4 q, PhysicsShape shape) {
     return float4x4(float4(c0, 0), float4(c1, 0), float4(c2, 0), float4(t, 1));
 }
 
+// ...drawn at `scale` about its centre of mass (less than 1 as it fades; a disabled body's PhysicsWorld.hiddenScale).
+inline float4x4 physScaledTransform(float3 x, float4 q, PhysicsShape shape, float scale) {
+    float4 r = quatMul(q, physConj(shape.comRotation));
+    float3 c0 = quatRotate(r, float3(1, 0, 0)) * scale, c1 = quatRotate(r, float3(0, 1, 0)) * scale, c2 = quatRotate(r, float3(0, 0, 1)) * scale;
+    float3 t = x - (c0 * shape.comPosition.x + c1 * shape.comPosition.y + c2 * shape.comPosition.z);
+    return float4x4(float4(c0, 0), float4(c1, 0), float4(c2, 0), float4(t, 1));
+}
+
 // Every body's instance record for this frame (and Metal's descriptor), where the steps put it; last frame's pose is
 // its previous transform. The pose also goes to the slot's snapshot, which the CPU reads once the frame is done.
 kernel void physicsPoseKernel(constant PhysicsPoseParams&  pp          [[buffer(0)]],
@@ -1649,6 +1885,46 @@ kernel void physicsPoseKernel(constant PhysicsPoseParams&  pp          [[buffer(
     // The inverse of a rotation R and a translation t: R^T and -R^T t; the normal matrix is its transpose.
     float3x3 r = float3x3(m[0].xyz, m[1].xyz, m[2].xyz);
     float3x3 rt = transpose(r);
+    float3 it = -(rt * m[3].xyz);
+    float4x4 inverse = float4x4(float4(rt[0], 0), float4(rt[1], 0), float4(rt[2], 0), float4(it, 1));
+    uint instance = b.info.z;
+    instances[instance].transform = m;
+    instances[instance].prevTransform = previous;
+    instances[instance].normalMatrix = transpose(inverse);
+    if (pp.descriptorStride != 0) {
+        device float* d = (device float*)(descriptors + instance * pp.descriptorStride);
+        for (uint c = 0; c < 4; ++c) {
+            for (uint row = 0; row < 3; ++row) d[c * 3 + row] = m[c][row];
+        }
+    }
+}
+
+// ...with fractured objects (its own kernel: the plain one stays as it was): a disabled body drawn shrunk to nothing,
+// a fading one smaller (PhysicsWorld.drawnScale); the snapshot's w says how far it is hidden (Scene.placeBodies).
+kernel void physicsFracturePoseKernel(constant PhysicsPoseParams&       pp          [[buffer(0)]],
+                                      device const PhysicsBody*         bodies      [[buffer(1)]],
+                                      device const PhysicsShape*        shapes      [[buffer(2)]],
+                                      device float4*                    lastPose    [[buffer(3)]],
+                                      device float4*                    snapshot    [[buffer(4)]],
+                                      device InstanceData*              instances   [[buffer(5)]],
+                                      device uchar*                     descriptors [[buffer(6)]],
+                                      device const PhysicsFractureState* fracture   [[buffer(7)]],
+                                      uint i [[thread_position_in_grid]])
+{
+    if (i >= pp.bodies) return;
+    PhysicsBody b = bodies[i];
+    PhysicsShape shape = shapes[b.info.x];
+    float scale = (b.info.y & PHYS_DISABLED) != 0 ? 0.0f : fracture[i].direction.w;
+    float drawn = max(scale, 1e-4f);
+    float4x4 m = physScaledTransform(b.position.xyz, b.rotation, shape, drawn);
+    float4x4 previous = physScaledTransform(lastPose[2 * i].xyz, lastPose[2 * i + 1], shape, drawn);
+    lastPose[2 * i] = float4(b.position.xyz, 0.0f);
+    lastPose[2 * i + 1] = b.rotation;
+    snapshot[2 * i] = float4(b.position.xyz, 1.0f - scale);
+    snapshot[2 * i + 1] = b.rotation;
+    // The inverse of a rotation R x a scale s and a translation t: R^T / s and -R^T t / s.
+    float3x3 r = float3x3(m[0].xyz, m[1].xyz, m[2].xyz);
+    float3x3 rt = transpose(r) / (drawn * drawn);
     float3 it = -(rt * m[3].xyz);
     float4x4 inverse = float4x4(float4(rt[0], 0), float4(rt[1], 0), float4(rt[2], 0), float4(it, 1));
     uint instance = b.info.z;
@@ -1890,6 +2166,7 @@ kernel void physicsHairKernel(constant PhysicsParams&       p          [[buffer(
         if (touches) colliders[count++] = k | PHYS_STATIC;
     }
     for (uint j = 0; j < hp.counts.y && count < PHYS_HAIR_COLLIDERS; ++j) {
+        if ((bodies[j].info.y & PHYS_DISABLED) != 0) continue;
         float r = reach + physReach(bodies[j], p);
         if (length_squared(bodies[j].position.xyz - centre) < r * r) colliders[count++] = j;
     }
@@ -2017,4 +2294,250 @@ kernel void physicsHairCurvesKernel(constant PhysicsHairGroup&      g         [[
     }
     positions[base + g.mesh.y] = positions[base];
     positions[base] = 2.0f * before - second;
+}
+
+// MARK: - Fracture (Physics+Fracture.swift)
+
+// Back to the start: every body's fracture state, the welds whole again, the clock at 0 (its command count stays).
+kernel void physicsFractureResetKernel(constant PhysicsFractureParams&     fp       [[buffer(1)]],
+                                       device PhysicsFractureState*        state    [[buffer(2)]],
+                                       device PhysicsFractureWeld*         welds    [[buffer(3)]],
+                                       device const PhysicsFractureWeld*   initial  [[buffer(4)]],
+                                       device uint4*                       clock    [[buffer(5)]],
+                                       uint i [[thread_position_in_grid]])
+{
+    if (i < fp.counts.x) {
+        PhysicsFractureState s;
+        s.strain = float4(0.0f);
+        s.impact = float4(0.0f);
+        s.direction = float4(0, 0, 0, 1);
+        state[i] = s;
+    }
+    if (i < fp.counts.y) welds[i] = initial[i];
+    if (i == 0) clock[0].x = 0;
+}
+
+// PhysicsWorld.launch.
+inline void physLaunch(thread PhysicsBody& b, PhysicsFractureCommand c) {
+    b.info.y &= ~(PHYS_DISABLED | PHYS_ASLEEP);
+    b.position = float4(c.origin.xyz, b.position.w);
+    b.prevPosition = float4(c.origin.xyz, 0.0f);
+    b.prevRotation = b.rotation;
+    b.velocity = float4(c.direction.xyz * c.direction.w, b.velocity.w);
+    b.angular = float4(0.0f, 0.0f, 0.0f, b.angular.w);
+}
+
+// PhysicsWorld.free.
+inline void physFree(thread PhysicsBody& b, PhysicsFractureNode node) {
+    if (b.position.w == 0.0f && node.extra.x > 0.0f) b.position.w = node.extra.x;
+    b.info.y &= ~PHYS_ASLEEP;
+    b.prevPosition.w = 0.0f;
+}
+
+// PhysicsWorld.blast.
+inline void physBlast(thread PhysicsBody& b, thread PhysicsFractureState& s, PhysicsFractureNode node, PhysicsFractureCommand c) {
+    if ((b.info.y & (PHYS_DISABLED | PHYS_KINEMATIC)) != 0) return;
+    float3 o = c.origin.xyz, away = b.position.xyz - o;
+    float radius = c.origin.w, d = length(away);
+    if (!(d < radius + b.invInertia.w * 0.5f)) return;
+    float f = max(1.0f - max(d - b.invInertia.w * 0.5f, 0.0f) / radius, 0.0f);
+    float3 dir = physDirection(away / max(d, 1e-4f) + float3(0, 0.35f, 0));
+    float dv = c.direction.w * f / float(c.info.w);
+    float invMass = b.position.w > 0.0f ? b.position.w : node.extra.x;
+    if (!(invMass > 0.0f) || !(dv > 0.0f)) return;
+    if (b.position.w > 0.0f) {
+        b.info.y &= ~PHYS_ASLEEP;
+        b.prevPosition.w = 0.0f;
+        b.velocity = float4(b.velocity.xyz + dir * dv, b.velocity.w);
+    }
+    float impulse = dv / invMass;
+    s.strain.x += impulse;
+    s.impact += float4(o * impulse, impulse);
+    s.direction.xyz += dir * impulse;
+}
+
+// The step's commands (PhysicsWorld.beginFractureStep), a thread a body, before the broad phase: the clock is the
+// step's index (the CPU's stepIndex), the command count the CPU's.
+kernel void physicsFractureCommandKernel(constant PhysicsFractureParams&      fp       [[buffer(1)]],
+                                         device PhysicsBody*                  bodies   [[buffer(2)]],
+                                         device const PhysicsFractureNode*    nodes    [[buffer(3)]],
+                                         device PhysicsFractureState*         state    [[buffer(4)]],
+                                         device const PhysicsFractureCommand* commands [[buffer(5)]],
+                                         device const uint4*                  clock    [[buffer(6)]],
+                                         device float4*                       lastPose [[buffer(7)]],
+                                         uint i [[thread_position_in_grid]])
+{
+    if (i >= fp.counts.x) return;
+    uint now = clock[0].x, count = min(clock[0].y, fp.counts.z);
+    PhysicsBody b = bodies[i];
+    PhysicsFractureState s = state[i];
+    bool changed = false;
+    for (uint k = 0; k < count; ++k) {
+        PhysicsFractureCommand c = commands[k];
+        if (!(c.info.x <= now && now < c.info.x + c.info.w)) continue;
+        switch (c.info.y) {
+        case PHYS_SHOOT:
+            if (c.info.z != i || now != c.info.x) break;
+            physLaunch(b, c);
+            lastPose[2 * i] = float4(b.position.xyz, 0.0f);   // (no streak from where it waited)
+            changed = true;
+            break;
+        case PHYS_BLAST:
+            physBlast(b, s, nodes[i], c);
+            changed = true;
+            break;
+        case PHYS_WAKE:
+            if (c.info.z != i) break;
+            b.info.y &= ~PHYS_ASLEEP;
+            b.prevPosition.w = 0.0f;
+            changed = true;
+            break;
+        case PHYS_RELEASE:
+            if (c.info.z != i) break;
+            physFree(b, nodes[i]);
+            changed = true;
+            break;
+        default: break;
+        }
+    }
+    if (!changed) return;
+    bodies[i] = b;
+    state[i] = s;
+}
+
+// Phase A of the step's end (PhysicsWorld.verdict): what the step's impacts make of each piece.
+kernel void physicsFractureVerdictKernel(constant PhysicsFractureParams&   fp     [[buffer(1)]],
+                                         device const PhysicsBody*         bodies [[buffer(2)]],
+                                         device const PhysicsFractureNode* nodes  [[buffer(3)]],
+                                         device PhysicsFractureState*      state  [[buffer(4)]],
+                                         uint i [[thread_position_in_grid]])
+{
+    if (i >= fp.counts.x) return;
+    PhysicsBody b = bodies[i];
+    PhysicsFractureNode node = nodes[i];
+    PhysicsFractureState s = state[i];
+    s.strain.w = 0.0f;
+    if ((b.info.y & (PHYS_PIECE | PHYS_DISABLED)) == PHYS_PIECE) {
+        float total = s.strain.x + s.strain.z;
+        if (node.info.z > 0 && total > node.offset.w) s.strain.w = 1.0f;
+        else if (total > node.extra.y && node.info.x != PHYS_NONE) s.strain.w = 2.0f;
+        s.strain.y = node.extra.z > 0.0f && (b.info.y & PHYS_ASLEEP) != 0 ? s.strain.y + PHYS_STEP : 0.0f;
+    }
+    state[i] = s;
+}
+
+// Phase B (PhysicsWorld.apply): each body reads only its parent's state and pose (which no thread writes here: a
+// breaking parent only sets its flags) and writes only its own, but for the welds a freed piece breaks (each to 1).
+kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp         [[buffer(1)]],
+                                       device PhysicsBody*               bodies     [[buffer(2)]],
+                                       device const PhysicsFractureNode* nodes      [[buffer(3)]],
+                                       device PhysicsFractureState*      state      [[buffer(4)]],
+                                       device PhysicsFractureWeld*       welds      [[buffer(5)]],
+                                       device const uint*                weldStarts [[buffer(6)]],
+                                       device const uint2*               weldList   [[buffer(7)]],
+                                       device uint4*                     clock      [[buffer(8)]],
+                                       device float4*                    lastPose   [[buffer(9)]],
+                                       device uint*                      broke      [[buffer(10)]],   // per body: 1 if it broke
+                                       uint i [[thread_position_in_grid]])
+{
+    if (i == 0) clock[0].x += 1;   // (the next step's command kernel reads it)
+    if (i >= fp.counts.x) return;
+    PhysicsBody b = bodies[i];
+    broke[i] = (b.info.y & (PHYS_PIECE | PHYS_DISABLED)) == PHYS_PIECE && state[i].strain.w == 1.0f ? 1u : 0u;
+    if ((b.info.y & PHYS_PIECE) == 0) return;
+    PhysicsFractureNode node = nodes[i];
+    PhysicsFractureState s = state[i];
+    float4 tuning = fp.tuning;
+    bool freed = false;
+    if ((b.info.y & PHYS_DISABLED) == 0) {
+        float verdict = s.strain.w;
+        if (verdict == 1.0f) {
+            bodies[i].info.y = b.info.y | PHYS_DISABLED;   // (its strain stays: its children read it)
+            return;
+        }
+        if (verdict == 2.0f) { physFree(b, node); freed = true; }
+        float scale = min(max(1.0f - (s.strain.y - tuning.x) / max(tuning.y, 1e-3f), 0.0f), 1.0f);
+        if (!(scale > 0.0f)) b.info.y |= PHYS_DISABLED;
+        s.strain.x = 0.0f;
+        s.strain.z = 0.0f;
+        s.impact = float4(0.0f);
+        s.direction = float4(0, 0, 0, scale);
+    } else {
+        // Disabled: in its parent's place, if that just broke.
+        uint p = node.info.x;
+        if (p == PHYS_NONE || state[p].strain.w != 1.0f) return;
+        PhysicsFractureState ps = state[p];
+        float4 pq = bodies[p].rotation, pv = bodies[p].velocity, pw = bodies[p].angular;
+        float4 px = bodies[p].position;
+        float3 x = px.xyz + quatRotate(pq, node.offset.xyz);
+        float4 q = physNormalize(quatMul(pq, node.rotation));
+        float3 v = pv.xyz + cross(pw.xyz, x - px.xyz);
+        float total = ps.strain.x + ps.strain.z;
+        float3 hit = ps.impact.w > 0.0f ? ps.impact.xyz / ps.impact.w : px.xyz;
+        float spread = max(tuning.z * pow(total / max(nodes[p].offset.w, 1e-6f), 1.0f / 3.0f), 1e-3f);
+        float f = max(1.0f - max(length(x - hit) - 0.6f * b.invInertia.w, 0.0f) / spread, 0.0f);
+        float inherited = total * f * f;
+        bool held = (node.info.w & 1u) != 0 && px.w == 0.0f;
+        b.position = float4(x, held ? 0.0f : node.extra.x);
+        b.rotation = q;
+        b.prevPosition = float4(x, 0.0f);
+        b.prevRotation = q;
+        b.info.y &= ~(PHYS_DISABLED | PHYS_ASLEEP);
+        s.strain = float4(0, 0, inherited, 0);
+        s.impact = float4(0.0f);
+        s.direction = float4(0, 0, 0, 1);
+        freed = inherited > node.extra.y;
+        if (freed && !held) {
+            float3 d = ps.direction.xyz;
+            float l = length(d);
+            if (l > 1e-6f && node.extra.x > 0.0f) v += d / l * min(inherited * tuning.w * node.extra.x, PHYS_FREED_PUSH);
+        }
+        b.velocity = float4(v, b.velocity.w);
+        b.angular = float4(pw.xyz, b.angular.w);
+        lastPose[2 * i] = float4(x, 0.0f);   // (no streak from where it waited)
+        lastPose[2 * i + 1] = q;
+    }
+    bodies[i] = b;
+    state[i] = s;
+    if (freed) {
+        for (uint k = weldStarts[i], end = weldStarts[i + 1]; k < end; ++k) {
+            device uint* words = (device uint*)(welds + weldList[k].y);   // (info.z: its 15th word)
+            atomic_store_explicit((device atomic_uint*)(words + 14), 1u, memory_order_relaxed);
+        }
+    }
+}
+
+// The step's breaks into its slot of the ring, in body order (the dust's seeds follow it: a run is the same every time),
+// by one threadgroup: each thread a run of bodies, their counts summed in order.
+kernel void physicsFractureEventsKernel(constant PhysicsFractureParams&   fp     [[buffer(1)]],
+                                        device const PhysicsBody*         bodies [[buffer(2)]],
+                                        device const PhysicsFractureNode* nodes  [[buffer(3)]],
+                                        device const uint4*               clock  [[buffer(8)]],
+                                        device const uint*                broke  [[buffer(10)]],
+                                        device uint4*                     ring   [[buffer(11)]],
+                                        uint t [[thread_index_in_threadgroup]],
+                                        uint width [[threads_per_threadgroup]])
+{
+    threadgroup uint before[1024];
+    uint n = fp.counts.x, per = (n + width - 1) / width, a = min(t * per, n), b = min(a + per, n);
+    uint mine = 0;
+    for (uint i = a; i < b; ++i) mine += broke[i];
+    before[t] = mine;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (t == 0) {
+        uint sum = 0;
+        for (uint k = 0; k < width; ++k) { uint c = before[k]; before[k] = sum; sum += c; }
+        uint step = clock[0].x - 1;   // (the apply kernel moved it on)
+        ring[step % PHYS_RING_SLOTS] = uint4(step + 1, min(sum, PHYS_RING_EVENTS), 0, 0);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint slot = (clock[0].x - 1) % PHYS_RING_SLOTS, at = before[t];
+    device PhysicsBreakEvent* events = (device PhysicsBreakEvent*)(ring + PHYS_RING_SLOTS) + slot * PHYS_RING_EVENTS;
+    for (uint i = a; i < b && at < PHYS_RING_EVENTS; ++i) {
+        if (broke[i] == 0) continue;
+        PhysicsBreakEvent e;
+        e.position = float4(bodies[i].position.xyz, bodies[i].invInertia.w);
+        e.velocity = float4(bodies[i].velocity.xyz, nodes[i].extra.w);
+        events[at++] = e;
+    }
 }

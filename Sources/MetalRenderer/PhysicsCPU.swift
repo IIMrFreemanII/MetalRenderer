@@ -8,6 +8,7 @@ import simd
 extension PhysicsWorld {
     func step() {
         let p = params
+        if fractures { beginFractureStep() }   // the shots and blasts of this step (Physics+Fracture.swift)
         broadPhase(p)
         wake(p)
         link()
@@ -37,6 +38,7 @@ extension PhysicsWorld {
         }
         settle(p, start)
         stepHair(start)
+        if fractures { endFractureStep() }     // what broke, what came free, what faded
         stepIndex += 1
     }
 
@@ -77,9 +79,12 @@ extension PhysicsWorld {
     private func broadPhase(_ p: GPUPhysicsParams) {
         let size = p.grid.x
         var grid: [SIMD3<Int32>: [Int]] = [:]
-        for (i, b) in bodies.enumerated() { grid[PhysicsWorld.cell(PhysicsMath.xyz(b.position), size), default: []].append(i) }
+        for (i, b) in bodies.enumerated() where !PhysicsWorld.disabled(b) {
+            grid[PhysicsWorld.cell(PhysicsMath.xyz(b.position), size), default: []].append(i)
+        }
         let k = PhysicsWorld.maxPairs
         for (i, b) in bodies.enumerated() {
+            if PhysicsWorld.disabled(b) { pairCounts[i] = 0; continue }   // (it is in no cell: nothing finds it either)
             let x = PhysicsMath.xyz(b.position), r = PhysicsWorld.reach(b, p)
             let c = PhysicsWorld.cell(x, size)
             var found: [(Float, UInt32)] = []   // (distance squared, -1 for a static; partner)
@@ -89,6 +94,7 @@ extension PhysicsWorld {
                         for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i && !PhysicsWorld.joined(b, i, bodies[j], j) {
                             let o = bodies[j]
                             if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { continue }   // neither gives
+                            if PhysicsWorld.held(b) && PhysicsWorld.held(o) { continue }             // two anchored pieces
                             let reach = r + PhysicsWorld.reach(o, p)
                             let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
                             if d2 < reach * reach { found.append((d2, UInt32(j))) }
@@ -191,6 +197,12 @@ extension PhysicsWorld {
                 let b = partner(pairs[e].partner)
                 // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
                 if refresh && (pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { continue }
+                // Two welded pieces: the weld is the pair's one contact (Physics+Fracture.swift).
+                if let w = liveWeld(i, pairs[e].partner) {
+                    pairs[e].contacts = 1
+                    contacts[e * PhysicsWorld.maxContacts] = PhysicsWorld.weldContact(w)
+                    continue
+                }
                 let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
                                + length(PhysicsMath.xyz(a.angular)) * a.invInertia.w
                                + length(PhysicsMath.xyz(b.angular)) * b.invInertia.w) * p.grid.w
@@ -271,7 +283,12 @@ extension PhysicsWorld {
 
     // MARK: Substeps
 
-    @inline(__always) static func moves(_ b: GPUPhysicsBody) -> Bool { b.position.w > 0 && b.info.y & PhysicsWorld.asleep == 0 }
+    @inline(__always) static func moves(_ b: GPUPhysicsBody) -> Bool {
+        b.position.w > 0 && b.info.y & (PhysicsWorld.asleep | PhysicsWorld.disabledBit) == 0
+    }
+    @inline(__always) static func disabled(_ b: GPUPhysicsBody) -> Bool { b.info.y & PhysicsWorld.disabledBit != 0 }
+    /// An anchored piece the ground still holds (it moves only once it comes free).
+    @inline(__always) static func held(_ b: GPUPhysicsBody) -> Bool { b.info.y & PhysicsWorld.anchoredBit != 0 && b.position.w == 0 }
 
     /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target;
     /// a kinematic body to where its table puts it at the end of substep `sub` (PhysicsFlesh.swift).
@@ -415,6 +432,10 @@ extension PhysicsWorld {
             }
         }
         for e in pairOrder {
+            if fractures {
+                pushFracturePair(Int(e), h: h, g: length(PhysicsMath.xyz(p.gravity)))
+                continue
+            }
             solvePair(Int(e)) { a, b, contact, ci in
                 let push = PhysicsWorld.contactPush(contact, a, b, h: h)
                 contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0)
@@ -489,6 +510,10 @@ extension PhysicsWorld {
     /// The contacts' velocity changes, a colour of pairs at a time.
     private func solveVelocities(_ p: GPUPhysicsParams) {
         for e in pairOrder {
+            if fractures {
+                kickFracturePair(Int(e), p)
+                continue
+            }
             solvePair(Int(e)) { a, b, contact, _ in
                 guard let kick = PhysicsWorld.contactKick(contact, a, b, p) else { return }
                 PhysicsWorld.kick(&a, kick.impulse, kick.ra, kick.twist)
@@ -688,7 +713,7 @@ extension PhysicsWorld {
             // (A figure's flesh and skin don't meet its own bones: info.z = their first << 8 | how many.)
             let soft = q.info.y & PhysicsWorld.softBit != 0
             let own = soft ? Int(q.info.z >> 8)..<Int((q.info.z >> 8) + (q.info.z & 0xFF)) : 0..<0
-            for (j, b) in bodies.enumerated() where !own.contains(j) {
+            for (j, b) in bodies.enumerated() where !own.contains(j) && !PhysicsWorld.disabled(b) {
                 let reach = r + PhysicsWorld.reach(b, p)
                 if length_squared(PhysicsMath.xyz(b.position) - x) < reach * reach { touching.append(UInt32(j)) }
             }

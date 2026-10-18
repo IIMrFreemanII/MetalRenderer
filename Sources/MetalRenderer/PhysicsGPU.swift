@@ -101,6 +101,27 @@ final class PhysicsGPU {
     private let bodyUploads: [MTLBuffer]
     /// The liquids (PhysicsFluidGPU.swift), stepped before each group's narrow phase.
     let fluid: FluidGPU?
+    /// Fractured objects (Physics+Fracture.swift): per body its node and its step's state, the welds (and as they
+    /// start), per body its welds (from `weldStarts`), the commands and their clock (steps run, commands), what the
+    /// fracture kernels are told; and the substeps' tables (MSL PhysicsTables: the tets', the welds', the states'
+    /// addresses) and what they point at.
+    private let fractureNodes: MTLBuffer
+    private let fractureState: MTLBuffer
+    private let welds: MTLBuffer
+    private let initialWelds: MTLBuffer
+    private let weldStarts: MTLBuffer
+    private let weldList: MTLBuffer
+    private let commands: MTLBuffer
+    private let fractureClock: MTLBuffer
+    private let fractureParams: MTLBuffer
+    private let tables: MTLBuffer
+    private let tableResources: [MTLResource]
+    /// Per body whether it broke this step, and the ring of steps' breaks the dust is made from (MSL
+    /// physicsFractureEventsKernel: a header per slot, then its events); the particles read it (ParticlesGPU.breakRing).
+    private let broke: MTLBuffer
+    let breakRing: MTLBuffer
+    private var commandsSent = 0
+    var fractures: Bool { world.fractures }
     /// It steps the world; otherwise it only draws the CPU's cloths and hair.
     let simulates: Bool
     var hasCloth: Bool { clothTable != nil }
@@ -155,7 +176,10 @@ final class PhysicsGPU {
         contacts = try buffer([GPUPhysicsContact](), "physicsContacts",
                               length: n * k * PhysicsWorld.maxContacts * MemoryLayout<GPUPhysicsContact>.stride)
         wake = try buffer([UInt32](repeating: 0, count: n), "physicsWake")
-        let poses = world.initialBodies.flatMap { [SIMD4(PhysicsMath.xyz($0.position), 0), $0.rotation] }
+        // (w: how far it is hidden: a disabled body, 1, until the pose kernel's snapshots say otherwise.)
+        let poses = world.initialBodies.flatMap {
+            [SIMD4(PhysicsMath.xyz($0.position), $0.info.y & PhysicsWorld.disabledBit != 0 ? 1 : 0), $0.rotation]
+        }
         lastPose = try buffer(poses, "physicsLastPose")
         let runs = stride(from: 0, to: world.substeps, by: PhysicsWorld.contactRefresh).map { first in
             Group(first: UInt32(first), count: UInt32(min(PhysicsWorld.contactRefresh, world.substeps - first)),
@@ -209,6 +233,23 @@ final class PhysicsGPU {
             : try (0..<slots).map { try buffer(world.initialBodies, "physicsFleshBodies\($0)") }
         self.sdfScene = sdfScene
         self.sdfResources = sdfResources
+        fractureNodes = try buffer(world.fractureNodes, "physicsFractureNodes")
+        fractureState = try buffer(world.fractureState, "physicsFractureState")
+        welds = try buffer(world.initialWelds, "physicsWelds")
+        initialWelds = try buffer(world.initialWelds, "physicsInitialWelds")
+        weldStarts = try buffer(world.weldStarts, "physicsWeldStarts")
+        weldList = try buffer(world.weldList, "physicsWeldList")
+        commands = try buffer([GPUFractureCommand](), "physicsCommands",
+                              length: world.fractures ? PhysicsWorld.maxCommands * MemoryLayout<GPUFractureCommand>.stride : 0)
+        fractureClock = try buffer([SIMD4<UInt32>()], "physicsFractureClock")
+        fractureParams = try buffer([GPUFractureParams(counts: SIMD4(UInt32(n), UInt32(world.initialWelds.count), UInt32(PhysicsWorld.maxCommands), 0),
+                                                       tuning: world.fractureTuning)], "physicsFractureParams")
+        tables = try buffer([tets.gpuAddress, tetStarts.gpuAddress, welds.gpuAddress, fractureState.gpuAddress,
+                             world.fractures ? 1 : 0, 0], "physicsTables")   // (MSL PhysicsTables: four addresses, flags)
+        tableResources = [tets, tetStarts, welds, fractureState]
+        broke = try buffer([UInt32](), "physicsBroke", length: n * 4)
+        breakRing = try buffer([UInt32](), "physicsBreakRing", length: world.fractures
+            ? PhysicsWorld.ringSlots * (16 + PhysicsWorld.ringEvents * MemoryLayout<GPUBreakEvent>.stride) : 0)
         if simulates, let liquids = world.fluid {
             fluid = try FluidGPU(device: device, fluid: liquids, bodies: n,
                                  world: FluidGPU.World(params: params, bodies: bodies, statics: statics, staticBounds: staticBounds,
@@ -216,6 +257,7 @@ final class PhysicsGPU {
         } else {
             fluid = nil
         }
+        sendCommands()   // (a scene's scripted ones)
     }
 
     // MARK: - Encoding
@@ -254,6 +296,15 @@ final class PhysicsGPU {
         enc.setBuffer(lastParticle, offset: 0, index: 7)
         enc.setBuffer(flesh, offset: 0, index: 8)
         dispatch(enc, pipelines[.physicsReset], max(count, particleCount, 1))
+        if fractures {
+            enc.setComputePipelineState(pipelines[.physicsFractureReset])
+            enc.setBuffer(fractureParams, offset: 0, index: 1)
+            enc.setBuffer(fractureState, offset: 0, index: 2)
+            enc.setBuffer(welds, offset: 0, index: 3)
+            enc.setBuffer(initialWelds, offset: 0, index: 4)
+            enc.setBuffer(fractureClock, offset: 0, index: 5)
+            dispatch(enc, pipelines[.physicsFractureReset], max(count, world.initialWelds.count, 1))
+        }
         fluid?.encodeReset(enc, pipelines: pipelines)
         guard strandCount > 0 else { return }
         var vertexCount = UInt32(world.initialHairVertices.count)
@@ -282,7 +333,9 @@ final class PhysicsGPU {
             for _ in 0..<(steps * groupCount) { fluid.encodeGroup(enc, pipelines: pipelines) }
             return
         }
+        enc.useResources(tableResources, usage: [.read, .write])   // (the substeps reach them through `tables`)
         for _ in 0..<steps {
+            if fractures { encodeFractureCommands(enc, pipelines: pipelines) }
             enc.setComputePipelineState(pipelines[.physicsClear])
             enc.setBuffer(heads, offset: 0, index: 1)
             enc.setBuffer(particleHeads, offset: 0, index: 3)
@@ -335,7 +388,72 @@ final class PhysicsGPU {
                 encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
             }
             encodeHair(enc, pipelines: pipelines)
+            if fractures { encodeFractureEnd(enc, pipelines: pipelines) }
         }
+    }
+
+    // MARK: - Fracture
+
+    /// The world's commands the GPU hasn't had yet (a shot, a blast: the CPU adds them between frames, stamped with a
+    /// step not yet encoded), then their count. A shared buffer: a frame in flight may see them early, before their step.
+    func sendCommands() {
+        let all = world.fractureCommands
+        guard fractures, all.count > commandsSent else { return }
+        let n = min(all.count, PhysicsWorld.maxCommands)
+        let stride = MemoryLayout<GPUFractureCommand>.stride
+        all.withUnsafeBytes { raw in
+            commands.contents().advanced(by: commandsSent * stride)
+                .copyMemory(from: raw.baseAddress!.advanced(by: commandsSent * stride), byteCount: (n - commandsSent) * stride)
+        }
+        commandsSent = n
+        fractureClock.contents().advanced(by: 4).storeBytes(of: UInt32(n), as: UInt32.self)
+    }
+
+    /// The step's commands, ahead of its broad phase.
+    private func encodeFractureCommands(_ enc: ComputePass, pipelines: Pipelines) {
+        enc.setComputePipelineState(pipelines[.physicsFractureCommand])
+        enc.setBuffer(fractureParams, offset: 0, index: 1)
+        enc.setBuffer(bodies, offset: 0, index: 2)
+        enc.setBuffer(fractureNodes, offset: 0, index: 3)
+        enc.setBuffer(fractureState, offset: 0, index: 4)
+        enc.setBuffer(commands, offset: 0, index: 5)
+        enc.setBuffer(fractureClock, offset: 0, index: 6)
+        enc.setBuffer(lastPose, offset: 0, index: 7)
+        dispatch(enc, pipelines[.physicsFractureCommand], count)
+    }
+
+    /// The step's end: what broke, what came free, what faded (two phases: verdicts, then each body's own).
+    private func encodeFractureEnd(_ enc: ComputePass, pipelines: Pipelines) {
+        enc.setComputePipelineState(pipelines[.physicsFractureVerdict])
+        enc.setBuffer(fractureParams, offset: 0, index: 1)
+        enc.setBuffer(bodies, offset: 0, index: 2)
+        enc.setBuffer(fractureNodes, offset: 0, index: 3)
+        enc.setBuffer(fractureState, offset: 0, index: 4)
+        dispatch(enc, pipelines[.physicsFractureVerdict], count)
+        enc.setComputePipelineState(pipelines[.physicsFractureApply])
+        enc.setBuffer(welds, offset: 0, index: 5)
+        enc.setBuffer(weldStarts, offset: 0, index: 6)
+        enc.setBuffer(weldList, offset: 0, index: 7)
+        enc.setBuffer(fractureClock, offset: 0, index: 8)
+        enc.setBuffer(lastPose, offset: 0, index: 9)
+        enc.setBuffer(broke, offset: 0, index: 10)
+        dispatch(enc, pipelines[.physicsFractureApply], count)
+        // The step's breaks into the ring, in body order: one threadgroup.
+        let events = pipelines[.physicsFractureEvents]
+        enc.setComputePipelineState(events)
+        enc.setBuffer(breakRing, offset: 0, index: 11)
+        barrier(enc)
+        enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1),
+                                 threadsPerThreadgroup: MTLSize(width: min(events.maxTotalThreadsPerThreadgroup, 1024), height: 1, depth: 1))
+    }
+
+    /// The fracture states and welds as the GPU has them (tests).
+    func readFractureState() -> [GPUFractureState] {
+        Array(UnsafeBufferPointer(start: fractureState.contents().bindMemory(to: GPUFractureState.self, capacity: count), count: count))
+    }
+    func readWelds() -> [GPUFractureWeld] {
+        let n = world.initialWelds.count
+        return Array(UnsafeBufferPointer(start: welds.contents().bindMemory(to: GPUFractureWeld.self, capacity: n), count: n))
     }
 
     /// The strands' step, after the bodies' (a thread a strand), then the clock a step on.
@@ -397,6 +515,9 @@ final class PhysicsGPU {
         enc.setBuffer(pairCounts, offset: 0, index: 7)
         enc.setBuffer(contacts, offset: 0, index: 8)
         enc.setBuffer(groups, offset: group * MemoryLayout<Group>.stride, index: 9)
+        enc.setBuffer(weldStarts, offset: 0, index: 10)
+        enc.setBuffer(weldList, offset: 0, index: 11)
+        enc.setBuffer(welds, offset: 0, index: 12)
         barrier(enc)
         enc.dispatchThreads(MTLSize(width: count * PhysicsWorld.maxPairs * simd, height: 1, depth: 1),
                             threadsPerThreadgroup: MTLSize(width: min(narrow.maxTotalThreadsPerThreadgroup / simd, 4) * simd, height: 1, depth: 1))
@@ -433,8 +554,7 @@ final class PhysicsGPU {
         enc.setBuffer(joints, offset: 0, index: 25)
         enc.setBuffer(jointStarts, offset: 0, index: 26)
         enc.setBuffer(ragdolls, offset: 0, index: 27)
-        enc.setBuffer(tets, offset: 0, index: 28)
-        enc.setBuffer(tetStarts, offset: 0, index: 29)
+        enc.setBuffer(tables, offset: 0, index: 28)
         enc.setBuffer(flesh, offset: 0, index: 30)
         let lanes = substeps.threadExecutionWidth
         let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
@@ -447,7 +567,8 @@ final class PhysicsGPU {
                     descriptorStride: Int) {
         guard !empty else { return }
         var p = PoseParams(bodies: UInt32(count), descriptorStride: descriptors == nil ? 0 : UInt32(descriptorStride))
-        enc.setComputePipelineState(pipelines[.physicsPose])
+        let pose = pipelines[fractures ? .physicsFracturePose : .physicsPose]
+        enc.setComputePipelineState(pose)
         enc.setBytes(&p, length: MemoryLayout<PoseParams>.stride, index: 0)
         enc.setBuffer(bodies, offset: 0, index: 1)
         enc.setBuffer(shapes, offset: 0, index: 2)
@@ -455,7 +576,8 @@ final class PhysicsGPU {
         enc.setBuffer(snapshots[slot], offset: 0, index: 4)
         enc.setBuffer(instances, offset: 0, index: 5)
         enc.setBuffer(descriptors ?? instances, offset: 0, index: 6)
-        dispatch(enc, pipelines[.physicsPose], count)
+        enc.setBuffer(fractureState, offset: 0, index: 7)
+        dispatch(enc, pose, count)
         guard particleCount > 0 else { return }
         var q = PoseParams(bodies: UInt32(particleCount), descriptorStride: p.descriptorStride)
         enc.setComputePipelineState(pipelines[.physicsParticlePose])

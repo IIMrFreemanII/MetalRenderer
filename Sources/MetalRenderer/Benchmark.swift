@@ -132,7 +132,7 @@ final class Benchmark {
             var s = settings
             SettingsEnv.apply(.scene, to: &s, from: env)
             // A run moved to a physics scene takes its look (the METALRENDERER_GI list below can change it again).
-            if s.scene.kind.simulates && !settings.scene.kind.simulates { s.usePhysicsLook() }
+            if s.scene.kind.usesPhysicsLook && !settings.scene.kind.simulates { s.usePhysicsLook() }
             // The fog and sky of the scene the run ends up with, unless this config set its own.
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
             if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
