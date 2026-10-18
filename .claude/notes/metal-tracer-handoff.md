@@ -73,6 +73,9 @@ Capability line: `Metal ray tracing: hardware, MetalFX denoiser: yes, Metal 4: y
   - Clusters mode: ~90× the BLAS mode in the gallery (M1: ~6×). Split: lightmap 37 ms, trace 47, many lights 97,
     mesh lights 15, cascades 27 + 47, reflections 54; the per-frame box structure (`vg`) only 1.7 ms. The cost is the
     software cluster walk in every ray query, so its relative cost grew as hardware RT made everything else fast.
+    **Wrong (2026-10-18):** it was the box structure's empty slots, boxes at 1e30 (`vgBoxesKernel`): with them in the
+    structure hardware traversal met nearly every box. As inactive (NaN) boxes: gallery `vg1 cascades static` 278 ->
+    19 ms, the closeups 545-662 -> 26-36 ms. The particles' box structures had the same bug (README "Particles").
 
 ## Where the M4 Max's frame goes (2026-10-17, main at `b229576`)
 The passes on their own (split mode, release, one run each, ms; Metal 3 / Metal 4 where they differ):
