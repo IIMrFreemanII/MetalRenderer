@@ -126,6 +126,7 @@ if [[ $suites == " " ]]; then
           Scene+Terrain*.swift|Renderer+Terrain.swift) add TerrainDocumentTests TerrainEditorTests ;;
           Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
           VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
+          MeshSimplifier.swift|MeshClusterizer.swift) add CacheTests VGStreamerTests CharacterBaseTests ;;   # and the builder's output (images)
           VGStreamer.swift|VirtualGeometry.swift) add VGStreamerTests VGCutTests ;;
           VirtualBLAS.swift) add VGCutTests ;;
           VirtualTracing.swift) add VGCutTests VGStreamerTests ;;   # and images: no suite traces it
