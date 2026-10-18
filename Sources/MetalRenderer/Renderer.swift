@@ -4927,7 +4927,8 @@ final class Renderer: NSObject {
         status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
-        status.destruction = scene.settings.kind == .destruction ? DestructionStatus(tool: destructionTool) : nil
+        status.destruction = scene.settings.kind == .destruction
+            ? DestructionStatus(tool: destructionTool, objects: scene.destructionRig?.info ?? []) : nil
         status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)

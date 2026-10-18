@@ -5,7 +5,8 @@ import simd
 /// moments along the way, on each API and on the CPU; what it costs moving; its video; and the massive setting.
 extension Benchmark {
     static let destructionModes: [String: () -> [Config]] = [
-        "destruction": destruction, "destructiontimes": destructionTimes,
+        "destruction": destruction, "destructiontimes": destructionTimes, "destructionpreview": destructionPreview,
+        "destructionmassive": destructionMassive, "destructiondemo": destructionDemo,
     ]
 
     /// The demo's moments: before anything, the wrecking ball's hit, the shots, the weight's fall, the dust settled.
@@ -32,5 +33,51 @@ extension Benchmark {
     /// The demo paused at each of its moments (the default API).
     private static func destructionTimes() -> [Config] {
         destructionMoments.map { t in destructionBase(String(format: "t%04.1f", t)).still(at: t) }
+    }
+
+    /// The Fracture Editor's preview (DestructionSettings.preview): objects' pieces held apart, at each level.
+    private static func destructionPreview() -> [Config] {
+        [("Tower", 1), ("Tower", 2), ("Golem", 1), ("Golem", 2), ("Brick wall", 1), ("Pane 1", 1)].map { name, level in
+            destructionBase("\(name.lowercased().replacingOccurrences(of: " ", with: "-")) level \(level)").with {
+                $0.scene.destruction.preview = FracturePreview(object: name, level: level, explode: 0.35)
+            }.still(at: 1)
+        }
+    }
+
+    /// Massive (DestructionSettings.massive): the courtyard and a building of fractured walls and floors, 4,000 bodies
+    /// and more, at the physics look (no GI or reflections: the physics takes the frame). Paused along the building's
+    /// fall, then its first 8 s moving for timing. Offline: the M1 Max doesn't keep 60 fps here.
+    private static func destructionMassive() -> [Config] {
+        let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .destruction)) {
+            $0.usePhysicsLook()
+            $0.scene.destruction.massive = true
+        }
+        var out = [Float(1), 3, 5, 8, 14].map { t in base.named(String(format: "massive t%04.1f", t)).still(at: t) }
+        out.append(base.named("massive moving"))
+        return out
+    }
+
+    /// The demo's video: its first 20 s along a camera track (`recording`: 600 JPEGs at 30 fps;
+    /// `.claude/skills/offscreen/scripts/video.sh -m destructiondemo` makes the mp4). Wide as the ball is let go, in on
+    /// the concrete wall as it hits, along the panes and the brick wall as the shots come, up to the tower as the weight
+    /// falls, round to the pillars and the golem, and back out over the rubble.
+    private static func destructionDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        let track = CameraTrack([
+            key(0, [0, 2.6, 13.5], [0, 1.4, -2]),
+            key(2, [-2.2, 2.2, 6.5], [-4.6, 1.6, -3]),
+            key(4, [-1.5, 1.7, 5.2], [-1.2, 1.1, -2.5]),
+            key(5.5, [0.6, 1.6, 4.5], [1.2, 0.9, -5]),
+            key(7.5, [4.0, 3.2, 3.5], [7.2, 2.6, -5.4]),
+            key(9.5, [6.0, 2.0, 4.5], [4.6, 1.4, -2.2]),
+            key(12, [4.4, 1.6, 5.5], [2.6, 0.9, 1.4]),
+            key(16, [0, 3.4, 11], [0, 1, -3]),
+            key(20, [0, 2.6, 13.5], [0, 1.2, -2]),
+        ])
+        var demo = destructionBase("destruction demo").with { $0.post = ShowcaseLook.lens.with { $0.aperture = 0 } }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
     }
 }

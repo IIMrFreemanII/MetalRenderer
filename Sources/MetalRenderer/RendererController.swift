@@ -92,6 +92,7 @@ final class RendererController: InputHandler {
     private(set) var terrainStatus = TerrainStatus()
     private var terrainObservers: [(TerrainStatus) -> Void] = []
     var onToggleTerrain: (() -> Void)?          // Shift-T
+    var onToggleFracture: (() -> Void)?         // Shift-F
     /// An armed pick's answer (the Material Designer's).
     var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// Who wants to know what a click in the view selected (its instance; nil: nothing).
@@ -258,6 +259,11 @@ final class RendererController: InputHandler {
                     : key == "h" ? onToggleCharacters : key == "x" ? onToggleVFX : key == "o" ? onToggleMaterials
                     : key == "y" ? onToggleProjectGraph : key == "z" ? onToggleDayBar : onToggleBuildings)?()
             }
+            return
+        }
+        // Shift-F: the Fracture Editor's window.
+        if key == "f" && event.modifierFlags.contains(.shift) {
+            if !event.isARepeat { onToggleFracture?() }
             return
         }
         // Shift-T: the Terrain Editor's window (T alone is Reference mode).

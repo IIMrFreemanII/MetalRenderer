@@ -151,6 +151,26 @@ extension PhysicsWorld {
         }
     }
 
+    /// The Fracture Editor's preview of fractured object `tree` (its root body `first`): its pieces at `level` (and
+    /// leaves above it) enabled, held where they are moved apart from its middle by `explode` x their distance, asleep;
+    /// the rest disabled. Before `finish`.
+    func preview(_ tree: FractureTree, first: Int, level: Int, explode: Float) {
+        let centre = PhysicsWorld.xyz(bodies[first].position)
+        for (k, node) in tree.nodes.enumerated() {
+            let i = first + k
+            guard node.level == level || (node.isLeaf && node.level < level) else {
+                bodies[i].info.y |= PhysicsWorld.disabledBit
+                continue
+            }
+            let x = PhysicsWorld.xyz(bodies[i].position)
+            let moved = x + (x - centre) * explode
+            bodies[i].info.y = (bodies[i].info.y & ~PhysicsWorld.disabledBit) | PhysicsWorld.asleep
+            bodies[i].position = SIMD4(moved, 0)
+            bodies[i].prevPosition = SIMD4(moved, 0)
+            fractureNodes[i].extra.x = 0   // (held: nothing frees it)
+        }
+    }
+
     /// A ball for shots: disabled until a `shoot` command sends it.
     func disable(_ i: Int) { bodies[i].info.y |= PhysicsWorld.disabledBit }
 

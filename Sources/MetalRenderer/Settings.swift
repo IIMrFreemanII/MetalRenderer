@@ -450,6 +450,14 @@ struct ParticleSettings: Equatable, Codable {
     }
 }
 
+/// The Fracture Editor's look at one object's pieces (DestructionSettings.preview).
+struct FracturePreview: Equatable, Codable {
+    var object: String
+    /// The level shown (1: the object's pieces), and how far apart they are (a share of their distance from its middle).
+    var level = 1
+    var explode: Float = 0.4
+}
+
 /// The destruction scene's (Scene+Destruction.swift). Changing any of it builds the scene again.
 struct DestructionSettings: Equatable, Codable {
     /// Scales every object's pieces (the first level's count, the next ones' by its square root).
@@ -466,6 +474,10 @@ struct DestructionSettings: Equatable, Codable {
     var massive = false
     /// The statues: the meshes cut piece by piece (textures kept), or none.
     var statues = true
+    /// The Fracture Editor's edits, by object name, over the saved recipes (FractureStore) and the defaults (session
+    /// state); and its preview: one object's pieces at a level, held apart (nothing moves, no demo).
+    var recipes: [String: FractureRecipe] = [:]
+    var preview: FracturePreview?
 
     static let pieceRange: ClosedRange<Float> = 0.25...4
     static let toughnessRange: ClosedRange<Float> = 0.1...10

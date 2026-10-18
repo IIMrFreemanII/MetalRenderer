@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var debugPanel: DebugPanel?
     private var plantEditor: PlantEditorPanel?
     private var vfxEditor: VFXEditorPanel?
+    private var fractureEditor: FractureEditorPanel?
     private var materialEditor: MaterialEditorPanel?
     private var painterPanel: PainterPanel?
     private var terrainEditor: TerrainEditorPanel?
@@ -152,6 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           Shift-T / Shift-Cmd-T   show the Terrain Editor (sculpt, paint layers, generate, erode, scatter and water on the
                        scene's ground: the terrain workshop, the Forest, Mireland, the valley, the city, the open world;
                        Sculpt or Tab in its window: drag shapes the ground, Ctrl inverts, Shift smooths, [ ] size, { } strength)
+          Shift-F / Shift-Cmd-F   show the Fracture Editor (the Destruction scene's objects: pattern, pieces, toughness,
+                       a preview of the pieces held apart; Save keeps them in Assets/Fracture); in that scene 1, 2, 3
+                       pick what a click does: grab a piece, shoot a ball from the camera, blast where you point
           Shift-V      walk (in the building workshop, the city): drag looks, W A S D, Shift runs, Space jumps, C or Control
                        crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
@@ -184,6 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if VFXEditorPanel.wasVisible { vfx.show(nextTo: window) }
         controller.onToggleVFX = { [weak self] in self?.toggleVFX(nil) }
         VFXEditorScript.run(vfx, main: window)
+        let fracture = FractureEditorPanel(host: controller)
+        fractureEditor = fracture
+        if FractureEditorPanel.wasVisible { fracture.show(nextTo: window) }
+        controller.onToggleFracture = { [weak self] in self?.toggleFracture(nil) }
         let materials = MaterialEditorPanel(controller: controller)
         materialEditor = materials
         if MaterialEditorPanel.wasVisible || controller.settings.scene.kind == .materials { materials.show(nextTo: window) }
@@ -266,6 +274,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func toggleVFX(_ sender: Any?) {
         vfxEditor?.toggle(nextTo: window)
+    }
+
+    @objc private func toggleFracture(_ sender: Any?) {
+        fractureEditor?.toggle(nextTo: window)
     }
 
     @objc private func toggleMaterials(_ sender: Any?) {
@@ -359,6 +371,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let terrainItem = appMenu.addItem(withTitle: "Terrain Editor…", action: #selector(toggleTerrain(_:)), keyEquivalent: "t")
         terrainItem.keyEquivalentModifierMask = [.command, .shift]
         terrainItem.target = self
+        let fractureItem = appMenu.addItem(withTitle: "Fracture Editor…", action: #selector(toggleFracture(_:)), keyEquivalent: "f")
+        fractureItem.keyEquivalentModifierMask = [.command, .shift]
+        fractureItem.target = self
         let graphItem = appMenu.addItem(withTitle: "Project Graph…", action: #selector(toggleProjectGraph(_:)), keyEquivalent: "g")
         graphItem.keyEquivalentModifierMask = [.command, .shift]
         graphItem.target = self

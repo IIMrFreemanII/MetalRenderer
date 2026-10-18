@@ -12,9 +12,20 @@ enum DestructionTool: Int, CaseIterable {
     }
 }
 
-/// The destruction scene's tools for the overlay (DestructionOverlay).
+/// The destruction scene's tools for the overlay (DestructionOverlay), and its objects for the Fracture Editor.
 struct DestructionStatus: Equatable {
     var tool: DestructionTool
+    var objects: [FractureObjectInfo] = []
+}
+
+/// One of the destruction scene's fractured objects as the Fracture Editor shows it.
+struct FractureObjectInfo: Equatable {
+    var name: String
+    var recipe: FractureRecipe
+    var nodes: Int
+    var leaves: Int
+    var welds: Int
+    var levels: Int
 }
 
 /// The destruction scene's tools (Physics+Fracture.swift's commands: they are kept with the step they start at, so

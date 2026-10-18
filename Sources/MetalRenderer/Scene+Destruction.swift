@@ -15,6 +15,16 @@ extension Scene {
         var objects: [Fractured] = []
         /// Per FractureMaterial, the particle emitter its breaks are events of (ParticleSystem.none: no dust).
         var dustProxies: [UInt32] = []
+        /// Each object's recipe before the Pieces setting's scale (the Fracture Editor's).
+        var recipes: [String: FractureRecipe] = [:]
+
+        /// What the Fracture Editor lists (DestructionStatus.objects).
+        var info: [FractureObjectInfo] {
+            objects.map { f in
+                FractureObjectInfo(name: f.name, recipe: recipes[f.name] ?? f.tree.recipe, nodes: f.tree.nodes.count,
+                                   leaves: f.tree.leaves, welds: f.tree.welds.count, levels: f.tree.levels)
+            }
+        }
         static let poolSize = 12
         /// The demo's cannonballs, ahead of the pool.
         static let scripted = 4
@@ -23,15 +33,23 @@ extension Scene {
 
     func buildDestruction(_ settings: DestructionSettings) {
         let kit = Kit(self)
-        var made: [Fractured] = []
-        func fractured(_ name: String, shape: SDFShape, recipe: FractureRecipe, transform: float4x4, material: Int, interior: Int,
+        var made: [Fractured] = [], bases: [String: FractureRecipe] = [:]
+        let saved = FractureStore.load()
+        /// Object `name`'s recipe: the editor's edit, the saved one, or `fallback` (its scene's default), its pieces
+        /// scaled by the Pieces setting; the unscaled one kept for the editor.
+        func chosen(_ name: String, _ fallback: FractureRecipe) -> FractureRecipe {
+            let base = settings.recipes[name] ?? saved[name] ?? fallback
+            bases[name] = base
+            return base.scaled(settings.pieces)
+        }
+        func fractured(_ name: String, shape: SDFShape, recipe fallback: FractureRecipe, transform: float4x4, material: Int, interior: Int,
                        anchor: FractureAnchor, mask: UInt32 = Scene.maskGeometry, toughness: Float, strength: Float) {
-            made.append(addFractured(name, shape: shape, recipe: recipe, transform: transform, material: material, interior: interior,
-                                     anchor: anchor, mask: mask, toughness: toughness, strength: strength))
+            made.append(addFractured(name, shape: shape, recipe: chosen(name, fallback), transform: transform, material: material,
+                                     interior: interior, anchor: anchor, mask: mask, toughness: toughness, strength: strength))
         }
         let world = physicsWorld()
         world.fractureTuning.x = settings.fade ? 6 : 1e9
-        let pieces = settings.pieces, tough = settings.toughness, strong = settings.strength
+        let tough = settings.toughness, strong = settings.strength
 
         // Materials, each object's outside then its broken inside (FractureMaterial's looks).
         let paving = addPBRMaterial(baseColor: [0.36, 0.34, 0.31], metallic: 0, roughness: 0.85)
@@ -52,10 +70,12 @@ extension Scene {
         section("Courtyard")
         addInstance(kit.quad, paving, scale([60, 1, 60]))
         addStaticPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
-        kit.slab([-12, 0, -9.4], [12, 5, -9], plaster)
-        kit.slab([-12.4, 0, -9.4], [-12, 5, 6], plaster)
-        kit.slab([12, 0, -9.4], [12.4, 5, 6], plaster)
-        for (point, normal) in [(SIMD3<Float>(0, 0, -9), SIMD3<Float>(0, 0, 1)), ([-12, 0, 0], [1, 0, 0]), ([12, 0, 0], [-1, 0, 0])] {
+        // (Massive: the back wall gives way to a building's lot behind it.)
+        let backWall: Float = settings.massive ? -22 : -9
+        kit.slab([-12, 0, backWall - 0.4], [12, 5, backWall], plaster)
+        kit.slab([-12.4, 0, backWall - 0.4], [-12, 5, 6], plaster)
+        kit.slab([12, 0, backWall - 0.4], [12.4, 5, 6], plaster)
+        for (point, normal) in [(SIMD3<Float>(0, 0, backWall), SIMD3<Float>(0, 0, 1)), ([-12, 0, 0], [1, 0, 0]), ([12, 0, 0], [-1, 0, 0])] {
             addStaticPlane(point: point, normal: normal, friction: 0.6, restitution: 0.1)
         }
         func fixed(_ shape: SDFShape, _ material: Int, _ transform: float4x4) {
@@ -64,7 +84,7 @@ extension Scene {
             addStaticCollider(sdf: s, transform, friction: 0.6, restitution: 0.1)
         }
         func recipe(_ material: FractureMaterial, seed: UInt64) -> FractureRecipe {
-            var r = FractureRecipe.defaults(material).scaled(pieces)
+            var r = FractureRecipe.defaults(material)
             r.seed = seed
             return r
         }
@@ -89,7 +109,7 @@ extension Scene {
         let pillar = SDFShape(.cylinder(halfHeight: 1.3, radius: 0.3, rounding: 0.02))
         for (k, x) in [Float(3.4), 5.4].enumerated() {
             var r = recipe(.concrete, seed: 31 + UInt64(k))
-            r.counts = [max(2, Int(10 * pieces)), max(2, Int((4 * pieces.squareRoot()).rounded()))]
+            r.counts = [10, 4]
             fractured("Pillar \(k + 1)", shape: pillar, recipe: r, transform: translate([x, 1.3, -2.2]), material: concrete,
                          interior: concreteInside, anchor: .ground(0), toughness: tough, strength: strong)
         }
@@ -119,7 +139,7 @@ extension Scene {
         // A concrete tower at the back right, the weight's.
         section("Tower")
         var towerRecipe = recipe(.concrete, seed: 61)
-        towerRecipe.counts = [max(2, Int(16 * pieces)), max(2, Int((6 * pieces.squareRoot()).rounded()))]
+        towerRecipe.counts = [16, 6]
         fractured("Tower", shape: SDFShape(.box(halfExtents: [0.5, 2, 0.5])), recipe: towerRecipe, transform: translate([7.4, 2, -5.4]),
                      material: concrete, interior: concreteInside, anchor: .ground(0), toughness: tough, strength: strong)
 
@@ -132,7 +152,7 @@ extension Scene {
             SDFShape.Node(.sphere(radius: 0.16), smooth: 0.05, at: [0, 1.32, 0.01]),
         ])
         var bustRecipe = recipe(.stone, seed: 71)
-        bustRecipe.counts = [max(2, Int(12 * pieces)), max(2, Int((4 * pieces.squareRoot()).rounded()))]
+        bustRecipe.counts = [12, 4]
         fractured("Bust", shape: bust, recipe: bustRecipe, transform: translate([-6.6, 0, 0.6]), material: marble,
                      interior: marbleInside, anchor: .ground(0), toughness: tough, strength: strong)
 
@@ -142,11 +162,39 @@ extension Scene {
             let files = Scene.assetsDirectory.appendingPathComponent("grim dark armored golem 3d model.glb")
             if FileManager.default.fileExists(atPath: files.path) {
                 var r = recipe(.stone, seed: 81)
-                r.counts = [max(2, Int(10 * pieces)), max(2, Int((4 * pieces.squareRoot()).rounded()))]
+                r.counts = [10, 4]
                 if let f = addFracturedModel("Golem", url: files, height: 1.7, transform: translate([2.6, 0, 1.4]) * rotate(-0.5, [0, 1, 0]),
-                                             recipe: r, interior: [0.55, 0.53, 0.5], anchor: .ground(0), toughness: tough, strength: strong) {
+                                             recipe: chosen("Golem", r), interior: [0.55, 0.53, 0.5], anchor: .ground(0), toughness: tough, strength: strong) {
                     made.append(f)
                 }
+            }
+        }
+
+        // Massive: a three-storey concrete building behind the courtyard, its walls and floors each fractured (4,000
+        // pieces and more with the courtyard's: offline runs).
+        if settings.massive {
+            section("Building")
+            let w: Float = 3.2, d: Float = 2.8, storey: Float = 3, t: Float = 0.2, centre = SIMD3<Float>(0, 0, -15)
+            var panel = recipe(.concrete, seed: 101)
+            panel.counts = [24, 8]
+            for floor in 0..<3 {
+                let y = Float(floor) * (storey + t)   // (each storey on the slab under it)
+                let walls: [(String, SIMD3<Float>, SIMD3<Float>)] = [
+                    ("front", [0, y + storey / 2, d], [w, storey / 2, t / 2]), ("back", [0, y + storey / 2, -d], [w, storey / 2, t / 2]),
+                    ("left", [-w + t / 2, y + storey / 2, 0], [t / 2, storey / 2, d - t / 2]),
+                    ("right", [w - t / 2, y + storey / 2, 0], [t / 2, storey / 2, d - t / 2]),
+                ]
+                for (k, (side, at, half)) in walls.enumerated() {
+                    panel.seed = 101 + UInt64(floor * 8 + k)
+                    fractured("Building/Floor \(floor + 1) \(side)", shape: SDFShape(.box(halfExtents: half)), recipe: panel,
+                              transform: translate(centre + at - [0, 0.001, 0]), material: concrete, interior: concreteInside,
+                              anchor: floor == 0 ? .ground(0) : .none, toughness: tough, strength: strong)
+                }
+                var slab = panel
+                slab.seed = 201 + UInt64(floor)
+                fractured("Building/Floor \(floor + 1) slab", shape: SDFShape(.box(halfExtents: [w, t / 2, d + t / 2])), recipe: slab,
+                          transform: translate(centre + [0, y + storey + t / 2, 0]), material: concrete, interior: concreteInside,
+                          anchor: .none, toughness: tough, strength: strong)
             }
         }
 
@@ -185,6 +233,10 @@ extension Scene {
         let shot = addSDFShape(SDFShape(.sphere(radius: 0.17)))
         var rig = DestructionRig()
         rig.objects = made
+        rig.recipes = bases
+        // The Fracture Editor's preview: one object's pieces held apart, nothing else breaking.
+        let preview = settings.preview.flatMap { p in made.first { $0.name == p.object }.map { (p, $0) } }
+        if let (p, f) = preview { world.preview(f.tree, first: f.firstBody, level: p.level, explode: p.explode) }
         for _ in 0..<(DestructionRig.scripted + DestructionRig.poolSize) {
             let b = world.bodies.count
             addBody(sdf: shot, iron, translate([0, -50, 0]), density: 7000, friction: 0.4, restitution: 0.1)
@@ -193,7 +245,13 @@ extension Scene {
         }
         destructionRig = rig
 
-        if settings.demo {
+        if settings.demo && preview == nil && settings.massive {
+            // The building's ground floor blasted at two corners, then shot at.
+            let step = { (t: Float) in Int(t / PhysicsWorld.stepLength) }
+            world.command(.blast, origin: [-3, 1, -12.2], radius: 2.2, magnitude: 14, at: step(2.5), steps: 6)
+            world.command(.blast, origin: [3, 1, -12.2], radius: 2.2, magnitude: 14, at: step(3.5), steps: 6)
+        }
+        if settings.demo && preview == nil {
             let step = { (t: Float) in Int(t / PhysicsWorld.stepLength) }
             world.command(.wake, body: ball, at: step(2))
             world.command(.wake, body: weight, at: step(6))
@@ -218,6 +276,7 @@ extension Scene {
         }
         skyAnimation = { _ in SIMD3<Float>(0.3, 0.45, 0.8) * 0.24 }
         defaultCamera = Scene.demoCamera(.destruction)!
+        if settings.massive { defaultCamera = Scene.camera([0, 5.5, 15], pitch: -0.14) }
     }
 
     /// The direction and speed that send a ball from `from` to `target` at about `speed` (m/s), aimed up for its drop.
@@ -260,7 +319,8 @@ extension Scene {
                 dust.bakedCurl = true
                 dust.size = (0.18, 0.9)
                 dust.sizeJitter = 0.4
-                dust.colors = (SIMD4(colour, 0.55 * amount), SIMD4(colour, 0.35 * amount), SIMD4(colour, 0))
+                let light = simd_min(colour * 1.6, SIMD3(repeating: 1))   // (a cloud of it scatters light: paler than the stone)
+                dust.colors = (SIMD4(light, 0.45 * amount), SIMD4(light, 0.3 * amount), SIMD4(light, 0))
                 dust.midpoint = 0.25
                 dust.atlas = .smoke
                 dust.frames = 64
