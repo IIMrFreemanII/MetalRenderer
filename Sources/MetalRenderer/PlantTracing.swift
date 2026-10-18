@@ -118,7 +118,7 @@ final class PlantTracing {
     let variantCount: Int
     private let descriptorCount: Int
     /// Per set (a frame slot's, or the one of a still scene): the variants' structures and their descriptors.
-    private(set) var sets: [[MTLAccelerationStructure]] = []
+    private(set) var sets: [[MTLAccelerationStructure]] = [] { didSet { declared = [:] } }
     private var descriptorBuffers: [MTLBuffer] = []
     private var variantDescriptors: [[MTLInstanceAccelerationStructureDescriptor]] = []
     private let work: MTLBuffer                  // per descriptor: (part, phase bucket); ~0 for the pads
@@ -139,14 +139,14 @@ final class PlantTracing {
     private var used: [[Int]]
     /// Far plants as their voxels (SceneSettings.voxelBoxes, a scene that moves): the assemblies' grids, whose boxes
     /// a far plant's instance names at its level instead of its variant (as VoxelLOD does a still scene's baked plants).
-    var voxels: VoxelGrids?
+    var voxels: VoxelGrids? { didSet { declared = [:] } }
     /// Per set: what each plant's descriptor names (its variant, variantCount + its rest variant, or -1 - its voxel
     /// level's box), to tell when another structure is named: the top-level structure is then built again, not refitted.
     private var chosen: [[Int32]]
     /// A scene that moves: per assembly and share kept, a variant at rest, built once and never posed or refitted,
     /// which a plant beyond the wind's `sway` reach names (it still leans as a whole: its instance's transform). Per
     /// assembly, its first.
-    private(set) var rest: [MTLAccelerationStructure] = []
+    private(set) var rest: [MTLAccelerationStructure] = [] { didSet { declared = [:] } }
     private var restBase: [Int] = []
 
     /// `meshStructures`: each mesh's (SceneBuffers.primitives); `positions` and `indices`: the scene's arrays, which the
@@ -588,9 +588,17 @@ final class PlantTracing {
 
     /// What `slot`'s ray queries read through the plants' variants and TraceScene, besides the meshes' structures (the
     /// scene declares those): the variants and the leafy meshes' prefixes.
+    /// (Kept per set, made again when the structures change: made per call, every encoder's declaration cast each of
+    /// a forest's hundreds of structures to MTLResource, a protocol check apiece: half the forest's CPU time a frame.)
     func resources(slot: Int) -> [MTLResource] {
-        [parts, cutouts] + sets[set(slot: slot)] + rest + prefixes + (voxels.map { $0.buffers + $0.boxes } ?? [])
+        let set = set(slot: slot)
+        if let made = declared[set] { return made }
+        let made: [MTLResource] = [parts, cutouts] + (sets[set] + rest + prefixes + (voxels?.boxes ?? [])).map { $0 as MTLResource }
+            + (voxels?.buffers ?? []).map { $0 as MTLResource }
+        declared[set] = made
+        return made
     }
+    private var declared: [Int: [MTLResource]] = [:]
     /// The structures `slot`'s top-level structure names (its build reads them).
     func structures(slot: Int) -> [MTLAccelerationStructure] { sets[set(slot: slot)] + rest + blases + (voxels?.boxes ?? []) }
 }

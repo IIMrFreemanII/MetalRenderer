@@ -1,0 +1,14 @@
+# The hot loops Tools/perf/hotcalls.py holds to the fast subset: no reference counting, allocation, exclusivity or
+# uniqueness checks, dynamic casts or Objective-C messages in their bodies. Each line is part of a demangled name
+# (`swift-demangle --simplified`), matched as a substring; a line that matches nothing fails, so keep them in step with
+# renames. List only functions that are clean: a closure inlined into its caller has no body of its own to check.
+
+# Per frame, per moving instance: the records, the crowd's walkers (Scene.update), the descriptors' writer.
+in Scene.writeInstanceData(into:all:range:)
+closure #1 in closure #1 in closure #2 in Scene.update(time:dayTime:)
+Crowd.Walker.positions(_:)
+static SceneBuffers.writeDescriptor(_:transform:options:mask:userID:resource:index:)
+
+# Offline builders' inner loops.
+split #1 (_:_:_:) in closure #2 in static BVHBuilder.build(boxes:masks:maxLeaf:grain:)
+static MeshClusterizer.morton(_:_:)

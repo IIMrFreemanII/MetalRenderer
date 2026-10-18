@@ -234,6 +234,8 @@ struct SceneBuffers {
 
     let instanceDescriptors: [MTLBuffer]                    // per slot
     private(set) var primitives: [MTLAccelerationStructure] = []        // per mesh
+    /// ...their resource IDs, which indirect descriptors name (asking each structure is an Objective-C call apiece).
+    private var primitiveIDs: [MTLResourceID] = []
     private(set) var namedPrimitives: [String: MTLAccelerationStructure] = [:]
     private(set) var primitiveRefit: PrimitiveRefit?        // the meshes that deform (the crowd's pose slots)
     private(set) var displacedBuild: DisplacedBuild?        // the displaced meshes' (built again when a bake moves them)
@@ -564,7 +566,7 @@ struct SceneBuffers {
 
     /// `body` for the parts of `0..<count`, side by side: a still scene's hundreds of thousands of records, each
     /// written once (an unoptimised build takes a second over them in one loop).
-    private static func inParts(_ count: Int, _ body: (Range<Int>) -> Void) {
+    static func inParts(_ count: Int, _ body: (Range<Int>) -> Void) {
         let part = 16384
         DispatchQueue.concurrentPerform(iterations: (count + part - 1) / part) { body(($0 * part)..<min(($0 + 1) * part, count)) }
     }
@@ -578,27 +580,34 @@ struct SceneBuffers {
         let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
         let stride = indirect ? SceneBuffers.indirectStride : 64
         let meshCount = scene.meshes.count
-        let plants = plants, set = plants?.set(slot: slot) ?? 0
+        let plants = plants, set = plants?.set(slot: slot) ?? 0, primitiveIDs = primitiveIDs, indirect = indirect, leafFall = leafFall
         let holes = scene.hasOpacity   // an alpha-tested instance (a procedural material's opacity) isn't opaque either
-        func write(_ i: Int) {
-            let instance = scene.instances[i]
-            guard instance.virtualMesh < 0 else { return }   // its cut's structure: VirtualTracing writes it
-            if instance.assembly >= 0, let plants {   // a plant: its assembly's variant (in the wind, PlantTracing writes it again)
-                SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform, options: plants.instanceOptions,
-                                             mask: instance.mask, userID: UInt32(i),
-                                             structure: plants.structure(set: set, assembly: instance.assembly, id: UInt32(i), fall: leafFall))
-                return
+        // Through the instances' buffer: `scene.instances[i]` copied a whole instance (~290 bytes) each time.
+        scene.instances.withUnsafeBufferPointer { instances in
+            func write(_ i: Int) {
+                guard instances[i].virtualMesh < 0 else { return }   // its cut's structure: VirtualTracing writes it
+                let assembly = instances[i].assembly
+                if assembly >= 0, let plants {   // a plant: its assembly's variant (in the wind, PlantTracing writes it again)
+                    SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instances[i].transform, options: plants.instanceOptions,
+                                                 mask: instances[i].mask, userID: UInt32(i),
+                                                 structure: plants.structure(set: set, assembly: assembly, id: UInt32(i), fall: leafFall))
+                    return
+                }
+                let sdf = instances[i].sdf
+                let index = sdf >= 0 ? meshCount + sdf : instances[i].mesh
+                // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
+                SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instances[i].transform,
+                                             options: sdf >= 0 || (holes && scene.cutsHoles(i)) ? boxOptions : options, mask: instances[i].mask,
+                                             userID: UInt32(i), resource: indirect ? primitiveIDs[index] : nil, index: index)
             }
-            let index = instance.sdf >= 0 ? meshCount + instance.sdf : instance.mesh
-            // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
-            SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instance.transform,
-                                         options: instance.sdf >= 0 || (holes && scene.cutsHoles(i)) ? boxOptions : options, mask: instance.mask,
-                                         userID: UInt32(i), structure: indirect ? primitives[index] : nil, index: index)
-        }
-        if all {
-            for i in range ?? scene.instances.indices { write(i) }
-        } else {
-            for i in scene.movingInstances { write(i) }
+            if let range {
+                for i in range { write(i) }
+            } else if all {
+                SceneBuffers.inParts(instances.count) { for i in $0 { write(i) } }
+            } else {   // (a crowd's tens of thousands of walkers: in parts too)
+                let moving = scene.movingInstances
+                SceneBuffers.inParts(moving.count) { for k in $0 { write(moving[k]) } }
+            }
         }
     }
 
@@ -606,6 +615,11 @@ struct SceneBuffers {
     /// user ID, or without a structure Metal 3's, which has the mesh's `index` among the structures.
     static func writeDescriptor(_ p: UnsafeMutableRawPointer, transform m: float4x4, options: UInt32, mask: UInt32, userID: UInt32,
                                 structure: MTLAccelerationStructure?, index: Int = 0) {
+        writeDescriptor(p, transform: m, options: options, mask: mask, userID: userID, resource: structure?.gpuResourceID, index: index)
+    }
+    /// ...naming the structure by its resource ID.
+    static func writeDescriptor(_ p: UnsafeMutableRawPointer, transform m: float4x4, options: UInt32, mask: UInt32, userID: UInt32,
+                                resource: MTLResourceID?, index: Int = 0) {
         var offset = 0
         for column in 0..<4 {           // packed column-major 4x3 matrix
             for row in 0..<3 {
@@ -616,9 +630,9 @@ struct SceneBuffers {
         p.storeBytes(of: options, toByteOffset: 48, as: UInt32.self)
         p.storeBytes(of: mask, toByteOffset: 52, as: UInt32.self)
         p.storeBytes(of: UInt32(0), toByteOffset: 56, as: UInt32.self)              // intersection function table offset
-        if let structure {
+        if let resource {
             p.storeBytes(of: userID, toByteOffset: 60, as: UInt32.self)
-            p.storeBytes(of: structure.gpuResourceID, toByteOffset: 64, as: MTLResourceID.self)
+            p.storeBytes(of: resource, toByteOffset: 64, as: MTLResourceID.self)
         } else {
             p.storeBytes(of: UInt32(index), toByteOffset: 60, as: UInt32.self)      // index into `primitives`
         }
@@ -867,6 +881,7 @@ struct SceneBuffers {
                                         scratch: scratch, scratchStride: stride)
         }
         primitives = structures.map { $0! }
+        primitiveIDs = primitives.map(\.gpuResourceID)
         for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }
     }
 
