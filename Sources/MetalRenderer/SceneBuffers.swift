@@ -234,7 +234,8 @@ struct SceneBuffers {
 
     let instanceDescriptors: [MTLBuffer]                    // per slot
     private(set) var primitives: [MTLAccelerationStructure] = []        // per mesh
-    /// ...their resource IDs, which indirect descriptors name (asking each structure is an Objective-C call apiece).
+    /// ...their resource IDs, which indirect descriptors name (asking each structure is an Objective-C call apiece): the
+    /// meshes', the SDF shapes' boxes and the voxel grids' boxes, as `primitives` has them.
     private var primitiveIDs: [MTLResourceID] = []
     private(set) var namedPrimitives: [String: MTLAccelerationStructure] = [:]
     private(set) var primitiveRefit: PrimitiveRefit?        // the meshes that deform (the crowd's pose slots)
@@ -436,6 +437,8 @@ struct SceneBuffers {
             : nil
         let meshStructures = primitives.count
         if let voxelGrids { primitives += voxelGrids.boxes }
+        // (Once they are all there: an SDF instance's descriptor names its box's ID, past the meshes'.)
+        primitiveIDs = primitives.map(\.gpuResourceID)
         if !still { plants?.voxels = voxelGrids }
         guard let placeholder = primitives.first else { return }
 
@@ -881,7 +884,6 @@ struct SceneBuffers {
                                         scratch: scratch, scratchStride: stride)
         }
         primitives = structures.map { $0! }
-        primitiveIDs = primitives.map(\.gpuResourceID)
         for (i, name) in scene.meshNames { namedPrimitives[name] = primitives[i] }
     }
 
