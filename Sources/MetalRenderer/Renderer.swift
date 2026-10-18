@@ -4828,6 +4828,7 @@ final class Renderer: NSObject {
         sizes[Kernel.trace.rawValue] = MTLSize(width: 16, height: 8, depth: 1)
         sizes[Kernel.atrous.rawValue] = MTLSize(width: 16, height: 16, depth: 1)
         sizes[Kernel.regirBuild.rawValue] = MTLSize(width: 64, height: 1, depth: 1)
+        sizes[Kernel.particleLight.rawValue] = MTLSize(width: 64, height: 1, depth: 1)   // a thread a particle
         sizes[Kernel.focus.rawValue] = MTLSize(width: 1, height: 1, depth: 1)   // one thread
         for item in (ProcessInfo.processInfo.environment["METALRENDERER_TG"] ?? "").split(separator: ",") {
             let kv = item.split(separator: "="), wh = kv.count == 2 ? kv[1].split(separator: "x").compactMap { Int($0) } : []

@@ -50,6 +50,10 @@ Phase 2:
    metal3 against metal4.
 2. Re-time the mode with hardware RT. On the M1 Max the cost is the shader's work on box and curve candidates (the
    trails' curve build is ~0.7 ms for 1,260 segments in software).
+   **Done (2026-10-18):** 6.3 ms paused, 20.4 ms moving 4x, after a fix: the pose's empty slots were boxes at 1e30,
+   and hardware traversal then met nearly every box in the structure (42 ms paused, 350 ms at 4x, and GPU faults that
+   zeroed whole runs). They are NaN (inactive) boxes now (`particlePoseTailKernel`). One run in eleven on Metal 4
+   still hung once in its first frames' reflections: the intermittent Metal 4 hang of metal4-hang-handoff.md.
 3. `ParticleTests` there.
 
 ## Traps found
