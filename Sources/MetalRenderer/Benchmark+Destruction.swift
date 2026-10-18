@@ -7,6 +7,7 @@ extension Benchmark {
     static let destructionModes: [String: () -> [Config]] = [
         "destruction": destruction, "destructiontimes": destructionTimes, "destructionpreview": destructionPreview,
         "destructionmassive": destructionMassive, "destructiondemo": destructionDemo,
+        "destructionbuildingdemo": destructionBuildingDemo,
     ]
 
     /// The demo's moments: before anything, the wrecking ball's hit, the shots, the weight's fall, the dust settled.
@@ -77,6 +78,32 @@ extension Benchmark {
             key(20, [0, 2.6, 13.5], [0, 1.2, -2]),
         ])
         var demo = destructionBase("destruction demo").with { $0.post = ShowcaseLook.lens.with { $0.aperture = 0 } }.track(track).recording()
+        demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
+        return [demo]
+    }
+
+    /// The massive setting's building coming down, as a video at the scene's full look (`recording`: 540 JPEGs at 30
+    /// fps; `.claude/skills/offscreen/scripts/video.sh -m destructionbuildingdemo`): wide over the courtyard, in over the
+    /// panes as the blasts take its front corners (2.5 s, 3.5 s), over the tower to its side as the storeys fall, up over
+    /// the rubble, and back out. Offline: over 4,000 bodies.
+    private static func destructionBuildingDemo() -> [Config] {
+        func key(_ time: Float, _ position: SIMD3<Float>, _ target: SIMD3<Float>) -> CameraTrack.Key {
+            CameraTrack.Key(time: time, position: position, target: target)
+        }
+        // (Along the courtyard's right, over the panes, the pillars and the tower: the wrecking ball's gantry on the left
+        // is in the way.)
+        let track = CameraTrack([
+            key(0, [0, 6, 14], [0, 4.5, -15]),
+            key(2.4, [1.5, 4.0, 1.0], [0, 3, -13]),
+            key(5, [5.5, 5.4, -4], [0, 3.5, -15]),
+            key(8, [8.5, 6, -11], [0, 2.5, -15]),
+            key(12, [4, 9, -6], [0, 1, -15]),
+            key(18, [0, 6.5, 12], [0, 2, -13]),
+        ])
+        var demo = destructionBase("building demo").with {
+            $0.scene.destruction.massive = true
+            $0.post = ShowcaseLook.lens.with { $0.aperture = 0 }
+        }.track(track).recording()
         demo.startTime = -Float(60) / 60   // Benchmark.warmupFrames x fixedDt
         return [demo]
     }
