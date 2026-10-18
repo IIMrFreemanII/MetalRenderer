@@ -64,6 +64,62 @@ Frames overlapping as in the app (the benchmark's wait off), one command buffer 
   mean, or 2x2x2 for the sky's 3D noise, which is only made once. Metal 4's own `generateMipmaps` keeps one texel
   instead of the mean, so it can't be used. That leaves MetalFX's interlude, about 0.13 ms.
 
+## The hang that is left (2026-10-18, main at `00126b3` with the SDF boxes' IDs fixed, as `827533b` on main)
+
+Still there, and not found. It is not tied to scene loads: in a paused scene every frame does the same work, and a
+random frame of 300 hangs. The cheapest repro is the particles scene: `METALRENDERER_BENCH=particles
+METALRENDERER_BENCH_ONLY=metal4 METALRENDERER_API=metal4`, about 2 s a run, 3 of 60 runs with each frame waited for and
+4-8 of 60 with frames overlapping (`.claude/notes/metal4-hang-hangrun.py` runs a setting N times and counts them; it
+counts a run that never printed its results as failed). The showcase (2 of 30 runs, frames overlapping) and the
+scene switches (1 of 30) hung the same way; Metal 3 hasn't, in 140 runs.
+
+What it looks like: one ray-tracing kernel stalls until the watchdog kills its command buffer after 100-130 ms (a few
+after ~200 ms), the passes after it failing as victims. With a command buffer per dispatch (`EXP_DISPATCHCB`) the
+kernel was `rcTraceMergeKernel` 3 times and `reflectionKernel` once; with one per pass the first to fail was
+reflections, particle light, the trace, the light map or the cascades' probes. A paused frame runs particle light,
+light map, trace, the cascades, reflections, the particle layer, composite, upscale, in that order: the stall may be
+a kernel that runs after the one that left something wrong.
+
+Each row: particles, Metal 4, 60 runs (120 or 240 where said), frames overlapping unless said; the baseline is 4-8.
+
+| Change (`.claude/notes/metal4-hang-experiments.patch` has the switches) | Runs hung |
+|---|---|
+| frames waited for (the benchmark's default) | 3 |
+| one command buffer a frame (`METALRENDERER_BENCH_SPLIT=0`), frames waited for | 1 |
+| ...frames overlapping | 2 |
+| every Metal 4 command buffer waited for before the next is committed (`EXP_SERIAL`) | 0, then 1 of 34 that never finished |
+| a producer barrier at each encoder's end as well (`EXP_PRODUCER`) | 5 |
+| the particles' structures never traced (`EXP_NOTRACE`) | 3 |
+| particle shadows off / their reflections off (the mode's settings) | 6 / 2 |
+| no residency releases at all (`EXP_NORELEASE`), 120 runs | 15 |
+| `requestResidency()` after each change (`EXP_REQ`) | 4 |
+| Metal 3 / Metal 3 with Metal 4's indirect instance descriptors (`EXP_INDIRECT`) | 0 / 0 |
+| `METALRENDERER_MATH=relaxed` | 6 |
+| safe math for SDF, Intersect, ParticleTrace / for Surface to LightTree / for Fog, Sky, Mips (pragmas), 120 runs | 10 / 6 / 8 of 92 |
+| every ray handed to a query checked finite (origin, direction, tmin, tmax: bit tests), 240 runs | 8 |
+| ...and the GGX sample's half vector floored above 0 (a mirror's rim sample is a NaN), 240 runs | 12 |
+
+So: not ordering between command buffers (it hangs with one a frame and nothing else on the GPU), not residency, not
+the particles, not NaN rays at the queries, not the descriptor kind. Waiting for every command buffer is the one
+change that came near (1 in 94).
+
+**A trap found on the way:** `METALRENDERER_MATH=safe`, and `#pragma METAL fp math_mode(safe)` over the whole source or
+over the pieces from Trace on, don't start under Metal 4 on macOS 27.0: the pipelines' compile fails with
+`XPC_ERROR_CONNECTION_INTERRUPTED` (the compiler service dies) and the renderer stops in App.swift. Over the pieces up
+to Sky it compiles. An earlier count of 0 hangs with safe math was those failed starts.
+
+**The best lead:** in 3 runs the first failure was no hang but a GPU address fault
+(`kIOGPUCommandBufferCallbackErrorPageFault`) in particle light, the first ray-tracing kernel of a paused frame;
+faults also follow some hangs, in the upscale. A kernel that reads an address nothing maps would fault or, on Apple
+GPUs, can stall: the hangs may be reads too, not loops. Particle light reads the particles' records and lighting
+(bound), the scene through TraceScene (declared every frame: `sceneDeclaredIn` is cleared at each commit) and, by
+their resource IDs, the BLASes the TLAS and the particles' structures name. The hang runner counts only hangs; grep
+the logs for `PageFault` too.
+
+Next to try: Metal System Trace or a GPU capture of a hung run (which kernel is resident when the watchdog fires, and
+what it reads); the cascades' merge with its `traceSurface` replaced by a plain closest hit; a build of the trace,
+cascades and reflections' kernels without the particle queries compiled in (PARTICLES off).
+
 ## Still open
 - **Scene loads** build their BLASes on a Metal 3 queue in the background (`SceneBuffers`, `VirtualTracing`'s
   placeholder, `MaterialTextures`). Virtual geometry's case says Metal 3 work beside the frames isn't enough to hang

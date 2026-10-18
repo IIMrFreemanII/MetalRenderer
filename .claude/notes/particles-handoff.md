@@ -53,7 +53,8 @@ Phase 2:
    **Done (2026-10-18):** 6.3 ms paused, 20.4 ms moving 4x, after a fix: the pose's empty slots were boxes at 1e30,
    and hardware traversal then met nearly every box in the structure (42 ms paused, 350 ms at 4x, and GPU faults that
    zeroed whole runs). They are NaN (inactive) boxes now (`particlePoseTailKernel`). One run in eleven on Metal 4
-   still hung once in its first frames' reflections: the intermittent Metal 4 hang of metal4-hang-handoff.md.
+   still hung, in a random frame (not the first, as it seemed): the intermittent Metal 4 hang; this scene is now its
+   quickest repro (metal4-hang-handoff.md, "The hang that is left").
 3. `ParticleTests` there.
 
 ## Traps found
