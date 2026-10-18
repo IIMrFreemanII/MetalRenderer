@@ -31,7 +31,7 @@ final class WaterSystem {
     /// The near patch (Water.metal waterNearKernel): its grid's vertices as the waves moved them, where each is at
     /// rest, its triangles, its structure (refitted every frame), and where it is this frame (the scene's x, z).
     private var near: (vertices: MTLBuffer, rest: MTLBuffer, indices: MTLBuffer, structure: MTLAccelerationStructure,
-                       descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: MTLBuffer)?
+                       refit: PrimitiveRefit)?
     private(set) var nearCenter: SIMD2<Float>?
     /// `METALRENDERER_WATER_NEAR`: the near patch's cells a side (0: none), and half its side (m).
     static let nearCells = ProcessInfo.processInfo.environment["METALRENDERER_WATER_NEAR"].flatMap(Int.init) ?? 192
@@ -146,7 +146,7 @@ final class WaterSystem {
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
-        near = (vb, rb, ib, structure, d, scratch)
+        near = (vb, rb, ib, structure, PrimitiveRefit(structures: [structure], descriptors: [d], scratch: scratch, scratchOffsets: [0]))
     }
 
     /// Where the near patch goes for a camera at `camera` (the scene's x, z): there, snapped to half a metre.
@@ -198,6 +198,9 @@ final class WaterSystem {
             if table.count * 64 > looks.length, let b = device.makeBuffer(length: table.count * 64, options: .storageModeShared) { looks = b }
             table.withUnsafeBytes { looks.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             buildSurfaces(w)
+            // Metal 4 builds the near patch's tree again (PrimitiveRefit.encode4): its refits of the tree it had
+            // built came out stale after a change of scene on macOS 27.0.1.
+            near?.refit.built4.done = false
         }
         // (The same key: the same water, another scene of it (the open world's next): its field takes over the map's
         // redraws as the camera goes, and the map that is drawn stays.)
@@ -416,8 +419,7 @@ extension WaterSystem {
         enc.useResources([n.vertices, n.rest], usage: [.read, .write])
         let side = WaterSystem.nearCells + 1
         enc.dispatchThreads(MTLSize(width: side, height: side, depth: 1), threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
-        passes.updatePrimitives(PrimitiveRefit(structures: [n.structure], descriptors: [n.descriptor], scratch: n.scratch, scratchOffsets: [0]),
-                                pass: "water near")
+        passes.updatePrimitives(n.refit, pass: "water near")
     }
 }
 

@@ -854,6 +854,9 @@ struct SceneBuffers {
                                             scratch: scratch, scratchOffsets: offsets,
                                             rebuilt: rebuilt.indices.map { (structures[rebuilt[$0].index]!, rebuilt[$0].descriptor, rebuiltOffsets[$0]) },
                                             rebuiltMeshes: rebuilt.map(\.index))
+            var sources = Array(refitted.indices)
+            for copy in copies { sources[copy.refit] = refitted.firstIndex { $0.index == copy.of } ?? copy.refit }
+            primitiveRefit?.sources = sources
         }
         if !displaced.isEmpty {
             guard let scratch = device.makeBuffer(length: displaced.map(\.scratch).max()!, options: .storageModePrivate) else {

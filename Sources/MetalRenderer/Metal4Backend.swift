@@ -277,7 +277,8 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     }
 
     /// Through the Metal 3 queue: the per-mesh structures are built there (once per scene), and the ones a frame
-    /// builds or refits are too, except PrimitiveWork4's (the plants' variants, the particles' boxes). Those are
+    /// builds or refits are too, except PrimitiveWork4's (the plants' variants, the particles' boxes, the deforming
+    /// meshes' refits and the liquids' builds: PrimitiveRefit). Those are
     /// encoded in the frame's own encoder, side by side: through the Metal 3 queue the forest's 231 refits ran one
     /// after another (11 ms on an M4 Max, 0.13 here).
     func updatePrimitives(_ work: PrimitiveWork, pass: String) {

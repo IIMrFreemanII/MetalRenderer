@@ -78,6 +78,22 @@ Frames overlapping as in the app (the benchmark's wait off), one command buffer 
   triangle structures failed here (README, "What Metal 4 still costs"); a per-frame Metal 4 build was slower. Next
   to try: a near patch whose structure Metal 4 builds at creation and refits from then on, made again with each
   scene (the stale refits came after scene changes), or the patch as a vertex-only update of a structure built once.
+  - **Written, not yet run on Metal 4** (2026-10-18, on the M1 Max, which has Metal 4 but not Metal 4 ray tracing:
+    the validation layer stops a Metal 4 structure build with "this device does not support Metal 4 ray tracing",
+    so `Capabilities.metal4RayTracing` is off there and every Metal 4 setting is skipped). `PrimitiveRefit` is now a
+    PrimitiveWork4 with refits too: the first frame builds its trees in the frame's encoder (a character's other
+    poses refitted from its first one's, as at load), the frames after refit them side by side; Metal 4 never refits
+    a tree Metal 3 built. Its `built4` flag lives with the structures (a scene's `primitiveRefit`, the near patch's),
+    and `WaterSystem.adopt` clears the near patch's when the scene changes, so it is built again then.
+    `METALRENDERER_M4_REFIT=0` sends the refits back through the Metal 3 queue. Metal 3's frames are unchanged
+    (the crowd bit for bit, the lake within 7 levels, RMS 0.02).
+  - **To do on the M4 Max:** `render.sh -m blasrefit` with `METALRENDERER_API=metal3`, `metal4` and
+    `metal4 METALRENDERER_M4_REFIT=0` (the lake, the crowd, both again after the other scene, the crowd moving), then
+    `Tools/eval/pngdiff.py` between them: the near patch must be there and match after each change of scene. Then time
+    the world's and the crowd's whole frames (`METALRENDERER_BENCH_SPLIT=0`) against the interlude. If the near
+    patch still goes stale, try `refit(..., options: .vertexData)`, or keep only the crowd's refits in the frame.
+  - The physics look's scenes (cloth, soft bodies, hair) crash on main in `SceneBuffers.writeInstanceDescriptors`
+    (SceneBuffers.swift:601, `primitiveIDs[index]` out of range, Metal 3 included), so `blasrefit` leaves them out.
 
 ## Reproducing
 The temporary benchmark mode (not committed):

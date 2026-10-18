@@ -24,7 +24,7 @@ extension Benchmark {
         "interiormotion": interiorMotion, "exposurewalk": exposureWalk, "darkroom": darkRoom,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
-        "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
+        "blasrefit": blasRefit, "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
 
     static func configs(for mode: String) -> [Config] {
@@ -33,6 +33,19 @@ extension Benchmark {
             print("METALRENDERER_BENCH=\(mode) isn't a mode (\(modes.keys.sorted().joined(separator: ", "))): running the default list")
         }
         return standard()
+    }
+
+    /// The meshes that deform, scene after scene, and back: their structures refitted every frame (PrimitiveRefit).
+    /// Metal 4 refits them in its frame (`METALRENDERER_M4_REFIT=0`: through the Metal 3 queue), which on macOS 27.0.1
+    /// lost a refitted structure's triangles, or left it stale after a change of scene; run it with each API and
+    /// compare the pictures: the water's near patch in the valley's lake and the crowd's poses.
+    private static func blasRefit() -> [Config] {
+        let lake = Config("lake", gi: .radianceCascades, scene: SceneSettings(kind: .valley)).still().frames(60).from(lookAt([-8, 3.5, 44], [-34, 0, 22]))
+        let crowd = Config("crowd", scale: 0.5, upscale: 3, gi: .radianceCascades,
+                           scene: SceneSettings(kind: .crowd, characters: 256, poses: 32, detail: 3)).still()
+        // (Not the physics look's scenes, cloth, soft bodies and hair: they crash in writeInstanceDescriptors, an index
+        // out of range, on main too.)
+        return [lake, crowd, lake.named("lake again"), crowd.named("crowd again"), crowd.named("crowd moving").moving()]
     }
 
     /// Every scene made once, a frame each: their outlines for the Project Graph (OutlineStore writes them).
