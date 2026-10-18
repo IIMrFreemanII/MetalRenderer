@@ -99,6 +99,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `TerrainEditor/*` | TerrainEditorTests |
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
+| `MeshSimplifier`, `MeshClusterizer` (the builder's steps; characters' LODs) | CacheTests, VGStreamerTests, CharacterBaseTests |
 | `VGStreamer`, `VirtualGeometry` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |
 | `VirtualTracing` (virtual geometry in Metal's structures) | VGCutTests, VGStreamerTests (+ prove with images: no suite traces it) |
 | `TraceScene`, `Renderer` | none: prove with images (the offscreen skill) |

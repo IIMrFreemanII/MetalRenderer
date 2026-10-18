@@ -73,6 +73,20 @@ but quote release numbers.
   * keep AABB math in SIMD4 (as `BVHNode`, a cluster tree's node, does).
 * **ARC:** reading a class reference inside a loop can retain and release. Hoist class properties into locals (`let
   nodes = self.nodes`) before the loop. Keep closures out of the hot path.
+* **A class's arrays: go through their buffer.** `scene.instances[i].field` in a loop pays an exclusivity check
+  (`swift_beginAccess`) per access, and reading a field of a big struct element that way can copy the whole element
+  first (a ~290-byte `Scene.Instance` for its `animation`). `instances.withUnsafe(Mutable)BufferPointer { inst in … }`
+  around the loop, and `inst[i].field` inside, does neither: the crowd's 131072 walkers went from 3.7 to 1.7 ms of CPU
+  a frame that way (with their records written in parts, `SceneBuffers.inParts`).
+* **Cache what a frame asks Metal or Objective-C for.** A `[MTLAccelerationStructure]` concatenated into a
+  `[MTLResource]` casts every element with a protocol check, and `structure.gpuResourceID` is a message send: make
+  such lists and IDs once and keep them (`PlantTracing.resources(slot:)`, `SceneBuffers.primitiveIDs`; the forest's
+  CPU time a frame halved).
+* **Check the compiled loop.** `python3 Tools/perf/hotcalls.py` (after `swift build -c release`) disassembles the
+  functions listed in `Tools/perf/hot-functions.txt` and fails if one calls the runtime: retain/release, allocation,
+  `swift_beginAccess`, uniqueness checks, dynamic casts, `objc_msgSend`. Add a hot loop there once it is clean; a name
+  that no longer matches fails too. It reads each function's own body only (inlined closures have none; callees aren't
+  followed).
 * **Algorithmic wins dwarf micro-optimizations.**
   * binned SAH (16–32 bins) instead of a full sweep;
   * a heap or priority queue for edge collapses;
@@ -117,9 +131,12 @@ but quote release numbers.
   `float4` drives the layout.
 * **Big per-frame uploads go through a staging array and one `copyMemory`**, not record by record into the buffer's
   `contents()`. Records written one at a time stay in the CPU's caches, and the GPU then reads them more slowly: with
-  16384 moving lights (3.5 MB of instances, 1 MB of lights) direct writes cost the GPU 0.35 ms a frame; a large
+  16384 moving lights (3.5 MB of instances, 1 MB of lights) direct writes cost an M1 Max's GPU 0.35 ms a frame; a large
   memcpy doesn't leave the data there. Keep the staging array between frames and rewrite only what changed
-  (`Renderer.instanceStage` / `lightStage`, `Scene.writeInstanceData(into:all:)`).
+  (`Renderer.lightStage`). The instance records are the exception: a crowd's 131072 would be a 27 MB copy a frame, so
+  `Scene.writeInstanceData` and `SceneBuffers.writeInstanceDescriptors` write the moving ones straight in, in parts on
+  every core (no GPU cost measurable on an M4 Max). Check the GPU side with `METALRENDERER_BENCH_SPLIT=0` when you
+  change either.
 * A struct shared with MSL gets a `precondition` on its stride in `validateGPULayouts` and a `static_assert(sizeof…)`
   next to its MSL definition.
 

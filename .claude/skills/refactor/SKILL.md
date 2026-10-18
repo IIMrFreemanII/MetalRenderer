@@ -102,7 +102,8 @@ project's structures with the sign that a feature went around each.
 * **One API only.** A pass that encodes for Metal 3 and not through `ComputePass`, so Metal 4 lacks it.
 * **Cost on the frame path:** allocations, string formatting or a new command buffer per frame; a full-screen pass
   that could be part of an existing kernel; a value stored that the next pass could compute. The `performance`
-  skill's checklists are the reference.
+  skill's checklists are the reference. A loop the feature runs every frame over many things follows the
+  `data-oriented` skill's subset, and is in `Tools/perf/hot-functions.txt` once it is clean.
 * **A missing guard.** A struct shared with the shaders without its size assert on both sides, a new option without
   a test that it falls back or round-trips.
 

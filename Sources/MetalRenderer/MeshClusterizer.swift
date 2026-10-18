@@ -51,6 +51,10 @@ enum MeshClusterizer {
         let triCount = triangles.count / 3
         guard triCount > 0 else { return [] }
         let posLocal = LocalIds(triangles.map { posId[Int($0)] }, universe: posId.count)
+        // The attribute vertices, numbered densely: a cluster's are the ones marked with its id (a set of them, hashed
+        // at every test, was half the clusterizer's time).
+        let vertLocal = LocalIds(triangles.map { Int32($0) }, universe: posId.count)
+        var vertIn = [Int32](repeating: -1, count: vertLocal.count)
         // Position -> triangles (CSR).
         var start = [Int32](repeating: 0, count: posLocal.count + 1)
         for p in posLocal.local { start[Int(p) + 1] += 1 }
@@ -77,14 +81,17 @@ enum MeshClusterizer {
             seedPos = sp
             let id = Int32(clusters.count)
             var members: [Int32] = []
-            var verts = Set<UInt32>()
+            var vertCount = 0
             var frontier: [Int32] = []
             var center = SIMD3<Float>.zero
             var radius: Float = 0
             func add(_ t: Int) {
                 assigned[t] = true
                 members.append(Int32(t))
-                for k in 0..<3 { verts.insert(triangles[3 * t + k]) }
+                for k in 0..<3 {
+                    let v = Int(vertLocal.local[3 * t + k])
+                    if vertIn[v] != id { vertIn[v] = id; vertCount += 1 }
+                }
                 center += (centroids[t] - center) / Float(members.count)
                 radius = max(radius, distance(centroids[t], center))
                 for k in 0..<3 {
@@ -103,8 +110,8 @@ enum MeshClusterizer {
                     let t = Int(frontier[i])
                     if assigned[t] { frontier.swapAt(i, frontier.count - 1); frontier.removeLast(); continue }
                     var new = 0
-                    for k in 0..<3 where !verts.contains(triangles[3 * t + k]) { new += 1 }
-                    if verts.count + new <= maxVertices {
+                    for k in 0..<3 where vertIn[Int(vertLocal.local[3 * t + k])] != id { new += 1 }
+                    if vertCount + new <= maxVertices {
                         let d = distance_squared(centroids[t], center)
                         if new < bestNew || (new == bestNew && d < bestDist) { best = t; bestNew = new; bestDist = d }
                     }
@@ -116,8 +123,8 @@ enum MeshClusterizer {
                     var bestD = Float.infinity
                     for q in seeds[(seedPos + 1)..<min(seedPos + 257, triCount)] where !assigned[q] {
                         var new = 0
-                        for k in 0..<3 where !verts.contains(triangles[3 * q + k]) { new += 1 }
-                        guard verts.count + new <= maxVertices else { continue }
+                        for k in 0..<3 where vertIn[Int(vertLocal.local[3 * q + k])] != id { new += 1 }
+                        guard vertCount + new <= maxVertices else { continue }
                         let d = distance_squared(centroids[q], center)
                         if d < bestD { bestD = d; best = q }
                     }
@@ -132,7 +139,20 @@ enum MeshClusterizer {
         // Fold slivers (< 16 triangles: leftovers between full clusters) into a neighbouring cluster with room.
         var owner = [Int32](repeating: 0, count: triCount)
         for (c, members) in clusters.enumerated() { for t in members { owner[Int(t)] = Int32(c) } }
-        var vertexCount = clusters.map { members in Set(members.flatMap { t in (0..<3).map { triangles[3 * Int(t) + $0] } }).count }
+        // A cluster's distinct vertices, counted by marks (each count a mark of its own).
+        var counted = [Int32](repeating: -1, count: vertLocal.count), countMark: Int32 = 0
+        func distinctVertices(_ members: [Int32]) -> Int {
+            countMark += 1
+            var n = 0
+            for t in members {
+                for k in 0..<3 {
+                    let v = Int(vertLocal.local[3 * Int(t) + k])
+                    if counted[v] != countMark { counted[v] = countMark; n += 1 }
+                }
+            }
+            return n
+        }
+        var vertexCount = clusters.map { distinctVertices($0) }
         for c in clusters.indices where !clusters[c].isEmpty && clusters[c].count < 16 {
             var best = -1, bestShared = 0
             var shared: [Int: Int] = [:]
@@ -152,7 +172,7 @@ enum MeshClusterizer {
             guard best >= 0 else { continue }
             for t in clusters[c] { owner[Int(t)] = Int32(best) }
             clusters[best] += clusters[c]
-            vertexCount[best] = Set(clusters[best].flatMap { t in (0..<3).map { triangles[3 * Int(t) + $0] } }).count
+            vertexCount[best] = distinctVertices(clusters[best])
             clusters[c] = []
         }
         return clusters.filter { !$0.isEmpty }

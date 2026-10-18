@@ -79,6 +79,9 @@ Every run is offscreen (no window, no focus change); never launch the binary wit
 
 ## Checklist: per-frame CPU / encoding (details: [references/cpu-swift.md](references/cpu-swift.md))
 
+Designing a new feature's per-frame loops (which parts are hot, their data layout, the fast subset's rules): the
+`data-oriented` skill.
+
 * **The frame never waits on the GPU.**
   * Three frames are in flight (`Renderer.maxFramesInFlight`, `frameSemaphore`).
   * Anything the CPU writes and the GPU reads is per slot (`slot = frameIndex % maxFramesInFlight`).
@@ -109,4 +112,6 @@ Every run is offscreen (no window, no focus change); never launch the binary wit
 * An A/B with at least 2 alternating rounds, with the medians and delta stated.
 * The quality scorer, or `pngdiff.py`, shows no regression beyond the noise, or the trade-off is stated explicitly.
 * Swift↔MSL struct layouts still match (`GPUTypes.swift` ↔ `Shaders/Types.metal`) if you touched a shared struct.
+* `python3 Tools/perf/hotcalls.py` passes on the release build if you touched a per-frame or builder loop (and the loop
+  is in `Tools/perf/hot-functions.txt` once it is clean).
 * `graphify update .` (CLAUDE.md).

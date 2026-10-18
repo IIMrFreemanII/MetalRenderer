@@ -699,11 +699,20 @@ final class Scene {
     func update(time t: Float, dayTime: Float? = nil) {
         let day = dayTime ?? t
         var changed = false
-        func move(_ i: Int) {
-            instances[i].prevTransform = instances[i].transform
-            if let animation = instances[i].animation {
-                let now = animation(t)
-                if now != instances[i].transform { changed = true; setTransform(i, now) }
+        // Through the array's buffer: `instances[i].animation` copied the whole instance (~290 bytes) out of the
+        // class's array, past an exclusivity check, each time. (The animations are functions of `t` only.)
+        func move<C: Sequence>(_ indices: C) where C.Element == Int {
+            instances.withUnsafeMutableBufferPointer { inst in
+                for i in indices {
+                    inst[i].prevTransform = inst[i].transform
+                    guard let animation = inst[i].animation else { continue }
+                    let now = animation(t)
+                    if now != inst[i].transform {
+                        changed = true
+                        inst[i].transform = now
+                        inst[i].normalMatrix = now.inverse.transpose
+                    }
+                }
             }
         }
         defer {
@@ -731,11 +740,11 @@ final class Scene {
             }
         }
         if let animated {
-            for i in animated.instances { move(i) }
+            move(animated.instances)
             for l in animated.lights { pose(l, placed: true) }
             for l in animated.scaledLights { pose(l, placed: false) }
         } else {
-            for i in instances.indices { move(i) }
+            move(instances.indices)
             for l in lights.indices where !lights[l].isMesh { pose(l, placed: true) }
         }
         if let skyAnimation { skyColor = skyAnimation(day) }
@@ -765,15 +774,24 @@ final class Scene {
         if let crowd {
             // The slots' poses at this time, then the walkers along their lanes: only a transform's translation
             // changes (and with it the inverse's), so this stays cheap for tens of thousands of them.
+            // Each walker is its own instance, so parts of them go side by side, through the buffers.
             crowd.viewer = viewer
             crowd.pose(at: t)
-            for w in crowd.walkers {
-                let (p, previous) = w.positions(crowd.slots[w.slot])
-                instances[w.instance].transform.columns.3 = SIMD4(p, 1)
-                instances[w.instance].prevTransform.columns.3 = SIMD4(previous, 1)
-                instances[w.instance].normalMatrix.columns.0.w = -dot(w.inverse0, p)
-                instances[w.instance].normalMatrix.columns.1.w = -dot(w.inverse1, p)
-                instances[w.instance].normalMatrix.columns.2.w = -dot(w.inverse2, p)
+            let slots = crowd.slots
+            crowd.walkers.withUnsafeBufferPointer { walkers in
+                instances.withUnsafeMutableBufferPointer { inst in
+                    let inst = inst, part = 8192
+                    DispatchQueue.concurrentPerform(iterations: (walkers.count + part - 1) / part) { k in
+                        for w in walkers[(k * part)..<min((k + 1) * part, walkers.count)] {
+                            let (p, previous) = w.positions(slots[w.slot])
+                            inst[w.instance].transform.columns.3 = SIMD4(p, 1)
+                            inst[w.instance].prevTransform.columns.3 = SIMD4(previous, 1)
+                            inst[w.instance].normalMatrix.columns.0.w = -dot(w.inverse0, p)
+                            inst[w.instance].normalMatrix.columns.1.w = -dot(w.inverse1, p)
+                            inst[w.instance].normalMatrix.columns.2.w = -dot(w.inverse2, p)
+                        }
+                    }
+                }
             }
         }
     }
@@ -973,23 +991,33 @@ final class Scene {
     /// only the ones that move, the rest being unchanged.
     /// `range`: of all the instances, these (a part of them, for a caller that writes the parts side by side).
     func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool, range: Range<Int>? = nil) {
-        func write(_ i: Int) {
-            let inst = instances[i]
-            out[i] = GPUInstanceData(transform: inst.transform,
-                                     prevTransform: inst.prevTransform,
-                                     normalMatrix: inst.normalMatrix,
-                                     meshIndex: inst.mesh >= 0 ? UInt32(inst.mesh)
-                                         : inst.assembly >= 0 ? UInt32(meshes.count + virtualMeshes.count + inst.assembly)
-                                         : inst.sdf >= 0 ? UInt32(meshes.count + virtualMeshes.count + assemblies.count + inst.sdf)
-                                         : UInt32(meshes.count + inst.virtualMesh),
-                                     materialIndex: UInt32(inst.material),
-                                     pad0: inst.mask | (inst.sdf >= 0 ? Scene.instanceSDF : 0),
-                                     pad1: virtualRank[i])
-        }
-        if !all, let animated {
-            for i in animated.instances { write(i) }
-        } else {
-            for i in range ?? instances.indices { write(i) }
+        // Through the arrays' buffers, with the counts taken once: reading `self`'s arrays per instance cost an
+        // exclusivity check each.
+        let meshCount = meshes.count, virtualCount = virtualMeshes.count, assemblyCount = assemblies.count
+        instances.withUnsafeBufferPointer { inst in
+            virtualRank.withUnsafeBufferPointer { rank in
+                func write(_ i: Int) {
+                    let mesh = inst[i].mesh, assembly = inst[i].assembly, sdf = inst[i].sdf
+                    out[i] = GPUInstanceData(transform: inst[i].transform,
+                                             prevTransform: inst[i].prevTransform,
+                                             normalMatrix: inst[i].normalMatrix,
+                                             meshIndex: mesh >= 0 ? UInt32(mesh)
+                                                 : assembly >= 0 ? UInt32(meshCount + virtualCount + assembly)
+                                                 : sdf >= 0 ? UInt32(meshCount + virtualCount + assemblyCount + sdf)
+                                                 : UInt32(meshCount + inst[i].virtualMesh),
+                                             materialIndex: UInt32(inst[i].material),
+                                             pad0: inst[i].mask | (sdf >= 0 ? Scene.instanceSDF : 0),
+                                             pad1: rank[i])
+                }
+                if let range {
+                    for i in range { write(i) }
+                } else if !all, let animated {   // (a crowd's tens of thousands of walkers: in parts)
+                    let moving = animated.instances
+                    SceneBuffers.inParts(moving.count) { for k in $0 { write(moving[k]) } }
+                } else {
+                    SceneBuffers.inParts(inst.count) { for i in $0 { write(i) } }
+                }
+            }
         }
     }
 
