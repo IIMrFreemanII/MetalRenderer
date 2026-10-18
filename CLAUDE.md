@@ -2,6 +2,12 @@
 
 Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`). Benchmark runs (`METALRENDERER_BENCH`) have no window and don't take the focus. Never launch the app without `METALRENDERER_BENCH`, or with `METALRENDERER_WINDOW=1`, unless the user asks: they work on this Mac while you iterate.
 
+## New features
+
+Plan and build them with the `data-oriented` skill (`.claude/skills/data-oriented`): what runs every frame over many
+things is written in the fast subset of Swift and proven with a profile and `Tools/perf/hotcalls.py`; the rest stays
+plain Swift.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

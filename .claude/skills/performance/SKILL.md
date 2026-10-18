@@ -79,6 +79,9 @@ Every run is offscreen (no window, no focus change); never launch the binary wit
 
 ## Checklist: per-frame CPU / encoding (details: [references/cpu-swift.md](references/cpu-swift.md))
 
+Designing a new feature's per-frame loops (which parts are hot, their data layout, the fast subset's rules): the
+`data-oriented` skill.
+
 * **The frame never waits on the GPU.**
   * Three frames are in flight (`Renderer.maxFramesInFlight`, `frameSemaphore`).
   * Anything the CPU writes and the GPU reads is per slot (`slot = frameIndex % maxFramesInFlight`).
